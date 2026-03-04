@@ -1,0 +1,61 @@
+{
+    "fileVersion": 1,
+    "id": "aslm-ui",
+    "name": "ASLM UI",
+    "description": "ASLM UI Module.",
+    "version": "0.0.1",
+    "author": "NGGT-ASLM",
+    "type": "ui",
+    "hasPage": true,
+    "icon": "icon.png",
+    "sidebarIcon": "sidebar_icon.png",
+    "source": {
+        "type": "github",
+        "repo": "NGGTLightKeeper/ASLM-UI"
+    },
+    "dependencies": {
+        "engines": [
+            {
+                "id": "python-runtime",
+                "libraries": [
+                    "django[6.0.2]"
+                ]
+            }
+        ]
+    },
+    "commands": {
+        "firstRun": [
+            {
+                "name": "Apply Migrations",
+                "description": "Applies database migrations",
+                "engine": "python-runtime",
+                "exec": "manage.py migrate"
+            }
+        ],
+        "run": [
+            {
+                "name": "Start UI Server",
+                "description": "Launches the Django development server",
+                "engine": "python-runtime",
+                "exec": "manage.py runserver"
+            }
+        ]
+    },
+    "settings": [
+        {
+            "key": "port",
+            "name": "Server Port",
+            "description": "Port the UI server listens on",
+            "type": "port",
+            "default": "8000",
+            "engine": "python-runtime",
+            "getExec": "manage.py get_setting --key port",
+            "setExec": "manage.py set_setting --key port --value {value}"
+        }
+    ],
+    "status": {
+        "installed": false,
+        "enabled": false,
+        "firstRunCompleted": false
+    }
+}

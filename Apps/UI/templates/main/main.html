@@ -1,0 +1,132 @@
+{% extends "main/base.html" %}
+{% load static %}
+
+{% block title %}ASLM Chat{% endblock %}
+
+{% block extra_css %}{% endblock %}
+
+{% block body %}
+<div class="chat-shell">
+
+    <!-- Main Chat Area -->
+    <main class="main-area" id="mainArea">
+        <header class="topbar">
+            <h2 class="chat-title" id="chatTitle">New Chat</h2>
+        </header>
+
+        <div class="messages-area" id="messagesArea">
+            <div class="messages-inner" id="messagesInner">
+                <div class="welcome" id="welcomeScreen">
+                    <h1>How can I help?</h1>
+                    <div class="input-area welcome-input">
+                        <div class="input-wrapper">
+                            <textarea class="chat-input" id="chatInput" placeholder="Message ASLM..." rows="3"></textarea>
+                            <button class="send-btn" id="sendBtn" disabled aria-label="Send Message">
+                                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input area shown during conversation -->
+        <div class="input-area conversation-input" id="conversationInput" style="display:none;">
+            <div class="input-wrapper">
+                <textarea class="chat-input" id="chatInputConv" placeholder="Message ASLM..." rows="3"></textarea>
+                <button class="send-btn" id="sendBtnConv" disabled aria-label="Send Message">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <!-- Right Sidebar (Model Settings) -->
+    <aside class="sidebar sidebar-right" id="sidebarRight">
+        <div class="sidebar-header">
+            <span class="logo-name">Model Settings</span>
+        </div>
+
+        <div class="settings-panel">
+            <!-- Model selector -->
+            <div class="setting-group">
+                <label class="setting-label" for="modelSelector">Model</label>
+                <select class="model-selector" id="modelSelector">
+                    <option value="">None</option>
+                </select>
+            </div>
+
+            <div class="settings-divider"></div>
+
+            <!-- Temperature -->
+            <div class="setting-group">
+                <label class="setting-label" for="temperature">
+                    Temperature
+                    <span class="setting-value" id="temperatureValue">0.7</span>
+                </label>
+                <input type="range" class="setting-range" id="temperature" min="0" max="2" step="0.1" value="0.7">
+            </div>
+
+            <!-- Max Tokens -->
+            <div class="setting-group">
+                <label class="setting-label" for="maxTokens">
+                    Max Tokens
+                    <span class="setting-value" id="maxTokensValue">2048</span>
+                </label>
+                <input type="range" class="setting-range" id="maxTokens" min="256" max="8192" step="256" value="2048">
+            </div>
+
+            <!-- Top P -->
+            <div class="setting-group">
+                <label class="setting-label" for="topP">
+                    Top P
+                    <span class="setting-value" id="topPValue">0.90</span>
+                </label>
+                <input type="range" class="setting-range" id="topP" min="0" max="1" step="0.05" value="0.9">
+            </div>
+
+            <!-- Top K -->
+            <div class="setting-group">
+                <label class="setting-label" for="topK">
+                    Top K
+                    <span class="setting-value" id="topKValue">50</span>
+                </label>
+                <input type="range" class="setting-range" id="topK" min="1" max="100" step="1" value="50">
+            </div>
+
+            <!-- Presence Penalty -->
+            <div class="setting-group">
+                <label class="setting-label" for="presencePenalty">
+                    Presence Penalty
+                    <span class="setting-value" id="presencePenaltyValue">0.0</span>
+                </label>
+                <input type="range" class="setting-range" id="presencePenalty" min="-2" max="2" step="0.1" value="0">
+            </div>
+
+            <!-- Frequency Penalty -->
+            <div class="setting-group">
+                <label class="setting-label" for="frequencyPenalty">
+                    Frequency Penalty
+                    <span class="setting-value" id="frequencyPenaltyValue">0.0</span>
+                </label>
+                <input type="range" class="setting-range" id="frequencyPenalty" min="-2" max="2" step="0.1" value="0">
+            </div>
+
+            <!-- System Prompt -->
+            <div class="setting-group">
+                <label class="setting-label" for="systemPrompt">System Prompt</label>
+                <textarea class="setting-textarea" id="systemPrompt" rows="5" placeholder="Enter system prompt..."></textarea>
+            </div>
+        </div>
+    </aside>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/main/main.js' %}"></script>
+{% endblock %}
