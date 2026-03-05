@@ -18,18 +18,25 @@
             {
                 "id": "python-runtime",
                 "libraries": [
-                    "django[6.0.2]"
+                    "argon2-cffi",
+                    "django==6.0.2",
+                    "django-cors-headers",
+                    "martor",
+                    "whitenoise"
                 ]
+            },
+            {
+                "id": "ollama-service"
             }
         ]
     },
     "commands": {
         "firstRun": [
             {
-                "name": "Apply Migrations",
-                "description": "Applies database migrations",
+                "name": "First Run Setup",
+                "description": "Generates settings.json and applies database migrations",
                 "engine": "python-runtime",
-                "exec": "manage.py migrate"
+                "exec": "main.py first_run"
             }
         ],
         "run": [
@@ -37,7 +44,7 @@
                 "name": "Start UI Server",
                 "description": "Launches the Django development server",
                 "engine": "python-runtime",
-                "exec": "manage.py runserver"
+                "exec": "main.py runserver"
             }
         ]
     },
@@ -49,8 +56,28 @@
             "type": "port",
             "default": "8000",
             "engine": "python-runtime",
-            "getExec": "manage.py get_setting --key port",
-            "setExec": "manage.py set_setting --key port --value {value}"
+            "getExec": "main.py get_setting --key port",
+            "setExec": "main.py set_setting --key port --value {value}"
+        },
+        {
+            "key": "ollama_enabled",
+            "name": "Ollama Status",
+            "description": "Whether the Ollama inference service is active",
+            "type": "bool",
+            "default": "false",
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key ollama_enabled",
+            "setExec": "main.py set_setting --key ollama_enabled --value {value}"
+        },
+        {
+            "key": "ollama_port",
+            "name": "Ollama Port",
+            "description": "Port that the local Ollama service listens on",
+            "type": "port",
+            "default": "11434",
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key ollama_port",
+            "setExec": "main.py set_setting --key ollama_port --value {value}"
         }
     ],
     "status": {

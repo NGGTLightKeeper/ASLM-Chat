@@ -1,13 +1,23 @@
+import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-SECRET_KEY = 'django-insecure-__+tudug4i#lf9cxg82ckc2&#!@=pbf9crqetx_l0=a3gq+nv3'
-DEBUG = True
 
-ALLOWED_HOSTS = [
-    'localhost',
-    '127.0.0.1',
-]
+# Ensure BASE_DIR is on sys.path so Settings package is importable
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from Settings.settings import load_settings as _load_settings
+
+_cfg = _load_settings()
+
+SECRET_KEY = _cfg.get('secret_key') or 'django-insecure-fallback-key-change-me'
+DEBUG = _cfg.get('debug', False)
+
+ALLOWED_HOSTS = _cfg.get('allowed_hosts', ['127.0.0.1', 'localhost'])
+
+OLLAMA_URL = f"http://127.0.0.1:{_cfg.get('ollama_port', 11434)}"
+OLLAMA_ENABLED = _cfg.get('ollama_enabled', False)
 
 CORS_ALLOWED_ORIGINS = [
     "https://localhost",
@@ -46,7 +56,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -115,5 +127,9 @@ STATIC_URL = 'static/'
 STATICFILES_DIRS = [
     BASE_DIR / "static/",
 ]
+
+# WhiteNoise — serve files directly from STATICFILES_DIRS without collectstatic
+WHITENOISE_USE_FINDERS = True
+WHITENOISE_AUTOREFRESH = DEBUG
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
