@@ -1,9 +1,9 @@
 {
     "fileVersion": 1,
-    "id": "aslm-ui",
-    "name": "ASLM UI",
-    "description": "ASLM UI Module.",
-    "version": "0.0.1",
+    "id": "aslm-chat",
+    "name": "ASLM Chat",
+    "description": "ASLM Chat Module",
+    "version": "0.1.0",
     "author": "NGGT-ASLM",
     "type": "ui",
     "hasPage": true,
@@ -11,7 +11,7 @@
     "sidebarIcon": "sidebar_icon.png",
     "source": {
         "type": "github",
-        "repo": "NGGTLightKeeper/ASLM-UI"
+        "repo": "NGGTLightKeeper/ASLM-Chat"
     },
     "dependencies": {
         "engines": [
@@ -50,34 +50,64 @@
     },
     "settings": [
         {
-            "key": "port",
-            "name": "Server Port",
+            "key": "ui-port",
+            "name": "UI Server Port",
             "description": "Port the UI server listens on",
             "type": "port",
-            "default": "8000",
+            "default": 30000,
             "engine": "python-runtime",
-            "getExec": "main.py get_setting --key port",
-            "setExec": "main.py set_setting --key port --value {value}"
+            "getExec": "main.py get_setting --key ui-port",
+            "setExec": "main.py set_setting --key ui-port --value {value}"
         },
         {
-            "key": "ollama_enabled",
-            "name": "Ollama Status",
-            "description": "Whether the Ollama inference service is active",
-            "type": "bool",
-            "default": "false",
+            "key": "api-port",
+            "name": "API Server Port",
+            "description": "Port the UI server listens on",
+            "type": "port",
+            "default": 30001,
             "engine": "python-runtime",
-            "getExec": "main.py get_setting --key ollama_enabled",
-            "setExec": "main.py set_setting --key ollama_enabled --value {value}"
+            "getExec": "main.py get_setting --key api-port",
+            "setExec": "main.py set_setting --key api-port --value {value}"
         },
         {
-            "key": "ollama_port",
+            "key": "ollama-service",
+            "name": "Ollama",
+            "description": "Whether the Ollama inference service is installed",
+            "type": "engine",
+            "default": false,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key ollama-service",
+            "setExec": "main.py set_setting --key ollama-service --value {value}"
+        },
+        {
+            "key": "ollama-service_path",
+            "name": "Ollama Path",
+            "description": "Path to the Ollama executable",
+            "type": "path",
+            "default": null,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key ollama-service_path",
+            "setExec": "main.py set_setting --key ollama-service_path --value {value}"
+        },
+        {
+            "key": "ollama-service_data",
+            "name": "Ollama Data",
+            "description": "Path to the Ollama data directory",
+            "type": "data",
+            "default": null,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key ollama-service_data",
+            "setExec": "main.py set_setting --key ollama-service_data --value {value}"
+        },
+        {
+            "key": "ollama-service_port",
             "name": "Ollama Port",
             "description": "Port that the local Ollama service listens on",
             "type": "port",
-            "default": "11434",
+            "default": 30002,
             "engine": "python-runtime",
-            "getExec": "main.py get_setting --key ollama_port",
-            "setExec": "main.py set_setting --key ollama_port --value {value}"
+            "getExec": "main.py get_setting --key ollama-service_port",
+            "setExec": "main.py set_setting --key ollama-service_port --value {value}"
         }
     ],
     "status": {

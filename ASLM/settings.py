@@ -16,8 +16,8 @@ DEBUG = _cfg.get('debug', False)
 
 ALLOWED_HOSTS = _cfg.get('allowed_hosts', ['127.0.0.1', 'localhost'])
 
-OLLAMA_URL = f"http://127.0.0.1:{_cfg.get('ollama_port', 11434)}"
-OLLAMA_ENABLED = _cfg.get('ollama_enabled', False)
+OLLAMA_URL = f"http://127.0.0.1:{_cfg.get('ollama-service_port', 30002)}"
+OLLAMA_ENABLED = _cfg.get('ollama-service', False)
 
 CORS_ALLOWED_ORIGINS = [
     "https://localhost",

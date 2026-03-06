@@ -1,5 +1,5 @@
 """
-main.py — ASLM-UI entry point.
+main.py — ASLM-Chat entry point.
 
 Called by ASLM with a command name and optional flags:
     python main.py runserver [--port PORT] [--log]
@@ -34,7 +34,7 @@ def run_django_command(*args: str, log: bool = False) -> None:
     argv = ['manage.py', *args]
 
     if log:
-        print(f"[ASLM-UI] Running: {' '.join(argv)}")
+        print(f"[ASLM-Chat] Running: {' '.join(argv)}")
 
     execute_from_command_line(argv)
 
@@ -42,14 +42,14 @@ def run_django_command(*args: str, log: bool = False) -> None:
 def cmd_runserver(port: int, log: bool) -> None:
     """Start the Django development server on the given port."""
     if log:
-        print(f"[ASLM-UI] Starting server on port {port}...")
+        print(f"[ASLM-Chat] Starting server on port {port}...")
     run_django_command('runserver', f'127.0.0.1:{port}', log=log)
 
 
 def cmd_migrate(log: bool) -> None:
     """Apply all pending database migrations."""
     if log:
-        print("[ASLM-UI] Applying migrations...")
+        print("[ASLM-Chat] Applying migrations...")
     run_django_command('migrate', '--noinput', log=log)
 
 
@@ -69,7 +69,7 @@ def cmd_collectstatic(log: bool) -> None:
 def cmd_first_run(log: bool = True) -> None:
     """Run the first-run setup: generate settings.json and apply migrations."""
     from Settings.first_run import run as first_run
-    print("[ASLM-UI] Running first-run setup...")
+    print("[ASLM-Chat] Running first-run setup...")
     first_run(log=log)
     cmd_migrate(log=log)
 
@@ -97,17 +97,19 @@ def cmd_set_setting(key: str, value: str) -> None:
         val = value
         
     set(key, val)
-    print(f"[ASLM-UI] Setting '{key}' updated to {val}")
+    print(f"[ASLM-Chat] Setting '{key}' updated to {val}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog='main.py',
-        description='ASLM-UI management entry point',
+        description='ASLM-Chat management entry point',
     )
     parser.add_argument('command', type=str, help='Command to execute')
-    parser.add_argument('--port', type=int, default=8000,
-                        help='Port for runserver (default: 8000)')
+    parser.add_argument('--port', type=int, default=30000,
+                        help='Port for runserver (default: 30000)')
+    parser.add_argument('--api-port', type=int, default=30001,
+                        help='API Server Port (default: 30001)')
     parser.add_argument('--app', type=str, default=None,
                         help='App name for makemigrations')
     parser.add_argument('--key', type=str, default=None,
@@ -129,7 +131,7 @@ def main() -> None:
         case 'runserver':
             from Settings.settings import load_settings
             settings = load_settings()
-            port = args.port if args.port != 8000 else int(settings.get('port', 8000))
+            port = args.port if args.port != 30000 else int(settings.get('ui-port', 30000))
             cmd_runserver(port, log=True)
 
         case 'migrate':
@@ -160,7 +162,7 @@ def main() -> None:
             parser.print_help()
 
         case _:
-            print(f"[ASLM-UI] Unknown command: '{args.command}'")
+            print(f"[ASLM-Chat] Unknown command: '{args.command}'")
             print("Run 'python main.py help' for usage.")
             sys.exit(1)
 
