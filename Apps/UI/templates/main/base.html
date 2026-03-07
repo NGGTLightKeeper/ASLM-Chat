@@ -34,7 +34,13 @@
         </a>
 
         <div class="history-list" id="historyList">
-            <!-- Dynamically populated -->
+            {% for chat in chats %}
+                <div class="chat-item" data-chat-id="{{ chat.id }}">
+                    <span class="chat-title">{{ chat.title }}</span>
+                </div>
+            {% empty %}
+                <div class="chat-item empty-state">No previous chats</div>
+            {% endfor %}
         </div>
 
         <div class="sidebar-footer">

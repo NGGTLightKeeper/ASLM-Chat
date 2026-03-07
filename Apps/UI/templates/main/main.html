@@ -7,6 +7,7 @@
 
 {% block body %}
 <div class="chat-shell">
+    {% csrf_token %}
 
     <!-- Main Chat Area -->
     <main class="main-area" id="mainArea">
@@ -56,7 +57,13 @@
             <div class="setting-group">
                 <label class="setting-label" for="modelSelector">Model</label>
                 <select class="model-selector" id="modelSelector">
-                    <option value="">None</option>
+                    {% if models %}
+                        {% for model in models %}
+                            <option value="{{ model }}">{{ model }}</option>
+                        {% endfor %}
+                    {% else %}
+                        <option value="">No models available</option>
+                    {% endif %}
                 </select>
             </div>
 
