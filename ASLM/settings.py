@@ -133,3 +133,6 @@ WHITENOISE_USE_FINDERS = True
 WHITENOISE_AUTOREFRESH = DEBUG
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Allow large JSON bodies for base64-encoded image uploads (256 MB)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 1024*1024*256

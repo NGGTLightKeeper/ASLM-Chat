@@ -22,6 +22,7 @@
                     "django==6.0.2",
                     "django-cors-headers",
                     "martor",
+                    "ollama",
                     "whitenoise"
                 ]
             },
@@ -98,6 +99,16 @@
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key ollama-service_data",
             "setExec": "main.py set_setting --key ollama-service_data --value {value}"
+        },
+        {
+            "key": "ollama-service_models",
+            "name": "Ollama Models",
+            "description": "Path to the Ollama models directory",
+            "type": "models",
+            "default": null,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key ollama-service_models",
+            "setExec": "main.py set_setting --key ollama-service_models --value {value}"
         },
         {
             "key": "ollama-service_port",

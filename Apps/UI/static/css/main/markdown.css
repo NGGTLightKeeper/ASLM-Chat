@@ -1,0 +1,180 @@
+/* ============================================================
+   Markdown & Reasoning Styles
+   ============================================================ */
+.markdown-body {
+    font-size: 15px;
+    line-height: 1.6;
+    word-wrap: break-word;
+}
+
+.markdown-body h1 {
+    font-size: 22px;
+    margin-top: 24px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid #3A3A3C;
+    padding-bottom: 8px;
+}
+
+.markdown-body h2 {
+    font-size: 20px;
+    margin-top: 24px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid #3A3A3C;
+    padding-bottom: 6px;
+}
+
+.markdown-body h3 {
+    font-size: 18px;
+    margin-top: 20px;
+    margin-bottom: 14px;
+}
+
+.markdown-body h4 {
+    font-size: 16px;
+    margin-top: 16px;
+    margin-bottom: 12px;
+}
+
+.markdown-body pre {
+    background-color: #282c34;
+    border-radius: 6px;
+    padding: 16px;
+    overflow: auto;
+    margin-top: 0;
+    margin-bottom: 16px;
+}
+
+.markdown-body code {
+    background-color: rgba(255, 255, 255, 0.1);
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+    font-size: 14px;
+}
+
+.markdown-body pre code {
+    background-color: transparent;
+    padding: 0;
+}
+
+.markdown-body p,
+.markdown-body blockquote,
+.markdown-body dl,
+.markdown-body details {
+    margin-top: 0;
+    margin-bottom: 16px;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+    margin-top: 0;
+    margin-bottom: 16px;
+    padding-left: 24px;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+.markdown-body li {
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+.markdown-body a {
+    color: #0A84FF;
+    text-decoration: none;
+}
+
+.markdown-body a:hover {
+    text-decoration: underline;
+}
+
+.markdown-body blockquote {
+    padding: 0 16px;
+    color: rgba(235, 235, 245, 0.6);
+    border-left: 4px solid #3A3A3C;
+}
+
+/* Tables */
+.markdown-body table {
+    display: block;
+    width: 100%;
+    margin-bottom: 16px;
+    overflow-x: auto;
+    border-spacing: 0;
+    border-collapse: collapse;
+}
+
+.markdown-body table th {
+    background-color: #2C2C2E;
+    font-weight: 600;
+}
+
+.markdown-body table th,
+.markdown-body table td {
+    padding: 8px 16px;
+    border: 1px solid #3A3A3C;
+    text-align: left;
+}
+
+.markdown-body table tr:nth-child(2n) {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+/* Reasoning Block Detached Style */
+.msg-thoughts-wrapper {
+    margin-bottom: 12px;
+}
+
+.msg-thoughts-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    background: rgba(44, 44, 46, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(235, 235, 245, 0.7);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s;
+}
+
+.msg-thoughts-toggle:hover {
+    background: rgba(58, 58, 60, 0.9);
+    color: #FFFFFF;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.msg-thoughts-toggle::before {
+    content: "🧠";
+    opacity: 0.8;
+}
+
+.msg-thoughts-toggle::after {
+    content: "▼";
+    font-size: 9px;
+    opacity: 0.5;
+    margin-left: 4px;
+    transition: transform 0.2s;
+}
+
+.msg-thoughts-wrapper.expanded .msg-thoughts-toggle::after {
+    transform: rotate(180deg);
+}
+
+.msg-thoughts-content {
+    display: none;
+    /* controlled by JS slideToggle */
+    margin-top: 10px;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px dashed rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    font-size: 14px;
+    color: rgba(235, 235, 245, 0.6);
+    white-space: pre-wrap;
+    font-family: var(--font);
+    line-height: 1.5;
+}

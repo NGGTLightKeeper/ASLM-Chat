@@ -132,6 +132,17 @@ def main() -> None:
             from Settings.settings import load_settings
             settings = load_settings()
             port = args.port if args.port != 30000 else int(settings.get('ui-port', 30000))
+            
+            # Start the Ollama background service if enabled, but only in the parent process
+            # to avoid launching two instances due to Django's auto-reloader
+            if not os.environ.get('RUN_MAIN'):
+                try:
+                    import importlib
+                    ollama_service = importlib.import_module('Services.ollama-service')
+                    ollama_service.start_ollama()
+                except ImportError as e:
+                    print(f"[ASLM-Chat] Warning: Services.ollama-service could not be loaded. {e}")
+            
             cmd_runserver(port, log=True)
 
         case 'migrate':
