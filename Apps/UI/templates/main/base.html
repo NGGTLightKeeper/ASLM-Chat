@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description"
-        content="{% block meta_description %}ASLM — Advanced System Language Models{% endblock %}" />
+        content="{% block meta_description %}ASLM - Advanced System Language Models{% endblock %}" />
     <title>{% block title %}ASLM Chat{% endblock %}</title>
 
     <link rel="icon" type="image/x-icon" href="{% static 'favicon.ico' %}">
@@ -18,7 +18,7 @@
     {% block extra_css %}{% endblock %}
 </head>
 
-<body data-preload-chat="{{ preload_chat_id|default:'' }}">
+<body data-preload-chat="{{ preload_chat_id|default:'' }}" data-llm-engine="{{ llm_engine|default:'' }}">
 <div class="app-shell">
 
     <!-- Left Sidebar (shared across all pages) -->
@@ -74,7 +74,7 @@
 </div>
 
 <script src="{% static 'js/jquery.min.js' %}"></script>
-<!-- Markdown parsing & sanitization -->
+<!-- Markdown parsing and sanitization -->
 <script src="{% static 'js/vendor/marked.min.js' %}"></script>
 <script src="{% static 'js/vendor/purify.min.js' %}"></script>
 <!-- Highlight.js for code blocks -->

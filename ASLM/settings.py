@@ -1,23 +1,27 @@
+"""Django settings for the ASLM-Chat project."""
+
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Ensure BASE_DIR is on sys.path so Settings package is importable
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from Settings.settings import load_settings as _load_settings
+from Settings.settings import get_llm_engine, is_engine_enabled, load_settings
 
-_cfg = _load_settings()
+_cfg = load_settings()
 
-SECRET_KEY = _cfg.get('secret_key') or 'django-insecure-fallback-key-change-me'
-DEBUG = _cfg.get('debug', False)
+SECRET_KEY = _cfg.get("secret_key") or "django-insecure-fallback-key-change-me"
+DEBUG = bool(_cfg.get("debug", False))
 
-ALLOWED_HOSTS = _cfg.get('allowed_hosts', ['127.0.0.1', 'localhost'])
+ALLOWED_HOSTS = _cfg.get("allowed_hosts", ["127.0.0.1", "localhost"])
 
+LLM_ENGINE = get_llm_engine()
 OLLAMA_URL = f"http://127.0.0.1:{_cfg.get('ollama-service_port', 30002)}"
-OLLAMA_ENABLED = _cfg.get('ollama-service', False)
+OLLAMA_ENABLED = is_engine_enabled("ollama-service")
 
 CORS_ALLOWED_ORIGINS = [
     "https://localhost",
@@ -41,29 +45,28 @@ CORS_ALLOW_METHODS = (
 )
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    'corsheaders',
-    'martor',
-
-    'Apps.Data',
-    'Apps.UI',
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "corsheaders",
+    "martor",
+    "Apps.Data",
+    "Apps.UI",
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
 PASSWORD_HASHERS = [
@@ -74,65 +77,54 @@ PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.ScryptPasswordHasher",
 ]
 
-ROOT_URLCONF = 'ASLM.urls'
+ROOT_URLCONF = "ASLM.urls"
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'ASLM.wsgi.application'
+WSGI_APPLICATION = "ASLM.wsgi.application"
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db.sqlite3",
     }
 }
 
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
+LANGUAGE_CODE = "en-us"
+TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
-DEFAULT_CHARSET = 'utf-8'
+DEFAULT_CHARSET = "utf-8"
 
-# STATIC
 STATIC_ROOT = "staticfiles/"
-STATIC_URL = 'static/'
-STATICFILES_DIRS = [
-    BASE_DIR / "static/",
-]
+STATIC_URL = "static/"
+STATICFILES_DIRS = [BASE_DIR / "static/"]
 
-# WhiteNoise — serve files directly from STATICFILES_DIRS without collectstatic
+# WhiteNoise serves assets directly from STATICFILES_DIRS in development.
 WHITENOISE_USE_FINDERS = True
 WHITENOISE_AUTOREFRESH = DEBUG
 
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Allow large JSON bodies for base64-encoded image uploads (256 MB)
-DATA_UPLOAD_MAX_MEMORY_SIZE = 1024*1024*256
+# Allow large JSON bodies for base64-encoded image uploads (256 MB).
+DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024 * 256

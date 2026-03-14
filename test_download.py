@@ -1,7 +1,7 @@
 import os
 import sys
 
-# Ensure the ASLM-Chat base directory is in sys.path so we can import API and Settings properly
+# Ensure the ASLM-Chat base directory is importable.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
@@ -10,9 +10,9 @@ from API import llm_api
 
 def run():
     print("Testing Model Download via llm_api...")
-    
-    engine = 'ollama-service'
-    model_name = 'gpt-oss:20b'
+
+    engine = "ollama-service"
+    model_name = "gpt-oss:20b"
     
     print(f"\n[1] Checking currently downloaded models in {engine}...")
     try:
@@ -26,8 +26,7 @@ def run():
 
     print(f"\n[2] Attempting to pull '{model_name}'...")
     try:
-        # stream=True returns an iterator. 
-        # For a quick test script, we will iterate and print progress.
+        # stream=True returns an iterator. Print progress as it arrives.
         progress_iterator = llm_api.download_model(engine, model_name, stream=True)
         for chunk in progress_iterator:
             status = chunk.get('status', '')
@@ -50,10 +49,15 @@ def run():
         response = llm_api.generate(
             engine=engine,
             model_name=model_name,
-            prompt="Reply with exactly 'Download Test OK'.",
+            messages=[{"role": "user", "content": "Reply with exactly 'Download Test OK'."}],
             stream=False
         )
-        print(f"  Response: {response.get('response')}")
+        if isinstance(response, dict):
+            content = response.get("message", {}).get("content") or response.get("response")
+        else:
+            message = getattr(response, "message", None)
+            content = getattr(message, "content", None) or getattr(response, "response", None)
+        print(f"  Response: {content}")
     except Exception as e:
         print(f"  [ERROR] Error generating response: {e}")
 

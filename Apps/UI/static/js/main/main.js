@@ -1,8 +1,6 @@
 'use strict';
 
 $(function () {
-
-  /* ── DOM ─────────────────────────────────────────────────── */
   const $newChatBtn = $('#newChatBtn');
   const $historyList = $('#historyList');
   const $chatTitle = $('#chatTitle');
@@ -16,33 +14,104 @@ $(function () {
   const $conversationInput = $('#conversationInput');
   const $modelSelector = $('#modelSelector');
 
-  // Tracking current active chat
   let currentChatId = null;
 
-  /* ── New Chat ────────────────────────────────────────────── */
-  $newChatBtn.on('click', function (e) {
-    e.preventDefault();
-    startNewChat();
-  });
+  const visionState = {
+    supported: false,
+    pending: []
+  };
+
+  const thinkState = {
+    supported: false,
+    paramName: 'think',
+    enabled: true,
+    levelSupported: false,
+    levelParamName: 'think_level',
+    level: 'medium'
+  };
+
+  const LLM_KNOWN_PARAMETERS = {
+    temperature: {
+      label: 'Temperature',
+      min: 0,
+      max: 2,
+      step: 0.1,
+      decimals: 1,
+      fallback: 0.8
+    },
+    num_ctx: {
+      label: 'Max Tokens',
+      min: 256,
+      max: 131072,
+      step: 256,
+      decimals: 0,
+      fallback: 2048
+    },
+    top_p: {
+      label: 'Top P',
+      min: 0,
+      max: 1,
+      step: 0.05,
+      decimals: 2,
+      fallback: 0.9
+    },
+    top_k: {
+      label: 'Top K',
+      min: 1,
+      max: 100,
+      step: 1,
+      decimals: 0,
+      fallback: 40
+    },
+    presence_penalty: {
+      label: 'Presence Penalty',
+      min: -2,
+      max: 2,
+      step: 0.1,
+      decimals: 1,
+      fallback: 0.0
+    },
+    frequency_penalty: {
+      label: 'Frequency Penalty',
+      min: -2,
+      max: 2,
+      step: 0.1,
+      decimals: 1,
+      fallback: 0.0
+    }
+  };
+
+  function getActiveEngine() {
+    return $('body').data('llm-engine') || 'ollama-service';
+  }
+
+  function buildChatTitle(text, hasImages) {
+    if (text) {
+      return text.substring(0, 40) + (text.length > 40 ? '...' : '');
+    }
+    return hasImages ? 'Image chat' : 'New Chat';
+  }
+
+  function updateSendButtons() {
+    const hasPendingImages = visionState.pending.length > 0;
+    $sendBtn.prop('disabled', !$chatInput.val().trim() && !hasPendingImages);
+    $sendBtnConv.prop('disabled', !$chatInputConv.val().trim() && !hasPendingImages);
+  }
 
   function startNewChat() {
     $chatTitle.text('New Chat');
+    document.title = 'ASLM Chat';
     $messagesInner.find('.msg').remove();
     $conversationInput.hide();
     $welcomeScreen.show();
-    $chatInput.val('').css('height', 'auto').trigger('input').focus();
+    $chatInput.val('').css('height', 'auto').focus();
+    $chatInputConv.val('').css('height', 'auto');
     currentChatId = null;
-    $('#historyList .chat-item').removeClass('active');
+    $('#historyList .chat-item').removeClass('active').removeAttr('aria-current');
     $messagesArea.show();
     clearPendingImages();
+    updateSendButtons();
   }
-
-  /* ── Vision / Image Attachment ───────────────────────────── */
-  const visionState = {
-    supported: false,
-    // Array of { dataUrl, base64 } objects for pending images
-    pending: []
-  };
 
   function updateVisionControls() {
     const show = visionState.supported;
@@ -56,496 +125,290 @@ $(function () {
     visionState.pending = [];
     $('#imagePreviewStrip').empty().hide();
     $('#imagePreviewStripConv').empty().hide();
-    // Reset file inputs so the same file can be selected again
     $('#imageInput').val('');
     $('#imageInputConv').val('');
-  }
-
-  function addImageToPreview(dataUrl, base64, $strip) {
-    const idx = visionState.pending.push({ dataUrl, base64 }) - 1;
-    const $thumb = $(`
-      <div class="img-preview-thumb" data-idx="${idx}">
-        <img src="${dataUrl}" alt="Attached image">
-        <button class="img-preview-remove" aria-label="Remove image">
-          <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-    `);
-    $strip.append($thumb).show();
-    // Sync the other strip too
-    const $otherStrip = $strip.is('#imagePreviewStrip') ? $('#imagePreviewStripConv') : $('#imagePreviewStrip');
-    const $thumbCopy = $thumb.clone();
-    $otherStrip.append($thumbCopy).show();
+    updateSendButtons();
   }
 
   function rebuildPreviewStrips() {
-    $('#imagePreviewStrip, #imagePreviewStripConv').empty();
+    const $strips = $('#imagePreviewStrip, #imagePreviewStripConv');
+    $strips.empty();
+
     if (visionState.pending.length === 0) {
-      $('#imagePreviewStrip, #imagePreviewStripConv').hide();
+      $strips.hide();
+      updateSendButtons();
       return;
     }
+
     visionState.pending.forEach(function (img, idx) {
-      const $thumb = $(`
+      const html = `
         <div class="img-preview-thumb" data-idx="${idx}">
           <img src="${img.dataUrl}" alt="Attached image">
           <button class="img-preview-remove" aria-label="Remove image">
-            <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
           </button>
         </div>
-      `);
-      $('#imagePreviewStrip, #imagePreviewStripConv').append($thumb.clone()).show();
+      `;
+      $strips.append(html);
     });
+
+    $strips.show();
+    updateSendButtons();
   }
 
-  // Attach button → open file picker
-  $(document).on('click', '#attachBtn', function () {
-    $('#imageInput').trigger('click');
-  });
-  $(document).on('click', '#attachBtnConv', function () {
-    $('#imageInputConv').trigger('click');
-  });
+  function handleFileInput(event) {
+    const maxImages = 20;
+    const files = Array.from(event.target.files || []);
+    if (!files.length) {
+      return;
+    }
 
-  // File selected — read as DataURL and store base64 (max 20 images)
-  function handleFileInput(e) {
-    const MAX_IMAGES = 20;
-    const files = Array.from(e.target.files);
-    if (!files.length) return;
     files.forEach(function (file) {
-      if (!file.type.startsWith('image/')) return;
-      if (visionState.pending.length >= MAX_IMAGES) {
-        console.warn(`Max ${MAX_IMAGES} images allowed`);
+      if (!file.type.startsWith('image/')) {
         return;
       }
+      if (visionState.pending.length >= maxImages) {
+        console.warn(`Max ${maxImages} images allowed`);
+        return;
+      }
+
       const reader = new FileReader();
-      reader.onload = function (ev) {
-        if (visionState.pending.length >= MAX_IMAGES) return;
-        const dataUrl = ev.target.result;
+      reader.onload = function (loadEvent) {
+        if (visionState.pending.length >= maxImages) {
+          return;
+        }
+
+        const dataUrl = loadEvent.target.result;
         const base64 = dataUrl.split(',')[1];
         visionState.pending.push({ dataUrl, base64 });
         rebuildPreviewStrips();
       };
       reader.readAsDataURL(file);
     });
-    $(e.target).val('');
+
+    $(event.target).val('');
   }
-
-  $('#imageInput, #imageInputConv').on('change', handleFileInput);
-
-  // Remove image from pending
-  $(document).on('click', '.img-preview-remove', function (e) {
-    e.stopPropagation();
-    const idx = $(this).closest('.img-preview-thumb').data('idx');
-    visionState.pending.splice(idx, 1);
-    rebuildPreviewStrips();
-  });
-
-  /* ── Model Settings & Groupings ──────────────────────────── */
-  const LLM_KNOWN_PARAMETERS = {
-    // Settings Group
-    'temperature': { label: 'Temperature', min: 0, max: 2, step: 0.1, decimals: 1, fallback: 0.8, group: '#group-settings .settings-section-content' },
-    'num_ctx': { label: 'Max Tokens', min: 256, step: 256, decimals: 0, fallback: 2048, group: '#group-settings .settings-section-content' },
-    // Sampling Group
-    'top_p': { label: 'Top P', min: 0, max: 1, step: 0.05, decimals: 2, fallback: 0.9, group: '#group-sampling .settings-section-content' },
-    'top_k': { label: 'Top K', min: 1, max: 100, step: 1, decimals: 0, fallback: 40, group: '#group-sampling .settings-section-content' },
-    'presence_penalty': { label: 'Presence Penalty', min: -2, max: 2, step: 0.1, decimals: 1, fallback: 0.0, group: '#group-sampling .settings-section-content' },
-    'frequency_penalty': { label: 'Frequency Penalty', min: -2, max: 2, step: 0.1, decimals: 1, fallback: 0.0, group: '#group-sampling .settings-section-content' }
-  };
 
   function getParameterGroup(paramKey) {
     if (['temperature', 'num_ctx', 'num_predict', 'seed', 'num_keep'].includes(paramKey)) {
       return '#group-settings';
-    } else if (['top_k', 'top_p', 'min_p', 'repeat_penalty', 'presence_penalty', 'frequency_penalty', 'mirostat', 'tfs_z', 'typical_p', 'repeat_last_n'].includes(paramKey)) {
+    }
+    if (['top_k', 'top_p', 'min_p', 'repeat_penalty', 'presence_penalty', 'frequency_penalty', 'mirostat', 'tfs_z', 'typical_p', 'repeat_last_n'].includes(paramKey)) {
       return '#group-sampling';
-    } else if (['think', 'think_level', 'thinking', 'reasoning', 'thinking_level', 'reasoning_effort'].includes(paramKey)) {
+    }
+    if (['think', 'think_level', 'thinking', 'reasoning', 'thinking_level', 'reasoning_effort'].includes(paramKey)) {
       return '#group-custom';
     }
     return '#group-advanced';
   }
 
-  // Accordion Toggles
-  $(document).on('click', '.settings-section-header', function () {
-    $(this).parent('.settings-section').toggleClass('collapsed');
-  });
+  function resetDynamicPanels() {
+    $('.settings-section').filter(function () {
+      return this.id.startsWith('group-') && this.id !== 'group-system' && this.id !== 'group-model';
+    }).hide().find('.settings-section-content').empty();
 
-  /* ── Think state (shared between both input areas) ─────── */
-  const thinkState = {
-    supported: false,
-    paramName: 'think',
-    enabled: true,
-    levelSupported: false,
-    levelParamName: 'think_level',
-    level: 'medium'
-  };
+    $('.settings-divider[id^="divider-"]').hide();
+  }
+
+  function renderKnownParameter(key, config, value) {
+    const groupId = getParameterGroup(key);
+    const $group = $(groupId);
+    const $content = $(`${groupId} .settings-section-content`);
+    const numericValue = Number(value);
+
+    const html = `
+      <div class="setting-group">
+        <label class="setting-label" for="dyn_${key}">
+          ${config.label}
+          <input
+            type="number"
+            class="setting-number"
+            id="val_${key}"
+            data-param="${key}"
+            data-decimals="${config.decimals}"
+            value="${numericValue.toFixed(config.decimals)}"
+            min="${config.min}"
+            max="${config.max}"
+            step="${config.step}">
+        </label>
+        <input
+          type="range"
+          class="setting-range dyn-param"
+          id="dyn_${key}"
+          data-param="${key}"
+          data-decimals="${config.decimals}"
+          min="${config.min}"
+          max="${config.max}"
+          step="${config.step}"
+          value="${numericValue}">
+      </div>
+    `;
+
+    $content.append(html);
+    $group.show();
+  }
+
+  function renderExperimentalParameter(key, value) {
+    const groupId = getParameterGroup(key);
+    const $group = $(groupId);
+    const $content = $(`${groupId} .settings-section-content`);
+
+    const html = `
+      <div class="setting-group">
+        <label class="setting-label" for="dyn_${key}">
+          ${key.replace(/_/g, ' ')}
+        </label>
+        <input
+          type="number"
+          class="setting-range dyn-param"
+          id="dyn_${key}"
+          data-param="${key}"
+          value="${value}"
+          style="width: 100%; border-radius: 4px; border: 1px solid #3A3A3C; padding: 6px; background: #2C2C2E; color: var(--c-text); margin-top: 5px;">
+      </div>
+    `;
+
+    $content.append(html);
+    $group.show();
+  }
+
+  function updateVisibleDividers() {
+    let visibleCount = 0;
+    ['#group-custom', '#group-settings', '#group-sampling', '#group-advanced'].forEach(function (selector) {
+      if ($(selector).is(':visible')) {
+        visibleCount += 1;
+        if (visibleCount > 1) {
+          $(`#divider-${selector.replace('#group-', '')}`).show();
+        }
+      }
+    });
+  }
 
   function updateThinkControls() {
-    const pairs = [
-      { $toggle: $('#thinkToggleBtn'), $levelSel: $('#thinkLevelSelector') },
-      { $toggle: $('#thinkToggleBtnConv'), $levelSel: $('#thinkLevelSelectorConv') }
-    ];
-
-    pairs.forEach(function ({ $toggle, $levelSel }) {
+    [
+      { $toggle: $('#thinkToggleBtn'), $selector: $('#thinkLevelSelector') },
+      { $toggle: $('#thinkToggleBtnConv'), $selector: $('#thinkLevelSelectorConv') }
+    ].forEach(function (pair) {
       if (!thinkState.supported) {
-        $toggle.hide();
-        $levelSel.hide();
+        pair.$toggle.hide();
+        pair.$selector.hide();
         return;
       }
-      $toggle.show();
-      $toggle.toggleClass('active', thinkState.enabled);
+
+      pair.$toggle.show().toggleClass('active', thinkState.enabled);
 
       if (thinkState.levelSupported && thinkState.enabled) {
-        $levelSel.show();
-        $levelSel.find('.think-level-btn').each(function () {
+        pair.$selector.show();
+        pair.$selector.find('.think-level-btn').each(function () {
           $(this).toggleClass('active', $(this).data('value') === thinkState.level);
         });
       } else {
-        $levelSel.hide();
+        pair.$selector.hide();
       }
     });
   }
 
-  // Think toggle click (both input areas via delegation)
-  $(document).on('click', '.think-toggle-btn', function () {
-    if (!thinkState.supported) return;
-    thinkState.enabled = !thinkState.enabled;
-    updateThinkControls();
-  });
-
-  // Think level button click
-  $(document).on('click', '.think-level-btn', function () {
-    thinkState.level = $(this).data('value');
-    updateThinkControls();
-  });
-
-  $modelSelector.on('change', async function () {
-    const model = $(this).val();
-    if (!model) return;
+  async function loadModelInfo(model) {
+    if (!model) {
+      resetDynamicPanels();
+      visionState.supported = false;
+      thinkState.supported = false;
+      updateVisionControls();
+      updateThinkControls();
+      return;
+    }
 
     try {
-      const response = await fetch(`/api/model_info/?model=${encodeURIComponent(model)}`);
-      if (response.ok) {
-        const data = await response.json();
-
-        // Reset dynamic sidebar panels (exclude System Prompt and the new Model group)
-        $('.settings-section').filter(function () {
-          return this.id.startsWith('group-') && this.id !== 'group-system' && this.id !== 'group-model';
-        }).hide().find('.settings-section-content').empty();
-        $('.settings-divider[id^="divider-"]').hide();
-
-        // Update vision controls
-        visionState.supported = !!data.supports_vision;
-        updateVisionControls();
-        // Clear pending images when switching models
-        clearPendingImages();
-
-        // Update think controls state
-        thinkState.supported = !!data.supports_thinking;
-        thinkState.paramName = data.think_param_name || 'think';
-        thinkState.levelSupported = !!data.supports_think_level;
-        thinkState.levelParamName = data.think_level_param_name || 'think_level';
-
-        // Derive defaults from model data
-        if (data.defaults && data.defaults[thinkState.paramName] !== undefined) {
-          const raw = data.defaults[thinkState.paramName];
-          thinkState.enabled = raw === true || String(raw).toLowerCase() === 'true';
-        } else {
-          thinkState.enabled = true;
-        }
-        if (data.defaults && data.defaults[thinkState.levelParamName] !== undefined) {
-          thinkState.level = String(data.defaults[thinkState.levelParamName]);
-        } else {
-          thinkState.level = 'medium';
-        }
-        updateThinkControls();
-
-        // Build Dynamic Parameters Sidebar UI
-        if (data.defaults) {
-          // Remove think params from defaults so they don't appear in sidebar
-          delete data.defaults[thinkState.paramName];
-          delete data.defaults[thinkState.levelParamName];
-
-          // 1. Context Length needs special max handling
-          LLM_KNOWN_PARAMETERS['num_ctx'].max = data.context_length || 131072;
-          if (data.defaults['num_ctx'] !== undefined) {
-            LLM_KNOWN_PARAMETERS['num_ctx'].fallback = data.defaults['num_ctx'];
-          }
-
-          // First pass: Known Parameters with fallbacks
-          for (const [key, config] of Object.entries(LLM_KNOWN_PARAMETERS)) {
-            const val = data.defaults[key] !== undefined ? data.defaults[key] : config.fallback;
-            const valStr = Number(val).toFixed(config.decimals);
-
-            const groupId = getParameterGroup(key);
-            const $groupContent = $(`${groupId} .settings-section-content`);
-
-            const html = `
-                <div class="setting-group">
-                    <label class="setting-label" for="dyn_${key}">
-                        ${config.label}
-                        <input type="number" class="setting-number" id="val_${key}"
-                               value="${valStr}"
-                               min="${config.min}" max="${config.max}" step="${config.step}">
-                    </label>
-                    <input type="range" class="setting-range dyn-param" id="dyn_${key}" data-param="${key}"
-                           min="${config.min}" max="${config.max}" step="${config.step}" value="${val}">
-                </div>
-            `;
-            $groupContent.append(html);
-            $(groupId).show();
-
-            // Slider → number
-            $(document).on('input', `#dyn_${key}`, function () {
-              $(`#val_${key}`).val(parseFloat(this.value).toFixed(config.decimals));
-            });
-
-            // Number → slider (on blur or Enter), clamp to [min, max]
-            $(document).on('change blur', `#val_${key}`, function () {
-              let v = parseFloat(this.value);
-              if (isNaN(v)) v = parseFloat($(`#dyn_${key}`).val());
-              v = Math.min(config.max, Math.max(config.min, v));
-              this.value = v.toFixed(config.decimals);
-              $(`#dyn_${key}`).val(v);
-            });
-            $(document).on('keydown', `#val_${key}`, function (e) {
-              if (e.key === 'Enter') $(this).trigger('blur');
-            });
-
-            if (data.defaults[key] !== undefined) {
-              delete data.defaults[key];
-            }
-          }
-
-          if (data.defaults['num_predict'] !== undefined) delete data.defaults['num_predict'];
-
-          // Second pass: Unknown experimental parameters
-          const leftoverKeys = Object.keys(data.defaults);
-          if (leftoverKeys.length > 0) {
-            for (const key of leftoverKeys) {
-              const val = data.defaults[key];
-              if (typeof val === 'number') {
-                const groupId = getParameterGroup(key);
-                const $groupContent = $(`${groupId} .settings-section-content`);
-                $(groupId).show();
-
-                const html = `
-                                <div class="setting-group">
-                                    <label class="setting-label" for="dyn_${key}">
-                                        ${key.replace(/_/g, ' ')}
-                                    </label>
-                                    <input type="number" class="setting-range dyn-param" id="dyn_${key}" data-param="${key}" value="${val}" style="width: 100%; border-radius: 4px; border: 1px solid #3A3A3C; padding: 6px; background: #2C2C2E; color: var(--text-primary); margin-top: 5px;">
-                                </div>
-                            `;
-                $groupContent.append(html);
-              }
-            }
-          }
-
-          // Final layout adjustments: display dividers between *visible* groups
-          let visibleCount = 0;
-          ['#group-settings', '#group-sampling', '#group-advanced'].forEach(function (sel) {
-            if ($(sel).is(':visible')) {
-              visibleCount++;
-              if (visibleCount > 1) {
-                $(`#divider-${sel.replace('#group-', '')}`).show();
-              }
-            }
-          });
-        }
+      const response = await fetch(`/api/model_info/?engine=${encodeURIComponent(getActiveEngine())}&model=${encodeURIComponent(model)}`);
+      if (!response.ok) {
+        throw new Error(`Failed to load model info: ${response.status}`);
       }
-    } catch (err) {
-      console.error("Failed to load model parameters", err);
-    }
-  });
 
-  // Trigger it once on load to configure the default selected model
-  if ($modelSelector.val()) {
-    $modelSelector.trigger('change');
+      const data = await response.json();
+      resetDynamicPanels();
+
+      visionState.supported = !!data.supports_vision;
+      updateVisionControls();
+      clearPendingImages();
+
+      thinkState.supported = !!data.supports_thinking;
+      thinkState.paramName = data.think_param_name || 'think';
+      thinkState.levelSupported = !!data.supports_think_level;
+      thinkState.levelParamName = data.think_level_param_name || 'think_level';
+      thinkState.enabled = data.defaults && data.defaults[thinkState.paramName] !== undefined
+        ? String(data.defaults[thinkState.paramName]).toLowerCase() === 'true' || data.defaults[thinkState.paramName] === true
+        : true;
+      thinkState.level = data.defaults && data.defaults[thinkState.levelParamName] !== undefined
+        ? String(data.defaults[thinkState.levelParamName])
+        : 'medium';
+      updateThinkControls();
+
+      if (!data.defaults) {
+        return;
+      }
+
+      const defaults = { ...data.defaults };
+      delete defaults[thinkState.paramName];
+      delete defaults[thinkState.levelParamName];
+
+      if (defaults.num_ctx !== undefined) {
+        LLM_KNOWN_PARAMETERS.num_ctx.max = data.context_length || 131072;
+        LLM_KNOWN_PARAMETERS.num_ctx.fallback = defaults.num_ctx;
+      }
+
+      Object.entries(LLM_KNOWN_PARAMETERS).forEach(function ([key, config]) {
+        const value = defaults[key] !== undefined ? defaults[key] : config.fallback;
+        renderKnownParameter(key, config, value);
+        delete defaults[key];
+      });
+
+      delete defaults.num_predict;
+
+      Object.entries(defaults).forEach(function ([key, value]) {
+        if (typeof value === 'number') {
+          renderExperimentalParameter(key, value);
+        }
+      });
+
+      updateVisibleDividers();
+    } catch (error) {
+      console.error('Failed to load model parameters', error);
+    }
   }
 
-
-  /* ── Input wiring ────────────────────────────────────────── */
-  function wireInput($input, $btn) {
-    $input.on('input', function () {
-      this.style.height = 'auto';
-      this.style.height = Math.min(this.scrollHeight, 200) + 'px';
-      $btn.prop('disabled', !this.value.trim());
-    });
-
-    $input.on('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        if (!$btn.prop('disabled')) sendMessage($input.val().trim(), $input);
+  function collectOptionsPayload() {
+    const payload = {};
+    $('#dynamicParameters .dyn-param').each(function () {
+      const param = $(this).data('param');
+      const numericValue = parseFloat($(this).val());
+      if (!Number.isNaN(numericValue)) {
+        payload[param] = numericValue;
       }
     });
 
-    $btn.on('click', function () {
-      if (!$btn.prop('disabled')) sendMessage($input.val().trim(), $input);
-    });
-  }
-
-  wireInput($chatInput, $sendBtn);
-  wireInput($chatInputConv, $sendBtnConv);
-
-  /* ── Send / Receive ──────────────────────────────────────── */
-  function sendMessage(text, $input) {
-    if (!text && visionState.pending.length === 0) return;
-
-    // Capture images before clearing
-    const imagesToSend = visionState.pending.slice();
-
-    // Switch from welcome → conversation view
-    if ($welcomeScreen.is(':visible')) {
-      $welcomeScreen.hide();
-      $conversationInput.show();
-      $chatInputConv.val('').css('height', 'auto').trigger('input').focus();
-    }
-
-    appendMessage('user', text, imagesToSend);
-    $input.val('').css('height', 'auto').trigger('input');
-    clearPendingImages();
-
-    // 2. Prepare assistant message bubble for streaming
-    const $msgBubble = appendTyping();
-    const $bubbleContent = $msgBubble.find('.msg-bubble');
-    scrollBottom();
-
-    // 3. Prepare options & send to API via Fetch for streaming
-    async function streamChat() {
-      try {
-        // Build options dictionary dynamically from generated DOM
-        const optionsPayload = {};
-        $('#dynamicParameters .dyn-param').each(function () {
-          const param = $(this).data('param');
-          const val = parseFloat($(this).val());
-          if (!isNaN(val)) {
-            optionsPayload[param] = val;
-          }
-        });
-
-        // Add think options from the input-area controls
-        if (thinkState.supported) {
-          optionsPayload[thinkState.paramName] = thinkState.enabled;
-          if (thinkState.levelSupported) {
-            optionsPayload[thinkState.levelParamName] = thinkState.level;
-          }
-        }
-
-        const payload = {
-          message: text,
-          model: $modelSelector.val(),
-          system_prompt: $('#systemPrompt').val(),
-          chat_id: currentChatId,
-          options: optionsPayload
-        };
-
-        // Attach images (base64 strings) if any
-        if (imagesToSend.length > 0) {
-          payload.images = imagesToSend.map(function (img) { return img.base64; });
-        }
-
-        const response = await fetch('/api/chat/', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCsrfToken()
-          },
-          body: JSON.stringify(payload)
-        });
-
-        // Remove typing indicator immediately once request is resolved
-        $msgBubble.removeClass('typing-indicator');
-        $bubbleContent.empty(); // clear the dots
-
-        if (!response.ok) {
-          try {
-            const errData = await response.json();
-            $bubbleContent.html(`[Error: ${errData.error || 'Server error'}]`);
-          } catch (e) {
-            $bubbleContent.html(`[Error: ${response.status} ${response.statusText}]`);
-          }
-          return;
-        }
-
-        // Process Chat ID header
-        const returnedChatId = response.headers.get('X-Chat-ID');
-        if (returnedChatId && currentChatId !== returnedChatId) {
-          currentChatId = returnedChatId;
-
-          // Check if we already have it in sidebar to avoid duplicates
-          if ($(`#historyList .chat-item[data-chat-id="${currentChatId}"]`).length === 0) {
-            $('#historyList .empty-state').remove();
-
-            const title = text.substring(0, 30) + (text.length > 30 ? '...' : '');
-            const $newItem = $(`
-              <a class="chat-item active" aria-current="page"
-                 href="/chat/${currentChatId}/"
-                 data-chat-id="${currentChatId}">
-                <div class="chat-item-icon">
-                  <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-                  </svg>
-                </div>
-                <div class="chat-item-body">
-                  <span class="chat-item-title">${escHtml(title)}</span>
-                  <span class="chat-item-date">just now</span>
-                </div>
-              </a>
-            `);
-
-            $('#historyList .chat-item').removeClass('active').removeAttr('aria-current');
-            $('#historyList').prepend($newItem);
-          }
-
-          // Update topbar title and URL
-          const chatTitle = text.substring(0, 40) + (text.length > 40 ? '...' : '');
-          $chatTitle.text(chatTitle);
-          document.title = `${chatTitle} — ASLM`;
-          history.pushState({ chatId: currentChatId }, chatTitle, `/chat/${currentChatId}/`);
-        }
-
-        // Stream reader
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let fullText = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const chunk = decoder.decode(value, { stream: true });
-          fullText += chunk;
-
-          // Re-encode HTML and parse newlines so it renders nicely in the div
-          // $bubbleContent.html(escHtml(fullText));   <-- Removed to let renderMessageHtml do the work
-
-          // Only auto-scroll if user is near the bottom
-          const area = $messagesArea[0];
-          const isScrolledToBottom = area.scrollHeight - area.clientHeight <= area.scrollTop + 50;
-          if (isScrolledToBottom) scrollBottom();
-
-          const $row = $msgBubble.closest('.msg');
-          renderMessageHtml($row, fullText);
-        }
-
-      } catch (err) {
-        $msgBubble.removeClass('typing-indicator');
-        $bubbleContent.html(`[Error: failed to connect to server - ${err.message}]`);
+    if (thinkState.supported) {
+      payload[thinkState.paramName] = thinkState.enabled;
+      if (thinkState.levelSupported) {
+        payload[thinkState.levelParamName] = thinkState.level;
       }
     }
 
-    streamChat();
+    return payload;
   }
 
-  /* ── Markdown & Message rendering ────────────────────────── */
+  function timeNow(dateInput) {
+    const date = dateInput ? new Date(dateInput) : new Date();
+    return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  }
 
-  // Configure Marked to use Highlight.js
-  if (typeof marked !== 'undefined' && typeof hljs !== 'undefined') {
-    marked.setOptions({
-      highlight: function (code, lang) {
-        const language = hljs.getLanguage(lang) ? lang : 'plaintext';
-        return hljs.highlight(code, { language }).value;
-      },
-      breaks: true
-    });
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>');
   }
 
   function renderMessageHtml($msgRow, rawText) {
@@ -560,36 +423,27 @@ $(function () {
 
     let allThinkContent = '';
     let allMainContent = '';
-
-    // We'll use simple indexOf parsing instead of regex loops which are fragile on unterminated strings
     let currentIndex = 0;
 
     while (true) {
-      let thinkStart = rawText.indexOf('<think>', currentIndex);
-
-      // No more <think> tags found, append the rest to main content
+      const thinkStart = rawText.indexOf('<think>', currentIndex);
       if (thinkStart === -1) {
         allMainContent += rawText.substring(currentIndex);
         break;
       }
 
-      // Append everything before <think> to main content
       allMainContent += rawText.substring(currentIndex, thinkStart);
+      const thinkEnd = rawText.indexOf('</think>', thinkStart + 7);
 
-      let thinkEnd = rawText.indexOf('</think>', thinkStart + 7);
-
-      // If we found the closing tag
       if (thinkEnd !== -1) {
         allThinkContent += rawText.substring(thinkStart + 7, thinkEnd) + '\n';
-        currentIndex = thinkEnd + 8; // Move past </think>
+        currentIndex = thinkEnd + 8;
       } else {
-        // Streaming / unterminated <think> block: the rest of the text is thoughts
         allThinkContent += rawText.substring(thinkStart + 7);
         break;
       }
     }
 
-    // Update thoughts block separately so we don't destroy its toggle state
     if (allThinkContent.trim()) {
       $thoughtsWrapper.show();
       $thoughtsContent.text(allThinkContent.trim());
@@ -597,7 +451,6 @@ $(function () {
       $thoughtsWrapper.hide();
     }
 
-    // Render remaining text after any think blocks
     if (allMainContent.trim()) {
       $bubble.html(`<div class="markdown-body">${DOMPurify.sanitize(marked.parse(allMainContent))}</div>`);
     } else {
@@ -605,30 +458,18 @@ $(function () {
     }
   }
 
-  // Handle custom expansion for reasoning blocks via event delegation
-  $messagesInner.on('click', '.msg-thoughts-toggle', function (e) {
-    e.stopPropagation();
-    const $wrapper = $(this).closest('.msg-thoughts-wrapper');
-    const $content = $wrapper.find('.msg-thoughts-content');
-
-    $content.slideToggle(200);
-    $wrapper.toggleClass('expanded');
-  });
-
   function appendMessage(role, text, images, timestamp) {
     const isUser = role === 'user';
     const label = isUser ? 'You' : 'ASLM';
     const timeStr = timeNow(timestamp);
 
-    // Build images HTML for user messages.
-    // images can be [{dataUrl, base64}, ...] (live) or ['data:...', ...] (from history)
     let imagesHtml = '';
     if (isUser && images && images.length > 0) {
-      const imgs = images.map(function (img) {
-        const src = (typeof img === 'string') ? img : img.dataUrl;
+      const content = images.map(function (image) {
+        const src = typeof image === 'string' ? image : image.dataUrl;
         return `<img src="${src}" alt="Attached image">`;
       }).join('');
-      imagesHtml = `<div class="msg-images">${imgs}</div>`;
+      imagesHtml = `<div class="msg-images">${content}</div>`;
     }
 
     const $row = $(`
@@ -647,18 +488,18 @@ $(function () {
           ` : ''}
           <div class="msg-bubble">${imagesHtml}</div>
         </div>
-      </div>`);
+      </div>
+    `);
 
-    if (!isUser) {
-      renderMessageHtml($row, text);
-    } else {
+    if (isUser) {
       $row.find('.msg-bubble').append($('<span>').text(text));
+    } else {
+      renderMessageHtml($row, text);
     }
 
     $messagesInner.append($row);
     scrollBottom();
   }
-
 
   function appendTyping(timestamp) {
     const timeStr = timeNow(timestamp);
@@ -682,119 +523,337 @@ $(function () {
             </div>
           </div>
         </div>
-      </div>`);
+      </div>
+    `);
+
     $messagesInner.append($row);
     return $row;
   }
-
 
   function scrollBottom() {
     $messagesArea.scrollTop($messagesArea[0].scrollHeight);
   }
 
-  /* ── Chat Loading Helper ─────────────────────────────────── */
+  function getCsrfToken() {
+    const tokenInput = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (tokenInput) {
+      return tokenInput.value;
+    }
+    return getCookie('csrftoken');
+  }
+
+  function getCookie(name) {
+    const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+
+  async function streamChat(text, imagesToSend, $msgBubble) {
+    const $bubbleContent = $msgBubble.find('.msg-bubble');
+
+    try {
+      const payload = {
+        engine: getActiveEngine(),
+        message: text,
+        model: $modelSelector.val(),
+        system_prompt: $('#systemPrompt').val(),
+        chat_id: currentChatId,
+        options: collectOptionsPayload()
+      };
+
+      if (imagesToSend.length > 0) {
+        payload.images = imagesToSend.map(function (img) {
+          return img.base64;
+        });
+      }
+
+      const response = await fetch('/api/chat/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCsrfToken()
+        },
+        body: JSON.stringify(payload)
+      });
+
+      $msgBubble.removeClass('typing-indicator');
+      $bubbleContent.empty();
+
+      if (!response.ok) {
+        try {
+          const errorData = await response.json();
+          $bubbleContent.html(`[Error: ${errorData.error || 'Server error'}]`);
+        } catch (_error) {
+          $bubbleContent.html(`[Error: ${response.status} ${response.statusText}]`);
+        }
+        return;
+      }
+
+      const returnedChatId = response.headers.get('X-Chat-ID');
+      if (returnedChatId && currentChatId !== returnedChatId) {
+        currentChatId = returnedChatId;
+
+        if ($(`#historyList .chat-item[data-chat-id="${currentChatId}"]`).length === 0) {
+          $('#historyList .empty-state').remove();
+
+          const title = buildChatTitle(text, imagesToSend.length > 0);
+          const $newItem = $(`
+            <a class="chat-item active" aria-current="page"
+               href="/chat/${currentChatId}/"
+               data-chat-id="${currentChatId}">
+              <div class="chat-item-icon">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                </svg>
+              </div>
+              <div class="chat-item-body">
+                <span class="chat-item-title">${escHtml(title)}</span>
+                <span class="chat-item-date">just now</span>
+              </div>
+            </a>
+          `);
+
+          $('#historyList .chat-item').removeClass('active').removeAttr('aria-current');
+          $('#historyList').prepend($newItem);
+        }
+
+        const chatTitle = buildChatTitle(text, imagesToSend.length > 0);
+        $chatTitle.text(chatTitle);
+        document.title = `${chatTitle} - ASLM`;
+        history.pushState({ chatId: currentChatId }, chatTitle, `/chat/${currentChatId}/`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let fullText = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        const chunk = decoder.decode(value, { stream: true });
+        fullText += chunk;
+
+        const area = $messagesArea[0];
+        const isNearBottom = area.scrollHeight - area.clientHeight <= area.scrollTop + 50;
+        const $row = $msgBubble.closest('.msg');
+        renderMessageHtml($row, fullText);
+
+        if (isNearBottom) {
+          scrollBottom();
+        }
+      }
+    } catch (error) {
+      $msgBubble.removeClass('typing-indicator');
+      $bubbleContent.html(`[Error: failed to connect to server - ${error.message}]`);
+    }
+  }
+
+  function sendMessage(text, $input) {
+    if (!text && visionState.pending.length === 0) {
+      return;
+    }
+
+    const imagesToSend = visionState.pending.slice();
+
+    if ($welcomeScreen.is(':visible')) {
+      $welcomeScreen.hide();
+      $conversationInput.show();
+      $chatInputConv.val('').css('height', 'auto').focus();
+    }
+
+    appendMessage('user', text, imagesToSend);
+    $input.val('').css('height', 'auto');
+    clearPendingImages();
+    updateSendButtons();
+
+    const $msgBubble = appendTyping();
+    scrollBottom();
+    streamChat(text, imagesToSend, $msgBubble);
+  }
+
+  function wireInput($input, $button) {
+    $input.on('input', function () {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+      updateSendButtons();
+    });
+
+    $input.on('keydown', function (event) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        if (!$button.prop('disabled')) {
+          sendMessage($input.val().trim(), $input);
+        }
+      }
+    });
+
+    $button.on('click', function () {
+      if (!$button.prop('disabled')) {
+        sendMessage($input.val().trim(), $input);
+      }
+    });
+  }
+
   function loadChat(chatId, pushState) {
-    if (!chatId || currentChatId === chatId) return;
+    if (!chatId || currentChatId === chatId) {
+      return;
+    }
 
     $.ajax({
       url: `/api/chat/${chatId}/`,
       method: 'GET',
       success: function (data) {
-        if (data.messages !== undefined) {
-          currentChatId = chatId;
-
-          // Update sidebar active state
-          $('#historyList .chat-item').removeClass('active').removeAttr('aria-current');
-          $(`#historyList .chat-item[data-chat-id="${chatId}"]`).addClass('active').attr('aria-current', 'page');
-
-          // Update page title
-          const title = data.title || 'Chat';
-          $chatTitle.text(title);
-          document.title = `${title} \u2014 ASLM`;
-
-          // Push browser history so URL reflects the chat permalink
-          if (pushState !== false) {
-            history.pushState({ chatId }, title, `/chat/${chatId}/`);
-          }
-
-          // Clear current view
-          $messagesInner.find('.msg').remove();
-          $welcomeScreen.hide();
-          $messagesArea.show();
-          $conversationInput.show();
-
-          // Append historical messages
-          data.messages.forEach(msg => {
-            appendMessage(msg.role, msg.content, msg.images || [], msg.created_at);
-          });
-
-          scrollBottom();
+        if (data.messages === undefined) {
+          return;
         }
+
+        currentChatId = chatId;
+        $('#historyList .chat-item').removeClass('active').removeAttr('aria-current');
+        $(`#historyList .chat-item[data-chat-id="${chatId}"]`).addClass('active').attr('aria-current', 'page');
+
+        const title = data.title || 'Chat';
+        $chatTitle.text(title);
+        document.title = `${title} - ASLM`;
+
+        if (pushState !== false) {
+          history.pushState({ chatId }, title, `/chat/${chatId}/`);
+        }
+
+        $messagesInner.find('.msg').remove();
+        $welcomeScreen.hide();
+        $messagesArea.show();
+        $conversationInput.show();
+
+        data.messages.forEach(function (message) {
+          appendMessage(message.role, message.content, message.images || [], message.created_at);
+        });
+
+        scrollBottom();
       },
-      error: function (err) {
-        console.error('Failed to load chat history:', err);
+      error: function (error) {
+        console.error('Failed to load chat history:', error);
       }
     });
   }
 
-  /* ── Chat history click (intercept anchor, load via AJAX) ── */
-  $(document).on('click', '#historyList .chat-item', function (e) {
-    e.preventDefault();
+  if (typeof marked !== 'undefined' && typeof hljs !== 'undefined') {
+    marked.setOptions({
+      highlight: function (code, lang) {
+        const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+        return hljs.highlight(code, { language }).value;
+      },
+      breaks: true
+    });
+  }
+
+  wireInput($chatInput, $sendBtn);
+  wireInput($chatInputConv, $sendBtnConv);
+  updateSendButtons();
+
+  $newChatBtn.on('click', function (event) {
+    if ($(this).attr('href') === '/') {
+      event.preventDefault();
+      startNewChat();
+    }
+  });
+
+  $('#imageInput, #imageInputConv').on('change', handleFileInput);
+
+  $(document).on('click', '#attachBtn', function () {
+    $('#imageInput').trigger('click');
+  });
+
+  $(document).on('click', '#attachBtnConv', function () {
+    $('#imageInputConv').trigger('click');
+  });
+
+  $(document).on('click', '.img-preview-remove', function (event) {
+    event.stopPropagation();
+    const index = $(this).closest('.img-preview-thumb').data('idx');
+    visionState.pending.splice(index, 1);
+    rebuildPreviewStrips();
+  });
+
+  $(document).on('click', '.settings-section-header', function () {
+    $(this).parent('.settings-section').toggleClass('collapsed');
+  });
+
+  $(document).on('click', '.think-toggle-btn', function () {
+    if (!thinkState.supported) {
+      return;
+    }
+    thinkState.enabled = !thinkState.enabled;
+    updateThinkControls();
+  });
+
+  $(document).on('click', '.think-level-btn', function () {
+    thinkState.level = $(this).data('value');
+    updateThinkControls();
+  });
+
+  $(document).on('input', '.setting-range', function () {
+    const param = $(this).data('param');
+    const decimals = parseInt($(this).data('decimals') || '0', 10);
+    $(`#val_${param}`).val(parseFloat(this.value).toFixed(decimals));
+  });
+
+  $(document).on('change blur', '.setting-number', function () {
+    const param = $(this).data('param');
+    const decimals = parseInt($(this).data('decimals') || '0', 10);
+    const min = parseFloat(this.min);
+    const max = parseFloat(this.max);
+    let value = parseFloat(this.value);
+
+    if (Number.isNaN(value)) {
+      value = parseFloat($(`#dyn_${param}`).val());
+    }
+
+    value = Math.min(max, Math.max(min, value));
+    this.value = value.toFixed(decimals);
+    $(`#dyn_${param}`).val(value);
+  });
+
+  $(document).on('keydown', '.setting-number', function (event) {
+    if (event.key === 'Enter') {
+      $(this).trigger('blur');
+    }
+  });
+
+  $messagesInner.on('click', '.msg-thoughts-toggle', function (event) {
+    event.stopPropagation();
+    const $wrapper = $(this).closest('.msg-thoughts-wrapper');
+    const $content = $wrapper.find('.msg-thoughts-content');
+
+    $content.slideToggle(200);
+    $wrapper.toggleClass('expanded');
+  });
+
+  $(document).on('click', '#historyList .chat-item', function (event) {
+    event.preventDefault();
     const chatId = $(this).data('chat-id');
     loadChat(chatId, true);
   });
 
-  // Browser back/forward button support
-  window.addEventListener('popstate', function (e) {
-    if (e.state && e.state.chatId) {
-      loadChat(e.state.chatId, false);
+  $modelSelector.on('change', function () {
+    loadModelInfo($(this).val());
+  });
+
+  window.addEventListener('popstate', function (event) {
+    if (event.state && event.state.chatId) {
+      loadChat(event.state.chatId, false);
     } else {
       startNewChat();
     }
   });
 
-  /* ── Auto-load chat from permalink (body[data-preload-chat]) */
   const preloadChatId = $('body').data('preload-chat');
   if (preloadChatId) {
     loadChat(preloadChatId, false);
   }
 
-  // Handling 'New Chat' click
-  $newChatBtn.on('click', function (e) {
-    if ($(this).attr('href') === '/') {
-      // If we're on the main view, just reset UI instead of full reload.
-      e.preventDefault();
-      startNewChat();
-    }
-  });
-
-  /* ── Utilities ───────────────────────────────────────────── */
-  function timeNow(dateInput) {
-    const d = dateInput ? new Date(dateInput) : new Date();
-    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  if ($modelSelector.val()) {
+    loadModelInfo($modelSelector.val());
   }
-
-  function escHtml(str) {
-    return str
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/\n/g, '<br>');
-  }
-
-  function getCsrfToken() {
-    // Read directly from the DOM element generated by {% csrf_token %}
-    const tokenInput = document.querySelector('[name=csrfmiddlewaretoken]');
-    if (tokenInput) {
-      return tokenInput.value;
-    }
-    // Fallback exactly as before just in case
-    return getCookie('csrftoken');
-  }
-
-  function getCookie(name) {
-    const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-    return match ? decodeURIComponent(match[1]) : null;
-  }
-
 });

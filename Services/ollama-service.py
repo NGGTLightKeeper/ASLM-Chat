@@ -1,63 +1,56 @@
+"""Process helpers for the local Ollama background service."""
+
+from __future__ import annotations
+
+import logging
 import os
 import subprocess
-import logging
-import threading
+
 from Settings import settings
 
 logger = logging.getLogger(__name__)
 
-# Keep track of the process to avoid garbage collection and allow future termination if needed
-_ollama_process = None
+# Keep a process reference for the current Python runtime.
+_ollama_process: subprocess.Popen | None = None
+
 
 def start_ollama() -> None:
-    """
-    Reads ASLM configurations and starts the Ollama executable in a background process
-    if the 'ollama-service' setting is enabled.
-    """
+    """Start the local Ollama service when the active engine requires it."""
     global _ollama_process
 
-    if not settings.get('ollama-service', False):
+    active_engine = settings.get_llm_engine()
+    if not settings.is_ollama_engine(active_engine) or not settings.get("ollama-service", False):
         return
-        
-    ollama_path = settings.get('ollama-service_path')
+
+    if _ollama_process is not None and _ollama_process.poll() is None:
+        logger.info("Ollama service is already running (PID: %s)", _ollama_process.pid)
+        return
+
+    ollama_path = settings.get("ollama-service_path")
     if not ollama_path or not os.path.exists(ollama_path):
         print(f"[ASLM-Chat] Ollama service is enabled but not found at: {ollama_path}")
         return
-        
-    ollama_data = settings.get('ollama-service_data')
-    ollama_models = settings.get('ollama-service_models')
-    ollama_port = settings.get('ollama-service_port', 30002)
-    
-    # Prepare environment variables for Ollama
+
+    ollama_models = settings.get("ollama-service_models")
+    ollama_port = settings.get("ollama-service_port", 30002)
+
     env = os.environ.copy()
-    env['OLLAMA_HOST'] = f"127.0.0.1:{ollama_port}"
-    if ollama_data:
-        # According to Ollama docs, OLLAMA_MODELS configures the location for models
-        # and there isn't a direct "data" folder variable unless it's just the root for models.
-        # ASLM separates data and models. The primary environment variable is OLLAMA_MODELS.
-        pass # Not natively used by ollama unless combined with models
-        
+    env["OLLAMA_HOST"] = f"127.0.0.1:{ollama_port}"
     if ollama_models:
-        env['OLLAMA_MODELS'] = str(ollama_models)
-        
+        env["OLLAMA_MODELS"] = str(ollama_models)
+
     print(f"[ASLM-Chat] Starting local Ollama service on port {ollama_port}...")
-    
+
     try:
-        # Start Ollama serve in the background
-        # Use CREATE_NO_WINDOW on windows so it doesn't pop up an extra console
-        creationflags = 0
-        if os.name == 'nt':
-            creationflags = subprocess.CREATE_NO_WINDOW
-            
-        args = [ollama_path, "serve"]
-        
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         _ollama_process = subprocess.Popen(
-            args,
+            [ollama_path, "serve"],
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            creationflags=creationflags
+            creationflags=creationflags,
         )
         print(f"[ASLM-Chat] Ollama service started successfully (PID: {_ollama_process.pid})")
-    except Exception as e:
-        print(f"[ASLM-Chat] Failed to start Ollama service: {e}")
+    except Exception as exc:
+        _ollama_process = None
+        print(f"[ASLM-Chat] Failed to start Ollama service: {exc}")
