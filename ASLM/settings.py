@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -10,7 +11,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from Settings.settings import get_llm_engine, is_engine_enabled, load_settings
+from Settings.settings import get_engine_url, get_llm_engine, get_openai_api_key, is_engine_enabled, load_settings
 
 _cfg = load_settings()
 
@@ -20,8 +21,11 @@ DEBUG = bool(_cfg.get("debug", False))
 ALLOWED_HOSTS = _cfg.get("allowed_hosts", ["127.0.0.1", "localhost"])
 
 LLM_ENGINE = get_llm_engine()
-OLLAMA_URL = f"http://127.0.0.1:{_cfg.get('ollama-service_port', 30002)}"
+OLLAMA_URL = get_engine_url("ollama-service")
 OLLAMA_ENABLED = is_engine_enabled("ollama-service")
+LMSTUDIO_URL = get_engine_url("lms")
+OPENAI_COMPAT_URL = get_engine_url("openai")
+OPENAI_COMPAT_API_KEY = get_openai_api_key() or os.environ.get("OPENAI_API_KEY", "not-needed")
 
 CORS_ALLOWED_ORIGINS = [
     "https://localhost",

@@ -21,7 +21,9 @@
                     "argon2-cffi",
                     "django==6.0.2",
                     "django-cors-headers",
+                    "lmstudio",
                     "martor",
+                    "openai",
                     "ollama",
                     "whitenoise"
                 ]
@@ -69,6 +71,22 @@
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key api-port",
             "setExec": "main.py set_setting --key api-port --value {value}"
+        },
+        {
+            "key": "llm-engine",
+            "name": "Active LLM Engine",
+            "description": "Engine used for chat generation in the UI",
+            "type": "select",
+            "default": "ollama-service",
+            "allowedValues": [
+                "ollama-service",
+                "lms",
+                "openai"
+            ],
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key llm-engine",
+            "setExec": "main.py set_setting --key llm-engine --value {value}",
+            "value": "openai"
         },
         {
             "key": "ollama-service",
@@ -119,6 +137,58 @@
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key ollama-service_port",
             "setExec": "main.py set_setting --key ollama-service_port --value {value}"
+        },
+        {
+            "key": "lms",
+            "name": "LM Studio",
+            "description": "Whether LM Studio integration is available",
+            "type": "engine",
+            "default": false,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key lms",
+            "setExec": "main.py set_setting --key lms --value {value}"
+        },
+        {
+            "key": "lms_url",
+            "name": "LM Studio Address",
+            "description": "Base address of the LM Studio Server API",
+            "type": "string",
+            "default": "127.0.0.1:1234",
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key lms_url",
+            "setExec": "main.py set_setting --key lms_url --value {value}",
+            "value": "127.0.0.1:1234"
+        },
+        {
+            "key": "openai",
+            "name": "OpenAI-Compatible API",
+            "description": "Whether an OpenAI-compatible API endpoint is available",
+            "type": "engine",
+            "default": false,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key openai",
+            "setExec": "main.py set_setting --key openai --value {value}"
+        },
+        {
+            "key": "openai_url",
+            "name": "OpenAI-Compatible Address",
+            "description": "Base URL of the OpenAI-compatible API endpoint",
+            "type": "string",
+            "default": "127.0.0.1:8000/v1",
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key openai_url",
+            "setExec": "main.py set_setting --key openai_url --value {value}",
+            "value": "127.0.0.1:9000/v1"
+        },
+        {
+            "key": "openai_api_key",
+            "name": "OpenAI-Compatible API Key",
+            "description": "Optional API key for secured OpenAI-compatible endpoints",
+            "type": "string",
+            "default": "",
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key openai_api_key",
+            "setExec": "main.py set_setting --key openai_api_key --value {value}"
         }
     ],
     "status": {

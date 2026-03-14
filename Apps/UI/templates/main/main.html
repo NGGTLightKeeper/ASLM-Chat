@@ -111,6 +111,60 @@
         </div>
 
         <div class="settings-panel">
+            <!-- Engine connection -->
+            <div class="settings-section" id="group-connection">
+                <div class="settings-section-header">
+                    Connection
+                    <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                </div>
+                <div class="settings-section-content">
+                    <div class="setting-group">
+                        <label class="setting-label" for="engineSelector">Engine</label>
+                        <select class="model-selector" id="engineSelector">
+                            {% for engine in engine_options %}
+                                <option value="{{ engine.id }}" {% if llm_engine == engine.id %}selected{% endif %}>{{ engine.label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="setting-group" id="engineAddressGroup">
+                        <label class="setting-label" for="engineAddressInput">
+                            Address
+                            <span class="setting-value" id="engineAddressStatus">Saved</span>
+                        </label>
+                        <input
+                            class="setting-input"
+                            id="engineAddressInput"
+                            type="text"
+                            value="{{ runtime_settings.active_url|default:'' }}"
+                            placeholder="Engine address">
+                        <p class="setting-note" id="engineAddressHint">Configure the selected engine endpoint.</p>
+                    </div>
+                    <div class="setting-group" id="engineApiKeyGroup">
+                        <label class="setting-label" for="engineApiKeyEnabled">
+                            API Key
+                            <span class="setting-value" id="engineApiKeyStatus">Disabled</span>
+                        </label>
+                        <label class="setting-checkbox-row" for="engineApiKeyEnabled">
+                            <input
+                                class="setting-checkbox"
+                                id="engineApiKeyEnabled"
+                                type="checkbox"
+                                {% if runtime_settings.has_openai_api_key %}checked{% endif %}>
+                            <span>Use API key</span>
+                        </label>
+                        <input
+                            class="setting-input"
+                            id="engineApiKeyInput"
+                            type="password"
+                            placeholder="Enter a new API key"
+                            autocomplete="off">
+                        <p class="setting-note" id="engineApiKeyHint">Optional for local servers, required for secured OpenAI-compatible APIs. Saved keys are never sent back to the browser.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-divider" id="divider-connection"></div>
+
             <!-- Model selection -->
             <div class="settings-section" id="group-model">
                 <div class="settings-section-header">
@@ -193,5 +247,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/main/main.js' %}"></script>
+{{ runtime_settings|json_script:"runtimeSettingsData" }}
+{{ engine_options|json_script:"engineOptionsData" }}
+<script src="{% static 'js/main/main.js' %}?v=20260315e"></script>
 {% endblock %}

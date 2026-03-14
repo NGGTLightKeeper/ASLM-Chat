@@ -29,12 +29,12 @@ def _extract_model_name(model_entry: Any) -> str:
     if isinstance(model_entry, str):
         return model_entry
     if isinstance(model_entry, dict):
-        for key in ("model", "name", "id"):
+        for key in ("model", "id", "model_key", "identifier", "name"):
             value = model_entry.get(key)
             if value:
                 return str(value)
         return ""
-    for attr in ("model", "name", "id"):
+    for attr in ("model", "id", "model_key", "identifier", "name"):
         value = getattr(model_entry, attr, None)
         if value:
             return str(value)
@@ -63,12 +63,26 @@ def _load_models_for_engine(engine: str) -> list[str]:
 
 def _build_base_context() -> dict[str, Any]:
     """Build shared template context used by chat pages."""
-    engine = _get_active_engine()
+    runtime_settings = settings.get_runtime_engine_settings()
+    engine = _get_active_engine(runtime_settings.get("llm-engine"))
     return {
         "llm_engine": engine,
         "models": _load_models_for_engine(engine),
+        "engine_options": settings.get_supported_engines(),
+        "runtime_settings": runtime_settings,
         "chats": Chat.objects.all(),
     }
+
+
+def _build_runtime_settings_payload() -> dict[str, Any]:
+    """Return the settings payload used by the UI settings API."""
+    runtime_settings = settings.get_runtime_engine_settings()
+    active_engine = _get_active_engine(runtime_settings.get("llm-engine"))
+    runtime_settings["llm-engine"] = active_engine
+    runtime_settings["active_url"] = runtime_settings["engine_urls"].get(active_engine, "")
+    runtime_settings["engine_options"] = settings.get_supported_engines()
+    runtime_settings["models"] = _load_models_for_engine(active_engine)
+    return runtime_settings
 
 
 def _build_chat_title(message: str, has_images: bool) -> str:
@@ -415,6 +429,44 @@ def get_model_info_api(request):
     except Exception as exc:
         logger.exception("Error getting model info for %s on engine %s", model_name, engine)
         return JsonResponse({"error": str(exc)}, status=500)
+
+
+def get_models_api(request):
+    """Return model names for the requested engine."""
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    engine = _get_active_engine(request.GET.get("engine"))
+    return JsonResponse({"engine": engine, "models": _load_models_for_engine(engine)})
+
+
+def runtime_settings_api(request):
+    """Read or update runtime engine settings used by the chat UI."""
+    if request.method == "GET":
+        return JsonResponse(_build_runtime_settings_payload())
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON format"}, status=400)
+
+    allowed_keys = {"llm-engine", "lms_url", "openai_url", "openai_api_key"}
+
+    for raw_key, raw_value in data.items():
+        if raw_key not in allowed_keys:
+            continue
+
+        if raw_key == "llm-engine":
+            value = settings.normalize_engine_name(raw_value)
+        else:
+            value = str(raw_value or "").strip()
+
+        settings.set(raw_key, value)
+
+    return JsonResponse(_build_runtime_settings_payload())
 
 
 class ProfileView(TemplateView):

@@ -288,6 +288,7 @@
 }
 
 .model-selector,
+.setting-input,
 .setting-textarea {
   width: 100%;
   background: var(--surface-tertiary);
@@ -309,11 +310,13 @@
 }
 
 .model-selector:hover,
+.setting-input:hover,
 .setting-textarea:hover {
   border-color: var(--c-gray-2);
 }
 
 .model-selector:focus,
+.setting-input:focus,
 .setting-textarea:focus {
   border-color: var(--c-primary);
 }
@@ -327,6 +330,22 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.setting-checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--c-text);
+  font-size: var(--font-size-body-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.setting-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--c-primary);
 }
 
 .setting-label {
@@ -414,8 +433,27 @@
   resize: vertical;
 }
 
+.setting-input {
+  min-height: 40px;
+  padding: 9px 12px;
+}
+
 .setting-textarea::placeholder {
   color: var(--c-text-placeholder);
+}
+
+.setting-note {
+  font-size: var(--font-size-caption-2);
+  line-height: 1.4;
+  color: var(--c-text-dim);
+}
+
+.setting-value.is-pending {
+  color: var(--c-warning);
+}
+
+.setting-value.is-error {
+  color: var(--c-danger);
 }
 
 /* Messages area */

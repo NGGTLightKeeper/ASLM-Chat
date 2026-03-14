@@ -12,9 +12,45 @@ $(function () {
   const $chatInputConv = $('#chatInputConv');
   const $sendBtnConv = $('#sendBtnConv');
   const $conversationInput = $('#conversationInput');
+  const $engineSelector = $('#engineSelector');
+  const $engineAddressGroup = $('#engineAddressGroup');
+  const $engineAddressInput = $('#engineAddressInput');
+  const $engineAddressStatus = $('#engineAddressStatus');
+  const $engineAddressHint = $('#engineAddressHint');
+  const $engineApiKeyGroup = $('#engineApiKeyGroup');
+  const $engineApiKeyEnabled = $('#engineApiKeyEnabled');
+  const $engineApiKeyInput = $('#engineApiKeyInput');
+  const $engineApiKeyStatus = $('#engineApiKeyStatus');
   const $modelSelector = $('#modelSelector');
 
+  let runtimeSettings = parseJsonScript('runtimeSettingsData') || {};
   let currentChatId = null;
+  let engineSelectionVersion = 0;
+  let activeEngine = 'ollama-service';
+
+  const ENGINE_ALIASES = {
+    ollama: 'ollama-service',
+    'ollama-service': 'ollama-service',
+    lms: 'lms',
+    'lm-studio': 'lms',
+    openai: 'openai',
+    'openai-api': 'openai'
+  };
+
+  const ENGINE_ADDRESS_KEYS = {
+    lms: 'lms_url',
+    openai: 'openai_url'
+  };
+
+  const ENGINE_ADDRESS_HINTS = {
+    'ollama-service': 'Ollama uses the local service managed by ASLM.',
+    lms: 'Example: http://127.0.0.1:1234',
+    openai: 'Example: http://127.0.0.1:8000/v1'
+  };
+
+  activeEngine = normalizeEngineValue(
+    runtimeSettings['llm-engine'] || $('body').data('llm-engine') || 'ollama-service'
+  );
 
   const visionState = {
     supported: false,
@@ -81,8 +117,204 @@ $(function () {
     }
   };
 
+  const LLM_PARAMETER_OPTION_SETS = {
+    reasoning_effort: ['minimal', 'low', 'medium', 'high'],
+    think_level: ['low', 'medium', 'high'],
+    thinking_level: ['low', 'medium', 'high'],
+    verbosity: ['low', 'medium', 'high']
+  };
+
+  function parseJsonScript(id) {
+    const element = document.getElementById(id);
+    if (!element) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(element.textContent);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function normalizeEngineValue(engine) {
+    const normalized = String(engine || '').trim().toLowerCase();
+    return ENGINE_ALIASES[normalized] || normalized || 'ollama-service';
+  }
+
+  function getEngineAddressKey(engine) {
+    return ENGINE_ADDRESS_KEYS[normalizeEngineValue(engine)] || null;
+  }
+
+  function getEngineAddress(engine) {
+    const key = getEngineAddressKey(engine);
+    return key ? (runtimeSettings[key] || '') : '';
+  }
+
+  function setEngineAddressStatus(text, state) {
+    $engineAddressStatus.text(text || '');
+    $engineAddressStatus.removeClass('is-pending is-error');
+
+    if (state) {
+      $engineAddressStatus.addClass(`is-${state}`);
+    }
+  }
+
+  function setEngineApiKeyStatus(text, state) {
+    $engineApiKeyStatus.text(text || '');
+    $engineApiKeyStatus.removeClass('is-pending is-error');
+
+    if (state) {
+      $engineApiKeyStatus.addClass(`is-${state}`);
+    }
+  }
+
   function getActiveEngine() {
-    return $('body').data('llm-engine') || 'ollama-service';
+    return activeEngine;
+  }
+
+  function updateEngineAddressUi() {
+    const engine = getActiveEngine();
+    const addressKey = getEngineAddressKey(engine);
+    const hasEditableAddress = Boolean(addressKey);
+    const hasApiKeySupport = engine === 'openai';
+    const hasStoredApiKey = hasApiKeySupport && !!runtimeSettings.has_openai_api_key;
+
+    $engineAddressGroup.toggle(hasEditableAddress);
+    $engineAddressHint.text(ENGINE_ADDRESS_HINTS[engine] || 'Configure the selected engine endpoint.');
+    $engineApiKeyGroup.toggle(hasApiKeySupport);
+
+    if (!hasEditableAddress) {
+      setEngineAddressStatus('Managed', null);
+    } else {
+      $engineAddressInput.val(getEngineAddress(engine));
+      setEngineAddressStatus('Saved', null);
+    }
+
+    if (!hasApiKeySupport) {
+      $engineApiKeyEnabled.prop('checked', false);
+      $engineApiKeyInput.val('').hide();
+      setEngineApiKeyStatus('Disabled', null);
+      return;
+    }
+
+    $engineApiKeyEnabled.prop('checked', hasStoredApiKey);
+    $engineApiKeyInput.val('');
+    $engineApiKeyInput.toggle(hasStoredApiKey);
+    $engineApiKeyInput.attr(
+      'placeholder',
+      hasStoredApiKey ? 'Stored API key. Enter a new one to replace it' : 'Enter a new API key'
+    );
+    setEngineApiKeyStatus(hasStoredApiKey ? 'Saved' : 'Disabled', null);
+  }
+
+  function renderModelOptions(models, preferredModel) {
+    const uniqueModels = Array.from(new Set(models || []));
+    const fallbackModel = uniqueModels[0] || '';
+    const selectedModel = uniqueModels.includes(preferredModel) ? preferredModel : fallbackModel;
+
+    $modelSelector.empty();
+
+    if (!uniqueModels.length) {
+      $modelSelector.append('<option value="">No models available</option>');
+      return '';
+    }
+
+    uniqueModels.forEach(function (modelName) {
+      const $option = $('<option>').val(modelName).text(modelName);
+      if (modelName === selectedModel) {
+        $option.prop('selected', true);
+      }
+      $modelSelector.append($option);
+    });
+
+    return selectedModel;
+  }
+
+  async function fetchModelsForEngine(engine) {
+    const response = await fetch(`/api/models/?engine=${encodeURIComponent(engine)}`);
+    if (!response.ok) {
+      throw new Error(`Failed to load models: ${response.status}`);
+    }
+    const data = await response.json();
+    return data.models || [];
+  }
+
+  async function saveRuntimeSettings(patch) {
+    const response = await fetch('/api/runtime_settings/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrfToken()
+      },
+      body: JSON.stringify(patch)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(function () {
+        return {};
+      });
+      throw new Error(errorData.error || `Failed to save settings: ${response.status}`);
+    }
+
+    runtimeSettings = await response.json();
+    return runtimeSettings;
+  }
+
+  async function refreshModelsForEngine(engine, preferredModel, modelsOverride, selectionVersion) {
+    const hasModelOverride = Array.isArray(modelsOverride) && modelsOverride.length > 0;
+    const models = hasModelOverride ? modelsOverride : await fetchModelsForEngine(engine);
+
+    if (selectionVersion && selectionVersion !== engineSelectionVersion) {
+      return '';
+    }
+
+    const selectedModel = renderModelOptions(models, preferredModel);
+
+    if (selectionVersion && selectionVersion !== engineSelectionVersion) {
+      return selectedModel;
+    }
+
+    await loadModelInfo(selectedModel);
+    return selectedModel;
+  }
+
+  async function applyEngineSelection(engine, options) {
+    const settingsOptions = options || {};
+    const normalizedEngine = normalizeEngineValue(engine);
+    const selectionVersion = ++engineSelectionVersion;
+    let availableModels = null;
+    activeEngine = normalizedEngine;
+
+    if (settingsOptions.persist !== false) {
+      runtimeSettings = await saveRuntimeSettings({ 'llm-engine': normalizedEngine });
+      runtimeSettings['llm-engine'] = normalizedEngine;
+      activeEngine = normalizedEngine;
+      $('body').data('llm-engine', normalizedEngine);
+      availableModels = Array.isArray(runtimeSettings.models) && runtimeSettings.models.length > 0
+        ? runtimeSettings.models
+        : null;
+    } else {
+      runtimeSettings['llm-engine'] = normalizedEngine;
+      activeEngine = normalizedEngine;
+      $('body').data('llm-engine', normalizedEngine);
+      availableModels = Array.isArray(runtimeSettings.models) && runtimeSettings.models.length > 0
+        ? runtimeSettings.models
+        : null;
+    }
+
+    if (selectionVersion !== engineSelectionVersion) {
+      return;
+    }
+
+    $engineSelector.val(activeEngine);
+    updateEngineAddressUi();
+    await refreshModelsForEngine(
+      activeEngine,
+      settingsOptions.preferredModel || '',
+      availableModels,
+      selectionVersion
+    );
   }
 
   function buildChatTitle(text, hasImages) {
@@ -204,12 +436,43 @@ $(function () {
     return '#group-advanced';
   }
 
+  function inferExperimentalParameterType(key, value) {
+    if (typeof value === 'boolean') {
+      return 'boolean';
+    }
+
+    if (typeof value === 'number') {
+      return Number.isInteger(value) ? 'integer' : 'number';
+    }
+
+    if (Array.isArray(value) || (value && typeof value === 'object')) {
+      return 'json';
+    }
+
+    if (typeof value === 'string' && LLM_PARAMETER_OPTION_SETS[key]) {
+      return 'select';
+    }
+
+    return 'string';
+  }
+
+  function formatExperimentalParameterLabel(key) {
+    return key
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, function (letter) {
+        return letter.toUpperCase();
+      });
+  }
+
   function resetDynamicPanels() {
     $('.settings-section').filter(function () {
-      return this.id.startsWith('group-') && this.id !== 'group-system' && this.id !== 'group-model';
+      return this.id.startsWith('group-')
+        && this.id !== 'group-connection'
+        && this.id !== 'group-system'
+        && this.id !== 'group-model';
     }).hide().find('.settings-section-content').empty();
 
-    $('.settings-divider[id^="divider-"]').hide();
+    $('.settings-divider[id^="divider-"]').not('#divider-connection').hide();
   }
 
   function renderKnownParameter(key, config, value) {
@@ -254,19 +517,62 @@ $(function () {
     const groupId = getParameterGroup(key);
     const $group = $(groupId);
     const $content = $(`${groupId} .settings-section-content`);
+    const valueType = inferExperimentalParameterType(key, value);
+    const label = formatExperimentalParameterLabel(key);
+    let controlHtml = '';
+
+    if (valueType === 'boolean') {
+      controlHtml = `
+        <select
+          class="model-selector setting-select dyn-param"
+          id="dyn_${key}"
+          data-param="${key}"
+          data-value-type="boolean">
+          <option value="true"${value ? ' selected' : ''}>True</option>
+          <option value="false"${!value ? ' selected' : ''}>False</option>
+        </select>
+      `;
+    } else if (valueType === 'select') {
+      const options = LLM_PARAMETER_OPTION_SETS[key] || [];
+      controlHtml = `
+        <select
+          class="model-selector setting-select dyn-param"
+          id="dyn_${key}"
+          data-param="${key}"
+          data-value-type="string">
+          ${options.map(function (optionValue) {
+            return `<option value="${optionValue}"${optionValue === value ? ' selected' : ''}>${formatExperimentalParameterLabel(optionValue)}</option>`;
+          }).join('')}
+        </select>
+      `;
+    } else if (valueType === 'json') {
+      controlHtml = `
+        <textarea
+          class="setting-textarea dyn-param"
+          id="dyn_${key}"
+          data-param="${key}"
+          data-value-type="json"
+          rows="4">${escapeTextareaValue(JSON.stringify(value, null, 2))}</textarea>
+      `;
+    } else {
+      const inputType = valueType === 'string' ? 'text' : 'number';
+      controlHtml = `
+        <input
+          type="${inputType}"
+          class="setting-input dyn-param"
+          id="dyn_${key}"
+          data-param="${key}"
+          data-value-type="${valueType}"
+          value="${escapeAttributeValue(String(value ?? ''))}">
+      `;
+    }
 
     const html = `
       <div class="setting-group">
         <label class="setting-label" for="dyn_${key}">
-          ${key.replace(/_/g, ' ')}
+          ${label}
         </label>
-        <input
-          type="number"
-          class="setting-range dyn-param"
-          id="dyn_${key}"
-          data-param="${key}"
-          value="${value}"
-          style="width: 100%; border-radius: 4px; border: 1px solid #3A3A3C; padding: 6px; background: #2C2C2E; color: var(--c-text); margin-top: 5px;">
+        ${controlHtml}
       </div>
     `;
 
@@ -367,7 +673,7 @@ $(function () {
       delete defaults.num_predict;
 
       Object.entries(defaults).forEach(function ([key, value]) {
-        if (typeof value === 'number') {
+        if (value !== undefined && value !== null) {
           renderExperimentalParameter(key, value);
         }
       });
@@ -382,9 +688,41 @@ $(function () {
     const payload = {};
     $('#dynamicParameters .dyn-param').each(function () {
       const param = $(this).data('param');
-      const numericValue = parseFloat($(this).val());
-      if (!Number.isNaN(numericValue)) {
-        payload[param] = numericValue;
+      const valueType = $(this).data('value-type') || 'number';
+      const rawValue = $(this).val();
+
+      if (valueType === 'boolean') {
+        payload[param] = String(rawValue).toLowerCase() === 'true';
+        return;
+      }
+
+      if (valueType === 'json') {
+        try {
+          payload[param] = JSON.parse(rawValue);
+        } catch (_error) {
+          payload[param] = rawValue;
+        }
+        return;
+      }
+
+      if (valueType === 'integer') {
+        const integerValue = parseInt(rawValue, 10);
+        if (!Number.isNaN(integerValue)) {
+          payload[param] = integerValue;
+        }
+        return;
+      }
+
+      if (valueType === 'number') {
+        const numericValue = parseFloat(rawValue);
+        if (!Number.isNaN(numericValue)) {
+          payload[param] = numericValue;
+        }
+        return;
+      }
+
+      if (rawValue !== '') {
+        payload[param] = rawValue;
       }
     });
 
@@ -409,6 +747,21 @@ $(function () {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/\n/g, '<br>');
+  }
+
+  function escapeAttributeValue(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function escapeTextareaValue(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
   function renderMessageHtml($msgRow, rawText) {
@@ -836,6 +1189,113 @@ $(function () {
     loadChat(chatId, true);
   });
 
+  $engineSelector.on('change', async function () {
+    try {
+      await applyEngineSelection($(this).val(), {
+        preferredModel: '',
+        persist: true
+      });
+    } catch (error) {
+      console.error('Failed to switch engine:', error);
+      setEngineAddressStatus('Error', 'error');
+    }
+  });
+
+  $engineAddressInput.on('keydown', function (event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      $(this).trigger('blur');
+    }
+  });
+
+  $engineAddressInput.on('blur', async function () {
+    const engine = getActiveEngine();
+    const addressKey = getEngineAddressKey(engine);
+    const addressValue = $(this).val().trim();
+    const selectionVersion = ++engineSelectionVersion;
+
+    if (!addressKey) {
+      return;
+    }
+
+    if ((runtimeSettings[addressKey] || '') === addressValue) {
+      setEngineAddressStatus('Saved', null);
+      return;
+    }
+
+    try {
+      setEngineAddressStatus('Saving...', 'pending');
+      runtimeSettings = await saveRuntimeSettings({ [addressKey]: addressValue });
+
+      if (selectionVersion !== engineSelectionVersion) {
+        return;
+      }
+
+      updateEngineAddressUi();
+      await refreshModelsForEngine(
+        engine,
+        $modelSelector.val(),
+        Array.isArray(runtimeSettings.models) ? runtimeSettings.models : null,
+        selectionVersion
+      );
+    } catch (error) {
+      console.error('Failed to save engine address:', error);
+      setEngineAddressStatus('Error', 'error');
+    }
+  });
+
+  $engineApiKeyEnabled.on('change', async function () {
+    if (getActiveEngine() !== 'openai') {
+      return;
+    }
+
+    const isEnabled = $(this).is(':checked');
+    $engineApiKeyInput.toggle(isEnabled);
+    if (isEnabled) {
+      setEngineApiKeyStatus('Enter key', null);
+      $engineApiKeyInput.trigger('focus');
+      return;
+    }
+
+    try {
+      setEngineApiKeyStatus('Saving...', 'pending');
+      runtimeSettings = await saveRuntimeSettings({ openai_api_key: '' });
+      updateEngineAddressUi();
+    } catch (error) {
+      console.error('Failed to update API key state:', error);
+      setEngineApiKeyStatus('Error', 'error');
+    }
+  });
+
+  $engineApiKeyInput.on('keydown', function (event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      $(this).trigger('blur');
+    }
+  });
+
+  $engineApiKeyInput.on('blur', async function () {
+    if (getActiveEngine() !== 'openai' || !$engineApiKeyEnabled.is(':checked')) {
+      return;
+    }
+
+    const apiKeyValue = $(this).val().trim();
+    if (!apiKeyValue) {
+      setEngineApiKeyStatus(runtimeSettings.has_openai_api_key ? 'Saved' : 'Enter key', null);
+      return;
+    }
+
+    try {
+      setEngineApiKeyStatus('Saving...', 'pending');
+      runtimeSettings = await saveRuntimeSettings({ openai_api_key: apiKeyValue });
+      $engineApiKeyInput.val('');
+      updateEngineAddressUi();
+    } catch (error) {
+      console.error('Failed to save API key:', error);
+      setEngineApiKeyStatus('Error', 'error');
+    }
+  });
+
   $modelSelector.on('change', function () {
     loadModelInfo($(this).val());
   });
@@ -853,7 +1313,11 @@ $(function () {
     loadChat(preloadChatId, false);
   }
 
-  if ($modelSelector.val()) {
-    loadModelInfo($modelSelector.val());
-  }
+  updateEngineAddressUi();
+  applyEngineSelection(getActiveEngine(), {
+    preferredModel: $modelSelector.val(),
+    persist: false
+  }).catch(function (error) {
+    console.error('Failed to initialize engine state:', error);
+  });
 });
