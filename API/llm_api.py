@@ -45,14 +45,15 @@ def download_model(engine: str, model_name: str, **kwargs):
         return module.download_model(model_name, **kwargs)
     raise NotImplementedError(f"Engine {engine} does not implement download_model")
 
-def generate(engine: str, model_name: str, prompt: str, **kwargs):
+def generate(engine: str, model_name: str, messages: list, **kwargs):
     """
-    Generates a response from the specified model using the given prompt.
-    kwargs can contain parameters like 'stream', 'options', etc.
+    Generates a response from the specified model using the conversation history.
+    messages - list of dicts: [{'role': 'user'/'assistant'/'system', 'content': '...'}, ...]
+    kwargs can contain parameters like 'stream', 'options', 'think', 'think_level', etc.
     """
     module = _get_engine_module(engine)
     if hasattr(module, 'generate'):
-        return module.generate(model_name, prompt, **kwargs)
+        return module.generate(model_name, messages, **kwargs)
     raise NotImplementedError(f"Engine {engine} does not implement generate")
 
 def get_model_settings(engine: str, model_name: str):

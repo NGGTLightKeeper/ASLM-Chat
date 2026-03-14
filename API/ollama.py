@@ -42,19 +42,39 @@ def download_model(model_name: str, **kwargs):
         logger.error(f"[Ollama API] Error downloading model {model_name}: {e}")
         raise
 
-def generate(model_name: str, prompt: str, **kwargs):
+def generate(model_name: str, messages: list, **kwargs):
     """
-    Generates a response using the specified model.
+    Generates a response using the specified model via the chat endpoint.
+    Accepts a list of message dicts: [{'role': 'user'/'assistant'/'system', 'content': '...'}, ...]
     Optional kwargs:
         stream (bool)
         options (dict) - generation parameters (temperature, num_ctx, etc.)
-        system (str) - custom system prompt
-        context (list) - context from previous interaction
+        think (bool) - enable/disable thinking (top-level Ollama param)
+        think_level (str) - thinking effort level: low / medium / high
         format (str) - return format (e.g. 'json')
+        images (list) - list of base64 image strings (for the last user message)
     """
     client = get_client()
     try:
-        return client.generate(model=model_name, prompt=prompt, **kwargs)
+        # 'think' is a top-level param for client.chat()
+        # 'think_level' (and similar) must go into 'options' dict
+        think = kwargs.pop('think', None)
+        think_level = kwargs.pop('think_level', None)
+
+        # Build call kwargs (drop legacy single-turn params if any)
+        call_kwargs = {k: v for k, v in kwargs.items() if k not in ('system', 'prompt')}
+
+        # Pass 'think' at top level — supported by ollama-python client
+        if think is not None:
+            call_kwargs['think'] = think
+
+        # Pass 'think_level' inside options — it's a generation option, not a client kwarg
+        if think_level is not None:
+            opts = call_kwargs.setdefault('options', {})
+            if isinstance(opts, dict):
+                opts['think_level'] = think_level
+
+        return client.chat(model=model_name, messages=messages, **call_kwargs)
     except Exception as e:
         logger.error(f"[Ollama API] Error generating response from {model_name}: {e}")
         raise

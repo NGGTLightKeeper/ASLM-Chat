@@ -67,6 +67,7 @@ def chat_api(request):
             
         # Save user message to DB and attach images
         user_msg = Message.objects.create(chat=chat, role='user', content=user_message)
+
         if images:
             for order, b64 in enumerate(images):
                 # Try to detect mime type from base64 header; fall back to jpeg
@@ -81,22 +82,58 @@ def chat_api(request):
                     mime = 'image/webp'
                 MessageImage.objects.create(message=user_msg, data=b64, mime_type=mime, order=order)
 
+        # --- Build message history for LLM ---
+        llm_messages = []
+
+        # 1. Optional system prompt
+        if system_prompt:
+            llm_messages.append({'role': 'system', 'content': system_prompt})
+
+        # 2. All previous messages from DB (excluding the one we just saved)
+        history_qs = chat.messages.exclude(id=user_msg.id)
+        for hist_msg in history_qs:
+            entry = {'role': hist_msg.role, 'content': hist_msg.content}
+            llm_messages.append(entry)
+
+        # 3. Current user message (last)
+        current_entry = {'role': 'user', 'content': user_message}
+        if images:
+            current_entry['images'] = images
+        llm_messages.append(current_entry)
+
+        # --- Extract think/think_level from options (top-level Ollama params) ---
+        think_param_names = {'think', 'thinking', 'reasoning'}
+        think_level_param_names = {'think_level', 'thinking_level', 'reasoning_effort'}
+
+        think_value = None
+        think_level_value = None
+        clean_options = {}
+
+        for k, v in options.items():
+            if k in think_param_names:
+                think_value = v
+            elif k in think_level_param_names:
+                think_level_value = v
+            else:
+                clean_options[k] = v
+
         # Prepare kwargs for generate
         generate_kwargs = {
             'engine': 'ollama-service',
             'model_name': model_name,
-            'prompt': user_message,
-            'system': system_prompt,
+            'messages': llm_messages,
             'stream': True
         }
-        
-        # Attach images if provided (Vision models)
-        if images:
-            generate_kwargs['images'] = images
 
-        # Merge options
-        if options:
-            generate_kwargs['options'] = options
+        # Pass think params at top level if present
+        if think_value is not None:
+            generate_kwargs['think'] = think_value
+        if think_level_value is not None:
+            generate_kwargs['think_level'] = think_level_value
+
+        # Merge remaining options
+        if clean_options:
+            generate_kwargs['options'] = clean_options
 
         # Call the LLM Wrapper with stream=True
         # We will yield plain text chunks back to the client
@@ -107,8 +144,15 @@ def chat_api(request):
                 # generate() with stream=True returns an iterator from ollama
                 response_iterator = llm_api.generate(**generate_kwargs)
                 for chunk in response_iterator:
-                    thinking_part = chunk.get('thinking', '')
-                    text_part = chunk.get('response', '')
+                    # ollama python client may return objects or dicts
+                    # chunk is a ChatResponse-like object with a .message attribute
+                    raw_msg = chunk.get('message', {}) if isinstance(chunk, dict) else getattr(chunk, 'message', {})
+                    if isinstance(raw_msg, dict):
+                        thinking_part = raw_msg.get('thinking', '') or ''
+                        text_part = raw_msg.get('content', '') or ''
+                    else:
+                        thinking_part = getattr(raw_msg, 'thinking', '') or ''
+                        text_part = getattr(raw_msg, 'content', '') or ''
                     
                     if thinking_part:
                         if not is_thinking:
@@ -163,7 +207,12 @@ def load_chat_api(request, chat_id):
         messages = chat.messages.all().prefetch_related('images')
         msg_list = []
         for m in messages:
-            entry = {'role': m.role, 'content': m.content}
+            entry = {
+                'role': m.role,
+                'content': m.content,
+                # ISO-8601 timestamp so JS can parse it with new Date()
+                'created_at': m.created_at.isoformat()
+            }
             imgs = list(m.images.all())
             if imgs:
                 entry['images'] = [img.data_url() for img in imgs]

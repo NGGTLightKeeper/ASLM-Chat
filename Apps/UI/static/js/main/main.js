@@ -615,9 +615,10 @@ $(function () {
     $wrapper.toggleClass('expanded');
   });
 
-  function appendMessage(role, text, images) {
+  function appendMessage(role, text, images, timestamp) {
     const isUser = role === 'user';
     const label = isUser ? 'You' : 'ASLM';
+    const timeStr = timeNow(timestamp);
 
     // Build images HTML for user messages.
     // images can be [{dataUrl, base64}, ...] (live) or ['data:...', ...] (from history)
@@ -636,7 +637,7 @@ $(function () {
         <div class="msg-body">
           <div class="msg-meta">
             <span>${label}</span>
-            <span>${timeNow()}</span>
+            <span>${timeStr}</span>
           </div>
           ${!isUser ? `
           <div class="msg-thoughts-wrapper" style="display:none;">
@@ -658,14 +659,16 @@ $(function () {
     scrollBottom();
   }
 
-  function appendTyping() {
+
+  function appendTyping(timestamp) {
+    const timeStr = timeNow(timestamp);
     const $row = $(`
       <div class="msg assistant">
         <div class="msg-avatar">A</div>
         <div class="msg-body">
           <div class="msg-meta">
             <span>ASLM</span>
-            <span>${timeNow()}</span>
+            <span>${timeStr}</span>
           </div>
           <div class="msg-thoughts-wrapper" style="display:none;">
             <div class="msg-thoughts-toggle">Thought Process</div>
@@ -683,6 +686,7 @@ $(function () {
     $messagesInner.append($row);
     return $row;
   }
+
 
   function scrollBottom() {
     $messagesArea.scrollTop($messagesArea[0].scrollHeight);
@@ -721,7 +725,7 @@ $(function () {
 
           // Append historical messages
           data.messages.forEach(msg => {
-            appendMessage(msg.role, msg.content, msg.images || []);
+            appendMessage(msg.role, msg.content, msg.images || [], msg.created_at);
           });
 
           scrollBottom();
@@ -765,8 +769,9 @@ $(function () {
   });
 
   /* ── Utilities ───────────────────────────────────────────── */
-  function timeNow() {
-    return new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  function timeNow(dateInput) {
+    const d = dateInput ? new Date(dateInput) : new Date();
+    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   }
 
   function escHtml(str) {
