@@ -27,6 +27,8 @@ $(function () {
   let currentChatId = null;
   let engineSelectionVersion = 0;
   let activeEngine = 'ollama-service';
+  let lmsLoadConfigDirty = false;
+  const modelsCache = {};
 
   const ENGINE_ALIASES = {
     ollama: 'ollama-service',
@@ -66,9 +68,12 @@ $(function () {
     level: 'medium'
   };
 
-  const LLM_KNOWN_PARAMETERS = {
+  const PARAMETER_DEFINITIONS = {
     temperature: {
       label: 'Temperature',
+      type: 'range',
+      group: 'settings',
+      engines: ['ollama-service', 'lms', 'openai'],
       min: 0,
       max: 2,
       step: 0.1,
@@ -76,31 +81,299 @@ $(function () {
       fallback: 0.8
     },
     num_ctx: {
-      label: 'Max Tokens',
+      label: 'Context Length',
+      type: 'range',
+      group: 'settings',
+      engines: ['ollama-service'],
       min: 256,
       max: 131072,
       step: 256,
       decimals: 0,
-      fallback: 2048
+      fallback: 4096
+    },
+    num_predict: {
+      label: 'Max Output Tokens',
+      type: 'range',
+      group: 'settings',
+      engines: ['ollama-service'],
+      min: -2,
+      max: 32768,
+      step: 32,
+      decimals: 0,
+      fallback: 512
+    },
+    num_keep: {
+      label: 'Keep Prompt Tokens',
+      type: 'range',
+      group: 'settings',
+      engines: ['ollama-service'],
+      min: -1,
+      max: 2048,
+      step: 1,
+      decimals: 0,
+      fallback: 0
+    },
+    seed: {
+      label: 'Seed',
+      type: 'optional-number',
+      group: 'advanced',
+      engines: ['ollama-service', 'openai'],
+      min: 0,
+      max: 2147483647,
+      step: 1,
+      decimals: 0,
+      fallback: null
     },
     top_p: {
       label: 'Top P',
+      type: 'range',
+      group: 'sampling',
+      engines: ['ollama-service', 'openai'],
       min: 0,
       max: 1,
-      step: 0.05,
+      step: 0.01,
       decimals: 2,
       fallback: 0.9
     },
     top_k: {
       label: 'Top K',
+      type: 'range',
+      group: 'sampling',
+      engines: ['ollama-service'],
       min: 1,
-      max: 100,
+      max: 1000,
       step: 1,
       decimals: 0,
       fallback: 40
     },
+    min_p: {
+      label: 'Min P',
+      type: 'range',
+      group: 'sampling',
+      engines: ['ollama-service'],
+      min: 0,
+      max: 1,
+      step: 0.01,
+      decimals: 2,
+      fallback: 0.0
+    },
+    repeat_last_n: {
+      label: 'Repeat Window',
+      type: 'range',
+      group: 'sampling',
+      engines: ['ollama-service'],
+      min: -1,
+      max: 4096,
+      step: 1,
+      decimals: 0,
+      fallback: 64
+    },
+    repeat_penalty: {
+      label: 'Repeat Penalty',
+      type: 'range',
+      group: 'sampling',
+      engines: ['ollama-service'],
+      min: 0,
+      max: 3,
+      step: 0.01,
+      decimals: 2,
+      fallback: 1.1
+    },
+    tfs_z: {
+      label: 'TFS Z',
+      type: 'range',
+      group: 'sampling',
+      engines: ['ollama-service'],
+      min: 0,
+      max: 2,
+      step: 0.01,
+      decimals: 2,
+      fallback: 1.0
+    },
+    mirostat: {
+      label: 'Mirostat',
+      type: 'select',
+      valueType: 'integer',
+      group: 'sampling',
+      engines: ['ollama-service'],
+      options: [
+        { value: 0, label: 'Off' },
+        { value: 1, label: 'V1' },
+        { value: 2, label: 'V2' }
+      ],
+      fallback: 0
+    },
+    mirostat_eta: {
+      label: 'Mirostat Eta',
+      type: 'range',
+      group: 'sampling',
+      engines: ['ollama-service'],
+      min: 0,
+      max: 1,
+      step: 0.01,
+      decimals: 2,
+      fallback: 0.1
+    },
+    mirostat_tau: {
+      label: 'Mirostat Tau',
+      type: 'range',
+      group: 'sampling',
+      engines: ['ollama-service'],
+      min: 0,
+      max: 20,
+      step: 0.1,
+      decimals: 1,
+      fallback: 5
+    },
+    stop: {
+      label: 'Stop Sequences',
+      type: 'json',
+      group: 'advanced',
+      engines: ['ollama-service', 'openai'],
+      fallback: null
+    },
+    maxTokens: {
+      label: 'Max Output Tokens',
+      type: 'range',
+      group: 'settings',
+      engines: ['lms'],
+      min: 1,
+      max: 32768,
+      step: 32,
+      decimals: 0,
+      fallback: 1024
+    },
+    topPSampling: {
+      label: 'Top P',
+      type: 'range',
+      group: 'sampling',
+      engines: ['lms'],
+      min: 0,
+      max: 1,
+      step: 0.01,
+      decimals: 2,
+      fallback: 0.95
+    },
+    topKSampling: {
+      label: 'Top K',
+      type: 'range',
+      group: 'sampling',
+      engines: ['lms'],
+      min: 1,
+      max: 1000,
+      step: 1,
+      decimals: 0,
+      fallback: 40
+    },
+    minPSampling: {
+      label: 'Min P',
+      type: 'range',
+      group: 'sampling',
+      engines: ['lms'],
+      min: 0,
+      max: 1,
+      step: 0.01,
+      decimals: 2,
+      fallback: 0
+    },
+    repeatPenalty: {
+      label: 'Repeat Penalty',
+      type: 'range',
+      group: 'sampling',
+      engines: ['lms'],
+      min: 0,
+      max: 3,
+      step: 0.01,
+      decimals: 2,
+      fallback: 1.0
+    },
+    xtcProbability: {
+      label: 'XTC Probability',
+      type: 'range',
+      group: 'sampling',
+      engines: ['lms'],
+      min: 0,
+      max: 1,
+      step: 0.01,
+      decimals: 2,
+      fallback: 0
+    },
+    xtcThreshold: {
+      label: 'XTC Threshold',
+      type: 'range',
+      group: 'sampling',
+      engines: ['lms'],
+      min: 0,
+      max: 1,
+      step: 0.01,
+      decimals: 2,
+      fallback: 0.1
+    },
+    cpuThreads: {
+      label: 'CPU Threads',
+      type: 'range',
+      group: 'advanced',
+      engines: ['lms'],
+      min: 1,
+      max: 64,
+      step: 1,
+      decimals: 0,
+      fallback: 4
+    },
+    stopStrings: {
+      label: 'Stop Sequences',
+      type: 'json',
+      group: 'advanced',
+      engines: ['lms'],
+      fallback: null
+    },
+    toolCallStopStrings: {
+      label: 'Tool Stop Sequences',
+      type: 'json',
+      group: 'advanced',
+      engines: ['lms'],
+      fallback: null
+    },
+    contextOverflowPolicy: {
+      label: 'Context Overflow Policy',
+      type: 'select',
+      valueType: 'string',
+      group: 'custom',
+      engines: ['lms'],
+      options: [
+        { value: 'stopAtLimit', label: 'Stop At Limit' },
+        { value: 'truncateMiddle', label: 'Truncate Middle' },
+        { value: 'rollingWindow', label: 'Rolling Window' }
+      ],
+      fallback: 'truncateMiddle'
+    },
+    draftModel: {
+      label: 'Draft Model',
+      type: 'select',
+      valueType: 'string',
+      group: 'advanced',
+      engines: ['lms'],
+      options: [
+        { value: '', label: 'Disabled' }
+      ],
+      fallback: ''
+    },
+    max_completion_tokens: {
+      label: 'Max Completion Tokens',
+      type: 'range',
+      group: 'settings',
+      engines: ['openai'],
+      min: 1,
+      max: 32768,
+      step: 32,
+      decimals: 0,
+      fallback: 1024
+    },
     presence_penalty: {
       label: 'Presence Penalty',
+      type: 'range',
+      group: 'sampling',
+      engines: ['openai'],
       min: -2,
       max: 2,
       step: 0.1,
@@ -109,16 +382,263 @@ $(function () {
     },
     frequency_penalty: {
       label: 'Frequency Penalty',
+      type: 'range',
+      group: 'sampling',
+      engines: ['openai'],
       min: -2,
       max: 2,
       step: 0.1,
       decimals: 1,
       fallback: 0.0
+    },
+    n: {
+      label: 'Candidates',
+      type: 'range',
+      group: 'advanced',
+      engines: ['openai'],
+      min: 1,
+      max: 8,
+      step: 1,
+      decimals: 0,
+      fallback: 1
+    },
+    logprobs: {
+      label: 'Logprobs',
+      type: 'boolean',
+      group: 'custom',
+      engines: ['openai'],
+      fallback: false
+    },
+    top_logprobs: {
+      label: 'Top Logprobs',
+      type: 'range',
+      group: 'advanced',
+      engines: ['openai'],
+      min: 0,
+      max: 20,
+      step: 1,
+      decimals: 0,
+      fallback: 0
+    },
+    reasoning_effort: {
+      label: 'Reasoning Effort',
+      type: 'select',
+      valueType: 'string',
+      group: 'custom',
+      engines: ['openai'],
+      options: [
+        { value: 'minimal', label: 'Minimal' },
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High' },
+        { value: 'xhigh', label: 'Extra High' }
+      ],
+      fallback: 'medium'
+    },
+    verbosity: {
+      label: 'Verbosity',
+      type: 'select',
+      valueType: 'string',
+      group: 'custom',
+      engines: ['openai'],
+      options: [
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High' }
+      ],
+      fallback: 'medium'
+    },
+    response_format: {
+      label: 'Response Format',
+      type: 'json',
+      group: 'advanced',
+      engines: ['openai'],
+      fallback: null
+    },
+    logit_bias: {
+      label: 'Logit Bias',
+      type: 'json',
+      group: 'advanced',
+      engines: ['openai'],
+      fallback: null
+    }
+  };
+
+  const LLM_LOAD_PARAMETER_DEFINITIONS = {
+    contextLength: {
+      label: 'Context Length',
+      type: 'optional-number',
+      path: 'contextLength',
+      min: 1,
+      max: 131072,
+      step: 256,
+      decimals: 0,
+      fallback: null
+    },
+    gpu_ratio: {
+      label: 'GPU Ratio',
+      type: 'optional-number',
+      path: 'gpu.ratio',
+      min: 0,
+      max: 1,
+      step: 0.01,
+      decimals: 2,
+      fallback: null
+    },
+    gpu_mainGpu: {
+      label: 'Main GPU',
+      type: 'optional-number',
+      path: 'gpu.mainGpu',
+      min: 0,
+      max: 16,
+      step: 1,
+      decimals: 0,
+      fallback: null
+    },
+    gpu_splitStrategy: {
+      label: 'GPU Split Strategy',
+      type: 'select',
+      valueType: 'string',
+      path: 'gpu.splitStrategy',
+      options: [
+        { value: '', label: 'Automatic' },
+        { value: 'evenly', label: 'Evenly' },
+        { value: 'favorMainGpu', label: 'Favor Main GPU' }
+      ],
+      fallback: ''
+    },
+    gpu_disabledGpus: {
+      label: 'Disabled GPUs',
+      type: 'json',
+      path: 'gpu.disabledGpus',
+      fallback: null
+    },
+    gpuStrictVramCap: {
+      label: 'Strict VRAM Cap',
+      type: 'boolean',
+      path: 'gpuStrictVramCap',
+      fallback: false
+    },
+    offloadKVCacheToGpu: {
+      label: 'Offload KV Cache To GPU',
+      type: 'boolean',
+      path: 'offloadKVCacheToGpu',
+      fallback: false
+    },
+    ropeFrequencyBase: {
+      label: 'RoPE Frequency Base',
+      type: 'optional-number',
+      path: 'ropeFrequencyBase',
+      min: 0,
+      max: 1000000,
+      step: 1,
+      decimals: 0,
+      fallback: null
+    },
+    ropeFrequencyScale: {
+      label: 'RoPE Frequency Scale',
+      type: 'optional-number',
+      path: 'ropeFrequencyScale',
+      min: 0,
+      max: 1000,
+      step: 0.01,
+      decimals: 2,
+      fallback: null
+    },
+    evalBatchSize: {
+      label: 'Eval Batch Size',
+      type: 'optional-number',
+      path: 'evalBatchSize',
+      min: 1,
+      max: 8192,
+      step: 1,
+      decimals: 0,
+      fallback: null
+    },
+    flashAttention: {
+      label: 'Flash Attention',
+      type: 'boolean',
+      path: 'flashAttention',
+      fallback: false
+    },
+    keepModelInMemory: {
+      label: 'Keep Model In Memory',
+      type: 'boolean',
+      path: 'keepModelInMemory',
+      fallback: false
+    },
+    seed: {
+      label: 'Seed',
+      type: 'optional-number',
+      path: 'seed',
+      min: 0,
+      max: 2147483647,
+      step: 1,
+      decimals: 0,
+      fallback: null
+    },
+    useFp16ForKVCache: {
+      label: 'Use FP16 For KV Cache',
+      type: 'boolean',
+      path: 'useFp16ForKVCache',
+      fallback: false
+    },
+    tryMmap: {
+      label: 'Try Memory Map',
+      type: 'boolean',
+      path: 'tryMmap',
+      fallback: false
+    },
+    numExperts: {
+      label: 'Num Experts',
+      type: 'optional-number',
+      path: 'numExperts',
+      min: 1,
+      max: 256,
+      step: 1,
+      decimals: 0,
+      fallback: null
+    },
+    llamaKCacheQuantizationType: {
+      label: 'K Cache Quantization',
+      type: 'select',
+      valueType: 'string',
+      path: 'llamaKCacheQuantizationType',
+      options: [
+        { value: '', label: 'Automatic' },
+        { value: 'f32', label: 'f32' },
+        { value: 'f16', label: 'f16' },
+        { value: 'q8_0', label: 'q8_0' },
+        { value: 'q4_0', label: 'q4_0' },
+        { value: 'q4_1', label: 'q4_1' },
+        { value: 'iq4_nl', label: 'iq4_nl' },
+        { value: 'q5_0', label: 'q5_0' },
+        { value: 'q5_1', label: 'q5_1' }
+      ],
+      fallback: ''
+    },
+    llamaVCacheQuantizationType: {
+      label: 'V Cache Quantization',
+      type: 'select',
+      valueType: 'string',
+      path: 'llamaVCacheQuantizationType',
+      options: [
+        { value: '', label: 'Automatic' },
+        { value: 'f32', label: 'f32' },
+        { value: 'f16', label: 'f16' },
+        { value: 'q8_0', label: 'q8_0' },
+        { value: 'q4_0', label: 'q4_0' },
+        { value: 'q4_1', label: 'q4_1' },
+        { value: 'iq4_nl', label: 'iq4_nl' },
+        { value: 'q5_0', label: 'q5_0' },
+        { value: 'q5_1', label: 'q5_1' }
+      ],
+      fallback: ''
     }
   };
 
   const LLM_PARAMETER_OPTION_SETS = {
-    reasoning_effort: ['minimal', 'low', 'medium', 'high'],
+    reasoning_effort: ['minimal', 'low', 'medium', 'high', 'xhigh'],
     think_level: ['low', 'medium', 'high'],
     thinking_level: ['low', 'medium', 'high'],
     verbosity: ['low', 'medium', 'high']
@@ -194,7 +714,7 @@ $(function () {
     if (!hasApiKeySupport) {
       $engineApiKeyEnabled.prop('checked', false);
       $engineApiKeyInput.val('').hide();
-      setEngineApiKeyStatus('Disabled', null);
+      setEngineApiKeyStatus('Off', null);
       return;
     }
 
@@ -205,7 +725,46 @@ $(function () {
       'placeholder',
       hasStoredApiKey ? 'Stored API key. Enter a new one to replace it' : 'Enter a new API key'
     );
-    setEngineApiKeyStatus(hasStoredApiKey ? 'Saved' : 'Disabled', null);
+    setEngineApiKeyStatus(hasStoredApiKey ? 'On' : 'Off', null);
+  }
+
+  function resetModelUiState(message) {
+    const placeholderText = message || 'Models load on demand';
+    $modelSelector.empty().append(
+      $('<option>').val('').text(placeholderText)
+    );
+    resetDynamicPanels();
+    renderLoadParameters();
+    updateVisibleDividers();
+    visionState.supported = false;
+    thinkState.supported = false;
+    thinkState.levelSupported = false;
+    updateVisionControls();
+    updateThinkControls();
+  }
+
+  function clearModelCache(engine) {
+    const canonicalEngine = normalizeEngineValue(engine);
+    delete modelsCache[canonicalEngine];
+  }
+
+  function getSupportedParameterDefinitions(engine) {
+    const canonicalEngine = normalizeEngineValue(engine);
+    return Object.entries(PARAMETER_DEFINITIONS).filter(function ([, definition]) {
+      return (definition.engines || []).includes(canonicalEngine);
+    });
+  }
+
+  function getAvailableModelsForEngine(engine) {
+    const canonicalEngine = normalizeEngineValue(engine);
+
+    if (Array.isArray(modelsCache[canonicalEngine]) && modelsCache[canonicalEngine].length > 0) {
+      return modelsCache[canonicalEngine].slice();
+    }
+
+    return $modelSelector.find('option').map(function () {
+      return $(this).val();
+    }).get().filter(Boolean);
   }
 
   function renderModelOptions(models, preferredModel) {
@@ -240,6 +799,26 @@ $(function () {
     return data.models || [];
   }
 
+  async function ensureModelsLoadedForActiveEngine(options) {
+    const loadOptions = options || {};
+    const engine = getActiveEngine();
+    const preferredModel = loadOptions.preferredModel || $modelSelector.val() || '';
+    let selectedModel = '';
+
+    if (Array.isArray(modelsCache[engine]) && modelsCache[engine].length > 0) {
+      selectedModel = renderModelOptions(modelsCache[engine], preferredModel);
+      await loadModelInfo(selectedModel);
+      return selectedModel;
+    }
+
+    resetModelUiState('Loading models...');
+    const models = await fetchModelsForEngine(engine);
+    modelsCache[engine] = models;
+    selectedModel = renderModelOptions(models, preferredModel);
+    await loadModelInfo(selectedModel);
+    return selectedModel;
+  }
+
   async function saveRuntimeSettings(patch) {
     const response = await fetch('/api/runtime_settings/', {
       method: 'POST',
@@ -261,60 +840,102 @@ $(function () {
     return runtimeSettings;
   }
 
-  async function refreshModelsForEngine(engine, preferredModel, modelsOverride, selectionVersion) {
-    const hasModelOverride = Array.isArray(modelsOverride) && modelsOverride.length > 0;
-    const models = hasModelOverride ? modelsOverride : await fetchModelsForEngine(engine);
-
-    if (selectionVersion && selectionVersion !== engineSelectionVersion) {
-      return '';
+  async function reloadSelectedModel(engine, modelName) {
+    if (!modelName) {
+      return;
     }
 
-    const selectedModel = renderModelOptions(models, preferredModel);
+    const response = await fetch('/api/reload_model/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrfToken()
+      },
+      body: JSON.stringify({
+        engine,
+        model: modelName
+      })
+    });
 
-    if (selectionVersion && selectionVersion !== engineSelectionVersion) {
-      return selectedModel;
+    if (!response.ok) {
+      const errorData = await response.json().catch(function () {
+        return {};
+      });
+      throw new Error(errorData.error || `Failed to reload model: ${response.status}`);
+    }
+  }
+
+  async function applyLmsLoadConfigChange() {
+    if (getActiveEngine() !== 'lms') {
+      return;
     }
 
-    await loadModelInfo(selectedModel);
-    return selectedModel;
+    const loadConfig = collectParameterPayload('#group-load .dyn-load-param');
+    runtimeSettings = await saveRuntimeSettings({ lms_load_config: loadConfig });
+    lmsLoadConfigDirty = true;
   }
 
   async function applyEngineSelection(engine, options) {
     const settingsOptions = options || {};
     const normalizedEngine = normalizeEngineValue(engine);
     const selectionVersion = ++engineSelectionVersion;
-    let availableModels = null;
+    const previousEngine = activeEngine;
+    const autoLoadModels = settingsOptions.autoLoadModels !== false;
+
     activeEngine = normalizedEngine;
+    $('body').data('llm-engine', normalizedEngine);
+    $engineSelector.val(normalizedEngine);
+    updateEngineAddressUi();
+    resetModelUiState('Models load on demand');
 
-    if (settingsOptions.persist !== false) {
-      runtimeSettings = await saveRuntimeSettings({ 'llm-engine': normalizedEngine });
+    if (settingsOptions.persist === false) {
       runtimeSettings['llm-engine'] = normalizedEngine;
-      activeEngine = normalizedEngine;
-      $('body').data('llm-engine', normalizedEngine);
-      availableModels = Array.isArray(runtimeSettings.models) && runtimeSettings.models.length > 0
-        ? runtimeSettings.models
-        : null;
-    } else {
-      runtimeSettings['llm-engine'] = normalizedEngine;
-      activeEngine = normalizedEngine;
-      $('body').data('llm-engine', normalizedEngine);
-      availableModels = Array.isArray(runtimeSettings.models) && runtimeSettings.models.length > 0
-        ? runtimeSettings.models
-        : null;
-    }
-
-    if (selectionVersion !== engineSelectionVersion) {
+      clearModelCache(normalizedEngine);
+      if (autoLoadModels) {
+        try {
+          await ensureModelsLoadedForActiveEngine({
+            preferredModel: settingsOptions.preferredModel || ''
+          });
+        } catch (error) {
+          console.error('Failed to load models after engine initialization:', error);
+          resetModelUiState('No models available');
+        }
+      }
       return;
     }
 
-    $engineSelector.val(activeEngine);
-    updateEngineAddressUi();
-    await refreshModelsForEngine(
-      activeEngine,
-      settingsOptions.preferredModel || '',
-      availableModels,
-      selectionVersion
-    );
+    try {
+      setEngineAddressStatus('Switching...', 'pending');
+      runtimeSettings = await saveRuntimeSettings({ 'llm-engine': normalizedEngine });
+      runtimeSettings['llm-engine'] = normalizedEngine;
+      clearModelCache(normalizedEngine);
+
+      if (selectionVersion !== engineSelectionVersion) {
+        return;
+      }
+
+      updateEngineAddressUi();
+      setEngineAddressStatus(getEngineAddressKey(normalizedEngine) ? 'Saved' : 'Managed', null);
+
+      if (autoLoadModels) {
+        try {
+          await ensureModelsLoadedForActiveEngine({
+            preferredModel: settingsOptions.preferredModel || ''
+          });
+        } catch (error) {
+          console.error('Failed to load models after engine switch:', error);
+          resetModelUiState('No models available');
+        }
+      }
+    } catch (error) {
+      activeEngine = previousEngine;
+      runtimeSettings['llm-engine'] = previousEngine;
+      $('body').data('llm-engine', previousEngine);
+      $engineSelector.val(previousEngine);
+      updateEngineAddressUi();
+      resetModelUiState('Models load on demand');
+      throw error;
+    }
   }
 
   function buildChatTitle(text, hasImages) {
@@ -424,6 +1045,9 @@ $(function () {
   }
 
   function getParameterGroup(paramKey) {
+    if (PARAMETER_DEFINITIONS[paramKey] && PARAMETER_DEFINITIONS[paramKey].group) {
+      return `#group-${PARAMETER_DEFINITIONS[paramKey].group}`;
+    }
     if (['temperature', 'num_ctx', 'num_predict', 'seed', 'num_keep'].includes(paramKey)) {
       return '#group-settings';
     }
@@ -464,6 +1088,35 @@ $(function () {
       });
   }
 
+  function getNestedValue(source, path) {
+    return String(path || '').split('.').reduce(function (current, key) {
+      if (!current || typeof current !== 'object') {
+        return undefined;
+      }
+      return current[key];
+    }, source);
+  }
+
+  function setNestedValue(target, path, value) {
+    const parts = String(path || '').split('.').filter(Boolean);
+    if (!parts.length) {
+      return;
+    }
+
+    let cursor = target;
+    parts.forEach(function (part, index) {
+      if (index === parts.length - 1) {
+        cursor[part] = value;
+        return;
+      }
+
+      if (!cursor[part] || typeof cursor[part] !== 'object') {
+        cursor[part] = {};
+      }
+      cursor = cursor[part];
+    });
+  }
+
   function resetDynamicPanels() {
     $('.settings-section').filter(function () {
       return this.id.startsWith('group-')
@@ -475,39 +1128,150 @@ $(function () {
     $('.settings-divider[id^="divider-"]').not('#divider-connection').hide();
   }
 
-  function renderKnownParameter(key, config, value) {
-    const groupId = getParameterGroup(key);
+  function renderKnownParameter(key, config, value, renderOptions) {
+    const options = renderOptions || {};
+    const groupId = options.groupId || getParameterGroup(key);
     const $group = $(groupId);
     const $content = $(`${groupId} .settings-section-content`);
-    const numericValue = Number(value);
+    const paramClass = options.paramClass || 'dyn-param';
+    const paramPath = options.paramPath || key;
+    const compactClass = options.compact ? ' setting-control-compact' : '';
+    const switchRowClass = options.compact ? ' setting-switch-row-compact' : '';
+    let html = '';
 
-    const html = `
-      <div class="setting-group">
-        <label class="setting-label" for="dyn_${key}">
-          ${config.label}
-          <input
-            type="number"
-            class="setting-number"
-            id="val_${key}"
+    if (config.type === 'select') {
+      const valueType = config.valueType || 'string';
+      const normalizedValue = value === undefined || value === null ? config.fallback : value;
+      html = `
+        <div class="setting-group">
+          <label class="setting-label" for="dyn_${key}">
+            ${config.label}
+          </label>
+          <select
+            class="model-selector setting-select${compactClass} ${paramClass}"
+            id="dyn_${key}"
             data-param="${key}"
+            data-param-path="${paramPath}"
+            data-value-type="${valueType}">
+            ${(config.options || []).map(function (option) {
+              const optionValue = typeof option === 'object' ? option.value : option;
+              const optionLabel = typeof option === 'object' ? option.label : formatExperimentalParameterLabel(String(option));
+              return `<option value="${escapeAttributeValue(String(optionValue))}"${String(optionValue) === String(normalizedValue) ? ' selected' : ''}>${optionLabel}</option>`;
+            }).join('')}
+          </select>
+        </div>
+      `;
+    } else if (config.type === 'boolean') {
+      const normalizedValue = value === undefined || value === null ? !!config.fallback : !!value;
+      html = `
+        <div class="setting-group">
+          <label class="setting-label" for="dyn_${key}">
+            ${config.label}
+          </label>
+          <label class="setting-switch-row${switchRowClass}" for="dyn_${key}">
+            <span class="setting-switch-text">Enabled</span>
+            <span class="setting-switch-control">
+              <input
+                class="setting-switch-input ${paramClass}"
+                id="dyn_${key}"
+                type="checkbox"
+                data-param="${key}"
+                data-param-path="${paramPath}"
+                data-value-type="boolean-switch"
+                ${normalizedValue ? 'checked' : ''}>
+              <span class="setting-switch-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+        </div>
+      `;
+    } else if (config.type === 'optional-number') {
+      const isEnabled = value !== undefined && value !== null && value !== '';
+      const normalizedValue = isEnabled ? Number(value) : '';
+      const optionalValueType = config.decimals === 0 ? 'optional-integer' : 'optional-number';
+      html = `
+        <div class="setting-group">
+          <label class="setting-label" for="dyn_${key}">
+            ${config.label}
+          </label>
+          <label class="setting-switch-row${switchRowClass}" for="toggle_${key}">
+            <span class="setting-switch-text">Specify value</span>
+            <span class="setting-switch-control">
+              <input
+                class="setting-switch-input optional-param-toggle"
+                id="toggle_${key}"
+                type="checkbox"
+                data-target="dyn_${key}"
+                ${isEnabled ? 'checked' : ''}>
+              <span class="setting-switch-slider" aria-hidden="true"></span>
+            </span>
+          </label>
+          <div
+            class="setting-dependent-field${isEnabled ? '' : ' is-hidden'}"
+            id="dyn_${key}_container">
+            <input
+              type="number"
+              class="setting-input${compactClass} ${paramClass}"
+              id="dyn_${key}"
+              data-param="${key}"
+              data-param-path="${paramPath}"
+              data-value-type="${optionalValueType}"
+              data-decimals="${config.decimals}"
+              min="${config.min}"
+              max="${config.max}"
+              step="${config.step}"
+              value="${isEnabled ? escapeAttributeValue(String(normalizedValue)) : ''}"
+              ${isEnabled ? '' : 'disabled'}>
+          </div>
+        </div>
+      `;
+    } else if (config.type === 'json') {
+      const normalizedValue = value === undefined || value === null ? config.fallback : value;
+      html = `
+        <div class="setting-group">
+          <label class="setting-label" for="dyn_${key}">
+            ${config.label}
+          </label>
+          <textarea
+            class="setting-textarea${compactClass} ${paramClass}"
+            id="dyn_${key}"
+            data-param="${key}"
+            data-param-path="${paramPath}"
+            data-value-type="json"
+            rows="4">${normalizedValue === null ? '' : escapeTextareaValue(JSON.stringify(normalizedValue, null, 2))}</textarea>
+        </div>
+      `;
+    } else {
+      const numericValue = Number(value === undefined || value === null ? config.fallback : value);
+      html = `
+        <div class="setting-group">
+          <label class="setting-label" for="dyn_${key}">
+            ${config.label}
+            <input
+              type="number"
+              class="setting-number"
+              id="val_${key}"
+              data-param="${key}"
+              data-decimals="${config.decimals}"
+              value="${numericValue.toFixed(config.decimals)}"
+              min="${config.min}"
+              max="${config.max}"
+              step="${config.step}">
+          </label>
+          <input
+            type="range"
+            class="setting-range ${paramClass}"
+            id="dyn_${key}"
+            data-param="${key}"
+            data-param-path="${paramPath}"
+            data-value-type="${config.decimals === 0 ? 'integer' : 'number'}"
             data-decimals="${config.decimals}"
-            value="${numericValue.toFixed(config.decimals)}"
             min="${config.min}"
             max="${config.max}"
-            step="${config.step}">
-        </label>
-        <input
-          type="range"
-          class="setting-range dyn-param"
-          id="dyn_${key}"
-          data-param="${key}"
-          data-decimals="${config.decimals}"
-          min="${config.min}"
-          max="${config.max}"
-          step="${config.step}"
-          value="${numericValue}">
-      </div>
-    `;
+            step="${config.step}"
+            value="${numericValue}">
+        </div>
+      `;
+    }
 
     $content.append(html);
     $group.show();
@@ -581,14 +1345,69 @@ $(function () {
   }
 
   function updateVisibleDividers() {
-    let visibleCount = 0;
-    ['#group-custom', '#group-settings', '#group-sampling', '#group-advanced'].forEach(function (selector) {
-      if ($(selector).is(':visible')) {
-        visibleCount += 1;
-        if (visibleCount > 1) {
-          $(`#divider-${selector.replace('#group-', '')}`).show();
-        }
+    const visibleGroups = ['load', 'custom', 'settings', 'sampling', 'advanced'].filter(function (groupName) {
+      return $(`#group-${groupName}`).is(':visible');
+    });
+
+    if (visibleGroups.length > 0) {
+      $('#divider-system').show();
+    }
+
+    visibleGroups.forEach(function (groupName, index) {
+      const nextGroup = visibleGroups[index + 1];
+      if (!nextGroup) {
+        return;
       }
+
+      if (nextGroup === 'sampling') {
+        return;
+      }
+
+      if (groupName === 'custom') {
+        return;
+      }
+
+      $(`#divider-${groupName}`).show();
+    });
+  }
+
+  function renderLoadParameters() {
+    const engine = getActiveEngine();
+    const $group = $('#group-load');
+    const $content = $('#group-load .settings-section-content');
+    const loadConfig = runtimeSettings.lms_load_config || {};
+    const selectedMainModel = $modelSelector.val() || '';
+    const lmsModels = getAvailableModelsForEngine('lms');
+
+    $content.empty();
+    $group.hide();
+
+    if (engine !== 'lms') {
+      return;
+    }
+
+    Object.entries(LLM_LOAD_PARAMETER_DEFINITIONS).forEach(function ([key, config]) {
+      const renderConfig = { ...config };
+
+      if (key === 'draftModel') {
+        const draftOptions = lmsModels
+          .filter(function (modelName) {
+            return modelName && modelName !== selectedMainModel;
+          })
+          .map(function (modelName) {
+            return { value: modelName, label: modelName };
+          });
+
+        renderConfig.options = [{ value: '', label: 'Disabled' }, ...draftOptions];
+      }
+
+      const currentValue = getNestedValue(loadConfig, config.path || key);
+      renderKnownParameter(key, renderConfig, currentValue, {
+        groupId: '#group-load',
+        paramClass: 'dyn-load-param',
+        paramPath: config.path || key,
+        compact: true
+      });
     });
   }
 
@@ -619,6 +1438,8 @@ $(function () {
   async function loadModelInfo(model) {
     if (!model) {
       resetDynamicPanels();
+      renderLoadParameters();
+      updateVisibleDividers();
       visionState.supported = false;
       thinkState.supported = false;
       updateVisionControls();
@@ -634,6 +1455,7 @@ $(function () {
 
       const data = await response.json();
       resetDynamicPanels();
+      renderLoadParameters();
 
       visionState.supported = !!data.supports_vision;
       updateVisionControls();
@@ -659,18 +1481,16 @@ $(function () {
       delete defaults[thinkState.paramName];
       delete defaults[thinkState.levelParamName];
 
-      if (defaults.num_ctx !== undefined) {
-        LLM_KNOWN_PARAMETERS.num_ctx.max = data.context_length || 131072;
-        LLM_KNOWN_PARAMETERS.num_ctx.fallback = defaults.num_ctx;
-      }
+      getSupportedParameterDefinitions(getActiveEngine()).forEach(function ([key, config]) {
+        const renderedConfig = { ...config };
+        if (key === 'num_ctx' && data.context_length) {
+          renderedConfig.max = data.context_length;
+        }
 
-      Object.entries(LLM_KNOWN_PARAMETERS).forEach(function ([key, config]) {
-        const value = defaults[key] !== undefined ? defaults[key] : config.fallback;
-        renderKnownParameter(key, config, value);
+        const value = defaults[key] !== undefined ? defaults[key] : renderedConfig.fallback;
+        renderKnownParameter(key, renderedConfig, value);
         delete defaults[key];
       });
-
-      delete defaults.num_predict;
 
       Object.entries(defaults).forEach(function ([key, value]) {
         if (value !== undefined && value !== null) {
@@ -684,23 +1504,32 @@ $(function () {
     }
   }
 
-  function collectOptionsPayload() {
+  function collectParameterPayload(selector) {
     const payload = {};
-    $('#dynamicParameters .dyn-param').each(function () {
+    $(selector).each(function () {
       const param = $(this).data('param');
+      const paramPath = $(this).data('paramPath') || param;
       const valueType = $(this).data('value-type') || 'number';
-      const rawValue = $(this).val();
+      const rawValue = $(this).is(':checkbox') ? ($(this).is(':checked') ? 'true' : 'false') : $(this).val();
 
       if (valueType === 'boolean') {
-        payload[param] = String(rawValue).toLowerCase() === 'true';
+        setNestedValue(payload, paramPath, String(rawValue).toLowerCase() === 'true');
+        return;
+      }
+
+      if (valueType === 'boolean-switch') {
+        setNestedValue(payload, paramPath, $(this).is(':checked'));
         return;
       }
 
       if (valueType === 'json') {
+        if (String(rawValue || '').trim() === '') {
+          return;
+        }
         try {
-          payload[param] = JSON.parse(rawValue);
+          setNestedValue(payload, paramPath, JSON.parse(rawValue));
         } catch (_error) {
-          payload[param] = rawValue;
+          setNestedValue(payload, paramPath, rawValue);
         }
         return;
       }
@@ -708,7 +1537,33 @@ $(function () {
       if (valueType === 'integer') {
         const integerValue = parseInt(rawValue, 10);
         if (!Number.isNaN(integerValue)) {
-          payload[param] = integerValue;
+          setNestedValue(payload, paramPath, integerValue);
+        }
+        return;
+      }
+
+      if (valueType === 'optional-integer') {
+        const toggleId = `#toggle_${param}`;
+        if (!$(toggleId).is(':checked')) {
+          return;
+        }
+
+        const integerValue = parseInt(rawValue, 10);
+        if (!Number.isNaN(integerValue)) {
+          setNestedValue(payload, paramPath, integerValue);
+        }
+        return;
+      }
+
+      if (valueType === 'optional-number') {
+        const toggleId = `#toggle_${param}`;
+        if (!$(toggleId).is(':checked')) {
+          return;
+        }
+
+        const numericValue = parseFloat(rawValue);
+        if (!Number.isNaN(numericValue)) {
+          setNestedValue(payload, paramPath, numericValue);
         }
         return;
       }
@@ -716,15 +1571,21 @@ $(function () {
       if (valueType === 'number') {
         const numericValue = parseFloat(rawValue);
         if (!Number.isNaN(numericValue)) {
-          payload[param] = numericValue;
+          setNestedValue(payload, paramPath, numericValue);
         }
         return;
       }
 
       if (rawValue !== '') {
-        payload[param] = rawValue;
+        setNestedValue(payload, paramPath, rawValue);
       }
     });
+
+    return payload;
+  }
+
+  function collectOptionsPayload() {
+    const payload = collectParameterPayload('#dynamicParameters .dyn-param');
 
     if (thinkState.supported) {
       payload[thinkState.paramName] = thinkState.enabled;
@@ -904,10 +1765,24 @@ $(function () {
     const $bubbleContent = $msgBubble.find('.msg-bubble');
 
     try {
+      const selectedModel = await ensureModelsLoadedForActiveEngine({
+        preferredModel: $modelSelector.val()
+      });
+
+      if (!selectedModel) {
+        throw new Error(`No models available for ${getActiveEngine()}`);
+      }
+
+      if (getActiveEngine() === 'lms' && lmsLoadConfigDirty) {
+        await reloadSelectedModel('lms', selectedModel);
+        await loadModelInfo(selectedModel);
+        lmsLoadConfigDirty = false;
+      }
+
       const payload = {
         engine: getActiveEngine(),
         message: text,
-        model: $modelSelector.val(),
+        model: selectedModel,
         system_prompt: $('#systemPrompt').val(),
         chat_id: currentChatId,
         options: collectOptionsPayload()
@@ -1174,6 +2049,27 @@ $(function () {
     }
   });
 
+  $(document).on('change', '.optional-param-toggle', function () {
+    const targetId = $(this).data('target');
+    const $target = $(`#${targetId}`);
+    const $targetContainer = $(`#${targetId}_container`);
+    const isEnabled = $(this).is(':checked');
+
+    $target.prop('disabled', !isEnabled);
+    $targetContainer.toggleClass('is-hidden', !isEnabled);
+    if (isEnabled) {
+      $target.trigger('focus');
+    } else {
+      $target.val('');
+    }
+
+    if ($(this).closest('#group-load').length > 0) {
+      applyLmsLoadConfigChange().catch(function (error) {
+        console.error('Failed to update LM Studio load config:', error);
+      });
+    }
+  });
+
   $messagesInner.on('click', '.msg-thoughts-toggle', function (event) {
     event.stopPropagation();
     const $wrapper = $(this).closest('.msg-thoughts-wrapper');
@@ -1192,7 +2088,6 @@ $(function () {
   $engineSelector.on('change', async function () {
     try {
       await applyEngineSelection($(this).val(), {
-        preferredModel: '',
         persist: true
       });
     } catch (error) {
@@ -1226,18 +2121,17 @@ $(function () {
     try {
       setEngineAddressStatus('Saving...', 'pending');
       runtimeSettings = await saveRuntimeSettings({ [addressKey]: addressValue });
+      clearModelCache(engine);
 
       if (selectionVersion !== engineSelectionVersion) {
         return;
       }
 
       updateEngineAddressUi();
-      await refreshModelsForEngine(
-        engine,
-        $modelSelector.val(),
-        Array.isArray(runtimeSettings.models) ? runtimeSettings.models : null,
-        selectionVersion
-      );
+      resetModelUiState('Loading models...');
+      await ensureModelsLoadedForActiveEngine({
+        preferredModel: ''
+      });
     } catch (error) {
       console.error('Failed to save engine address:', error);
       setEngineAddressStatus('Error', 'error');
@@ -1252,7 +2146,7 @@ $(function () {
     const isEnabled = $(this).is(':checked');
     $engineApiKeyInput.toggle(isEnabled);
     if (isEnabled) {
-      setEngineApiKeyStatus('Enter key', null);
+      setEngineApiKeyStatus('On', null);
       $engineApiKeyInput.trigger('focus');
       return;
     }
@@ -1281,7 +2175,7 @@ $(function () {
 
     const apiKeyValue = $(this).val().trim();
     if (!apiKeyValue) {
-      setEngineApiKeyStatus(runtimeSettings.has_openai_api_key ? 'Saved' : 'Enter key', null);
+      setEngineApiKeyStatus(runtimeSettings.has_openai_api_key ? 'On' : 'Off', null);
       return;
     }
 
@@ -1300,6 +2194,22 @@ $(function () {
     loadModelInfo($(this).val());
   });
 
+  $(document).on('change', '#group-load .dyn-load-param', function () {
+    applyLmsLoadConfigChange().catch(function (error) {
+      console.error('Failed to update LM Studio load config:', error);
+    });
+  });
+
+  $(document).on('blur', '#group-load .dyn-load-param', function () {
+    if ($(this).is(':checkbox')) {
+      return;
+    }
+
+    applyLmsLoadConfigChange().catch(function (error) {
+      console.error('Failed to update LM Studio load config:', error);
+    });
+  });
+
   window.addEventListener('popstate', function (event) {
     if (event.state && event.state.chatId) {
       loadChat(event.state.chatId, false);
@@ -1314,8 +2224,8 @@ $(function () {
   }
 
   updateEngineAddressUi();
+  resetModelUiState('Loading models...');
   applyEngineSelection(getActiveEngine(), {
-    preferredModel: $modelSelector.val(),
     persist: false
   }).catch(function (error) {
     console.error('Failed to initialize engine state:', error);

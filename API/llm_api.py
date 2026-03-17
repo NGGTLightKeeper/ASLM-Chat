@@ -66,3 +66,46 @@ def get_model_settings(engine: str | None, model_name: str) -> Any:
     if hasattr(module, "get_model_settings"):
         return module.get_model_settings(model_name)
     raise NotImplementedError(f"Engine {engine} does not implement get_model_settings")
+
+
+def prepare_runtime(engine: str | None) -> None:
+    """Prepare the selected engine runtime before it is used."""
+    module = _get_engine_module(engine)
+    prepare = getattr(module, "prepare_runtime", None)
+    if callable(prepare):
+        prepare()
+
+
+def cleanup_runtime(engine: str | None) -> None:
+    """Release runtime resources for the selected engine when it is deselected."""
+    module = _get_engine_module(engine)
+    cleanup = getattr(module, "cleanup_runtime", None)
+    if callable(cleanup):
+        cleanup()
+
+
+def handle_engine_transition(previous_engine: str | None, next_engine: str | None) -> None:
+    """Apply runtime teardown/startup when the active engine changes."""
+    previous = settings.normalize_engine_name(previous_engine)
+    current = settings.normalize_engine_name(next_engine)
+
+    if previous == current:
+        return
+
+    try:
+        cleanup_runtime(previous)
+    except Exception as exc:
+        logger.warning("Failed to clean up engine %s: %s", previous, exc)
+
+    try:
+        prepare_runtime(current)
+    except Exception as exc:
+        logger.warning("Failed to prepare engine %s: %s", current, exc)
+
+
+def reload_model(engine: str | None, model_name: str) -> None:
+    """Reload a model when the selected engine exposes explicit reload support."""
+    module = _get_engine_module(engine)
+    reload_func = getattr(module, "reload_model", None)
+    if callable(reload_func):
+        reload_func(model_name)

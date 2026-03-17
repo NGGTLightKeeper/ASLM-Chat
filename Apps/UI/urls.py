@@ -12,5 +12,6 @@ urlpatterns = [
     path("api/chat/<uuid:chat_id>/", views.load_chat_api, name="load_chat_api"),
     path("api/models/", views.get_models_api, name="models_api"),
     path("api/model_info/", views.get_model_info_api, name="model_info_api"),
+    path("api/reload_model/", views.reload_model_api, name="reload_model_api"),
     path("api/runtime_settings/", views.runtime_settings_api, name="runtime_settings_api"),
 ]

@@ -11,6 +11,30 @@ from Settings import settings
 logger = logging.getLogger(__name__)
 
 
+def _get_load_config() -> dict[str, Any]:
+    """Return the persisted LM Studio load-time config without empty values."""
+    raw_config = settings.get("lms_load_config", {}) or {}
+    if not isinstance(raw_config, dict):
+        return {}
+
+    def _clean(value: Any) -> Any:
+        if isinstance(value, dict):
+            cleaned: dict[str, Any] = {}
+            for key, item in value.items():
+                cleaned_item = _clean(item)
+                if cleaned_item is not None:
+                    cleaned[key] = cleaned_item
+            return cleaned or None
+        if isinstance(value, list):
+            return value or None
+        if value in ("", None):
+            return None
+        return value
+
+    cleaned_config = _clean(raw_config)
+    return cleaned_config if isinstance(cleaned_config, dict) else {}
+
+
 def _get_sdk():
     """Import the LM Studio SDK lazily so Django can boot without the package."""
     try:
@@ -35,6 +59,14 @@ def _get_client():
         api_host = raw_address.strip().rstrip("/")
 
     return lms, lms.Client(api_host)
+
+
+def _get_model_handle(client: Any, model_name: str):
+    """Return an LM Studio model handle using the configured load-time options."""
+    load_config = _get_load_config()
+    if load_config:
+        return client.llm.model(model_name, config=load_config)
+    return client.llm.model(model_name)
 
 
 def _build_chat_history(lms, messages: list[dict[str, Any]]):
@@ -132,6 +164,70 @@ def get_models() -> list[Any]:
     return merged_models
 
 
+def cleanup_runtime() -> None:
+    """Unload every currently loaded LM Studio model."""
+    _lms, client = _get_client()
+
+    try:
+        loaded_models = list(client.list_loaded_models())
+    except Exception as exc:
+        logger.warning("[LM Studio API] Could not list loaded models for unload: %s", exc)
+        return
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+    for entry in loaded_models:
+        unload = getattr(entry, "unload", None)
+        if callable(unload):
+            try:
+                unload()
+                continue
+            except Exception as exc:
+                logger.warning("[LM Studio API] Failed to unload model via handle: %s", exc)
+
+        model_name = _coerce_model_name(entry)
+        if not model_name:
+            continue
+
+        _lms, client = _get_client()
+        try:
+            handle = client.llm.model(model_name)
+            unload = getattr(handle, "unload", None)
+            if callable(unload):
+                unload()
+        except Exception as exc:
+            logger.warning("[LM Studio API] Failed to unload model %s: %s", model_name, exc)
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+
+def reload_model(model_name: str) -> None:
+    """Unload and reload the selected model with the current load-time config."""
+    if not model_name:
+        return
+
+    cleanup_runtime()
+
+    _lms, client = _get_client()
+    try:
+        model = _get_model_handle(client, model_name)
+        # Trigger a lightweight metadata call so the new load config is applied immediately.
+        get_context_length = getattr(model, "get_context_length", None)
+        if callable(get_context_length):
+            get_context_length()
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
 def download_model(model_name: str, **kwargs: Any) -> Any:
     """LM Studio model downloads are managed by LM Studio itself."""
     raise NotImplementedError("LM Studio model downloads are managed by LM Studio.")
@@ -145,7 +241,7 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
     stream = bool(kwargs.get("stream", False))
 
     try:
-        model = client.llm.model(model_name)
+        model = _get_model_handle(client, model_name)
         if stream:
             for fragment in model.respond_stream(chat, config=options or None):
                 content = getattr(fragment, "content", "") or ""
@@ -168,41 +264,17 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
 
 
 def get_model_settings(model_name: str) -> dict[str, Any]:
-    """Return basic capability metadata for an LM Studio model."""
-    _lms, client = _get_client()
-
-    try:
-        model = client.llm.model(model_name)
-        info = model.get_info()
-        context_length = model.get_context_length()
-    except Exception as exc:
-        logger.error("[LM Studio API] Error fetching settings for %s: %s", model_name, exc)
-        raise
-    finally:
-        try:
-            client.close()
-        except Exception:
-            pass
-
-    info_payload = info.to_dict() if hasattr(info, "to_dict") else {}
-    capabilities = []
-
-    vision_markers = [
-        getattr(info, "vision", None),
-        getattr(info, "supports_vision", None),
-        info_payload.get("vision"),
-        info_payload.get("supports_vision"),
-    ]
-    if any(bool(marker) for marker in vision_markers):
-        capabilities.append("vision")
+    """Return generic capability metadata without forcing a model load."""
+    info_payload: dict[str, Any] = {"model": model_name}
+    capabilities: list[str] = []
 
     return {
         "model": model_name,
-        "context_length": int(context_length or 8192),
+        "context_length": 8192,
         "defaults": {},
         "supports_thinking": False,
         "supports_think_level": False,
-        "supports_vision": "vision" in capabilities,
+        "supports_vision": False,
         "capabilities": capabilities,
         "raw": info_payload,
     }

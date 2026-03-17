@@ -33,13 +33,12 @@ class ModelNameExtractionTests(SimpleTestCase):
 class MainViewTests(TestCase):
     """Verify that the main page uses the configured LLM engine helpers."""
 
-    @patch("Apps.UI.views._load_models_for_engine", return_value=["llama3"])
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
-    def test_main_view_includes_models_and_engine(self, _mock_engine, _mock_models):
+    def test_main_view_includes_models_and_engine(self, _mock_engine):
         response = self.client.get(reverse("main"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["models"], ["llama3"])
+        self.assertEqual(response.context["models"], [])
         self.assertEqual(response.context["llm_engine"], "ollama-service")
         self.assertIn("runtime_settings", response.context)
 
@@ -71,9 +70,15 @@ class ChatApiTests(TestCase):
     def setUp(self):
         self.client = Client()
 
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
-    def test_chat_api_creates_new_chat_and_streams_response(self, _mock_engine, mock_generate):
+    def test_chat_api_creates_new_chat_and_streams_response(
+        self,
+        _mock_engine,
+        mock_generate,
+        mock_prepare_runtime,
+    ):
         mock_generate.return_value = [{"message": {"content": "Hi there"}}]
 
         response = self.client.post(
@@ -87,21 +92,21 @@ class ChatApiTests(TestCase):
         self.assertEqual(b"".join(response.streaming_content), b"Hi there")
         self.assertEqual(Chat.objects.count(), 1)
         self.assertEqual(Chat.objects.first().messages.count(), 2)
+        mock_prepare_runtime.assert_called_once_with("ollama-service")
 
 
 class RuntimeSettingsApiTests(TestCase):
     """Verify runtime settings and dynamic model selection endpoints."""
 
-    @patch("Apps.UI.views._load_models_for_engine", return_value=["gpt-oss"])
-    def test_get_runtime_settings_payload(self, mock_models):
+    def test_get_runtime_settings_payload(self):
         response = self.client.get(reverse("runtime_settings_api"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["models"], ["gpt-oss"])
-        mock_models.assert_called_once()
+        self.assertNotIn("models", response.json())
+        self.assertIn("lms_load_config", response.json())
 
-    @patch("Apps.UI.views._load_models_for_engine", return_value=["qwen"])
-    def test_post_runtime_settings_updates_engine(self, mock_models):
+    @patch("Apps.UI.views.llm_api.handle_engine_transition")
+    def test_post_runtime_settings_updates_engine(self, mock_transition):
         response = self.client.post(
             reverse("runtime_settings_api"),
             data='{"llm-engine":"openai","openai_url":"http://127.0.0.1:9000/v1"}',
@@ -112,9 +117,10 @@ class RuntimeSettingsApiTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["llm-engine"], "openai")
         self.assertEqual(payload["openai_url"], "127.0.0.1:9000/v1")
-        self.assertEqual(payload["models"], ["qwen"])
+        self.assertNotIn("models", payload)
         self.assertFalse(payload["has_openai_api_key"])
-        mock_models.assert_called_once_with("openai")
+        mock_transition.assert_called_once()
+        self.assertEqual(mock_transition.call_args.args[1], "openai")
 
     @patch("Apps.UI.views._load_models_for_engine", return_value=["llama3"])
     def test_models_api_returns_engine_specific_models(self, mock_models):
@@ -124,8 +130,19 @@ class RuntimeSettingsApiTests(TestCase):
         self.assertEqual(response.json(), {"engine": "lms", "models": ["llama3"]})
         mock_models.assert_called_once_with("lms")
 
+    @patch("Apps.UI.views.llm_api.reload_model")
+    def test_reload_model_api_reloads_selected_engine_model(self, mock_reload):
+        response = self.client.post(
+            reverse("reload_model_api"),
+            data='{"engine":"lms","model":"qwen"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"engine": "lms", "model": "qwen", "reloaded": True})
+        mock_reload.assert_called_once_with("lms", "qwen")
+
     @patch("Apps.UI.views.settings.get_supported_engines", return_value=[])
-    @patch("Apps.UI.views._load_models_for_engine", return_value=["gpt-oss"])
     @patch(
         "Apps.UI.views.settings.get_runtime_engine_settings",
         return_value={
@@ -139,7 +156,6 @@ class RuntimeSettingsApiTests(TestCase):
     def test_runtime_settings_payload_does_not_expose_api_key(
         self,
         _mock_runtime_settings,
-        _mock_models,
         _mock_engines,
     ):
         response = self.client.get(reverse("runtime_settings_api"))

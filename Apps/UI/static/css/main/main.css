@@ -332,20 +332,85 @@
   gap: 4px;
 }
 
-.setting-checkbox-row {
-  display: inline-flex;
+.setting-switch-row {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
+  min-height: 28px;
   color: var(--c-text);
-  font-size: var(--font-size-body-2);
+  font-size: var(--font-size-caption-2);
   cursor: pointer;
   user-select: none;
 }
 
-.setting-checkbox {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--c-primary);
+.setting-switch-text {
+  flex: 1;
+  color: var(--c-text);
+}
+
+.setting-switch-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.setting-switch-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.setting-switch-slider {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 34px;
+  height: 20px;
+  padding: 2px;
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  background: var(--surface-tertiary);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  transition: background var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.setting-switch-slider::before {
+  content: '';
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--c-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.32);
+  transform: translateX(0);
+  transition: transform var(--t-fast), background var(--t-fast);
+}
+
+.setting-switch-row:hover .setting-switch-slider {
+  border-color: var(--c-gray-2);
+  background: var(--surface-hover);
+}
+
+.setting-switch-input:checked + .setting-switch-slider {
+  background: var(--c-primary);
+  border-color: transparent;
+  box-shadow: 0 0 0 1px rgba(10, 132, 255, 0.18);
+}
+
+.setting-switch-input:checked + .setting-switch-slider::before {
+  transform: translateX(14px);
+}
+
+.setting-switch-input:focus-visible + .setting-switch-slider {
+  outline: 2px solid rgba(10, 132, 255, 0.34);
+  outline-offset: 2px;
 }
 
 .setting-label {
@@ -436,6 +501,31 @@
 .setting-input {
   min-height: 40px;
   padding: 9px 12px;
+}
+
+.setting-control-compact {
+  min-height: 30px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  padding-left: 10px;
+  padding-right: 10px;
+  font-size: var(--font-size-caption-2);
+}
+
+.setting-textarea.setting-control-compact {
+  min-height: 56px;
+}
+
+.setting-switch-row-compact {
+  min-height: 22px;
+}
+
+.setting-dependent-field {
+  display: block;
+}
+
+.setting-dependent-field.is-hidden {
+  display: none;
 }
 
 .setting-textarea::placeholder {

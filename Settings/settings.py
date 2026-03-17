@@ -55,6 +55,7 @@ DEFAULTS: dict[str, Any] = {
     "ollama-service_models": None,
     "lms": False,
     "lms_url": "127.0.0.1:1234",
+    "lms_load_config": {},
     "openai": False,
     "openai_url": "127.0.0.1:8000/v1",
     "openai_api_key": "",
@@ -329,6 +330,7 @@ def get_runtime_engine_settings() -> dict[str, Any]:
     return {
         "llm-engine": active_engine,
         "lms_url": normalize_engine_address(get("lms_url", DEFAULTS["lms_url"])),
+        "lms_load_config": dict(get("lms_load_config", DEFAULTS["lms_load_config"]) or {}),
         "openai_url": normalize_engine_address(get("openai_url", DEFAULTS["openai_url"])),
         "has_openai_api_key": bool(openai_api_key),
         "engine_urls": {

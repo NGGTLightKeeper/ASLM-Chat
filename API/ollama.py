@@ -12,6 +12,28 @@ from Settings import settings
 logger = logging.getLogger(__name__)
 
 
+def prepare_runtime() -> None:
+    """Ensure the managed Ollama runtime is available before a request is sent."""
+    try:
+        import importlib
+
+        ollama_service = importlib.import_module("Services.ollama-service")
+        ollama_service.start_ollama()
+    except ImportError as exc:
+        logger.warning("[Ollama API] Could not import Services.ollama-service: %s", exc)
+
+
+def cleanup_runtime() -> None:
+    """Stop the managed Ollama runtime when the engine is deselected."""
+    try:
+        import importlib
+
+        ollama_service = importlib.import_module("Services.ollama-service")
+        ollama_service.stop_ollama()
+    except ImportError as exc:
+        logger.warning("[Ollama API] Could not import Services.ollama-service: %s", exc)
+
+
 def get_client() -> ollama.Client:
     """Create an Ollama client using the configured local service port."""
     port = settings.get("ollama-service_port", 30002)

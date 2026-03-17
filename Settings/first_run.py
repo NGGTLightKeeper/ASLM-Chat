@@ -20,6 +20,7 @@ def run(log: bool = False, ui_port: int = 30000, api_port: int = 30001) -> None:
             "debug": existing.get("debug", False),
             "llm-engine": existing.get("llm-engine", "ollama-service"),
             "lms_url": existing.get("lms_url", "127.0.0.1:1234"),
+            "lms_load_config": existing.get("lms_load_config", {}),
             "openai_url": existing.get("openai_url", "127.0.0.1:8000/v1"),
             "openai_api_key": existing.get("openai_api_key", ""),
         }

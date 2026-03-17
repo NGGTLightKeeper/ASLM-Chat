@@ -67,7 +67,7 @@ def _build_base_context() -> dict[str, Any]:
     engine = _get_active_engine(runtime_settings.get("llm-engine"))
     return {
         "llm_engine": engine,
-        "models": _load_models_for_engine(engine),
+        "models": [],
         "engine_options": settings.get_supported_engines(),
         "runtime_settings": runtime_settings,
         "chats": Chat.objects.all(),
@@ -81,7 +81,6 @@ def _build_runtime_settings_payload() -> dict[str, Any]:
     runtime_settings["llm-engine"] = active_engine
     runtime_settings["active_url"] = runtime_settings["engine_urls"].get(active_engine, "")
     runtime_settings["engine_options"] = settings.get_supported_engines()
-    runtime_settings["models"] = _load_models_for_engine(active_engine)
     return runtime_settings
 
 
@@ -347,6 +346,7 @@ def chat_api(request):
             is_thinking = False
 
             try:
+                llm_api.prepare_runtime(engine)
                 response_iterator = llm_api.generate(**generate_kwargs)
                 for chunk in response_iterator:
                     raw_message = chunk.get("message", {}) if isinstance(chunk, dict) else getattr(chunk, "message", {})
@@ -440,6 +440,33 @@ def get_models_api(request):
     return JsonResponse({"engine": engine, "models": _load_models_for_engine(engine)})
 
 
+def reload_model_api(request):
+    """Reload the selected model when the active engine supports explicit reload."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON format"}, status=400)
+
+    model_name = str(data.get("model", "") or "").strip()
+    engine = _get_active_engine(data.get("engine"))
+    if not model_name:
+        return JsonResponse({"error": "Model parameter is required"}, status=400)
+
+    try:
+        llm_api.reload_model(engine, model_name)
+    except NotImplementedError as exc:
+        logger.info("Model reload is not implemented for engine %s: %s", engine, exc)
+        return JsonResponse({"error": str(exc)}, status=501)
+    except Exception as exc:
+        logger.exception("Error reloading model %s on engine %s", model_name, engine)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+    return JsonResponse({"engine": engine, "model": model_name, "reloaded": True})
+
+
 def runtime_settings_api(request):
     """Read or update runtime engine settings used by the chat UI."""
     if request.method == "GET":
@@ -453,7 +480,10 @@ def runtime_settings_api(request):
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON format"}, status=400)
 
-    allowed_keys = {"llm-engine", "lms_url", "openai_url", "openai_api_key"}
+    allowed_keys = {"llm-engine", "lms_url", "lms_load_config", "openai_url", "openai_api_key"}
+
+    previous_engine = settings.get_llm_engine()
+    next_engine = previous_engine
 
     for raw_key, raw_value in data.items():
         if raw_key not in allowed_keys:
@@ -461,10 +491,15 @@ def runtime_settings_api(request):
 
         if raw_key == "llm-engine":
             value = settings.normalize_engine_name(raw_value)
+            next_engine = value
+        elif raw_key == "lms_load_config":
+            value = raw_value if isinstance(raw_value, dict) else {}
         else:
             value = str(raw_value or "").strip()
 
         settings.set(raw_key, value)
+
+    llm_api.handle_engine_transition(previous_engine, next_engine)
 
     return JsonResponse(_build_runtime_settings_payload())
 
