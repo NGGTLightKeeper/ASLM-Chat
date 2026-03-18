@@ -4,19 +4,59 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import subprocess
 from typing import Any
 
 from django.http import JsonResponse, StreamingHttpResponse
 from django.views.generic import TemplateView
 
 from API import llm_api
-from Apps.Data.models import Chat, Message, MessageImage
+from Apps.Data.ollama_presets import (
+    activate_ollama_preset,
+    create_ollama_preset,
+    delete_ollama_preset,
+    get_ollama_preset_payload,
+    rename_ollama_preset,
+    sync_active_ollama_preset,
+)
+from Apps.Data.models import Chat, Message, MessageImage, OllamaPreset
 from Settings import settings
 
 logger = logging.getLogger(__name__)
 
 THINK_PARAM_NAMES = {"think", "thinking", "reasoning"}
 THINK_LEVEL_PARAM_NAMES = {"think_level", "thinking_level", "reasoning_effort"}
+
+
+def _get_local_gpu_devices() -> list[dict[str, Any]]:
+    """Return local NVIDIA GPU devices with both numeric ids and labels."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,name", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    devices: list[dict[str, Any]] = []
+    for line in result.stdout.splitlines():
+        parts = [part.strip() for part in line.split(",", 1)]
+        if len(parts) != 2 or not parts[0]:
+            continue
+        try:
+            device_id = int(parts[0])
+        except ValueError:
+            continue
+        devices.append({"id": device_id, "name": parts[1] or f"GPU {device_id}"})
+
+    return devices
 
 
 def _get_active_engine(requested_engine: str | None = None) -> str:
@@ -122,6 +162,7 @@ def _serialize_message(message: Message) -> dict[str, Any]:
 def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
     """Parse Ollama-specific model metadata into a frontend-friendly payload."""
     context_length = 8192
+    model_layers = 0
     defaults: dict[str, Any] = {}
 
     if isinstance(settings_data, dict):
@@ -141,7 +182,11 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
                 context_length = int(value)
             except (TypeError, ValueError):
                 pass
-            break
+        if key.endswith(".block_count"):
+            try:
+                model_layers = int(value)
+            except (TypeError, ValueError):
+                pass
 
     if parameters_str:
         for line in parameters_str.strip().splitlines():
@@ -179,15 +224,26 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
             break
 
     supports_vision = "vision" in capabilities
+    cpu_threads = max(int(os.cpu_count() or 1), 1)
+    gpu_devices = _get_local_gpu_devices()
+    gpu_count = len(gpu_devices)
 
     return {
         "context_length": context_length,
+        "model_layers": model_layers,
         "defaults": defaults,
         "supports_thinking": supports_thinking,
         "supports_think_level": supports_think_level,
         "think_param_name": think_param_name,
         "think_level_param_name": think_level_param_name,
         "supports_vision": supports_vision,
+        "runtime_limits": {
+            "cpu_threads": cpu_threads,
+            "gpu_count": gpu_count,
+            "gpu_devices": gpu_devices,
+            "main_gpu_max": max(gpu_count - 1, 0),
+            "model_layers": model_layers,
+        },
     }
 
 
@@ -232,12 +288,27 @@ def _build_model_info_payload(engine: str, model_name: str) -> dict[str, Any]:
     settings_data = llm_api.get_model_settings(engine, model_name)
     if settings.is_ollama_engine(engine):
         payload = _extract_ollama_model_info(settings_data)
+        preset_payload = get_ollama_preset_payload(model_name)
+        payload["defaults"] = {**payload.get("defaults", {}), **preset_payload["active_config"]}
+        payload["ollama_presets"] = preset_payload
     else:
         payload = _extract_generic_model_info(settings_data)
 
     payload["model"] = model_name
     payload["engine"] = engine
     return payload
+
+
+def _read_json_request_body(request) -> dict[str, Any]:
+    """Parse a JSON request body and return an empty mapping on failure."""
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Invalid JSON format") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError("JSON body must be an object")
+    return data
 
 
 class MainView(TemplateView):
@@ -438,6 +509,132 @@ def get_models_api(request):
 
     engine = _get_active_engine(request.GET.get("engine"))
     return JsonResponse({"engine": engine, "models": _load_models_for_engine(engine)})
+
+
+def get_ollama_presets_api(request):
+    """Return preset metadata for the selected Ollama model."""
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    model_name = str(request.GET.get("model", "") or "").strip()
+    if not model_name:
+        return JsonResponse({"error": "Model parameter is required"}, status=400)
+
+    try:
+        return JsonResponse(get_ollama_preset_payload(model_name))
+    except Exception as exc:
+        logger.exception("Error getting Ollama presets for %s", model_name)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def sync_ollama_preset_api(request):
+    """Persist UI changes to the active Ollama preset."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return JsonResponse(sync_active_ollama_preset(model_name, config))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error syncing Ollama preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def select_ollama_preset_api(request):
+    """Set the active preset for an Ollama model."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return JsonResponse(activate_ollama_preset(model_name, preset_id))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except OllamaPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error selecting Ollama preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def create_ollama_preset_api(request):
+    """Create a new Ollama preset for the selected model."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return JsonResponse(
+            create_ollama_preset(
+                model_name,
+                name=preset_name or None,
+                config=config if isinstance(config, dict) else {},
+                activate=True,
+            )
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error creating Ollama preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def rename_ollama_preset_api(request):
+    """Rename an existing custom Ollama preset."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        if not model_name or not preset_id or not preset_name:
+            return JsonResponse({"error": "Model, preset_id and name are required"}, status=400)
+        return JsonResponse(rename_ollama_preset(model_name, preset_id, preset_name))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except OllamaPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error renaming Ollama preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def delete_ollama_preset_api(request):
+    """Delete an existing custom Ollama preset."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return JsonResponse(delete_ollama_preset(model_name, preset_id))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except OllamaPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error deleting Ollama preset")
+        return JsonResponse({"error": str(exc)}, status=500)
 
 
 def reload_model_api(request):

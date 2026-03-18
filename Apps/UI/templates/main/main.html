@@ -184,6 +184,17 @@
                             <option value="">Models load on demand</option>
                         {% endif %}
                     </select>
+                    <div class="setting-group" id="ollamaPresetGroup" style="display:none;">
+                        <label class="setting-label" for="ollamaPresetSelector">Preset</label>
+                        <select class="model-selector" id="ollamaPresetSelector">
+                            <option value="">Default</option>
+                        </select>
+                        <div class="preset-actions">
+                            <button class="preset-action-btn" id="ollamaPresetCreateBtn" type="button">New</button>
+                            <button class="preset-action-btn" id="ollamaPresetRenameBtn" type="button">Rename</button>
+                            <button class="preset-action-btn preset-action-btn-danger" id="ollamaPresetDeleteBtn" type="button">Delete</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -263,5 +274,5 @@
 {% block extra_js %}
 {{ runtime_settings|json_script:"runtimeSettingsData" }}
 {{ engine_options|json_script:"engineOptionsData" }}
-<script src="{% static 'js/main/main.js' %}?v=20260318a"></script>
+<script src="{% static 'js/main/main.js' %}?v=20260318d"></script>
 {% endblock %}

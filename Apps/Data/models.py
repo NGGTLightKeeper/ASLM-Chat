@@ -62,3 +62,28 @@ class MessageImage(models.Model):
 
     def __str__(self) -> str:
         return f"Image #{self.order} for message {self.message_id}"
+
+
+class OllamaPreset(models.Model):
+    """Persist per-model Ollama presets used by the chat UI."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    model_name = models.CharField(max_length=255, db_index=True)
+    name = models.CharField(max_length=120)
+    config = models.JSONField(default=dict)
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["model_name", "-is_active", "-is_default", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["model_name", "name"],
+                name="unique_ollama_preset_name_per_model",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.model_name} :: {self.name}"

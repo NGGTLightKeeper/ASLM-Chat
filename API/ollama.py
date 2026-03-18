@@ -11,6 +11,8 @@ from Settings import settings
 
 logger = logging.getLogger(__name__)
 
+OLLAMA_TOP_LEVEL_CHAT_KEYS = {"format", "keep_alive", "logprobs", "top_logprobs"}
+
 
 def prepare_runtime() -> None:
     """Ensure the managed Ollama runtime is available before a request is sent."""
@@ -74,14 +76,21 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any) -> 
         think = kwargs.pop("think", None)
         think_level = kwargs.pop("think_level", None)
         call_kwargs = {key: value for key, value in kwargs.items() if key not in {"system", "prompt"}}
+        options = call_kwargs.get("options")
+
+        if isinstance(options, dict):
+            for key in OLLAMA_TOP_LEVEL_CHAT_KEYS:
+                if key in options:
+                    call_kwargs[key] = options.pop(key)
+
+            if not options:
+                call_kwargs.pop("options", None)
 
         if think is not None:
-            call_kwargs["think"] = think
-
-        if think_level is not None:
-            options = call_kwargs.setdefault("options", {})
-            if isinstance(options, dict):
-                options["think_level"] = think_level
+            if bool(think) and think_level in {"low", "medium", "high"}:
+                call_kwargs["think"] = think_level
+            else:
+                call_kwargs["think"] = think
 
         return client.chat(model=model_name, messages=messages, **call_kwargs)
     except Exception as exc:

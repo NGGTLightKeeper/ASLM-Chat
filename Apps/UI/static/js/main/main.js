@@ -22,6 +22,11 @@ $(function () {
   const $engineApiKeyInput = $('#engineApiKeyInput');
   const $engineApiKeyStatus = $('#engineApiKeyStatus');
   const $modelSelector = $('#modelSelector');
+  const $ollamaPresetGroup = $('#ollamaPresetGroup');
+  const $ollamaPresetSelector = $('#ollamaPresetSelector');
+  const $ollamaPresetCreateBtn = $('#ollamaPresetCreateBtn');
+  const $ollamaPresetRenameBtn = $('#ollamaPresetRenameBtn');
+  const $ollamaPresetDeleteBtn = $('#ollamaPresetDeleteBtn');
 
   let runtimeSettings = parseJsonScript('runtimeSettingsData') || {};
   let currentChatId = null;
@@ -29,6 +34,12 @@ $(function () {
   let activeEngine = 'ollama-service';
   let lmsLoadConfigDirty = false;
   const modelsCache = {};
+  let ollamaPresetState = {
+    model: '',
+    activePresetId: '',
+    presets: []
+  };
+  let ollamaPresetSyncTimer = null;
 
   const ENGINE_ALIASES = {
     ollama: 'ollama-service',
@@ -82,25 +93,143 @@ $(function () {
     },
     num_ctx: {
       label: 'Context Length',
-      type: 'range',
+      type: 'token-range',
       group: 'settings',
       engines: ['ollama-service'],
-      min: 256,
+      min: 128,
       max: 131072,
-      step: 256,
+      step: 128,
       decimals: 0,
-      fallback: 4096
+      fallback: 32768,
+      note: 'Context window in tokens.'
     },
     num_predict: {
       label: 'Max Output Tokens',
-      type: 'range',
+      type: 'token-range',
       group: 'settings',
       engines: ['ollama-service'],
-      min: -2,
+      min: 128,
       max: 32768,
-      step: 32,
+      step: 128,
       decimals: 0,
-      fallback: 512
+      fallback: 8192,
+      note: 'Maximum generated tokens.'
+    },
+    numa: {
+      label: 'NUMA',
+      type: 'boolean',
+      group: 'load',
+      engines: ['ollama-service'],
+      fallback: false,
+      note: 'NUMA-aware memory placement.'
+    },
+    num_batch: {
+      label: 'Batch Size',
+      type: 'optional-number',
+      group: 'load',
+      engines: ['ollama-service'],
+      min: 1,
+      max: 8192,
+      step: 1,
+      decimals: 0,
+      fallback: null,
+      note: 'Prompt batch size.'
+    },
+    num_gpu: {
+      label: 'GPU Layers',
+      type: 'optional-number',
+      group: 'load',
+      engines: ['ollama-service'],
+      min: 0,
+      max: 999,
+      step: 1,
+      decimals: 0,
+      fallback: null,
+      note: 'Layers offloaded to GPU.'
+    },
+    main_gpu: {
+      label: 'Main GPU',
+      type: 'select',
+      valueType: 'integer',
+      group: 'load',
+      engines: ['ollama-service'],
+      min: 0,
+      max: 16,
+      step: 1,
+      decimals: 0,
+      fallback: null,
+      options: [
+        { value: '', label: 'Automatic' }
+      ],
+      note: 'Primary GPU'
+    },
+    low_vram: {
+      label: 'Low VRAM',
+      type: 'boolean',
+      group: 'load',
+      engines: ['ollama-service'],
+      fallback: false,
+      note: 'Lower VRAM usage.'
+    },
+    f16_kv: {
+      label: 'Use FP16 KV Cache',
+      type: 'boolean',
+      group: 'load',
+      engines: ['ollama-service'],
+      fallback: false,
+      note: 'Use FP16 KV cache.'
+    },
+    logits_all: {
+      label: 'Return Full Logits',
+      type: 'boolean',
+      group: 'load',
+      engines: ['ollama-service'],
+      fallback: false,
+      note: 'Return logits for all tokens.'
+    },
+    vocab_only: {
+      label: 'Vocabulary Only',
+      type: 'boolean',
+      group: 'load',
+      engines: ['ollama-service'],
+      fallback: false,
+      note: 'Vocabulary-only load.'
+    },
+    use_mmap: {
+      label: 'Use Memory Map',
+      type: 'boolean',
+      group: 'load',
+      engines: ['ollama-service'],
+      fallback: false,
+      note: 'Use memory mapping.'
+    },
+    use_mlock: {
+      label: 'Use Memory Lock',
+      type: 'boolean',
+      group: 'load',
+      engines: ['ollama-service'],
+      fallback: false,
+      note: 'Lock model pages in RAM.'
+    },
+    embedding_only: {
+      label: 'Embedding Only',
+      type: 'boolean',
+      group: 'load',
+      engines: ['ollama-service'],
+      fallback: false,
+      note: 'Embedding-only load.'
+    },
+    num_thread: {
+      label: 'CPU Threads',
+      type: 'optional-number',
+      group: 'load',
+      engines: ['ollama-service'],
+      min: 1,
+      max: 128,
+      step: 1,
+      decimals: 0,
+      fallback: null,
+      note: 'CPU threads'
     },
     num_keep: {
       label: 'Keep Prompt Tokens',
@@ -111,7 +240,8 @@ $(function () {
       max: 2048,
       step: 1,
       decimals: 0,
-      fallback: 0
+      fallback: 0,
+      note: '-1 keeps all, 0 is automatic.'
     },
     seed: {
       label: 'Seed',
@@ -122,7 +252,8 @@ $(function () {
       max: 2147483647,
       step: 1,
       decimals: 0,
-      fallback: null
+      fallback: null,
+      note: 'Deterministic seed.'
     },
     top_p: {
       label: 'Top P',
@@ -188,7 +319,41 @@ $(function () {
       max: 2,
       step: 0.01,
       decimals: 2,
+      fallback: 1.0,
+      note: 'Tail-free sampling.'
+    },
+    typical_p: {
+      label: 'Typical P',
+      type: 'range',
+      group: 'sampling',
+      engines: ['ollama-service'],
+      min: 0,
+      max: 1,
+      step: 0.01,
+      decimals: 2,
       fallback: 1.0
+    },
+    presence_penalty: {
+      label: 'Presence Penalty',
+      type: 'range',
+      group: 'sampling',
+      engines: ['ollama-service', 'openai'],
+      min: -2,
+      max: 2,
+      step: 0.1,
+      decimals: 1,
+      fallback: 0.0
+    },
+    frequency_penalty: {
+      label: 'Frequency Penalty',
+      type: 'range',
+      group: 'sampling',
+      engines: ['ollama-service', 'openai'],
+      min: -2,
+      max: 2,
+      step: 0.1,
+      decimals: 1,
+      fallback: 0.0
     },
     mirostat: {
       label: 'Mirostat',
@@ -231,6 +396,50 @@ $(function () {
       group: 'advanced',
       engines: ['ollama-service', 'openai'],
       fallback: null
+    },
+    logprobs: {
+      label: 'Logprobs',
+      type: 'boolean',
+      group: 'custom',
+      engines: ['ollama-service', 'openai'],
+      fallback: false
+    },
+    top_logprobs: {
+      label: 'Top Logprobs',
+      type: 'range',
+      group: 'advanced',
+      engines: ['ollama-service', 'openai'],
+      min: 0,
+      max: 20,
+      step: 1,
+      decimals: 0,
+      fallback: 0,
+      note: 'Alternative token logprobs.'
+    },
+    keep_alive: {
+      label: 'Keep Alive',
+      type: 'string',
+      group: 'load',
+      engines: ['ollama-service'],
+      fallback: '',
+      note: 'How long to keep the model loaded.',
+      example: '5m, 30s, 1h, -1'
+    },
+    format: {
+      label: 'Response Format',
+      type: 'json',
+      group: 'advanced',
+      engines: ['ollama-service'],
+      fallback: null,
+      note: 'JSON mode or JSON schema.'
+    },
+    penalize_newline: {
+      label: 'Penalize Newline',
+      type: 'boolean',
+      group: 'advanced',
+      engines: ['ollama-service'],
+      fallback: false,
+      note: 'Penalize newline tokens too.'
     },
     maxTokens: {
       label: 'Max Output Tokens',
@@ -401,24 +610,6 @@ $(function () {
       step: 1,
       decimals: 0,
       fallback: 1
-    },
-    logprobs: {
-      label: 'Logprobs',
-      type: 'boolean',
-      group: 'custom',
-      engines: ['openai'],
-      fallback: false
-    },
-    top_logprobs: {
-      label: 'Top Logprobs',
-      type: 'range',
-      group: 'advanced',
-      engines: ['openai'],
-      min: 0,
-      max: 20,
-      step: 1,
-      decimals: 0,
-      fallback: 0
     },
     reasoning_effort: {
       label: 'Reasoning Effort',
@@ -733,6 +924,7 @@ $(function () {
     $modelSelector.empty().append(
       $('<option>').val('').text(placeholderText)
     );
+    resetOllamaPresetUi();
     resetDynamicPanels();
     renderLoadParameters();
     updateVisibleDividers();
@@ -765,6 +957,107 @@ $(function () {
     return $modelSelector.find('option').map(function () {
       return $(this).val();
     }).get().filter(Boolean);
+  }
+
+  function getSelectedModelName() {
+    return String($modelSelector.val() || '').trim();
+  }
+
+  function getActiveOllamaPreset() {
+    return (ollamaPresetState.presets || []).find(function (preset) {
+      return preset.id === ollamaPresetState.activePresetId;
+    }) || null;
+  }
+
+  function resetOllamaPresetUi() {
+    ollamaPresetState = {
+      model: '',
+      activePresetId: '',
+      presets: []
+    };
+    $ollamaPresetSelector.empty().append('<option value="">Default</option>');
+    $ollamaPresetGroup.hide();
+    $ollamaPresetRenameBtn.prop('disabled', true);
+    $ollamaPresetDeleteBtn.prop('disabled', true);
+  }
+
+  function applyOllamaPresetState(payload) {
+    if (!payload || getActiveEngine() !== 'ollama-service' || !getSelectedModelName()) {
+      resetOllamaPresetUi();
+      return;
+    }
+
+    ollamaPresetState = {
+      model: payload.model || getSelectedModelName(),
+      activePresetId: payload.active_preset_id || '',
+      presets: Array.isArray(payload.presets) ? payload.presets : []
+    };
+
+    $ollamaPresetSelector.empty();
+    ollamaPresetState.presets.forEach(function (preset) {
+      const label = preset.is_default ? `${preset.name} (Default)` : preset.name;
+      const $option = $('<option>').val(preset.id).text(label);
+      if (preset.id === ollamaPresetState.activePresetId) {
+        $option.prop('selected', true);
+      }
+      $ollamaPresetSelector.append($option);
+    });
+
+    const activePreset = getActiveOllamaPreset();
+    const isDefaultPreset = !activePreset || !!activePreset.is_default;
+    $ollamaPresetRenameBtn.prop('disabled', isDefaultPreset);
+    $ollamaPresetDeleteBtn.prop('disabled', isDefaultPreset);
+    $ollamaPresetGroup.show();
+  }
+
+  async function postJson(url, payload) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrfToken()
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(function () {
+        return {};
+      });
+      throw new Error(errorData.error || `Request failed: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async function syncActiveOllamaPreset() {
+    if (getActiveEngine() !== 'ollama-service') {
+      return;
+    }
+
+    const modelName = getSelectedModelName();
+    if (!modelName) {
+      return;
+    }
+
+    const payload = await postJson('/api/ollama_presets/sync/', {
+      model: modelName,
+      config: collectOptionsPayload()
+    });
+    applyOllamaPresetState(payload);
+  }
+
+  function scheduleOllamaPresetSync() {
+    if (getActiveEngine() !== 'ollama-service') {
+      return;
+    }
+
+    window.clearTimeout(ollamaPresetSyncTimer);
+    ollamaPresetSyncTimer = window.setTimeout(function () {
+      syncActiveOllamaPreset().catch(function (error) {
+        console.error('Failed to sync Ollama preset:', error);
+      });
+    }, 220);
   }
 
   function renderModelOptions(models, preferredModel) {
@@ -1128,6 +1421,153 @@ $(function () {
     $('.settings-divider[id^="divider-"]').not('#divider-connection').hide();
   }
 
+  function getParameterNote(config) {
+    if (!config) {
+      return '';
+    }
+
+    if (config.note) {
+      return config.note;
+    }
+
+    if (config.type === 'range' || config.type === 'optional-number') {
+      const parts = [`Range: ${config.min} - ${config.max}`];
+      if (config.step !== undefined) {
+        parts.push(`step ${config.step}`);
+      }
+      return parts.join(', ');
+    }
+
+    if (config.type === 'select' && Array.isArray(config.options)) {
+      const labels = config.options.map(function (option) {
+        return typeof option === 'object' ? option.label : String(option);
+      });
+      return `Options: ${labels.join(', ')}`;
+    }
+
+    if (config.type === 'json') {
+      return 'Accepts a JSON object/array. Plain text is also accepted when supported by the engine.';
+    }
+
+    if (config.type === 'string' && config.example) {
+      return `Example: ${config.example}`;
+    }
+
+    return '';
+  }
+
+  function formatParameterMetaValue(value) {
+    if (value === null || value === undefined || value === '') {
+      return 'auto';
+    }
+    return String(value);
+  }
+
+  function getParameterMeta(config) {
+    if (!config) {
+      return [];
+    }
+
+    const meta = [];
+    if (config.min !== undefined) {
+      meta.push({ label: 'Min', value: formatParameterMetaValue(config.min) });
+    }
+    if (config.max !== undefined) {
+      meta.push({ label: 'Max', value: formatParameterMetaValue(config.max) });
+    }
+    if (config.step !== undefined) {
+      meta.push({ label: 'Step', value: formatParameterMetaValue(config.step) });
+    }
+    if (config.fallback !== undefined) {
+      meta.push({ label: 'Default', value: formatParameterMetaValue(config.fallback) });
+    }
+    return meta;
+  }
+
+  function getInputPlaceholder(config) {
+    if (!config) {
+      return '';
+    }
+
+    if (config.placeholder) {
+      return config.placeholder;
+    }
+
+    if (config.example) {
+      return config.example;
+    }
+
+    if (config.type === 'optional-number' && config.min !== undefined && config.max !== undefined) {
+      return `${config.min} - ${config.max}`;
+    }
+
+    if (config.type === 'json') {
+      return 'Enter JSON value';
+    }
+
+    return '';
+  }
+
+  function renderParameterMeta(config) {
+    const metaItems = getParameterMeta(config);
+    if (!metaItems.length) {
+      return '';
+    }
+
+    return `
+      <div class="setting-meta" aria-hidden="true">
+        ${metaItems.map(function (item) {
+          return `
+            <span class="setting-meta-chip">
+              <span class="setting-meta-label">${item.label}</span>
+              <span class="setting-meta-value">${escapeAttributeValue(item.value)}</span>
+            </span>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  function buildTokenStepValues(minValue, maxValue) {
+    const values = [];
+    const normalizedMin = Math.max(128, Number(minValue) || 128);
+    const normalizedMax = Math.max(normalizedMin, Number(maxValue) || normalizedMin);
+
+    for (let value = normalizedMin; value <= Math.min(normalizedMax, 1024); value += 128) {
+      values.push(value);
+    }
+
+    if (normalizedMax > 1024) {
+      const start = values.length && values[values.length - 1] >= 1024 ? 2048 : 1024;
+      for (let value = start; value <= normalizedMax; value += 1024) {
+        if (!values.includes(value)) {
+          values.push(value);
+        }
+      }
+    }
+
+    if (!values.length || values[values.length - 1] !== normalizedMax) {
+      values.push(normalizedMax);
+    }
+
+    return values;
+  }
+
+  function resolveTokenRangeValue(rawValue, allowedValues) {
+    const numericValue = Number(rawValue);
+    if (!allowedValues.length) {
+      return Number.isFinite(numericValue) ? numericValue : 0;
+    }
+
+    if (!Number.isFinite(numericValue)) {
+      return allowedValues[0];
+    }
+
+    return allowedValues.reduce(function (closest, candidate) {
+      return Math.abs(candidate - numericValue) < Math.abs(closest - numericValue) ? candidate : closest;
+    }, allowedValues[0]);
+  }
+
   function renderKnownParameter(key, config, value, renderOptions) {
     const options = renderOptions || {};
     const groupId = options.groupId || getParameterGroup(key);
@@ -1137,6 +1577,9 @@ $(function () {
     const paramPath = options.paramPath || key;
     const compactClass = options.compact ? ' setting-control-compact' : '';
     const switchRowClass = options.compact ? ' setting-switch-row-compact' : '';
+    const noteText = getParameterNote(config);
+    const noteHtml = noteText ? `<p class="setting-note">${noteText}</p>` : '';
+    const metaHtml = renderParameterMeta(config);
     let html = '';
 
     if (config.type === 'select') {
@@ -1159,6 +1602,8 @@ $(function () {
               return `<option value="${escapeAttributeValue(String(optionValue))}"${String(optionValue) === String(normalizedValue) ? ' selected' : ''}>${optionLabel}</option>`;
             }).join('')}
           </select>
+          ${noteHtml}
+          ${metaHtml}
         </div>
       `;
     } else if (config.type === 'boolean') {
@@ -1178,10 +1623,12 @@ $(function () {
                 data-param="${key}"
                 data-param-path="${paramPath}"
                 data-value-type="boolean-switch"
-                ${normalizedValue ? 'checked' : ''}>
+              ${normalizedValue ? 'checked' : ''}>
               <span class="setting-switch-slider" aria-hidden="true"></span>
             </span>
           </label>
+          ${noteHtml}
+          ${metaHtml}
         </div>
       `;
     } else if (config.type === 'optional-number') {
@@ -1219,9 +1666,13 @@ $(function () {
               min="${config.min}"
               max="${config.max}"
               step="${config.step}"
+              placeholder="${escapeAttributeValue(getInputPlaceholder(config))}"
+              title="${escapeAttributeValue(noteText || '')}"
               value="${isEnabled ? escapeAttributeValue(String(normalizedValue)) : ''}"
               ${isEnabled ? '' : 'disabled'}>
           </div>
+          ${noteHtml}
+          ${metaHtml}
         </div>
       `;
     } else if (config.type === 'json') {
@@ -1237,7 +1688,72 @@ $(function () {
             data-param="${key}"
             data-param-path="${paramPath}"
             data-value-type="json"
+            placeholder="${escapeAttributeValue(getInputPlaceholder(config))}"
             rows="4">${normalizedValue === null ? '' : escapeTextareaValue(JSON.stringify(normalizedValue, null, 2))}</textarea>
+          ${noteHtml}
+          ${metaHtml}
+        </div>
+      `;
+    } else if (config.type === 'string') {
+      const normalizedValue = value === undefined || value === null ? config.fallback : value;
+      html = `
+        <div class="setting-group">
+          <label class="setting-label" for="dyn_${key}">
+            ${config.label}
+          </label>
+          <input
+            type="text"
+            class="setting-input${compactClass} ${paramClass}"
+            id="dyn_${key}"
+            data-param="${key}"
+            data-param-path="${paramPath}"
+            data-value-type="string"
+            placeholder="${escapeAttributeValue(getInputPlaceholder(config))}"
+            title="${escapeAttributeValue(noteText || '')}"
+            value="${escapeAttributeValue(String(normalizedValue || ''))}">
+          ${noteHtml}
+          ${metaHtml}
+        </div>
+      `;
+    } else if (config.type === 'token-range') {
+      const allowedValues = buildTokenStepValues(config.min, config.max);
+      const resolvedValue = resolveTokenRangeValue(
+        value === undefined || value === null ? config.fallback : value,
+        allowedValues
+      );
+      const sliderIndex = Math.max(allowedValues.indexOf(resolvedValue), 0);
+      html = `
+        <div class="setting-group">
+          <label class="setting-label" for="dyn_${key}">
+            ${config.label}
+            <input
+              type="number"
+              class="setting-number"
+              id="val_${key}"
+              data-param="${key}"
+              data-decimals="${config.decimals}"
+              data-scale="token-range"
+              value="${resolvedValue}"
+              min="${config.min}"
+              max="${config.max}"
+              step="128">
+          </label>
+          <input
+            type="range"
+            class="setting-range ${paramClass}"
+            id="dyn_${key}"
+            data-param="${key}"
+            data-param-path="${paramPath}"
+            data-value-type="integer"
+            data-decimals="${config.decimals}"
+            data-scale="token-range"
+            data-allowed-values="${escapeAttributeValue(JSON.stringify(allowedValues))}"
+            min="0"
+            max="${Math.max(allowedValues.length - 1, 0)}"
+            step="1"
+            value="${sliderIndex}">
+          ${noteHtml}
+          ${metaHtml}
         </div>
       `;
     } else {
@@ -1269,6 +1785,8 @@ $(function () {
             max="${config.max}"
             step="${config.step}"
             value="${numericValue}">
+          ${noteHtml}
+          ${metaHtml}
         </div>
       `;
     }
@@ -1437,6 +1955,7 @@ $(function () {
 
   async function loadModelInfo(model) {
     if (!model) {
+      resetOllamaPresetUi();
       resetDynamicPanels();
       renderLoadParameters();
       updateVisibleDividers();
@@ -1456,6 +1975,7 @@ $(function () {
       const data = await response.json();
       resetDynamicPanels();
       renderLoadParameters();
+      applyOllamaPresetState(data.ollama_presets || null);
 
       visionState.supported = !!data.supports_vision;
       updateVisionControls();
@@ -1474,6 +1994,7 @@ $(function () {
       updateThinkControls();
 
       if (!data.defaults) {
+        updateVisibleDividers();
         return;
       }
 
@@ -1483,8 +2004,37 @@ $(function () {
 
       getSupportedParameterDefinitions(getActiveEngine()).forEach(function ([key, config]) {
         const renderedConfig = { ...config };
+        const runtimeLimits = data.runtime_limits || {};
         if (key === 'num_ctx' && data.context_length) {
           renderedConfig.max = data.context_length;
+          renderedConfig.note = `Context window. Model limit: ${data.context_length}.`;
+        }
+        if (key === 'num_predict') {
+          renderedConfig.max = Math.max(1024, Math.min(32768, data.context_length || renderedConfig.max || 32768));
+          renderedConfig.note = `Maximum generated tokens. Limit: ${renderedConfig.max}.`;
+        }
+        if (key === 'num_gpu' && runtimeLimits.model_layers) {
+          renderedConfig.max = runtimeLimits.model_layers;
+          renderedConfig.note = `GPU layers. Model layers: ${runtimeLimits.model_layers}.`;
+        }
+        if (key === 'main_gpu') {
+          const gpuDevices = Array.isArray(runtimeLimits.gpu_devices) ? runtimeLimits.gpu_devices : [];
+          renderedConfig.options = [{ value: '', label: 'Automatic' }].concat(
+            gpuDevices.map(function (device) {
+              return {
+                value: device.id,
+                label: `GPU ${device.id} - ${device.name}`
+              };
+            })
+          );
+          renderedConfig.max = runtimeLimits.main_gpu_max || 0;
+          renderedConfig.note = runtimeLimits.gpu_count > 0
+            ? 'Primary GPU.'
+            : 'No NVIDIA GPU detected by the local runtime.';
+        }
+        if (key === 'num_thread' && runtimeLimits.cpu_threads) {
+          renderedConfig.max = runtimeLimits.cpu_threads;
+          renderedConfig.note = `CPU threads. Detected: ${runtimeLimits.cpu_threads}.`;
         }
 
         const value = defaults[key] !== undefined ? defaults[key] : renderedConfig.fallback;
@@ -1510,7 +2060,14 @@ $(function () {
       const param = $(this).data('param');
       const paramPath = $(this).data('paramPath') || param;
       const valueType = $(this).data('value-type') || 'number';
-      const rawValue = $(this).is(':checkbox') ? ($(this).is(':checked') ? 'true' : 'false') : $(this).val();
+      const scale = $(this).data('scale');
+      let rawValue = $(this).is(':checkbox') ? ($(this).is(':checked') ? 'true' : 'false') : $(this).val();
+
+      if (scale === 'token-range') {
+        const allowedValues = JSON.parse($(this).attr('data-allowed-values') || '[]');
+        const resolvedValue = allowedValues[parseInt(rawValue, 10)] || allowedValues[0] || 0;
+        rawValue = String(resolvedValue);
+      }
 
       if (valueType === 'boolean') {
         setNestedValue(payload, paramPath, String(rawValue).toLowerCase() === 'true');
@@ -2014,22 +2571,46 @@ $(function () {
     }
     thinkState.enabled = !thinkState.enabled;
     updateThinkControls();
+    scheduleOllamaPresetSync();
   });
 
   $(document).on('click', '.think-level-btn', function () {
     thinkState.level = $(this).data('value');
     updateThinkControls();
+    scheduleOllamaPresetSync();
   });
 
   $(document).on('input', '.setting-range', function () {
     const param = $(this).data('param');
     const decimals = parseInt($(this).data('decimals') || '0', 10);
+    const scale = $(this).data('scale');
+    if (scale === 'token-range') {
+      const allowedValues = JSON.parse($(this).attr('data-allowed-values') || '[]');
+      const index = parseInt(this.value, 10);
+      const resolvedValue = allowedValues[Math.max(index, 0)] || allowedValues[0] || 0;
+      $(`#val_${param}`).val(resolvedValue);
+      return;
+    }
+
     $(`#val_${param}`).val(parseFloat(this.value).toFixed(decimals));
   });
 
   $(document).on('change blur', '.setting-number', function () {
     const param = $(this).data('param');
     const decimals = parseInt($(this).data('decimals') || '0', 10);
+    const scale = $(this).data('scale');
+    if (scale === 'token-range') {
+      const $range = $(`#dyn_${param}`);
+      const allowedValues = JSON.parse($range.attr('data-allowed-values') || '[]');
+      const resolvedValue = resolveTokenRangeValue(this.value, allowedValues);
+      const resolvedIndex = Math.max(allowedValues.indexOf(resolvedValue), 0);
+
+      this.value = String(resolvedValue);
+      $range.val(resolvedIndex);
+      scheduleOllamaPresetSync();
+      return;
+    }
+
     const min = parseFloat(this.min);
     const max = parseFloat(this.max);
     let value = parseFloat(this.value);
@@ -2041,12 +2622,43 @@ $(function () {
     value = Math.min(max, Math.max(min, value));
     this.value = value.toFixed(decimals);
     $(`#dyn_${param}`).val(value);
+    scheduleOllamaPresetSync();
   });
 
   $(document).on('keydown', '.setting-number', function (event) {
     if (event.key === 'Enter') {
       $(this).trigger('blur');
     }
+  });
+
+  $(document).on('change blur', '.dyn-param[data-value-type="optional-number"], .dyn-param[data-value-type="optional-integer"]', function () {
+    if ($(this).prop('disabled')) {
+      return;
+    }
+
+    const rawValue = String($(this).val() || '').trim();
+    if (!rawValue) {
+      return;
+    }
+
+    const decimals = parseInt($(this).data('decimals') || '0', 10);
+    const min = parseFloat($(this).attr('min'));
+    const max = parseFloat($(this).attr('max'));
+    let numericValue = decimals === 0 ? parseInt(rawValue, 10) : parseFloat(rawValue);
+
+    if (Number.isNaN(numericValue)) {
+      return;
+    }
+
+    if (!Number.isNaN(min)) {
+      numericValue = Math.max(min, numericValue);
+    }
+    if (!Number.isNaN(max)) {
+      numericValue = Math.min(max, numericValue);
+    }
+
+    $(this).val(decimals === 0 ? String(Math.round(numericValue)) : numericValue.toFixed(decimals));
+    scheduleOllamaPresetSync();
   });
 
   $(document).on('change', '.optional-param-toggle', function () {
@@ -2068,6 +2680,8 @@ $(function () {
         console.error('Failed to update LM Studio load config:', error);
       });
     }
+
+    scheduleOllamaPresetSync();
   });
 
   $messagesInner.on('click', '.msg-thoughts-toggle', function (event) {
@@ -2192,6 +2806,107 @@ $(function () {
 
   $modelSelector.on('change', function () {
     loadModelInfo($(this).val());
+  });
+
+  $ollamaPresetSelector.on('change', async function () {
+    const presetId = $(this).val();
+    const modelName = getSelectedModelName();
+    if (getActiveEngine() !== 'ollama-service' || !presetId || !modelName) {
+      return;
+    }
+
+    try {
+      const payload = await postJson('/api/ollama_presets/select/', {
+        model: modelName,
+        preset_id: presetId
+      });
+      applyOllamaPresetState(payload);
+      await loadModelInfo(modelName);
+    } catch (error) {
+      console.error('Failed to select Ollama preset:', error);
+    }
+  });
+
+  $ollamaPresetCreateBtn.on('click', async function () {
+    const modelName = getSelectedModelName();
+    if (getActiveEngine() !== 'ollama-service' || !modelName) {
+      return;
+    }
+
+    const requestedName = window.prompt('Preset name', '');
+    if (requestedName === null) {
+      return;
+    }
+
+    try {
+      const payload = await postJson('/api/ollama_presets/create/', {
+        model: modelName,
+        name: requestedName.trim(),
+        config: collectOptionsPayload()
+      });
+      applyOllamaPresetState(payload);
+    } catch (error) {
+      console.error('Failed to create Ollama preset:', error);
+    }
+  });
+
+  $ollamaPresetRenameBtn.on('click', async function () {
+    const activePreset = getActiveOllamaPreset();
+    const modelName = getSelectedModelName();
+    if (getActiveEngine() !== 'ollama-service' || !modelName || !activePreset || activePreset.is_default) {
+      return;
+    }
+
+    const requestedName = window.prompt('Preset name', activePreset.name || '');
+    if (requestedName === null) {
+      return;
+    }
+
+    try {
+      const payload = await postJson('/api/ollama_presets/rename/', {
+        model: modelName,
+        preset_id: activePreset.id,
+        name: requestedName.trim()
+      });
+      applyOllamaPresetState(payload);
+    } catch (error) {
+      console.error('Failed to rename Ollama preset:', error);
+    }
+  });
+
+  $ollamaPresetDeleteBtn.on('click', async function () {
+    const activePreset = getActiveOllamaPreset();
+    const modelName = getSelectedModelName();
+    if (getActiveEngine() !== 'ollama-service' || !modelName || !activePreset || activePreset.is_default) {
+      return;
+    }
+
+    if (!window.confirm(`Delete preset "${activePreset.name}"?`)) {
+      return;
+    }
+
+    try {
+      const payload = await postJson('/api/ollama_presets/delete/', {
+        model: modelName,
+        preset_id: activePreset.id
+      });
+      applyOllamaPresetState(payload);
+      await loadModelInfo(modelName);
+    } catch (error) {
+      console.error('Failed to delete Ollama preset:', error);
+    }
+  });
+
+  $(document).on('change', '.dyn-param', function () {
+    scheduleOllamaPresetSync();
+  });
+
+  $(document).on('blur', '.dyn-param', function () {
+    if ($(this).is(':checkbox')) {
+      return;
+    }
+
+    scheduleOllamaPresetSync();
   });
 
   $(document).on('change', '#group-load .dyn-load-param', function () {

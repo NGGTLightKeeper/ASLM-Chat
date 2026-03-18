@@ -8,7 +8,7 @@ from django.test import Client, SimpleTestCase, TestCase
 from django.urls import reverse
 
 from API.openai import _build_openai_request_options
-from Apps.Data.models import Chat
+from Apps.Data.models import Chat, OllamaPreset
 from Apps.UI.views import _extract_model_name
 
 
@@ -164,3 +164,64 @@ class RuntimeSettingsApiTests(TestCase):
         payload = response.json()
         self.assertTrue(payload["has_openai_api_key"])
         self.assertNotIn("openai_api_key", payload)
+
+
+class OllamaPresetApiTests(TestCase):
+    """Cover Ollama preset API endpoints and model-info integration."""
+
+    @patch("Apps.UI.views.llm_api.get_model_settings")
+    def test_model_info_includes_active_ollama_preset_defaults(self, mock_get_model_settings):
+        mock_get_model_settings.return_value = {
+            "modelinfo": {"general.architecture.context_length": 131072},
+            "parameters": "temperature 0.8",
+            "template": "",
+            "capabilities": [],
+        }
+
+        response = self.client.get(
+            reverse("model_info_api"),
+            {"engine": "ollama-service", "model": "llama3"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("ollama_presets", payload)
+        self.assertEqual(payload["defaults"]["num_ctx"], 32768)
+        self.assertEqual(payload["defaults"]["num_predict"], 8192)
+
+    def test_sync_endpoint_clones_default_preset_on_first_change(self):
+        response = self.client.post(
+            reverse("sync_ollama_preset_api"),
+            data='{"model":"llama3","config":{"num_ctx":65536,"num_predict":4096,"think":true,"think_level":"high"}}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload["presets"]), 2)
+        self.assertEqual(OllamaPreset.objects.filter(model_name="llama3").count(), 2)
+
+    def test_create_rename_delete_endpoints_manage_custom_preset(self):
+        created = self.client.post(
+            reverse("create_ollama_preset_api"),
+            data='{"model":"llama3","name":"Research","config":{"num_ctx":49152}}',
+            content_type="application/json",
+        )
+        self.assertEqual(created.status_code, 200)
+        created_payload = created.json()
+        active_preset_id = created_payload["active_preset_id"]
+
+        renamed = self.client.post(
+            reverse("rename_ollama_preset_api"),
+            data=f'{{"model":"llama3","preset_id":"{active_preset_id}","name":"Research v2"}}',
+            content_type="application/json",
+        )
+        self.assertEqual(renamed.status_code, 200)
+
+        deleted = self.client.post(
+            reverse("delete_ollama_preset_api"),
+            data=f'{{"model":"llama3","preset_id":"{active_preset_id}"}}',
+            content_type="application/json",
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(OllamaPreset.objects.filter(model_name="llama3").count(), 1)
