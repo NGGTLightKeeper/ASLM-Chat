@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from Apps.Data.models import OllamaPreset
 
@@ -157,13 +157,16 @@ def create_ollama_preset(
         raise ValueError("Model name is required for Ollama presets")
 
     base_name = str(name or "").strip() or _next_custom_preset_name(normalized_model)
-    preset = OllamaPreset.objects.create(
-        model_name=normalized_model,
-        name=base_name,
-        config=normalize_ollama_preset_config(config) or deepcopy(DEFAULT_OLLAMA_PRESET_CONFIG),
-        is_default=False,
-        is_active=False,
-    )
+    try:
+        preset = OllamaPreset.objects.create(
+            model_name=normalized_model,
+            name=base_name,
+            config=normalize_ollama_preset_config(config) or deepcopy(DEFAULT_OLLAMA_PRESET_CONFIG),
+            is_default=False,
+            is_active=False,
+        )
+    except IntegrityError as exc:
+        raise ValueError(f"A preset named '{base_name}' already exists for {normalized_model}.") from exc
 
     if activate:
         return activate_ollama_preset(normalized_model, str(preset.id))
@@ -186,7 +189,10 @@ def rename_ollama_preset(model_name: str, preset_id: str, new_name: str) -> dict
         raise ValueError("The default preset cannot be renamed")
 
     preset.name = normalized_name
-    preset.save(update_fields=["name", "updated_at"])
+    try:
+        preset.save(update_fields=["name", "updated_at"])
+    except IntegrityError as exc:
+        raise ValueError(f"A preset named '{normalized_name}' already exists for {model_name}.") from exc
     return get_ollama_preset_payload(model_name)
 
 

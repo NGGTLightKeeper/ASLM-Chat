@@ -109,3 +109,6 @@ def reload_model(engine: str | None, model_name: str) -> None:
     reload_func = getattr(module, "reload_model", None)
     if callable(reload_func):
         reload_func(model_name)
+        return
+
+    raise NotImplementedError(f"Engine {engine} does not implement reload_model")

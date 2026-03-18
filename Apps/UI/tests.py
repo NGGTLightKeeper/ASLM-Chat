@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 from django.test import Client, SimpleTestCase, TestCase
 from django.urls import reverse
 
+from API import llm_api
 from API.openai import _build_openai_request_options
 from Apps.Data.models import Chat, OllamaPreset
 from Apps.UI.views import _extract_model_name
@@ -62,6 +63,30 @@ class OpenAiOptionMappingTests(SimpleTestCase):
         self.assertEqual(payload["reasoning_effort"], "high")
         self.assertEqual(payload["extra_body"]["num_ctx"], 4096)
         self.assertEqual(payload["extra_body"]["top_k"], 40)
+
+    @patch("openai.OpenAI")
+    @patch("API.openai.settings.get_engine_url", return_value="http://127.0.0.1:9000/v1")
+    @patch("API.openai.settings.get_openai_api_key", return_value="")
+    def test_openai_client_omits_api_key_when_not_configured(
+        self,
+        _mock_api_key,
+        _mock_engine_url,
+        mock_openai_client,
+    ):
+        from API.openai import _get_client
+
+        mock_openai_client.return_value = Mock()
+        _get_client()
+
+        self.assertNotIn("api_key", mock_openai_client.call_args.kwargs)
+
+
+class EngineRegistryTests(SimpleTestCase):
+    """Cover generic engine registry behavior for optional capabilities."""
+
+    def test_reload_model_raises_for_engines_without_reload_support(self):
+        with self.assertRaises(NotImplementedError):
+            llm_api.reload_model("openai", "gpt-oss")
 
 
 class ChatApiTests(TestCase):
@@ -225,3 +250,28 @@ class OllamaPresetApiTests(TestCase):
         )
         self.assertEqual(deleted.status_code, 200)
         self.assertEqual(OllamaPreset.objects.filter(model_name="llama3").count(), 1)
+
+    def test_duplicate_preset_name_returns_validation_error(self):
+        self.client.post(
+            reverse("create_ollama_preset_api"),
+            data='{"model":"llama3","name":"Research","config":{"num_ctx":49152}}',
+            content_type="application/json",
+        )
+
+        duplicate = self.client.post(
+            reverse("create_ollama_preset_api"),
+            data='{"model":"llama3","name":"Research","config":{"num_ctx":32768}}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertIn("already exists", duplicate.json()["error"])
+
+    def test_reload_model_api_returns_not_implemented_for_unsupported_engine(self):
+        response = self.client.post(
+            reverse("reload_model_api"),
+            data='{"engine":"openai","model":"gpt-oss"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 501)
