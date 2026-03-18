@@ -379,6 +379,14 @@
   flex: 1;
   color: var(--c-text);
 }
+.setting-switch-text strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: var(--font-size-caption-1);
+  font-weight: 600;
+  color: var(--c-text);
+}
+
 
 .setting-switch-control {
   position: relative;
@@ -811,6 +819,7 @@
 }
 
 .vision-badge,
+.tool-toggle-btn,
 .think-toggle-btn,
 .think-level-selector {
   display: inline-flex;
@@ -832,6 +841,78 @@
 
 .vision-badge svg {
   flex-shrink: 0;
+}
+
+.tool-toggle-btn {
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--c-border-strong);
+  background: transparent;
+  color: var(--c-text-muted);
+  transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
+  user-select: none;
+}
+
+.tool-toggle-btn:hover {
+  border-color: var(--c-gray-2);
+  color: var(--c-text);
+}
+
+.tool-toggle-btn.active {
+  border-color: var(--c-primary);
+  background: rgba(10, 132, 255, 0.14);
+  color: var(--c-primary);
+}
+
+.tool-toggle-btn svg {
+  flex-shrink: 0;
+  transition: stroke var(--t-fast);
+}
+
+.tool-toggle-btn.active svg {
+  stroke: var(--c-primary);
+}
+
+.tool-selector-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  background: var(--surface-secondary);
+}
+
+.tool-selector-label {
+  flex-shrink: 0;
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-2);
+  font-weight: 600;
+}
+
+.tool-selector {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 28px 8px 10px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-tertiary);
+  color: var(--c-text);
+  font-size: var(--font-size-caption-1);
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%238E8E93' stroke-width='2' viewBox='0 0 24 24'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+.tool-selector:hover {
+  border-color: var(--c-gray-2);
+}
+
+.tool-selector:focus {
+  border-color: var(--c-primary);
 }
 
 .think-toggle-btn {

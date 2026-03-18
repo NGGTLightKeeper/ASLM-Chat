@@ -2,15 +2,43 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch, Mock
+import tempfile
+import textwrap
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 from django.test import Client, SimpleTestCase, TestCase
 from django.urls import reverse
 
 from API import llm_api
+from API import mcp as tool_registry
 from API.openai import _build_openai_request_options
 from Apps.Data.models import Chat, OllamaPreset
 from Apps.UI.views import _extract_model_name
+
+
+class ToolRegistryTestMixin:
+    """Patch the local tools directory for endpoint tests."""
+
+    def setUp(self):
+        super().setUp()
+        self._tools_dir_context = tempfile.TemporaryDirectory()
+        self.tools_dir = Path(self._tools_dir_context.name)
+        self.tools_patch = patch.object(tool_registry, 'TOOLS_DIR', self.tools_dir)
+        self.tools_patch.start()
+        tool_registry.reset_cache()
+
+    def tearDown(self):
+        tool_registry.reset_cache()
+        self.tools_patch.stop()
+        self._tools_dir_context.cleanup()
+        super().tearDown()
+
+    def write_tool(self, folder: str, body: str) -> None:
+        tool_dir = self.tools_dir / folder
+        tool_dir.mkdir(parents=True, exist_ok=True)
+        (tool_dir / 'tool.py').write_text(textwrap.dedent(body).strip() + '\n', encoding='utf-8')
+        tool_registry.reset_cache()
 
 
 class ModelNameExtractionTests(SimpleTestCase):
@@ -31,17 +59,27 @@ class ModelNameExtractionTests(SimpleTestCase):
         )
 
 
-class MainViewTests(TestCase):
-    """Verify that the main page uses the configured LLM engine helpers."""
+class MainViewTests(ToolRegistryTestMixin, TestCase):
+    """Verify that the main page uses the configured engine and tool helpers."""
 
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
-    def test_main_view_includes_models_and_engine(self, _mock_engine):
+    def test_main_view_includes_runtime_settings_and_local_tools(self, _mock_engine):
+        self.write_tool(
+            'echo',
+            '''
+            TOOL = {"id": "echo", "name": "Echo", "description": "Echo tool", "parameters": {"type": "object", "properties": {}}}
+            def call_tool(arguments, context=None):
+                return "ok"
+            ''',
+        )
+
         response = self.client.get(reverse("main"))
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["models"], [])
         self.assertEqual(response.context["llm_engine"], "ollama-service")
         self.assertIn("runtime_settings", response.context)
+        self.assertEqual(response.context["available_tools"], [{"id": "echo", "name": "Echo", "description": "Echo tool"}])
 
 
 class OpenAiOptionMappingTests(SimpleTestCase):
@@ -89,10 +127,11 @@ class EngineRegistryTests(SimpleTestCase):
             llm_api.reload_model("openai", "gpt-oss")
 
 
-class ChatApiTests(TestCase):
+class ChatApiTests(ToolRegistryTestMixin, TestCase):
     """Exercise chat API basics without calling a real model backend."""
 
     def setUp(self):
+        super().setUp()
         self.client = Client()
 
     @patch("Apps.UI.views.llm_api.prepare_runtime")
@@ -118,6 +157,50 @@ class ChatApiTests(TestCase):
         self.assertEqual(Chat.objects.count(), 1)
         self.assertEqual(Chat.objects.first().messages.count(), 2)
         mock_prepare_runtime.assert_called_once_with("ollama-service")
+
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_api_passes_selected_tool_to_ollama(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+    ):
+        self.write_tool(
+            'echo',
+            '''
+            TOOL = {"id": "echo", "name": "Echo", "description": "Echo tool", "parameters": {"type": "object", "properties": {}}}
+            def supports(engine=None, model_name=None):
+                return engine == "ollama-service"
+            def call_tool(arguments, context=None):
+                return "ok"
+            ''',
+        )
+        mock_generate.return_value = [{"message": {"content": "Done"}}]
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"Hello","model":"llama3","tool_id":"echo"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b''.join(response.streaming_content), b'Done')
+        self.assertEqual(mock_generate.call_args.kwargs["tool_id"], "echo")
+        self.assertEqual(mock_generate.call_args.kwargs["tool_context"]["engine"], "ollama-service")
+        self.assertEqual(Chat.objects.first().active_tool_slug, 'echo')
+
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_api_rejects_unknown_tool(self, _mock_engine):
+        response = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"Hello","model":"llama3","tool_id":"missing"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Unknown or unsupported tool", response.json()["error"])
 
 
 class RuntimeSettingsApiTests(TestCase):
@@ -191,16 +274,53 @@ class RuntimeSettingsApiTests(TestCase):
         self.assertNotIn("openai_api_key", payload)
 
 
-class OllamaPresetApiTests(TestCase):
+class ToolApiTests(ToolRegistryTestMixin, TestCase):
+    """Cover local tool listing and chat persistence endpoints."""
+
+    def test_tools_api_returns_discovered_tools(self):
+        self.write_tool(
+            'echo',
+            '''
+            TOOL = {"id": "echo", "name": "Echo", "description": "Echo tool", "parameters": {"type": "object", "properties": {}}}
+            def call_tool(arguments, context=None):
+                return "ok"
+            ''',
+        )
+
+        response = self.client.get(reverse("tools_api"), {"engine": "ollama-service", "model": "llama3"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["tools"], [{"id": "echo", "name": "Echo", "description": "Echo tool"}])
+
+    def test_load_chat_api_returns_active_tool_id(self):
+        chat = Chat.objects.create(title="Chat", active_tool_slug="echo")
+
+        response = self.client.get(reverse("load_chat_api", args=[chat.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["active_tool_id"], "echo")
+
+
+class OllamaPresetApiTests(ToolRegistryTestMixin, TestCase):
     """Cover Ollama preset API endpoints and model-info integration."""
 
     @patch("Apps.UI.views.llm_api.get_model_settings")
-    def test_model_info_includes_active_ollama_preset_defaults(self, mock_get_model_settings):
+    def test_model_info_includes_active_ollama_preset_defaults_and_tools(self, mock_get_model_settings):
+        self.write_tool(
+            'echo',
+            '''
+            TOOL = {"id": "echo", "name": "Echo", "description": "Echo tool", "parameters": {"type": "object", "properties": {}}}
+            def supports(engine=None, model_name=None):
+                return engine == "ollama-service"
+            def call_tool(arguments, context=None):
+                return "ok"
+            ''',
+        )
         mock_get_model_settings.return_value = {
             "modelinfo": {"general.architecture.context_length": 131072},
             "parameters": "temperature 0.8",
             "template": "",
-            "capabilities": [],
+            "capabilities": ["tools"],
         }
 
         response = self.client.get(
@@ -211,6 +331,8 @@ class OllamaPresetApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertIn("ollama_presets", payload)
+        self.assertTrue(payload["supports_tool_calling"])
+        self.assertEqual(payload["available_tools"], [{"id": "echo", "name": "Echo", "description": "Echo tool"}])
         self.assertEqual(payload["defaults"]["num_ctx"], 32768)
         self.assertEqual(payload["defaults"]["num_predict"], 8192)
 
@@ -267,7 +389,7 @@ class OllamaPresetApiTests(TestCase):
         self.assertEqual(duplicate.status_code, 400)
         self.assertIn("already exists", duplicate.json()["error"])
 
-    def test_reload_model_api_returns_not_implemented_for_unsupported_engine(self):
+    def test_reload_api_returns_not_implemented_for_unsupported_engine(self):
         response = self.client.post(
             reverse("reload_model_api"),
             data='{"engine":"openai","model":"gpt-oss"}',

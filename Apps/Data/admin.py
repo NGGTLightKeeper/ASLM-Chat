@@ -9,8 +9,8 @@ from Apps.Data.models import Chat, Message, MessageImage, OllamaPreset
 class ChatAdmin(admin.ModelAdmin):
     """Expose persisted chats in the Django admin."""
 
-    list_display = ("title", "created_at", "updated_at")
-    search_fields = ("title",)
+    list_display = ("title", "active_tool_slug", "created_at", "updated_at")
+    search_fields = ("title", "active_tool_slug")
 
 
 @admin.register(Message)

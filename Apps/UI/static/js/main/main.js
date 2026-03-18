@@ -27,8 +27,18 @@ $(function () {
   const $ollamaPresetCreateBtn = $('#ollamaPresetCreateBtn');
   const $ollamaPresetRenameBtn = $('#ollamaPresetRenameBtn');
   const $ollamaPresetDeleteBtn = $('#ollamaPresetDeleteBtn');
+  const $toolToggleBtn = $('#toolToggleBtn');
+  const $toolToggleBtnConv = $('#toolToggleBtnConv');
+  const $toolSelectorPanel = $('#toolSelectorPanel');
+  const $toolSelectorPanelConv = $('#toolSelectorPanelConv');
+  const $toolSelector = $('#toolSelector');
+  const $toolSelectorConv = $('#toolSelectorConv');
 
   let runtimeSettings = parseJsonScript('runtimeSettingsData') || {};
+  const defaultAvailableTools = parseJsonScript('availableToolsData') || [];
+  let availableTools = Array.isArray(defaultAvailableTools) ? defaultAvailableTools.slice() : [];
+  let selectedToolId = '';
+  let toolSelectorOpen = false;
   let currentChatId = null;
   let engineSelectionVersion = 0;
   let activeEngine = 'ollama-service';
@@ -77,6 +87,10 @@ $(function () {
     levelSupported: false,
     levelParamName: 'think_level',
     level: 'medium'
+  };
+
+  const toolState = {
+    supported: false
   };
 
   const PARAMETER_DEFINITIONS = {
@@ -919,6 +933,65 @@ $(function () {
     setEngineApiKeyStatus(hasStoredApiKey ? 'On' : 'Off', null);
   }
 
+  function normalizeToolId(toolId) {
+    return String(toolId || '').trim();
+  }
+
+  function getSelectedToolDefinition() {
+    return (availableTools || []).find(function (tool) {
+      return normalizeToolId(tool.id) === selectedToolId;
+    }) || null;
+  }
+
+  function updateAvailableTools(tools) {
+    availableTools = Array.isArray(tools) ? tools.slice() : [];
+    if (!availableTools.some(function (tool) { return normalizeToolId(tool.id) === selectedToolId; })) {
+      selectedToolId = '';
+    }
+    renderToolControls();
+  }
+
+  function applySelectedToolId(toolId) {
+    const normalizedToolId = normalizeToolId(toolId);
+    selectedToolId = availableTools.some(function (tool) {
+      return normalizeToolId(tool.id) === normalizedToolId;
+    }) ? normalizedToolId : '';
+    renderToolControls();
+  }
+
+  function renderToolControls() {
+    const hasToolSupport = toolState.supported && Array.isArray(availableTools) && availableTools.length > 0;
+    const selectedTool = getSelectedToolDefinition();
+    const buttonLabel = selectedTool ? selectedTool.name : 'Tools';
+
+    if (!hasToolSupport) {
+      toolSelectorOpen = false;
+    }
+
+    [$toolToggleBtn, $toolToggleBtnConv].forEach(function ($button) {
+      $button.toggle(hasToolSupport);
+      $button.toggleClass('active', !!selectedTool);
+      $button.find('.tool-toggle-label').text(buttonLabel);
+    });
+
+    [$toolSelector, $toolSelectorConv].forEach(function ($select) {
+      $select.empty().append($('<option>').val('').text('No tool'));
+      (availableTools || []).forEach(function (tool) {
+        const toolId = normalizeToolId(tool.id);
+        const $option = $('<option>').val(toolId).text(tool.name || toolId);
+        if (toolId === selectedToolId) {
+          $option.prop('selected', true);
+        }
+        $select.append($option);
+      });
+      $select.val(selectedToolId || '');
+    });
+
+    [$toolSelectorPanel, $toolSelectorPanelConv].forEach(function ($panel) {
+      $panel.toggle(hasToolSupport && toolSelectorOpen);
+    });
+  }
+
   function resetModelUiState(message) {
     const placeholderText = message || 'Models load on demand';
     $modelSelector.empty().append(
@@ -931,8 +1004,12 @@ $(function () {
     visionState.supported = false;
     thinkState.supported = false;
     thinkState.levelSupported = false;
+    toolState.supported = false;
+    updateAvailableTools(defaultAvailableTools);
+    toolSelectorOpen = false;
     updateVisionControls();
     updateThinkControls();
+    renderToolControls();
   }
 
   function clearModelCache(engine) {
@@ -1977,6 +2054,14 @@ $(function () {
       renderLoadParameters();
       applyOllamaPresetState(data.ollama_presets || null);
 
+      toolState.supported = !!data.supports_tool_calling;
+      updateAvailableTools(data.available_tools || defaultAvailableTools);
+      if (!toolState.supported) {
+        selectedToolId = '';
+        toolSelectorOpen = false;
+      }
+      renderToolControls();
+
       visionState.supported = !!data.supports_vision;
       updateVisionControls();
       clearPendingImages();
@@ -2345,6 +2430,10 @@ $(function () {
         options: collectOptionsPayload()
       };
 
+      if (toolState.supported && selectedToolId) {
+        payload.tool_id = selectedToolId;
+      }
+
       if (imagesToSend.length > 0) {
         payload.images = imagesToSend.map(function (img) {
           return img.base64;
@@ -2499,6 +2588,7 @@ $(function () {
         $(`#historyList .chat-item[data-chat-id="${chatId}"]`).addClass('active').attr('aria-current', 'page');
 
         const title = data.title || 'Chat';
+        applySelectedToolId(data.active_tool_id || '');
         $chatTitle.text(title);
         document.title = `${title} - ASLM`;
 
@@ -2874,6 +2964,20 @@ $(function () {
     }
   });
 
+  $toolToggleBtn.add($toolToggleBtnConv).on('click', function () {
+    if (!toolState.supported || !availableTools.length) {
+      return;
+    }
+    toolSelectorOpen = !toolSelectorOpen;
+    renderToolControls();
+  });
+
+  $toolSelector.add($toolSelectorConv).on('change', function () {
+    selectedToolId = normalizeToolId($(this).val());
+    toolSelectorOpen = false;
+    renderToolControls();
+  });
+
   $ollamaPresetDeleteBtn.on('click', async function () {
     const activePreset = getActiveOllamaPreset();
     const modelName = getSelectedModelName();
@@ -2938,6 +3042,8 @@ $(function () {
     loadChat(preloadChatId, false);
   }
 
+  updateAvailableTools(defaultAvailableTools);
+  applySelectedToolId('');
   updateEngineAddressUi();
   resetModelUiState('Loading models...');
   applyEngineSelection(getActiveEngine(), {

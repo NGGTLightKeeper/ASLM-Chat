@@ -11,7 +11,7 @@ from typing import Any
 from django.http import JsonResponse, StreamingHttpResponse
 from django.views.generic import TemplateView
 
-from API import llm_api
+from API import llm_api, mcp as tool_registry
 from Apps.Data.ollama_presets import (
     activate_ollama_preset,
     create_ollama_preset,
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 THINK_PARAM_NAMES = {"think", "thinking", "reasoning"}
 THINK_LEVEL_PARAM_NAMES = {"think_level", "thinking_level", "reasoning_effort"}
+TOOL_CAPABILITY_NAMES = {"tools", "tool", "tool-calling", "tool_calling"}
 
 
 def _get_local_gpu_devices() -> list[dict[str, Any]]:
@@ -110,6 +111,7 @@ def _build_base_context() -> dict[str, Any]:
         "models": [],
         "engine_options": settings.get_supported_engines(),
         "runtime_settings": runtime_settings,
+        "available_tools": tool_registry.list_tools(),
         "chats": Chat.objects.all(),
     }
 
@@ -199,6 +201,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
 
     think_param_name = "think"
     think_level_param_name = "think_level"
+    normalized_capabilities = {str(item).strip().lower() for item in capabilities}
 
     supports_thinking = any(
         marker in template_str
@@ -208,7 +211,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
         marker in template_str for marker in (".ThinkLevel", ".ReasoningEffort")
     )
 
-    if "thinking" in capabilities:
+    if "thinking" in normalized_capabilities:
         supports_thinking = True
 
     for candidate in THINK_PARAM_NAMES:
@@ -223,7 +226,8 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
             supports_think_level = True
             break
 
-    supports_vision = "vision" in capabilities
+    supports_vision = "vision" in normalized_capabilities
+    supports_tool_calling = bool(normalized_capabilities & TOOL_CAPABILITY_NAMES)
     cpu_threads = max(int(os.cpu_count() or 1), 1)
     gpu_devices = _get_local_gpu_devices()
     gpu_count = len(gpu_devices)
@@ -237,6 +241,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
         "think_param_name": think_param_name,
         "think_level_param_name": think_level_param_name,
         "supports_vision": supports_vision,
+        "supports_tool_calling": supports_tool_calling,
         "runtime_limits": {
             "cpu_threads": cpu_threads,
             "gpu_count": gpu_count,
@@ -258,9 +263,11 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
             "think_param_name": "think",
             "think_level_param_name": "think_level",
             "supports_vision": False,
+            "supports_tool_calling": False,
         }
 
     capabilities = settings_data.get("capabilities", []) or []
+    normalized_capabilities = {str(item).strip().lower() for item in capabilities}
     defaults = settings_data.get("defaults", settings_data.get("parameters", {})) or {}
     if not isinstance(defaults, dict):
         defaults = {}
@@ -279,7 +286,8 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
         "supports_think_level": bool(settings_data.get("supports_think_level", False)),
         "think_param_name": settings_data.get("think_param_name", "think"),
         "think_level_param_name": settings_data.get("think_level_param_name", "think_level"),
-        "supports_vision": "vision" in capabilities or bool(settings_data.get("supports_vision", False)),
+        "supports_vision": "vision" in normalized_capabilities or bool(settings_data.get("supports_vision", False)),
+        "supports_tool_calling": bool(settings_data.get("supports_tool_calling", False)),
     }
 
 
@@ -294,6 +302,9 @@ def _build_model_info_payload(engine: str, model_name: str) -> dict[str, Any]:
     else:
         payload = _extract_generic_model_info(settings_data)
 
+    payload["available_tools"] = (
+        tool_registry.list_tools(engine, model_name) if payload.get("supports_tool_calling") else []
+    )
     payload["model"] = model_name
     payload["engine"] = engine
     return payload
@@ -340,11 +351,18 @@ def chat_api(request):
         chat_id = data.get("chat_id", "")
         images = data.get("images", []) or []
         engine = _get_active_engine(data.get("engine"))
+        tool_id = str(data.get("tool_id", "") or "").strip()
 
         if not model_name:
             return JsonResponse({"error": "Missing model parameter"}, status=400)
         if not user_message and not images:
             return JsonResponse({"error": "Missing message or images"}, status=400)
+
+        selected_tool = None
+        if tool_id:
+            selected_tool = tool_registry.get_tool(tool_id, engine=engine, model_name=model_name)
+            if selected_tool is None:
+                return JsonResponse({"error": f"Unknown or unsupported tool: {tool_id}"}, status=400)
 
         if chat_id:
             try:
@@ -353,6 +371,11 @@ def chat_api(request):
                 return JsonResponse({"error": "Chat not found"}, status=404)
         else:
             chat = Chat.objects.create(title=_build_chat_title(user_message, bool(images)))
+
+        normalized_tool_id = selected_tool["id"] if selected_tool else ""
+        if chat.active_tool_slug != normalized_tool_id:
+            chat.active_tool_slug = normalized_tool_id
+            chat.save(update_fields=["active_tool_slug", "updated_at"])
 
         user_message_record = Message.objects.create(
             chat=chat,
@@ -411,6 +434,15 @@ def chat_api(request):
             generate_kwargs["think_level"] = think_level_value
         if clean_options:
             generate_kwargs["options"] = clean_options
+        if settings.is_ollama_engine(engine) and selected_tool is not None:
+            generate_kwargs["tool_id"] = selected_tool["id"]
+            generate_kwargs["tool_context"] = {
+                "chat_id": str(chat.id),
+                "engine": engine,
+                "model_name": model_name,
+                "module_dir": str(settings.BASE_DIR),
+                "project_dir": str(settings.BASE_DIR),
+            }
 
         def stream_response():
             full_response = ""
@@ -473,7 +505,12 @@ def load_chat_api(request, chat_id):
         chat = Chat.objects.get(id=chat_id)
         messages = chat.messages.all().prefetch_related("images")
         payload = [_serialize_message(message) for message in messages]
-        return JsonResponse({"chat_id": str(chat.id), "title": chat.title, "messages": payload})
+        return JsonResponse({
+            "chat_id": str(chat.id),
+            "title": chat.title,
+            "messages": payload,
+            "active_tool_id": chat.active_tool_slug,
+        })
     except Chat.DoesNotExist:
         return JsonResponse({"error": "Chat not found"}, status=404)
     except Exception as exc:
@@ -509,6 +546,16 @@ def get_models_api(request):
 
     engine = _get_active_engine(request.GET.get("engine"))
     return JsonResponse({"engine": engine, "models": _load_models_for_engine(engine)})
+
+
+def get_tools_api(request):
+    """Return locally discovered tools filtered for the requested engine/model."""
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    engine = _get_active_engine(request.GET.get("engine"))
+    model_name = str(request.GET.get("model", "") or "").strip() or None
+    return JsonResponse({"tools": tool_registry.list_tools(engine, model_name)})
 
 
 def get_ollama_presets_api(request):
@@ -617,7 +664,7 @@ def rename_ollama_preset_api(request):
 
 
 def delete_ollama_preset_api(request):
-    """Delete an existing custom Ollama preset."""
+    """Delete an existing custom preset and fall back to the default one."""
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 

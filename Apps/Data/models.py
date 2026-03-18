@@ -16,10 +16,11 @@ class MessageRole(models.TextChoices):
 
 
 class Chat(models.Model):
-    """A single chat thread containing ordered messages."""
+    """A single chat thread containing ordered messages and chat-level tool state."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     title = models.CharField(max_length=255, default="New Chat")
+    active_tool_slug = models.CharField(max_length=120, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -12,6 +12,7 @@ urlpatterns = [
     path("api/chat/<uuid:chat_id>/", views.load_chat_api, name="load_chat_api"),
     path("api/models/", views.get_models_api, name="models_api"),
     path("api/model_info/", views.get_model_info_api, name="model_info_api"),
+    path("api/tools/", views.get_tools_api, name="tools_api"),
     path("api/ollama_presets/", views.get_ollama_presets_api, name="ollama_presets_api"),
     path("api/ollama_presets/sync/", views.sync_ollama_preset_api, name="sync_ollama_preset_api"),
     path("api/ollama_presets/select/", views.select_ollama_preset_api, name="select_ollama_preset_api"),
