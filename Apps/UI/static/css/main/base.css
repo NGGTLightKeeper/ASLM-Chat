@@ -1,119 +1,157 @@
-/* Inter – local */
+/* Inter - local */
 @font-face {
-  font-family: 'Inter';
-  src: url('../fonts/inter/inter-latin-300-normal.woff2') format('woff2');
+  font-family: "Inter";
+  src: url("../fonts/inter/inter-latin-300-normal.woff2") format("woff2");
   font-weight: 300;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Inter';
-  src: url('../fonts/inter/inter-latin-400-normal.woff2') format('woff2');
+  font-family: "Inter";
+  src: url("../fonts/inter/inter-latin-400-normal.woff2") format("woff2");
   font-weight: 400;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Inter';
-  src: url('../fonts/inter/inter-latin-500-normal.woff2') format('woff2');
+  font-family: "Inter";
+  src: url("../fonts/inter/inter-latin-500-normal.woff2") format("woff2");
   font-weight: 500;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Inter';
-  src: url('../fonts/inter/inter-latin-600-normal.woff2') format('woff2');
+  font-family: "Inter";
+  src: url("../fonts/inter/inter-latin-600-normal.woff2") format("woff2");
   font-weight: 600;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Inter';
-  src: url('../fonts/inter/inter-latin-700-normal.woff2') format('woff2');
+  font-family: "Inter";
+  src: url("../fonts/inter/inter-latin-700-normal.woff2") format("woff2");
   font-weight: 700;
   font-display: swap;
 }
 
-/* Design tokens */
 :root {
-  /* System Accents */
-  --c-system-blue: #0A84FF;
-  --c-system-green: #32D74B;
-  --c-system-indigo: #5E5CE6;
-  --c-system-orange: #FF9F0A;
-  --c-system-pink: #FF375F;
-  --c-system-purple: #BF5AF2;
-  --c-system-red: #FF453A;
-  --c-system-teal: #64D2FF;
-  --c-system-yellow: #FFD60A;
-  --c-system-mint: #66D4CF;
-  --c-system-cyan: #64D2FF;
+  /* HIG-aligned palette */
+  --c-system-blue: #0a84ff;
+  --c-system-green: #32d74b;
+  --c-system-indigo: #5e5ce6;
+  --c-system-orange: #ff9f0a;
+  --c-system-pink: #ff375f;
+  --c-system-purple: #bf5af2;
+  --c-system-red: #ff453a;
+  --c-system-teal: #64d2ff;
+  --c-system-yellow: #ffd60a;
+  --c-system-mint: #66d4cf;
+  --c-system-cyan: #64d2ff;
 
-  /* System Grays */
-  --c-gray-1: #8E8E93;
+  --c-gray-1: #8e8e93;
   --c-gray-2: #636366;
-  --c-gray-3: #48484A;
-  --c-gray-4: #3A3A3C;
-  --c-gray-5: #2C2C2E;
-  --c-gray-6: #1C1C1E;
+  --c-gray-3: #48484a;
+  --c-gray-4: #3a3a3c;
+  --c-gray-5: #2c2c2e;
+  --c-gray-6: #1c1c1e;
 
-  /* Core Mappings (Backgrounds) */
   --c-bg: #000000;
-  --c-bg-surface: #1C1C1E;
-  --c-bg-elevated: #2C2C2E;
+  --c-bg-surface: #1c1c1e;
+  --c-bg-elevated: #2c2c2e;
 
-  /* Core Mappings (Labels/Text) */
-  --c-text: #FFFFFF;
-  --c-text-muted: rgba(235, 235, 245, 0.60);
-  --c-text-dim: rgba(235, 235, 245, 0.30);
-  --c-text-placeholder: rgba(235, 235, 245, 0.30);
+  --c-text: #ffffff;
+  --c-text-muted: rgba(235, 235, 245, 0.6);
+  --c-text-dim: rgba(235, 235, 245, 0.3);
   --c-text-quaternary: rgba(235, 235, 245, 0.18);
+  --c-text-placeholder: rgba(235, 235, 245, 0.3);
 
-  /* Core Mappings (Elements/Brand) */
+  --c-border: #38383a;
+  --c-border-strong: var(--c-gray-4);
+  --c-link: #0984ff;
+  --c-overlay-blue: rgba(10, 132, 255, 0.12);
+  --c-overlay-blue-strong: rgba(10, 132, 255, 0.16);
+
   --c-primary: var(--c-system-blue);
-  --c-primary-dark: var(--c-system-indigo);
-  --c-tertiary: var(--c-system-purple);
   --c-success: var(--c-system-green);
   --c-danger: var(--c-system-red);
-  --c-warning: var(--c-system-yellow);
-  --c-action-blue: var(--c-system-blue);
+  --c-warning: var(--c-system-orange);
+  --c-info: var(--c-system-teal);
+  --c-accent-secondary: var(--c-system-indigo);
+  --c-accent-tertiary: var(--c-system-purple);
 
-  /* Border */
-  --c-border: #38383A;
-  --c-border-subtle: #38383A;
+  --surface-primary: var(--c-bg);
+  --surface-secondary: var(--c-bg-surface);
+  --surface-tertiary: var(--c-bg-elevated);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --surface-hover-strong: rgba(255, 255, 255, 0.1);
+  --surface-overlay: rgba(0, 0, 0, 0.65);
+  --surface-overlay-soft: rgba(0, 0, 0, 0.2);
+  --surface-blue-soft: rgba(10, 132, 255, 0.1);
+  --surface-purple-soft: rgba(191, 90, 242, 0.12);
+  --surface-purple-strong: rgba(191, 90, 242, 0.15);
+  --surface-green-soft: rgba(50, 215, 75, 0.08);
+  --surface-row-alt: rgba(255, 255, 255, 0.03);
+  --surface-elevated-soft: rgba(44, 44, 46, 0.8);
+  --surface-elevated-hover: rgba(58, 58, 60, 0.9);
 
-  /* Accent helpers */
-  --c-accent-muted: rgba(10, 132, 255, 0.15);
-  --c-accent-glow: rgba(10, 132, 255, 0.25);
+  --border-subtle: rgba(255, 255, 255, 0.1);
+  --border-soft: rgba(255, 255, 255, 0.15);
+  --border-strong-soft: rgba(255, 255, 255, 0.2);
+  --border-success: rgba(50, 215, 75, 0.4);
+  --focus-ring: rgba(10, 132, 255, 0.18);
 
-  /* Layout */
-  --sidebar-w: 270px;
-  --sidebar-collapsed: 56px;
-  --header-h: 52px;
+  --text-success: rgba(50, 215, 75, 0.85);
+  --text-soft: rgba(235, 235, 245, 0.7);
+  --text-soft-alt: rgba(235, 235, 245, 0.45);
+  --danger-hover: rgba(255, 69, 58, 0.85);
 
-  /* Typography */
-  --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --text-xs: 12px;
-  --text-sm: 14px;
-  --text-base: 16px;
-  --text-md: 16px;
-  --text-lg: 18px;
-  --text-xl: 24px;
+  --font: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-size-caption-2: 12px;
+  --font-size-caption-1: 13px;
+  --font-size-body-2: 15px;
+  --font-size-body-1: 17px;
+  --font-size-title-3: 20px;
+  --font-size-title-2: 22px;
+  --font-size-title-1: 28px;
+  --font-size-large-title: 34px;
+  --font-size-display: 60px;
 
-  /* Radii */
-  --r-sm: 5px;
-  --r-md: 9px;
+  /* Legacy aliases used across the frontend */
+  --text-xs: var(--font-size-caption-2);
+  --text-sm: var(--font-size-caption-1);
+  --text-md: var(--font-size-body-2);
+  --text-base: var(--font-size-body-1);
+  --text-lg: var(--font-size-title-3);
+  --text-xl: var(--font-size-title-2);
+  --text-2xl: var(--font-size-title-1);
+
+  --sidebar-w: 272px;
+  --sidebar-right-w: 288px;
+  --header-h: 56px;
+  --content-w: 1200px;
+  --composer-w: 760px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  --r-sm: 8px;
+  --r-md: 10px;
   --r-lg: 14px;
-  --r-xl: 20px;
+  --r-xl: 16px;
+  --r-2xl: 20px;
   --r-pill: 9999px;
 
-  /* Transitions */
   --t-fast: 130ms ease;
   --t-base: 220ms ease;
   --t-slow: 360ms ease;
 }
 
-/* Reset */
 *,
 *::before,
 *::after {
@@ -127,19 +165,29 @@ body {
   height: 100%;
   font-family: var(--font);
   font-size: var(--text-base);
-  background: var(--c-bg);
+  background: var(--surface-primary);
   color: var(--c-text);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
 
+html {
+  color-scheme: dark;
+  accent-color: var(--c-primary);
+}
+
+body {
+  min-height: 100%;
+}
+
 a {
-  color: var(--c-primary-dark);
+  color: var(--c-link);
   text-decoration: none;
+  transition: color var(--t-fast);
 }
 
 a:hover {
-  color: var(--c-secondary);
+  color: var(--c-primary);
 }
 
 button {
@@ -151,7 +199,8 @@ button {
 }
 
 input,
-textarea {
+textarea,
+select {
   font-family: var(--font);
   font-size: var(--text-base);
   color: var(--c-text);
@@ -160,7 +209,6 @@ textarea {
   outline: none;
 }
 
-/* Scrollbar */
 ::-webkit-scrollbar {
   width: 4px;
   height: 4px;
@@ -176,10 +224,9 @@ textarea {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--c-primary-dark);
+  background: var(--c-gray-2);
 }
 
-/* Utilities */
 .truncate {
   overflow: hidden;
   white-space: nowrap;

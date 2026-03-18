@@ -1,115 +1,433 @@
-import sys, os
-sys.path.insert(0, os.path.join(os.getcwd()))
+"""UI views and JSON endpoints for ASLM-Chat."""
 
-from django.shortcuts import render
-from django.views.generic import TemplateView, DetailView, ListView
-from django.http import JsonResponse, StreamingHttpResponse
-from django.views.decorators.csrf import csrf_exempt
+from __future__ import annotations
+
 import json
-from ..Data.models import Chat, Message, MessageImage
+import logging
+import os
+import subprocess
+from typing import Any
+
+from django.http import JsonResponse, StreamingHttpResponse
+from django.views.generic import TemplateView
+
 from API import llm_api
+from Apps.Data.ollama_presets import (
+    activate_ollama_preset,
+    create_ollama_preset,
+    delete_ollama_preset,
+    get_ollama_preset_payload,
+    rename_ollama_preset,
+    sync_active_ollama_preset,
+)
+from Apps.Data.models import Chat, Message, MessageImage, OllamaPreset
 from Settings import settings
 
-# Main Page
-class main(TemplateView):
-    template_name = 'main/main.html'
-    
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        # Fetch available models if ollama-service is active
-        models = []
-        if settings.get('ollama-service'):
+logger = logging.getLogger(__name__)
+
+THINK_PARAM_NAMES = {"think", "thinking", "reasoning"}
+THINK_LEVEL_PARAM_NAMES = {"think_level", "thinking_level", "reasoning_effort"}
+
+
+def _get_local_gpu_devices() -> list[dict[str, Any]]:
+    """Return local NVIDIA GPU devices with both numeric ids and labels."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,name", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    devices: list[dict[str, Any]] = []
+    for line in result.stdout.splitlines():
+        parts = [part.strip() for part in line.split(",", 1)]
+        if len(parts) != 2 or not parts[0]:
+            continue
+        try:
+            device_id = int(parts[0])
+        except ValueError:
+            continue
+        devices.append({"id": device_id, "name": parts[1] or f"GPU {device_id}"})
+
+    return devices
+
+
+def _get_active_engine(requested_engine: str | None = None) -> str:
+    """Return the canonical engine identifier used for the current request."""
+    return settings.normalize_engine_name(requested_engine or settings.get_llm_engine())
+
+
+def _extract_model_name(model_entry: Any) -> str:
+    """Extract a model name from adapter-specific list responses."""
+    if isinstance(model_entry, str):
+        return model_entry
+    if isinstance(model_entry, dict):
+        for key in ("model", "id", "model_key", "identifier", "name"):
+            value = model_entry.get(key)
+            if value:
+                return str(value)
+        return ""
+    for attr in ("model", "id", "model_key", "identifier", "name"):
+        value = getattr(model_entry, attr, None)
+        if value:
+            return str(value)
+    return ""
+
+
+def _load_models_for_engine(engine: str) -> list[str]:
+    """Return sorted model names for the selected engine."""
+    try:
+        raw_models = llm_api.get_models(engine)
+    except NotImplementedError:
+        logger.info("Model listing is not implemented for engine %s", engine)
+        return []
+    except Exception as exc:
+        logger.warning("Failed to load models for engine %s: %s", engine, exc)
+        return []
+
+    model_names = []
+    for entry in raw_models or []:
+        model_name = _extract_model_name(entry)
+        if model_name:
+            model_names.append(model_name)
+
+    return sorted(set(model_names), key=str.casefold)
+
+
+def _build_base_context() -> dict[str, Any]:
+    """Build shared template context used by chat pages."""
+    runtime_settings = settings.get_runtime_engine_settings()
+    engine = _get_active_engine(runtime_settings.get("llm-engine"))
+    return {
+        "llm_engine": engine,
+        "models": [],
+        "engine_options": settings.get_supported_engines(),
+        "runtime_settings": runtime_settings,
+        "chats": Chat.objects.all(),
+    }
+
+
+def _build_runtime_settings_payload() -> dict[str, Any]:
+    """Return the settings payload used by the UI settings API."""
+    runtime_settings = settings.get_runtime_engine_settings()
+    active_engine = _get_active_engine(runtime_settings.get("llm-engine"))
+    runtime_settings["llm-engine"] = active_engine
+    runtime_settings["active_url"] = runtime_settings["engine_urls"].get(active_engine, "")
+    runtime_settings["engine_options"] = settings.get_supported_engines()
+    return runtime_settings
+
+
+def _build_chat_title(message: str, has_images: bool) -> str:
+    """Generate a stable title for a new chat thread."""
+    if message:
+        return message[:30] + ("..." if len(message) > 30 else "")
+    if has_images:
+        return "Image chat"
+    return "New Chat"
+
+
+def _detect_image_mime(base64_data: str) -> str:
+    """Guess the MIME type from the leading bytes of a base64 payload."""
+    if base64_data.startswith("/9j/"):
+        return "image/jpeg"
+    if base64_data.startswith("iVBOR"):
+        return "image/png"
+    if base64_data.startswith("R0lGO"):
+        return "image/gif"
+    if base64_data.startswith("UklGR"):
+        return "image/webp"
+    return "image/jpeg"
+
+
+def _serialize_message(message: Message) -> dict[str, Any]:
+    """Convert a database message to the JSON shape expected by the frontend."""
+    payload = {
+        "role": message.role,
+        "content": message.content,
+        "created_at": message.created_at.isoformat(),
+    }
+    images = list(message.images.all())
+    if images:
+        payload["images"] = [image.data_url() for image in images]
+    return payload
+
+
+def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
+    """Parse Ollama-specific model metadata into a frontend-friendly payload."""
+    context_length = 8192
+    model_layers = 0
+    defaults: dict[str, Any] = {}
+
+    if isinstance(settings_data, dict):
+        modelinfo = settings_data.get("modelinfo", {}) or {}
+        parameters_str = settings_data.get("parameters", "") or ""
+        template_str = settings_data.get("template", "") or ""
+        capabilities = settings_data.get("capabilities", []) or []
+    else:
+        modelinfo = getattr(settings_data, "modelinfo", {}) or {}
+        parameters_str = getattr(settings_data, "parameters", "") or ""
+        template_str = getattr(settings_data, "template", "") or ""
+        capabilities = getattr(settings_data, "capabilities", []) or []
+
+    for key, value in modelinfo.items():
+        if key.endswith(".context_length"):
             try:
-                models_data = llm_api.get_models('ollama-service')
-                # extract model names (Ollama python client returns 'model' key for the name)
-                models = [m.get('model') for m in models_data]
-            except Exception as e:
-                print(f"[ASLM-Chat UI] Error getting models: {e}")
-        context['models'] = models
-        
-        # Fetch existing chats for sidebar
-        context['chats'] = Chat.objects.all()
+                context_length = int(value)
+            except (TypeError, ValueError):
+                pass
+        if key.endswith(".block_count"):
+            try:
+                model_layers = int(value)
+            except (TypeError, ValueError):
+                pass
+
+    if parameters_str:
+        for line in parameters_str.strip().splitlines():
+            parts = line.strip().split()
+            if len(parts) < 2:
+                continue
+            key = parts[0].strip().lower()
+            value = " ".join(parts[1:]).strip()
+            defaults[key] = settings.normalize_setting_value(value)
+
+    think_param_name = "think"
+    think_level_param_name = "think_level"
+
+    supports_thinking = any(
+        marker in template_str
+        for marker in (".Think ", ".Think\n", ".ThinkLevel", ".Reasoning", ".Reason ")
+    )
+    supports_think_level = any(
+        marker in template_str for marker in (".ThinkLevel", ".ReasoningEffort")
+    )
+
+    if "thinking" in capabilities:
+        supports_thinking = True
+
+    for candidate in THINK_PARAM_NAMES:
+        if candidate in defaults:
+            think_param_name = candidate
+            supports_thinking = True
+            break
+
+    for candidate in THINK_LEVEL_PARAM_NAMES:
+        if candidate in defaults:
+            think_level_param_name = candidate
+            supports_think_level = True
+            break
+
+    supports_vision = "vision" in capabilities
+    cpu_threads = max(int(os.cpu_count() or 1), 1)
+    gpu_devices = _get_local_gpu_devices()
+    gpu_count = len(gpu_devices)
+
+    return {
+        "context_length": context_length,
+        "model_layers": model_layers,
+        "defaults": defaults,
+        "supports_thinking": supports_thinking,
+        "supports_think_level": supports_think_level,
+        "think_param_name": think_param_name,
+        "think_level_param_name": think_level_param_name,
+        "supports_vision": supports_vision,
+        "runtime_limits": {
+            "cpu_threads": cpu_threads,
+            "gpu_count": gpu_count,
+            "gpu_devices": gpu_devices,
+            "main_gpu_max": max(gpu_count - 1, 0),
+            "model_layers": model_layers,
+        },
+    }
+
+
+def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
+    """Build a best-effort model metadata payload for non-Ollama engines."""
+    if not isinstance(settings_data, dict):
+        return {
+            "context_length": 8192,
+            "defaults": {},
+            "supports_thinking": False,
+            "supports_think_level": False,
+            "think_param_name": "think",
+            "think_level_param_name": "think_level",
+            "supports_vision": False,
+        }
+
+    capabilities = settings_data.get("capabilities", []) or []
+    defaults = settings_data.get("defaults", settings_data.get("parameters", {})) or {}
+    if not isinstance(defaults, dict):
+        defaults = {}
+
+    context_length = (
+        settings_data.get("context_length")
+        or settings_data.get("max_context_window")
+        or settings_data.get("max_tokens")
+        or 8192
+    )
+
+    return {
+        "context_length": int(context_length),
+        "defaults": defaults,
+        "supports_thinking": bool(settings_data.get("supports_thinking", False)),
+        "supports_think_level": bool(settings_data.get("supports_think_level", False)),
+        "think_param_name": settings_data.get("think_param_name", "think"),
+        "think_level_param_name": settings_data.get("think_level_param_name", "think_level"),
+        "supports_vision": "vision" in capabilities or bool(settings_data.get("supports_vision", False)),
+    }
+
+
+def _build_model_info_payload(engine: str, model_name: str) -> dict[str, Any]:
+    """Load adapter metadata and normalize it for the frontend."""
+    settings_data = llm_api.get_model_settings(engine, model_name)
+    if settings.is_ollama_engine(engine):
+        payload = _extract_ollama_model_info(settings_data)
+        preset_payload = get_ollama_preset_payload(model_name)
+        payload["defaults"] = {**payload.get("defaults", {}), **preset_payload["active_config"]}
+        payload["ollama_presets"] = preset_payload
+    else:
+        payload = _extract_generic_model_info(settings_data)
+
+    payload["model"] = model_name
+    payload["engine"] = engine
+    return payload
+
+
+def _read_json_request_body(request) -> dict[str, Any]:
+    """Parse a JSON request body and return an empty mapping on failure."""
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Invalid JSON format") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError("JSON body must be an object")
+    return data
+
+
+class MainView(TemplateView):
+    """Main chat interface."""
+
+    template_name = "main/main.html"
+
+    def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        context.update(_build_base_context())
         return context
 
+
 def chat_api(request):
-    """
-    Receives JSON payload via POST, interacts with llm_api, 
-    saves messages to DB, and returns the AI reply.
-    """
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Invalid request method'}, status=405)
+    """Handle chat generation requests and stream assistant output."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
 
     try:
         data = json.loads(request.body)
-        user_message = data.get('message', '')
-        model_name = data.get('model', '')
-        system_prompt = data.get('system_prompt', '')
-        options = data.get('options', {})
-        chat_id = data.get('chat_id', '')
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON format"}, status=400)
 
-        images = data.get('images', [])  # list of base64-encoded strings
+    try:
+        user_message = data.get("message", "")
+        model_name = data.get("model", "")
+        system_prompt = data.get("system_prompt", "")
+        options = data.get("options", {}) or {}
+        chat_id = data.get("chat_id", "")
+        images = data.get("images", []) or []
+        engine = _get_active_engine(data.get("engine"))
 
         if not model_name:
-            return JsonResponse({'error': 'Missing model parameter'}, status=400)
+            return JsonResponse({"error": "Missing model parameter"}, status=400)
         if not user_message and not images:
-            return JsonResponse({'error': 'Missing message or images'}, status=400)
-            
-        # Get or create chat
+            return JsonResponse({"error": "Missing message or images"}, status=400)
+
         if chat_id:
             try:
                 chat = Chat.objects.get(id=chat_id)
             except Chat.DoesNotExist:
-                return JsonResponse({'error': 'Chat not found'}, status=404)
+                return JsonResponse({"error": "Chat not found"}, status=404)
         else:
-            # Create a new chat, generate a title automatically from the first few words
-            title = user_message[:30] + ('...' if len(user_message) > 30 else '')
-            chat = Chat.objects.create(title=title)
-            
-        # Save user message to DB and attach images
-        user_msg = Message.objects.create(chat=chat, role='user', content=user_message)
-        if images:
-            for order, b64 in enumerate(images):
-                # Try to detect mime type from base64 header; fall back to jpeg
-                mime = 'image/jpeg'
-                if b64.startswith('/9j/'):
-                    mime = 'image/jpeg'
-                elif b64.startswith('iVBOR'):
-                    mime = 'image/png'
-                elif b64.startswith('R0lGO'):
-                    mime = 'image/gif'
-                elif b64.startswith('UklGR'):
-                    mime = 'image/webp'
-                MessageImage.objects.create(message=user_msg, data=b64, mime_type=mime, order=order)
+            chat = Chat.objects.create(title=_build_chat_title(user_message, bool(images)))
 
-        # Prepare kwargs for generate
-        generate_kwargs = {
-            'engine': 'ollama-service',
-            'model_name': model_name,
-            'prompt': user_message,
-            'system': system_prompt,
-            'stream': True
+        user_message_record = Message.objects.create(
+            chat=chat,
+            role="user",
+            content=user_message,
+        )
+
+        for order, base64_data in enumerate(images):
+            MessageImage.objects.create(
+                message=user_message_record,
+                data=base64_data,
+                mime_type=_detect_image_mime(base64_data),
+                order=order,
+            )
+
+        llm_messages: list[dict[str, Any]] = []
+        if system_prompt:
+            llm_messages.append({"role": "system", "content": system_prompt})
+
+        history_qs = chat.messages.exclude(id=user_message_record.id)
+        for historical_message in history_qs:
+            llm_messages.append(
+                {
+                    "role": historical_message.role,
+                    "content": historical_message.content,
+                }
+            )
+
+        current_entry: dict[str, Any] = {"role": "user", "content": user_message}
+        if images:
+            current_entry["images"] = images
+        llm_messages.append(current_entry)
+
+        think_value = None
+        think_level_value = None
+        clean_options = {}
+
+        for key, value in options.items():
+            if key in THINK_PARAM_NAMES:
+                think_value = value
+            elif key in THINK_LEVEL_PARAM_NAMES:
+                think_level_value = value
+            else:
+                clean_options[key] = value
+
+        generate_kwargs: dict[str, Any] = {
+            "engine": engine,
+            "model_name": model_name,
+            "messages": llm_messages,
+            "stream": True,
         }
-        
-        # Attach images if provided (Vision models)
-        if images:
-            generate_kwargs['images'] = images
 
-        # Merge options
-        if options:
-            generate_kwargs['options'] = options
+        if think_value is not None:
+            generate_kwargs["think"] = think_value
+        if think_level_value is not None:
+            generate_kwargs["think_level"] = think_level_value
+        if clean_options:
+            generate_kwargs["options"] = clean_options
 
-        # Call the LLM Wrapper with stream=True
-        # We will yield plain text chunks back to the client
         def stream_response():
             full_response = ""
             is_thinking = False
+
             try:
-                # generate() with stream=True returns an iterator from ollama
+                llm_api.prepare_runtime(engine)
                 response_iterator = llm_api.generate(**generate_kwargs)
                 for chunk in response_iterator:
-                    thinking_part = chunk.get('thinking', '')
-                    text_part = chunk.get('response', '')
-                    
+                    raw_message = chunk.get("message", {}) if isinstance(chunk, dict) else getattr(chunk, "message", {})
+                    if isinstance(raw_message, dict):
+                        thinking_part = raw_message.get("thinking", "") or ""
+                        text_part = raw_message.get("content", "") or ""
+                    else:
+                        thinking_part = getattr(raw_message, "thinking", "") or ""
+                        text_part = getattr(raw_message, "content", "") or ""
+
                     if thinking_part:
                         if not is_thinking:
                             is_thinking = True
@@ -117,7 +435,7 @@ def chat_api(request):
                             yield "<think>\n"
                         full_response += thinking_part
                         yield thinking_part
-                        
+
                     if text_part:
                         if is_thinking:
                             is_thinking = False
@@ -125,177 +443,282 @@ def chat_api(request):
                             yield "\n</think>\n"
                         full_response += text_part
                         yield text_part
-                        
-            except Exception as e:
-                print(f"Error during streaming: {e}")
+            except Exception as exc:
+                logger.exception("Error during streaming generation")
                 if is_thinking:
                     yield "\n</think>\n"
-                yield f"\n[Error during generation: {str(e)}]"
+                yield f"\n[Error during generation: {exc}]"
             finally:
                 if is_thinking:
                     full_response += "\n</think>\n"
-                
-                # Once streaming is done (or fails), save the full response to DB
                 if full_response:
-                    Message.objects.create(chat=chat, role='assistant', content=full_response)
+                    Message.objects.create(chat=chat, role="assistant", content=full_response)
 
-        response = StreamingHttpResponse(stream_response(), content_type='text/plain; charset=utf-8')
-        # Inject custom header so frontend knows the chat ID
-        response['X-Chat-ID'] = str(chat.id)
+        response = StreamingHttpResponse(stream_response(), content_type="text/plain; charset=utf-8")
+        response["X-Chat-ID"] = str(chat.id)
+        response["X-LLM-Engine"] = engine
         return response
 
-    except json.JSONDecodeError:
-        return JsonResponse({'error': 'Invalid JSON format'}, status=400)
-    except Exception as e:
-        print(f"Exception in chat_api: {e}")
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception as exc:
+        logger.exception("Unhandled exception in chat_api")
+        return JsonResponse({"error": str(exc)}, status=500)
 
 
 def load_chat_api(request, chat_id):
-    """
-    Loads historical messages for a specific chat ID.
-    """
-    if request.method != 'GET':
-        return JsonResponse({'error': 'Invalid request method'}, status=405)
-        
+    """Load persisted messages for a chat thread."""
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
     try:
         chat = Chat.objects.get(id=chat_id)
-        messages = chat.messages.all().prefetch_related('images')
-        msg_list = []
-        for m in messages:
-            entry = {'role': m.role, 'content': m.content}
-            imgs = list(m.images.all())
-            if imgs:
-                entry['images'] = [img.data_url() for img in imgs]
-            msg_list.append(entry)
-        
-        return JsonResponse({'chat_id': str(chat.id), 'title': chat.title, 'messages': msg_list})
+        messages = chat.messages.all().prefetch_related("images")
+        payload = [_serialize_message(message) for message in messages]
+        return JsonResponse({"chat_id": str(chat.id), "title": chat.title, "messages": payload})
     except Chat.DoesNotExist:
-        return JsonResponse({'error': 'Chat not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        return JsonResponse({"error": "Chat not found"}, status=404)
+    except Exception as exc:
+        logger.exception("Failed to load chat %s", chat_id)
+        return JsonResponse({"error": str(exc)}, status=500)
+
 
 def get_model_info_api(request):
-    """
-    Returns settings for a specific model, parsing the metadata 
-    to extract actual maximum context lengths and other dynamic bounds.
-    """
-    if request.method != 'GET':
-        return JsonResponse({'error': 'Invalid request method'}, status=405)
-        
-    model_name = request.GET.get('model', '')
+    """Return model capabilities and default parameters for the selected engine."""
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    model_name = request.GET.get("model", "")
     if not model_name:
-        return JsonResponse({'error': 'Model parameter is required'}, status=400)
-        
+        return JsonResponse({"error": "Model parameter is required"}, status=400)
+
+    engine = _get_active_engine(request.GET.get("engine"))
+
     try:
-        settings_data = llm_api.get_model_settings('ollama-service', model_name)
-        # Ollama's show method returns a dictionary directly with python-ollama API
-        # but the structure can be nested depending on the dict fields parsing
-        # we are looking specifically for modelinfo attributes
-        
-        # Safe default fallbacks
-        context_length = 8192
-        defaults = {}
-        
-        # In `ollama` python client, `show` returns a mapping directly with 'modelinfo' and 'parameters'
-        modelinfo = {}
-        parameters_str = ""
-        template_str = ""
-        
-        if isinstance(settings_data, dict):
-            modelinfo = settings_data.get('modelinfo', {})
-            parameters_str = settings_data.get('parameters', "")
-            template_str = settings_data.get('template', "")
-            capabilities = settings_data.get('capabilities', [])
+        return JsonResponse(_build_model_info_payload(engine, model_name))
+    except NotImplementedError as exc:
+        logger.info("Model info is not implemented for engine %s: %s", engine, exc)
+        return JsonResponse({"error": str(exc)}, status=501)
+    except Exception as exc:
+        logger.exception("Error getting model info for %s on engine %s", model_name, engine)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def get_models_api(request):
+    """Return model names for the requested engine."""
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    engine = _get_active_engine(request.GET.get("engine"))
+    return JsonResponse({"engine": engine, "models": _load_models_for_engine(engine)})
+
+
+def get_ollama_presets_api(request):
+    """Return preset metadata for the selected Ollama model."""
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    model_name = str(request.GET.get("model", "") or "").strip()
+    if not model_name:
+        return JsonResponse({"error": "Model parameter is required"}, status=400)
+
+    try:
+        return JsonResponse(get_ollama_preset_payload(model_name))
+    except Exception as exc:
+        logger.exception("Error getting Ollama presets for %s", model_name)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def sync_ollama_preset_api(request):
+    """Persist UI changes to the active Ollama preset."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return JsonResponse(sync_active_ollama_preset(model_name, config))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error syncing Ollama preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def select_ollama_preset_api(request):
+    """Set the active preset for an Ollama model."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return JsonResponse(activate_ollama_preset(model_name, preset_id))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except OllamaPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error selecting Ollama preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def create_ollama_preset_api(request):
+    """Create a new Ollama preset for the selected model."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return JsonResponse(
+            create_ollama_preset(
+                model_name,
+                name=preset_name or None,
+                config=config if isinstance(config, dict) else {},
+                activate=True,
+            )
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error creating Ollama preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def rename_ollama_preset_api(request):
+    """Rename an existing custom Ollama preset."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        if not model_name or not preset_id or not preset_name:
+            return JsonResponse({"error": "Model, preset_id and name are required"}, status=400)
+        return JsonResponse(rename_ollama_preset(model_name, preset_id, preset_name))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except OllamaPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error renaming Ollama preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def delete_ollama_preset_api(request):
+    """Delete an existing custom Ollama preset."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return JsonResponse(delete_ollama_preset(model_name, preset_id))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except OllamaPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error deleting Ollama preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def reload_model_api(request):
+    """Reload the selected model when the active engine supports explicit reload."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON format"}, status=400)
+
+    model_name = str(data.get("model", "") or "").strip()
+    engine = _get_active_engine(data.get("engine"))
+    if not model_name:
+        return JsonResponse({"error": "Model parameter is required"}, status=400)
+
+    try:
+        llm_api.reload_model(engine, model_name)
+    except NotImplementedError as exc:
+        logger.info("Model reload is not implemented for engine %s: %s", engine, exc)
+        return JsonResponse({"error": str(exc)}, status=501)
+    except Exception as exc:
+        logger.exception("Error reloading model %s on engine %s", model_name, engine)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+    return JsonResponse({"engine": engine, "model": model_name, "reloaded": True})
+
+
+def runtime_settings_api(request):
+    """Read or update runtime engine settings used by the chat UI."""
+    if request.method == "GET":
+        return JsonResponse(_build_runtime_settings_payload())
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON format"}, status=400)
+
+    allowed_keys = {"llm-engine", "lms_url", "lms_load_config", "openai_url", "openai_api_key"}
+
+    previous_engine = settings.get_llm_engine()
+    next_engine = previous_engine
+
+    for raw_key, raw_value in data.items():
+        if raw_key not in allowed_keys:
+            continue
+
+        if raw_key == "llm-engine":
+            value = settings.normalize_engine_name(raw_value)
+            next_engine = value
+        elif raw_key == "lms_load_config":
+            value = raw_value if isinstance(raw_value, dict) else {}
         else:
-            modelinfo = getattr(settings_data, 'modelinfo', {})
-            parameters_str = getattr(settings_data, 'parameters', "")
-            template_str = getattr(settings_data, 'template', "")
-            capabilities = getattr(settings_data, 'capabilities', [])
-            
-        # Parse looking for context length
-        for key, value in modelinfo.items():
-            if key.endswith('.context_length'):
-                try:
-                    context_length = int(value)
-                except ValueError:
-                    pass
-                break # Found the typical context_length key
-                
-        # Parse the parameters string into a dictionary
-        if parameters_str:
-            lines = parameters_str.strip().split('\n')
-            for line in lines:
-                parts = line.strip().split()
-                if len(parts) >= 2:
-                    k = parts[0].strip().lower()
-                    # Values might have spaces if they are strings, join them back, but usually they are numbers
-                    v = " ".join(parts[1:]).strip()
-                    try:
-                        # Try int
-                        defaults[k] = int(v)
-                    except ValueError:
-                        try:
-                            # Try float
-                            defaults[k] = float(v)
-                        except ValueError:
-                            # Keep as string or boolean
-                            val_lower = v.lower()
-                            if val_lower == 'true':
-                                defaults[k] = True
-                            elif val_lower == 'false':
-                                defaults[k] = False
-                            else:
-                                defaults[k] = v
-                                
-        # Check for reasoning parameters
-        think_param_name = 'think'
-        think_level_param_name = 'think_level'
-        
-        supports_thinking = '.Think ' in template_str or '.Think\n' in template_str or '.ThinkLevel' in template_str
-        supports_think_level = '.ThinkLevel' in template_str
-        
-        if 'thinking' in capabilities:
-            supports_thinking = True
-            
-        think_candidates = ['think', 'thinking', 'reasoning']
-        for cand in think_candidates:
-            if cand in defaults:
-                think_param_name = cand
-                supports_thinking = True
-                break
+            value = str(raw_value or "").strip()
 
-        if not supports_thinking and ('.Reasoning' in template_str or '.Reason ' in template_str):
-            supports_thinking = True
-            think_param_name = 'reasoning'
-            
-        level_candidates = ['think_level', 'thinking_level', 'reasoning_effort']
-        for cand in level_candidates:
-            if cand in defaults:
-                think_level_param_name = cand
-                supports_think_level = True
-                break
-                
-        if not supports_think_level and '.ReasoningEffort' in template_str:
-            supports_think_level = True
-            think_level_param_name = 'reasoning_effort'
-                
-        supports_vision = 'vision' in (capabilities or [])
+        settings.set(raw_key, value)
 
-        return JsonResponse({
-            'model': model_name,
-            'context_length': context_length,
-            'defaults': defaults,
-            'supports_thinking': supports_thinking,
-            'supports_think_level': supports_think_level,
-            'think_param_name': think_param_name,
-            'think_level_param_name': think_level_param_name,
-            'supports_vision': supports_vision
-        })
-    except Exception as e:
-        print(f"[ASLM-Chat UI] Error getting model info for {model_name}: {e}")
-        return JsonResponse({'error': str(e)}, status=500)
+    llm_api.handle_engine_transition(previous_engine, next_engine)
 
-# Profile Page
-class profile(TemplateView):
-    template_name = 'main/profile.html'
+    return JsonResponse(_build_runtime_settings_payload())
+
+
+class ProfileView(TemplateView):
+    """Static account/profile page."""
+
+    template_name = "main/profile.html"
+
+    def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        context.update(_build_base_context())
+        return context
+
+
+class ChatView(TemplateView):
+    """Chat permalink page that preloads a specific conversation."""
+
+    template_name = "main/main.html"
+
+    def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        context.update(_build_base_context())
+        context["preload_chat_id"] = str(kwargs.get("chat_id", ""))
+        return context
