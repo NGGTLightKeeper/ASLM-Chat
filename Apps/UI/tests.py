@@ -1,4 +1,4 @@
-"""Tests for ASLM-Chat UI helpers and endpoints."""
+# Copyright NGGT.LightKeeper. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -21,30 +21,31 @@ from Apps.UI.views import _extract_model_name
 class ToolRegistryTestMixin:
     """Patch the local tools directory for endpoint tests."""
 
+    # Create isolated Tools directory
     def setUp(self):
         super().setUp()
         self._tools_dir_context = tempfile.TemporaryDirectory()
         self.tools_dir = Path(self._tools_dir_context.name)
-        self.tools_patch = patch.object(tool_registry, 'TOOLS_DIR', self.tools_dir)
+        self.tools_patch = patch.object(tool_registry, "TOOLS_DIR", self.tools_dir)
         self.tools_patch.start()
         tool_registry.reset_cache()
 
+    # Restore original registry state
     def tearDown(self):
         tool_registry.reset_cache()
         self.tools_patch.stop()
         self._tools_dir_context.cleanup()
         super().tearDown()
 
+    # Write temporary MCP server
     def write_server(self, folder: str, body: str) -> None:
         server_dir = self.tools_dir / folder
         server_dir.mkdir(parents=True, exist_ok=True)
-        (server_dir / 'mcp-server.py').write_text(
+        (server_dir / "mcp-server.py").write_text(
             textwrap.dedent(body).strip() + "\n",
-            encoding='utf-8',
+            encoding="utf-8",
         )
         tool_registry.reset_cache()
-
-
 
 class ModelNameExtractionTests(SimpleTestCase):
     """Cover adapter-specific model list formats."""
