@@ -1,4 +1,4 @@
-"""Adapter registry for LLM engines used by ASLM-Chat."""
+# Copyright NGGT.LightKeeper. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -21,8 +21,10 @@ ENGINE_MODULES = {
 }
 
 
+# Load adapter module
 def _get_engine_module(engine: str | None) -> ModuleType:
-    """Load the API adapter module for the requested engine."""
+    """Load the adapter module for the selected LLM engine."""
+
     canonical_engine = settings.normalize_engine_name(engine)
     module_name = ENGINE_MODULES.get(canonical_engine)
 
@@ -36,75 +38,50 @@ def _get_engine_module(engine: str | None) -> ModuleType:
         raise ImportError(f"Failed to load engine module {module_name}: {exc}") from exc
 
 
+# List engine models
 def get_models(engine: str | None) -> Any:
-    """Return available models for the selected engine."""
+    """Return the list of models exposed by the selected engine."""
+
     module = _get_engine_module(engine)
     if hasattr(module, "get_models"):
         return module.get_models()
+
     raise NotImplementedError(f"Engine {engine} does not implement get_models")
 
-
+# Download engine model
 def download_model(engine: str | None, model_name: str, **kwargs: Any) -> Any:
-    """Download or pull a model for the selected engine."""
+    """Download or pull a model through the selected engine adapter."""
+
     module = _get_engine_module(engine)
     if hasattr(module, "download_model"):
         return module.download_model(model_name, **kwargs)
+
     raise NotImplementedError(f"Engine {engine} does not implement download_model")
 
-
+# Generate engine response
 def generate(engine: str | None, model_name: str, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
-    """Generate a response from the selected engine using chat-style messages."""
+    """Generate a chat response through the selected engine adapter."""
+
     module = _get_engine_module(engine)
     if hasattr(module, "generate"):
         return module.generate(model_name, messages, **kwargs)
+
     raise NotImplementedError(f"Engine {engine} does not implement generate")
 
-
+# Read model settings
 def get_model_settings(engine: str | None, model_name: str) -> Any:
-    """Return model metadata or settings from the selected engine."""
+    """Return model metadata exposed by the selected engine."""
+
     module = _get_engine_module(engine)
     if hasattr(module, "get_model_settings"):
         return module.get_model_settings(model_name)
+
     raise NotImplementedError(f"Engine {engine} does not implement get_model_settings")
 
-
-def prepare_runtime(engine: str | None) -> None:
-    """Prepare the selected engine runtime before it is used."""
-    module = _get_engine_module(engine)
-    prepare = getattr(module, "prepare_runtime", None)
-    if callable(prepare):
-        prepare()
-
-
-def cleanup_runtime(engine: str | None) -> None:
-    """Release runtime resources for the selected engine when it is deselected."""
-    module = _get_engine_module(engine)
-    cleanup = getattr(module, "cleanup_runtime", None)
-    if callable(cleanup):
-        cleanup()
-
-
-def handle_engine_transition(previous_engine: str | None, next_engine: str | None) -> None:
-    """Apply runtime teardown/startup when the active engine changes."""
-    previous = settings.normalize_engine_name(previous_engine)
-    current = settings.normalize_engine_name(next_engine)
-
-    if previous == current:
-        return
-
-    try:
-        cleanup_runtime(previous)
-    except Exception as exc:
-        logger.warning("Failed to clean up engine %s: %s", previous, exc)
-
-    try:
-        prepare_runtime(current)
-    except Exception as exc:
-        logger.warning("Failed to prepare engine %s: %s", current, exc)
-
-
+# Reload selected model
 def reload_model(engine: str | None, model_name: str) -> None:
-    """Reload a model when the selected engine exposes explicit reload support."""
+    """Reload the selected model when the engine supports explicit reloads."""
+
     module = _get_engine_module(engine)
     reload_func = getattr(module, "reload_model", None)
     if callable(reload_func):
@@ -112,3 +89,44 @@ def reload_model(engine: str | None, model_name: str) -> None:
         return
 
     raise NotImplementedError(f"Engine {engine} does not implement reload_model")
+
+
+# Start engine runtime
+def prepare_runtime(engine: str | None) -> None:
+    """Prepare the selected engine runtime before it is used."""
+
+    module = _get_engine_module(engine)
+    prepare = getattr(module, "prepare_runtime", None)
+    if callable(prepare):
+        prepare()
+
+# Stop engine runtime
+def cleanup_runtime(engine: str | None) -> None:
+    """Release runtime resources for the selected engine."""
+
+    module = _get_engine_module(engine)
+    cleanup = getattr(module, "cleanup_runtime", None)
+    if callable(cleanup):
+        cleanup()
+
+# Switch active runtime
+def handle_engine_transition(previous_engine: str | None, next_engine: str | None) -> None:
+    """Switch runtime resources when the active engine changes."""
+
+    previous = settings.normalize_engine_name(previous_engine)
+    current = settings.normalize_engine_name(next_engine)
+
+    if previous == current:
+        return
+
+    # Stop the previous runtime before starting the next one.
+    try:
+        cleanup_runtime(previous)
+    except Exception as exc:
+        logger.warning("Failed to clean up engine %s: %s", previous, exc)
+
+    # Keep engine switching non-fatal for the caller.
+    try:
+        prepare_runtime(current)
+    except Exception as exc:
+        logger.warning("Failed to prepare engine %s: %s", current, exc)

@@ -1,4 +1,4 @@
-"""OpenAI-compatible adapter backed by the official ``openai`` SDK."""
+# Copyright NGGT.LightKeeper. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -39,25 +39,26 @@ DIRECT_OPTION_KEYS = {
 }
 
 
+# Create OpenAI client
 def _get_client():
     """Create an OpenAI-compatible client using the configured base URL."""
+
     try:
         from openai import OpenAI
     except ImportError as exc:
         raise ImportError("The 'openai' package is required for OpenAI-compatible support.") from exc
 
-    client_kwargs = {
-        "base_url": settings.get_engine_url("openai"),
-    }
+    client_kwargs = {"base_url": settings.get_engine_url("openai")}
     api_key = settings.get_openai_api_key()
     if api_key:
         client_kwargs["api_key"] = api_key
 
     return OpenAI(**client_kwargs)
 
-
+# Convert chat messages
 def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert generic ASLM chat messages to OpenAI-compatible message payloads."""
+    """Convert ASLM chat messages into OpenAI-compatible payloads."""
+
     payload: list[dict[str, Any]] = []
 
     for message in messages:
@@ -65,10 +66,12 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
         content = message.get("content", "") or ""
         images = message.get("images") or []
 
+        # Image inputs require multipart content instead of a plain string.
         if images:
             content_parts: list[dict[str, Any]] = []
             if content:
                 content_parts.append({"type": "text", "text": content})
+
             for image_base64 in images:
                 content_parts.append(
                     {
@@ -76,6 +79,7 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
                         "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"},
                     }
                 )
+
             payload.append({"role": role, "content": content_parts})
             continue
 
@@ -83,9 +87,10 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
 
     return payload
 
-
+# Split request options
 def _build_openai_request_options(options: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-    """Split generic generation options into OpenAI kwargs and ``extra_body``."""
+    """Split generic generation options into direct kwargs and ``extra_body``."""
+
     direct_options: dict[str, Any] = {}
     extra_body: dict[str, Any] = {}
 
@@ -108,8 +113,10 @@ def _build_openai_request_options(options: dict[str, Any], **kwargs: Any) -> dic
     return direct_options
 
 
+# List remote models
 def get_models() -> list[Any]:
     """Return models exposed by the configured OpenAI-compatible endpoint."""
+
     client = _get_client()
     try:
         response = client.models.list()
@@ -119,14 +126,40 @@ def get_models() -> list[Any]:
 
     return list(getattr(response, "data", []) or [])
 
-
+# Reject local download request
 def download_model(model_name: str, **kwargs: Any) -> Any:
-    """OpenAI-compatible APIs expose remote models and do not download locally."""
+    """Raise because OpenAI-compatible endpoints expose remote models only."""
+
     raise NotImplementedError("OpenAI-compatible models are remote and cannot be downloaded locally.")
 
+# Read model metadata
+def get_model_settings(model_name: str) -> dict[str, Any]:
+    """Return basic metadata for a model from an OpenAI-compatible endpoint."""
 
+    client = _get_client()
+    try:
+        model = client.models.retrieve(model_name)
+    except Exception as exc:
+        logger.error("[OpenAI API] Error fetching settings for %s: %s", model_name, exc)
+        raise
+
+    raw_model = model.to_dict() if hasattr(model, "to_dict") else {}
+    return {
+        "model": model_name,
+        "context_length": raw_model.get("context_length", raw_model.get("max_context_length", 8192)),
+        "defaults": {},
+        "supports_thinking": False,
+        "supports_think_level": False,
+        "supports_vision": False,
+        "capabilities": [],
+        "raw": raw_model,
+    }
+
+
+# Generate OpenAI response
 def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
     """Generate a streamed or non-streamed response through an OpenAI-compatible API."""
+
     client = _get_client()
     options = dict(kwargs.get("options", {}) or {})
     stream = bool(kwargs.get("stream", False))
@@ -145,6 +178,7 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
             **request_options,
         )
 
+        # Keep one outgoing shape for both stream and non-stream modes.
         if stream:
             for chunk in response:
                 for choice in getattr(chunk, "choices", []) or []:
@@ -162,26 +196,3 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
     except Exception as exc:
         logger.error("[OpenAI API] Error generating response from %s: %s", model_name, exc)
         raise
-
-
-def get_model_settings(model_name: str) -> dict[str, Any]:
-    """Return basic metadata for a model exposed by an OpenAI-compatible endpoint."""
-    client = _get_client()
-
-    try:
-        model = client.models.retrieve(model_name)
-    except Exception as exc:
-        logger.error("[OpenAI API] Error fetching settings for %s: %s", model_name, exc)
-        raise
-
-    raw_model = model.to_dict() if hasattr(model, "to_dict") else {}
-    return {
-        "model": model_name,
-        "context_length": raw_model.get("context_length", raw_model.get("max_context_length", 8192)),
-        "defaults": {},
-        "supports_thinking": False,
-        "supports_think_level": False,
-        "supports_vision": False,
-        "capabilities": [],
-        "raw": raw_model,
-    }
