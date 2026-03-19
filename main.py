@@ -1,12 +1,14 @@
-"""Command entry point for the ASLM-Chat module."""
+# Copyright NGGT.LightKeeper. All Rights Reserved.
 
 from __future__ import annotations
 
 import argparse
+import importlib
 import os
 import sys
 
-# Ensure the project root is on sys.path so Django and Settings can be imported.
+
+# Prepare project imports
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
@@ -16,8 +18,10 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ASLM.settings")
 from Settings.console import PrintTechData
 
 
+# Run Django command
 def run_django_command(*args: str, log: bool = False) -> None:
     """Execute a Django management command."""
+
     from django.core.management import execute_from_command_line
 
     argv = ["manage.py", *args]
@@ -26,53 +30,64 @@ def run_django_command(*args: str, log: bool = False) -> None:
 
     execute_from_command_line(argv)
 
-
+# Start Django development server
 def cmd_runserver(port: int, log: bool) -> None:
-    """Start the Django development server on the given port."""
+    """Start the Django development server on the requested port."""
+
     if log:
         print(f"[ASLM-Chat] Starting server on port {port}...")
+
     run_django_command("runserver", f"127.0.0.1:{port}", log=log)
 
-
+# Apply database migrations
 def cmd_migrate(log: bool) -> None:
     """Apply all pending database migrations."""
+
     if log:
         print("[ASLM-Chat] Applying migrations...")
+
     run_django_command("migrate", "--noinput", log=log)
 
-
+# Create migration files
 def cmd_makemigrations(app: str | None, log: bool) -> None:
     """Create migration files for changed models."""
+
     args = ["makemigrations"]
     if app:
         args.append(app)
+
     run_django_command(*args, log=log)
 
-
+# Collect static files
 def cmd_collectstatic(log: bool) -> None:
     """Collect static files into ``STATIC_ROOT``."""
+
     run_django_command("collectstatic", "--noinput", log=log)
 
 
+# Run first-time setup
 def cmd_first_run(log: bool = True, ui_port: int = 30000, api_port: int = 30001) -> None:
-    """Generate the settings file and run initial migrations."""
+    """Generate settings and apply initial migrations."""
+
     from Settings.first_run import run as first_run
 
     print("[ASLM-Chat] Running first-run setup...")
     first_run(log=log, ui_port=ui_port, api_port=api_port)
     cmd_migrate(log=log)
 
-
+# Read one runtime setting
 def cmd_get_setting(key: str) -> None:
     """Print a single setting value for ASLM integration hooks."""
+
     from Settings.settings import get
 
     value = get(key)
     print(value if value is not None else "")
 
-
+# Update one runtime setting
 def cmd_set_setting(key: str, value: str) -> None:
     """Update a single setting key from string input."""
+
     from Settings.settings import normalize_setting_value, set
 
     parsed_value = normalize_setting_value(value)
@@ -80,16 +95,16 @@ def cmd_set_setting(key: str, value: str) -> None:
     print(f"[ASLM-Chat] Setting '{key}' updated to {parsed_value}")
 
 
+# Start local engine service
 def maybe_start_local_engine_service(log: bool) -> None:
     """Start the active local engine service when the current adapter needs it."""
+
     from Settings import settings
 
     if not settings.is_ollama_engine(settings.get_llm_engine()):
         return
 
     try:
-        import importlib
-
         ollama_service = importlib.import_module("Services.ollama-service")
         ollama_service.start_ollama()
     except ImportError as exc:
@@ -97,8 +112,10 @@ def maybe_start_local_engine_service(log: bool) -> None:
             print(f"[ASLM-Chat] Warning: Services.ollama-service could not be loaded. {exc}")
 
 
-def main() -> None:
-    """Parse CLI arguments and dispatch the requested command."""
+# Build CLI parser
+def _build_parser() -> argparse.ArgumentParser:
+    """Return the command-line parser for the project entry point."""
+
     parser = argparse.ArgumentParser(
         prog="main.py",
         description="ASLM-Chat management entry point",
@@ -110,18 +127,43 @@ def main() -> None:
     parser.add_argument("--key", type=str, default=None, help="Setting key for get_setting/set_setting")
     parser.add_argument("--value", type=str, default=None, help="Setting value for set_setting")
     parser.add_argument("--log", action="store_true", help="Enable verbose output")
+    return parser
+
+# Print startup banner
+def _maybe_print_banner(command: str) -> None:
+    """Print technical module data once for interactive commands."""
+
+    if not os.environ.get("RUN_MAIN") and command not in {"get_setting", "set_setting"}:
+        PrintTechData().PTD_Print()
+
+# Resolve runtime server port
+def _resolve_runserver_port(requested_port: int) -> int:
+    """Return the effective UI port for ``runserver``."""
+
+    from Settings.settings import load_settings
+
+    if requested_port != 30000:
+        return requested_port
+
+    runtime_settings = load_settings()
+    return int(runtime_settings.get("ui-port", 30000))
+
+
+# Dispatch CLI command
+def main() -> None:
+    """Parse CLI arguments and dispatch the requested command."""
+
+    parser = _build_parser()
     args = parser.parse_args()
 
-    if not os.environ.get("RUN_MAIN") and args.command not in {"get_setting", "set_setting"}:
-        PrintTechData().PTD_Print()
+    _maybe_print_banner(args.command)
 
     match args.command:
         case "runserver":
-            from Settings.settings import load_settings
+            port = _resolve_runserver_port(args.port)
 
-            runtime_settings = load_settings()
-            port = args.port if args.port != 30000 else int(runtime_settings.get("ui-port", 30000))
-
+            # Start the managed local engine once before Django's reloader spins
+            # up the child process that serves requests.
             if not os.environ.get("RUN_MAIN"):
                 maybe_start_local_engine_service(args.log)
 

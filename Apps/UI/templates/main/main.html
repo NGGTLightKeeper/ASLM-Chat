@@ -1,4 +1,4 @@
-{% extends "main/base.html" %}
+﻿{% extends "main/base.html" %}
 {% load static %}
 
 {% block title %}ASLM Chat{% endblock %}
@@ -9,7 +9,6 @@
 <div class="chat-shell">
     {% csrf_token %}
 
-    <!-- Main Chat Area -->
     <main class="main-area" id="mainArea">
         <header class="topbar">
             <h2 class="chat-title" id="chatTitle">New Chat</h2>
@@ -22,11 +21,14 @@
                     <div class="input-area welcome-input">
                         <div class="input-wrapper" id="inputWrapper">
                             <input type="file" id="imageInput" accept="image/*" multiple style="display:none;">
-                            <!-- Image preview grid -->
                             <div class="image-preview-grid" id="imagePreviewStrip" style="display:none;"></div>
-                            <!-- Textarea -->
                             <textarea class="chat-input" id="chatInput" placeholder="Message ASLM..." rows="1"></textarea>
-                            <!-- Bottom bar -->
+                            <div class="tool-selector-panel" id="toolSelectorPanel" style="display:none;">
+                                <label class="tool-selector-label" for="toolSelector">Tool Server</label>
+                                <select class="tool-selector" id="toolSelector">
+                                    <option value="">No server</option>
+                                </select>
+                            </div>
                             <div class="input-bottom-bar">
                                 <div class="input-bottom-left">
                                     <button class="attach-btn" id="attachBtn" style="display:none;" title="Attach image" aria-label="Attach image">
@@ -38,6 +40,10 @@
                                         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                                         Vision
                                     </div>
+                                    <button class="tool-toggle-btn" id="toolToggleBtn" style="display:none;" title="Select tool server">
+                                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 010 1.4l-4 4a1 1 0 01-1.4 0l-2-2a1 1 0 011.4-1.4L10 9.59l3.3-3.3a1 1 0 011.4 0z"/><path d="M5 13h14"/><path d="M5 17h10"/></svg>
+                                        <span class="tool-toggle-label">Tools</span>
+                                    </button>
                                     <button class="think-toggle-btn" id="thinkToggleBtn" style="display:none;" title="Toggle thinking">
                                         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
                                         Think
@@ -62,15 +68,17 @@
             </div>
         </div>
 
-        <!-- Input area shown during conversation -->
         <div class="input-area conversation-input" id="conversationInput" style="display:none;">
             <div class="input-wrapper" id="inputWrapperConv">
                 <input type="file" id="imageInputConv" accept="image/*" multiple style="display:none;">
-                <!-- Image preview grid -->
                 <div class="image-preview-grid" id="imagePreviewStripConv" style="display:none;"></div>
-                <!-- Textarea -->
                 <textarea class="chat-input" id="chatInputConv" placeholder="Message ASLM..." rows="1"></textarea>
-                <!-- Bottom bar -->
+                <div class="tool-selector-panel" id="toolSelectorPanelConv" style="display:none;">
+                    <label class="tool-selector-label" for="toolSelectorConv">Tool Server</label>
+                    <select class="tool-selector" id="toolSelectorConv">
+                        <option value="">No server</option>
+                    </select>
+                </div>
                 <div class="input-bottom-bar">
                     <div class="input-bottom-left">
                         <button class="attach-btn" id="attachBtnConv" style="display:none;" title="Attach image" aria-label="Attach image">
@@ -82,6 +90,10 @@
                             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                             Vision
                         </div>
+                        <button class="tool-toggle-btn" id="toolToggleBtnConv" style="display:none;" title="Select tool server">
+                            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 010 1.4l-4 4a1 1 0 01-1.4 0l-2-2a1 1 0 011.4-1.4L10 9.59l3.3-3.3a1 1 0 011.4 0z"/><path d="M5 13h14"/><path d="M5 17h10"/></svg>
+                            <span class="tool-toggle-label">Tools</span>
+                        </button>
                         <button class="think-toggle-btn" id="thinkToggleBtnConv" style="display:none;" title="Toggle thinking">
                             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
                             Think
@@ -104,14 +116,12 @@
         </div>
     </main>
 
-    <!-- Right Sidebar (Model Settings) -->
     <aside class="sidebar sidebar-right" id="sidebarRight">
         <div class="sidebar-header">
             <span class="logo-name">Model Settings</span>
         </div>
 
         <div class="settings-panel">
-            <!-- Engine connection -->
             <div class="settings-section" id="group-connection">
                 <div class="settings-section-header">
                     Connection
@@ -131,12 +141,7 @@
                             Address
                             <span class="setting-value" id="engineAddressStatus">Saved</span>
                         </label>
-                        <input
-                            class="setting-input"
-                            id="engineAddressInput"
-                            type="text"
-                            value="{{ runtime_settings.active_url|default:'' }}"
-                            placeholder="Engine address">
+                        <input class="setting-input" id="engineAddressInput" type="text" value="{{ runtime_settings.active_url|default:'' }}" placeholder="Engine address">
                         <p class="setting-note" id="engineAddressHint">Configure the selected engine endpoint.</p>
                     </div>
                     <div class="setting-group" id="engineApiKeyGroup">
@@ -147,20 +152,11 @@
                         <label class="setting-switch-row" for="engineApiKeyEnabled">
                             <span class="setting-switch-text">Use saved key</span>
                             <span class="setting-switch-control">
-                                <input
-                                    class="setting-switch-input"
-                                    id="engineApiKeyEnabled"
-                                    type="checkbox"
-                                    {% if runtime_settings.has_openai_api_key %}checked{% endif %}>
+                                <input class="setting-switch-input" id="engineApiKeyEnabled" type="checkbox" {% if runtime_settings.has_openai_api_key %}checked{% endif %}>
                                 <span class="setting-switch-slider" aria-hidden="true"></span>
                             </span>
                         </label>
-                        <input
-                            class="setting-input"
-                            id="engineApiKeyInput"
-                            type="password"
-                            placeholder="Paste API key"
-                            autocomplete="off">
+                        <input class="setting-input" id="engineApiKeyInput" type="password" placeholder="Paste API key" autocomplete="off">
                         <p class="setting-note" id="engineApiKeyHint">Needed only for secured endpoints.</p>
                     </div>
                 </div>
@@ -168,7 +164,6 @@
 
             <div class="settings-divider" id="divider-connection"></div>
 
-            <!-- Model selection -->
             <div class="settings-section" id="group-model">
                 <div class="settings-section-header">
                     Model
@@ -198,7 +193,6 @@
                 </div>
             </div>
 
-            <!-- System Prompt -->
             <div class="settings-section" id="group-system">
                 <div class="settings-section-header">
                     System Prompt
@@ -214,7 +208,6 @@
             <div class="settings-divider" id="divider-system" style="display:none;"></div>
 
             <div id="dynamicParameters">
-                <!-- Load -->
                 <div class="settings-section collapsed" id="group-load" style="display:none;">
                     <div class="settings-section-header">
                         Load
@@ -225,7 +218,6 @@
 
                 <div class="settings-divider" id="divider-load" style="display:none;"></div>
 
-                <!-- Custom Fields -->
                 <div class="settings-section collapsed" id="group-custom" style="display:none;">
                     <div class="settings-section-header">
                         Custom Fields
@@ -234,7 +226,6 @@
                     <div class="settings-section-content"></div>
                 </div>
 
-                <!-- Settings -->
                 <div class="settings-section collapsed" id="group-settings" style="display:none;">
                     <div class="settings-section-header">
                         Settings
@@ -245,7 +236,6 @@
 
                 <div class="settings-divider" id="divider-settings" style="display:none;"></div>
 
-                <!-- Sampling -->
                 <div class="settings-section collapsed" id="group-sampling" style="display:none;">
                     <div class="settings-section-header">
                         Sampling
@@ -256,7 +246,6 @@
 
                 <div class="settings-divider" id="divider-sampling" style="display:none;"></div>
 
-                <!-- Advanced -->
                 <div class="settings-section collapsed" id="group-advanced" style="display:none;">
                     <div class="settings-section-header">
                         Advanced
@@ -274,5 +263,7 @@
 {% block extra_js %}
 {{ runtime_settings|json_script:"runtimeSettingsData" }}
 {{ engine_options|json_script:"engineOptionsData" }}
-<script src="{% static 'js/main/main.js' %}?v=20260318d"></script>
+{{ available_tool_servers|json_script:"availableToolServersData" }}
+<script src="{% static 'js/main/main.js' %}?v=20260319b"></script>
 {% endblock %}
+

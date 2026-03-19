@@ -1,16 +1,16 @@
-"""First-run initialization helpers for ASLM-Chat."""
+# Copyright NGGT.LightKeeper. All Rights Reserved.
 
 from __future__ import annotations
 
 import secrets
+from typing import Any
 
 
-def run(log: bool = False, ui_port: int = 30000, api_port: int = 30001) -> None:
-    """Create the initial settings file while preserving existing values."""
-    from Settings.settings import SETTINGS_FILE, load_settings, save_settings
+# Build first-run settings payload
+def _build_initial_settings(existing: dict[str, Any], ui_port: int, api_port: int) -> dict[str, Any]:
+    """Return the initial settings payload while preserving existing values."""
 
-    existing = load_settings()
-    initial: dict[str, object] = dict(existing)
+    initial: dict[str, Any] = dict(existing)
     initial.update(
         {
             "secret_key": existing.get("secret_key") or secrets.token_urlsafe(50),
@@ -25,15 +25,31 @@ def run(log: bool = False, ui_port: int = 30000, api_port: int = 30001) -> None:
             "openai_api_key": existing.get("openai_api_key", ""),
         }
     )
+    return initial
 
+# Print first-run summary
+def _print_summary(settings_file, initial: dict[str, Any]) -> None:
+    """Print a short summary of the written first-run settings."""
+
+    print(f"[ASLM-Chat] Settings written to: {settings_file}")
+    print(f"[ASLM-Chat]   ui-port    : {initial['ui-port']}")
+    print(f"[ASLM-Chat]   api-port   : {initial['api-port']}")
+    print(f"[ASLM-Chat]   debug      : {initial['debug']}")
+    print(f"[ASLM-Chat]   llm-engine : {initial['llm-engine']}")
+    print(f"[ASLM-Chat]   lms_url    : {initial['lms_url']}")
+    print(f"[ASLM-Chat]   openai_url : {initial['openai_url']}")
+    print("[ASLM-Chat] First-run setup complete.")
+
+
+# Run first-run setup
+def run(log: bool = False, ui_port: int = 30000, api_port: int = 30001) -> None:
+    """Create the initial settings file while preserving existing values."""
+
+    from Settings.settings import SETTINGS_FILE, load_settings, save_settings
+
+    existing = load_settings()
+    initial = _build_initial_settings(existing, ui_port, api_port)
     save_settings(initial)
 
     if log:
-        print(f"[ASLM-Chat] Settings written to: {SETTINGS_FILE}")
-        print(f"[ASLM-Chat]   ui-port    : {initial['ui-port']}")
-        print(f"[ASLM-Chat]   api-port   : {initial['api-port']}")
-        print(f"[ASLM-Chat]   debug      : {initial['debug']}")
-        print(f"[ASLM-Chat]   llm-engine : {initial['llm-engine']}")
-        print(f"[ASLM-Chat]   lms_url    : {initial['lms_url']}")
-        print(f"[ASLM-Chat]   openai_url : {initial['openai_url']}")
-        print("[ASLM-Chat] First-run setup complete.")
+        _print_summary(SETTINGS_FILE, initial)

@@ -27,8 +27,18 @@ $(function () {
   const $ollamaPresetCreateBtn = $('#ollamaPresetCreateBtn');
   const $ollamaPresetRenameBtn = $('#ollamaPresetRenameBtn');
   const $ollamaPresetDeleteBtn = $('#ollamaPresetDeleteBtn');
+  const $toolToggleBtn = $('#toolToggleBtn');
+  const $toolToggleBtnConv = $('#toolToggleBtnConv');
+  const $toolSelectorPanel = $('#toolSelectorPanel');
+  const $toolSelectorPanelConv = $('#toolSelectorPanelConv');
+  const $toolSelector = $('#toolSelector');
+  const $toolSelectorConv = $('#toolSelectorConv');
 
   let runtimeSettings = parseJsonScript('runtimeSettingsData') || {};
+  const defaultAvailableToolServers = parseJsonScript('availableToolServersData') || [];
+  let availableToolServers = Array.isArray(defaultAvailableToolServers) ? defaultAvailableToolServers.slice() : [];
+  let selectedToolServerId = '';
+  let toolSelectorOpen = false;
   let currentChatId = null;
   let engineSelectionVersion = 0;
   let activeEngine = 'ollama-service';
@@ -40,6 +50,9 @@ $(function () {
     presets: []
   };
   let ollamaPresetSyncTimer = null;
+  let isChatGenerating = false;
+  let queuedMessageCounter = 0;
+  const chatRequestQueue = [];
 
   const ENGINE_ALIASES = {
     ollama: 'ollama-service',
@@ -77,6 +90,10 @@ $(function () {
     levelSupported: false,
     levelParamName: 'think_level',
     level: 'medium'
+  };
+
+  const toolState = {
+    supported: false
   };
 
   const PARAMETER_DEFINITIONS = {
@@ -919,6 +936,69 @@ $(function () {
     setEngineApiKeyStatus(hasStoredApiKey ? 'On' : 'Off', null);
   }
 
+  function normalizeToolServerId(serverId) {
+    return String(serverId || '').trim();
+  }
+
+  function getSelectedToolServerDefinition() {
+    return (availableToolServers || []).find(function (server) {
+      return normalizeToolServerId(server.id) === selectedToolServerId;
+    }) || null;
+  }
+
+  function updateAvailableToolServers(tools) {
+    availableToolServers = Array.isArray(tools) ? tools.slice() : [];
+    if (!availableToolServers.some(function (server) { return normalizeToolServerId(server.id) === selectedToolServerId; })) {
+      selectedToolServerId = '';
+    }
+    renderToolControls();
+  }
+
+  function applySelectedToolServerId(serverId) {
+    const normalizedServerId = normalizeToolServerId(serverId);
+    selectedToolServerId = availableToolServers.some(function (server) {
+      return normalizeToolServerId(server.id) === normalizedServerId;
+    }) ? normalizedServerId : '';
+    renderToolControls();
+  }
+
+  function renderToolControls() {
+    const hasToolSupport = toolState.supported && Array.isArray(availableToolServers) && availableToolServers.length > 0;
+    const selectedTool = getSelectedToolServerDefinition();
+    const buttonLabel = selectedTool ? selectedTool.name : 'Tools';
+
+    if (!hasToolSupport) {
+      toolSelectorOpen = false;
+    }
+
+    [$toolToggleBtn, $toolToggleBtnConv].forEach(function ($button) {
+      $button.toggle(hasToolSupport);
+      $button.toggleClass('active', !!selectedTool);
+      $button.find('.tool-toggle-label').text(buttonLabel);
+    });
+
+    [$toolSelector, $toolSelectorConv].forEach(function ($select) {
+      $select.empty().append($('<option>').val('').text('No server'));
+      (availableToolServers || []).forEach(function (toolServer) {
+        const toolServerId = normalizeToolServerId(toolServer.id);
+        const toolCount = Number(toolServer.tool_count || (toolServer.tools || []).length || 0);
+        const optionLabel = toolCount > 1
+          ? `${toolServer.name || toolServerId} (${toolCount} tools)`
+          : (toolServer.name || toolServerId);
+        const $option = $('<option>').val(toolServerId).text(optionLabel);
+        if (toolServerId === selectedToolServerId) {
+          $option.prop('selected', true);
+        }
+        $select.append($option);
+      });
+      $select.val(selectedToolServerId || '');
+    });
+
+    [$toolSelectorPanel, $toolSelectorPanelConv].forEach(function ($panel) {
+      $panel.toggle(hasToolSupport && toolSelectorOpen);
+    });
+  }
+
   function resetModelUiState(message) {
     const placeholderText = message || 'Models load on demand';
     $modelSelector.empty().append(
@@ -931,8 +1011,12 @@ $(function () {
     visionState.supported = false;
     thinkState.supported = false;
     thinkState.levelSupported = false;
+    toolState.supported = false;
+    updateAvailableToolServers(defaultAvailableToolServers);
+    toolSelectorOpen = false;
     updateVisionControls();
     updateThinkControls();
+    renderToolControls();
   }
 
   function clearModelCache(engine) {
@@ -1961,8 +2045,14 @@ $(function () {
       updateVisibleDividers();
       visionState.supported = false;
       thinkState.supported = false;
+      thinkState.levelSupported = false;
+      toolState.supported = false;
+      selectedToolServerId = '';
+      toolSelectorOpen = false;
+      updateAvailableToolServers(defaultAvailableToolServers);
       updateVisionControls();
       updateThinkControls();
+      renderToolControls();
       return;
     }
 
@@ -1976,6 +2066,14 @@ $(function () {
       resetDynamicPanels();
       renderLoadParameters();
       applyOllamaPresetState(data.ollama_presets || null);
+
+      toolState.supported = !!data.supports_tool_calling;
+      updateAvailableToolServers(data.available_tool_servers || defaultAvailableToolServers);
+      if (!toolState.supported) {
+        selectedToolServerId = '';
+        toolSelectorOpen = false;
+      }
+      renderToolControls();
 
       visionState.supported = !!data.supports_vision;
       updateVisionControls();
@@ -2182,57 +2280,194 @@ $(function () {
       .replace(/>/g, '&gt;');
   }
 
-  function renderMessageHtml($msgRow, rawText) {
-    const $thoughtsWrapper = $msgRow.find('.msg-thoughts-wrapper');
-    const $thoughtsContent = $msgRow.find('.msg-thoughts-content');
-    const $bubble = $msgRow.find('.msg-bubble');
+  function parseMessageTimeline(rawText) {
+    const source = String(rawText || '');
+    const segments = [];
+    let cursor = 0;
 
+    function pushTextSegment(value) {
+      if (!value || !value.trim()) {
+        return;
+      }
+      segments.push({ type: 'text', content: value });
+    }
+
+    while (cursor < source.length) {
+      const thinkStart = source.indexOf('<think>', cursor);
+      const toolStart = source.indexOf('<tool_call>', cursor);
+      const hasThink = thinkStart !== -1;
+      const hasTool = toolStart !== -1;
+
+      if (!hasThink && !hasTool) {
+        pushTextSegment(source.substring(cursor));
+        break;
+      }
+
+      let nextStart = -1;
+      let nextType = '';
+      if (hasThink && (!hasTool || thinkStart < toolStart)) {
+        nextStart = thinkStart;
+        nextType = 'thought';
+      } else {
+        nextStart = toolStart;
+        nextType = 'tool';
+      }
+
+      if (nextStart > cursor) {
+        pushTextSegment(source.substring(cursor, nextStart));
+      }
+
+      if (nextType === 'thought') {
+        const thinkEnd = source.indexOf('</think>', nextStart + 7);
+        if (thinkEnd === -1) {
+          const content = source.substring(nextStart + 7).trim();
+          if (content) {
+            segments.push({ type: 'thought', content });
+          }
+          break;
+        }
+
+        const content = source.substring(nextStart + 7, thinkEnd).trim();
+        if (content) {
+          segments.push({ type: 'thought', content });
+        }
+        cursor = thinkEnd + 8;
+        continue;
+      }
+
+      const toolEnd = source.indexOf('</tool_call>', nextStart + 11);
+      if (toolEnd === -1) {
+        break;
+      }
+
+      const payload = source.substring(nextStart + 11, toolEnd);
+      try {
+        const parsed = JSON.parse(payload);
+        segments.push({
+          type: 'tool',
+          alias: String(parsed.alias || '').trim(),
+          serverId: String(parsed.server_id || '').trim(),
+          serverName: String(parsed.server_name || '').trim(),
+          toolId: String(parsed.tool_id || '').trim(),
+          toolName: String(parsed.tool_name || '').trim(),
+          arguments: parsed.arguments && typeof parsed.arguments === 'object' ? parsed.arguments : {}
+        });
+      } catch (_error) {
+        // Ignore malformed inline markers instead of breaking the rest of the message.
+      }
+      cursor = toolEnd + 12;
+    }
+
+    return { segments };
+  }
+
+  function renderMarkdownSegment(content) {
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
-      $bubble.html(escHtml(rawText));
+      return escHtml(content);
+    }
+    return DOMPurify.sanitize(marked.parse(content));
+  }
+
+  function getExpandedThoughtIndices($msgRow) {
+    const rawValue = String($msgRow.attr('data-expanded-thoughts') || '').trim();
+    if (!rawValue) {
+      return new Set();
+    }
+
+    return new Set(
+      rawValue
+        .split(',')
+        .map(function (value) { return parseInt(value, 10); })
+        .filter(function (value) { return Number.isInteger(value) && value >= 0; })
+    );
+  }
+
+  function setExpandedThoughtIndices($msgRow, expandedIndices) {
+    const normalized = Array.from(expandedIndices)
+      .filter(function (value) { return Number.isInteger(value) && value >= 0; })
+      .sort(function (left, right) { return left - right; });
+
+    if (normalized.length === 0) {
+      $msgRow.removeAttr('data-expanded-thoughts');
       return;
     }
 
-    let allThinkContent = '';
-    let allMainContent = '';
-    let currentIndex = 0;
-
-    while (true) {
-      const thinkStart = rawText.indexOf('<think>', currentIndex);
-      if (thinkStart === -1) {
-        allMainContent += rawText.substring(currentIndex);
-        break;
-      }
-
-      allMainContent += rawText.substring(currentIndex, thinkStart);
-      const thinkEnd = rawText.indexOf('</think>', thinkStart + 7);
-
-      if (thinkEnd !== -1) {
-        allThinkContent += rawText.substring(thinkStart + 7, thinkEnd) + '\n';
-        currentIndex = thinkEnd + 8;
-      } else {
-        allThinkContent += rawText.substring(thinkStart + 7);
-        break;
-      }
-    }
-
-    if (allThinkContent.trim()) {
-      $thoughtsWrapper.show();
-      $thoughtsContent.text(allThinkContent.trim());
-    } else {
-      $thoughtsWrapper.hide();
-    }
-
-    if (allMainContent.trim()) {
-      $bubble.html(`<div class="markdown-body">${DOMPurify.sanitize(marked.parse(allMainContent))}</div>`);
-    } else {
-      $bubble.html('');
-    }
+    $msgRow.attr('data-expanded-thoughts', normalized.join(','));
   }
 
-  function appendMessage(role, text, images, timestamp) {
+  function renderActivityTimeline($msgRow, segments) {
+    const $stream = $msgRow.find('.msg-activity-stream');
+    const $bubble = $msgRow.find('.msg-bubble');
+    if (!$stream.length) {
+      return;
+    }
+
+    if (!Array.isArray(segments) || segments.length === 0) {
+      $stream.hide().empty();
+      $bubble.html('');
+      $msgRow.removeAttr('data-expanded-thoughts');
+      return;
+    }
+
+    const expandedThoughts = getExpandedThoughtIndices($msgRow);
+    let thoughtIndex = -1;
+    const html = segments.map(function (segment) {
+      if (segment.type === 'thought') {
+        thoughtIndex += 1;
+        const isExpanded = expandedThoughts.has(thoughtIndex);
+        return `
+          <div class="msg-thoughts-wrapper${isExpanded ? ' expanded' : ''}" data-thought-index="${thoughtIndex}">
+            <div class="msg-thoughts-toggle">Thought Process</div>
+            <div class="msg-thoughts-content" style="display:${isExpanded ? 'block' : 'none'};">${escHtml(segment.content)}</div>
+          </div>
+        `;
+      }
+
+      if (segment.type === 'tool') {
+        const label = escHtml(segment.toolName || segment.alias || segment.toolId || 'Tool');
+        const badge = escHtml(segment.serverName || segment.serverId || 'server');
+        const argumentKeys = Object.keys(segment.arguments || {});
+        const note = argumentKeys.length > 0
+          ? `<div class="msg-tool-call-note">Args: ${escHtml(argumentKeys.join(', '))}</div>`
+          : '';
+
+        return `
+          <div class="msg-tool-call-card">
+            <div class="msg-tool-call-main">
+              <div class="msg-tool-call-name">${label}</div>
+              ${note}
+            </div>
+            <div class="msg-tool-call-badge">${badge}</div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="msg-stream-text">
+          <div class="markdown-body">${renderMarkdownSegment(segment.content)}</div>
+        </div>
+      `;
+    }).join('');
+
+    $bubble.empty();
+    $stream.html(html).show();
+    setExpandedThoughtIndices($msgRow, expandedThoughts);
+  }
+
+  function renderMessageHtml($msgRow, rawText) {
+    const parsed = parseMessageTimeline(rawText);
+    renderActivityTimeline($msgRow, parsed.segments);
+  }
+
+  function appendMessage(role, text, images, timestamp, options) {
+    const viewOptions = options || {};
     const isUser = role === 'user';
     const label = isUser ? 'You' : 'ASLM';
     const timeStr = timeNow(timestamp);
+    const queuedBadge = isUser && viewOptions.queued
+      ? '<span class="msg-status-pill">Queued</span>'
+      : '';
+    const messageKey = viewOptions.messageKey || '';
 
     let imagesHtml = '';
     if (isUser && images && images.length > 0) {
@@ -2244,19 +2479,15 @@ $(function () {
     }
 
     const $row = $(`
-      <div class="msg ${role}">
+      <div class="msg ${role}${viewOptions.queued ? ' is-queued' : ''}" data-message-key="${escapeAttributeValue(messageKey)}">
         <div class="msg-avatar">${isUser ? 'U' : 'A'}</div>
         <div class="msg-body">
           <div class="msg-meta">
             <span>${label}</span>
             <span>${timeStr}</span>
+            ${queuedBadge}
           </div>
-          ${!isUser ? `
-          <div class="msg-thoughts-wrapper" style="display:none;">
-            <div class="msg-thoughts-toggle">Thought Process</div>
-            <div class="msg-thoughts-content" style="display:none;"></div>
-          </div>
-          ` : ''}
+          ${!isUser ? '<div class="msg-activity-stream" style="display:none;"></div>' : ''}
           <div class="msg-bubble">${imagesHtml}</div>
         </div>
       </div>
@@ -2264,12 +2495,35 @@ $(function () {
 
     if (isUser) {
       $row.find('.msg-bubble').append($('<span>').text(text));
+    } else if (Array.isArray(viewOptions.activitySegments) && viewOptions.activitySegments.length > 0) {
+      renderActivityTimeline($row, viewOptions.activitySegments);
     } else {
       renderMessageHtml($row, text);
     }
 
     $messagesInner.append($row);
     scrollBottom();
+    return $row;
+  }
+
+
+  function setQueuedMessageState($row, queued) {
+    if (!$row || !$row.length) {
+      return;
+    }
+
+    $row.toggleClass('is-queued', !!queued);
+    const $meta = $row.find('.msg-meta');
+    let $badge = $meta.find('.msg-status-pill');
+
+    if (queued) {
+      if (!$badge.length) {
+        $badge = $('<span class="msg-status-pill">Queued</span>');
+        $meta.append($badge);
+      }
+    } else {
+      $badge.remove();
+    }
   }
 
   function appendTyping(timestamp) {
@@ -2282,10 +2536,7 @@ $(function () {
             <span>ASLM</span>
             <span>${timeStr}</span>
           </div>
-          <div class="msg-thoughts-wrapper" style="display:none;">
-            <div class="msg-thoughts-toggle">Thought Process</div>
-            <div class="msg-thoughts-content" style="display:none;"></div>
-          </div>
+          <div class="msg-activity-stream" style="display:none;"></div>
           <div class="msg-bubble">
             <div class="typing-indicator">
               <div class="typing-dot"></div>
@@ -2318,35 +2569,64 @@ $(function () {
     return match ? decodeURIComponent(match[1]) : null;
   }
 
-  async function streamChat(text, imagesToSend, $msgBubble) {
-    const $bubbleContent = $msgBubble.find('.msg-bubble');
+  function clonePendingImages(images) {
+    return (images || []).map(function (image) {
+      return {
+        base64: image.base64,
+        dataUrl: image.dataUrl
+      };
+    });
+  }
+
+  async function resolveModelForRequest(request) {
+    const preferredModel = String(request.model || request.preferredModel || '').trim();
+    if (preferredModel) {
+      return preferredModel;
+    }
+
+    if (Array.isArray(modelsCache[request.engine]) && modelsCache[request.engine].length > 0) {
+      return modelsCache[request.engine][0] || '';
+    }
+
+    const models = await fetchModelsForEngine(request.engine);
+    modelsCache[request.engine] = models;
+    return models[0] || '';
+  }
+
+  async function streamChat(request, $msgRow) {
+    const $bubbleContent = $msgRow.find('.msg-bubble');
 
     try {
-      const selectedModel = await ensureModelsLoadedForActiveEngine({
-        preferredModel: $modelSelector.val()
-      });
-
+      const selectedModel = await resolveModelForRequest(request);
       if (!selectedModel) {
-        throw new Error(`No models available for ${getActiveEngine()}`);
+        throw new Error(`No models available for ${request.engine}`);
       }
 
-      if (getActiveEngine() === 'lms' && lmsLoadConfigDirty) {
+      request.model = selectedModel;
+
+      if (request.engine === 'lms' && lmsLoadConfigDirty) {
         await reloadSelectedModel('lms', selectedModel);
-        await loadModelInfo(selectedModel);
+        if (request.engine === getActiveEngine()) {
+          await loadModelInfo(selectedModel);
+        }
         lmsLoadConfigDirty = false;
       }
 
       const payload = {
-        engine: getActiveEngine(),
-        message: text,
+        engine: request.engine,
+        message: request.text,
         model: selectedModel,
-        system_prompt: $('#systemPrompt').val(),
-        chat_id: currentChatId,
-        options: collectOptionsPayload()
+        system_prompt: request.systemPrompt,
+        chat_id: request.chatId || currentChatId,
+        options: request.options || {}
       };
 
-      if (imagesToSend.length > 0) {
-        payload.images = imagesToSend.map(function (img) {
+      if (request.toolServerId) {
+        payload.tool_server_id = request.toolServerId;
+      }
+
+      if (request.images.length > 0) {
+        payload.images = request.images.map(function (img) {
           return img.base64;
         });
       }
@@ -2360,7 +2640,6 @@ $(function () {
         body: JSON.stringify(payload)
       });
 
-      $msgBubble.removeClass('typing-indicator');
       $bubbleContent.empty();
 
       if (!response.ok) {
@@ -2376,11 +2655,17 @@ $(function () {
       const returnedChatId = response.headers.get('X-Chat-ID');
       if (returnedChatId && currentChatId !== returnedChatId) {
         currentChatId = returnedChatId;
+        request.chatId = returnedChatId;
+        chatRequestQueue.forEach(function (queuedRequest) {
+          if (!queuedRequest.chatId) {
+            queuedRequest.chatId = returnedChatId;
+          }
+        });
 
         if ($(`#historyList .chat-item[data-chat-id="${currentChatId}"]`).length === 0) {
           $('#historyList .empty-state').remove();
 
-          const title = buildChatTitle(text, imagesToSend.length > 0);
+          const title = buildChatTitle(request.text, request.images.length > 0);
           const $newItem = $(`
             <a class="chat-item active" aria-current="page"
                href="/chat/${currentChatId}/"
@@ -2401,7 +2686,7 @@ $(function () {
           $('#historyList').prepend($newItem);
         }
 
-        const chatTitle = buildChatTitle(text, imagesToSend.length > 0);
+        const chatTitle = buildChatTitle(request.text, request.images.length > 0);
         $chatTitle.text(chatTitle);
         document.title = `${chatTitle} - ASLM`;
         history.pushState({ chatId: currentChatId }, chatTitle, `/chat/${currentChatId}/`);
@@ -2422,17 +2707,57 @@ $(function () {
 
         const area = $messagesArea[0];
         const isNearBottom = area.scrollHeight - area.clientHeight <= area.scrollTop + 50;
-        const $row = $msgBubble.closest('.msg');
-        renderMessageHtml($row, fullText);
+        renderMessageHtml($msgRow, fullText);
 
         if (isNearBottom) {
           scrollBottom();
         }
       }
     } catch (error) {
-      $msgBubble.removeClass('typing-indicator');
       $bubbleContent.html(`[Error: failed to connect to server - ${error.message}]`);
     }
+  }
+
+  async function processChatQueue() {
+    if (isChatGenerating || chatRequestQueue.length === 0) {
+      return;
+    }
+
+    const request = chatRequestQueue.shift();
+    if (!request) {
+      return;
+    }
+
+    isChatGenerating = true;
+    setQueuedMessageState(request.$userRow, false);
+    updateSendButtons();
+
+    const $assistantRow = appendTyping();
+    scrollBottom();
+
+    try {
+      await streamChat(request, $assistantRow);
+    } finally {
+      isChatGenerating = false;
+      updateSendButtons();
+      if (chatRequestQueue.length > 0) {
+        processChatQueue();
+      }
+    }
+  }
+
+  function buildQueuedRequest(text, imagesToSend) {
+    return {
+      id: `queued-${++queuedMessageCounter}`,
+      text,
+      images: clonePendingImages(imagesToSend),
+      engine: getActiveEngine(),
+      preferredModel: getSelectedModelName(),
+      systemPrompt: $('#systemPrompt').val(),
+      options: collectOptionsPayload(),
+      toolServerId: toolState.supported ? selectedToolServerId : '',
+      chatId: currentChatId
+    };
   }
 
   function sendMessage(text, $input) {
@@ -2440,7 +2765,8 @@ $(function () {
       return;
     }
 
-    const imagesToSend = visionState.pending.slice();
+    const imagesToSend = clonePendingImages(visionState.pending);
+    const queued = isChatGenerating || chatRequestQueue.length > 0;
 
     if ($welcomeScreen.is(':visible')) {
       $welcomeScreen.hide();
@@ -2448,14 +2774,18 @@ $(function () {
       $chatInputConv.val('').css('height', 'auto').focus();
     }
 
-    appendMessage('user', text, imagesToSend);
+    const request = buildQueuedRequest(text, imagesToSend);
+    request.$userRow = appendMessage('user', text, imagesToSend, null, {
+      queued,
+      messageKey: request.id
+    });
+
     $input.val('').css('height', 'auto');
     clearPendingImages();
     updateSendButtons();
 
-    const $msgBubble = appendTyping();
-    scrollBottom();
-    streamChat(text, imagesToSend, $msgBubble);
+    chatRequestQueue.push(request);
+    processChatQueue();
   }
 
   function wireInput($input, $button) {
@@ -2499,6 +2829,7 @@ $(function () {
         $(`#historyList .chat-item[data-chat-id="${chatId}"]`).addClass('active').attr('aria-current', 'page');
 
         const title = data.title || 'Chat';
+        applySelectedToolServerId(data.active_tool_server_id || '');
         $chatTitle.text(title);
         document.title = `${title} - ASLM`;
 
@@ -2512,7 +2843,9 @@ $(function () {
         $conversationInput.show();
 
         data.messages.forEach(function (message) {
-          appendMessage(message.role, message.content, message.images || [], message.created_at);
+          appendMessage(message.role, message.content, message.images || [], message.created_at, {
+            activitySegments: Array.isArray(message.activity_segments) ? message.activity_segments : []
+          });
         });
 
         scrollBottom();
@@ -2684,13 +3017,28 @@ $(function () {
     scheduleOllamaPresetSync();
   });
 
-  $messagesInner.on('click', '.msg-thoughts-toggle', function (event) {
+  $messagesInner.on('mousedown', '.msg-thoughts-toggle', function (event) {
+    event.preventDefault();
     event.stopPropagation();
-    const $wrapper = $(this).closest('.msg-thoughts-wrapper');
-    const $content = $wrapper.find('.msg-thoughts-content');
 
-    $content.slideToggle(200);
-    $wrapper.toggleClass('expanded');
+    const $wrapper = $(this).closest('.msg-thoughts-wrapper');
+    const $row = $(this).closest('.msg');
+    const $content = $wrapper.find('.msg-thoughts-content');
+    const thoughtIndex = parseInt($wrapper.attr('data-thought-index') || '-1', 10);
+    const expandedThoughts = getExpandedThoughtIndices($row);
+    const willExpand = !$wrapper.hasClass('expanded');
+
+    if (Number.isInteger(thoughtIndex) && thoughtIndex >= 0) {
+      if (willExpand) {
+        expandedThoughts.add(thoughtIndex);
+      } else {
+        expandedThoughts.delete(thoughtIndex);
+      }
+      setExpandedThoughtIndices($row, expandedThoughts);
+    }
+
+    $wrapper.toggleClass('expanded', willExpand);
+    $content.stop(true, true)[willExpand ? 'slideDown' : 'slideUp'](160);
   });
 
   $(document).on('click', '#historyList .chat-item', function (event) {
@@ -2874,6 +3222,20 @@ $(function () {
     }
   });
 
+  $toolToggleBtn.add($toolToggleBtnConv).on('click', function () {
+    if (!toolState.supported || !availableToolServers.length) {
+      return;
+    }
+    toolSelectorOpen = !toolSelectorOpen;
+    renderToolControls();
+  });
+
+  $toolSelector.add($toolSelectorConv).on('change', function () {
+    selectedToolServerId = normalizeToolServerId($(this).val());
+    toolSelectorOpen = false;
+    renderToolControls();
+  });
+
   $ollamaPresetDeleteBtn.on('click', async function () {
     const activePreset = getActiveOllamaPreset();
     const modelName = getSelectedModelName();
@@ -2938,6 +3300,8 @@ $(function () {
     loadChat(preloadChatId, false);
   }
 
+  updateAvailableToolServers(defaultAvailableToolServers);
+  applySelectedToolServerId('');
   updateEngineAddressUi();
   resetModelUiState('Loading models...');
   applyEngineSelection(getActiveEngine(), {

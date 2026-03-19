@@ -1,4 +1,4 @@
-"""Process helpers for the local Ollama background service."""
+# Copyright NGGT.LightKeeper. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -15,13 +15,14 @@ from Settings import settings
 
 logger = logging.getLogger(__name__)
 
-# Keep a process reference for the current Python runtime.
 _ollama_process: subprocess.Popen | None = None
 PID_FILE = Path(__file__).resolve().parent.parent / "Settings" / "ollama-service.pid"
 
 
+# Read saved service PID
 def _read_pid() -> int | None:
-    """Return the tracked Ollama PID if one is recorded on disk."""
+    """Return the saved Ollama PID when it exists."""
+
     try:
         raw_value = PID_FILE.read_text(encoding="utf-8").strip()
     except OSError:
@@ -35,23 +36,27 @@ def _read_pid() -> int | None:
     except ValueError:
         return None
 
-
+# Save service PID
 def _write_pid(pid: int) -> None:
-    """Persist the managed Ollama PID so every process can control it."""
+    """Persist the managed Ollama PID on disk."""
+
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text(str(pid), encoding="utf-8")
 
-
+# Delete saved service PID
 def _clear_pid() -> None:
-    """Remove the tracked Ollama PID file."""
+    """Remove the saved Ollama PID file."""
+
     try:
         PID_FILE.unlink()
     except OSError:
         pass
 
 
+# Check saved process state
 def _is_pid_running(pid: int | None) -> bool:
-    """Return whether the given PID still belongs to a running process."""
+    """Return whether the given PID still points to a live process."""
+
     if not pid:
         return False
 
@@ -59,11 +64,13 @@ def _is_pid_running(pid: int | None) -> bool:
         os.kill(pid, 0)
     except OSError:
         return False
+
     return True
 
-
+# Wait for HTTP readiness
 def _wait_until_ready(timeout_seconds: float = 15.0) -> bool:
     """Wait until the local Ollama HTTP endpoint starts responding."""
+
     deadline = time.time() + timeout_seconds
     host = settings.get_engine_url("ollama-service")
     version_url = f"{host.rstrip('/')}/api/version"
@@ -79,19 +86,25 @@ def _wait_until_ready(timeout_seconds: float = 15.0) -> bool:
     return False
 
 
+# Start managed service
 def start_ollama() -> None:
     """Start the local Ollama service when the active engine requires it."""
+
     global _ollama_process
 
+    # Skip startup when the current runtime does not use the managed Ollama
+    # service or when it is disabled in settings.
     active_engine = settings.get_llm_engine()
     if not settings.is_ollama_engine(active_engine) or not settings.get("ollama-service", False):
         return
 
+    # Reuse an already running process tracked on disk.
     tracked_pid = _read_pid()
     if tracked_pid and _is_pid_running(tracked_pid):
         logger.info("Ollama service is already running (PID: %s)", tracked_pid)
         return
 
+    # Validate the configured executable before attempting to spawn it.
     ollama_path = settings.get("ollama-service_path")
     if not ollama_path or not os.path.exists(ollama_path):
         print(f"[ASLM-Chat] Ollama service is enabled but not found at: {ollama_path}")
@@ -100,6 +113,8 @@ def start_ollama() -> None:
     ollama_models = settings.get("ollama-service_models")
     ollama_port = settings.get("ollama-service_port", 30002)
 
+    # The managed service uses environment variables for its bind address and
+    # optional custom model directory.
     env = os.environ.copy()
     env["OLLAMA_HOST"] = f"127.0.0.1:{ollama_port}"
     if ollama_models:
@@ -116,9 +131,12 @@ def start_ollama() -> None:
             stderr=subprocess.DEVNULL,
             creationflags=creationflags,
         )
+
         _write_pid(_ollama_process.pid)
+
         if not _wait_until_ready():
             logger.warning("Ollama process started but the HTTP endpoint did not become ready in time.")
+
         print(f"[ASLM-Chat] Ollama service started successfully (PID: {_ollama_process.pid})")
     except Exception as exc:
         _ollama_process = None
@@ -126,8 +144,10 @@ def start_ollama() -> None:
         print(f"[ASLM-Chat] Failed to start Ollama service: {exc}")
 
 
+# Stop managed service
 def stop_ollama() -> None:
-    """Stop the managed Ollama service if this module started it earlier."""
+    """Stop the managed Ollama service when a tracked PID exists."""
+
     global _ollama_process
 
     pid = _read_pid()
@@ -136,6 +156,8 @@ def stop_ollama() -> None:
         return
 
     try:
+        # Windows needs ``taskkill`` to terminate the full spawned tree, while
+        # POSIX systems can stop the recorded PID directly.
         if os.name == "nt":
             subprocess.run(
                 ["taskkill", "/PID", str(pid), "/T", "/F"],

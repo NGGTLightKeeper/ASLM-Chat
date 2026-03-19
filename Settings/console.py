@@ -1,21 +1,70 @@
-import json
-import datetime
-from .settings import *
+# Copyright NGGT.LightKeeper. All Rights Reserved.
 
+from __future__ import annotations
+
+import datetime
+import json
+from pathlib import Path
+from typing import Any
+
+from .settings import BASE_DIR
+
+
+# Read module manifest
+def _load_module_manifest() -> dict[str, Any] | None:
+    """Return the local module manifest when it exists and is valid."""
+
+    json_path = BASE_DIR / "ASLM_Module.json"
+    if not json_path.exists():
+        return None
+
+    try:
+        with json_path.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    return data if isinstance(data, dict) else None
+
+# Print separator line
+def _print_separator() -> None:
+    """Print a standard separator line for console output."""
+
+    print("------------------------------------------------------")
+
+
+# Print technical module data
 class PrintTechData:
-    def PTD_Print(self):
-        print("------------------------------------------------------")
-        try:
-            json_path = BASE_DIR / 'ASLM_Module.json'
-            if json_path.exists():
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    print(f'Module: {data.get('name', 'N/A')}, v{data.get('version', 'N/A')} by {data.get('author', 'N/A')}')
-                    print(f'ID: {data.get('id', 'N/A')} | Type: {data.get('type', 'N/A')} | HasPage: {data.get('hasPage', 'N/A')}')
-                    if data.get('source').get('type') == "github":
-                        print(f'SourceCode: https://github.com/{data.get('source').get('repo')}')
-        except:
+    # Print startup information
+    def PTD_Print(self) -> None:
+        """Print module metadata and the current startup time."""
+
+        _print_separator()
+
+        # Read and print module manifest details when available.
+        data = _load_module_manifest()
+        if data is None:
             print("Error reading config")
-        print("------------------------------------------------------")
-        print(f'Module Start Time: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
-        print("------------------------------------------------------")
+        else:
+            source = data.get("source") if isinstance(data.get("source"), dict) else {}
+
+            print(
+                f"Module: {data.get('name', 'N/A')}, "
+                f"v{data.get('version', 'N/A')} by {data.get('author', 'N/A')}"
+            )
+            print(
+                f"ID: {data.get('id', 'N/A')} | "
+                f"Type: {data.get('type', 'N/A')} | "
+                f"HasPage: {data.get('hasPage', 'N/A')}"
+            )
+
+            if source.get("type") == "github":
+                print(f"SourceCode: https://github.com/{source.get('repo', '')}")
+
+        _print_separator()
+
+        # Print the current module start time separately from manifest data.
+        started_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"Module Start Time: {started_at}")
+
+        _print_separator()

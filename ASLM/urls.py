@@ -1,4 +1,4 @@
-"""URL configuration for ASLM-Chat."""
+# Copyright NGGT.LightKeeper. All Rights Reserved.
 
 from django.contrib import admin
 from django.urls import include, path
