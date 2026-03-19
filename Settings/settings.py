@@ -137,6 +137,15 @@ def normalize_engine_name(engine: str | None) -> str:
     normalized = str(engine).strip().lower()
     return ENGINE_ALIASES.get(normalized, normalized)
 
+# List supported engines
+def get_supported_engines() -> list[dict[str, str]]:
+    """Return the engines that ASLM-Chat can expose in the UI."""
+
+    return [
+        {"id": engine_id, "label": ENGINE_LABELS[engine_id]}
+        for engine_id in ("ollama-service", "lms", "openai")
+    ]
+
 
 # Read settings file
 def _load_settings_from_disk() -> dict[str, Any]:
