@@ -12,8 +12,9 @@ from django.urls import reverse
 
 from API import llm_api
 from API import mcp as tool_registry
+from API.ollama import _prepare_chat_kwargs
 from API.openai import _build_openai_request_options
-from Apps.Data.models import Chat, OllamaPreset
+from Apps.Data.models import Chat, Message, OllamaPreset
 from Apps.UI.views import _extract_model_name
 
 
@@ -34,11 +35,15 @@ class ToolRegistryTestMixin:
         self._tools_dir_context.cleanup()
         super().tearDown()
 
-    def write_tool(self, folder: str, body: str) -> None:
-        tool_dir = self.tools_dir / folder
-        tool_dir.mkdir(parents=True, exist_ok=True)
-        (tool_dir / 'tool.py').write_text(textwrap.dedent(body).strip() + '\n', encoding='utf-8')
+    def write_server(self, folder: str, body: str) -> None:
+        server_dir = self.tools_dir / folder
+        server_dir.mkdir(parents=True, exist_ok=True)
+        (server_dir / 'mcp-server.py').write_text(
+            textwrap.dedent(body).strip() + "\n",
+            encoding='utf-8',
+        )
         tool_registry.reset_cache()
+
 
 
 class ModelNameExtractionTests(SimpleTestCase):
@@ -60,15 +65,16 @@ class ModelNameExtractionTests(SimpleTestCase):
 
 
 class MainViewTests(ToolRegistryTestMixin, TestCase):
-    """Verify that the main page uses the configured engine and tool helpers."""
+    """Verify that the main page uses the configured engine and local server helpers."""
 
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
-    def test_main_view_includes_runtime_settings_and_local_tools(self, _mock_engine):
-        self.write_tool(
-            'echo',
+    def test_main_view_includes_runtime_settings_and_local_servers(self, _mock_engine):
+        self.write_server(
+            'time_suite',
             '''
-            TOOL = {"id": "echo", "name": "Echo", "description": "Echo tool", "parameters": {"type": "object", "properties": {}}}
-            def call_tool(arguments, context=None):
+            MCP_SERVER = {"id": "time_suite", "name": "Time Suite", "description": "Time helpers"}
+            TOOLS = [{"id": "time_now", "name": "Current Time", "parameters": {"type": "object", "properties": {}}}]
+            def call_tool(tool_id, arguments, context=None):
                 return "ok"
             ''',
         )
@@ -79,7 +85,34 @@ class MainViewTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(response.context["models"], [])
         self.assertEqual(response.context["llm_engine"], "ollama-service")
         self.assertIn("runtime_settings", response.context)
-        self.assertEqual(response.context["available_tools"], [{"id": "echo", "name": "Echo", "description": "Echo tool"}])
+        self.assertEqual(
+            response.context["available_tool_servers"],
+            [{
+                "id": "time_suite",
+                "name": "Time Suite",
+                "description": "Time helpers",
+                "tool_count": 1,
+                "tools": [{"id": "time_now", "name": "Current Time", "description": ""}],
+            }],
+        )
+
+
+class OllamaOptionMappingTests(SimpleTestCase):
+    """Ensure Ollama-only thinking parameters are normalized before request dispatch."""
+
+    def test_prepare_chat_kwargs_maps_think_level_into_think(self):
+        payload = _prepare_chat_kwargs(
+            {
+                "stream": True,
+                "think": True,
+                "think_level": "high",
+                "options": {"temperature": 0.7},
+            }
+        )
+
+        self.assertNotIn("think_level", payload)
+        self.assertEqual(payload["think"], "high")
+        self.assertEqual(payload["options"]["temperature"], 0.7)
 
 
 class OpenAiOptionMappingTests(SimpleTestCase):
@@ -161,19 +194,21 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
     @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
-    def test_chat_api_passes_selected_tool_to_ollama(
+    def test_chat_api_passes_selected_tool_server_to_ollama(
         self,
         _mock_engine,
         mock_generate,
         _mock_prepare_runtime,
     ):
-        self.write_tool(
-            'echo',
+        self.write_server(
+            'time_suite',
             '''
-            TOOL = {"id": "echo", "name": "Echo", "description": "Echo tool", "parameters": {"type": "object", "properties": {}}}
-            def supports(engine=None, model_name=None):
-                return engine == "ollama-service"
-            def call_tool(arguments, context=None):
+            MCP_SERVER = {"id": "time_suite", "name": "Time Suite"}
+            TOOLS = [
+                {"id": "time_now", "name": "Current Time", "parameters": {"type": "object", "properties": {}}},
+                {"id": "timezone_name", "name": "Timezone Name", "parameters": {"type": "object", "properties": {}}},
+            ]
+            def call_tool(tool_id, arguments, context=None):
                 return "ok"
             ''',
         )
@@ -181,26 +216,153 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
 
         response = self.client.post(
             reverse("chat_api"),
-            data='{"message":"Hello","model":"llama3","tool_id":"echo"}',
+            data='{"message":"Hello","model":"llama3","tool_server_id":"time_suite"}',
             content_type="application/json",
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(b''.join(response.streaming_content), b'Done')
-        self.assertEqual(mock_generate.call_args.kwargs["tool_id"], "echo")
+        self.assertEqual(mock_generate.call_args.kwargs["tool_server_id"], "time_suite")
         self.assertEqual(mock_generate.call_args.kwargs["tool_context"]["engine"], "ollama-service")
-        self.assertEqual(Chat.objects.first().active_tool_slug, 'echo')
+        self.assertEqual(Chat.objects.first().active_tool_slug, 'time_suite')
 
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
-    def test_chat_api_rejects_unknown_tool(self, _mock_engine):
+    def test_chat_api_rejects_unknown_tool_server(self, _mock_engine):
         response = self.client.post(
             reverse("chat_api"),
-            data='{"message":"Hello","model":"llama3","tool_id":"missing"}',
+            data='{"message":"Hello","model":"llama3","tool_server_id":"missing"}',
             content_type="application/json",
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Unknown or unsupported tool", response.json()["error"])
+        self.assertIn("Unknown or unsupported tool server", response.json()["error"])
+
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_api_stream_includes_server_and_tool_markers(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+    ):
+        mock_generate.return_value = iter([
+            {"message": {"thinking": "Searching..."}},
+            {"tool_event": {"server_id": "time_suite", "server_name": "Time Suite", "tool_id": "time_now", "tool_name": "Current Time", "alias": "time_suite__time_now", "arguments": {"label": "now"}}},
+            {"message": {"content": "Done"}},
+        ])
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"Hello","model":"llama3"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = b''.join(response.streaming_content).decode('utf-8')
+        self.assertIn('<think>\nSearching...', body)
+        self.assertIn('\"server_id\": \"time_suite\"', body)
+        self.assertIn('\"tool_id\": \"time_now\"', body)
+        self.assertIn('Done', body)
+
+
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_api_saves_visible_content_and_machine_transcript(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+    ):
+        mock_generate.return_value = iter([
+            {"message": {"thinking": "Plan first."}},
+            {"transcript_message": {"role": "assistant", "content": "", "thinking": "Plan first.", "tool_calls": [{"function": {"name": "time_suite__time_now", "arguments": {"label": "now"}}}]}},
+            {"tool_event": {"server_id": "time_suite", "server_name": "Time Suite", "tool_id": "time_now", "tool_name": "Current Time", "alias": "time_suite__time_now", "arguments": {"label": "now"}}},
+            {"tool_result": {"role": "tool", "name": "time_suite__time_now", "tool_name": "time_suite__time_now", "content": '{"ok": true}', "server_id": "time_suite", "server_name": "Time Suite", "tool_id": "time_now", "tool_display_name": "Current Time", "arguments": {"label": "now"}}},
+            {"message": {"content": "Done"}},
+            {"transcript_message": {"role": "assistant", "content": "Done"}},
+        ])
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"Hello","model":"llama3"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        b"".join(response.streaming_content)
+        assistant_message = Message.objects.filter(role="assistant").latest("created_at")
+        self.assertEqual(assistant_message.content, "Done")
+        self.assertEqual(len(assistant_message.llm_transcript), 3)
+        self.assertEqual(assistant_message.llm_transcript[1]["role"], "tool")
+        self.assertEqual(assistant_message.llm_transcript[1]["server_name"], "Time Suite")
+
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_api_uses_stored_transcript_for_follow_up_messages(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+    ):
+        chat = Chat.objects.create(title="Chat")
+        Message.objects.create(chat=chat, role="user", content="Hello")
+        Message.objects.create(
+            chat=chat,
+            role="assistant",
+            content="Visible answer",
+            llm_transcript=[
+                {"role": "assistant", "content": "", "thinking": "Plan", "tool_calls": [{"function": {"name": "time_suite__time_now", "arguments": {"label": "now"}}}]},
+                {"role": "tool", "name": "time_suite__time_now", "tool_name": "time_suite__time_now", "content": '{"ok": true}'},
+                {"role": "assistant", "content": "Visible answer"},
+            ],
+        )
+        mock_generate.return_value = [{"message": {"content": "Next"}}]
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data=f'{{"chat_id":"{chat.id}","message":"Follow up","model":"llama3"}}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        b"".join(response.streaming_content)
+        history_messages = mock_generate.call_args.kwargs["messages"]
+        self.assertEqual([item["role"] for item in history_messages[:4]], ["user", "assistant", "tool", "assistant"])
+        self.assertEqual(history_messages[1]["thinking"], "Plan")
+        self.assertEqual(history_messages[2]["name"], "time_suite__time_now")
+        self.assertEqual(history_messages[-1]["content"], "Follow up")
+
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_api_strips_legacy_ui_markup_when_transcript_is_missing(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+    ):
+        chat = Chat.objects.create(title="Chat")
+        Message.objects.create(chat=chat, role="user", content="Hello")
+        Message.objects.create(
+            chat=chat,
+            role="assistant",
+            content='<think>\nPlan\n</think>\n<tool_call>{"alias":"time_suite__time_now"}</tool_call>Visible answer',
+        )
+        mock_generate.return_value = [{"message": {"content": "Next"}}]
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data=f'{{"chat_id":"{chat.id}","message":"Follow up","model":"llama3"}}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        b"".join(response.streaming_content)
+        history_messages = mock_generate.call_args.kwargs["messages"]
+        self.assertEqual(history_messages[1], {"role": "assistant", "content": "Visible answer"})
 
 
 class RuntimeSettingsApiTests(TestCase):
@@ -275,14 +437,15 @@ class RuntimeSettingsApiTests(TestCase):
 
 
 class ToolApiTests(ToolRegistryTestMixin, TestCase):
-    """Cover local tool listing and chat persistence endpoints."""
+    """Cover local tool-server listing and chat persistence endpoints."""
 
-    def test_tools_api_returns_discovered_tools(self):
-        self.write_tool(
-            'echo',
+    def test_tools_api_returns_discovered_servers(self):
+        self.write_server(
+            'time_suite',
             '''
-            TOOL = {"id": "echo", "name": "Echo", "description": "Echo tool", "parameters": {"type": "object", "properties": {}}}
-            def call_tool(arguments, context=None):
+            MCP_SERVER = {"id": "time_suite", "name": "Time Suite", "description": "Time helpers"}
+            TOOLS = [{"id": "time_now", "name": "Current Time", "parameters": {"type": "object", "properties": {}}}]
+            def call_tool(tool_id, arguments, context=None):
                 return "ok"
             ''',
         )
@@ -290,29 +453,56 @@ class ToolApiTests(ToolRegistryTestMixin, TestCase):
         response = self.client.get(reverse("tools_api"), {"engine": "ollama-service", "model": "llama3"})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["tools"], [{"id": "echo", "name": "Echo", "description": "Echo tool"}])
+        self.assertEqual(
+            response.json()["tool_servers"],
+            [{
+                "id": "time_suite",
+                "name": "Time Suite",
+                "description": "Time helpers",
+                "tool_count": 1,
+                "tools": [{"id": "time_now", "name": "Current Time", "description": ""}],
+            }],
+        )
 
-    def test_load_chat_api_returns_active_tool_id(self):
-        chat = Chat.objects.create(title="Chat", active_tool_slug="echo")
+    def test_load_chat_api_returns_active_tool_server_id(self):
+        chat = Chat.objects.create(title="Chat", active_tool_slug="time_suite")
+        Message.objects.create(
+            chat=chat,
+            role="assistant",
+            content="Visible answer",
+            llm_transcript=[
+                {"role": "assistant", "content": "", "thinking": "Plan"},
+                {"role": "tool", "name": "time_suite__time_now", "tool_name": "time_suite__time_now", "content": '{"ok": true}', "server_id": "time_suite", "server_name": "Time Suite", "tool_id": "time_now", "tool_display_name": "Current Time", "arguments": {"label": "now"}},
+                {"role": "assistant", "content": "Visible answer"},
+            ],
+        )
 
         response = self.client.get(reverse("load_chat_api", args=[chat.id]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["active_tool_id"], "echo")
+        payload = response.json()
+        self.assertEqual(payload["active_tool_server_id"], "time_suite")
+        self.assertEqual(payload["messages"][0]["content"], "Visible answer")
+        self.assertEqual(payload["messages"][0]["activity_segments"][0]["type"], "thought")
+        self.assertEqual(payload["messages"][0]["activity_segments"][1]["type"], "tool")
 
 
 class OllamaPresetApiTests(ToolRegistryTestMixin, TestCase):
     """Cover Ollama preset API endpoints and model-info integration."""
 
     @patch("Apps.UI.views.llm_api.get_model_settings")
-    def test_model_info_includes_active_ollama_preset_defaults_and_tools(self, mock_get_model_settings):
-        self.write_tool(
-            'echo',
+    def test_model_info_includes_active_ollama_preset_defaults_and_servers(self, mock_get_model_settings):
+        self.write_server(
+            'time_suite',
             '''
-            TOOL = {"id": "echo", "name": "Echo", "description": "Echo tool", "parameters": {"type": "object", "properties": {}}}
+            MCP_SERVER = {"id": "time_suite", "name": "Time Suite", "description": "Time helpers"}
+            TOOLS = [
+                {"id": "time_now", "name": "Current Time", "parameters": {"type": "object", "properties": {}}},
+                {"id": "timezone_name", "name": "Timezone Name", "parameters": {"type": "object", "properties": {}}},
+            ]
             def supports(engine=None, model_name=None):
                 return engine == "ollama-service"
-            def call_tool(arguments, context=None):
+            def call_tool(tool_id, arguments, context=None):
                 return "ok"
             ''',
         )
@@ -332,7 +522,8 @@ class OllamaPresetApiTests(ToolRegistryTestMixin, TestCase):
         payload = response.json()
         self.assertIn("ollama_presets", payload)
         self.assertTrue(payload["supports_tool_calling"])
-        self.assertEqual(payload["available_tools"], [{"id": "echo", "name": "Echo", "description": "Echo tool"}])
+        self.assertEqual(payload["available_tool_servers"][0]["id"], "time_suite")
+        self.assertEqual(payload["available_tool_servers"][0]["tool_count"], 2)
         self.assertEqual(payload["defaults"]["num_ctx"], 32768)
         self.assertEqual(payload["defaults"]["num_predict"], 8192)
 

@@ -32,11 +32,17 @@ class Chat(models.Model):
 
 
 class Message(models.Model):
-    """A single message inside a chat thread."""
+    """A single message inside a chat thread.
+
+    ``content`` stores the user-facing text rendered in the UI.
+    ``llm_transcript`` stores the machine-oriented message sequence used to
+    rebuild assistant history for future model calls.
+    """
 
     chat = models.ForeignKey(Chat, on_delete=models.CASCADE, related_name="messages")
     role = models.CharField(max_length=50, choices=MessageRole.choices)
     content = models.TextField()
+    llm_transcript = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

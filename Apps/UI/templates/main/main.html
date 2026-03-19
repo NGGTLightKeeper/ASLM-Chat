@@ -1,4 +1,4 @@
-{% extends "main/base.html" %}
+﻿{% extends "main/base.html" %}
 {% load static %}
 
 {% block title %}ASLM Chat{% endblock %}
@@ -24,9 +24,9 @@
                             <div class="image-preview-grid" id="imagePreviewStrip" style="display:none;"></div>
                             <textarea class="chat-input" id="chatInput" placeholder="Message ASLM..." rows="1"></textarea>
                             <div class="tool-selector-panel" id="toolSelectorPanel" style="display:none;">
-                                <label class="tool-selector-label" for="toolSelector">Tool</label>
+                                <label class="tool-selector-label" for="toolSelector">Tool Server</label>
                                 <select class="tool-selector" id="toolSelector">
-                                    <option value="">No tool</option>
+                                    <option value="">No server</option>
                                 </select>
                             </div>
                             <div class="input-bottom-bar">
@@ -40,7 +40,7 @@
                                         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                                         Vision
                                     </div>
-                                    <button class="tool-toggle-btn" id="toolToggleBtn" style="display:none;" title="Select tool">
+                                    <button class="tool-toggle-btn" id="toolToggleBtn" style="display:none;" title="Select tool server">
                                         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 010 1.4l-4 4a1 1 0 01-1.4 0l-2-2a1 1 0 011.4-1.4L10 9.59l3.3-3.3a1 1 0 011.4 0z"/><path d="M5 13h14"/><path d="M5 17h10"/></svg>
                                         <span class="tool-toggle-label">Tools</span>
                                     </button>
@@ -74,9 +74,9 @@
                 <div class="image-preview-grid" id="imagePreviewStripConv" style="display:none;"></div>
                 <textarea class="chat-input" id="chatInputConv" placeholder="Message ASLM..." rows="1"></textarea>
                 <div class="tool-selector-panel" id="toolSelectorPanelConv" style="display:none;">
-                    <label class="tool-selector-label" for="toolSelectorConv">Tool</label>
+                    <label class="tool-selector-label" for="toolSelectorConv">Tool Server</label>
                     <select class="tool-selector" id="toolSelectorConv">
-                        <option value="">No tool</option>
+                        <option value="">No server</option>
                     </select>
                 </div>
                 <div class="input-bottom-bar">
@@ -90,7 +90,7 @@
                             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                             Vision
                         </div>
-                        <button class="tool-toggle-btn" id="toolToggleBtnConv" style="display:none;" title="Select tool">
+                        <button class="tool-toggle-btn" id="toolToggleBtnConv" style="display:none;" title="Select tool server">
                             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 010 1.4l-4 4a1 1 0 01-1.4 0l-2-2a1 1 0 011.4-1.4L10 9.59l3.3-3.3a1 1 0 011.4 0z"/><path d="M5 13h14"/><path d="M5 17h10"/></svg>
                             <span class="tool-toggle-label">Tools</span>
                         </button>
@@ -263,6 +263,7 @@
 {% block extra_js %}
 {{ runtime_settings|json_script:"runtimeSettingsData" }}
 {{ engine_options|json_script:"engineOptionsData" }}
-{{ available_tools|json_script:"availableToolsData" }}
-<script src="{% static 'js/main/main.js' %}?v=20260319a"></script>
+{{ available_tool_servers|json_script:"availableToolServersData" }}
+<script src="{% static 'js/main/main.js' %}?v=20260319b"></script>
 {% endblock %}
+

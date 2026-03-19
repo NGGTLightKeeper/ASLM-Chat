@@ -1074,6 +1074,115 @@
   color: var(--c-text-dim);
 }
 
+.msg-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: 999px;
+  background: var(--surface-tertiary);
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-2);
+  line-height: 1;
+}
+
+.msg.user.is-queued .msg-bubble {
+  border: 1px dashed var(--c-border-strong);
+  opacity: 0.9;
+}
+
+.msg-activity-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.msg-thoughts-wrapper {
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+
+.msg-thoughts-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 8px 12px;
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-1);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.msg-thoughts-toggle:hover {
+  color: var(--c-text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.msg-thoughts-content {
+  padding: 12px;
+  border-top: 1px solid var(--c-border);
+  color: var(--c-text-dim);
+  font-size: var(--font-size-caption-1);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.msg-tool-call-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-tertiary);
+}
+
+.msg-tool-call-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.msg-tool-call-name {
+  color: var(--c-text);
+  font-size: var(--font-size-caption-1);
+  font-weight: 600;
+}
+
+.msg-tool-call-note {
+  color: var(--c-text-dim);
+  font-size: var(--font-size-caption-2);
+}
+
+.msg-tool-call-badge {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-2);
+  line-height: 1;
+}
+
+.msg-stream-text {
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--surface-secondary);
+  color: var(--c-text);
+  border-bottom-left-radius: 4px;
+}
+
+.msg-stream-text .markdown-body {
+  color: inherit;
+}
+
 .typing-indicator {
   display: flex;
   gap: 4px;

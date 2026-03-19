@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 from typing import Any
 
@@ -111,7 +112,7 @@ def _build_base_context() -> dict[str, Any]:
         "models": [],
         "engine_options": settings.get_supported_engines(),
         "runtime_settings": runtime_settings,
-        "available_tools": tool_registry.list_tools(),
+        "available_tool_servers": tool_registry.list_servers(),
         "chats": Chat.objects.all(),
     }
 
@@ -148,6 +149,114 @@ def _detect_image_mime(base64_data: str) -> str:
     return "image/jpeg"
 
 
+def _strip_llm_markup(content: str) -> str:
+    """Remove stored think/tool markers from legacy assistant content."""
+    source = str(content or "")
+    source = re.sub(r"<think>.*?</think>", "", source, flags=re.DOTALL)
+    source = re.sub(r"<tool_call>.*?</tool_call>", "", source, flags=re.DOTALL)
+    return source.strip()
+
+
+def _normalize_transcript_entries(raw_entries: Any) -> list[dict[str, Any]]:
+    """Return a safe list of transcript entries stored on assistant messages."""
+    if not isinstance(raw_entries, list):
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for raw_entry in raw_entries:
+        if not isinstance(raw_entry, dict):
+            continue
+        role = str(raw_entry.get("role", "") or "").strip().lower()
+        if role not in {"assistant", "tool"}:
+            continue
+
+        entry: dict[str, Any] = {
+            "role": role,
+            "content": str(raw_entry.get("content", "") or ""),
+        }
+        if role == "assistant":
+            thinking = str(raw_entry.get("thinking", "") or "")
+            if thinking:
+                entry["thinking"] = thinking
+            tool_calls = raw_entry.get("tool_calls")
+            if isinstance(tool_calls, list):
+                entry["tool_calls"] = tool_calls
+        else:
+            for key in ("name", "tool_name", "server_id", "server_name", "tool_id", "tool_display_name"):
+                value = raw_entry.get(key)
+                if value is not None:
+                    entry[key] = value
+            arguments = raw_entry.get("arguments")
+            if isinstance(arguments, dict):
+                entry["arguments"] = arguments
+        entries.append(entry)
+
+    return entries
+
+
+def _build_llm_history_entries(message: Message) -> list[dict[str, Any]]:
+    """Convert one stored message into the message list expected by the LLM backend."""
+    if message.role != "assistant":
+        return [{"role": message.role, "content": message.content}]
+
+    transcript_entries = _normalize_transcript_entries(message.llm_transcript)
+    if transcript_entries:
+        llm_entries: list[dict[str, Any]] = []
+        for entry in transcript_entries:
+            payload = {
+                "role": entry["role"],
+                "content": entry.get("content", ""),
+            }
+            if entry["role"] == "assistant":
+                if entry.get("thinking"):
+                    payload["thinking"] = entry["thinking"]
+                if isinstance(entry.get("tool_calls"), list):
+                    payload["tool_calls"] = entry["tool_calls"]
+            else:
+                if entry.get("name"):
+                    payload["name"] = entry["name"]
+                if entry.get("tool_name"):
+                    payload["tool_name"] = entry["tool_name"]
+            llm_entries.append(payload)
+        return llm_entries
+
+    stripped_content = _strip_llm_markup(message.content)
+    if not stripped_content:
+        return []
+    return [{"role": "assistant", "content": stripped_content}]
+
+
+def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
+    """Build frontend activity segments from the stored machine transcript."""
+    transcript_entries = _normalize_transcript_entries(message.llm_transcript)
+    if not transcript_entries:
+        return []
+
+    segments: list[dict[str, Any]] = []
+    for entry in transcript_entries:
+        if entry["role"] == "assistant":
+            thinking = str(entry.get("thinking", "") or "").strip()
+            content = str(entry.get("content", "") or "").strip()
+            if thinking:
+                segments.append({"type": "thought", "content": thinking})
+            if content:
+                segments.append({"type": "text", "content": content})
+            continue
+
+        segments.append(
+            {
+                "type": "tool",
+                "serverId": str(entry.get("server_id", "") or ""),
+                "serverName": str(entry.get("server_name", "") or ""),
+                "toolId": str(entry.get("tool_id", entry.get("name", "")) or ""),
+                "toolName": str(entry.get("tool_display_name", entry.get("tool_name", entry.get("name", ""))) or ""),
+                "arguments": entry.get("arguments") if isinstance(entry.get("arguments"), dict) else {},
+            }
+        )
+
+    return segments
+
+
 def _serialize_message(message: Message) -> dict[str, Any]:
     """Convert a database message to the JSON shape expected by the frontend."""
     payload = {
@@ -155,10 +264,38 @@ def _serialize_message(message: Message) -> dict[str, Any]:
         "content": message.content,
         "created_at": message.created_at.isoformat(),
     }
+    activity_segments = _build_activity_segments(message)
+    if activity_segments:
+        payload["activity_segments"] = activity_segments
     images = list(message.images.all())
     if images:
         payload["images"] = [image.data_url() for image in images]
     return payload
+
+
+def _extract_stream_message_parts(chunk: Any) -> tuple[str, str]:
+    """Return streamed thinking and content text from a backend chunk."""
+    raw_message = chunk.get("message", {}) if isinstance(chunk, dict) else getattr(chunk, "message", {})
+    if isinstance(raw_message, dict):
+        thinking_part = raw_message.get("thinking", "") or ""
+        text_part = raw_message.get("content", "") or ""
+    else:
+        thinking_part = getattr(raw_message, "thinking", "") or ""
+        text_part = getattr(raw_message, "content", "") or ""
+    return str(thinking_part), str(text_part)
+
+
+def _serialize_tool_call_marker(tool_event: dict[str, Any]) -> str:
+    """Encode a tool invocation into an inline marker understood by the frontend."""
+    payload = {
+        "alias": str(tool_event.get("alias", "") or "").strip(),
+        "server_id": str(tool_event.get("server_id", "") or "").strip(),
+        "server_name": str(tool_event.get("server_name", "") or "").strip(),
+        "tool_id": str(tool_event.get("tool_id", "") or "").strip(),
+        "tool_name": str(tool_event.get("tool_name", "") or "").strip(),
+        "arguments": tool_event.get("arguments") or {},
+    }
+    return f'<tool_call>{json.dumps(payload, ensure_ascii=False)}</tool_call>'
 
 
 def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
@@ -302,8 +439,8 @@ def _build_model_info_payload(engine: str, model_name: str) -> dict[str, Any]:
     else:
         payload = _extract_generic_model_info(settings_data)
 
-    payload["available_tools"] = (
-        tool_registry.list_tools(engine, model_name) if payload.get("supports_tool_calling") else []
+    payload["available_tool_servers"] = (
+        tool_registry.list_servers(engine, model_name) if payload.get("supports_tool_calling") else []
     )
     payload["model"] = model_name
     payload["engine"] = engine
@@ -351,18 +488,18 @@ def chat_api(request):
         chat_id = data.get("chat_id", "")
         images = data.get("images", []) or []
         engine = _get_active_engine(data.get("engine"))
-        tool_id = str(data.get("tool_id", "") or "").strip()
+        tool_server_id = str(data.get("tool_server_id", data.get("tool_id", "")) or "").strip()
 
         if not model_name:
             return JsonResponse({"error": "Missing model parameter"}, status=400)
         if not user_message and not images:
             return JsonResponse({"error": "Missing message or images"}, status=400)
 
-        selected_tool = None
-        if tool_id:
-            selected_tool = tool_registry.get_tool(tool_id, engine=engine, model_name=model_name)
-            if selected_tool is None:
-                return JsonResponse({"error": f"Unknown or unsupported tool: {tool_id}"}, status=400)
+        selected_tool_server = None
+        if tool_server_id:
+            selected_tool_server = tool_registry.get_server(tool_server_id, engine=engine, model_name=model_name)
+            if selected_tool_server is None:
+                return JsonResponse({"error": f"Unknown or unsupported tool server: {tool_server_id}"}, status=400)
 
         if chat_id:
             try:
@@ -372,9 +509,9 @@ def chat_api(request):
         else:
             chat = Chat.objects.create(title=_build_chat_title(user_message, bool(images)))
 
-        normalized_tool_id = selected_tool["id"] if selected_tool else ""
-        if chat.active_tool_slug != normalized_tool_id:
-            chat.active_tool_slug = normalized_tool_id
+        normalized_tool_server_id = selected_tool_server["id"] if selected_tool_server else ""
+        if chat.active_tool_slug != normalized_tool_server_id:
+            chat.active_tool_slug = normalized_tool_server_id
             chat.save(update_fields=["active_tool_slug", "updated_at"])
 
         user_message_record = Message.objects.create(
@@ -397,12 +534,7 @@ def chat_api(request):
 
         history_qs = chat.messages.exclude(id=user_message_record.id)
         for historical_message in history_qs:
-            llm_messages.append(
-                {
-                    "role": historical_message.role,
-                    "content": historical_message.content,
-                }
-            )
+            llm_messages.extend(_build_llm_history_entries(historical_message))
 
         current_entry: dict[str, Any] = {"role": "user", "content": user_message}
         if images:
@@ -434,8 +566,8 @@ def chat_api(request):
             generate_kwargs["think_level"] = think_level_value
         if clean_options:
             generate_kwargs["options"] = clean_options
-        if settings.is_ollama_engine(engine) and selected_tool is not None:
-            generate_kwargs["tool_id"] = selected_tool["id"]
+        if settings.is_ollama_engine(engine) and selected_tool_server is not None:
+            generate_kwargs["tool_server_id"] = selected_tool_server["id"]
             generate_kwargs["tool_context"] = {
                 "chat_id": str(chat.id),
                 "engine": engine,
@@ -445,35 +577,47 @@ def chat_api(request):
             }
 
         def stream_response():
-            full_response = ""
+            visible_parts: list[str] = []
+            transcript_entries: list[dict[str, Any]] = []
             is_thinking = False
 
             try:
                 llm_api.prepare_runtime(engine)
                 response_iterator = llm_api.generate(**generate_kwargs)
                 for chunk in response_iterator:
-                    raw_message = chunk.get("message", {}) if isinstance(chunk, dict) else getattr(chunk, "message", {})
-                    if isinstance(raw_message, dict):
-                        thinking_part = raw_message.get("thinking", "") or ""
-                        text_part = raw_message.get("content", "") or ""
-                    else:
-                        thinking_part = getattr(raw_message, "thinking", "") or ""
-                        text_part = getattr(raw_message, "content", "") or ""
+                    if isinstance(chunk, dict) and chunk.get("transcript_message"):
+                        transcript_message = chunk["transcript_message"]
+                        if isinstance(transcript_message, dict):
+                            transcript_entries.append(transcript_message)
+                        continue
+
+                    if isinstance(chunk, dict) and chunk.get("tool_result"):
+                        tool_message = chunk["tool_result"]
+                        if isinstance(tool_message, dict):
+                            transcript_entries.append(tool_message)
+                        continue
+
+                    if isinstance(chunk, dict) and chunk.get("tool_event"):
+                        if is_thinking:
+                            is_thinking = False
+                            yield "\n</think>\n"
+                        marker = _serialize_tool_call_marker(chunk["tool_event"])
+                        yield marker
+                        continue
+
+                    thinking_part, text_part = _extract_stream_message_parts(chunk)
 
                     if thinking_part:
                         if not is_thinking:
                             is_thinking = True
-                            full_response += "<think>\n"
                             yield "<think>\n"
-                        full_response += thinking_part
                         yield thinking_part
 
                     if text_part:
                         if is_thinking:
                             is_thinking = False
-                            full_response += "\n</think>\n"
                             yield "\n</think>\n"
-                        full_response += text_part
+                        visible_parts.append(text_part)
                         yield text_part
             except Exception as exc:
                 logger.exception("Error during streaming generation")
@@ -482,9 +626,16 @@ def chat_api(request):
                 yield f"\n[Error during generation: {exc}]"
             finally:
                 if is_thinking:
-                    full_response += "\n</think>\n"
-                if full_response:
-                    Message.objects.create(chat=chat, role="assistant", content=full_response)
+                    yield "\n</think>\n"
+
+                visible_content = "".join(visible_parts).strip()
+                if visible_content or transcript_entries:
+                    Message.objects.create(
+                        chat=chat,
+                        role="assistant",
+                        content=visible_content,
+                        llm_transcript=transcript_entries,
+                    )
 
         response = StreamingHttpResponse(stream_response(), content_type="text/plain; charset=utf-8")
         response["X-Chat-ID"] = str(chat.id)
@@ -510,6 +661,7 @@ def load_chat_api(request, chat_id):
             "title": chat.title,
             "messages": payload,
             "active_tool_id": chat.active_tool_slug,
+            "active_tool_server_id": chat.active_tool_slug,
         })
     except Chat.DoesNotExist:
         return JsonResponse({"error": "Chat not found"}, status=404)
@@ -549,13 +701,14 @@ def get_models_api(request):
 
 
 def get_tools_api(request):
-    """Return locally discovered tools filtered for the requested engine/model."""
+    """Return locally discovered MCP-style tool servers for the requested engine/model."""
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
     engine = _get_active_engine(request.GET.get("engine"))
     model_name = str(request.GET.get("model", "") or "").strip() or None
-    return JsonResponse({"tools": tool_registry.list_tools(engine, model_name)})
+    servers = tool_registry.list_servers(engine, model_name)
+    return JsonResponse({"tool_servers": servers, "servers": servers, "tools": servers})
 
 
 def get_ollama_presets_api(request):
