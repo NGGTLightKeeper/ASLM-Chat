@@ -1,0 +1,40 @@
+{
+  "tiers": {
+    "A": { "name": "Authoritative", "weight": 1.0, "description": "Primary sources, official docs, peer-reviewed" },
+    "B": { "name": "Trusted", "weight": 0.8, "description": "Quality secondary sources, major platforms" },
+    "C": { "name": "Community", "weight": 0.5, "description": "Moderated communities, blogs" }
+  },
+  "domains": [
+    {"pattern": "arxiv.org",              "tier": "A", "cat": "science"},
+    {"pattern": "nature.com",             "tier": "A", "cat": "science"},
+    {"pattern": "sciencedirect.com",      "tier": "A", "cat": "science"},
+    {"pattern": "ncbi.nlm.nih.gov",       "tier": "A", "cat": "science"},
+    {"pattern": "plos.org",               "tier": "A", "cat": "science"},
+    {"pattern": "biorxiv.org",            "tier": "A", "cat": "science"},
+    {"pattern": "docs.python.org",        "tier": "A", "cat": "docs"},
+    {"pattern": "readthedocs.io",         "tier": "A", "cat": "docs"},
+    {"pattern": "developer.mozilla.org",  "tier": "A", "cat": "docs"},
+    {"pattern": "kubernetes.io",          "tier": "A", "cat": "docs"},
+    {"pattern": "docs.rs",               "tier": "A", "cat": "docs"},
+
+    {"pattern": "github.com",             "tier": "B", "cat": "code"},
+    {"pattern": "gitlab.com",             "tier": "B", "cat": "code"},
+    {"pattern": "huggingface.co",         "tier": "B", "cat": "code"},
+    {"pattern": "stackoverflow.com",      "tier": "B", "cat": "qa"},
+    {"pattern": "wikipedia.org",          "tier": "B", "cat": "encyclopedia"},
+    {"pattern": "reuters.com",            "tier": "B", "cat": "news"},
+    {"pattern": "apnews.com",             "tier": "B", "cat": "news"},
+    {"pattern": "bbc.com",                "tier": "B", "cat": "news"},
+    {"pattern": "nytimes.com",            "tier": "B", "cat": "news"},
+
+    {"pattern": "reddit.com",             "tier": "C", "cat": "community"},
+    {"pattern": "habr.com",               "tier": "C", "cat": "community"},
+    {"pattern": "dev.to",                 "tier": "C", "cat": "community"},
+    {"pattern": "news.ycombinator.com",   "tier": "C", "cat": "community"}
+  ],
+  "blacklist": {
+    "blocked_extensions": [".exe", ".zip", ".tar.gz", ".msi", ".dmg", ".apk"],
+    "blocked_domain_contains": ["casino", "gambling", "porn", "xxx", "warez"],
+    "blocked_url_patterns": ["/ads/", "/sponsor/", "/affiliate/", "click_id=", "tracking_id="]
+  }
+}
