@@ -1,0 +1,384 @@
+{
+    "tiers": {
+        "A": {
+            "weight": 1.0,
+            "label": "Authoritative"
+        },
+        "B": {
+            "weight": 0.75,
+            "label": "Trusted"
+        },
+        "C": {
+            "weight": 0.45,
+            "label": "Community"
+        }
+    },
+    "domains": [
+        {
+            "pattern": "arxiv.org",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "pmc.ncbi.nlm.nih.gov",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "pubmed.ncbi.nlm.nih.gov",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "who.int",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "dl.acm.org",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "ieeexplore.ieee.org",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "proceedings.neurips.cc",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "link.springer.com",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "onlinelibrary.wiley.com",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "nature.com",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "science.org",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "cell.com",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "thelancet.com",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "sciencedirect.com",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "jstor.org",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "scholar.google.com",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "semanticscholar.org",
+            "tier": "A",
+            "cat": "science"
+        },
+        {
+            "pattern": "cyberleninka.ru",
+            "tier": "B",
+            "cat": "science"
+        },
+        {
+            "pattern": "elibrary.ru",
+            "tier": "B",
+            "cat": "science"
+        },
+        {
+            "pattern": "docs.python.org",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "developer.mozilla.org",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "kubernetes.io",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "go.dev",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "learn.microsoft.com",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "docs.oracle.com",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "doc.rust-lang.org",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "docs.rs",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "react.dev",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "vuejs.org",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "angular.dev",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "nodejs.org",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "postgresql.org",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "devdocs.io",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "pkg.go.dev",
+            "tier": "A",
+            "cat": "docs"
+        },
+        {
+            "pattern": "pypi.org",
+            "tier": "B",
+            "cat": "docs"
+        },
+        {
+            "pattern": "readthedocs.io",
+            "tier": "B",
+            "cat": "docs"
+        },
+        {
+            "pattern": "readthedocs.org",
+            "tier": "B",
+            "cat": "docs"
+        },
+        {
+            "pattern": "github.com",
+            "tier": "B",
+            "cat": "code"
+        },
+        {
+            "pattern": "stackoverflow.com",
+            "tier": "B",
+            "cat": "code"
+        },
+        {
+            "pattern": "gitlab.com",
+            "tier": "B",
+            "cat": "code"
+        },
+        {
+            "pattern": "baeldung.com",
+            "tier": "B",
+            "cat": "code"
+        },
+        {
+            "pattern": "habr.com",
+            "tier": "C",
+            "cat": "code"
+        },
+        {
+            "pattern": "dev.to",
+            "tier": "C",
+            "cat": "code"
+        },
+        {
+            "pattern": "medium.com",
+            "tier": "C",
+            "cat": "code"
+        },
+        {
+            "pattern": "eng.uber.com",
+            "tier": "B",
+            "cat": "engineering"
+        },
+        {
+            "pattern": "engineering.fb.com",
+            "tier": "B",
+            "cat": "engineering"
+        },
+        {
+            "pattern": "netflixtechblog.com",
+            "tier": "B",
+            "cat": "engineering"
+        },
+        {
+            "pattern": "blog.google",
+            "tier": "B",
+            "cat": "engineering"
+        },
+        {
+            "pattern": "openai.com",
+            "tier": "B",
+            "cat": "engineering"
+        },
+        {
+            "pattern": "huggingface.co",
+            "tier": "B",
+            "cat": "engineering"
+        },
+        {
+            "pattern": "reuters.com",
+            "tier": "A",
+            "cat": "news"
+        },
+        {
+            "pattern": "apnews.com",
+            "tier": "A",
+            "cat": "news"
+        },
+        {
+            "pattern": "bloomberg.com",
+            "tier": "A",
+            "cat": "news"
+        },
+        {
+            "pattern": "bbc.com",
+            "tier": "A",
+            "cat": "news"
+        },
+        {
+            "pattern": "bbc.co.uk",
+            "tier": "A",
+            "cat": "news"
+        },
+        {
+            "pattern": "interfax.ru",
+            "tier": "A",
+            "cat": "news_ru"
+        },
+        {
+            "pattern": "rbc.ru",
+            "tier": "A",
+            "cat": "news_ru"
+        },
+        {
+            "pattern": "vedomosti.ru",
+            "tier": "A",
+            "cat": "news_ru"
+        },
+        {
+            "pattern": "kommersant.ru",
+            "tier": "A",
+            "cat": "news_ru"
+        },
+        {
+            "pattern": "tass.ru",
+            "tier": "A",
+            "cat": "news_ru"
+        },
+        {
+            "pattern": "ria.ru",
+            "tier": "B",
+            "cat": "news_ru"
+        },
+        {
+            "pattern": "thebell.io",
+            "tier": "B",
+            "cat": "news_ru"
+        },
+        {
+            "pattern": "meduza.io",
+            "tier": "B",
+            "cat": "news_ru"
+        },
+        {
+            "pattern": "forbes.ru",
+            "tier": "B",
+            "cat": "news_ru"
+        },
+        {
+            "pattern": "en.wikipedia.org",
+            "tier": "B",
+            "cat": "reference"
+        },
+        {
+            "pattern": "ru.wikipedia.org",
+            "tier": "B",
+            "cat": "reference"
+        }
+    ],
+    "blacklist": {
+        "blocked_extensions": [
+            ".jpg",
+            ".png",
+            ".gif",
+            ".webp",
+            ".mp4",
+            ".zip",
+            ".exe",
+            ".svg"
+        ],
+        "blocked_domain_contains": [
+            "pinterest.",
+            "vk.com",
+            "ok.ru",
+            "tiktok.com",
+            "instagram.com",
+            "facebook.com",
+            "glarity.app",
+            "deepwiki.com",
+            "softpedia.com",
+            "filehorse.com",
+            "uptodown.com",
+            "quora.com"
+        ],
+        "blocked_url_patterns": [
+            "utm_source=",
+            "utm_medium=",
+            "utm_campaign=",
+            "?ref=",
+            "&ref=",
+            "/tag/",
+            "/category/",
+            "?affiliate"
+        ]
+    }
+}

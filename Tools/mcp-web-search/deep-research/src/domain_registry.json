@@ -1,0 +1,495 @@
+{
+  "_comment": "Global-first domain registry for crawl routing, rate limits, and access methods. Tiers: friendly/moderate/hardened/fortress. Methods: http/json_api/official_api/xml_feed/skip. response_time_ms: measured p95 latency from bench_domains.py, used to set per-domain http_stage_timeout.",
+  "domains": [
+    {
+      "pattern": "alza.cz",
+      "aliases": ["alza.sk", "alza.hu", "alza.at"],
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "notes": "Blocks all automated access with 403 across all layers.",
+      "topics": ["shopping", "tech"]
+    },
+    {
+      "pattern": "geizhals.at",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "response_time_ms": 450,
+      "notes": "Useful for EU price comparison and product specs. .at TLD accessible; .de and .eu block automated access.",
+      "topics": ["shopping", "tech"]
+    },
+    {
+      "pattern": "newegg.com",
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "response_time_ms": 1360,
+      "notes": "Catalog pages are generally usable; reduce rate to avoid throttling.",
+      "topics": ["shopping", "tech"]
+    },
+    {
+      "pattern": "bestbuy.com",
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "notes": "Blocks all automated access with 403 across all layers.",
+      "topics": ["shopping", "tech"]
+    },
+    {
+      "pattern": "bhphotovideo.com",
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "notes": "Blocks all automated access with 403 across all layers.",
+      "topics": ["shopping", "tech"]
+    },
+    {
+      "pattern": "microcenter.com",
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "notes": "Blocks all automated access with 403 across all layers.",
+      "topics": ["shopping", "tech"]
+    },
+    {
+      "pattern": "aliexpress.com",
+      "aliases": ["aliexpress.us", "aliexpress.fr"],
+      "tier": "hardened",
+      "method": "http",
+      "rps": 0.3,
+      "burst": 1,
+      "response_time_ms": 3090,
+      "notes": "Heavy SPA with aggressive anti-bot; no reliable public JSON endpoints. Use HTTP with extreme caution.",
+      "topics": ["shopping"]
+    },
+    {
+      "pattern": "ebay.com",
+      "aliases": ["ebay.co.uk", "ebay.de", "ebay.fr", "ebay.it"],
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "response_time_ms": 3290,
+      "notes": "Server-rendered product and search pages are well-structured and crawlable.",
+      "topics": ["shopping"]
+    },
+    {
+      "pattern": "amazon.com",
+      "aliases": ["amazon.co.uk", "amazon.de", "amazon.fr", "amazon.it", "amazon.es", "amazon.co.jp"],
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "notes": "Direct scraping triggers heavy bot detection. Skip.",
+      "topics": ["shopping", "finance"]
+    },
+    {
+      "pattern": "wikipedia.org",
+      "aliases": ["wikimedia.org", "wiktionary.org"],
+      "tier": "friendly",
+      "method": "http",
+      "rps": 5.0,
+      "burst": 10,
+      "response_time_ms": 2000,
+      "json_api_hint": "https://www.mediawiki.org/wiki/API:Main_page",
+      "notes": "High-value general knowledge source with open access patterns. Root HEAD may redirect; individual article pages work fine.",
+      "topics": ["general", "academic"]
+    },
+    {
+      "pattern": "wikidata.org",
+      "tier": "friendly",
+      "method": "json_api",
+      "rps": 3.0,
+      "burst": 6,
+      "response_time_ms": 1670,
+      "json_api_hint": "https://www.wikidata.org/w/api.php?action=wbsearchentities&search=<q>&language=en&format=json",
+      "notes": "Structured knowledge graph companion to Wikipedia.",
+      "topics": ["general", "academic", "tech"]
+    },
+    {
+      "pattern": "github.com",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 2.0,
+      "burst": 5,
+      "response_time_ms": 930,
+      "json_api_hint": "GitHub REST/GraphQL APIs",
+      "notes": "Excellent for source code, issues, releases, and README extraction.",
+      "topics": ["tech"]
+    },
+    {
+      "pattern": "stackoverflow.com",
+      "aliases": ["stackexchange.com", "superuser.com", "serverfault.com", "askubuntu.com"],
+      "tier": "hardened",
+      "method": "json_api",
+      "rps": 1.5,
+      "burst": 3,
+      "response_time_ms": 600,
+      "json_api_hint": "https://api.stackexchange.com/2.3/search?site=stackoverflow&intitle=<query>&order=desc&sort=relevance",
+      "notes": "Web pages block all automated access with 403. Use Stack Exchange API instead — public, no key needed.",
+      "topics": ["tech"]
+    },
+    {
+      "pattern": "docs.python.org",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 3.0,
+      "burst": 5,
+      "response_time_ms": 290,
+      "notes": "Official Python documentation.",
+      "topics": ["tech"]
+    },
+    {
+      "pattern": "developer.mozilla.org",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 2.0,
+      "burst": 5,
+      "response_time_ms": 380,
+      "notes": "MDN Web Docs; reliable for web platform references.",
+      "topics": ["tech"]
+    },
+    {
+      "pattern": "learn.microsoft.com",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 2.0,
+      "burst": 5,
+      "response_time_ms": 1320,
+      "notes": "High-value official docs across Azure, .NET, Windows, and Microsoft developer tooling.",
+      "topics": ["tech"]
+    },
+    {
+      "pattern": "readthedocs.io",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 2.0,
+      "burst": 5,
+      "response_time_ms": 3000,
+      "notes": "Large amount of project documentation. Root returns 404; specific project docs work fine (e.g. /en/stable/).",
+      "topics": ["tech"]
+    },
+    {
+      "pattern": "docs.rs",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 2.5,
+      "burst": 5,
+      "response_time_ms": 540,
+      "notes": "Official Rust crate documentation index.",
+      "topics": ["tech"]
+    },
+    {
+      "pattern": "pkg.go.dev",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 2.5,
+      "burst": 5,
+      "response_time_ms": 520,
+      "notes": "Official Go package documentation and module metadata.",
+      "topics": ["tech"]
+    },
+    {
+      "pattern": "pypi.org",
+      "tier": "friendly",
+      "method": "json_api",
+      "rps": 2.0,
+      "burst": 4,
+      "response_time_ms": 450,
+      "json_api_hint": "https://pypi.org/pypi/<project>/json",
+      "notes": "Use JSON endpoints for package metadata and release history.",
+      "topics": ["tech"]
+    },
+    {
+      "pattern": "npmjs.com",
+      "tier": "hardened",
+      "method": "json_api",
+      "rps": 2.0,
+      "burst": 4,
+      "response_time_ms": 570,
+      "json_api_hint": "https://registry.npmjs.org/<package>",
+      "notes": "Web pages block automated access. Use npm registry API instead — fully public, no auth needed.",
+      "topics": ["tech"]
+    },
+    {
+      "pattern": "arxiv.org",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "response_time_ms": 410,
+      "json_api_hint": "http://export.arxiv.org/api/query",
+      "notes": "Open research source; keep request rate conservative.",
+      "topics": ["academic", "tech"]
+    },
+    {
+      "pattern": "semanticscholar.org",
+      "tier": "moderate",
+      "method": "json_api",
+      "rps": 0.3,
+      "burst": 1,
+      "response_time_ms": 5000,
+      "json_api_hint": "https://api.semanticscholar.org/graph/v1/paper/search?query=<q>&fields=title,authors,year,abstract",
+      "notes": "Academic Graph API throttles aggressively (429 on burst). Root probe may return 429 but targeted queries work. Keep rps very low.",
+      "topics": ["academic", "tech"]
+    },
+    {
+      "pattern": "pubmed.ncbi.nlm.nih.gov",
+      "aliases": ["ncbi.nlm.nih.gov"],
+      "tier": "friendly",
+      "method": "json_api",
+      "rps": 2.0,
+      "burst": 4,
+      "response_time_ms": 940,
+      "json_api_hint": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=<q>&retmode=json",
+      "notes": "NCBI E-utilities are fully public without API key (3 req/sec unauthenticated).",
+      "topics": ["academic", "medical"]
+    },
+    {
+      "pattern": "reddit.com",
+      "tier": "fortress",
+      "method": "camoufox",
+      "rps": 0.5,
+      "burst": 2,
+      "response_time_ms": 4000,
+      "notes": "Anonymous .json endpoints blocked since mid-2023. Use camoufox to render SPA content.",
+      "topics": ["general", "tech", "news"]
+    },
+    {
+      "pattern": "lenta.ru",
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "response_time_ms": 1380,
+      "notes": "High-traffic Russian news outlet. Has some anti-bot measures but standard HTTP generally works.",
+      "topics": ["news", "ru"]
+    },
+    {
+      "pattern": "rbc.ru",
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "notes": "Major Russian business and news publication. Returns HTTP 401 on all requests — geo-block or auth wall. Skip.",
+      "topics": ["news", "finance", "ru"]
+    },
+    {
+      "pattern": "tass.ru",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "response_time_ms": 320,
+      "notes": "Russian state wire service. Well-structured pages, minimal bot protection.",
+      "topics": ["news", "ru"]
+    },
+    {
+      "pattern": "mysku.club",
+      "aliases": ["mysku.ru"],
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "notes": "TLS handshake failure on both aiohttp and curl_cffi — site unreachable. Skip.",
+      "topics": ["shopping", "tech", "ru"]
+    },
+    {
+      "pattern": "ixbt.live",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "response_time_ms": 650,
+      "notes": "iXBT community blog platform. User-written hardware reviews and discussions.",
+      "topics": ["tech", "ru"]
+    },
+    {
+      "pattern": "overclockers.ru",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "response_time_ms": 370,
+      "notes": "Russian enthusiast hardware forum and news. Strong on CPU/GPU overclocking and PC builds.",
+      "topics": ["tech", "ru"]
+    },
+    {
+      "pattern": "huggingface.co",
+      "tier": "friendly",
+      "method": "json_api",
+      "rps": 2.0,
+      "burst": 5,
+      "response_time_ms": 1870,
+      "json_api_hint": "https://huggingface.co/api/models?search=<q>&limit=20",
+      "notes": "ML model and dataset hub. Public API requires no key for browsing public repos.",
+      "topics": ["tech", "academic"]
+    },
+    {
+      "pattern": "docs.anthropic.com",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 2.0,
+      "burst": 5,
+      "response_time_ms": 1330,
+      "notes": "Official Anthropic/Claude API documentation. Well-structured, no bot protection.",
+      "topics": ["tech", "academic"]
+    },
+    {
+      "pattern": "platform.openai.com",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.5,
+      "burst": 4,
+      "response_time_ms": 3000,
+      "notes": "OpenAI API and platform documentation. Root may redirect/block; specific doc pages work.",
+      "topics": ["tech", "academic"]
+    },
+    {
+      "pattern": "habr.com",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.5,
+      "burst": 4,
+      "response_time_ms": 490,
+      "notes": "Primary Russian-language tech blog platform. Well-structured HTML, high-signal articles.",
+      "topics": ["tech", "ru"]
+    },
+    {
+      "pattern": "4pda.to",
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "response_time_ms": 5000,
+      "notes": "Major Russian-language tech forum. Root returns 403 to HEAD/bots; article pages accessible via GET with browser UA.",
+      "topics": ["tech", "shopping", "ru"]
+    },
+    {
+      "pattern": "ixbt.com",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "response_time_ms": 700,
+      "notes": "Long-running Russian hardware and tech review site. Detailed product benchmarks and comparisons.",
+      "topics": ["tech", "shopping", "ru"]
+    },
+    {
+      "pattern": "dns-shop.ru",
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "notes": "Major Russian electronics retailer. Heavy SPA with aggressive anti-bot. Skip.",
+      "topics": ["shopping", "tech", "ru"]
+    },
+    {
+      "pattern": "bbc.com",
+      "aliases": ["bbc.co.uk"],
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.5,
+      "burst": 4,
+      "response_time_ms": 580,
+      "notes": "High-quality international news source. Structured article pages with predictable layouts.",
+      "topics": ["news", "general"]
+    },
+    {
+      "pattern": "reuters.com",
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "notes": "Returns HTTP 401 on all requests since 2023 — requires authentication. Skip.",
+      "topics": ["news", "finance", "general"]
+    },
+    {
+      "pattern": "theverge.com",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "response_time_ms": 560,
+      "notes": "Tech and consumer electronics journalism. Good signal for product launches and industry news.",
+      "topics": ["news", "tech"]
+    },
+    {
+      "pattern": "arstechnica.com",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "response_time_ms": 1030,
+      "notes": "In-depth tech journalism with strong editorial quality.",
+      "topics": ["news", "tech", "academic"]
+    },
+    {
+      "pattern": "news.ycombinator.com",
+      "tier": "friendly",
+      "method": "json_api",
+      "rps": 2.0,
+      "burst": 5,
+      "response_time_ms": 690,
+      "json_api_hint": "https://hacker-news.firebaseio.com/v0/item/<id>.json",
+      "notes": "Hacker News Firebase API is fully public, no key needed.",
+      "topics": ["news", "tech"]
+    },
+    {
+      "pattern": "playwright.dev",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 2.0,
+      "burst": 5,
+      "response_time_ms": 170,
+      "notes": "Official Playwright documentation.",
+      "topics": ["tech"]
+    },
+    {
+      "pattern": "kubernetes.io",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 2.0,
+      "burst": 4,
+      "response_time_ms": 290,
+      "notes": "High-value official docs for orchestration and infra topics.",
+      "topics": ["tech"]
+    },
+    {
+      "pattern": "docker.com",
+      "aliases": ["docs.docker.com"],
+      "tier": "friendly",
+      "method": "http",
+      "rps": 2.0,
+      "burst": 4,
+      "response_time_ms": 3000,
+      "notes": "Official Docker documentation. Root may redirect; specific doc pages at docs.docker.com work fine.",
+      "topics": ["tech"]
+    },
+    {
+      "pattern": "linkedin.com",
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "notes": "Skip direct crawling; anti-bot friction not worth it.",
+      "topics": ["finance", "tech"]
+    },
+    {
+      "pattern": "ticketmaster.com",
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "notes": "Skip; queueing and anti-bot layers make it low-value.",
+      "topics": ["shopping", "news"]
+    }
+  ]
+}

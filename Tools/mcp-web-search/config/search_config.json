@@ -1,0 +1,25 @@
+{
+  "search": {
+    "mode": "native",
+    "websurfx_url": "http://localhost:8085",
+    "timeout_seconds": 40.0,
+    "max_results": 10,
+    "tavily_api_key": null,
+    "auto_scrape_preview": true,
+    "preview_char_budget": 10000,
+    "preview_min_chars": 600,
+    "preview_max_chars": 4000
+  },
+  "extraction": {
+    "mode": "native",
+    "firecrawl_url": "http://localhost:3002",
+    "timeout_seconds": 25.0,
+    "max_page_chars": 20000,
+    "min_content_length": 800
+  },
+  "cache": {
+    "search_ttl_seconds": 1800,
+    "page_ttl_seconds": 86400
+  },
+  "max_snippet_chars": 2000
+}
