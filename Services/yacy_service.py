@@ -19,6 +19,8 @@ YACY_SERVICE_DIR = BASE_DIR / "Tools" / "mcp-web-search" / "services" / "yacy"
 YACY_RUNTIME_DIR = YACY_SERVICE_DIR / "runtime"
 YACY_URL = "http://127.0.0.1:8090"
 YACY_DOWNLOAD_URL = "https://release.yacy.net/yacy_latest.tar.gz"
+YACY_DB_REPO_ID = "di74975/yacy-tech-docs"
+YACY_DB_FILENAME = "db.tar.gz"
 
 _STARTED_BY_ASLM = False
 
@@ -202,6 +204,57 @@ def ensure_installed(log: bool = False) -> bool:
     _configure_yacy(log)
     _log(f"YaCy runtime installed at: {YACY_RUNTIME_DIR}", log)
     return _start_script() is not None
+
+
+def ensure_database_snapshot(log: bool = False) -> bool:
+    """Download and extract the optional YaCy database snapshot into the runtime."""
+
+    if not ensure_installed(log=log):
+        return False
+
+    data_dir = YACY_RUNTIME_DIR / "DATA"
+    existing_entries = [
+        entry for entry in data_dir.iterdir()
+        if entry.name.upper() != "SETTINGS"
+    ] if data_dir.exists() else []
+    if existing_entries:
+        _log(f"YaCy database snapshot already present in: {data_dir}", log)
+        return True
+
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as exc:
+        _warn(f"Could not install YaCy database snapshot because huggingface_hub is unavailable: {exc}")
+        return False
+
+    _log("Downloading YaCy database snapshot from Hugging Face...", log)
+    with tempfile.TemporaryDirectory(dir=YACY_SERVICE_DIR) as temp_dir:
+        temp_root = Path(temp_dir)
+        download_dir = temp_root / "downloads"
+        download_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            archive_path = Path(
+                hf_hub_download(
+                    repo_id=YACY_DB_REPO_ID,
+                    filename=YACY_DB_FILENAME,
+                    repo_type="dataset",
+                    local_dir=str(download_dir),
+                )
+            )
+        except Exception as exc:
+            _warn(f"Could not download the YaCy database snapshot: {exc}")
+            return False
+
+        try:
+            with tarfile.open(archive_path, "r:gz") as archive:
+                _safe_extract(archive, YACY_RUNTIME_DIR)
+        except Exception as exc:
+            _warn(f"Could not extract the YaCy database snapshot: {exc}")
+            return False
+
+    _log(f"YaCy database snapshot installed into: {YACY_RUNTIME_DIR}", log)
+    return True
 
 
 def start_yacy(log: bool = False) -> bool:

@@ -22,6 +22,7 @@ from sandbox.config import (
     MEMORY_SWAP_LIMIT,
     PIDS_LIMIT,
     SANDBOX_IMAGE,
+    SANDBOX_IMAGE_SOURCE,
     SNAPSHOT_IMAGE_PREFIX,
     STORAGE_LIMIT,
     WINDOWS_DOCKER_DESKTOP_PATHS,
@@ -166,26 +167,56 @@ def _ensure_image() -> tuple[bool, str]:
     if inspect_result.returncode == 0:
         return True, "Image already exists locally."
 
-    pull_result = _run_command(["docker", "pull", SANDBOX_IMAGE], timeout=600)
-    if pull_result.returncode == 0:
+    dockerfile_dir = Path(__file__).resolve().parents[2]
+    dockerfile_path = dockerfile_dir / "Dockerfile"
+
+    def _build_local() -> tuple[bool, str]:
+        if not dockerfile_path.exists():
+            return False, f"Dockerfile not found at: {dockerfile_path}"
+
+        build_result = _run_command(
+            ["docker", "build", "-t", SANDBOX_IMAGE, str(dockerfile_dir)],
+            timeout=1800,
+        )
+        if build_result.returncode != 0:
+            return False, build_result.stderr.strip() or "Failed to build sandbox image."
+        return True, f"Image '{SANDBOX_IMAGE}' built locally from Dockerfile."
+
+    def _pull_registry() -> tuple[bool, str]:
+        pull_result = _run_command(["docker", "pull", SANDBOX_IMAGE], timeout=600)
+        if pull_result.returncode != 0:
+            return False, pull_result.stderr.strip() or "Failed to pull sandbox image from Docker Hub."
         return True, f"Image '{SANDBOX_IMAGE}' pulled from Docker Hub."
 
-    dockerfile_dir = Path(__file__).resolve().parents[2]
-    if not (dockerfile_dir / "Dockerfile").exists():
-        return (
-            False,
-            "Pull failed and no Dockerfile found. Pull error: "
-            f"{pull_result.stderr.strip()}",
-        )
+    source = SANDBOX_IMAGE_SOURCE if SANDBOX_IMAGE_SOURCE in {"local", "registry", "auto"} else "local"
+    if source == "local":
+        local_ok, local_message = _build_local()
+        if local_ok:
+            return True, local_message
 
-    build_result = _run_command(
-        ["docker", "build", "-t", SANDBOX_IMAGE, str(dockerfile_dir)],
-        timeout=1800,
-    )
-    if build_result.returncode != 0:
-        return False, build_result.stderr.strip() or "Failed to build sandbox image."
+        registry_ok, registry_message = _pull_registry()
+        if registry_ok:
+            return True, f"{local_message} Falling back to registry succeeded: {registry_message}"
+        return False, f"{local_message} Registry fallback failed: {registry_message}"
 
-    return True, "Image built locally from Dockerfile (Docker Hub pull failed)."
+    if source == "registry":
+        registry_ok, registry_message = _pull_registry()
+        if registry_ok:
+            return True, registry_message
+
+        local_ok, local_message = _build_local()
+        if local_ok:
+            return True, f"{registry_message} Falling back to local build succeeded: {local_message}"
+        return False, f"{registry_message} Local build fallback failed: {local_message}"
+
+    registry_ok, registry_message = _pull_registry()
+    if registry_ok:
+        return True, registry_message
+
+    local_ok, local_message = _build_local()
+    if local_ok:
+        return True, f"{registry_message} Falling back to local build succeeded: {local_message}"
+    return False, f"{registry_message} Local build fallback failed: {local_message}"
 
 
 # Container start command.
