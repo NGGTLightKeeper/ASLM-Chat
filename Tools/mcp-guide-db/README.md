@@ -41,7 +41,7 @@ Lists snippet metadata for a guide as JSON.
 
 ### `create_snippet(guide, slug, title, kind, body, source_task, related_tools=[])`
 
-Creates a new snippet under `guide_tools_db/<guide>/snippets/<slug>.md`.
+Creates a new snippet under `mcp-guide-db/guide_tools_db/<guide>/snippets/<slug>.md`.
 
 Allowed `kind` values:
 - `pattern`
@@ -71,7 +71,7 @@ Hard delete is intentionally not exposed.
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `GUIDE_DB_DIR` | `../../guide_tools_db` | Root directory containing guide folders and legacy `.md` files |
+| `GUIDE_DB_DIR` | `./guide_tools_db` | Root directory containing guide folders and legacy `.md` files |
 
 ---
 
@@ -80,7 +80,8 @@ Hard delete is intentionally not exposed.
 Preferred layout:
 
 ```text
-guide_tools_db/
+mcp-guide-db/
+  guide_tools_db/
   mcp-web-search/
     guide.md
     snippets/
@@ -91,7 +92,7 @@ guide_tools_db/
     snippets/
 ```
 
-Legacy flat files such as `guide_tools_db/mcp-web-search.md` remain readable during migration.
+Legacy flat files such as `mcp-guide-db/guide_tools_db/mcp-web-search.md` remain readable during migration.
 
 Snippet modules are Markdown files with YAML frontmatter. Expected fields:
 - `title`
@@ -107,7 +108,7 @@ Snippet modules are Markdown files with YAML frontmatter. Expected fields:
 
 ## Safety Model
 
-- All snippet writes are confined to `guide_tools_db/`
+- All snippet writes are confined to `mcp-guide-db/guide_tools_db/`
 - Path traversal is rejected
 - If a guide still exists only as a legacy flat file, `guide.md` is bootstrapped from that file before snippet writes
 - Deprecated snippets are moved into `_deprecated/`; physical deletion is manual
@@ -119,13 +120,12 @@ Snippet modules are Markdown files with YAML frontmatter. Expected fields:
 ```text
 mcp-guide-db/
   guide_db_mcp.py
-
-guide_tools_db/
-  mcp-web-search/
-    guide.md
-    snippets/
-    _deprecated/
-  mcp-web-search.md   # optional legacy fallback
+  guide_tools_db/
+    mcp-web-search/
+      guide.md
+      snippets/
+      _deprecated/
+    mcp-web-search.md   # optional legacy fallback
 ```
 
 ---
