@@ -25,7 +25,8 @@
     "auto_confirm": true,
     "max_output_chars": 12000,
     "container_name": "deep-think-sandbox",
-    "image": "dima1312313/deep-think-sandbox:latest"
+    "image": "dima1312313/deep-think-sandbox:latest",
+    "image_source": "local"
   },
   "limits": {
     "max_active_agents": 4,

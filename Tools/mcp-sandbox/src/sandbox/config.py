@@ -11,6 +11,7 @@ from pathlib import Path
 
 CONTAINER_NAME = os.getenv("SANDBOX_CONTAINER_NAME", "mcp-sandbox")
 SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "dima1312313/mcp-sandbox:latest")
+SANDBOX_IMAGE_SOURCE = os.getenv("SANDBOX_IMAGE_SOURCE", "local").strip().lower()
 SNAPSHOT_IMAGE_PREFIX = os.getenv(
     "SANDBOX_SNAPSHOT_PREFIX",
     f"{CONTAINER_NAME}-snapshot",

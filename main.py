@@ -94,6 +94,19 @@ def cmd_set_setting(key: str, value: str) -> None:
     set(key, parsed_value)
     print(f"[ASLM-Chat] Setting '{key}' updated to {parsed_value}")
 
+# Install YaCy DB snapshot
+def cmd_install_yacy_db(log: bool = True) -> None:
+    """Download the optional YaCy database snapshot into the managed runtime."""
+
+    from Services import yacy_service
+
+    ok = yacy_service.ensure_database_snapshot(log=log)
+    if not ok:
+        print("[ASLM-Chat] YaCy database snapshot installation did not complete successfully.")
+        sys.exit(1)
+
+    print("[ASLM-Chat] YaCy database snapshot is ready.")
+
 
 # Start local engine service
 def maybe_start_local_engine_service(log: bool) -> None:
@@ -192,6 +205,9 @@ def main() -> None:
                 print("Error: --key and --value arguments are required.")
                 sys.exit(1)
             cmd_set_setting(args.key, args.value)
+
+        case "install_yacy_db":
+            cmd_install_yacy_db(log=True)
 
         case "help":
             parser.print_help()
