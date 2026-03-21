@@ -52,6 +52,7 @@ class SandboxConfig(BaseModel):
     max_output_chars: int = 12000
     container_name: str = "deep-think-sandbox"
     image: str = "deep-think-sandbox:latest"
+    image_source: str = "local"
 
 
 # Runtime limits
@@ -219,6 +220,7 @@ _ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
     "DEEP_THINK_TASK_TIMEOUT_SECONDS": ("limits", "task_timeout_seconds"),
     "DEEP_THINK_SANDBOX_CONTAINER": ("sandbox", "container_name"),
     "DEEP_THINK_SANDBOX_IMAGE": ("sandbox", "image"),
+    "DEEP_THINK_SANDBOX_IMAGE_SOURCE": ("sandbox", "image_source"),
 }
 
 
