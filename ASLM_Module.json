@@ -235,6 +235,16 @@
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key openai_api_key",
             "setExec": "main.py set_setting --key openai_api_key --value {value}"
+        },
+        {
+            "key": "use-yacy",
+            "name": "Use YaCy",
+            "description": "Whether web-search tools should use and auto-start the local YaCy service.",
+            "type": "bool",
+            "default": false,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key use-yacy",
+            "setExec": "main.py set_setting --key use-yacy --value {value}"
         }
     ],
     "status": {

@@ -28,6 +28,7 @@ def _build_initial_settings(existing: dict[str, Any], ui_port: int, api_port: in
             "llm-engine": existing.get("llm-engine", "ollama-service"),
             "lms_url": existing.get("lms_url", "127.0.0.1:1234"),
             "lms_load_config": existing.get("lms_load_config", {}),
+            "use-yacy": existing.get("use-yacy", False),
             "openai_url": existing.get("openai_url", "127.0.0.1:8000/v1"),
             "openai_api_key": existing.get("openai_api_key", ""),
         }
@@ -146,7 +147,19 @@ def _ensure_spacy_model(log: bool) -> None:
         log=log,
     )
 
-def _run_tool_bootstrap(log: bool) -> None:
+def _ensure_yacy_installed(log: bool) -> None:
+    """Install and configure the bundled YaCy runtime when enabled."""
+
+    try:
+        from Services import yacy_service
+    except ImportError as exc:
+        _print_warning(f"Skipping YaCy bootstrap because the service helper is unavailable: {exc}")
+        return
+
+    if not yacy_service.ensure_installed(log=log):
+        _print_warning("YaCy bootstrap did not complete successfully.")
+
+def _run_tool_bootstrap(log: bool, use_yacy: bool) -> None:
     """Run post-dependency bootstrap tasks that were previously handled by install.bat."""
 
     if not TOOLS_DIR.exists():
@@ -158,6 +171,8 @@ def _run_tool_bootstrap(log: bool) -> None:
     _ensure_camoufox_binary(log)
     _ensure_nltk_data(log)
     _ensure_spacy_model(log)
+    if use_yacy:
+        _ensure_yacy_installed(log)
 
 # Print first-run summary
 def _print_summary(settings_file, initial: dict[str, Any]) -> None:
@@ -182,7 +197,7 @@ def run(log: bool = False, ui_port: int = 30000, api_port: int = 30001) -> None:
     existing = load_settings()
     initial = _build_initial_settings(existing, ui_port, api_port)
     save_settings(initial)
-    _run_tool_bootstrap(log)
+    _run_tool_bootstrap(log, bool(initial.get("use-yacy", False)))
 
     if log:
         _print_summary(SETTINGS_FILE, initial)

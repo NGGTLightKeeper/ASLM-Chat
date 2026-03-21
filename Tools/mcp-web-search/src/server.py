@@ -2,8 +2,13 @@
 
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+import sys
 
 from mcp.server.fastmcp import FastMCP
+
+ASLM_ROOT = Path(__file__).resolve().parents[3]
+if str(ASLM_ROOT) not in sys.path:
+    sys.path.insert(0, str(ASLM_ROOT))
 
 
 def _load_register_tools():
@@ -29,4 +34,21 @@ register_tools(mcp)
 
 # Local runner entry point.
 if __name__ == "__main__":
-    mcp.run()
+    yacy_started = False
+    try:
+        try:
+            from Services import yacy_service
+
+            yacy_started = yacy_service.start_yacy(log=True)
+        except Exception:
+            yacy_started = False
+
+        mcp.run()
+    finally:
+        if yacy_started:
+            try:
+                from Services import yacy_service
+
+                yacy_service.stop_yacy(log=True)
+            except Exception:
+                pass
