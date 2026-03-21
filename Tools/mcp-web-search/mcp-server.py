@@ -4,6 +4,7 @@ import asyncio
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 SERVER_ROOT = Path(__file__).resolve().parent
 if str(SERVER_ROOT) not in sys.path:
@@ -16,6 +17,160 @@ if str(ASLM_ROOT) not in sys.path:
 SRC_ROOT = Path(__file__).resolve().parent / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
+
+MCP_SERVER = {
+    "id": "web_search",
+    "name": "Web Search",
+    "description": "Search, page reading, deep research, and file import tools.",
+}
+
+TOOLS = [
+    {
+        "id": "web_search",
+        "name": "Web Search",
+        "description": (
+            "Search the internet via DDGS and optionally YaCy. "
+            "Single query returns previews; multiple queries return compact batch results."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "description": "A search string or a list of search strings.",
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ],
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum result count per query.",
+                    "default": 10,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "id": "read_page",
+        "name": "Read Page",
+        "description": "Read one or more URLs and extract page text or save structured page dumps.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "description": "A URL string or a list of URLs to read.",
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ],
+                },
+                "save": {
+                    "type": "boolean",
+                    "description": "Save extracted content to task/pages/ instead of returning it.",
+                    "default": False,
+                },
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "id": "deep_research",
+        "name": "Deep Research",
+        "description": "Run the long-form research pipeline and return the final report.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Research question or task.",
+                },
+                "depth": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "extra"],
+                    "default": "medium",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "id": "import_web_file",
+        "name": "Import Web File",
+        "description": "Download a confirmed file URL into the task workspace.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "save_to": {
+                    "type": "string",
+                    "description": "Subdirectory inside task/ to save the file.",
+                    "default": "downloads/",
+                },
+                "allowed_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional category filter such as text, media, archive, or data.",
+                },
+                "max_size_mb": {
+                    "type": "integer",
+                    "description": "Maximum download size in MB.",
+                    "default": 50,
+                },
+            },
+            "required": ["url"],
+        },
+    },
+]
+
+
+def supports(engine: str | None = None, model_name: str | None = None) -> bool:
+    """Expose this tool server only for Ollama tool-calling flows."""
+
+    return engine == "ollama-service"
+
+
+_REGISTERED_TOOL_FUNCTIONS: dict[str, Any] | None = None
+
+
+class _ToolCollector:
+    """Capture FastMCP-style tool registrations into a simple function map."""
+
+    def __init__(self) -> None:
+        self.tools: dict[str, Any] = {}
+        self._mcp_server = None
+
+    def tool(self, name: str | None = None):
+        def decorator(fn):
+            self.tools[name or fn.__name__] = fn
+            return fn
+
+        return decorator
+
+
+def _get_registered_tool_functions() -> dict[str, Any]:
+    """Lazily build a mapping of tool ids to the nested FastMCP handlers."""
+
+    global _REGISTERED_TOOL_FUNCTIONS
+
+    if _REGISTERED_TOOL_FUNCTIONS is not None:
+        return _REGISTERED_TOOL_FUNCTIONS
+
+    collector = _ToolCollector()
+    register_tools(collector)
+    _REGISTERED_TOOL_FUNCTIONS = collector.tools
+    return _REGISTERED_TOOL_FUNCTIONS
+
+
+async def call_tool(tool_id: str, arguments: dict[str, Any] | None, context: dict[str, Any] | None = None) -> Any:
+    """Generic ASLM-compatible dispatcher for Web Search tools."""
+
+    tool_functions = _get_registered_tool_functions()
+    handler = tool_functions.get(tool_id)
+    if handler is None:
+        raise ValueError(f"Unknown tool: {tool_id}")
+
+    return await handler(**(arguments or {}))
 
 
 def _is_yacy_enabled() -> bool:
