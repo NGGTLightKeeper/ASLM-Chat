@@ -35,9 +35,12 @@ def cmd_runserver(port: int, log: bool) -> None:
     """Start the Django development server on the requested port."""
 
     if log:
-        print(f"[ASLM-Chat] Starting server on port {port}...")
+        print(f"[ASLM-Chat] Starting server on port {port} (noreload)...")
 
-    run_django_command("runserver", f"127.0.0.1:{port}", log=log)
+    # ASLM tracks the launched process directly. Django's autoreloader would
+    # spawn a child interpreter and can confuse the module runner into
+    # thinking the service stopped, so keep a single long-lived process here.
+    run_django_command("runserver", f"127.0.0.1:{port}", "--noreload", log=log)
 
 # Apply database migrations
 def cmd_migrate(log: bool) -> None:
