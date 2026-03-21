@@ -180,5 +180,25 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# MCP tools test logs and test data
+Tools/tests
+
+# Deep Think
+Tools/mcp-deep-think/_out/
+Tools/mcp-deep-think/benchmarks/
+Tools/mcp-deep-think/logs/
+Tools/mcp-deep-think/tests/
+
+# web search tools logs and source code
+*.db
+*.log
+Tools/mcp-web-search/deep-research/_out/
+Tools/mcp-web-search/deep-research/_cache/
+Tools/mcp-web-search/deep-research/downloaded_files/
+Tools/mcp-web-search/deep-research/latest_logs/
+Tools/mcp-web-search/services/yacy/*
+!Tools/mcp-web-search/services/yacy/*.bat
+
+# UI
 staticfiles
 Settings/settings.json

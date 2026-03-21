@@ -118,22 +118,56 @@ def _ensure_image() -> tuple[bool, str]:
     if _image_exists_locally():
         return True, "Image already exists locally."
 
-    logger.info("Pulling %s from Docker Hub ...", SANDBOX_IMAGE)
-    pull = _run(["docker", "pull", SANDBOX_IMAGE], timeout=600)
-    if pull.returncode == 0:
+    dockerfile = _DOCKERFILE_DIR / "Dockerfile"
+    image_source = str(getattr(settings.sandbox, "image_source", "local") or "local").strip().lower()
+    if image_source not in {"local", "registry", "auto"}:
+        image_source = "local"
+
+    def _build_local() -> tuple[bool, str]:
+        if not dockerfile.exists():
+            return False, f"Local Dockerfile not found: {dockerfile}"
+
+        logger.info("Building %s locally from %s ...", SANDBOX_IMAGE, dockerfile)
+        build = _run(["docker", "build", "-t", SANDBOX_IMAGE, str(_DOCKERFILE_DIR)], timeout=600)
+        if build.returncode != 0:
+            return False, f"Local build failed:\n{build.stderr.strip()[:400]}"
+        return True, f"Built '{SANDBOX_IMAGE}' locally from Dockerfile."
+
+    def _pull_registry() -> tuple[bool, str]:
+        logger.info("Pulling %s from Docker Hub ...", SANDBOX_IMAGE)
+        pull = _run(["docker", "pull", SANDBOX_IMAGE], timeout=600)
+        if pull.returncode != 0:
+            return False, f"Registry pull failed:\n{pull.stderr.strip()[:400]}"
         return True, f"Pulled '{SANDBOX_IMAGE}' from Docker Hub."
 
-    # Fall back to a local build when the registry pull fails.
-    dockerfile = _DOCKERFILE_DIR / "Dockerfile"
-    if not dockerfile.exists():
-        return False, f"Pull failed and no local Dockerfile found.\nPull error: {pull.stderr.strip()[:400]}"
+    if image_source == "local":
+        local_ok, local_message = _build_local()
+        if local_ok:
+            return True, local_message
 
-    logger.info("Pull failed, building locally from %s ...", dockerfile)
-    build = _run(["docker", "build", "-t", SANDBOX_IMAGE, str(_DOCKERFILE_DIR)], timeout=600)
-    if build.returncode != 0:
-        return False, f"Local build failed:\n{build.stderr.strip()[:400]}"
+        registry_ok, registry_message = _pull_registry()
+        if registry_ok:
+            return True, f"{local_message}\nFallback succeeded: {registry_message}"
+        return False, f"{local_message}\nRegistry fallback failed: {registry_message}"
 
-    return True, "Built locally from Dockerfile (Docker Hub pull failed)."
+    if image_source == "registry":
+        registry_ok, registry_message = _pull_registry()
+        if registry_ok:
+            return True, registry_message
+
+        local_ok, local_message = _build_local()
+        if local_ok:
+            return True, f"{registry_message}\nFallback succeeded: {local_message}"
+        return False, f"{registry_message}\nLocal build fallback failed: {local_message}"
+
+    registry_ok, registry_message = _pull_registry()
+    if registry_ok:
+        return True, registry_message
+
+    local_ok, local_message = _build_local()
+    if local_ok:
+        return True, f"{registry_message}\nFallback succeeded: {local_message}"
+    return False, f"{registry_message}\nLocal build fallback failed: {local_message}"
 
 
 # Container lifecycle
