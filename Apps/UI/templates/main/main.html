@@ -23,12 +23,6 @@
                             <input type="file" id="imageInput" accept="image/*" multiple style="display:none;">
                             <div class="image-preview-grid" id="imagePreviewStrip" style="display:none;"></div>
                             <textarea class="chat-input" id="chatInput" placeholder="Message ASLM..." rows="1"></textarea>
-                            <div class="tool-selector-panel" id="toolSelectorPanel" style="display:none;">
-                                <label class="tool-selector-label" for="toolSelector">Tool Server</label>
-                                <select class="tool-selector" id="toolSelector">
-                                    <option value="">No server</option>
-                                </select>
-                            </div>
                             <div class="input-bottom-bar">
                                 <div class="input-bottom-left">
                                     <button class="attach-btn" id="attachBtn" style="display:none;" title="Attach image" aria-label="Attach image">
@@ -40,10 +34,6 @@
                                         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                                         Vision
                                     </div>
-                                    <button class="tool-toggle-btn" id="toolToggleBtn" style="display:none;" title="Select tool server">
-                                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 010 1.4l-4 4a1 1 0 01-1.4 0l-2-2a1 1 0 011.4-1.4L10 9.59l3.3-3.3a1 1 0 011.4 0z"/><path d="M5 13h14"/><path d="M5 17h10"/></svg>
-                                        <span class="tool-toggle-label">Tools</span>
-                                    </button>
                                     <button class="think-toggle-btn" id="thinkToggleBtn" style="display:none;" title="Toggle thinking">
                                         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
                                         Think
@@ -73,12 +63,6 @@
                 <input type="file" id="imageInputConv" accept="image/*" multiple style="display:none;">
                 <div class="image-preview-grid" id="imagePreviewStripConv" style="display:none;"></div>
                 <textarea class="chat-input" id="chatInputConv" placeholder="Message ASLM..." rows="1"></textarea>
-                <div class="tool-selector-panel" id="toolSelectorPanelConv" style="display:none;">
-                    <label class="tool-selector-label" for="toolSelectorConv">Tool Server</label>
-                    <select class="tool-selector" id="toolSelectorConv">
-                        <option value="">No server</option>
-                    </select>
-                </div>
                 <div class="input-bottom-bar">
                     <div class="input-bottom-left">
                         <button class="attach-btn" id="attachBtnConv" style="display:none;" title="Attach image" aria-label="Attach image">
@@ -193,6 +177,18 @@
                 </div>
             </div>
 
+            <div class="settings-section collapsed" id="group-tools" style="display:none;">
+                <div class="settings-section-header">
+                    Tools
+                    <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                </div>
+                <div class="settings-section-content">
+                    <div class="tool-server-list" id="toolServerList"></div>
+                </div>
+            </div>
+
+            <div class="settings-divider" id="divider-tools" style="display:none;"></div>
+
             <div class="settings-section" id="group-system">
                 <div class="settings-section-header">
                     System Prompt
@@ -258,12 +254,37 @@
     </aside>
 
 </div>
+
+<div class="tool-inspector-overlay" id="toolInspectorModal">
+    <div class="tool-inspector-panel">
+        <div class="tool-inspector-header">
+            <div class="tool-inspector-header-left">
+                <span class="tool-inspector-title"></span>
+                <span class="tool-inspector-server"></span>
+            </div>
+            <button class="tool-inspector-close" id="toolInspectorClose" aria-label="Close">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="tool-inspector-body">
+            <div class="tool-inspector-section">
+                <div class="tool-inspector-section-label">_in_</div>
+                <pre class="tool-inspector-in tool-inspector-pre"></pre>
+            </div>
+            <div class="tool-inspector-section">
+                <div class="tool-inspector-section-label">_out_</div>
+                <pre class="tool-inspector-out tool-inspector-pre"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
 {{ runtime_settings|json_script:"runtimeSettingsData" }}
 {{ engine_options|json_script:"engineOptionsData" }}
 {{ available_tool_servers|json_script:"availableToolServersData" }}
-<script src="{% static 'js/main/main.js' %}?v=20260319b"></script>
+<script src="{% static 'js/main/main.js' %}?v=20260322f"></script>
 {% endblock %}
 

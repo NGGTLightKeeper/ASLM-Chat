@@ -1,5 +1,6 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -16,11 +17,16 @@ TRUST_REGISTRY_PATH = CONFIG_DIR / "trust_registry.json"
 
 
 # Infrastructure endpoints.
-LM_STUDIO_URL = "http://localhost:1234/v1"
+# ASLM injects settings as ASLM_<KEY> environment variables at module startup.
+# lms_url setting arrives as "host:port" without scheme, so we prefix it here.
+_lms_url_raw = os.getenv("ASLM_LMS_URL", "127.0.0.1:1234")
+LM_STUDIO_URL = (
+    _lms_url_raw if _lms_url_raw.startswith("http") else f"http://{_lms_url_raw}/v1"
+)
 
-YACY_URL = "http://localhost:8090"
-YACY_USER = "admin"
-YACY_PASS = "admin123"
+YACY_URL = os.getenv("ASLM_YACY_URL", "http://localhost:8090")
+YACY_USER = os.getenv("ASLM_YACY_USER", "admin")
+YACY_PASS = os.getenv("ASLM_YACY_PASS", "admin123")
 
 
 # DDGS settings.

@@ -247,6 +247,39 @@
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key use-yacy",
             "setExec": "main.py set_setting --key use-yacy --value {value}"
+        },
+        {
+            "key": "yacy_url",
+            "name": "YaCy URL",
+            "description": "Base URL of the local YaCy search service.",
+            "type": "string",
+            "default": "http://localhost:8090",
+            "value": "http://localhost:8090",
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key yacy_url",
+            "setExec": "main.py set_setting --key yacy_url --value {value}"
+        },
+        {
+            "key": "yacy_user",
+            "name": "YaCy Username",
+            "description": "Username for YaCy admin authentication.",
+            "type": "string",
+            "default": "admin",
+            "value": "admin",
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key yacy_user",
+            "setExec": "main.py set_setting --key yacy_user --value {value}"
+        },
+        {
+            "key": "yacy_pass",
+            "name": "YaCy Password",
+            "description": "Password for YaCy admin authentication.",
+            "type": "string",
+            "default": "admin123",
+            "value": "admin123",
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key yacy_pass",
+            "setExec": "main.py set_setting --key yacy_pass --value {value}"
         }
     ],
     "status": {

@@ -27,18 +27,22 @@ $(function () {
   const $ollamaPresetCreateBtn = $('#ollamaPresetCreateBtn');
   const $ollamaPresetRenameBtn = $('#ollamaPresetRenameBtn');
   const $ollamaPresetDeleteBtn = $('#ollamaPresetDeleteBtn');
-  const $toolToggleBtn = $('#toolToggleBtn');
-  const $toolToggleBtnConv = $('#toolToggleBtnConv');
-  const $toolSelectorPanel = $('#toolSelectorPanel');
-  const $toolSelectorPanelConv = $('#toolSelectorPanelConv');
-  const $toolSelector = $('#toolSelector');
-  const $toolSelectorConv = $('#toolSelectorConv');
+  const $groupTools = $('#group-tools');
+  const $dividerTools = $('#divider-tools');
+  const $toolInspectorModal = $('#toolInspectorModal');
+
+  $('#toolInspectorClose').on('click', function () { $toolInspectorModal.removeClass('open'); });
+  $toolInspectorModal.on('click', function (e) {
+    if ($(e.target).is($toolInspectorModal)) { $toolInspectorModal.removeClass('open'); }
+  });
+  $(document).on('keydown', function (e) {
+    if (e.key === 'Escape') { $toolInspectorModal.removeClass('open'); }
+  });
 
   let runtimeSettings = parseJsonScript('runtimeSettingsData') || {};
   const defaultAvailableToolServers = parseJsonScript('availableToolServersData') || [];
   let availableToolServers = Array.isArray(defaultAvailableToolServers) ? defaultAvailableToolServers.slice() : [];
-  let selectedToolServerId = '';
-  let toolSelectorOpen = false;
+  let selectedToolServerIds = new Set();
   let currentChatId = null;
   let engineSelectionVersion = 0;
   let activeEngine = 'ollama-service';
@@ -51,6 +55,7 @@ $(function () {
   };
   let ollamaPresetSyncTimer = null;
   let isChatGenerating = false;
+  let currentAbortController = null;
   let queuedMessageCounter = 0;
   const chatRequestQueue = [];
 
@@ -940,63 +945,60 @@ $(function () {
     return String(serverId || '').trim();
   }
 
-  function getSelectedToolServerDefinition() {
-    return (availableToolServers || []).find(function (server) {
-      return normalizeToolServerId(server.id) === selectedToolServerId;
-    }) || null;
-  }
-
   function updateAvailableToolServers(tools) {
     availableToolServers = Array.isArray(tools) ? tools.slice() : [];
-    if (!availableToolServers.some(function (server) { return normalizeToolServerId(server.id) === selectedToolServerId; })) {
-      selectedToolServerId = '';
-    }
+    const validIds = new Set(availableToolServers.map(function (s) { return normalizeToolServerId(s.id); }));
+    selectedToolServerIds.forEach(function (id) {
+      if (!validIds.has(id)) selectedToolServerIds.delete(id);
+    });
     renderToolControls();
   }
 
-  function applySelectedToolServerId(serverId) {
-    const normalizedServerId = normalizeToolServerId(serverId);
-    selectedToolServerId = availableToolServers.some(function (server) {
-      return normalizeToolServerId(server.id) === normalizedServerId;
-    }) ? normalizedServerId : '';
+  function applySelectedToolServerIds(ids) {
+    selectedToolServerIds = new Set();
+    const validIds = new Set(availableToolServers.map(function (s) { return normalizeToolServerId(s.id); }));
+    (Array.isArray(ids) ? ids : (ids ? [ids] : [])).forEach(function (id) {
+      const normalized = normalizeToolServerId(id);
+      if (validIds.has(normalized)) selectedToolServerIds.add(normalized);
+    });
     renderToolControls();
   }
 
   function renderToolControls() {
     const hasToolSupport = toolState.supported && Array.isArray(availableToolServers) && availableToolServers.length > 0;
-    const selectedTool = getSelectedToolServerDefinition();
-    const buttonLabel = selectedTool ? selectedTool.name : 'Tools';
 
-    if (!hasToolSupport) {
-      toolSelectorOpen = false;
-    }
+    $groupTools.toggle(hasToolSupport);
+    $dividerTools.toggle(hasToolSupport);
 
-    [$toolToggleBtn, $toolToggleBtnConv].forEach(function ($button) {
-      $button.toggle(hasToolSupport);
-      $button.toggleClass('active', !!selectedTool);
-      $button.find('.tool-toggle-label').text(buttonLabel);
-    });
+    const $content = $groupTools.find('.settings-section-content');
+    $content.empty();
 
-    [$toolSelector, $toolSelectorConv].forEach(function ($select) {
-      $select.empty().append($('<option>').val('').text('No server'));
-      (availableToolServers || []).forEach(function (toolServer) {
-        const toolServerId = normalizeToolServerId(toolServer.id);
-        const toolCount = Number(toolServer.tool_count || (toolServer.tools || []).length || 0);
-        const optionLabel = toolCount > 1
-          ? `${toolServer.name || toolServerId} (${toolCount} tools)`
-          : (toolServer.name || toolServerId);
-        const $option = $('<option>').val(toolServerId).text(optionLabel);
-        if (toolServerId === selectedToolServerId) {
-          $option.prop('selected', true);
+    if (!hasToolSupport) return;
+
+    const $list = $('<div class="tool-server-list" id="toolServerList">');
+    availableToolServers.forEach(function (server) {
+      const serverId = normalizeToolServerId(server.id);
+      const toolCount = Number(server.tool_count || (server.tools || []).length || 0);
+      const label = toolCount > 0 ? `${server.name || serverId} (${toolCount} tools)` : (server.name || serverId);
+      const checked = selectedToolServerIds.has(serverId);
+
+      const $row = $('<label class="tool-server-row">');
+      const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
+      const $name = $('<span class="tool-server-name">').text(label);
+
+      $checkbox.on('change', function () {
+        if (this.checked) {
+          selectedToolServerIds.add(serverId);
+        } else {
+          selectedToolServerIds.delete(serverId);
         }
-        $select.append($option);
       });
-      $select.val(selectedToolServerId || '');
+
+      $row.append($checkbox).append($name);
+      $list.append($row);
     });
 
-    [$toolSelectorPanel, $toolSelectorPanelConv].forEach(function ($panel) {
-      $panel.toggle(hasToolSupport && toolSelectorOpen);
-    });
+    $content.append($list);
   }
 
   function resetModelUiState(message) {
@@ -1013,7 +1015,6 @@ $(function () {
     thinkState.levelSupported = false;
     toolState.supported = false;
     updateAvailableToolServers(defaultAvailableToolServers);
-    toolSelectorOpen = false;
     updateVisionControls();
     updateThinkControls();
     renderToolControls();
@@ -1322,10 +1323,18 @@ $(function () {
     return hasImages ? 'Image chat' : 'New Chat';
   }
 
+  const STOP_ICON = '<svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
+  const SEND_ICON = '<svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"></path></svg>';
+
   function updateSendButtons() {
-    const hasPendingImages = visionState.pending.length > 0;
-    $sendBtn.prop('disabled', !$chatInput.val().trim() && !hasPendingImages);
-    $sendBtnConv.prop('disabled', !$chatInputConv.val().trim() && !hasPendingImages);
+    if (isChatGenerating) {
+      $sendBtn.prop('disabled', false).addClass('stop-btn').html(STOP_ICON).attr('aria-label', 'Stop generation');
+      $sendBtnConv.prop('disabled', false).addClass('stop-btn').html(STOP_ICON).attr('aria-label', 'Stop generation');
+    } else {
+      const hasPendingImages = visionState.pending.length > 0;
+      $sendBtn.removeClass('stop-btn').html(SEND_ICON).attr('aria-label', 'Send Message').prop('disabled', !$chatInput.val().trim() && !hasPendingImages);
+      $sendBtnConv.removeClass('stop-btn').html(SEND_ICON).attr('aria-label', 'Send Message').prop('disabled', !$chatInputConv.val().trim() && !hasPendingImages);
+    }
   }
 
   function startNewChat() {
@@ -2047,8 +2056,7 @@ $(function () {
       thinkState.supported = false;
       thinkState.levelSupported = false;
       toolState.supported = false;
-      selectedToolServerId = '';
-      toolSelectorOpen = false;
+      selectedToolServerIds = new Set();
       updateAvailableToolServers(defaultAvailableToolServers);
       updateVisionControls();
       updateThinkControls();
@@ -2070,8 +2078,7 @@ $(function () {
       toolState.supported = !!data.supports_tool_calling;
       updateAvailableToolServers(data.available_tool_servers || defaultAvailableToolServers);
       if (!toolState.supported) {
-        selectedToolServerId = '';
-        toolSelectorOpen = false;
+        selectedToolServerIds = new Set();
       }
       renderToolControls();
 
@@ -2280,9 +2287,29 @@ $(function () {
       .replace(/>/g, '&gt;');
   }
 
+  function openToolInspector(seg) {
+    const $modal = $('#toolInspectorModal');
+    $modal.find('.tool-inspector-title').text(seg.toolName || seg.alias || seg.toolId || 'Tool');
+    $modal.find('.tool-inspector-server').text(seg.serverName || seg.serverId || '');
+
+    const argsText = Object.keys(seg.arguments || {}).length > 0
+      ? JSON.stringify(seg.arguments, null, 2)
+      : '(no arguments)';
+    $modal.find('.tool-inspector-in').text(argsText);
+
+    const resultText = seg.result !== null && seg.result !== undefined
+      ? String(seg.result)
+      : '(pending)';
+    $modal.find('.tool-inspector-out').text(resultText);
+
+    $modal.addClass('open');
+  }
+
   function parseMessageTimeline(rawText) {
     const source = String(rawText || '');
     const segments = [];
+    // Maps alias → tool segment so tool_result markers can attach result to it.
+    const toolSegmentByAlias = {};
     let cursor = 0;
 
     function pushTextSegment(value) {
@@ -2294,40 +2321,37 @@ $(function () {
 
     while (cursor < source.length) {
       const thinkStart = source.indexOf('<think>', cursor);
-      const toolStart = source.indexOf('<tool_call>', cursor);
-      const hasThink = thinkStart !== -1;
-      const hasTool = toolStart !== -1;
+      const toolCallStart = source.indexOf('<tool_call>', cursor);
+      const toolResultStart = source.indexOf('<tool_result>', cursor);
 
-      if (!hasThink && !hasTool) {
+      const candidates = [
+        thinkStart !== -1 ? { pos: thinkStart, kind: 'thought' } : null,
+        toolCallStart !== -1 ? { pos: toolCallStart, kind: 'tool' } : null,
+        toolResultStart !== -1 ? { pos: toolResultStart, kind: 'result' } : null,
+      ].filter(Boolean);
+
+      if (candidates.length === 0) {
         pushTextSegment(source.substring(cursor));
         break;
       }
 
-      let nextStart = -1;
-      let nextType = '';
-      if (hasThink && (!hasTool || thinkStart < toolStart)) {
-        nextStart = thinkStart;
-        nextType = 'thought';
-      } else {
-        nextStart = toolStart;
-        nextType = 'tool';
+      candidates.sort(function (a, b) { return a.pos - b.pos; });
+      const next = candidates[0];
+
+      if (next.pos > cursor) {
+        pushTextSegment(source.substring(cursor, next.pos));
       }
 
-      if (nextStart > cursor) {
-        pushTextSegment(source.substring(cursor, nextStart));
-      }
-
-      if (nextType === 'thought') {
-        const thinkEnd = source.indexOf('</think>', nextStart + 7);
+      if (next.kind === 'thought') {
+        const thinkEnd = source.indexOf('</think>', next.pos + 7);
         if (thinkEnd === -1) {
-          const content = source.substring(nextStart + 7).trim();
+          const content = source.substring(next.pos + 7).trim();
           if (content) {
             segments.push({ type: 'thought', content });
           }
           break;
         }
-
-        const content = source.substring(nextStart + 7, thinkEnd).trim();
+        const content = source.substring(next.pos + 7, thinkEnd).trim();
         if (content) {
           segments.push({ type: 'thought', content });
         }
@@ -2335,27 +2359,50 @@ $(function () {
         continue;
       }
 
-      const toolEnd = source.indexOf('</tool_call>', nextStart + 11);
-      if (toolEnd === -1) {
-        break;
+      if (next.kind === 'tool') {
+        const toolEnd = source.indexOf('</tool_call>', next.pos + 11);
+        if (toolEnd === -1) { break; }
+        const payload = source.substring(next.pos + 11, toolEnd);
+        try {
+          const parsed = JSON.parse(payload);
+          const alias = String(parsed.alias || '').trim();
+          const seg = {
+            type: 'tool',
+            alias,
+            serverId: String(parsed.server_id || '').trim(),
+            serverName: String(parsed.server_name || '').trim(),
+            toolId: String(parsed.tool_id || '').trim(),
+            toolName: String(parsed.tool_name || '').trim(),
+            arguments: parsed.arguments && typeof parsed.arguments === 'object' ? parsed.arguments : {},
+            result: null,
+          };
+          segments.push(seg);
+          if (alias) { toolSegmentByAlias[alias] = seg; }
+        } catch (_error) {
+          // Ignore malformed markers.
+        }
+        cursor = toolEnd + 12;
+        continue;
       }
 
-      const payload = source.substring(nextStart + 11, toolEnd);
-      try {
-        const parsed = JSON.parse(payload);
-        segments.push({
-          type: 'tool',
-          alias: String(parsed.alias || '').trim(),
-          serverId: String(parsed.server_id || '').trim(),
-          serverName: String(parsed.server_name || '').trim(),
-          toolId: String(parsed.tool_id || '').trim(),
-          toolName: String(parsed.tool_name || '').trim(),
-          arguments: parsed.arguments && typeof parsed.arguments === 'object' ? parsed.arguments : {}
-        });
-      } catch (_error) {
-        // Ignore malformed inline markers instead of breaking the rest of the message.
+      if (next.kind === 'result') {
+        const resultEnd = source.indexOf('</tool_result>', next.pos + 13);
+        if (resultEnd === -1) { break; }
+        const payload = source.substring(next.pos + 13, resultEnd);
+        try {
+          const parsed = JSON.parse(payload);
+          const alias = String(parsed.alias || '').trim();
+          const content = String(parsed.content || '');
+          const target = toolSegmentByAlias[alias];
+          if (target) {
+            target.result = content;
+          }
+        } catch (_error) {
+          // Ignore malformed markers.
+        }
+        cursor = resultEnd + 14;
+        continue;
       }
-      cursor = toolEnd + 12;
     }
 
     return { segments };
@@ -2411,6 +2458,8 @@ $(function () {
 
     const expandedThoughts = getExpandedThoughtIndices($msgRow);
     let thoughtIndex = -1;
+    let toolSegmentIndex = 0;
+    const toolSegments = segments.filter(function (s) { return s.type === 'tool'; });
     const html = segments.map(function (segment) {
       if (segment.type === 'thought') {
         thoughtIndex += 1;
@@ -2426,16 +2475,16 @@ $(function () {
       if (segment.type === 'tool') {
         const label = escHtml(segment.toolName || segment.alias || segment.toolId || 'Tool');
         const badge = escHtml(segment.serverName || segment.serverId || 'server');
-        const argumentKeys = Object.keys(segment.arguments || {});
-        const note = argumentKeys.length > 0
-          ? `<div class="msg-tool-call-note">Args: ${escHtml(argumentKeys.join(', '))}</div>`
-          : '';
+        const hasResult = segment.result !== null && segment.result !== undefined;
+        const statusDot = hasResult
+          ? '<span class="msg-tool-call-dot msg-tool-call-dot--done"></span>'
+          : '<span class="msg-tool-call-dot msg-tool-call-dot--pending"></span>';
 
         return `
-          <div class="msg-tool-call-card">
+          <div class="msg-tool-call-card" data-tool-segment-index="${toolSegmentIndex++}">
             <div class="msg-tool-call-main">
+              ${statusDot}
               <div class="msg-tool-call-name">${label}</div>
-              ${note}
             </div>
             <div class="msg-tool-call-badge">${badge}</div>
           </div>
@@ -2452,6 +2501,15 @@ $(function () {
     $bubble.empty();
     $stream.html(html).show();
     setExpandedThoughtIndices($msgRow, expandedThoughts);
+
+    $stream.find('.msg-tool-call-card[data-tool-segment-index]').each(function () {
+      const idx = parseInt($(this).attr('data-tool-segment-index'), 10);
+      const seg = toolSegments[idx];
+      if (!seg) { return; }
+      $(this).on('click', function () {
+        openToolInspector(seg);
+      });
+    });
   }
 
   function renderMessageHtml($msgRow, rawText) {
@@ -2478,6 +2536,14 @@ $(function () {
       imagesHtml = `<div class="msg-images">${content}</div>`;
     }
 
+    const regenBtn = !isUser
+      ? `<button class="msg-regen-btn" title="Regenerate response" aria-label="Regenerate response">
+           <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+             <path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3"/>
+           </svg>
+         </button>`
+      : '';
+
     const $row = $(`
       <div class="msg ${role}${viewOptions.queued ? ' is-queued' : ''}" data-message-key="${escapeAttributeValue(messageKey)}">
         <div class="msg-avatar">${isUser ? 'U' : 'A'}</div>
@@ -2486,6 +2552,7 @@ $(function () {
             <span>${label}</span>
             <span>${timeStr}</span>
             ${queuedBadge}
+            ${regenBtn}
           </div>
           ${!isUser ? '<div class="msg-activity-stream" style="display:none;"></div>' : ''}
           <div class="msg-bubble">${imagesHtml}</div>
@@ -2535,6 +2602,11 @@ $(function () {
           <div class="msg-meta">
             <span>ASLM</span>
             <span>${timeStr}</span>
+            <button class="msg-regen-btn" title="Regenerate response" aria-label="Regenerate response">
+              <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3"/>
+              </svg>
+            </button>
           </div>
           <div class="msg-activity-stream" style="display:none;"></div>
           <div class="msg-bubble">
@@ -2621,8 +2693,8 @@ $(function () {
         options: request.options || {}
       };
 
-      if (request.toolServerId) {
-        payload.tool_server_id = request.toolServerId;
+      if (request.toolServerIds && request.toolServerIds.length > 0) {
+        payload.tool_server_ids = request.toolServerIds;
       }
 
       if (request.images.length > 0) {
@@ -2631,13 +2703,15 @@ $(function () {
         });
       }
 
+      currentAbortController = new AbortController();
       const response = await fetch('/api/chat/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-CSRFToken': getCsrfToken()
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: currentAbortController.signal
       });
 
       $bubbleContent.empty();
@@ -2666,21 +2740,7 @@ $(function () {
           $('#historyList .empty-state').remove();
 
           const title = buildChatTitle(request.text, request.images.length > 0);
-          const $newItem = $(`
-            <a class="chat-item active" aria-current="page"
-               href="/chat/${currentChatId}/"
-               data-chat-id="${currentChatId}">
-              <div class="chat-item-icon">
-                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-                </svg>
-              </div>
-              <div class="chat-item-body">
-                <span class="chat-item-title">${escHtml(title)}</span>
-                <span class="chat-item-date">just now</span>
-              </div>
-            </a>
-          `);
+          const $newItem = $(buildChatItemHtml(currentChatId, title, 'just now', true));
 
           $('#historyList .chat-item').removeClass('active').removeAttr('aria-current');
           $('#historyList').prepend($newItem);
@@ -2695,26 +2755,48 @@ $(function () {
       const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let fullText = '';
+      const signal = currentAbortController ? currentAbortController.signal : null;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
+      // Wrap reader.read() so it rejects immediately when the signal fires.
+      function readOrAbort() {
+        if (!signal) { return reader.read(); }
+        if (signal.aborted) { return Promise.reject(new DOMException('Aborted', 'AbortError')); }
+        return Promise.race([
+          reader.read(),
+          new Promise(function (_, reject) {
+            signal.addEventListener('abort', function () {
+              reject(new DOMException('Aborted', 'AbortError'));
+            }, { once: true });
+          })
+        ]);
+      }
+
+      try {
+        while (true) {
+          const { done, value } = await readOrAbort();
+          if (done) { break; }
+
+          const chunk = decoder.decode(value, { stream: true });
+          fullText += chunk;
+
+          const area = $messagesArea[0];
+          const isNearBottom = area.scrollHeight - area.clientHeight <= area.scrollTop + 50;
+          renderMessageHtml($msgRow, fullText);
+
+          if (isNearBottom) { scrollBottom(); }
         }
-
-        const chunk = decoder.decode(value, { stream: true });
-        fullText += chunk;
-
-        const area = $messagesArea[0];
-        const isNearBottom = area.scrollHeight - area.clientHeight <= area.scrollTop + 50;
-        renderMessageHtml($msgRow, fullText);
-
-        if (isNearBottom) {
-          scrollBottom();
-        }
+      } catch (readError) {
+        if (readError.name !== 'AbortError') { throw readError; }
+      } finally {
+        reader.cancel();
+        reader.releaseLock();
       }
     } catch (error) {
-      $bubbleContent.html(`[Error: failed to connect to server - ${error.message}]`);
+      if (error.name !== 'AbortError') {
+        $bubbleContent.html(`[Error: failed to connect to server - ${error.message}]`);
+      }
+    } finally {
+      currentAbortController = null;
     }
   }
 
@@ -2755,7 +2837,7 @@ $(function () {
       preferredModel: getSelectedModelName(),
       systemPrompt: $('#systemPrompt').val(),
       options: collectOptionsPayload(),
-      toolServerId: toolState.supported ? selectedToolServerId : '',
+      toolServerIds: toolState.supported ? Array.from(selectedToolServerIds) : [],
       chatId: currentChatId
     };
   }
@@ -2788,6 +2870,153 @@ $(function () {
     processChatQueue();
   }
 
+  function buildChatItemHtml(chatId, title, dateStr, active) {
+    const activeAttr = active ? ' class="chat-item active" aria-current="page"' : ' class="chat-item"';
+    return `
+      <a${activeAttr} href="/chat/${chatId}/" data-chat-id="${escapeAttributeValue(chatId)}">
+        <div class="chat-item-icon">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+          </svg>
+        </div>
+        <div class="chat-item-body">
+          <span class="chat-item-title">${escHtml(title)}</span>
+          <span class="chat-item-date">${escHtml(dateStr)}</span>
+        </div>
+        <button class="chat-item-menu-btn" aria-label="Chat options">
+          <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24">
+            <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
+          </svg>
+        </button>
+      </a>
+    `;
+  }
+
+  // Chat item context menu
+  let $activeMenuTarget = null;
+  const $dropdown = $('#chatItemDropdown');
+
+  function openChatMenu($item, event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    $activeMenuTarget = $item;
+    const rect = $item[0].getBoundingClientRect();
+    $dropdown.css({
+      top: rect.bottom + window.scrollY + 2,
+      left: rect.left + window.scrollX,
+      minWidth: rect.width,
+    }).show();
+  }
+
+  function closeChatMenu() {
+    $dropdown.hide();
+    $activeMenuTarget = null;
+  }
+
+  $(document).on('click', function (e) {
+    if (!$(e.target).closest('#chatItemDropdown, .chat-item-menu-btn').length) {
+      closeChatMenu();
+    }
+  });
+
+  $(document).on('click', '.chat-item-menu-btn', function (event) {
+    const $item = $(this).closest('.chat-item');
+    if ($activeMenuTarget && $activeMenuTarget.is($item)) {
+      closeChatMenu();
+    } else {
+      openChatMenu($item, event);
+    }
+  });
+
+  $('#chatRenameBtn').on('click', function () {
+    if (!$activeMenuTarget) { return; }
+    const $item = $activeMenuTarget;
+    const chatId = $item.data('chat-id');
+    const currentTitle = $item.find('.chat-item-title').text();
+    closeChatMenu();
+
+    const newTitle = window.prompt('Rename chat:', currentTitle);
+    if (!newTitle || !newTitle.trim() || newTitle.trim() === currentTitle) { return; }
+
+    $.ajax({
+      url: `/api/chat/${chatId}/rename/`,
+      method: 'PATCH',
+      contentType: 'application/json',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+      data: JSON.stringify({ title: newTitle.trim() }),
+      success: function (data) {
+        if (!data.ok) { return; }
+        $item.find('.chat-item-title').text(data.title);
+        if (chatId === currentChatId) {
+          $chatTitle.text(data.title);
+          document.title = `${data.title} - ASLM`;
+        }
+      }
+    });
+  });
+
+  $('#chatDeleteBtn').on('click', function () {
+    if (!$activeMenuTarget) { return; }
+    const $item = $activeMenuTarget;
+    const chatId = $item.data('chat-id');
+    const title = $item.find('.chat-item-title').text();
+    closeChatMenu();
+
+    if (!window.confirm(`Delete "${title}"?`)) { return; }
+
+    $.ajax({
+      url: `/api/chat/${chatId}/delete/`,
+      method: 'DELETE',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+      success: function (data) {
+        if (!data.ok) { return; }
+        $item.remove();
+        if (!$('#historyList .chat-item:not(.empty-state)').length) {
+          $('#historyList').append('<div class="chat-item empty-state"><span class="chat-item-title">No previous chats</span></div>');
+        }
+        if (chatId === currentChatId) {
+          startNewChat();
+        }
+      }
+    });
+  });
+
+  function regenerateLastResponse() {
+    if (isChatGenerating || !currentChatId) { return; }
+
+    $.ajax({
+      url: `/api/chat/${currentChatId}/last/`,
+      method: 'DELETE',
+      contentType: 'application/json',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+      success: function (data) {
+        if (!data.ok) { return; }
+
+        // Remove last assistant bubble from DOM.
+        const $msgs = $messagesInner.find('.msg.assistant');
+        if ($msgs.length) { $msgs.last().remove(); }
+
+        if (!data.user_message) { return; }
+
+        const text = data.user_message.content || '';
+        const images = (data.user_message.images || []).map(function (src) {
+          return { base64: src.replace(/^data:[^;]+;base64,/, ''), dataUrl: src };
+        });
+
+        const request = buildQueuedRequest(text, images);
+        request.$userRow = { length: 0 }; // No new user bubble — message already in DOM.
+        request.chatId = currentChatId;
+
+        chatRequestQueue.push(request);
+        processChatQueue();
+      },
+      error: function () {
+        console.error('Failed to delete last assistant message');
+      }
+    });
+  }
+
   function wireInput($input, $button) {
     $input.on('input', function () {
       this.style.height = 'auto';
@@ -2805,6 +3034,12 @@ $(function () {
     });
 
     $button.on('click', function () {
+      if (isChatGenerating && currentAbortController) {
+        currentAbortController.abort();
+        isChatGenerating = false;
+        updateSendButtons();
+        return;
+      }
       if (!$button.prop('disabled')) {
         sendMessage($input.val().trim(), $input);
       }
@@ -2829,7 +3064,7 @@ $(function () {
         $(`#historyList .chat-item[data-chat-id="${chatId}"]`).addClass('active').attr('aria-current', 'page');
 
         const title = data.title || 'Chat';
-        applySelectedToolServerId(data.active_tool_server_id || '');
+        applySelectedToolServerIds(data.active_tool_server_ids || []);
         $chatTitle.text(title);
         document.title = `${title} - ASLM`;
 
@@ -2875,6 +3110,10 @@ $(function () {
       event.preventDefault();
       startNewChat();
     }
+  });
+
+  $messagesInner.on('click', '.msg-regen-btn', function () {
+    regenerateLastResponse();
   });
 
   $('#imageInput, #imageInputConv').on('change', handleFileInput);
@@ -3222,20 +3461,6 @@ $(function () {
     }
   });
 
-  $toolToggleBtn.add($toolToggleBtnConv).on('click', function () {
-    if (!toolState.supported || !availableToolServers.length) {
-      return;
-    }
-    toolSelectorOpen = !toolSelectorOpen;
-    renderToolControls();
-  });
-
-  $toolSelector.add($toolSelectorConv).on('change', function () {
-    selectedToolServerId = normalizeToolServerId($(this).val());
-    toolSelectorOpen = false;
-    renderToolControls();
-  });
-
   $ollamaPresetDeleteBtn.on('click', async function () {
     const activePreset = getActiveOllamaPreset();
     const modelName = getSelectedModelName();
@@ -3301,7 +3526,7 @@ $(function () {
   }
 
   updateAvailableToolServers(defaultAvailableToolServers);
-  applySelectedToolServerId('');
+  applySelectedToolServerIds([]);
   updateEngineAddressUi();
   resetModelUiState('Loading models...');
   applyEngineSelection(getActiveEngine(), {

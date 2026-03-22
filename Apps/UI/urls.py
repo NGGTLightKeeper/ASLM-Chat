@@ -11,6 +11,9 @@ urlpatterns = [
 
     path("api/chat/", views.chat_api, name="chat_api"),
     path("api/chat/<uuid:chat_id>/", views.load_chat_api, name="load_chat_api"),
+    path("api/chat/<uuid:chat_id>/last/", views.delete_last_assistant_api, name="delete_last_assistant_api"),
+    path("api/chat/<uuid:chat_id>/rename/", views.rename_chat_api, name="rename_chat_api"),
+    path("api/chat/<uuid:chat_id>/delete/", views.delete_chat_api, name="delete_chat_api"),
 
     path("api/models/", views.get_models_api, name="models_api"),
     path("api/model_info/", views.get_model_info_api, name="model_info_api"),

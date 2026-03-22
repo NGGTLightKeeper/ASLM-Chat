@@ -206,7 +206,18 @@ class Settings(BaseModel):
 
 
 # Environment overrides
+# ASLM injects settings as ASLM_<KEY> environment variables at module startup.
+# lms_url arrives as "host:port", so we normalize it to a full chat completions URL.
+def _aslm_lms_url() -> str | None:
+    raw = os.getenv("ASLM_LMS_URL")
+    if raw is None:
+        return None
+    url = raw if raw.startswith("http") else f"http://{raw}"
+    return url.rstrip("/") + "/v1/chat/completions"
+
+
 _ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
+    # ASLM native vars (populated automatically by the launcher).
     "DEEP_THINK_LM_STUDIO_URL": ("llm", "base_url"),
     "DEEP_THINK_LM_STUDIO_MODEL": ("llm", "model"),
     "DEEP_THINK_LLM_TIMEOUT_SECONDS": ("llm", "timeout_seconds"),
@@ -253,9 +264,15 @@ def _coerce_env_value(raw: str) -> Any:
         return raw
 
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
-    """Apply legacy environment overrides onto the loaded config payload."""
+    """Apply environment overrides onto the loaded config payload."""
 
     updated = deepcopy(data)
+
+    # Apply ASLM_LMS_URL first so DEEP_THINK_LM_STUDIO_URL can still override it.
+    aslm_url = _aslm_lms_url()
+    if aslm_url is not None:
+        updated.setdefault("llm", {})["base_url"] = aslm_url
+
     for env_name, path in _ENV_OVERRIDES.items():
         raw = os.getenv(env_name)
         if raw is None:

@@ -315,32 +315,40 @@ def _serialize_server(server_definition: dict[str, Any]) -> dict[str, Any]:
 
 # Build Ollama tools
 def build_ollama_tools(
-    server_id: str | None,
+    server_ids: str | list[str] | None,
     engine: str | None = None,
     model_name: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Return Ollama-compatible tool payloads for the selected local server."""
+    """Return Ollama-compatible tool payloads for one or more selected servers."""
 
-    server_definition = get_server(server_id, engine=engine, model_name=model_name)
-    if not server_definition:
-        return [], {}
+    if isinstance(server_ids, str):
+        server_ids = [server_ids] if server_ids else []
+    elif not server_ids:
+        server_ids = []
 
     tools: list[dict[str, Any]] = []
     tool_lookup: dict[str, dict[str, Any]] = {}
 
-    for tool_definition in server_definition["tools"]:
-        alias = tool_definition["alias"]
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": alias,
-                    "description": tool_definition["description"] or tool_definition["name"],
-                    "parameters": tool_definition["parameters"],
-                },
-            }
-        )
-        tool_lookup[alias] = {"server": server_definition, "tool": tool_definition}
+    for server_id in server_ids:
+        server_definition = get_server(server_id, engine=engine, model_name=model_name)
+        if not server_definition:
+            continue
+
+        for tool_definition in server_definition["tools"]:
+            alias = tool_definition["alias"]
+            if alias in tool_lookup:
+                continue
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": alias,
+                        "description": tool_definition["description"] or tool_definition["name"],
+                        "parameters": tool_definition["parameters"],
+                    },
+                }
+            )
+            tool_lookup[alias] = {"server": server_definition, "tool": tool_definition}
 
     return tools, tool_lookup
 
@@ -411,8 +419,12 @@ def call_ollama_tool(
     alias: str,
     arguments: dict[str, Any] | None,
     context: dict[str, Any] | None = None,
-) -> str:
-    """Execute a local tool and serialize its result for Ollama."""
+) -> str | dict:
+    """Execute a local tool and serialize its result for Ollama.
+
+    Returns a str for normal results, or a dict with ``_image_b64`` and
+    ``_mime_type`` keys when the tool returns an image payload.
+    """
 
     lookup_entry = tool_lookup.get(alias)
     if not lookup_entry:
@@ -453,6 +465,15 @@ def call_ollama_tool(
             )
         else:
             return f"Tool execution failed: no handler registered for {tool_definition['id']}"
+
+        # If the tool returned an image payload, pass it through as-is so
+        # the caller can embed it in an Ollama "images" message field.
+        if isinstance(result, dict) and result.get("ok") and result.get("data_base64"):
+            return {
+                "_image_b64": result["data_base64"],
+                "_mime_type": result.get("mime_type", "image/png"),
+                "_path": result.get("path", ""),
+            }
 
         return _serialize_tool_result(result)
     except Exception as exc:

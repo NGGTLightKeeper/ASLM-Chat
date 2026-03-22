@@ -256,6 +256,15 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
     if not transcript_entries:
         return []
 
+    # Index tool results by alias for quick lookup (alias = server__tool_id).
+    tool_results: dict[str, str] = {}
+    for entry in transcript_entries:
+        if entry.get("role") == "tool":
+            # Prefer the full alias stored by _build_tool_message, fall back to tool_id/name.
+            alias = str(entry.get("alias") or entry.get("tool_id") or entry.get("name") or "")
+            if alias:
+                tool_results[alias] = str(entry.get("content") or "")
+
     segments: list[dict[str, Any]] = []
     for entry in transcript_entries:
         if entry["role"] == "assistant":
@@ -267,14 +276,20 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
                 segments.append({"type": "text", "content": content})
             continue
 
+        if entry["role"] == "tool":
+            continue
+
+        seg_alias = str(entry.get("alias") or entry.get("tool_id", entry.get("name", "")) or "")
         segments.append(
             {
                 "type": "tool",
+                "alias": seg_alias,
                 "serverId": str(entry.get("server_id", "") or ""),
                 "serverName": str(entry.get("server_name", "") or ""),
                 "toolId": str(entry.get("tool_id", entry.get("name", "")) or ""),
                 "toolName": str(entry.get("tool_display_name", entry.get("tool_name", entry.get("name", ""))) or ""),
                 "arguments": entry.get("arguments") if isinstance(entry.get("arguments"), dict) else {},
+                "result": tool_results.get(seg_alias, None),
             }
         )
 
@@ -328,6 +343,14 @@ def _serialize_tool_call_marker(tool_event: dict[str, Any]) -> str:
     return f'<tool_call>{json.dumps(payload, ensure_ascii=False)}</tool_call>'
 
 
+# Serialize tool result marker
+def _serialize_tool_result_marker(alias: str, content: str) -> str:
+    """Encode a tool result into an inline marker so the frontend can show _out_."""
+
+    payload = {"alias": alias, "content": content}
+    return f'<tool_result>{json.dumps(payload, ensure_ascii=False)}</tool_result>'
+
+
 # Extract Ollama model info
 def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
     """Parse Ollama-specific model metadata into a frontend-friendly payload."""
@@ -369,7 +392,15 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
                 continue
             key = parts[0].strip().lower()
             value = " ".join(parts[1:]).strip()
-            defaults[key] = settings.normalize_setting_value(value)
+            normalized = settings.normalize_setting_value(value)
+            if key == "stop":
+                existing = defaults.get("stop")
+                if isinstance(existing, list):
+                    existing.append(normalized)
+                else:
+                    defaults["stop"] = [normalized]
+            else:
+                defaults[key] = normalized
 
     think_param_name = "think"
     think_level_param_name = "think_level"
@@ -503,23 +534,36 @@ def _read_json_request_body(request) -> dict[str, Any]:
     return data
 
 
-# Resolve selected tool server
-def _resolve_tool_server(engine: str, model_name: str, tool_server_id: str) -> dict[str, Any] | None:
-    """Return the selected tool server when it is supported by the backend."""
+# Resolve selected tool servers
+def _resolve_tool_servers(engine: str, model_name: str, tool_server_ids: list[str]) -> list[dict[str, Any]]:
+    """Return the selected tool servers when they are supported by the backend."""
 
-    normalized_tool_server_id = str(tool_server_id or "").strip()
-    if not normalized_tool_server_id:
-        return None
+    resolved = []
+    for raw_id in tool_server_ids:
+        normalized = str(raw_id or "").strip()
+        if not normalized:
+            continue
+        server = tool_registry.get_server(normalized, engine=engine, model_name=model_name)
+        if server is None:
+            raise ValueError(f"Unknown or unsupported tool server: {normalized}")
+        resolved.append(server)
+    return resolved
 
-    selected_tool_server = tool_registry.get_server(
-        normalized_tool_server_id,
-        engine=engine,
-        model_name=model_name,
-    )
-    if selected_tool_server is None:
-        raise ValueError(f"Unknown or unsupported tool server: {normalized_tool_server_id}")
+# Parse stored tool slugs
+def _parse_active_tool_slugs(slug: str) -> list[str]:
+    """Return a list of active tool server ids from the stored slug field."""
 
-    return selected_tool_server
+    import json as _json
+    if not slug:
+        return []
+    try:
+        parsed = _json.loads(slug)
+        if isinstance(parsed, list):
+            return [str(s) for s in parsed if str(s).strip()]
+    except (ValueError, TypeError):
+        pass
+    # Legacy: single plain string
+    return [slug] if slug.strip() else []
 
 # Resolve chat instance
 def _resolve_chat(chat_id: str, user_message: str, images: list[str]) -> Chat:
@@ -597,7 +641,7 @@ def _build_generate_kwargs(
     think_level_value: Any,
     clean_options: dict[str, Any],
     chat: Chat,
-    selected_tool_server: dict[str, Any] | None,
+    selected_tool_servers: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Build keyword arguments for ``llm_api.generate``."""
 
@@ -615,8 +659,8 @@ def _build_generate_kwargs(
     if clean_options:
         generate_kwargs["options"] = clean_options
 
-    if settings.is_ollama_engine(engine) and selected_tool_server is not None:
-        generate_kwargs["tool_server_id"] = selected_tool_server["id"]
+    if settings.is_ollama_engine(engine) and selected_tool_servers:
+        generate_kwargs["tool_server_ids"] = [s["id"] for s in selected_tool_servers]
         generate_kwargs["tool_context"] = {
             "chat_id": str(chat.id),
             "engine": engine,
@@ -651,6 +695,9 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
                 tool_message = chunk["tool_result"]
                 if isinstance(tool_message, dict):
                     transcript_entries.append(tool_message)
+                    alias = str(tool_message.get("alias") or tool_message.get("tool_id") or tool_message.get("name") or "")
+                    content = str(tool_message.get("content") or "")
+                    yield _serialize_tool_result_marker(alias, content)
                 continue
 
             # Tool events are sent as inline markers for the frontend.
@@ -727,15 +774,18 @@ def chat_api(request):
         chat_id = data.get("chat_id", "")
         images = data.get("images", []) or []
         engine = _get_active_engine(data.get("engine"))
-        tool_server_id = str(data.get("tool_server_id", data.get("tool_id", "")) or "").strip()
+        raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
+        if isinstance(raw_tool_ids, str):
+            raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
+        tool_server_ids = [str(s).strip() for s in raw_tool_ids if str(s).strip()]
 
         if not model_name:
             return JsonResponse({"error": "Missing model parameter"}, status=400)
         if not user_message and not images:
             return JsonResponse({"error": "Missing message or images"}, status=400)
 
-        # Resolve the tool server before persisting the message.
-        selected_tool_server = _resolve_tool_server(engine, model_name, tool_server_id)
+        # Resolve the tool servers before persisting the message.
+        selected_tool_servers = _resolve_tool_servers(engine, model_name, tool_server_ids)
 
         # Reuse the existing chat when provided, otherwise create a new one.
         try:
@@ -743,9 +793,10 @@ def chat_api(request):
         except LookupError as exc:
             return JsonResponse({"error": str(exc)}, status=404)
 
-        normalized_tool_server_id = selected_tool_server["id"] if selected_tool_server else ""
-        if chat.active_tool_slug != normalized_tool_server_id:
-            chat.active_tool_slug = normalized_tool_server_id
+        import json as _json
+        active_slug = _json.dumps([s["id"] for s in selected_tool_servers], ensure_ascii=False)
+        if chat.active_tool_slug != active_slug:
+            chat.active_tool_slug = active_slug
             chat.save(update_fields=["active_tool_slug", "updated_at"])
 
         # Persist the incoming user message and its attachments.
@@ -777,7 +828,7 @@ def chat_api(request):
             think_level_value,
             clean_options,
             chat,
-            selected_tool_server,
+            selected_tool_servers,
         )
 
         response = StreamingHttpResponse(
@@ -796,6 +847,84 @@ def chat_api(request):
 
 
 # Load saved chat
+def delete_last_assistant_api(request, chat_id):
+    """Delete the last assistant message and return the preceding user message for regeneration."""
+
+    if request.method != "DELETE":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        chat = Chat.objects.get(id=chat_id)
+        messages = list(chat.messages.order_by("created_at"))
+        if not messages:
+            return JsonResponse({"error": "No messages"}, status=400)
+
+        last = messages[-1]
+        if last.role != "assistant":
+            return JsonResponse({"error": "Last message is not from assistant"}, status=400)
+
+        last.delete()
+
+        # Find the preceding user message to replay.
+        user_message = next((m for m in reversed(messages[:-1]) if m.role == "user"), None)
+        if not user_message:
+            return JsonResponse({"ok": True, "user_message": None})
+
+        images = [img.data_url() for img in user_message.images.all()]
+        return JsonResponse({
+            "ok": True,
+            "user_message": {
+                "content": user_message.content,
+                "images": images,
+            }
+        })
+    except Chat.DoesNotExist:
+        return JsonResponse({"error": "Chat not found"}, status=404)
+    except Exception as exc:
+        logger.exception("Failed to delete last assistant message for chat %s", chat_id)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def rename_chat_api(request, chat_id):
+    """Rename a chat thread."""
+
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        title = str(data.get("title", "")).strip()
+        if not title:
+            return JsonResponse({"error": "Title is required"}, status=400)
+
+        chat = Chat.objects.get(id=chat_id)
+        chat.title = title
+        chat.save(update_fields=["title"])
+        return JsonResponse({"ok": True, "title": chat.title})
+    except Chat.DoesNotExist:
+        return JsonResponse({"error": "Chat not found"}, status=404)
+    except Exception as exc:
+        logger.exception("Failed to rename chat %s", chat_id)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def delete_chat_api(request, chat_id):
+    """Delete a chat thread and all its messages."""
+
+    if request.method != "DELETE":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        chat = Chat.objects.get(id=chat_id)
+        chat.delete()
+        return JsonResponse({"ok": True})
+    except Chat.DoesNotExist:
+        return JsonResponse({"error": "Chat not found"}, status=404)
+    except Exception as exc:
+        logger.exception("Failed to delete chat %s", chat_id)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
 def load_chat_api(request, chat_id):
     """Load persisted messages for a chat thread."""
 
@@ -810,8 +939,7 @@ def load_chat_api(request, chat_id):
             "chat_id": str(chat.id),
             "title": chat.title,
             "messages": payload,
-            "active_tool_id": chat.active_tool_slug,
-            "active_tool_server_id": chat.active_tool_slug,
+            "active_tool_server_ids": _parse_active_tool_slugs(chat.active_tool_slug),
         })
     except Chat.DoesNotExist:
         return JsonResponse({"error": "Chat not found"}, status=404)

@@ -13,7 +13,7 @@
     <link rel="shortcut icon" type="image/x-icon" href="{% static 'favicon.ico' %}">
 
     <link rel="stylesheet" href="{% static 'css/main/base.css' %}?v=20260315b" />
-    <link rel="stylesheet" href="{% static 'css/main/main.css' %}?v=20260315c" />
+    <link rel="stylesheet" href="{% static 'css/main/main.css' %}?v=20260322f" />
     <link rel="stylesheet" href="{% static 'css/main/markdown.css' %}?v=20260315b" />
     {% block extra_css %}{% endblock %}
 </head>
@@ -47,12 +47,22 @@
                         <span class="chat-item-title">{{ chat.title }}</span>
                         <span class="chat-item-date">{{ chat.updated_at|timesince }} ago</span>
                     </div>
+                    <button class="chat-item-menu-btn" aria-label="Chat options">
+                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24">
+                            <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
+                        </svg>
+                    </button>
                 </a>
             {% empty %}
                 <div class="chat-item empty-state">
                     <span class="chat-item-title">No previous chats</span>
                 </div>
             {% endfor %}
+        </div>
+
+        <div class="chat-item-dropdown" id="chatItemDropdown" style="display:none;">
+            <button class="chat-item-dropdown-btn" id="chatRenameBtn">Rename</button>
+            <button class="chat-item-dropdown-btn chat-item-dropdown-btn--danger" id="chatDeleteBtn">Delete</button>
         </div>
 
         <div class="sidebar-footer">

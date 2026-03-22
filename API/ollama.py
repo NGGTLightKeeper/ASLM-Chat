@@ -14,7 +14,7 @@ from Settings import settings
 logger = logging.getLogger(__name__)
 
 OLLAMA_TOP_LEVEL_CHAT_KEYS = {"format", "keep_alive", "logprobs", "top_logprobs"}
-OLLAMA_INTERNAL_CHAT_KEYS = {"system", "prompt", "tool_id", "tool_server_id", "tool_context", "think", "think_level"}
+OLLAMA_INTERNAL_CHAT_KEYS = {"system", "prompt", "tool_id", "tool_server_id", "tool_server_ids", "tool_context", "think", "think_level", "engine"}
 MAX_TOOL_ROUNDS = 100
 
 
@@ -199,21 +199,36 @@ def _prepare_chat_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
 # Build tool message
 def _build_tool_message(
     tool_name: str,
-    content: str,
+    content: str | dict[str, Any],
     tool_event: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a tool message payload that can be fed back into Ollama."""
+    """Build a tool message payload that can be fed back into Ollama.
 
-    payload = {
-        "role": "tool",
-        "name": tool_name,
-        "tool_name": tool_name,
-        "content": content,
-    }
+    When *content* is an image dict (has ``_image_b64``), the message uses
+    Ollama's ``images`` field so the model receives the image visually.
+    """
+
+    if isinstance(content, dict) and "_image_b64" in content:
+        image_path = content.get("_path", "image")
+        payload = {
+            "role": "tool",
+            "name": tool_name,
+            "tool_name": tool_name,
+            "content": f"[Image: {image_path}]",
+            "images": [content["_image_b64"]],
+        }
+    else:
+        payload = {
+            "role": "tool",
+            "name": tool_name,
+            "tool_name": tool_name,
+            "content": content if isinstance(content, str) else str(content),
+        }
 
     if tool_event:
         payload.update(
             {
+                "alias": tool_event.get("alias") or tool_name,
                 "server_id": tool_event.get("server_id") or "",
                 "server_name": tool_event.get("server_name") or "",
                 "tool_id": tool_event.get("tool_id") or tool_name,
@@ -316,13 +331,13 @@ def _run_tool_loop(
     model_name: str,
     messages: list[dict[str, Any]],
     call_kwargs: dict[str, Any],
-    tool_server_id: str,
+    tool_server_ids: list[str],
     tool_context: dict[str, Any],
 ):
     """Resolve local tools through Ollama tool-calling with streaming output."""
 
     tools, tool_lookup = tool_registry.build_ollama_tools(
-        tool_server_id,
+        tool_server_ids,
         engine="ollama-service",
         model_name=model_name,
     )
@@ -375,7 +390,12 @@ def _run_tool_loop(
             tool_message = _build_tool_message(tool_call["name"], tool_result, tool_event)
 
             conversation.append(tool_message)
-            yield {"tool_result": tool_message}
+
+            # Strip images from the UI event to avoid streaming megabytes of base64.
+            ui_tool_message = {k: v for k, v in tool_message.items() if k != "images"}
+            if "images" in tool_message:
+                ui_tool_message["content"] = tool_message.get("content", "[image]")
+            yield {"tool_result": ui_tool_message}
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
 
@@ -384,14 +404,20 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any) -> 
     """Generate a chat response through Ollama."""
 
     client = get_client()
-    tool_server_id = str(kwargs.pop("tool_server_id", kwargs.pop("tool_id", "")) or "").strip()
+    raw_ids = kwargs.pop("tool_server_ids", None) or kwargs.pop("tool_server_id", None) or kwargs.pop("tool_id", None)
+    if isinstance(raw_ids, str):
+        tool_server_ids = [raw_ids] if raw_ids.strip() else []
+    elif isinstance(raw_ids, list):
+        tool_server_ids = [str(s) for s in raw_ids if str(s).strip()]
+    else:
+        tool_server_ids = []
     tool_context = dict(kwargs.pop("tool_context", {}) or {})
 
     try:
         call_kwargs = _prepare_chat_kwargs(kwargs)
 
-        if tool_server_id:
-            return _run_tool_loop(client, model_name, messages, call_kwargs, tool_server_id, tool_context)
+        if tool_server_ids:
+            return _run_tool_loop(client, model_name, messages, call_kwargs, tool_server_ids, tool_context)
 
         return client.chat(model=model_name, messages=messages, **call_kwargs)
     except Exception as exc:

@@ -42,20 +42,20 @@ from sandbox.workspace import (
 MCP_SERVER = {
     "id": "sandbox",
     "name": "Sandbox",
-    "description": "Managed Linux sandbox with workspace, shell, and artifact helpers.",
+    "description": "Linux sandbox with shared workspace. Use bash to run commands, write_file/read_file/str_replace to manage files, share to create download links. All paths are relative to the workspace root.",
 }
 
 TOOLS = [
     {
         "id": "status",
         "name": "Sandbox Status",
-        "description": "Return current sandbox and Docker status.",
+        "description": "Check Docker availability and container state. Call this first if unsure whether the sandbox is ready.",
         "parameters": {"type": "object", "properties": {}},
     },
     {
         "id": "list_directory",
         "name": "List Directory",
-        "description": "List files and directories inside the task workspace.",
+        "description": "List files and directories in the workspace. Use path='.' for root, recursive=True to see all nested files. Call before reading or editing to understand the layout.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -68,7 +68,7 @@ TOOLS = [
     {
         "id": "read_file",
         "name": "Read File",
-        "description": "Read a text file from the task workspace.",
+        "description": "Read a text file from the workspace. Use start_line/end_line to read a specific range. Always read before str_replace to get exact context.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -82,7 +82,7 @@ TOOLS = [
     {
         "id": "write_file",
         "name": "Write File",
-        "description": "Create or fully overwrite a text file in the task workspace.",
+        "description": "Create or fully overwrite a file in the workspace. Use for new files or complete rewrites. For surgical edits use str_replace instead.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -95,7 +95,7 @@ TOOLS = [
     {
         "id": "str_replace",
         "name": "String Replace",
-        "description": "Replace one exact unique text fragment in a file.",
+        "description": "Replace one exact unique text fragment in a file. old_str must match exactly as it appears in the file. Read the file first to copy the exact context.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -109,7 +109,7 @@ TOOLS = [
     {
         "id": "bash",
         "name": "Run Bash",
-        "description": "Run a bash command inside the Linux sandbox container.",
+        "description": "Run a shell command inside the Linux container. Use for Python execution, package installs, git, grep, find, OCR, builds, and any CLI work. For non-trivial code prefer write_file then bash to run it.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -124,7 +124,7 @@ TOOLS = [
     {
         "id": "show_image",
         "name": "Show Image",
-        "description": "Load an image from the workspace into chat.",
+        "description": "Load an image from the workspace for visual inspection. Use after generating charts, screenshots, or any image artifact.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -136,7 +136,7 @@ TOOLS = [
     {
         "id": "share",
         "name": "Share Artifact",
-        "description": "Create a localhost share link for a file or HTML app.",
+        "description": "Create a localhost download link for a file, or a preview link for an HTML app directory. Call after generating an artifact to deliver it.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -148,7 +148,7 @@ TOOLS = [
     {
         "id": "import_from_host",
         "name": "Import From Host",
-        "description": "Copy an allowed host path into the task workspace.",
+        "description": "Copy a file from the host machine into the workspace so bash and file tools can access it.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -161,7 +161,7 @@ TOOLS = [
     {
         "id": "reset",
         "name": "Reset Sandbox",
-        "description": "Recreate the sandbox container from the base image.",
+        "description": "Recreate the container from the base image. Use when the environment is broken. Set preserve_workspace=False to also wipe workspace files.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -172,7 +172,7 @@ TOOLS = [
     {
         "id": "snapshot",
         "name": "Snapshot Sandbox",
-        "description": "Save the current container state as a named snapshot.",
+        "description": "Save the current container state as a named snapshot for later restore.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -183,7 +183,7 @@ TOOLS = [
     {
         "id": "restore",
         "name": "Restore Sandbox",
-        "description": "Restore the container from a previously created snapshot.",
+        "description": "Restore the container from a previously saved snapshot.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -347,6 +347,7 @@ def _show_image(arguments: dict[str, Any] | None, context: dict[str, Any] | None
         }
     except Exception as exc:
         return {"ok": False, "error": f"Error reading image: {exc}"}
+
 
 
 def _share(arguments: dict[str, Any] | None, context: dict[str, Any] | None = None) -> dict[str, Any]:
