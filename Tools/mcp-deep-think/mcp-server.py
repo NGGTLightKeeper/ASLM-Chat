@@ -88,21 +88,26 @@ async def _deep_think(arguments: dict[str, Any] | None, context: dict[str, Any] 
     """Run Deep Think and return a model-friendly report."""
 
     from src.orchestrator import orchestrator
+    from src.llm_client import llm_client
 
     query = str((arguments or {}).get("query", "")).strip()
     if not query:
         return "Deep Think Error: query is required."
 
     normalized_mode = "quick" if str((arguments or {}).get("mode", "full")).lower() == "quick" else "full"
+    runtime_context = dict(context or {})
+    runtime_engine = str(runtime_context.get("engine") or "ollama-service").strip()
+    runtime_model = str(runtime_context.get("model_name") or "").strip()
     logger.info("Deep Think started: %s... (mode=%s)", query[:100], normalized_mode)
 
-    session = (context or {}).get("mcp_session")
+    session = runtime_context.get("mcp_session")
 
     try:
-        report = await _run_with_optional_keepalive(
-            orchestrator.run(query=query, mode=normalized_mode),
-            session=session,
-        )
+        with llm_client.runtime_target(engine=runtime_engine, model_name=runtime_model):
+            report = await _run_with_optional_keepalive(
+                orchestrator.run(query=query, mode=normalized_mode),
+                session=session,
+            )
         formatted = orchestrator.format_report_for_llm(
             report,
             include_raw_reports=normalized_mode == "full",
