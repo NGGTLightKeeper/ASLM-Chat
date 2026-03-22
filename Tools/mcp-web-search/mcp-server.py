@@ -4,14 +4,206 @@ import asyncio
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 SERVER_ROOT = Path(__file__).resolve().parent
 if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
+ASLM_ROOT = Path(__file__).resolve().parents[2]
+if str(ASLM_ROOT) not in sys.path:
+    sys.path.insert(0, str(ASLM_ROOT))
+
 SRC_ROOT = Path(__file__).resolve().parent / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
+
+MCP_SERVER = {
+    "id": "web_search",
+    "name": "Web Search",
+    "description": "Search, page reading, deep research, and file import tools.",
+}
+
+TOOLS = [
+    {
+        "id": "web_search",
+        "name": "Web Search",
+        "description": (
+            "Search the internet via DDGS and optionally YaCy. "
+            "Single query returns previews; multiple queries return compact batch results."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "description": "A search string or a list of search strings.",
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ],
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum result count per query.",
+                    "default": 10,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "id": "read_page",
+        "name": "Read Page",
+        "description": "Read one or more URLs and extract page text or save structured page dumps.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "description": "A URL string or a list of URLs to read.",
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ],
+                },
+                "save": {
+                    "type": "boolean",
+                    "description": "Save extracted content to task/pages/ instead of returning it.",
+                    "default": False,
+                },
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "id": "deep_research",
+        "name": "Deep Research",
+        "description": "Run the long-form research pipeline and return the final report.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Research question or task.",
+                },
+                "depth": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "extra"],
+                    "default": "medium",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "id": "import_web_file",
+        "name": "Import Web File",
+        "description": "Download a confirmed file URL into the task workspace.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "save_to": {
+                    "type": "string",
+                    "description": "Subdirectory inside task/ to save the file.",
+                    "default": "downloads/",
+                },
+                "allowed_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional category filter such as text, media, archive, or data.",
+                },
+                "max_size_mb": {
+                    "type": "integer",
+                    "description": "Maximum download size in MB.",
+                    "default": 50,
+                },
+            },
+            "required": ["url"],
+        },
+    },
+]
+
+
+def supports(engine: str | None = None, model_name: str | None = None) -> bool:
+    """Expose this tool server only for Ollama tool-calling flows."""
+
+    return engine == "ollama-service"
+
+
+_REGISTERED_TOOL_FUNCTIONS: dict[str, Any] | None = None
+
+
+class _ToolCollector:
+    """Capture FastMCP-style tool registrations into a simple function map."""
+
+    def __init__(self) -> None:
+        self.tools: dict[str, Any] = {}
+        self._mcp_server = None
+
+    def tool(self, name: str | None = None):
+        def decorator(fn):
+            self.tools[name or fn.__name__] = fn
+            return fn
+
+        return decorator
+
+
+def _get_registered_tool_functions() -> dict[str, Any]:
+    """Lazily build a mapping of tool ids to the nested FastMCP handlers."""
+
+    global _REGISTERED_TOOL_FUNCTIONS
+
+    if _REGISTERED_TOOL_FUNCTIONS is not None:
+        return _REGISTERED_TOOL_FUNCTIONS
+
+    collector = _ToolCollector()
+    register_tools(collector)
+    _REGISTERED_TOOL_FUNCTIONS = collector.tools
+    return _REGISTERED_TOOL_FUNCTIONS
+
+
+async def call_tool(tool_id: str, arguments: dict[str, Any] | None, context: dict[str, Any] | None = None) -> Any:
+    """Generic ASLM-compatible dispatcher for Web Search tools."""
+
+    tool_functions = _get_registered_tool_functions()
+    handler = tool_functions.get(tool_id)
+    if handler is None:
+        raise ValueError(f"Unknown tool: {tool_id}")
+
+    return await handler(**(arguments or {}))
+
+
+def _is_yacy_enabled() -> bool:
+    """Return whether YaCy is enabled in ASLM settings or legacy mode."""
+
+    try:
+        from Settings import settings as app_settings
+
+        return bool(app_settings.get("use-yacy", False))
+    except Exception:
+        return True
+
+
+def _ensure_yacy_started() -> bool:
+    """Start YaCy on demand when it is enabled and manageable from ASLM."""
+
+    if not _is_yacy_enabled():
+        return False
+
+    try:
+        from Services import yacy_service
+
+        return bool(yacy_service.start_yacy(log=False))
+    except Exception:
+        return True
+
+
+def _format_found_line(total: int, yacy_count: int, ddgs_count: int, yacy_enabled: bool) -> str:
+    """Build a user-facing result summary line."""
+
+    if yacy_enabled:
+        return f"Found   : {total}  (YaCy: {yacy_count}  DDGS: {ddgs_count})"
+    return f"Found   : {total}  (DDGS: {ddgs_count})"
 
 # Tool registration entry point.
 def register_tools(mcp) -> None:
@@ -68,6 +260,7 @@ def register_tools(mcp) -> None:
           WEB_SEARCH_MODE = "legacy" | "semantic"
         """
         import json as _json
+        yacy_enabled = _ensure_yacy_started()
 
         # --- batch mode ---
         if isinstance(query, list):
@@ -83,12 +276,16 @@ def register_tools(mcp) -> None:
 
             # Search one query across both backends.
             async def _search_one_batch(q: str) -> list[SearchResult]:
-                yacy_task = asyncio.wait_for(async_yacy_search(q, per_fetch), timeout=_YACY_SEARCH_TIMEOUT)
                 ddgs_task  = asyncio.wait_for(async_ddgs_search(q, per_fetch), timeout=_DDGS_SEARCH_TIMEOUT)
-                yr, dr = await asyncio.gather(yacy_task, ddgs_task, return_exceptions=True)
-                yr = yr if isinstance(yr, list) else []
+                if yacy_enabled:
+                    yacy_task = asyncio.wait_for(async_yacy_search(q, per_fetch), timeout=_YACY_SEARCH_TIMEOUT)
+                    yr, dr = await asyncio.gather(yacy_task, ddgs_task, return_exceptions=True)
+                    yr = yr if isinstance(yr, list) else []
+                else:
+                    yr = []
+                    dr = await ddgs_task
                 dr = dr if isinstance(dr, list) else []
-                return _proportional_merge(yr, dr, per_fetch)
+                return _proportional_merge(yr, dr, per_fetch) if yacy_enabled else dr[:per_fetch]
 
             raw = await asyncio.gather(*[_search_one_batch(q) for q in queries], return_exceptions=True)
             per_query: list[list[SearchResult]] = [r if isinstance(r, list) else [] for r in raw]
@@ -123,7 +320,12 @@ def register_tools(mcp) -> None:
                 q_hdr = "\n".join([
                     f"Web Search - {ms}ms",
                     f"Query   : {qdata['query']}",
-                    f"Found   : {qdata['count']}  (YaCy: {sum(1 for r in qdata['results'] if 'yacy' in r['engine'].lower())}  DDGS: {sum(1 for r in qdata['results'] if 'yacy' not in r['engine'].lower())})",
+                    _format_found_line(
+                        qdata["count"],
+                        sum(1 for r in qdata["results"] if "yacy" in r["engine"].lower()),
+                        sum(1 for r in qdata["results"] if "yacy" not in r["engine"].lower()),
+                        yacy_enabled,
+                    ),
                 ])
                 out_blocks.append(q_hdr)
                 for i, r in enumerate(qdata["results"], 1):
@@ -139,12 +341,14 @@ def register_tools(mcp) -> None:
         # --- single query mode ---
         t0 = time.time()
 
-        yacy_task = asyncio.wait_for(async_yacy_search(query, limit), timeout=_YACY_SEARCH_TIMEOUT)
         ddgs_task  = asyncio.wait_for(async_ddgs_search(query, limit), timeout=_DDGS_SEARCH_TIMEOUT)
-
-        yacy_res, ddgs_res = await asyncio.gather(yacy_task, ddgs_task, return_exceptions=True)
-
-        yacy_res = yacy_res if isinstance(yacy_res, list) else []
+        if yacy_enabled:
+            yacy_task = asyncio.wait_for(async_yacy_search(query, limit), timeout=_YACY_SEARCH_TIMEOUT)
+            yacy_res, ddgs_res = await asyncio.gather(yacy_task, ddgs_task, return_exceptions=True)
+            yacy_res = yacy_res if isinstance(yacy_res, list) else []
+        else:
+            yacy_res = []
+            ddgs_res = await ddgs_task
         ddgs_res = ddgs_res if isinstance(ddgs_res, list) else []
 
         yn_raw, dn_raw = len(yacy_res), len(ddgs_res)
@@ -174,7 +378,7 @@ def register_tools(mcp) -> None:
         results += yacy_res[len(ddgs_res):] + ddgs_res[len(yacy_res):]
 
         # YaCy auto-learn: index trusted URLs from DDGS results
-        if ddgs_res:
+        if yacy_enabled and ddgs_res:
             try:
                 trust_json = _HERE.parent / "deep-research" / "config" / "trust_registry.json"
                 if trust_json.exists():
@@ -222,7 +426,7 @@ def register_tools(mcp) -> None:
         hdr = "\n".join([
             f"Web Search - {ms}ms",
             f"Query   : {query}",
-            f"Found   : {len(results)}  (YaCy: {yn}  DDGS: {dn})",
+            _format_found_line(len(results), yn, dn, yacy_enabled),
         ])
         blocks = [hdr] + [_fmt_result(i, r, previews[i-1]) for i, r in enumerate(results, 1)]
         if downloadable:
@@ -380,7 +584,6 @@ def register_tools(mcp) -> None:
         WARNING: this tool runs for a long time (3 to 15 minutes). Wait for completion.
         depth: 'low' | 'medium' | 'high' | 'extra'
         """
-        import uuid
         import glob
         import sys
         import os
@@ -396,9 +599,13 @@ def register_tools(mcp) -> None:
         try:
             env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
             env.pop("PYTHONPATH", None)
+            yacy_enabled = _ensure_yacy_started()
+            cmd = [sys.executable, "-u", str(script), query, "--depth", depth, "--id", task_id]
+            if not yacy_enabled:
+                cmd.append("--no-yacy")
 
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-u", str(script), query, "--depth", depth, "--id", task_id,
+                *cmd,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

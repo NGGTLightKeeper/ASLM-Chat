@@ -4,11 +4,27 @@ import argparse
 import asyncio
 import logging
 import sys
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from tools import register_tools
+
+def _load_register_tools():
+    """Load register_tools from the root mcp-server.py file."""
+
+    module_path = Path(__file__).resolve().with_name("mcp-server.py")
+    spec = spec_from_file_location("browser_agent_mcp_server", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load MCP tools module: {module_path}")
+
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.register_tools
+
+
+register_tools = _load_register_tools()
 
 
 # Logging setup

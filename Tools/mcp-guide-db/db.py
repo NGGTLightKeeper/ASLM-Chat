@@ -12,7 +12,7 @@ import yaml
 
 # Database root and validation
 DB_DIR = Path(
-    os.getenv("GUIDE_DB_DIR", str(Path(__file__).parent.parent.parent / "guide_tools_db"))
+    os.getenv("GUIDE_DB_DIR", str(Path(__file__).resolve().parent / "guide_tools_db"))
 )
 VALID_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 VALID_KIND = {"pattern", "synergy", "pitfall", "example"}

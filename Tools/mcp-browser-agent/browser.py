@@ -1,24 +1,140 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 import asyncio
+import concurrent.futures
+import importlib.util
 import logging
 import re
 import sys
+import threading
+from pathlib import Path
 from typing import Any
 
 from camoufox.async_api import AsyncCamoufox
 from mcp.types import TextContent
 from playwright.async_api import BrowserContext, Page
 
-from config import (
-    AUTO_TEXT_PREVIEW_LEN,
-    BROWSER_HEIGHT,
-    BROWSER_WIDTH,
-    DOWNLOADS_DIR,
-    MAX_A11Y_DEPTH,
-    MAX_ELEMENTS,
-    MAX_MAIN_INTERACTIVE,
-)
+SERVER_ROOT = Path(__file__).resolve().parent
+CONFIG_PATH = SERVER_ROOT / "config.py"
+
+
+def _load_local_config():
+    """Load the sibling config module without relying on global sys.path order."""
+
+    spec = importlib.util.spec_from_file_location("mcp_browser_agent_config", CONFIG_PATH)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load browser-agent config from {CONFIG_PATH}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_config = _load_local_config()
+
+AUTO_TEXT_PREVIEW_LEN = _config.AUTO_TEXT_PREVIEW_LEN
+BROWSER_HEIGHT = _config.BROWSER_HEIGHT
+BROWSER_WIDTH = _config.BROWSER_WIDTH
+DOWNLOADS_DIR = _config.DOWNLOADS_DIR
+MAX_A11Y_DEPTH = _config.MAX_A11Y_DEPTH
+MAX_ELEMENTS = _config.MAX_ELEMENTS
+MAX_MAIN_INTERACTIVE = _config.MAX_MAIN_INTERACTIVE
+
+
+class BrowserRuntime:
+    """Keep one dedicated event loop alive for all browser operations."""
+
+    def __init__(self) -> None:
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._ready = threading.Event()
+        self._lock = threading.Lock()
+
+    def _thread_main(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._loop = loop
+        self._ready.set()
+        loop.run_forever()
+
+    def ensure_started(self) -> None:
+        if self._thread is not None and self._thread.is_alive() and self._loop is not None:
+            return
+
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive() and self._loop is not None:
+                return
+
+            self._ready.clear()
+            self._thread = threading.Thread(
+                target=self._thread_main,
+                name="mcp-browser-agent-loop",
+                daemon=True,
+            )
+            self._thread.start()
+            self._ready.wait()
+
+    def submit(self, coro) -> concurrent.futures.Future:
+        self.ensure_started()
+        assert self._loop is not None
+        return asyncio.run_coroutine_threadsafe(coro, self._loop)
+
+
+_browser_runtime = BrowserRuntime()
+
+
+async def run_in_browser_loop(
+    coro,
+    session=None,
+    interval: float = 3.0,
+    message: str = "working...",
+):
+    """Run a browser coroutine on the dedicated browser loop."""
+
+    future = _browser_runtime.submit(coro)
+    wrapped = asyncio.wrap_future(future)
+
+    try:
+        while True:
+            done, _pending = await asyncio.wait({wrapped}, timeout=interval)
+            if wrapped in done:
+                return wrapped.result()
+
+            if session is not None:
+                try:
+                    await session.send_log_message(level="debug", data=message, logger="browser-agent")
+                except Exception:
+                    pass
+    except asyncio.CancelledError:
+        future.cancel()
+        raise
+
+if sys.platform.startswith("win"):
+    # Playwright/Camoufox may leave subprocess transports pending on shutdown.
+    # Guard their destructors so tool calls do not emit false crash traces.
+    try:
+        import asyncio.base_subprocess as _base_subprocess
+        import asyncio.proactor_events as _proactor_events
+
+        _orig_pipe_del = _proactor_events._ProactorBasePipeTransport.__del__
+        _orig_subproc_del = _base_subprocess.BaseSubprocessTransport.__del__
+
+        def _safe_pipe_del(self):
+            try:
+                _orig_pipe_del(self)
+            except Exception:
+                pass
+
+        def _safe_subproc_del(self):
+            try:
+                _orig_subproc_del(self)
+            except Exception:
+                pass
+
+        _proactor_events._ProactorBasePipeTransport.__del__ = _safe_pipe_del
+        _base_subprocess.BaseSubprocessTransport.__del__ = _safe_subproc_del
+    except Exception:
+        pass
 
 
 # Logging
@@ -787,17 +903,31 @@ class BrowserState:
 
         log.info("Launching camoufox browser (Firefox stealth)...")
 
-        self._camoufox_cm = AsyncCamoufox(
-            headless=False,
-            window=(BROWSER_WIDTH, BROWSER_HEIGHT),
-        )
-        browser = await self._camoufox_cm.__aenter__()
+        try:
+            self._camoufox_cm = AsyncCamoufox(
+                headless=False,
+                window=(BROWSER_WIDTH, BROWSER_HEIGHT),
+            )
+            browser = await self._camoufox_cm.__aenter__()
 
-        self.context = await browser.new_context(
-            viewport={"width": BROWSER_WIDTH, "height": BROWSER_HEIGHT},
-            accept_downloads=True,
-        )
-        self.page = await self.context.new_page()
+            self.context = await browser.new_context(
+                viewport={"width": BROWSER_WIDTH, "height": BROWSER_HEIGHT},
+                accept_downloads=True,
+            )
+            self.page = await self.context.new_page()
+        except Exception as exc:
+            self.page = None
+            self.context = None
+            if self._camoufox_cm is not None:
+                try:
+                    await self._camoufox_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
+            self._camoufox_cm = None
+            raise RuntimeError(
+                "Browser launch failed. Check that Playwright browsers and Camoufox are installed "
+                f"and that the current runtime is allowed to spawn browser subprocesses. Original error: {exc}"
+            ) from exc
 
         # Persist downloads into the shared task directory.
         async def handle_download(download):
