@@ -1337,6 +1337,25 @@ $(function () {
     }
   }
 
+  function updateRegenButtons() {
+    // Hide all regen buttons first.
+    $messagesInner.find('.msg-regen-btn').hide();
+
+    // Show regen on the very last assistant message.
+    const $allMsgs = $messagesInner.find('.msg');
+    const $lastAssistant = $messagesInner.find('.msg.assistant').last();
+    if ($lastAssistant.length) {
+      $lastAssistant.find('.msg-regen-btn').show();
+
+      // Also show regen on the user message right before the last assistant message,
+      // but only if that user message is immediately preceding.
+      const $prev = $lastAssistant.prev('.msg.user');
+      if ($prev.length) {
+        $prev.find('.msg-regen-btn').show();
+      }
+    }
+  }
+
   function startNewChat() {
     $chatTitle.text('New Chat');
     document.title = 'ASLM Chat';
@@ -2515,6 +2534,7 @@ $(function () {
   function renderMessageHtml($msgRow, rawText) {
     const parsed = parseMessageTimeline(rawText);
     renderActivityTimeline($msgRow, parsed.segments);
+    $msgRow.find('.msg-bubble').attr('data-raw', rawText);
   }
 
   function appendMessage(role, text, images, timestamp, options) {
@@ -2536,39 +2556,47 @@ $(function () {
       imagesHtml = `<div class="msg-images">${content}</div>`;
     }
 
-    const regenBtn = !isUser
-      ? `<button class="msg-regen-btn" title="Regenerate response" aria-label="Regenerate response">
-           <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-             <path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3"/>
-           </svg>
-         </button>`
-      : '';
+    const messageId = viewOptions.messageId || '';
+    const copyBtn = `<button class="msg-action-btn msg-copy-btn" title="Copy" aria-label="Copy message">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        </button>`;
+    const regenBtn = `<button class="msg-action-btn msg-regen-btn" title="Regenerate" aria-label="Regenerate response">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg>
+        </button>`;
+    const deleteBtn = `<button class="msg-action-btn msg-delete-btn" title="Delete" aria-label="Delete message">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+        </button>`;
+    const msgActionsHtml = isUser
+      ? `<div class="msg-actions">${copyBtn}${regenBtn}${deleteBtn}</div>`
+      : `<div class="msg-actions">${copyBtn}${regenBtn}${deleteBtn}</div>`;
 
     const $row = $(`
-      <div class="msg ${role}${viewOptions.queued ? ' is-queued' : ''}" data-message-key="${escapeAttributeValue(messageKey)}">
+      <div class="msg ${role}${viewOptions.queued ? ' is-queued' : ''}" data-message-key="${escapeAttributeValue(messageKey)}"${messageId ? ` data-message-id="${messageId}"` : ''}>
         <div class="msg-avatar">${isUser ? 'U' : 'A'}</div>
         <div class="msg-body">
           <div class="msg-meta">
             <span>${label}</span>
             <span>${timeStr}</span>
             ${queuedBadge}
-            ${regenBtn}
           </div>
           ${!isUser ? '<div class="msg-activity-stream" style="display:none;"></div>' : ''}
           <div class="msg-bubble">${imagesHtml}</div>
+          ${msgActionsHtml}
         </div>
       </div>
     `);
 
     if (isUser) {
-      $row.find('.msg-bubble').append($('<span>').text(text));
+      $row.find('.msg-bubble').attr('data-raw', text).append($('<span>').text(text));
     } else if (Array.isArray(viewOptions.activitySegments) && viewOptions.activitySegments.length > 0) {
+      $row.find('.msg-bubble').attr('data-raw', text);
       renderActivityTimeline($row, viewOptions.activitySegments);
     } else {
       renderMessageHtml($row, text);
     }
 
     $messagesInner.append($row);
+    updateRegenButtons();
     scrollBottom();
     return $row;
   }
@@ -2602,11 +2630,6 @@ $(function () {
           <div class="msg-meta">
             <span>ASLM</span>
             <span>${timeStr}</span>
-            <button class="msg-regen-btn" title="Regenerate response" aria-label="Regenerate response">
-              <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3"/>
-              </svg>
-            </button>
           </div>
           <div class="msg-activity-stream" style="display:none;"></div>
           <div class="msg-bubble">
@@ -2820,6 +2843,22 @@ $(function () {
     try {
       await streamChat(request, $assistantRow);
     } finally {
+      // Inject action panel if not already present (streaming msg didn't have it)
+      if ($assistantRow.find('.msg-actions').length === 0) {
+        $assistantRow.find('.msg-body').append(`
+          <div class="msg-actions">
+            <button class="msg-action-btn msg-copy-btn" title="Copy" aria-label="Copy message">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            </button>
+            <button class="msg-action-btn msg-regen-btn" title="Regenerate" aria-label="Regenerate response">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg>
+            </button>
+            <button class="msg-action-btn msg-delete-btn" title="Delete" aria-label="Delete message">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+            </button>
+          </div>`);
+      }
+      updateRegenButtons();
       isChatGenerating = false;
       updateSendButtons();
       if (chatRequestQueue.length > 0) {
@@ -2982,8 +3021,21 @@ $(function () {
     });
   });
 
-  function regenerateLastResponse() {
-    if (isChatGenerating || !currentChatId) { return; }
+  function abortGeneration() {
+    if (currentAbortController) {
+      currentAbortController.abort();
+    }
+    isChatGenerating = false;
+    updateSendButtons();
+    // Tell the backend to stop Ollama immediately.
+    fetch('/api/chat/abort/', {
+      method: 'POST',
+      headers: { 'X-CSRFToken': getCsrfToken() }
+    }).catch(function () {});
+  }
+
+  function doRegenerate() {
+    if (!currentChatId) { return; }
 
     $.ajax({
       url: `/api/chat/${currentChatId}/last/`,
@@ -2996,6 +3048,7 @@ $(function () {
         // Remove last assistant bubble from DOM.
         const $msgs = $messagesInner.find('.msg.assistant');
         if ($msgs.length) { $msgs.last().remove(); }
+        updateSendButtons();
 
         if (!data.user_message) { return; }
 
@@ -3017,6 +3070,65 @@ $(function () {
     });
   }
 
+  function regenerateLastResponse() {
+    if (!currentChatId) { return; }
+    if (isChatGenerating) {
+      // Stop current generation first, then regenerate after backend confirms stop.
+      abortGeneration();
+      // Small delay to let the stream close before deleting the (partial) message.
+      setTimeout(doRegenerate, 300);
+    } else {
+      doRegenerate();
+    }
+  }
+
+  function regenerateFromUserMessage($userMsg) {
+    if (!currentChatId || isChatGenerating) { return; }
+
+    // Get the user's original text from the bubble data-raw attribute.
+    const userText = $userMsg.find('.msg-bubble').attr('data-raw') || $userMsg.find('.msg-bubble').text();
+    if (!userText.trim()) { return; }
+
+    // Find the next assistant message (the response to this user message).
+    const $nextAssistant = $userMsg.next('.msg.assistant');
+    if (!$nextAssistant.length) { return; }
+
+    const assistantMessageId = $nextAssistant.data('message-id');
+
+    function doUserRegen() {
+      // Remove assistant message from DOM.
+      $nextAssistant.remove();
+      updateRegenButtons();
+
+      // Build a new request with the user's original text.
+      const request = buildQueuedRequest(userText, []);
+      request.$userRow = { length: 0 }; // User message already in DOM.
+      request.chatId = currentChatId;
+
+      chatRequestQueue.push(request);
+      processChatQueue();
+    }
+
+    if (assistantMessageId) {
+      // Delete the assistant message from backend first.
+      $.ajax({
+        url: `/api/message/${assistantMessageId}/delete/`,
+        method: 'DELETE',
+        headers: { 'X-CSRFToken': getCsrfToken() },
+        success: function (data) {
+          if (data.ok) {
+            doUserRegen();
+          }
+        },
+        error: function () {
+          console.error('Failed to delete assistant message for regen', assistantMessageId);
+        }
+      });
+    } else {
+      doUserRegen();
+    }
+  }
+
   function wireInput($input, $button) {
     $input.on('input', function () {
       this.style.height = 'auto';
@@ -3035,9 +3147,7 @@ $(function () {
 
     $button.on('click', function () {
       if (isChatGenerating && currentAbortController) {
-        currentAbortController.abort();
-        isChatGenerating = false;
-        updateSendButtons();
+        abortGeneration();
         return;
       }
       if (!$button.prop('disabled')) {
@@ -3079,7 +3189,8 @@ $(function () {
 
         data.messages.forEach(function (message) {
           appendMessage(message.role, message.content, message.images || [], message.created_at, {
-            activitySegments: Array.isArray(message.activity_segments) ? message.activity_segments : []
+            activitySegments: Array.isArray(message.activity_segments) ? message.activity_segments : [],
+            messageId: message.id
           });
         });
 
@@ -3113,7 +3224,70 @@ $(function () {
   });
 
   $messagesInner.on('click', '.msg-regen-btn', function () {
-    regenerateLastResponse();
+    const $msg = $(this).closest('.msg');
+    if ($msg.hasClass('user')) {
+      // User message regen: delete the next assistant message, then re-send.
+      regenerateFromUserMessage($msg);
+    } else {
+      regenerateLastResponse();
+    }
+  });
+
+  $messagesInner.on('click', '.msg-copy-btn', function () {
+    const $btn = $(this);
+    const $bubble = $btn.closest('.msg-body').find('.msg-bubble');
+    const text = $bubble.attr('data-raw') || $bubble.text();
+
+    function onCopied() {
+      const orig = $btn.html();
+      $btn.html('<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 12 4 10"/></svg>');
+      setTimeout(function () { $btn.html(orig); }, 1200);
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(onCopied).catch(function () {
+        fallbackCopy(text, onCopied);
+      });
+    } else {
+      fallbackCopy(text, onCopied);
+    }
+  });
+
+  function fallbackCopy(text, onSuccess) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      if (document.execCommand('copy')) { onSuccess && onSuccess(); }
+    } catch (_) {}
+    document.body.removeChild(ta);
+  }
+
+  $messagesInner.on('click', '.msg-delete-btn', function () {
+    const $msg = $(this).closest('.msg');
+    const messageId = $msg.data('message-id');
+    if (!messageId) {
+      $msg.remove();
+      updateRegenButtons();
+      return;
+    }
+    $.ajax({
+      url: `/api/message/${messageId}/delete/`,
+      method: 'DELETE',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+      success: function (data) {
+        if (data.ok) {
+          $msg.remove();
+          updateRegenButtons();
+        }
+      },
+      error: function () {
+        console.error('Failed to delete message', messageId);
+      }
+    });
   });
 
   $('#imageInput, #imageInputConv').on('change', handleFileInput);

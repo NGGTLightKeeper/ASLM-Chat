@@ -13,6 +13,7 @@ from django.http import JsonResponse, StreamingHttpResponse
 from django.views.generic import TemplateView
 
 from API import llm_api, mcp as tool_registry
+from API import ollama as ollama_api
 from Apps.Data.ollama_presets import (
     activate_ollama_preset,
     create_ollama_preset,
@@ -843,6 +844,39 @@ def chat_api(request):
         return JsonResponse({"error": str(exc)}, status=400)
     except Exception as exc:
         logger.exception("Unhandled exception in chat_api")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Abort active generation
+def abort_generation_api(request):
+    """Immediately signal the active LLM generation to stop."""
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        ollama_api.abort_generation()
+        return JsonResponse({"ok": True})
+    except Exception as exc:
+        logger.exception("Failed to abort generation")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Delete a specific message by ID
+def delete_message_api(request, message_id):
+    """Delete a single message by its primary key."""
+
+    if request.method != "DELETE":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        msg = Message.objects.get(id=message_id)
+        msg.delete()
+        return JsonResponse({"ok": True})
+    except Message.DoesNotExist:
+        return JsonResponse({"error": "Message not found"}, status=404)
+    except Exception as exc:
+        logger.exception("Failed to delete message %s", message_id)
         return JsonResponse({"error": str(exc)}, status=500)
 
 

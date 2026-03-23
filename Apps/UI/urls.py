@@ -10,8 +10,10 @@ urlpatterns = [
     path("profile/", views.ProfileView.as_view(), name="profile"),
 
     path("api/chat/", views.chat_api, name="chat_api"),
+    path("api/chat/abort/", views.abort_generation_api, name="abort_generation_api"),
     path("api/chat/<uuid:chat_id>/", views.load_chat_api, name="load_chat_api"),
     path("api/chat/<uuid:chat_id>/last/", views.delete_last_assistant_api, name="delete_last_assistant_api"),
+    path("api/message/<int:message_id>/delete/", views.delete_message_api, name="delete_message_api"),
     path("api/chat/<uuid:chat_id>/rename/", views.rename_chat_api, name="rename_chat_api"),
     path("api/chat/<uuid:chat_id>/delete/", views.delete_chat_api, name="delete_chat_api"),
 

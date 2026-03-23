@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import threading
 from typing import Any
 
 import ollama
@@ -12,6 +13,15 @@ from API import mcp as tool_registry
 from Settings import settings
 
 logger = logging.getLogger(__name__)
+
+# Global abort event — set to interrupt the active generation immediately.
+_abort_event = threading.Event()
+
+
+def abort_generation() -> None:
+    """Signal the active Ollama generation to stop."""
+    _abort_event.set()
+
 
 OLLAMA_TOP_LEVEL_CHAT_KEYS = {"format", "keep_alive", "logprobs", "top_logprobs"}
 OLLAMA_INTERNAL_CHAT_KEYS = {"system", "prompt", "tool_id", "tool_server_id", "tool_server_ids", "tool_context", "think", "think_level", "engine"}
@@ -278,6 +288,8 @@ def _stream_round(
         stream_kwargs["tools"] = tools
 
     for raw_chunk in client.chat(model=model_name, messages=conversation, stream=True, **stream_kwargs):
+        if _abort_event.is_set():
+            break
         normalized_chunk = _normalize_message(_get_field(raw_chunk, "message", default=raw_chunk))
         thinking_part = normalized_chunk.get("thinking", "") or ""
         content_part = normalized_chunk.get("content", "") or ""
@@ -399,6 +411,14 @@ def _run_tool_loop(
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
 
+# Wrap a non-streaming ollama iterator so abort is respected
+def _iter_with_abort(iterator):
+    for chunk in iterator:
+        if _abort_event.is_set():
+            break
+        yield chunk
+
+
 # Generate Ollama response
 def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
     """Generate a chat response through Ollama."""
@@ -414,12 +434,13 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any) -> 
     tool_context = dict(kwargs.pop("tool_context", {}) or {})
 
     try:
+        _abort_event.clear()
         call_kwargs = _prepare_chat_kwargs(kwargs)
 
         if tool_server_ids:
             return _run_tool_loop(client, model_name, messages, call_kwargs, tool_server_ids, tool_context)
 
-        return client.chat(model=model_name, messages=messages, **call_kwargs)
+        return _iter_with_abort(client.chat(model=model_name, messages=messages, **call_kwargs))
     except Exception as exc:
         logger.error("[Ollama API] Error generating response from %s: %s", model_name, exc)
         raise

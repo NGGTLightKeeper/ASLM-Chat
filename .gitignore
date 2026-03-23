@@ -179,9 +179,11 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+.claude
 
 # MCP tools test logs and test data
 Tools/tests
+deploy.bat
 
 # Deep Think
 Tools/mcp-deep-think/_out/

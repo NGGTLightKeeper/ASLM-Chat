@@ -889,6 +889,7 @@
   background: #c0392b;
 }
 
+
 .vision-badge,
 .tool-toggle-btn,
 .think-toggle-btn,
@@ -1183,28 +1184,46 @@
   color: var(--c-text-dim);
 }
 
-.msg-regen-btn {
+.msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.msg:hover .msg-actions {
+  opacity: 1;
+}
+
+.msg-action-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-left: auto;
-  padding: 3px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   background: none;
   border: none;
   border-radius: var(--r-sm);
   color: var(--c-text-muted);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
+  transition: color var(--t-fast), background var(--t-fast);
 }
 
-.msg:hover .msg-regen-btn {
-  opacity: 1;
-}
-
-.msg-regen-btn:hover {
+.msg-action-btn:hover {
   color: var(--c-text);
   background: var(--surface-tertiary);
+}
+
+.msg.user .msg-actions {
+  justify-content: flex-end;
+}
+
+.msg-delete-btn:hover {
+  color: var(--c-error, #e74c3c);
+  background: color-mix(in srgb, var(--c-error, #e74c3c) 12%, transparent);
 }
 
 .msg-status-pill {
