@@ -10,8 +10,7 @@ SRC_ROOT = Path(__file__).resolve().parent / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from sandbox.http_share import _start_http_server, _stop_http_server
-from sandbox.token_registry import _start_token_cleanup, _stop_token_cleanup
+from sandbox.container import _ensure_container_running
 
 
 def _load_register_tools():
@@ -38,14 +37,10 @@ def main() -> None:
     mcp = FastMCP("Sandbox")
     register_tools(mcp)
 
-    _start_http_server()
-    _start_token_cleanup()
+    import threading
+    threading.Thread(target=_ensure_container_running, daemon=True).start()
 
-    try:
-        mcp.run()
-    finally:
-        _stop_token_cleanup()
-        _stop_http_server()
+    mcp.run()
 
 
 if __name__ == "__main__":

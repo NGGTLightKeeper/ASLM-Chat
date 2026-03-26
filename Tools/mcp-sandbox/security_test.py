@@ -20,10 +20,11 @@ from sandbox import config  # noqa: E402
 from sandbox.workspace import (  # noqa: E402
     get_secure_task_path,
     is_allowed_host_import,
-    read_file,
+    normalize_model_relative_path,
+    read,
     task_root,
     validate_model_path,
-    write_file,
+    write,
 )
 
 PASS = "\033[32mPASS\033[0m"
@@ -118,14 +119,19 @@ for path, label in ABSOLUTE_PATHS:
     )
 
 check(
-    "task/ prefix rejected",
-    expect_raise=True,
+    "task/ prefix tolerated",
+    expect_raise=False,
     fn=lambda: validate_model_path("task/secret.txt"),
 )
 check(
-    "task alone rejected",
-    expect_raise=True,
+    "task alone tolerated",
+    expect_raise=False,
     fn=lambda: validate_model_path("task"),
+)
+check(
+    "task\\ prefix normalized",
+    expect_raise=False,
+    fn=lambda: normalize_model_relative_path(r"task\pages\example.json"),
 )
 
 print()
@@ -180,7 +186,7 @@ check(
 
 # Workspace read and write checks.
 
-print_group("GROUP 3 - write_file / read_file - boundary enforcement")
+print_group("GROUP 3 - write / read - boundary enforcement")
 
 WRITE_ESCAPE_PATHS = [
     ("../escape.txt", "One level up from task/"),
@@ -190,15 +196,15 @@ WRITE_ESCAPE_PATHS = [
 
 for path, label in WRITE_ESCAPE_PATHS:
     check(
-        f"write_file blocked: {label}",
+        f"write blocked: {label}",
         expect_raise=True,
-        fn=lambda p=path: write_file(p, "pwned"),
+        fn=lambda p=path: write(p, "pwned"),
     )
 
 check(
-    "write_file to bare filename blocked (must be in task/)",
+    "write to bare filename blocked (must be in task/)",
     expect_raise=False,
-    fn=lambda: write_file("canary_test_delete_me.txt", "ok"),
+    fn=lambda: write("canary_test_delete_me.txt", "ok"),
     notes="Single filename should succeed because it lands inside task/.",
 )
 
@@ -418,16 +424,16 @@ else:
     docker_exec("rm -f /workspace/task/__sym_test")
     docker_exec("ln -s /etc/passwd /workspace/task/__sym_test")
     try:
-        read_result = read_file("__sym_test")
-        sym_read = "root:" in read_result.get("content", "")
+        read_result = read("__sym_test")
+        sym_read = "root:" in ((read_result.get("result") or {}).get("content", ""))
     except Exception:
         sym_read = False
     docker_exec("rm -f /workspace/task/__sym_test")
     verdict = FAIL if sym_read else PASS
-    print(f"  {verdict}  sandbox read_file() follows symlink to /etc/passwd: {sym_read}")
+    print(f"  {verdict}  sandbox read() follows symlink to /etc/passwd: {sym_read}")
     if sym_read:
-        print("         WARNING  read_file() follows the symlink target.")
-    results.append(("read_file symlink follow", not sym_read, "FOLLOWS" if sym_read else "blocked"))
+        print("         WARNING  read() follows the symlink target.")
+    results.append(("read symlink follow", not sym_read, "FOLLOWS" if sym_read else "blocked"))
 
 
 # Summary output.

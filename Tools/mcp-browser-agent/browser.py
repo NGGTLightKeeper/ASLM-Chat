@@ -240,7 +240,7 @@ _ATTR_RE = re.compile(r'\[(?P<key>\w+)(?:=(?P<val>[^\]]+))?\]')
 # Accessibility tree extraction
 
 # Build a compact accessibility tree with stable element refs
-async def get_accessibility_tree(page: Page) -> tuple[list[dict], str]:
+async def get_accessibility_tree(page: Page, full: bool = False) -> tuple[list[dict], str]:
     """Extract the current accessibility tree and assign stable refs."""
 
     try:
@@ -252,6 +252,7 @@ async def get_accessibility_tree(page: Page) -> tuple[list[dict], str]:
     elements: list[dict] = []
     lines: list[str] = []
     ref_counter = 0
+    max_elements = MAX_ELEMENTS * 2 if full else MAX_ELEMENTS
 
     # Keep the active landmark in sync with snapshot indentation.
     landmark_stack: list[tuple[int, str]] = []
@@ -273,7 +274,7 @@ async def get_accessibility_tree(page: Page) -> tuple[list[dict], str]:
         name = match.group("name") or ""
         attrs_str = match.group("attrs") or ""
 
-        if depth > MAX_A11Y_DEPTH or ref_counter >= MAX_ELEMENTS:
+        if depth > MAX_A11Y_DEPTH or ref_counter >= max_elements:
             continue
 
         if role in SKIP_ROLES and not name:
@@ -341,7 +342,7 @@ async def get_accessibility_tree(page: Page) -> tuple[list[dict], str]:
         elements.append(elem)
 
         # Keep the readable tree focused on content-bearing regions.
-        show_in_tree = current_landmark in ("main", "dialog", "form", "region", "unknown", "complementary")
+        show_in_tree = full or current_landmark in ("main", "dialog", "form", "region", "unknown", "complementary")
 
         if show_in_tree:
             indent = "  " * depth
@@ -481,12 +482,6 @@ async def _extract_brief_text(page: Page, max_chars: int = AUTO_TEXT_PREVIEW_LEN
 async def _wait_for_spa_content(page: Page, timeout_ms: int = 5000):
     """Wait for SPA content to settle without relying on fixed sleeps."""
 
-    # Let the network calm down first, but do not fail on long-lived connections.
-    try:
-        await page.wait_for_load_state("networkidle", timeout=timeout_ms)
-    except Exception:
-        pass
-
     # Poll the main landmark until meaningful text appears.
     for _ in range(6):
         try:
@@ -505,15 +500,15 @@ async def _wait_for_spa_content(page: Page, timeout_ms: int = 5000):
 
         # Use an in-page timer to keep the Playwright transport active.
         try:
-            await page.evaluate("() => new Promise(r => setTimeout(r, 500))")
+            await page.evaluate("() => new Promise(r => setTimeout(r, 300))")
         except Exception:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
 
     # Give the page one last short rendering window.
     try:
-        await page.evaluate("() => new Promise(r => setTimeout(r, 500))")
+        await page.evaluate("() => new Promise(r => setTimeout(r, 300))")
     except Exception:
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.3)
 
 
 # Overlay and page-state detection
@@ -987,6 +982,7 @@ async def _take_snapshot(
     action_context: str | None = None,
     run_dismiss: bool = False,
     include_text: bool = True,
+    full: bool = False,
 ) -> list[TextContent]:
     """Build the full page snapshot used after major page changes."""
 
@@ -1009,7 +1005,7 @@ async def _take_snapshot(
         )
 
     # Refresh the in-memory element cache for later click and type actions.
-    elements, tree_text = await get_accessibility_tree(state.page)
+    elements, tree_text = await get_accessibility_tree(state.page, full=full)
     _last_elements = elements
 
     url = state.page.url
@@ -1053,15 +1049,16 @@ async def _take_snapshot(
             parts.append("\n### Page Text Preview\n(no text content detected — page may still be loading)")
 
     # Expose the parsed accessibility tree for structural context.
+    tree_label = "### Accessibility Tree" if full else "### Accessibility Tree (main area)"
     if tree_text.strip():
-        parts.append(f"\n### Accessibility Tree (main area)\n```\n{tree_text}\n```")
+        parts.append(f"\n{tree_label}\n```\n{tree_text}\n```")
     else:
         parts.append("\n### Accessibility Tree\n(empty — page may not have rendered yet)")
 
     # Finish with the clickable and fillable controls list.
     parts.append("\n### Interactive elements")
     interactive_lines = _format_interactive_list(
-        elements, region_filter=None, max_items=MAX_MAIN_INTERACTIVE, skip_noise=True
+        elements, region_filter=None, max_items=MAX_MAIN_INTERACTIVE * 2 if full else MAX_MAIN_INTERACTIVE, skip_noise=not full
     )
     if interactive_lines:
         parts.extend(interactive_lines)

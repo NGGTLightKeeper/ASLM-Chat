@@ -32,6 +32,8 @@ class DomainInfo:
     rate_limit_headers: List[str] = field(default_factory=list)
     notes: str = ""
     response_time_ms: Optional[int] = None  # measured p95 latency from bench_domains.py
+    try_preview_bot: bool = False  # try social-media bot UA probe (Telegrambot, WhatsApp, etc.)
+    use_warp: bool = False  # route through Cloudflare WARP SOCKS5 proxy as fallback
 
 # Access strategy models.
 # Resolved access strategy record.
@@ -125,6 +127,8 @@ class DomainRegistry:
                     rate_limit_headers=entry.get("rate_limit_headers") or [],
                     notes=entry.get("notes") or "",
                     response_time_ms=int(v) if (v := entry.get("response_time_ms")) is not None else None,
+                    try_preview_bot=bool(entry.get("try_preview_bot", False)),
+                    use_warp=bool(entry.get("use_warp", False)),
                 )
                 if not info.topics:
                     info.topics = ["general"]
@@ -187,6 +191,8 @@ class DomainRegistry:
             rate_limit_headers=list(static_info.rate_limit_headers),
             notes=static_info.notes,
             response_time_ms=static_info.response_time_ms,
+            try_preview_bot=static_info.try_preview_bot,
+            use_warp=static_info.use_warp,
         )
 
     # Lookup helpers.
@@ -282,6 +288,18 @@ class DomainRegistry:
         """Return whether the domain specifically prefers Camoufox."""
 
         return self.lookup(url_or_domain).method == "camoufox"
+
+    # Strategy helpers.
+    def should_try_preview_bot(self, url_or_domain: str) -> bool:
+        """Return whether the domain should try the preview-bot probe."""
+
+        return self.lookup(url_or_domain).try_preview_bot
+
+    # Strategy helpers.
+    def should_use_warp(self, url_or_domain: str) -> bool:
+        """Return whether the domain should try the WARP fallback path."""
+
+        return self.lookup(url_or_domain).use_warp
 
     # Strategy helpers.
     def get_feed_url(self, url_or_domain: str) -> Optional[str]:

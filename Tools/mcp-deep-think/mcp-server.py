@@ -24,7 +24,14 @@ TOOLS = [
     {
         "id": "deep_think",
         "name": "Deep Think",
-        "description": "Run the Deep Think research swarm and return the formatted report.",
+        "description": (
+            "Launch the Deep Think multi-agent research swarm on a question or task. "
+            "A coordinator spawns specialist sub-agents that iterate through reflect, search, python, and finish cycles. "
+            "Returns a structured Markdown report with findings, reasoning trace, and source references saved to _out/<task_id>/. "
+            "mode='full' produces a comprehensive report with all sub-agent findings included. "
+            "mode='quick' runs a single fast pass — suitable for quick factual lookups. "
+            "WARNING: full mode can take several minutes. Do not interrupt — wait for the report."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -129,7 +136,7 @@ def register_tools(mcp) -> None:
 
     @mcp.tool()
     async def deep_think(query: str, mode: str = "full") -> str:
-        """Run the Deep Think research swarm and return the formatted report."""
+        """Launch the Deep Think multi-agent research swarm on a question or task. A coordinator spawns specialist sub-agents that iterate through reflect, search, python, and finish cycles. Returns a structured Markdown report with findings, reasoning trace, and source references saved to _out/<task_id>/. mode='full' produces a comprehensive report with all sub-agent findings included. mode='quick' runs a single fast pass suitable for quick factual lookups. WARNING: full mode can take several minutes — wait for completion."""
 
         session = None
         try:
