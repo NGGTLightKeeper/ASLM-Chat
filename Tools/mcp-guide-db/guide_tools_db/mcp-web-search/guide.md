@@ -106,7 +106,7 @@ Rules:
 - **Do not use for web pages or repo homepages** — only for direct file URLs with a known extension (.pdf, .zip, .csv, etc.).
 - **Hard cap: 50 MB. Never pass `max_size_mb` above 50.** For large datasets use `bash("curl -L -o file.csv URL")` inside the sandbox instead.
 - `allowed_types` accepts: `"text"`, `"media"`, `"archive"`, `"data"` — pass it when you know the expected category.
-- File lands in `task/{save_to}/{filename}` — immediately accessible via `bash(...)` or `show_image(...)` in the sandbox.
+- File lands in `task/{save_to}/{filename}` — immediately accessible via `bash(...)` or `read(...)` in the sandbox.
 - Executables and scripts (`.exe`, `.sh`, `.py`, `.dll`, etc.) are hard-blocked server-side.
 
 Workflow:

@@ -386,6 +386,8 @@ def _run_tool_loop(
             call_context = dict(tool_context or {})
             call_context.update(
                 {
+                    "engine": "ollama-service",
+                    "model_name": model_name,
                     "tool_alias": tool_call["name"],
                     "tool_arguments": tool_call.get("arguments") or {},
                     "tool_call_index": tool_call_index,

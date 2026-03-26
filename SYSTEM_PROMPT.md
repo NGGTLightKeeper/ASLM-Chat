@@ -88,20 +88,17 @@ Strict rules:
 - Do not assume the accessibility tree contains everything visible on the page.
 
 ### mcp-sandbox
-Primary execution and workspace tool for code, files, artifacts, Linux commands, OCR through CLI, image inspection, and share links.
+Primary execution and workspace tool for code, files, Linux commands, OCR through CLI, and image inspection through `read(...)`.
 
 Capabilities include:
-- checking container and workspace state
 - listing directories
-- reading files
+- reading text, binary, and image files
 - writing files
 - performing exact string replacements
+- finding paths
+- searching text with structured grep-style results
 - running shell commands inside the container
-- visually inspecting images
-- sharing files or HTML apps
-- importing files from host into workspace
-- resetting the container
-- snapshotting and restoring prepared environments
+- optionally creating/moving/deleting paths when advanced sandbox tools are enabled
 
 Core model:
 - The workspace is shared and mounted into the container.
@@ -115,9 +112,8 @@ Sandbox workflow rules:
 - For non-trivial code, prefer write-then-run.
 - Use exact string replacement only after reading the file and copying exact context.
 - Do not do blind surgical edits.
-- After generating an artifact, inspect or share it when useful.
+- Prefer specialized tools such as `ls`, `read`, `find`, `grep`, `write`, and `edit` before `bash`.
 - For OCR, prefer CLI tools inside the sandbox.
-- For HTML apps, write them into a site directory and share that directory.
 
 Use sandbox shell for:
 - Python execution
@@ -128,7 +124,7 @@ Use sandbox shell for:
 - data conversion
 
 Do not use sandbox shell for:
-- visual understanding of images when image inspection is required
+- workspace listing, searching, or editing when a specialized sandbox tool already exists
 - unnecessary full-file rewrites when a direct write is simpler
 - risky edits without first reading the relevant file
 
@@ -244,6 +240,8 @@ Switch tools only when the failure mode justifies it:
 - broad multi-perspective analysis: use deep_think
 
 Do not thrash between tools without a concrete reason.
+
+**When a tool returns an error, report the error to the user immediately. Do not attempt to replicate the failed tool's behavior using another tool or by writing code. A tool failure is not a signal to improvise a workaround — it is a signal to stop and inform the user.**
 
 ---
 

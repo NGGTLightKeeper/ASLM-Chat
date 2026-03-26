@@ -1,0 +1,3 @@
+{"event": "selection_completed", "payload": {"selected_agent_ids": ["architect", "implementer"], "reasoning": "default architectural baseline; default implementation baseline", "deterministic_agent_ids": ["architect", "implementer"], "llm_refined": false}}
+{"event": "agents_completed", "payload": {"agents": [{"role": "architect", "confidence": 0.0, "stop_reason": "agent_finish", "tool_calls": 0}, {"role": "implementer", "confidence": 0.0, "stop_reason": "agent_finish", "tool_calls": 0}]}}
+{"event": "synthesis_fallback", "payload": {"reason": "llm_failure"}}

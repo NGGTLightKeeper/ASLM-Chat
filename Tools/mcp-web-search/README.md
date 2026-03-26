@@ -57,12 +57,15 @@ Search the internet and local YaCy index.
   - `"ddgs"` — external search via DDGS only
 
 **Behavior:**
-- `Preview` depends on mode in `config.py`: `legacy` — first cleaned page lines, `semantic` — relevant chunks (E5)
+- `Preview` now uses a denser cleanup pipeline: DOM noise stripping -> article extraction -> boilerplate removal -> optional semantic chunk selection
+- `legacy` mode keeps the cleaned dense preview without semantic chunking; `semantic` mode compresses to the most relevant chunks (E5) and allows soft result reranking
 - Results from trusted DDGS domains are automatically submitted to YaCy for indexing (self-learning)
 - Blocks PDF, video, social media (YouTube, Twitter/X, TikTok, Vimeo)
 
 **Preview mode config (`config.py`):**
 - `WEB_SEARCH_MODE = "semantic"` (default) or `"legacy"`
+- `WEB_SEARCH_PREVIEW_PROFILE = "speed" | "balanced" | "quality"` tunes preview density and latency
+- `WEB_SEARCH_PREVIEW_RERANK = "soft" | "off"` controls post-preview result reordering in single-query mode
 - `WEB_SEARCH_SEMANTIC_REQUIRE_CUDA = True` requires CUDA for `semantic` mode
 - On CUDA/model initialization error, automatically falls back to `legacy`
 

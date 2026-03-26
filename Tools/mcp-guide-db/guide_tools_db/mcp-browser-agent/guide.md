@@ -32,7 +32,7 @@ The model works with:
 **Key principles:**
 
 1. The working unit is the `ref` from the **latest** snapshot — not a DOM selector
-2. The accessibility tree may not contain all text content on JS-heavy (SPA) pages — use `browser_screenshot()` + `show_image()` for visual inspection when text extraction is insufficient
+2. The accessibility tree may not contain all text content on JS-heavy (SPA) pages — use `browser_screenshot()` + sandbox `read()` for visual inspection when text extraction is insufficient
 3. Refs expire after every action — always use refs from the most recent snapshot
 
 ---
@@ -150,7 +150,7 @@ Take a PNG screenshot of the current page and save it to `_in/`.
 | --- | --- | --- |
 | `full_page` | Capture full scrollable page | `false` |
 
-Returns the file path and a `show_image()` hint. Use `show_image(path)` in the Python sandbox to visually inspect the screenshot.
+Returns the file path and a sandbox `read()` hint. Use `read(path)` in the sandbox to visually inspect the screenshot.
 
 **When to use:**
 
@@ -161,8 +161,8 @@ Returns the file path and a `show_image()` hint. Use `show_image(path)` in the P
 
 ```text
 1. browser_screenshot()
-   → returns: "Screenshot saved: ...\nCall show_image('...') to inspect visually."
-2. show_image('_in/screenshot_<ts>.png')   ← run in Python sandbox to see it
+   → returns: "Screenshot saved: ...\nCall read('...') to inspect visually."
+2. read('_in/screenshot_<ts>.png')   ← run in sandbox to see it
 ```
 
 ```json
@@ -197,7 +197,7 @@ Situations detected:
 5. Identify refs from snapshot → browser_click(ref) or browser_type(ref, ...)
 6. Each action returns a compact snapshot with new refs — use them immediately
 7. If you need the full tree or more content → browser_snapshot(scroll="down")
-8. If text is missing from tree → browser_screenshot() → show_image(path)
+8. If text is missing from tree → browser_screenshot() → read(path)
 ```
 
 ---
@@ -226,7 +226,7 @@ Situations detected:
 | Submit / keyboard navigation / dismiss | `browser_click(key="Enter")` |
 | Fill a form field | `browser_type` |
 | CAPTCHA / login / overlay block | `browser_wait_for_user` |
-| Visual inspection / canvas / iframe | `browser_screenshot` → `show_image` |
+| Visual inspection / canvas / iframe | `browser_screenshot` → `read` |
 
 ---
 
@@ -251,7 +251,7 @@ Situations detected:
 | 4 | Calling `browser_click` on a CAPTCHA — use `browser_wait_for_user` |
 | 5 | Thinking in CSS selectors — this tool is ref-based, not selector-based |
 | 6 | Using separate `browser_click` calls for each checkbox — use `refs: [...]` batch instead |
-| 7 | Assuming a screenshot was understood visually — always follow with `show_image()` |
+| 7 | Assuming a screenshot was understood visually — always follow with sandbox `read()` |
 
 ---
 
@@ -276,7 +276,7 @@ Situations detected:
 
 ```text
 1. browser_screenshot()
-2. show_image(path)                ← run in Python sandbox
+2. read(path)                      ← run in sandbox
 ```
 
 ### Overlay won't go away
