@@ -1,6 +1,7 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 import asyncio
+import os
 import sys
 import time
 from pathlib import Path
@@ -153,12 +154,13 @@ TOOLS = [
 
 
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
-    """Expose this tool server only for Ollama tool-calling flows."""
+    """Expose this tool server for engines that support tool-calling."""
 
-    return engine == "ollama-service"
+    return engine in ("ollama-service", "lms")
 
 
 _REGISTERED_TOOL_FUNCTIONS: dict[str, Any] | None = None
+_OP_LOG_ENABLED = os.getenv("MCP_WEB_SEARCH_OP_LOG", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 class _ToolCollector:
@@ -174,6 +176,24 @@ class _ToolCollector:
             return fn
 
         return decorator
+
+
+def _short_repr(value: Any, limit: int = 180) -> str:
+    text = repr(value)
+    if len(text) > limit:
+        text = text[: limit - 3] + "..."
+    return text
+
+
+def _tool_log(event: str, tool: str, **fields: Any) -> None:
+    if not _OP_LOG_ENABLED:
+        return
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    extras = " ".join(f"{key}={_short_repr(val)}" for key, val in fields.items() if val is not None)
+    line = f"[mcp-web-search] {stamp} {event} tool={tool}"
+    if extras:
+        line += f" {extras}"
+    print(line, file=sys.stderr, flush=True)
 
 
 def _get_registered_tool_functions() -> dict[str, Any]:
@@ -216,7 +236,15 @@ async def call_tool(tool_id: str, arguments: dict[str, Any] | None, context: dic
                 except Exception:
                     pass
 
-    return await handler(**call_args)
+    t0 = time.time()
+    _tool_log("start", tool_id, path="dispatcher", args=call_args)
+    try:
+        result = await handler(**call_args)
+    except Exception as exc:
+        _tool_log("error", tool_id, path="dispatcher", elapsed_ms=int((time.time() - t0) * 1000), error=str(exc))
+        raise
+    _tool_log("finish", tool_id, path="dispatcher", elapsed_ms=int((time.time() - t0) * 1000))
+    return result
 
 
 def _is_yacy_enabled() -> bool:
@@ -369,6 +397,8 @@ def register_tools(mcp) -> None:
           WEB_SEARCH_MODE = "legacy" | "semantic"
         """
         import json as _json
+        _tool_t0 = time.time()
+        _tool_log("start", "web_search", path="fastmcp", query=query, limit=limit, deep=deep)
         yacy_enabled = _ensure_yacy_started()
 
         # Keepalive: send periodic log pings so LMS doesn't kill the WebSocket connection.
@@ -704,7 +734,24 @@ def register_tools(mcp) -> None:
 
         _ping_task = asyncio.create_task(_ping())
         try:
-            return await _run()
+            result = await _run()
+            _tool_log(
+                "finish",
+                "web_search",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                blocks=len(result) if isinstance(result, list) else None,
+            )
+            return result
+        except Exception as exc:
+            _tool_log(
+                "error",
+                "web_search",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                error=str(exc),
+            )
+            raise
         finally:
             _ping_task.cancel()
 
@@ -725,6 +772,8 @@ def register_tools(mcp) -> None:
           Nothing is written if the page fails to load.
         """
         import json as _json
+        _tool_t0 = time.time()
+        _tool_log("start", "read_page", path="fastmcp", url=url, save=save)
 
         urls = _parse_url_arg(url)
         if not urls:
@@ -863,9 +912,26 @@ def register_tools(mcp) -> None:
 
         try:
             results = await asyncio.gather(*tasks)
+            final_results = list(results)
+            _tool_log(
+                "finish",
+                "read_page",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                items=len(final_results),
+            )
+            return final_results
+        except Exception as exc:
+            _tool_log(
+                "error",
+                "read_page",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                error=str(exc),
+            )
+            raise
         finally:
             _ping_task_rp.cancel()
-        return list(results)
 
     # Research tools.
     # Register the deep research tool.
@@ -880,13 +946,17 @@ def register_tools(mcp) -> None:
         import sys
         import os
         import datetime
+        _tool_t0 = time.time()
+        _tool_log("start", "deep_research", path="fastmcp", query=query, depth=depth)
 
         _ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         task_id = f"research_{_ts}"
         script  = SCRIPTS_DIR / "deep_research.py"
 
         if not script.exists():
-            return f"Error: Script not found: {script}"
+            result = f"Error: Script not found: {script}"
+            _tool_log("finish", "deep_research", path="fastmcp", elapsed_ms=int((time.time() - _tool_t0) * 1000), status="missing_script")
+            return result
 
         try:
             env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
@@ -973,18 +1043,46 @@ def register_tools(mcp) -> None:
                     break
 
             if report:
-                return report.read_text(encoding="utf-8", errors="replace")
+                result = report.read_text(encoding="utf-8", errors="replace")
+                _tool_log(
+                    "finish",
+                    "deep_research",
+                    path="fastmcp",
+                    elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                    task_id=task_id,
+                    status="report_found",
+                )
+                return result
 
             err = stderr.decode('utf-8', errors='replace')[-3000:]
             out = stdout.decode('utf-8', errors='replace')[-1000:]
-            return (
+            result = (
                 f"Error: Process finished (code {proc.returncode}) but report.md not found.\n"
                 f"OUT_DIR: {OUT_DIR}\nPROJECT_DIR: {PROJECT_DIR}\n"
                 f"task_id: {task_id}\n\nStderr:\n{err}\nStdout:\n{out}"
             )
+            _tool_log(
+                "finish",
+                "deep_research",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                task_id=task_id,
+                status="report_missing",
+                returncode=proc.returncode,
+            )
+            return result
 
         except Exception as e:
-            return f"Error: Launch error: {e}"
+            result = f"Error: Launch error: {e}"
+            _tool_log(
+                "error",
+                "deep_research",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                task_id=task_id,
+                error=str(e),
+            )
+            return result
 
     # Download helpers.
 
@@ -1051,12 +1149,40 @@ def register_tools(mcp) -> None:
 
         Returns: {status, file, size_bytes, content_type, message}
         """
-        return await _keepalive_download(
-            download_file(
-                url=url,
-                project_dir=PROJECT_DIR,
-                save_to=save_to,
-                allowed_types=allowed_types,
-                max_size_mb=min(max_size_mb, 50),
-            )
+        _tool_t0 = time.time()
+        _tool_log(
+            "start",
+            "import_web_file",
+            path="fastmcp",
+            url=url,
+            save_to=save_to,
+            allowed_types=allowed_types,
+            max_size_mb=max_size_mb,
         )
+        try:
+            result = await _keepalive_download(
+                download_file(
+                    url=url,
+                    project_dir=PROJECT_DIR,
+                    save_to=save_to,
+                    allowed_types=allowed_types,
+                    max_size_mb=min(max_size_mb, 50),
+                )
+            )
+            _tool_log(
+                "finish",
+                "import_web_file",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                status=result.get("status") if isinstance(result, dict) else None,
+            )
+            return result
+        except Exception as exc:
+            _tool_log(
+                "error",
+                "import_web_file",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                error=str(exc),
+            )
+            raise

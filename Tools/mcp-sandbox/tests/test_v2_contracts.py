@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import importlib
 import os
 import shutil
 import sys
@@ -15,7 +14,6 @@ if str(SRC) not in sys.path:
 
 os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT.parent.parent))
 
-from sandbox import config as sandbox_config  # noqa: E402
 from sandbox import workspace  # noqa: E402
 from sandbox.api import handle_tool  # noqa: E402
 
@@ -30,18 +28,81 @@ class SandboxV2ContractsTests(unittest.TestCase):
             else:
                 child.unlink()
 
-    def test_write_and_read_text_use_v2_envelope(self) -> None:
+    def test_write_and_bash_cat_text(self) -> None:
         write_result = handle_tool("write", {"path": "notes.txt", "content": "alpha\nbeta\n"})
         self.assertTrue(write_result["ok"])
         self.assertEqual(write_result["tool"], "write")
         self.assertIn("bytes_written", write_result["result"])
 
-        read_result = handle_tool("read", {"path": "notes.txt", "start_line": 1, "end_line": 1})
-        self.assertTrue(read_result["ok"])
-        self.assertEqual(read_result["tool"], "read")
-        self.assertEqual(read_result["result"]["kind"], "text")
-        self.assertEqual(read_result["result"]["content"], "alpha")
-        self.assertEqual(read_result["warnings"], [])
+        # Read via bash cat (routed to internal read)
+        cat_result = handle_tool("bash", {"command": "cat notes.txt"})
+        self.assertTrue(cat_result["ok"])
+        self.assertEqual(cat_result["tool"], "bash")
+        self.assertIn("alpha", cat_result["result"]["stdout"])
+        self.assertTrue(cat_result["result"].get("routed", False))
+
+    def test_bash_head_routes_correctly(self) -> None:
+        handle_tool("write", {"path": "lines.txt", "content": "\n".join(f"line{i}" for i in range(1, 21))})
+        result = handle_tool("bash", {"command": "head -n 5 lines.txt"})
+        self.assertTrue(result["ok"])
+        self.assertIn("line1", result["result"]["stdout"])
+        self.assertNotIn("line10", result["result"]["stdout"])
+        self.assertTrue(result["result"].get("routed", False))
+
+    def test_bash_grep_routes_correctly(self) -> None:
+        handle_tool("write", {"path": "src/main.py", "content": "print('hello')\n"})
+        handle_tool("write", {"path": "src/other.txt", "content": "HELLO\n"})
+
+        result = handle_tool("bash", {"command": "grep -ri hello ."})
+        self.assertTrue(result["ok"])
+        stdout = result["result"]["stdout"]
+        self.assertIn("hello", stdout.lower())
+        self.assertTrue(result["result"].get("routed", False))
+
+    def test_bash_find_routes_correctly(self) -> None:
+        handle_tool("write", {"path": "src/main.py", "content": "print('hello')\n"})
+
+        result = handle_tool("bash", {"command": "find . -name '*.py'"})
+        self.assertTrue(result["ok"])
+        self.assertIn("main.py", result["result"]["stdout"])
+        self.assertTrue(result["result"].get("routed", False))
+
+    def test_bash_mkdir_routes_correctly(self) -> None:
+        result = handle_tool("bash", {"command": "mkdir -p deep/nested/dir"})
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["result"].get("routed", False))
+
+        ls_result = handle_tool("bash", {"command": "ls deep"})
+        self.assertTrue(ls_result["ok"])
+        self.assertIn("nested", ls_result["result"]["stdout"])
+
+    def test_bash_mv_routes_correctly(self) -> None:
+        handle_tool("write", {"path": "old.txt", "content": "data"})
+        result = handle_tool("bash", {"command": "mv old.txt new.txt"})
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["result"].get("routed", False))
+
+        cat_result = handle_tool("bash", {"command": "cat new.txt"})
+        self.assertTrue(cat_result["ok"])
+        self.assertIn("data", cat_result["result"]["stdout"])
+
+    def test_bash_rm_routes_correctly(self) -> None:
+        handle_tool("write", {"path": "temp.txt", "content": "delete me"})
+        result = handle_tool("bash", {"command": "rm temp.txt"})
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["result"].get("routed", False))
+
+        cat_result = handle_tool("bash", {"command": "cat temp.txt"})
+        self.assertFalse(cat_result["ok"])
+
+    def test_compound_commands_go_to_real_bash(self) -> None:
+        """Pipes, chains, and subshells should NOT be intercepted."""
+        # This will go to real bash (which may fail without container) —
+        # but the point is it should NOT be routed.
+        result = handle_tool("bash", {"command": "echo hello | grep hello"})
+        # If real bash is available, result.ok may be True or False depending
+        # on container state, but routed should NOT be True.
+        self.assertFalse(result.get("result", {}).get("routed", False))
 
     def test_read_image_returns_inline_preview_metadata(self) -> None:
         png_bytes = base64.b64decode(
@@ -50,12 +111,10 @@ class SandboxV2ContractsTests(unittest.TestCase):
         image_path = self.task_root / "pixel.png"
         image_path.write_bytes(png_bytes)
 
-        result = handle_tool("read", {"path": "pixel.png"})
+        # file command should report image type
+        result = handle_tool("bash", {"command": "file pixel.png"})
         self.assertTrue(result["ok"])
-        self.assertEqual(result["result"]["kind"], "image")
-        self.assertEqual(result["result"]["mime"], "image/png")
-        self.assertIsNotNone(result["result"]["preview"])
-        self.assertIn("data_base64", result["result"]["preview"])
+        self.assertIn("image", result["result"]["stdout"])
 
     def test_edit_returns_typed_error_for_ambiguous_match(self) -> None:
         handle_tool("write", {"path": "app.txt", "content": "hello\nhello\n"})
@@ -73,41 +132,10 @@ class SandboxV2ContractsTests(unittest.TestCase):
         self.assertEqual(result["error"]["type"], "ambiguous_match")
         self.assertEqual(result["result"]["match_count"], 2)
 
-    def test_find_and_grep_return_structured_matches(self) -> None:
-        handle_tool("write", {"path": "src/main.py", "content": "print('hello')\n"})
-        handle_tool("write", {"path": "src/other.txt", "content": "HELLO\n"})
-
-        find_result = handle_tool("find", {"path": ".", "name_pattern": "*.py"})
-        self.assertTrue(find_result["ok"])
-        self.assertEqual(find_result["tool"], "find")
-        self.assertEqual(find_result["result"]["matches"][0]["path"], "src/main.py")
-
-        grep_result = handle_tool("grep", {"pattern": "hello", "path": ".", "case_sensitive": False})
-        self.assertTrue(grep_result["ok"])
-        self.assertEqual(grep_result["tool"], "grep")
-        self.assertGreaterEqual(len(grep_result["result"]["matches"]), 2)
-
-
-class SandboxAdvancedToolDiscoveryTests(unittest.TestCase):
-    def test_advanced_tools_flag_adds_optional_tools(self) -> None:
-        previous = os.environ.get("SANDBOX_ADVANCED_TOOLS")
-        os.environ["SANDBOX_ADVANCED_TOOLS"] = "true"
-        try:
-            config_module = importlib.reload(sandbox_config)
-            api_module = importlib.import_module("sandbox.api")
-            api_module = importlib.reload(api_module)
-            tool_ids = [tool["id"] for tool in api_module.TOOLS]
-            self.assertIn("mkdir", tool_ids)
-            self.assertIn("move", tool_ids)
-            self.assertIn("delete", tool_ids)
-            self.assertTrue(config_module.ADVANCED_TOOLS_ENABLED)
-        finally:
-            if previous is None:
-                os.environ.pop("SANDBOX_ADVANCED_TOOLS", None)
-            else:
-                os.environ["SANDBOX_ADVANCED_TOOLS"] = previous
-            importlib.reload(sandbox_config)
-            importlib.reload(importlib.import_module("sandbox.api"))
+    def test_public_tools_are_bash_write_edit_only(self) -> None:
+        from sandbox.api import TOOLS
+        tool_ids = {t["id"] for t in TOOLS}
+        self.assertEqual(tool_ids, {"bash", "write", "edit"})
 
 
 if __name__ == "__main__":

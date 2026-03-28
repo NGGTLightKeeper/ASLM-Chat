@@ -47,13 +47,6 @@ MAX_IMAGE_PREVIEW_BYTES = int(os.getenv("SANDBOX_MAX_IMAGE_PREVIEW_BYTES", "2000
 MAX_LS_ENTRIES = int(os.getenv("SANDBOX_MAX_LS_ENTRIES", "500"))
 MAX_FIND_RESULTS = int(os.getenv("SANDBOX_MAX_FIND_RESULTS", "200"))
 MAX_GREP_RESULTS = int(os.getenv("SANDBOX_MAX_GREP_RESULTS", "200"))
-ADVANCED_TOOLS_ENABLED = os.getenv("SANDBOX_ADVANCED_TOOLS", "true").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
 CPU_LIMIT = os.getenv("SANDBOX_CPU_LIMIT", "4")
 THREAD_LIMIT = int(os.getenv("SANDBOX_THREAD_LIMIT", "4"))
 MEMORY_LIMIT = os.getenv("SANDBOX_MEMORY_LIMIT", "3g")

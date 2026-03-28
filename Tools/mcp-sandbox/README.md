@@ -4,29 +4,36 @@ Sandbox v2 is the workspace and execution server for code, files, OCR, and Linux
 
 ## Public tools
 
-Core tools:
-- `ls(path=".", depth=1, max_entries=...)`
-- `read(path, start_line=None, end_line=None, max_bytes=...)`
-- `write(path, content)`
-- `edit(path, old_str, new_str, replace_all=False)`
-- `find(path=".", name_pattern=None, type="any", max_depth=8, max_results=...)`
-- `grep(pattern, path=".", glob=None, case_sensitive=False, context_before=0, context_after=0, max_results=...)`
-- `bash(command, cwd=".", timeout_s=60, stdin=None)`
+The model sees three tools:
 
-Optional advanced tools when `SANDBOX_ADVANCED_TOOLS=true`:
-- `mkdir(path, parents=True)`
-- `move(src, dst, overwrite=False)`
-- `delete(path, recursive=False)`
+- `bash(command, cwd=".", timeout_s=60, stdin=None)` — universal interface
+- `write(path, content)` — create or overwrite a file
+- `edit(path, old_str, new_str, replace_all=False)` — surgical text replacement
 
-Removed from the public model-facing API:
-- `status`
-- `reset`
-- `snapshot`
-- `restore`
-- `share`
-- `import_from_host`
-- `show_image`
-- legacy names such as `list_directory`, `read_file`, `write_file`, `str_replace`
+## Bash supervisor
+
+Simple shell commands are transparently routed to internal structured tools
+for safety, path validation, and structured output. Compound commands (pipes,
+chains, subshells) and execution commands go to real bash inside a Docker
+container.
+
+Routed commands include:
+
+| Shell command | Internal operation |
+| --- | --- |
+| `cat`, `head`, `tail`, `less`, `more` | `read(path, ...)` |
+| `ls`, `tree` | `ls(path, ...)` |
+| `find`, `fd` | `find(path, ...)` |
+| `grep`, `rg`, `egrep` | `grep(pattern, ...)` |
+| `sed -n '10,50p' file` | `read(path, start_line, end_line)` |
+| `wc`, `file`, `stat` | file metadata via `read(...)` |
+| `mkdir`, `touch` | `mkdir(...)` / `write(...)` |
+| `mv` | `move(src, dst)` |
+| `cp` (single file) | `read(...)` + `write(...)` |
+| `rm` | `delete(path, ...)` |
+| `pwd` | returns workspace root |
+
+Everything else (python, pytest, git, npm, pip, curl, etc.) goes to real bash.
 
 ## Result envelope
 
@@ -35,7 +42,7 @@ Every tool returns the same shape:
 ```json
 {
   "ok": true,
-  "tool": "read",
+  "tool": "bash",
   "result": {},
   "error": null,
   "warnings": [],
@@ -43,42 +50,16 @@ Every tool returns the same shape:
 }
 ```
 
-Errors are typed:
-
-```json
-{
-  "ok": false,
-  "tool": "edit",
-  "result": {},
-  "error": {
-    "type": "match_not_found",
-    "message": "old_str not found in file."
-  },
-  "warnings": [],
-  "truncated": false
-}
-```
-
-## Usage notes
-
-- Prefer specialized tools before `bash`.
-- Treat `task/` as the workspace root and use relative paths like `.` or `src/app.py`.
-- `read` is universal:
-  - text files return content and line metadata
-  - binary files return metadata only
-  - images return metadata plus inline preview payload when small enough
-- `write` is for full file creation or overwrite.
-- `edit` is for exact literal replacements and fails on ambiguous matches unless `replace_all=true`.
-- `bash` is the escape hatch for execution, installs, tests, builds, and OCR.
+Routed bash results include `"routed": true` inside the result object.
 
 ## Workflow
 
 Typical coding flow:
 
 ```text
-ls(...)
-read(...)
-write(...) or edit(...)
-bash(...)
-read(...) again if you need output or visual image inspection
+bash("ls -la")
+bash("grep -rn 'pattern' .")
+bash("cat file.py")
+edit("file.py", old_str, new_str)
+bash("python file.py")
 ```

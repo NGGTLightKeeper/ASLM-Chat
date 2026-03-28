@@ -14,6 +14,10 @@ SERVER_ROOT = Path(__file__).resolve().parent
 if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
+ASLM_ROOT = Path(__file__).resolve().parents[2]
+if str(ASLM_ROOT) not in sys.path:
+    sys.path.insert(0, str(ASLM_ROOT))
+
 MCP_SERVER = {
     "id": "deep_think",
     "name": "Deep Think",
@@ -53,9 +57,9 @@ TOOLS = [
 
 
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
-    """Expose this tool server only for Ollama tool-calling flows."""
+    """Expose this tool server for engines that support tool-calling."""
 
-    return engine == "ollama-service"
+    return engine in ("ollama-service", "lms")
 
 
 async def _run_with_optional_keepalive(coro, session=None, interval: float = 10.0):
@@ -146,5 +150,5 @@ def register_tools(mcp) -> None:
 
         return await _deep_think(
             {"query": query, "mode": mode},
-            {"mcp_session": session},
+            {"engine": "lms", "mcp_session": session},
         )

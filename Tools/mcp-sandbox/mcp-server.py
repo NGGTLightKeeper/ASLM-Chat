@@ -12,9 +12,9 @@ from sandbox.api import MCP_SERVER, TOOL_HANDLERS, TOOLS, handle_tool
 
 
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
-    """Expose this tool server only for Ollama tool-calling flows."""
+    """Expose this tool server for engines that support tool-calling."""
 
-    return engine == "ollama-service"
+    return engine in ("ollama-service", "lms")
 
 
 def call_tool(

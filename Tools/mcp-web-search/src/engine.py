@@ -379,13 +379,67 @@ def _youtube_video_id(url: str) -> str | None:
 
 # Fetch transcript text for a YouTube URL.
 def _youtube_transcript(url: str) -> str:
-    """Fetch YouTube transcript: youtube-transcript-api first, yt-dlp as fallback."""
+    """Fetch YouTube transcript: yt-dlp first, youtube-transcript-api as fallback."""
     import re as _re
     video_id = _youtube_video_id(url)
     if not video_id:
         return f"Error: Could not extract video ID from: {url}"
 
-    # --- Attempt 1: youtube-transcript-api ---
+    yt_dlp_error = None
+
+    # --- Attempt 1: yt-dlp ---
+    try:
+        import yt_dlp, tempfile, os, glob as _glob
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ydl_opts = {
+                "skip_download": True,
+                "writesubtitles": True,
+                "writeautomaticsub": True,
+                "subtitleslangs": ["ru", "en"],
+                "subtitlesformat": "vtt",
+                "outtmpl": os.path.join(tmpdir, "sub"),
+                "quiet": False,
+                "no_warnings": False,
+                "logger": type("Logger", (), {"debug": lambda x: None, "info": lambda x: None, "warning": _debug_log, "error": _debug_log})(),
+            }
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+            except Exception as e:
+                yt_dlp_error = f"Video not accessible or no subtitles: {url}"
+                _debug_log(f"yt-dlp download failed: {e}")
+            else:
+                vtt_files = _glob.glob(os.path.join(tmpdir, "*.vtt"))
+                if not vtt_files:
+                    yt_dlp_error = f"No subtitles available for: {url}"
+                    _debug_log(f"No VTT files for {video_id}")
+                else:
+                    raw = open(vtt_files[0], encoding="utf-8", errors="replace").read()
+                    if not raw:
+                        yt_dlp_error = f"Subtitle file is empty for: {url}"
+                    else:
+                        lines = raw.splitlines()
+                        text_lines = []
+                        seen = set()
+                        for line in lines:
+                            line = line.strip()
+                            if not line or line.startswith("WEBVTT") or "-->" in line or _re.match(r"^\d+$", line):
+                                continue
+                            clean = _re.sub(r"<[^>]+>", "", line).strip()
+                            if clean and clean not in seen:
+                                seen.add(clean)
+                                text_lines.append(clean)
+
+                        if text_lines:
+                            text = " ".join(text_lines)
+                            return f"YouTube transcript (yt-dlp)\nVideo: {url}\n\n{text}"
+
+                        yt_dlp_error = f"No text extracted from subtitles for: {url}"
+    except Exception as e:
+        yt_dlp_error = f"Failed to fetch transcript for {url}: {e}"
+        _debug_log(f"yt-dlp failed for {video_id}: {e}")
+
+    # --- Attempt 2: youtube-transcript-api ---
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
         api = YouTubeTranscriptApi()
@@ -417,58 +471,13 @@ def _youtube_transcript(url: str) -> str:
                 return f"YouTube transcript (youtube-transcript-api)\nVideo: {url}\n\n{text}"
     except Exception as e:
         _debug_log(f"youtube-transcript-api import/init failed: {e}")
-
-    # --- Attempt 2: yt-dlp ---
-    try:
-        import yt_dlp, tempfile, os, glob as _glob
-        with tempfile.TemporaryDirectory() as tmpdir:
-            ydl_opts = {
-                "skip_download": True,
-                "writesubtitles": True,
-                "writeautomaticsub": True,
-                "subtitleslangs": ["ru", "en"],
-                "subtitlesformat": "vtt",
-                "outtmpl": os.path.join(tmpdir, "sub"),
-                "quiet": False,
-                "no_warnings": False,
-                "logger": type("Logger", (), {"debug": lambda x: None, "info": lambda x: None, "warning": _debug_log, "error": _debug_log})(),
-            }
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
-            except Exception as e:
-                _debug_log(f"yt-dlp download failed: {e}")
-                return f"Error: Video not accessible or no subtitles: {url}"
-
-            vtt_files = _glob.glob(os.path.join(tmpdir, "*.vtt"))
-            if not vtt_files:
-                _debug_log(f"No VTT files for {video_id}")
-                return f"Error: No subtitles available for: {url}"
-
-            raw = open(vtt_files[0], encoding="utf-8", errors="replace").read()
-            if not raw:
-                return f"Error: Subtitle file is empty for: {url}"
-
-            lines = raw.splitlines()
-            text_lines = []
-            seen = set()
-            for line in lines:
-                line = line.strip()
-                if not line or line.startswith("WEBVTT") or "-->" in line or _re.match(r"^\d+$", line):
-                    continue
-                clean = _re.sub(r"<[^>]+>", "", line).strip()
-                if clean and clean not in seen:
-                    seen.add(clean)
-                    text_lines.append(clean)
-
-            if not text_lines:
-                return f"Error: No text extracted from subtitles for: {url}"
-
-            text = " ".join(text_lines)
-            return f"YouTube transcript (yt-dlp)\nVideo: {url}\n\n{text}"
-    except Exception as e:
-        _debug_log(f"yt-dlp failed for {video_id}: {e}")
-        return f"Error: Failed to fetch transcript for {url}: {e}"
+    if yt_dlp_error:
+        return (
+            f"Error: yt-dlp failed for {url}. "
+            f"Fallback via youtube-transcript-api also failed. "
+            f"yt-dlp detail: {yt_dlp_error}"
+        )
+    return f"Error: Failed to fetch transcript for {url}"
 
 
 # Return whether a URL should be skipped for text extraction.
