@@ -42,6 +42,13 @@ class SearchConfig(BaseModel):
     enable_lightweight_read: bool = True
     lightweight_read_top_results: int = 1
     lightweight_read_char_budget: int = 2000
+    overdrive: bool = False
+    overdrive_human_behavior: bool = True
+    overdrive_ocr_fallback: bool = True
+    overdrive_parallel_timeout: float = 20.0
+    overdrive_ocr_timeout: float = 30.0
+    overdrive_browser_start_delay: float = 0.75
+    overdrive_browser_concurrency: int = 2
 
 
 # Sandbox settings
@@ -232,6 +239,14 @@ _ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
     "DEEP_THINK_SANDBOX_CONTAINER": ("sandbox", "container_name"),
     "DEEP_THINK_SANDBOX_IMAGE": ("sandbox", "image"),
     "DEEP_THINK_SANDBOX_IMAGE_SOURCE": ("sandbox", "image_source"),
+    # Overdrive mode overrides (also respond to SEARCH_OVERDRIVE_* vars).
+    "SEARCH_OVERDRIVE": ("search", "overdrive"),
+    "SEARCH_OVERDRIVE_HUMAN_BEHAVIOR": ("search", "overdrive_human_behavior"),
+    "SEARCH_OVERDRIVE_OCR_FALLBACK": ("search", "overdrive_ocr_fallback"),
+    "SEARCH_OVERDRIVE_PARALLEL_TIMEOUT": ("search", "overdrive_parallel_timeout"),
+    "SEARCH_OVERDRIVE_OCR_TIMEOUT": ("search", "overdrive_ocr_timeout"),
+    "SEARCH_OVERDRIVE_BROWSER_START_DELAY": ("search", "overdrive_browser_start_delay"),
+    "SEARCH_OVERDRIVE_BROWSER_CONCURRENCY": ("search", "overdrive_browser_concurrency"),
 }
 
 

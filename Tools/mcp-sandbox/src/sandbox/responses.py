@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass
+class SandboxToolError(Exception):
+    """Structured error raised by sandbox helpers."""
+
+    error_type: str
+    message: str
+    result: dict[str, Any] | None = None
+    warnings: list[str] | None = None
+    truncated: bool = False
+
+    def __str__(self) -> str:
+        return self.message
+
+
+def success_response(
+    tool: str,
+    result: dict[str, Any] | None = None,
+    *,
+    warnings: list[str] | None = None,
+    truncated: bool = False,
+) -> dict[str, Any]:
+    """Wrap a successful tool result in the sandbox v2 envelope."""
+
+    return {
+        "ok": True,
+        "tool": tool,
+        "result": result or {},
+        "error": None,
+        "warnings": list(warnings or []),
+        "truncated": bool(truncated),
+    }
+
+
+def error_response(
+    tool: str,
+    error_type: str,
+    message: str,
+    *,
+    result: dict[str, Any] | None = None,
+    warnings: list[str] | None = None,
+    truncated: bool = False,
+) -> dict[str, Any]:
+    """Wrap a failed tool result in the sandbox v2 envelope."""
+
+    return {
+        "ok": False,
+        "tool": tool,
+        "result": result or {},
+        "error": {
+            "type": error_type,
+            "message": message,
+        },
+        "warnings": list(warnings or []),
+        "truncated": bool(truncated),
+    }
+
+
+def exception_response(tool: str, exc: Exception) -> dict[str, Any]:
+    """Map Python exceptions into typed sandbox v2 errors."""
+
+    if isinstance(exc, SandboxToolError):
+        return error_response(
+            tool,
+            exc.error_type,
+            exc.message,
+            result=exc.result,
+            warnings=exc.warnings,
+            truncated=exc.truncated,
+        )
+
+    if isinstance(exc, FileNotFoundError):
+        return error_response(tool, "not_found", str(exc))
+    if isinstance(exc, NotADirectoryError):
+        return error_response(tool, "not_a_directory", str(exc))
+    if isinstance(exc, IsADirectoryError):
+        return error_response(tool, "is_a_directory", str(exc))
+    if isinstance(exc, PermissionError):
+        return error_response(tool, "permission_denied", str(exc))
+    if isinstance(exc, ValueError):
+        return error_response(tool, "invalid_arguments", str(exc))
+
+    return error_response(tool, "internal_error", str(exc))

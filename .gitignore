@@ -184,6 +184,7 @@ cython_debug/
 # MCP tools test logs and test data
 Tools/tests
 deploy.bat
+task
 
 # Deep Think
 Tools/mcp-deep-think/_out/
@@ -200,7 +201,7 @@ Tools/mcp-web-search/deep-research/downloaded_files/
 Tools/mcp-web-search/deep-research/latest_logs/
 Tools/mcp-web-search/services/yacy/*
 !Tools/mcp-web-search/services/yacy/*.bat
-
+Tools/mcp-web-search/tests/
 # UI
 staticfiles
 Settings/settings.json

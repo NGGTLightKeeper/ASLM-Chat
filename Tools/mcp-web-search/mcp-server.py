@@ -1,6 +1,7 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 import asyncio
+import os
 import sys
 import time
 from pathlib import Path
@@ -14,9 +15,12 @@ ASLM_ROOT = Path(__file__).resolve().parents[2]
 if str(ASLM_ROOT) not in sys.path:
     sys.path.insert(0, str(ASLM_ROOT))
 
+# Append src/ to sys.path so generic names like 'engine' resolve correctly,
+# but do NOT insert at position 0 — that would shadow src/ packages from other
+# tool servers (e.g. mcp-deep-think/src/orchestrator).
 SRC_ROOT = Path(__file__).resolve().parent / "src"
 if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
+    sys.path.append(str(SRC_ROOT))
 
 MCP_SERVER = {
     "id": "web_search",
@@ -29,8 +33,11 @@ TOOLS = [
         "id": "web_search",
         "name": "Web Search",
         "description": (
-            "Search the internet via DDGS and optionally YaCy. "
-            "Single query returns previews; multiple queries return compact batch results."
+            "Search the internet using DDGS (DuckDuckGo/Google/Brave/Bing) and local YaCy index in parallel. "
+            "Single query: returns results with page previews and snippet context. "
+            "Multiple queries (list of strings, up to 10): runs all in parallel, returns compact batch results without previews — total results capped proportionally. "
+            "Results include title, URL, snippet, and source badge (YaCy or DDGS). "
+            "Downloadable file URLs are flagged — use import_web_file to save them to workspace."
         ),
         "parameters": {
             "type": "object",
@@ -54,7 +61,13 @@ TOOLS = [
     {
         "id": "read_page",
         "name": "Read Page",
-        "description": "Read one or more URLs and extract page text or save structured page dumps.",
+        "description": (
+            "Fetch and extract text content from one or more URLs (HTML, PDF, GitHub, YouTube). "
+            "Automatically routes by domain registry: json_api domains use REST endpoints, hardened domains use Chrome TLS fingerprint, fortress domains are skipped. "
+            "YouTube URLs return a transcript. PDF URLs return extracted text. Reddit URLs use the JSON API. "
+            "save=True writes each page to task/pages/<slug>.json in the workspace instead of returning content. "
+            "Returns 'Source: <url>' header followed by extracted text for each URL."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -77,7 +90,15 @@ TOOLS = [
     {
         "id": "deep_research",
         "name": "Deep Research",
-        "description": "Run the long-form research pipeline and return the final report.",
+        "description": (
+            "Run the autonomous multi-step research pipeline on a question and return a final Markdown report. "
+            "Iteratively generates sub-queries, searches, reads pages, filters with NER, and synthesizes findings. "
+            "depth='low': ~4 queries, 8 sources, 3-5 min. "
+            "depth='medium': ~6 queries, 23 sources, 7-10 min. "
+            "depth='high': ~10 queries, 60 sources, 15+ min. "
+            "depth='extra': maximum depth with GLiNER NER filtering enabled. "
+            "Report is saved to _out/<task_id>/report.md. WARNING: this tool runs for a long time — do not interrupt."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -97,7 +118,15 @@ TOOLS = [
     {
         "id": "import_web_file",
         "name": "Import Web File",
-        "description": "Download a confirmed file URL into the task workspace.",
+        "description": (
+            "Download a file from a URL and save it to the task workspace. "
+            "Only call this when you have confirmed the URL points to a real downloadable file — either from a search result FILE/PDF badge or a read_page hint. "
+            "Do NOT call speculatively or for web pages, documentation sites, or GitHub repo root URLs. "
+            "save_to sets the subdirectory inside task/ (default: downloads/). "
+            "allowed_types filters by category: text (.pdf .docx .csv .json .xml), media (.mp3 .mp4 .jpg .png), archive (.zip .tar .gz .7z), data (.sqlite .db). "
+            "max_size_mb aborts download if file exceeds the limit (hard cap: 50 MB). "
+            "Returns status, saved file path, size_bytes, and content_type."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -125,12 +154,13 @@ TOOLS = [
 
 
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
-    """Expose this tool server only for Ollama tool-calling flows."""
+    """Expose this tool server for engines that support tool-calling."""
 
-    return engine == "ollama-service"
+    return engine in ("ollama-service", "lms")
 
 
 _REGISTERED_TOOL_FUNCTIONS: dict[str, Any] | None = None
+_OP_LOG_ENABLED = os.getenv("MCP_WEB_SEARCH_OP_LOG", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 class _ToolCollector:
@@ -146,6 +176,24 @@ class _ToolCollector:
             return fn
 
         return decorator
+
+
+def _short_repr(value: Any, limit: int = 180) -> str:
+    text = repr(value)
+    if len(text) > limit:
+        text = text[: limit - 3] + "..."
+    return text
+
+
+def _tool_log(event: str, tool: str, **fields: Any) -> None:
+    if not _OP_LOG_ENABLED:
+        return
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    extras = " ".join(f"{key}={_short_repr(val)}" for key, val in fields.items() if val is not None)
+    line = f"[mcp-web-search] {stamp} {event} tool={tool}"
+    if extras:
+        line += f" {extras}"
+    print(line, file=sys.stderr, flush=True)
 
 
 def _get_registered_tool_functions() -> dict[str, Any]:
@@ -165,12 +213,38 @@ def _get_registered_tool_functions() -> dict[str, Any]:
 async def call_tool(tool_id: str, arguments: dict[str, Any] | None, context: dict[str, Any] | None = None) -> Any:
     """Generic ASLM-compatible dispatcher for Web Search tools."""
 
+    import json as _json
+
     tool_functions = _get_registered_tool_functions()
     handler = tool_functions.get(tool_id)
     if handler is None:
         raise ValueError(f"Unknown tool: {tool_id}")
 
-    return await handler(**(arguments or {}))
+    call_args = dict(arguments or {})
+
+    # Ollama sometimes serializes array arguments as JSON strings.
+    # Deserialize them so batch mode (list queries, list URLs) works correctly.
+    for key in ("query", "url"):
+        val = call_args.get(key)
+        if isinstance(val, str):
+            stripped = val.strip()
+            if stripped.startswith("["):
+                try:
+                    parsed = _json.loads(stripped)
+                    if isinstance(parsed, list):
+                        call_args[key] = parsed
+                except Exception:
+                    pass
+
+    t0 = time.time()
+    _tool_log("start", tool_id, path="dispatcher", args=call_args)
+    try:
+        result = await handler(**call_args)
+    except Exception as exc:
+        _tool_log("error", tool_id, path="dispatcher", elapsed_ms=int((time.time() - t0) * 1000), error=str(exc))
+        raise
+    _tool_log("finish", tool_id, path="dispatcher", elapsed_ms=int((time.time() - t0) * 1000))
+    return result
 
 
 def _is_yacy_enabled() -> bool:
@@ -222,8 +296,10 @@ def register_tools(mcp) -> None:
         _badge_engine,
         _is_antibot,
         _fetch_previews,
+        _prepare_results_with_previews,
         _proportional_merge,
         _proportional_allot,
+        _normalize_url,
         _parse_url_arg,
         _fetch_reddit_json,
         _fetch_with_camoufox,
@@ -245,8 +321,67 @@ def register_tools(mcp) -> None:
 
     # Search tools.
     # Register the combined web search tool.
+    async def _llm_expand_query(query: str) -> list[str]:
+        """Call LM Studio to generate alternative search query variants."""
+        import aiohttp as _aio
+        import json as _j
+        try:
+            from config import (
+                LM_STUDIO_URL,
+                WEB_SEARCH_DEEP_MODEL,
+                WEB_SEARCH_DEEP_QUERY_COUNT,
+                WEB_SEARCH_DEEP_TEMPERATURE,
+                WEB_SEARCH_DEEP_TIMEOUT,
+            )
+        except ImportError:
+            LM_STUDIO_URL             = "http://127.0.0.1:1234/v1"
+            WEB_SEARCH_DEEP_MODEL     = "local-model"
+            WEB_SEARCH_DEEP_QUERY_COUNT = 3
+            WEB_SEARCH_DEEP_TEMPERATURE = 0.4
+            WEB_SEARCH_DEEP_TIMEOUT   = 15.0
+
+        system = (
+            "You are a search query optimizer. "
+            "Generate alternative search queries to improve recall. "
+            "Return ONLY a JSON array of strings, no explanation."
+        )
+        prompt = (
+            f'Generate {WEB_SEARCH_DEEP_QUERY_COUNT} alternative search queries for: "{query}"\n'
+            f"Return as JSON array of strings only."
+        )
+        payload = {
+            "model": WEB_SEARCH_DEEP_MODEL,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user",   "content": prompt},
+            ],
+            "temperature": WEB_SEARCH_DEEP_TEMPERATURE,
+            "max_tokens": 256,
+            "stream": False,
+        }
+        try:
+            async with _aio.ClientSession() as _s:
+                async with _s.post(
+                    f"{LM_STUDIO_URL}/chat/completions",
+                    json=payload,
+                    timeout=_aio.ClientTimeout(total=WEB_SEARCH_DEEP_TIMEOUT),
+                ) as resp:
+                    if resp.status != 200:
+                        return []
+                    data = await resp.json()
+                    text = data["choices"][0]["message"]["content"].strip()
+            # Extract JSON array from response.
+            import re as _re
+            m = _re.search(r"\[.*?\]", text, _re.DOTALL)
+            if m:
+                variants = _j.loads(m.group())
+                return [v.strip() for v in variants if isinstance(v, str) and v.strip()]
+        except Exception:
+            pass
+        return []
+
     @mcp.tool()
-    async def web_search(query: str | list[str], limit: int = 10) -> list[str]:
+    async def web_search(query: str | list[str], limit: int = 10, deep: bool = False) -> list[str]:
         """
         Internet search. Always uses both sources in parallel:
         half results from local YaCy index (+ global P2P network),
@@ -255,184 +390,370 @@ def register_tools(mcp) -> None:
         Single query: returns results with page previews.
         Multiple queries (list): runs all in parallel, returns structured JSON - no previews, snippets only.
           - Up to 10 queries; total results capped at limit*len(queries), distributed proportionally.
+        deep=True: LLM expands query into multiple variants, searches in parallel, returns rich results
+          with previews. Slower but higher recall for ambiguous or complex queries.
 
         Preview mode is configured in tools/mcp-web-search/config.py:
           WEB_SEARCH_MODE = "legacy" | "semantic"
         """
         import json as _json
+        _tool_t0 = time.time()
+        _tool_log("start", "web_search", path="fastmcp", query=query, limit=limit, deep=deep)
         yacy_enabled = _ensure_yacy_started()
 
-        # --- batch mode ---
-        if isinstance(query, list):
-            queries = [q.strip() for q in query if isinstance(q, str) and q.strip()][:10]
-            if not queries:
-                return ['{"error": "No queries provided"}']
-
-            total_limit = limit * len(queries)
-            total_limit = max(5, min(total_limit, 50))
-
-            t0 = time.time()
-            per_fetch = max(12, total_limit // max(len(queries), 1) + 6)
-
-            # Search one query across both backends.
-            async def _search_one_batch(q: str) -> list[SearchResult]:
-                ddgs_task  = asyncio.wait_for(async_ddgs_search(q, per_fetch), timeout=_DDGS_SEARCH_TIMEOUT)
-                if yacy_enabled:
-                    yacy_task = asyncio.wait_for(async_yacy_search(q, per_fetch), timeout=_YACY_SEARCH_TIMEOUT)
-                    yr, dr = await asyncio.gather(yacy_task, ddgs_task, return_exceptions=True)
-                    yr = yr if isinstance(yr, list) else []
-                else:
-                    yr = []
-                    dr = await ddgs_task
-                dr = dr if isinstance(dr, list) else []
-                return _proportional_merge(yr, dr, per_fetch) if yacy_enabled else dr[:per_fetch]
-
-            raw = await asyncio.gather(*[_search_one_batch(q) for q in queries], return_exceptions=True)
-            per_query: list[list[SearchResult]] = [r if isinstance(r, list) else [] for r in raw]
-
-            found_counts = [len(r) for r in per_query]
-            allotments = _proportional_allot(found_counts, total_limit)
-
-            ms = int((time.time() - t0) * 1000)
-            total_returned = 0
-            out_queries = []
-
-            for q, results, allot in zip(queries, per_query, allotments):
-                trimmed = results[:allot]
-                total_returned += len(trimmed)
-                out_queries.append({
-                    "query": q,
-                    "count": len(trimmed),
-                    "found": len(results),
-                    "results": [
-                        {
-                            "title": r.title or "",
-                            "url": r.url,
-                            "snippet": (r.snippet or "")[:350],
-                            "engine": r.engine or "",
-                        }
-                        for r in trimmed
-                    ],
-                })
-
-            out_blocks: list[str] = []
-            for qdata in out_queries:
-                q_hdr = "\n".join([
-                    f"Web Search - {ms}ms",
-                    f"Query   : {qdata['query']}",
-                    _format_found_line(
-                        qdata["count"],
-                        sum(1 for r in qdata["results"] if "yacy" in r["engine"].lower()),
-                        sum(1 for r in qdata["results"] if "yacy" not in r["engine"].lower()),
-                        yacy_enabled,
-                    ),
-                ])
-                out_blocks.append(q_hdr)
-                for i, r in enumerate(qdata["results"], 1):
-                    lines = [
-                        f"[{i}] {_badge_type(r['url'])} {_badge_engine(r['engine'])}",
-                        f"Title   : {r['title'] or '-'}",
-                        f"URL     : {r['url']}",
-                        f"Snippet : {r['snippet'] or '-'}",
-                    ]
-                    out_blocks.append("\n".join(lines))
-            return out_blocks
-
-        # --- single query mode ---
-        t0 = time.time()
-
-        ddgs_task  = asyncio.wait_for(async_ddgs_search(query, limit), timeout=_DDGS_SEARCH_TIMEOUT)
-        if yacy_enabled:
-            yacy_task = asyncio.wait_for(async_yacy_search(query, limit), timeout=_YACY_SEARCH_TIMEOUT)
-            yacy_res, ddgs_res = await asyncio.gather(yacy_task, ddgs_task, return_exceptions=True)
-            yacy_res = yacy_res if isinstance(yacy_res, list) else []
-        else:
-            yacy_res = []
-            ddgs_res = await ddgs_task
-        ddgs_res = ddgs_res if isinstance(ddgs_res, list) else []
-
-        yn_raw, dn_raw = len(yacy_res), len(ddgs_res)
-
-        total_found = yn_raw + dn_raw
-        if total_found == 0:
-            yacy_take = ddgs_take = 0
-        elif yn_raw == 0:
-            yacy_take, ddgs_take = 0, limit
-        elif dn_raw == 0:
-            yacy_take, ddgs_take = limit, 0
-        else:
-            yacy_take = max(1, round(limit * yn_raw / total_found))
-            ddgs_take = limit - yacy_take
-            if yacy_take > yn_raw:
-                yacy_take = yn_raw
-                ddgs_take = min(limit - yacy_take, dn_raw)
-            elif ddgs_take > dn_raw:
-                ddgs_take = dn_raw
-                yacy_take = min(limit - ddgs_take, yn_raw)
-
-        yacy_res = yacy_res[:yacy_take]
-        ddgs_res  = ddgs_res[:ddgs_take]
-        yn, dn = len(yacy_res), len(ddgs_res)
-
-        results = [x for pair in zip(yacy_res, ddgs_res) for x in pair]
-        results += yacy_res[len(ddgs_res):] + ddgs_res[len(yacy_res):]
-
-        # YaCy auto-learn: index trusted URLs from DDGS results
-        if yacy_enabled and ddgs_res:
+        # Keepalive: send periodic log pings so LMS doesn't kill the WebSocket connection.
+        async def _ping() -> None:
             try:
-                trust_json = _HERE.parent / "deep-research" / "config" / "trust_registry.json"
-                if trust_json.exists():
-                    import json
-                    with open(trust_json, "r", encoding="utf-8") as f:
-                        td = json.load(f)
+                session = mcp._mcp_server.request_context.session
+            except (LookupError, AttributeError):
+                return
+            while True:
+                await asyncio.sleep(3.0)
+                try:
+                    await session.send_log_message(level="debug", data="searching...", logger="web-search")
+                except Exception:
+                    return
 
-                    # Check whether a result belongs to a trusted domain.
-                    def _is_trusted(url: str) -> bool:
-                        nl = urlparse(url).netloc.lower()
-                        for d in td.get("domains", []):
-                            p = d.get("pattern", "")
-                            if nl == p or nl.endswith("." + p):
-                                return True
-                        return False
+        async def _run() -> list[str]:
+            # Overdrive consumes significant resources; skip deep mode while it is active.
+            try:
+                from config import OVERDRIVE as _overdrive_on
+            except ImportError:
+                _overdrive_on = False
+            try:
+                from config import (
+                    WEB_SEARCH_OVERDRIVE_BATCH_UNLIMITED as _OD_BATCH_UNLIMITED,
+                    WEB_SEARCH_OVERDRIVE_BATCH_FETCH_PREVIEWS as _OD_BATCH_FETCH_PREVIEWS,
+                    WEB_SEARCH_OVERDRIVE_SNIPPET_CHARS as _OD_SNIPPET_CHARS,
+                    WEB_SEARCH_OVERDRIVE_PREVIEW_LIMIT as _OD_PREVIEW_LIMIT,
+                    WEB_SEARCH_OVERDRIVE_OUTPUT_CHARS as _OD_OUTPUT_CHARS,
+                    WEB_SEARCH_OVERDRIVE_MIN_CLEAN_CHARS as _OD_MIN_CLEAN_CHARS,
+                )
+            except ImportError:
+                _OD_BATCH_UNLIMITED = True
+                _OD_BATCH_FETCH_PREVIEWS = True
+                _OD_SNIPPET_CHARS = 1200
+                _OD_PREVIEW_LIMIT = 0
+                _OD_OUTPUT_CHARS = 2400
+                _OD_MIN_CLEAN_CHARS = 200
+            _deep = deep and not _overdrive_on
 
-                    for item in ddgs_res:
-                        if item.url and _is_trusted(item.url):
-                            asyncio.create_task(async_add_to_yacy_index(item.url))
-            except Exception as e:
-                _debug_log(f"YaCy auto-learn error: {e}")
+            # --- deep mode: LLM query expansion ---
+            if _deep and isinstance(query, str) and query.strip():
+                try:
+                    from config import (
+                        WEB_SEARCH_DEEP_PREVIEW_LIMIT,
+                        WEB_SEARCH_DEEP_FETCH_CAMOUFOX,
+                        WEB_SEARCH_DEEP_FETCH_TIMEOUT,
+                        WEB_SEARCH_DEEP_TOTAL_TIMEOUT,
+                        WEB_SEARCH_DEEP_OUTPUT_CHARS,
+                        WEB_SEARCH_DEEP_MIN_CLEAN_CHARS,
+                    )
+                except ImportError:
+                    WEB_SEARCH_DEEP_PREVIEW_LIMIT   = 15
+                    WEB_SEARCH_DEEP_FETCH_CAMOUFOX  = True
+                    WEB_SEARCH_DEEP_FETCH_TIMEOUT   = 10.0
+                    WEB_SEARCH_DEEP_TOTAL_TIMEOUT   = 35.0
+                    WEB_SEARCH_DEEP_OUTPUT_CHARS    = 1800
+                    WEB_SEARCH_DEEP_MIN_CLEAN_CHARS = 260
+                _deep_overrides = {
+                    "preview_limit":   WEB_SEARCH_DEEP_PREVIEW_LIMIT,
+                    "fetch_timeout":   WEB_SEARCH_DEEP_FETCH_TIMEOUT,
+                    "total_timeout":   WEB_SEARCH_DEEP_TOTAL_TIMEOUT,
+                    "use_camoufox":    WEB_SEARCH_DEEP_FETCH_CAMOUFOX,
+                    "output_chars":    WEB_SEARCH_DEEP_OUTPUT_CHARS,
+                    "min_clean_chars": WEB_SEARCH_DEEP_MIN_CLEAN_CHARS,
+                }
 
-        ms = int((time.time()-t0)*1000)
+                variants = await _llm_expand_query(query.strip())
+                if variants:
+                    # Combine original + LLM variants, deduplicate.
+                    all_queries = [query.strip()] + [v for v in variants if v.lower() != query.strip().lower()]
+                    all_queries = list(dict.fromkeys(all_queries))  # preserve order, dedup
 
-        if not results:
-            return [f"Web Search - no results - {ms}ms\nQuery: {query}"]
+                    per_fetch = max(12, limit + 6)
+                    async def _search_one_deep(q: str) -> list[SearchResult]:
+                        ddgs_task = asyncio.wait_for(async_ddgs_search(q, per_fetch), timeout=_DDGS_SEARCH_TIMEOUT)
+                        if yacy_enabled:
+                            yacy_task = asyncio.wait_for(async_yacy_search(q, per_fetch), timeout=_YACY_SEARCH_TIMEOUT)
+                            yr, dr = await asyncio.gather(yacy_task, ddgs_task, return_exceptions=True)
+                            yr = yr if isinstance(yr, list) else []
+                        else:
+                            yr = []
+                            dr = await ddgs_task
+                        dr = dr if isinstance(dr, list) else []
+                        return _proportional_merge(yr, dr, per_fetch) if yacy_enabled else dr[:per_fetch]
 
-        previews = await _fetch_previews(results)
-        previews += [""] * (len(results) - len(previews))
+                    t0 = time.time()
+                    raw_all = await asyncio.gather(*[_search_one_deep(q) for q in all_queries], return_exceptions=True)
 
-        # Format one result block for display.
-        def _fmt_result(i: int, r: SearchResult, preview: str) -> str:
-            lines = [
-                f"[{i}] {_badge_type(r.url)} {_badge_engine(r.engine)}",
-                f"Title   : {r.title or '-'}",
-                f"URL     : {_short_url(r.url)}",
-                f"Snippet : {(r.snippet or '-')[:400]}",
-            ]
-            if preview:
-                lines.append(f"Preview : {preview}")
-            return "\n".join(lines)
+                    # Merge all results, dedup by normalized URL, keep top limit*2 for rerank.
+                    seen_urls: set = set()
+                    merged: list[SearchResult] = []
+                    for r_list in raw_all:
+                        if not isinstance(r_list, list):
+                            continue
+                        for r in r_list:
+                            nu = _normalize_url(r.url)
+                            if nu not in seen_urls:
+                                seen_urls.add(nu)
+                                merged.append(r)
+                    merged = merged[:limit * 3]
 
-        downloadable = [r for r in results if _is_downloadable_ext(r.url)]
+                    if merged:
+                        ms = int((time.time() - t0) * 1000)
+                        results, previews = await _prepare_results_with_previews(
+                            merged[:limit * 2], query.strip(), overrides=_deep_overrides
+                        )
+                        results = results[:limit]
+                        previews = previews[:limit]
 
-        hdr = "\n".join([
-            f"Web Search - {ms}ms",
-            f"Query   : {query}",
-            _format_found_line(len(results), yn, dn, yacy_enabled),
-        ])
-        blocks = [hdr] + [_fmt_result(i, r, previews[i-1]) for i, r in enumerate(results, 1)]
-        if downloadable:
-            hint = "Downloadable files found - use import_web_file(url) to save to task workspace."
-            blocks.append(hint)
-        return blocks
+                        def _fmt_result_deep(i: int, r: SearchResult, preview: str) -> str:
+                            lines = [
+                                f"[{i}] {_badge_type(r.url)} {_badge_engine(r.engine)}",
+                                f"Title   : {r.title or '-'}",
+                                f"URL     : {_short_url(r.url)}",
+                                f"Snippet : {(r.snippet or '-')[:400]}",
+                            ]
+                            if preview:
+                                lines.append(f"Preview : {preview}")
+                            return "\n".join(lines)
+
+                        _od_tag = " [OVERDRIVE]" if _overdrive_on else ""
+                        hdr = "\n".join([
+                            f"Web Search (deep){_od_tag} - {ms}ms",
+                            f"Query   : {query}",
+                            f"Variants: {', '.join(all_queries[1:])}",
+                            _format_found_line(len(results), 0, len(results), yacy_enabled),
+                        ])
+                        blocks = [hdr] + [_fmt_result_deep(i, r, previews[i-1]) for i, r in enumerate(results, 1)]
+                        return blocks
+                    # else: fall through to regular single-query below
+
+            # --- batch mode ---
+            if isinstance(query, list):
+                queries = [q.strip() for q in query if isinstance(q, str) and q.strip()][:10]
+                if not queries:
+                    return ['{"error": "No queries provided"}']
+
+                total_limit = limit * len(queries)
+                if _overdrive_on and _OD_BATCH_UNLIMITED:
+                    total_limit = max(5, total_limit)
+                else:
+                    total_limit = max(5, min(total_limit, 50))
+
+                t0 = time.time()
+                per_fetch = max(12, total_limit // max(len(queries), 1) + 6)
+
+                # Search one query across both backends.
+                async def _search_one_batch(q: str) -> list[SearchResult]:
+                    ddgs_task  = asyncio.wait_for(async_ddgs_search(q, per_fetch), timeout=_DDGS_SEARCH_TIMEOUT)
+                    if yacy_enabled:
+                        yacy_task = asyncio.wait_for(async_yacy_search(q, per_fetch), timeout=_YACY_SEARCH_TIMEOUT)
+                        yr, dr = await asyncio.gather(yacy_task, ddgs_task, return_exceptions=True)
+                        yr = yr if isinstance(yr, list) else []
+                    else:
+                        yr = []
+                        dr = await ddgs_task
+                    dr = dr if isinstance(dr, list) else []
+                    return _proportional_merge(yr, dr, per_fetch) if yacy_enabled else dr[:per_fetch]
+
+                raw = await asyncio.gather(*[_search_one_batch(q) for q in queries], return_exceptions=True)
+                per_query: list[list[SearchResult]] = [r if isinstance(r, list) else [] for r in raw]
+
+                found_counts = [len(r) for r in per_query]
+                allotments = _proportional_allot(found_counts, total_limit)
+
+                ms = int((time.time() - t0) * 1000)
+                total_returned = 0
+                out_queries = []
+
+                for q, results, allot in zip(queries, per_query, allotments):
+                    trimmed = results[:allot]
+                    previews = [""] * len(trimmed)
+                    if _overdrive_on and _OD_BATCH_FETCH_PREVIEWS and trimmed:
+                        effective_preview_limit = _OD_PREVIEW_LIMIT if _OD_PREVIEW_LIMIT > 0 else len(trimmed)
+                        try:
+                            trimmed, previews = await _prepare_results_with_previews(
+                                trimmed,
+                                q,
+                                overrides={
+                                    "preview_limit": effective_preview_limit,
+                                    "output_chars": _OD_OUTPUT_CHARS,
+                                    "min_clean_chars": _OD_MIN_CLEAN_CHARS,
+                                },
+                            )
+                        except Exception as e:
+                            _debug_log(f"overdrive batch preview enrichment failed for '{q}': {e}")
+                    total_returned += len(trimmed)
+                    out_queries.append({
+                        "query": q,
+                        "count": len(trimmed),
+                        "found": len(results),
+                        "results": [
+                            {
+                                "title": r.title or "",
+                                "url": r.url,
+                                "snippet": (r.snippet or "")[:(_OD_SNIPPET_CHARS if _overdrive_on else 350)],
+                                "preview": (previews[i] or "")[:_OD_OUTPUT_CHARS] if i < len(previews) else "",
+                                "engine": r.engine or "",
+                            }
+                            for i, r in enumerate(trimmed)
+                        ],
+                    })
+
+                _od_tag = " [OVERDRIVE]" if _overdrive_on else ""
+                out_blocks: list[str] = []
+                for qdata in out_queries:
+                    q_hdr = "\n".join([
+                        f"Web Search{_od_tag} - {ms}ms",
+                        f"Query   : {qdata['query']}",
+                        _format_found_line(
+                            qdata["count"],
+                            sum(1 for r in qdata["results"] if "yacy" in r["engine"].lower()),
+                            sum(1 for r in qdata["results"] if "yacy" not in r["engine"].lower()),
+                            yacy_enabled,
+                        ),
+                    ])
+                    out_blocks.append(q_hdr)
+                    for i, r in enumerate(qdata["results"], 1):
+                        lines = [
+                            f"[{i}] {_badge_type(r['url'])} {_badge_engine(r['engine'])}",
+                            f"Title   : {r['title'] or '-'}",
+                            f"URL     : {r['url']}",
+                            f"Snippet : {r['snippet'] or '-'}",
+                        ]
+                        if r.get("preview"):
+                            lines.append(f"Preview : {r['preview']}")
+                        out_blocks.append("\n".join(lines))
+                return out_blocks
+
+            # --- single query mode ---
+            t0 = time.time()
+
+            ddgs_task  = asyncio.wait_for(async_ddgs_search(query, limit), timeout=_DDGS_SEARCH_TIMEOUT)
+            if yacy_enabled:
+                yacy_task = asyncio.wait_for(async_yacy_search(query, limit), timeout=_YACY_SEARCH_TIMEOUT)
+                yacy_res, ddgs_res = await asyncio.gather(yacy_task, ddgs_task, return_exceptions=True)
+                yacy_res = yacy_res if isinstance(yacy_res, list) else []
+            else:
+                yacy_res = []
+                ddgs_res = await ddgs_task
+            ddgs_res = ddgs_res if isinstance(ddgs_res, list) else []
+
+            yn_raw, dn_raw = len(yacy_res), len(ddgs_res)
+
+            total_found = yn_raw + dn_raw
+            if total_found == 0:
+                yacy_take = ddgs_take = 0
+            elif yn_raw == 0:
+                yacy_take, ddgs_take = 0, limit
+            elif dn_raw == 0:
+                yacy_take, ddgs_take = limit, 0
+            else:
+                yacy_take = max(1, round(limit * yn_raw / total_found))
+                ddgs_take = limit - yacy_take
+                if yacy_take > yn_raw:
+                    yacy_take = yn_raw
+                    ddgs_take = min(limit - yacy_take, dn_raw)
+                elif ddgs_take > dn_raw:
+                    ddgs_take = dn_raw
+                    yacy_take = min(limit - ddgs_take, yn_raw)
+
+            yacy_res = yacy_res[:yacy_take]
+            ddgs_res  = ddgs_res[:ddgs_take]
+            yn, dn = len(yacy_res), len(ddgs_res)
+
+            results = [x for pair in zip(yacy_res, ddgs_res) for x in pair]
+            results += yacy_res[len(ddgs_res):] + ddgs_res[len(yacy_res):]
+
+            # YaCy auto-learn: index trusted URLs from DDGS results
+            if yacy_enabled and ddgs_res:
+                try:
+                    trust_json = _HERE.parent / "deep-research" / "config" / "trust_registry.json"
+                    if trust_json.exists():
+                        import json
+                        with open(trust_json, "r", encoding="utf-8") as f:
+                            td = json.load(f)
+
+                        # Check whether a result belongs to a trusted domain.
+                        def _is_trusted(url: str) -> bool:
+                            nl = urlparse(url).netloc.lower()
+                            for d in td.get("domains", []):
+                                p = d.get("pattern", "")
+                                if nl == p or nl.endswith("." + p):
+                                    return True
+                            return False
+
+                        for item in ddgs_res:
+                            if item.url and _is_trusted(item.url):
+                                asyncio.create_task(async_add_to_yacy_index(item.url))
+                except Exception as e:
+                    _debug_log(f"YaCy auto-learn error: {e}")
+
+            ms = int((time.time()-t0)*1000)
+
+            _od_tag = " [OVERDRIVE]" if _overdrive_on else ""
+            if not results:
+                return [f"Web Search{_od_tag} - no results - {ms}ms\nQuery: {query}"]
+
+            preview_overrides = None
+            if _overdrive_on:
+                effective_preview_limit = _OD_PREVIEW_LIMIT if _OD_PREVIEW_LIMIT > 0 else len(results)
+                preview_overrides = {
+                    "preview_limit": effective_preview_limit,
+                    "output_chars": _OD_OUTPUT_CHARS,
+                    "min_clean_chars": _OD_MIN_CLEAN_CHARS,
+                }
+            results, previews = await _prepare_results_with_previews(results, query, overrides=preview_overrides)
+
+            # Format one result block for display.
+            def _fmt_result(i: int, r: SearchResult, preview: str) -> str:
+                lines = [
+                    f"[{i}] {_badge_type(r.url)} {_badge_engine(r.engine)}",
+                    f"Title   : {r.title or '-'}",
+                    f"URL     : {_short_url(r.url)}",
+                    f"Snippet : {(r.snippet or '-')[:(_OD_SNIPPET_CHARS if _overdrive_on else 400)]}",
+                ]
+                if preview:
+                    lines.append(f"Preview : {preview}")
+                return "\n".join(lines)
+
+            downloadable = [r for r in results if _is_downloadable_ext(r.url)]
+
+            hdr = "\n".join([
+                f"Web Search{_od_tag} - {ms}ms",
+                f"Query   : {query}",
+                _format_found_line(len(results), yn, dn, yacy_enabled),
+            ])
+            blocks = [hdr] + [_fmt_result(i, r, previews[i-1]) for i, r in enumerate(results, 1)]
+            if downloadable:
+                hint = "Downloadable files found - use import_web_file(url) to save to task workspace."
+                blocks.append(hint)
+            return blocks
+
+        _ping_task = asyncio.create_task(_ping())
+        try:
+            result = await _run()
+            _tool_log(
+                "finish",
+                "web_search",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                blocks=len(result) if isinstance(result, list) else None,
+            )
+            return result
+        except Exception as exc:
+            _tool_log(
+                "error",
+                "web_search",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                error=str(exc),
+            )
+            raise
+        finally:
+            _ping_task.cancel()
 
     # Register the page-reading tool.
     @mcp.tool()
@@ -451,10 +772,27 @@ def register_tools(mcp) -> None:
           Nothing is written if the page fails to load.
         """
         import json as _json
+        _tool_t0 = time.time()
+        _tool_log("start", "read_page", path="fastmcp", url=url, save=save)
 
         urls = _parse_url_arg(url)
         if not urls:
             return ["Error: argument must be a string or array of strings."]
+
+        # Keepalive: keep the MCP WebSocket alive during slow page fetches.
+        async def _ping_rp() -> None:
+            try:
+                session = mcp._mcp_server.request_context.session
+            except (LookupError, AttributeError):
+                return
+            while True:
+                await asyncio.sleep(3.0)
+                try:
+                    await session.send_log_message(level="debug", data="reading...", logger="read-page")
+                except Exception:
+                    return
+
+        _ping_task_rp = asyncio.create_task(_ping_rp())
 
         if save:
             workspace_root = Path(PROJECT_DIR).parent.parent
@@ -572,8 +910,28 @@ def register_tools(mcp) -> None:
         else:
             tasks = [_process_single(u) for u in urls]
 
-        results = await asyncio.gather(*tasks)
-        return list(results)
+        try:
+            results = await asyncio.gather(*tasks)
+            final_results = list(results)
+            _tool_log(
+                "finish",
+                "read_page",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                items=len(final_results),
+            )
+            return final_results
+        except Exception as exc:
+            _tool_log(
+                "error",
+                "read_page",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                error=str(exc),
+            )
+            raise
+        finally:
+            _ping_task_rp.cancel()
 
     # Research tools.
     # Register the deep research tool.
@@ -588,13 +946,17 @@ def register_tools(mcp) -> None:
         import sys
         import os
         import datetime
+        _tool_t0 = time.time()
+        _tool_log("start", "deep_research", path="fastmcp", query=query, depth=depth)
 
         _ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         task_id = f"research_{_ts}"
         script  = SCRIPTS_DIR / "deep_research.py"
 
         if not script.exists():
-            return f"Error: Script not found: {script}"
+            result = f"Error: Script not found: {script}"
+            _tool_log("finish", "deep_research", path="fastmcp", elapsed_ms=int((time.time() - _tool_t0) * 1000), status="missing_script")
+            return result
 
         try:
             env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
@@ -681,18 +1043,46 @@ def register_tools(mcp) -> None:
                     break
 
             if report:
-                return report.read_text(encoding="utf-8", errors="replace")
+                result = report.read_text(encoding="utf-8", errors="replace")
+                _tool_log(
+                    "finish",
+                    "deep_research",
+                    path="fastmcp",
+                    elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                    task_id=task_id,
+                    status="report_found",
+                )
+                return result
 
             err = stderr.decode('utf-8', errors='replace')[-3000:]
             out = stdout.decode('utf-8', errors='replace')[-1000:]
-            return (
+            result = (
                 f"Error: Process finished (code {proc.returncode}) but report.md not found.\n"
                 f"OUT_DIR: {OUT_DIR}\nPROJECT_DIR: {PROJECT_DIR}\n"
                 f"task_id: {task_id}\n\nStderr:\n{err}\nStdout:\n{out}"
             )
+            _tool_log(
+                "finish",
+                "deep_research",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                task_id=task_id,
+                status="report_missing",
+                returncode=proc.returncode,
+            )
+            return result
 
         except Exception as e:
-            return f"Error: Launch error: {e}"
+            result = f"Error: Launch error: {e}"
+            _tool_log(
+                "error",
+                "deep_research",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                task_id=task_id,
+                error=str(e),
+            )
+            return result
 
     # Download helpers.
 
@@ -759,12 +1149,40 @@ def register_tools(mcp) -> None:
 
         Returns: {status, file, size_bytes, content_type, message}
         """
-        return await _keepalive_download(
-            download_file(
-                url=url,
-                project_dir=PROJECT_DIR,
-                save_to=save_to,
-                allowed_types=allowed_types,
-                max_size_mb=min(max_size_mb, 50),
-            )
+        _tool_t0 = time.time()
+        _tool_log(
+            "start",
+            "import_web_file",
+            path="fastmcp",
+            url=url,
+            save_to=save_to,
+            allowed_types=allowed_types,
+            max_size_mb=max_size_mb,
         )
+        try:
+            result = await _keepalive_download(
+                download_file(
+                    url=url,
+                    project_dir=PROJECT_DIR,
+                    save_to=save_to,
+                    allowed_types=allowed_types,
+                    max_size_mb=min(max_size_mb, 50),
+                )
+            )
+            _tool_log(
+                "finish",
+                "import_web_file",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                status=result.get("status") if isinstance(result, dict) else None,
+            )
+            return result
+        except Exception as exc:
+            _tool_log(
+                "error",
+                "import_web_file",
+                path="fastmcp",
+                elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                error=str(exc),
+            )
+            raise

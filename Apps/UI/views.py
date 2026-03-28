@@ -123,7 +123,7 @@ def _build_base_context() -> dict[str, Any]:
         "models": [],
         "engine_options": settings.get_supported_engines(),
         "runtime_settings": runtime_settings,
-        "available_tool_servers": tool_registry.list_servers(),
+        "available_tool_servers": tool_registry.list_servers(engine=engine),
         "chats": Chat.objects.all(),
     }
 
@@ -660,7 +660,7 @@ def _build_generate_kwargs(
     if clean_options:
         generate_kwargs["options"] = clean_options
 
-    if settings.is_ollama_engine(engine) and selected_tool_servers:
+    if selected_tool_servers:
         generate_kwargs["tool_server_ids"] = [s["id"] for s in selected_tool_servers]
         generate_kwargs["tool_context"] = {
             "chat_id": str(chat.id),

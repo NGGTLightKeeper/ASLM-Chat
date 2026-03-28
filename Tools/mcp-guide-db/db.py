@@ -48,6 +48,26 @@ class SnippetRecord:
         return self.path.stem
 
 
+# Store one recipe record with parsed frontmatter
+@dataclass(frozen=True)
+class RecipeRecord:
+    owner_guide: str
+    path: Path
+    title: str
+    domain: str
+    trigger: str
+    tools: tuple[str, ...]
+    related_guides: tuple[str, ...]
+    difficulty: str
+    body: str
+
+    @property
+    def slug(self) -> str:
+        """Return the recipe filename stem."""
+
+        return self.path.stem
+
+
 # Time and validation helpers
 
 # Return the current UTC timestamp in stable ISO format
@@ -123,6 +143,11 @@ def _snippets_dir(guide: str) -> Path:
 
     return _secure_path(_guide_dir(guide) / "snippets")
 
+def _recipes_dir(guide: str) -> Path:
+    """Return the recipes directory for a guide."""
+
+    return _secure_path(_guide_dir(guide) / "recipes")
+
 def _deprecated_dir(guide: str) -> Path:
     """Return the deprecated snippets directory for a guide."""
 
@@ -134,6 +159,12 @@ def _snippet_path(guide: str, snippet: str, deprecated: bool = False) -> Path:
     slug = _safe_segment(str(snippet).removesuffix(".md"), "snippet")
     base = _deprecated_dir(guide) if deprecated else _snippets_dir(guide)
     return _secure_path(base / f"{slug}.md")
+
+def _recipe_path(guide: str, recipe: str) -> Path:
+    """Return the Markdown path for one recipe."""
+
+    slug = _safe_segment(str(recipe).removesuffix(".md"), "recipe")
+    return _secure_path(_recipes_dir(guide) / f"{slug}.md")
 
 
 # Frontmatter helpers
@@ -366,6 +397,118 @@ def _get_external_synergy_snippets(target_guide: GuideEntry) -> list[SnippetReco
     return sorted(records, key=lambda item: (item.owner_guide.lower(), item.slug.lower()))
 
 
+# Recipe discovery
+
+def _read_recipe_record(owner_guide: str, recipe_path: Path) -> RecipeRecord:
+    """Read one recipe file and normalize its metadata."""
+
+    raw_text = recipe_path.read_text(encoding="utf-8")
+    meta, body = _split_frontmatter(raw_text)
+    title = str(meta.get("title") or recipe_path.stem).strip()
+    domain = str(meta.get("domain") or "general").strip()
+    trigger = str(meta.get("trigger") or "").strip()
+    raw_tools = meta.get("tools", [])
+    if isinstance(raw_tools, str):
+        raw_tools = [raw_tools]
+    tools = tuple(str(t).strip() for t in raw_tools if isinstance(t, str))
+    raw_guides = meta.get("related_guides", [])
+    if isinstance(raw_guides, str):
+        raw_guides = [raw_guides]
+    related_guides = tuple(str(g).strip() for g in raw_guides if isinstance(g, str))
+    difficulty = str(meta.get("difficulty") or "medium").strip()
+    return RecipeRecord(
+        owner_guide=owner_guide,
+        path=recipe_path,
+        title=title,
+        domain=domain,
+        trigger=trigger,
+        tools=tools,
+        related_guides=related_guides,
+        difficulty=difficulty,
+        body=body.strip(),
+    )
+
+
+def _get_recipes(guide: GuideEntry) -> list[RecipeRecord]:
+    """Return all recipes for a single guide."""
+
+    if guide.folder_path is None:
+        return []
+
+    recipes_dir = guide.folder_path / "recipes"
+    if not recipes_dir.exists():
+        return []
+
+    records: list[RecipeRecord] = []
+    for recipe_path in sorted(recipes_dir.glob("*.md")):
+        records.append(_read_recipe_record(guide.name, recipe_path))
+
+    return records
+
+
+def _get_all_recipes() -> list[RecipeRecord]:
+    """Return all recipes across all guides."""
+
+    records: list[RecipeRecord] = []
+    for guide in _get_guides():
+        records.extend(_get_recipes(guide))
+    return sorted(records, key=lambda r: (r.owner_guide.lower(), r.slug.lower()))
+
+
+def _search_recipes(query: str) -> list[RecipeRecord]:
+    """Search recipes by matching query against title, domain, trigger, and tools."""
+
+    query_lower = query.lower().strip()
+    if not query_lower:
+        return []
+
+    terms = query_lower.split()
+    results: list[RecipeRecord] = []
+
+    for recipe in _get_all_recipes():
+        searchable = " ".join([
+            recipe.title.lower(),
+            recipe.domain.lower(),
+            recipe.trigger.lower(),
+            " ".join(recipe.tools),
+            " ".join(recipe.related_guides),
+            recipe.owner_guide.lower(),
+        ])
+        if all(term in searchable for term in terms):
+            results.append(recipe)
+
+    return results
+
+
+def _resolve_recipe(name_or_query: str) -> RecipeRecord | None:
+    """Resolve a recipe by exact slug, partial name, or domain."""
+
+    query = name_or_query.strip().lower().removesuffix(".md")
+    if not query:
+        return None
+
+    all_recipes = _get_all_recipes()
+
+    # Exact slug match
+    for recipe in all_recipes:
+        if recipe.slug.lower() == query:
+            return recipe
+
+    # Partial slug or title match
+    matches = [r for r in all_recipes if query in r.slug.lower() or query in r.title.lower()]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        return min(matches, key=lambda r: len(r.slug))
+
+    # Domain match
+    matches = [r for r in all_recipes if query in r.domain.lower()]
+    if len(matches) == 1:
+        return matches[0]
+
+    return None
+
+
 # Rendering helpers
 
 # Render one snippet block for assembled guide output
@@ -385,10 +528,40 @@ def _render_snippet(record: SnippetRecord, include_source: bool) -> str:
     body = record.body or "_No snippet body provided._"
     return f"{heading}\n\n_Metadata: {', '.join(meta_parts)}_\n\n{body}"
 
-def _assemble_guide_content(guide: GuideEntry) -> str:
-    """Assemble one guide with its local and external synergy snippets."""
+def _render_recipe_summary(recipe: RecipeRecord) -> str:
+    """Render a short summary line for a recipe."""
+
+    trigger_short = recipe.trigger[:80] + "..." if len(recipe.trigger) > 80 else recipe.trigger
+    return f"- **{recipe.title}** ({recipe.slug}) -- {trigger_short}"
+
+
+def _render_recipe_full(recipe: RecipeRecord) -> str:
+    """Render a full recipe block for assembled guide output."""
+
+    meta_parts = [
+        f"domain: {recipe.domain}",
+        f"difficulty: {recipe.difficulty}",
+        f"tools: {', '.join(recipe.tools)}",
+    ]
+    heading = f"### {recipe.title}"
+    body = recipe.body or "_No recipe body provided._"
+    return f"{heading}\n\n_Metadata: {', '.join(meta_parts)}_\n\n{body}"
+
+
+def _assemble_guide_content(guide: GuideEntry, mode: str = "core") -> str:
+    """Assemble one guide with optional recipes and snippets.
+
+    Modes:
+        core          -- guide.md + recipe index (titles only) + snippets
+        core+recipes  -- guide.md + full recipe content + snippets
+        full          -- same as core+recipes (kept for compatibility)
+
+    Snippets always appear in all modes -- they are the model's accumulated field notes
+    and should always be visible.
+    """
 
     guide_text = guide.guide_path.read_text(encoding="utf-8").strip()
+    recipes = _get_recipes(guide)
     local_snippets = _get_local_snippets(guide)
     external_snippets = _get_external_synergy_snippets(guide)
 
@@ -399,6 +572,18 @@ def _assemble_guide_content(guide: GuideEntry) -> str:
         guide_text,
     ]
 
+    # Recipe section -- verbosity depends on mode
+    if recipes:
+        if mode == "core":
+            parts.extend(["", "## Available Recipes", ""])
+            parts.extend(_render_recipe_summary(r) for r in recipes)
+            parts.append("")
+            parts.append("Use get_recipe(name) to load a specific recipe workflow.")
+        else:  # core+recipes or full
+            parts.extend(["", "## Recipes", ""])
+            parts.extend(_render_recipe_full(r) for r in recipes)
+
+    # Snippets always shown -- accumulated field notes
     if local_snippets:
         parts.extend(["", "## Local Snippets", ""])
         parts.extend(_render_snippet(record, include_source=False) for record in local_snippets)

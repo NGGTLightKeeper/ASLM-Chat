@@ -8,6 +8,7 @@ import inspect
 import json
 import logging
 import re
+import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -35,8 +36,21 @@ def reset_cache() -> None:
 
 
 # Hash local server files
+def _iter_server_source_files(server_dir: Path):
+    """Yield relevant source files for one local MCP server."""
+
+    for path in sorted(server_dir.rglob("*"), key=lambda item: str(item).casefold()):
+        if not path.is_file():
+            continue
+        if "__pycache__" in path.parts:
+            continue
+        if path.suffix.lower() not in {".py", ".json"}:
+            continue
+        yield path
+
+
 def _server_signature() -> tuple[tuple[str, int], ...]:
-    """Build a stable signature for every local MCP server file."""
+    """Build a stable signature for every local MCP server source file."""
 
     if not TOOLS_DIR.exists():
         return ()
@@ -47,14 +61,27 @@ def _server_signature() -> tuple[tuple[str, int], ...]:
         if not child.is_dir() or not server_file.is_file():
             continue
 
-        try:
-            stat = server_file.stat()
-        except OSError:
-            continue
+        for source_file in _iter_server_source_files(child):
+            try:
+                stat = source_file.stat()
+            except OSError:
+                continue
 
-        entries.append((str(server_file), stat.st_mtime_ns))
+            entries.append((str(source_file), stat.st_mtime_ns))
 
     return tuple(entries)
+
+
+def _iter_server_files():
+    """Yield top-level MCP server entrypoints from the Tools directory."""
+
+    if not TOOLS_DIR.exists():
+        return
+
+    for child in sorted(TOOLS_DIR.iterdir(), key=lambda item: item.name.casefold()):
+        server_file = child / SERVER_FILENAME
+        if child.is_dir() and server_file.is_file():
+            yield server_file
 
 # Normalize server id
 def _slugify(value: str) -> str:
@@ -64,8 +91,33 @@ def _slugify(value: str) -> str:
     return normalized or "tool"
 
 # Load server module
+def _purge_modules_under(server_root: Path) -> None:
+    """Drop previously imported modules loaded from one tool directory."""
+
+    resolved_root = server_root.resolve()
+    stale_module_names: list[str] = []
+
+    for module_name, module in list(sys.modules.items()):
+        module_file = getattr(module, "__file__", None)
+        if not module_file:
+            continue
+
+        try:
+            module_path = Path(module_file).resolve()
+        except OSError:
+            continue
+
+        if module_path.is_relative_to(resolved_root):
+            stale_module_names.append(module_name)
+
+    for module_name in stale_module_names:
+        sys.modules.pop(module_name, None)
+
+
 def _load_module(server_file: Path) -> ModuleType:
     """Load one ``mcp-server.py`` file into an isolated Python module."""
+
+    _purge_modules_under(server_file.parent)
 
     module_name = f"aslm_chat_mcp_server_{_slugify(server_file.parent.name)}"
     spec = importlib.util.spec_from_file_location(module_name, server_file)
@@ -217,8 +269,7 @@ def _ensure_registry_loaded() -> dict[str, dict[str, Any]]:
         return _SERVER_CACHE
 
     discovered: dict[str, dict[str, Any]] = {}
-    for server_path_str, _mtime in signature:
-        server_file = Path(server_path_str)
+    for server_file in _iter_server_files():
         folder_name = server_file.parent.name
 
         try:
@@ -413,6 +464,31 @@ def _serialize_tool_result(result: Any) -> str:
 
     return str(result)
 
+
+def _extract_inline_image_payload(result: Any) -> dict[str, Any] | None:
+    """Extract an Ollama image payload from the sandbox v2 read envelope."""
+
+    if not isinstance(result, dict) or not result.get("ok"):
+        return None
+
+    payload = result.get("result")
+    if not isinstance(payload, dict):
+        return None
+
+    preview = payload.get("preview")
+    if not isinstance(preview, dict):
+        return None
+
+    data_base64 = preview.get("data_base64")
+    if not data_base64:
+        return None
+
+    return {
+        "_image_b64": data_base64,
+        "_mime_type": preview.get("mime_type", payload.get("mime", "image/png")),
+        "_path": payload.get("path", ""),
+    }
+
 # Execute local tool
 def call_ollama_tool(
     tool_lookup: dict[str, dict[str, Any]],
@@ -466,14 +542,9 @@ def call_ollama_tool(
         else:
             return f"Tool execution failed: no handler registered for {tool_definition['id']}"
 
-        # If the tool returned an image payload, pass it through as-is so
-        # the caller can embed it in an Ollama "images" message field.
-        if isinstance(result, dict) and result.get("ok") and result.get("data_base64"):
-            return {
-                "_image_b64": result["data_base64"],
-                "_mime_type": result.get("mime_type", "image/png"),
-                "_path": result.get("path", ""),
-            }
+        image_payload = _extract_inline_image_payload(result)
+        if image_payload is not None:
+            return image_payload
 
         return _serialize_tool_result(result)
     except Exception as exc:

@@ -25,8 +25,11 @@ TOOLS = [
         "id": "browser_navigate",
         "name": "Browser Navigate",
         "description": (
-            "Open URL in the browser. Returns page snapshot with interactive elements "
-            "and a brief text preview of page content."
+            "Open a URL in the browser and return an accessibility tree snapshot of the loaded page. "
+            "The snapshot lists all interactive elements (buttons, links, inputs, selects) with their ref IDs, roles, and labels. "
+            "Also includes a brief text preview of the visible page content. "
+            "Always call this first before using any other browser tool — ref IDs are only valid after a navigate or snapshot call. "
+            "Handles redirects automatically and reports the final URL."
         ),
         "parameters": {
             "type": "object",
@@ -40,8 +43,11 @@ TOOLS = [
         "id": "browser_snapshot",
         "name": "Browser Snapshot",
         "description": (
-            "Refresh the accessibility snapshot with updated refs. "
-            "Also scrolls the page before snapshotting if scroll direction is provided."
+            "Refresh the accessibility tree snapshot to get updated element refs after a page change. "
+            "Call after any action that modifies the DOM (clicks, form submissions, dynamic content loading) to get fresh ref IDs. "
+            "Optionally scrolls the page before snapshotting: scroll='down' or scroll='up' by the specified amount in pixels (default 500). "
+            "Use scroll to reveal content below the fold and then snapshot to capture those elements. "
+            "Set full=true to include all page regions (banner, navigation, footer) — use when navigation buttons or controls are missing from the default snapshot."
         ),
         "parameters": {
             "type": "object",
@@ -56,6 +62,11 @@ TOOLS = [
                     "description": "Pixels to scroll (default: 500)",
                     "default": 500,
                 },
+                "full": {
+                    "type": "boolean",
+                    "description": "Include all page regions including banner and navigation (default: false)",
+                    "default": False,
+                },
             },
         },
     },
@@ -63,8 +74,12 @@ TOOLS = [
         "id": "browser_click",
         "name": "Browser Click",
         "description": (
-            "Click interactive elements by ref ID, click a batch of refs, "
-            "or press a keyboard key."
+            "Click an interactive element by its ref ID, click multiple elements sequentially, or press a keyboard key. "
+            "ref: single element ref ID from the snapshot (e.g. 'e5'). "
+            "refs: list of ref IDs to click one after another in order. "
+            "key: keyboard key to press without clicking an element — use for Enter, Escape, Tab, ArrowDown, ArrowUp, Space, and similar. "
+            "Returns a compact updated snapshot after the action. "
+            "If the click triggers navigation to a new URL, returns a full snapshot of the new page."
         ),
         "parameters": {
             "type": "object",
@@ -88,7 +103,13 @@ TOOLS = [
     {
         "id": "browser_type",
         "name": "Browser Type",
-        "description": "Type text into an input element (textbox, searchbox, and so on).",
+        "description": (
+            "Clear an input element and type text into it. Works for textbox, searchbox, textarea, and similar input fields. "
+            "ref is the element ref ID from the current snapshot. "
+            "The existing content of the field is cleared before typing. "
+            "Set press_enter=True to submit the input immediately after typing (equivalent to pressing Enter). "
+            "Returns a compact updated snapshot after typing."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -107,8 +128,11 @@ TOOLS = [
         "id": "browser_wait_for_user",
         "name": "Browser Wait For User",
         "description": (
-            "Pause and display a message to the user, then wait for them to act. "
-            "Use for CAPTCHA, login form, age gate, or manual overlay close."
+            "Pause automation and display a message asking the user to perform a manual action in the browser. "
+            "Use when the page requires human interaction that cannot be automated: CAPTCHA solving, login with credentials, age verification gate, cookie consent popup, or 2FA prompt. "
+            "message should clearly describe what the user needs to do. "
+            "The browser remains open and the session stays active during the wait. "
+            "After timeout_seconds the tool resumes and returns a fresh snapshot of whatever state the page is in."
         ),
         "parameters": {
             "type": "object",
@@ -126,7 +150,14 @@ TOOLS = [
     {
         "id": "browser_screenshot",
         "name": "Browser Screenshot",
-        "description": "Take a screenshot of the current page and save it to task/.",
+        "description": (
+            "Take a PNG screenshot of the current browser page and save it to the task workspace. "
+            "full_page=False (default) captures only the visible viewport. "
+            "full_page=True captures the entire scrollable page height. "
+            "Saved as screenshot_<timestamp>.png. "
+            "Returns the file path and a hint to call sandbox read(...) to inspect it visually. "
+            "Use to verify visual state, capture rendered output, or document automation results."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -142,9 +173,9 @@ TOOLS = [
 
 
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
-    """Expose this tool server only for Ollama tool-calling flows."""
+    """Expose this tool server for engines that support tool-calling."""
 
-    return engine == "ollama-service"
+    return engine in ("ollama-service", "lms")
 
 
 def _flatten_content(content: Any) -> str:
@@ -271,6 +302,7 @@ async def _execute_browser_tool(name: str, arguments: dict[str, Any] | None, con
 
             if name == "browser_snapshot":
                 scroll = args.get("scroll")
+                full = bool(args.get("full", False))
                 if scroll:
                     amount = int(args.get("amount", 500))
                     delta = amount if scroll == "down" else -amount
@@ -279,7 +311,8 @@ async def _execute_browser_tool(name: str, arguments: dict[str, Any] | None, con
 
                 return _flatten_content(
                     await _take_snapshot(
-                        action_context=f"Scrolled {scroll} {int(args.get('amount', 500))}px" if scroll else None
+                        action_context=f"Scrolled {scroll} {int(args.get('amount', 500))}px" if scroll else None,
+                        full=full,
                     )
                 )
 
@@ -400,7 +433,7 @@ async def _execute_browser_tool(name: str, arguments: dict[str, Any] | None, con
                 relative_path = f"task/{file_name}"
                 return (
                     f"Screenshot saved: {file_path}\n"
-                    f"Call show_image('{relative_path}') to inspect visually."
+                    f"Call read('{relative_path}') to inspect visually."
                 )
 
             return f"Unknown tool: {name}"
@@ -456,6 +489,7 @@ def register_tools(server) -> None:
     async def server_call_tool(name: str, arguments: dict[str, Any] | None) -> CallToolResult:
         """Execute the requested Browser Agent tool."""
 
+        log.info("server_call_tool: %s", name)
         session = None
         try:
             session = server.request_context.session

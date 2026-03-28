@@ -14,6 +14,10 @@ SERVER_ROOT = Path(__file__).resolve().parent
 if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
+ASLM_ROOT = Path(__file__).resolve().parents[2]
+if str(ASLM_ROOT) not in sys.path:
+    sys.path.insert(0, str(ASLM_ROOT))
+
 MCP_SERVER = {
     "id": "deep_think",
     "name": "Deep Think",
@@ -24,7 +28,14 @@ TOOLS = [
     {
         "id": "deep_think",
         "name": "Deep Think",
-        "description": "Run the Deep Think research swarm and return the formatted report.",
+        "description": (
+            "Launch the Deep Think multi-agent research swarm on a question or task. "
+            "A coordinator spawns specialist sub-agents that iterate through reflect, search, python, and finish cycles. "
+            "Returns a structured Markdown report with findings, reasoning trace, and source references saved to _out/<task_id>/. "
+            "mode='full' produces a comprehensive report with all sub-agent findings included. "
+            "mode='quick' runs a single fast pass — suitable for quick factual lookups. "
+            "WARNING: full mode can take several minutes. Do not interrupt — wait for the report."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -46,9 +57,9 @@ TOOLS = [
 
 
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
-    """Expose this tool server only for Ollama tool-calling flows."""
+    """Expose this tool server for engines that support tool-calling."""
 
-    return engine == "ollama-service"
+    return engine in ("ollama-service", "lms")
 
 
 async def _run_with_optional_keepalive(coro, session=None, interval: float = 10.0):
@@ -129,7 +140,7 @@ def register_tools(mcp) -> None:
 
     @mcp.tool()
     async def deep_think(query: str, mode: str = "full") -> str:
-        """Run the Deep Think research swarm and return the formatted report."""
+        """Launch the Deep Think multi-agent research swarm on a question or task. A coordinator spawns specialist sub-agents that iterate through reflect, search, python, and finish cycles. Returns a structured Markdown report with findings, reasoning trace, and source references saved to _out/<task_id>/. mode='full' produces a comprehensive report with all sub-agent findings included. mode='quick' runs a single fast pass suitable for quick factual lookups. WARNING: full mode can take several minutes — wait for completion."""
 
         session = None
         try:
@@ -139,5 +150,5 @@ def register_tools(mcp) -> None:
 
         return await _deep_think(
             {"query": query, "mode": mode},
-            {"mcp_session": session},
+            {"engine": "lms", "mcp_session": session},
         )

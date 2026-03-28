@@ -28,16 +28,51 @@ TOOLS = [
     {
         "id": "get_guide",
         "name": "Get Guide",
-        "description": "Retrieve the assembled content of a specific guide by name or index.",
+        "description": "Retrieve the assembled content of a specific guide by name or index. Supports modes: core, core+recipes, full.",
         "parameters": {
             "type": "object",
             "properties": {
                 "name_or_index": {
                     "type": "string",
                     "description": "Guide name (full or partial) or 1-based index as a string.",
-                }
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["core", "core+recipes", "full"],
+                    "description": "Output mode. core = guide + recipe titles + snippets. core+recipes = guide + full recipes + snippets. full = same as core+recipes.",
+                    "default": "core",
+                },
             },
             "required": ["name_or_index"],
+        },
+    },
+    {
+        "id": "list_recipes",
+        "name": "List Recipes",
+        "description": "List available workflow recipes. Optionally filter by guide name.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "guide": {
+                    "type": "string",
+                    "description": "Optional guide name to filter recipes by.",
+                },
+            },
+        },
+    },
+    {
+        "id": "get_recipe",
+        "name": "Get Recipe",
+        "description": "Retrieve a specific workflow recipe by name or search query.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name_or_query": {
+                    "type": "string",
+                    "description": "Recipe slug (e.g. 'repo-analysis'), partial name, or search query.",
+                },
+            },
+            "required": ["name_or_query"],
         },
     },
     {
@@ -118,9 +153,9 @@ TOOLS = [
 
 
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
-    """Expose this tool server only for Ollama tool-calling flows."""
+    """Expose this tool server for engines that support tool-calling."""
 
-    return engine == "ollama-service"
+    return engine in ("ollama-service", "lms")
 
 
 def _load_db_dependencies():
@@ -131,12 +166,17 @@ def _load_db_dependencies():
         VALID_KIND,
         _assemble_guide_content,
         _ensure_guide_layout,
+        _get_all_recipes,
         _get_guides,
+        _get_recipes,
         _list_snippet_records,
         _normalize_related_tools,
         _read_snippet_file,
+        _render_recipe_full,
         _resolve_guide,
+        _resolve_recipe,
         _safe_segment,
+        _search_recipes,
         _snippet_exists,
         _snippet_path,
         _utc_now,
@@ -149,12 +189,17 @@ def _load_db_dependencies():
         "VALID_KIND": VALID_KIND,
         "assemble_guide_content": _assemble_guide_content,
         "ensure_guide_layout": _ensure_guide_layout,
+        "get_all_recipes": _get_all_recipes,
         "get_guides": _get_guides,
+        "get_recipes": _get_recipes,
         "list_snippet_records": _list_snippet_records,
         "normalize_related_tools": _normalize_related_tools,
         "read_snippet_file": _read_snippet_file,
+        "render_recipe_full": _render_recipe_full,
         "resolve_guide": _resolve_guide,
+        "resolve_recipe": _resolve_recipe,
         "safe_segment": _safe_segment,
+        "search_recipes": _search_recipes,
         "snippet_exists": _snippet_exists,
         "snippet_path": _snippet_path,
         "utc_now": _utc_now,
@@ -184,6 +229,9 @@ def _get_guide(arguments: dict[str, Any] | None, context: dict[str, Any] | None 
 
     deps = _load_db_dependencies()
     query = str((arguments or {}).get("name_or_index", "")).strip()
+    mode = str((arguments or {}).get("mode", "core")).strip().lower()
+    if mode not in ("core", "core+recipes", "full"):
+        mode = "core"
     if not query:
         return "Error: name_or_index is required."
 
@@ -193,7 +241,66 @@ def _get_guide(arguments: dict[str, Any] | None, context: dict[str, Any] | None 
         available = ", ".join(f"[{idx}] {entry.name}" for idx, entry in enumerate(guides, start=1))
         return f"Guide not found: '{query}'\nAvailable: {available or 'none'}"
 
-    return deps["assemble_guide_content"](guide)
+    return deps["assemble_guide_content"](guide, mode=mode)
+
+
+def _list_recipes(arguments: dict[str, Any] | None, context: dict[str, Any] | None = None) -> str:
+    """Return a formatted list of available recipes."""
+
+    deps = _load_db_dependencies()
+    args = arguments or {}
+    guide_filter = str(args.get("guide", "")).strip() if args.get("guide") else None
+
+    if guide_filter:
+        guide = deps["resolve_guide"](guide_filter)
+        if guide is None:
+            return f"Guide not found: '{guide_filter}'"
+        recipes = deps["get_recipes"](guide)
+    else:
+        recipes = deps["get_all_recipes"]()
+
+    if not recipes:
+        return "No recipes found."
+
+    lines = [f"Available recipes ({len(recipes)} total):", ""]
+    for recipe in recipes:
+        trigger_short = recipe.trigger[:60] + "..." if len(recipe.trigger) > 60 else recipe.trigger
+        lines.append(
+            f"  [{recipe.owner_guide}] {recipe.slug} -- {recipe.title}"
+            f"  (domain: {recipe.domain}, trigger: {trigger_short})"
+        )
+    lines.append("")
+    lines.append("Use get_recipe(name_or_query) to load a specific recipe.")
+    return "\n".join(lines)
+
+
+def _get_recipe(arguments: dict[str, Any] | None, context: dict[str, Any] | None = None) -> str:
+    """Return one recipe by name or search query."""
+
+    deps = _load_db_dependencies()
+    query = str((arguments or {}).get("name_or_query", "")).strip()
+    if not query:
+        return "Error: name_or_query is required."
+
+    recipe = deps["resolve_recipe"](query)
+    if recipe is not None:
+        return deps["render_recipe_full"](recipe)
+
+    # Try search fallback
+    results = deps["search_recipes"](query)
+    if len(results) == 1:
+        return deps["render_recipe_full"](results[0])
+    if len(results) > 1:
+        lines = [f"Multiple recipes match '{query}':"]
+        for r in results:
+            lines.append(f"  - {r.slug} ({r.owner_guide}) -- {r.title}")
+        lines.append("")
+        lines.append("Specify the exact slug to load one.")
+        return "\n".join(lines)
+
+    all_recipes = deps["get_all_recipes"]()
+    available = ", ".join(r.slug for r in all_recipes)
+    return f"Recipe not found: '{query}'\nAvailable: {available or 'none'}"
 
 
 def _list_snippets(arguments: dict[str, Any] | None, context: dict[str, Any] | None = None) -> str:
@@ -359,6 +466,8 @@ def _deprecate_snippet(arguments: dict[str, Any] | None, context: dict[str, Any]
 TOOL_HANDLERS = {
     "list_guides": _list_guides,
     "get_guide": _get_guide,
+    "list_recipes": _list_recipes,
+    "get_recipe": _get_recipe,
     "list_snippets": _list_snippets,
     "create_snippet": _create_snippet,
     "append_snippet": _append_snippet,

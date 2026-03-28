@@ -21,6 +21,7 @@ def register_tools(mcp) -> None:
             _badge_engine,
             _is_antibot,
             _fetch_previews,
+            _prepare_results_with_previews,
             _proportional_merge,
             _proportional_allot,
             _parse_url_arg,
@@ -54,6 +55,7 @@ def register_tools(mcp) -> None:
             _badge_engine,
             _is_antibot,
             _fetch_previews,
+            _prepare_results_with_previews,
             _proportional_merge,
             _proportional_allot,
             _parse_url_arg,
@@ -76,8 +78,24 @@ def register_tools(mcp) -> None:
         from .file_importer import download_file
     except ImportError:
         from file_importer import download_file
+    try:
+        from .overdrive import read_url_overdrive as _read_url_overdrive
+    except ImportError:
+        try:
+            from overdrive import read_url_overdrive as _read_url_overdrive
+        except ImportError:
+            _read_url_overdrive = None
     from pathlib import Path
     from urllib.parse import urlparse
+
+    # Overdrive config.
+    try:
+        from .. import config as _ws_config
+    except (ImportError, ValueError):
+        try:
+            import config as _ws_config
+        except ImportError:
+            _ws_config = None
 
     # Search tools.
     # Register the combined web search tool.
@@ -97,6 +115,23 @@ def register_tools(mcp) -> None:
         """
         import json as _json
 
+        try:
+            overdrive_on = bool(getattr(_ws_config, "OVERDRIVE", False))
+            od_batch_unlimited = bool(getattr(_ws_config, "WEB_SEARCH_OVERDRIVE_BATCH_UNLIMITED", True))
+            od_batch_fetch_previews = bool(getattr(_ws_config, "WEB_SEARCH_OVERDRIVE_BATCH_FETCH_PREVIEWS", True))
+            od_snippet_chars = int(getattr(_ws_config, "WEB_SEARCH_OVERDRIVE_SNIPPET_CHARS", 1200) or 1200)
+            od_preview_limit = int(getattr(_ws_config, "WEB_SEARCH_OVERDRIVE_PREVIEW_LIMIT", 0) or 0)
+            od_output_chars = int(getattr(_ws_config, "WEB_SEARCH_OVERDRIVE_OUTPUT_CHARS", 2400) or 2400)
+            od_min_clean_chars = int(getattr(_ws_config, "WEB_SEARCH_OVERDRIVE_MIN_CLEAN_CHARS", 200) or 200)
+        except Exception:
+            overdrive_on = False
+            od_batch_unlimited = True
+            od_batch_fetch_previews = True
+            od_snippet_chars = 1200
+            od_preview_limit = 0
+            od_output_chars = 2400
+            od_min_clean_chars = 200
+
         # --- batch mode ---
         if isinstance(query, list):
             queries = [q.strip() for q in query if isinstance(q, str) and q.strip()][:10]
@@ -104,7 +139,10 @@ def register_tools(mcp) -> None:
                 return ['{"error": "No queries provided"}']
 
             total_limit = limit * len(queries)
-            total_limit = max(5, min(total_limit, 50))
+            if overdrive_on and od_batch_unlimited:
+                total_limit = max(5, total_limit)
+            else:
+                total_limit = max(5, min(total_limit, 50))
 
             t0 = time.time()
             per_fetch = max(12, total_limit // max(len(queries), 1) + 6)
@@ -130,6 +168,21 @@ def register_tools(mcp) -> None:
 
             for q, results, allot in zip(queries, per_query, allotments):
                 trimmed = results[:allot]
+                previews = [""] * len(trimmed)
+                if overdrive_on and od_batch_fetch_previews and trimmed:
+                    effective_preview_limit = od_preview_limit if od_preview_limit > 0 else len(trimmed)
+                    try:
+                        trimmed, previews = await _prepare_results_with_previews(
+                            trimmed,
+                            q,
+                            overrides={
+                                "preview_limit": effective_preview_limit,
+                                "output_chars": od_output_chars,
+                                "min_clean_chars": od_min_clean_chars,
+                            },
+                        )
+                    except Exception as e:
+                        _debug_log(f"overdrive batch preview enrichment failed for '{q}': {e}")
                 total_returned += len(trimmed)
                 out_queries.append({
                     "query": q,
@@ -139,10 +192,11 @@ def register_tools(mcp) -> None:
                         {
                             "title": r.title or "",
                             "url": r.url,
-                            "snippet": (r.snippet or "")[:350],
+                            "snippet": (r.snippet or "")[:(od_snippet_chars if overdrive_on else 350)],
+                            "preview": (previews[i] or "")[:od_output_chars] if i < len(previews) else "",
                             "engine": r.engine or "",
                         }
-                        for r in trimmed
+                        for i, r in enumerate(trimmed)
                     ],
                 })
 
@@ -161,6 +215,8 @@ def register_tools(mcp) -> None:
                         f"URL     : {r['url']}",
                         f"Snippet : {r['snippet'] or '-'}",
                     ]
+                    if r.get("preview"):
+                        lines.append(f"Preview : {r['preview']}")
                     out_blocks.append("\n".join(lines))
             return out_blocks
 
@@ -230,8 +286,15 @@ def register_tools(mcp) -> None:
         if not results:
             return [f"Web Search - no results - {ms}ms\nQuery: {query}"]
 
-        previews = await _fetch_previews(results)
-        previews += [""] * (len(results) - len(previews))
+        preview_overrides = None
+        if overdrive_on:
+            effective_preview_limit = od_preview_limit if od_preview_limit > 0 else len(results)
+            preview_overrides = {
+                "preview_limit": effective_preview_limit,
+                "output_chars": od_output_chars,
+                "min_clean_chars": od_min_clean_chars,
+            }
+        results, previews = await _prepare_results_with_previews(results, query, overrides=preview_overrides)
 
         # Format one result block for display.
         def _fmt_result(i: int, r: SearchResult, preview: str) -> str:
@@ -239,7 +302,7 @@ def register_tools(mcp) -> None:
                 f"[{i}] {_badge_type(r.url)} {_badge_engine(r.engine)}",
                 f"Title   : {r.title or '-'}",
                 f"URL     : {_short_url(r.url)}",
-                f"Snippet : {(r.snippet or '-')[:400]}",
+                f"Snippet : {(r.snippet or '-')[:(od_snippet_chars if overdrive_on else 400)]}",
             ]
             if preview:
                 lines.append(f"Preview : {preview}")
@@ -307,17 +370,54 @@ def register_tools(mcp) -> None:
                         return f"Source: {u}\n\n{text}"
                 except Exception as e:
                     _debug_log(f"reddit_json failed for {u}: {e}")
+                # .json API blocked — try overdrive (Camoufox/Patchright can handle Reddit)
+                if (
+                    _read_url_overdrive is not None
+                    and _ws_config is not None
+                    and getattr(_ws_config, "OVERDRIVE", False)
+                ):
+                    try:
+                        text = await _read_url_overdrive(
+                            u,
+                            human_behavior=getattr(_ws_config, "OVERDRIVE_HUMAN_BEHAVIOR", True),
+                            ocr_fallback=False,
+                            parallel_timeout=getattr(_ws_config, "OVERDRIVE_PARALLEL_TIMEOUT", 20.0),
+                            ocr_timeout=getattr(_ws_config, "OVERDRIVE_OCR_TIMEOUT", 30.0),
+                            browser_start_delay=getattr(_ws_config, "OVERDRIVE_BROWSER_START_DELAY", 0.75),
+                            browser_concurrency=getattr(_ws_config, "OVERDRIVE_BROWSER_CONCURRENCY", 2),
+                            browser_fanout=getattr(_ws_config, "OVERDRIVE_BROWSER_FANOUT", 4),
+                            browser_idle_timeout=getattr(_ws_config, "OVERDRIVE_BROWSER_IDLE_TIMEOUT", 30.0),
+                        )
+                        if text.strip():
+                            return f"Source: {u}\n[OVERDRIVE]\n\n{text[:12000]}"
+                    except Exception as e:
+                        _debug_log(f"overdrive reddit failed for {u}: {e}")
                 return f"Source: {u}\nError: Reddit fetch failed."
 
             reg = _domain_registry
             method = "http"
             tier = "unknown"
             json_api_hint = None
+            try_preview_bot = False
             if reg is not None:
                 info = reg.lookup(u)
                 method = info.method
                 tier = info.tier
                 json_api_hint = info.json_api_hint
+                try_preview_bot = bool(getattr(info, "try_preview_bot", False))
+            mimic_user_agent = bool(getattr(_ws_config, "MIMIC_USER_AGENT", True))
+
+            if try_preview_bot and mimic_user_agent:
+                try:
+                    try:
+                        from preview_bot_fetcher import probe_with_preview_bots as _probe_with_preview_bots
+                    except ImportError:
+                        from .preview_bot_fetcher import probe_with_preview_bots as _probe_with_preview_bots  # type: ignore
+                    text = await _probe_with_preview_bots(u, timeout=12)
+                    if text.strip() and not _is_antibot(text):
+                        return f"Source: {u}\n[PREVIEW_BOT]\n\n{text[:12000]}"
+                except Exception as e:
+                    _debug_log(f"preview_bot failed for {u}: {e}")
 
             if method == "json_api":
                 api_url = json_api_hint or u
@@ -339,6 +439,31 @@ def register_tools(mcp) -> None:
                 pass
             except Exception as e:
                 _debug_log(f"read_page ingest_router error for {u}: {e}")
+
+            # Overdrive mode: multi-method staggered race.
+            if (
+                _read_url_overdrive is not None
+                and _ws_config is not None
+                and getattr(_ws_config, "OVERDRIVE", False)
+            ):
+                try:
+                    text = await _read_url_overdrive(
+                        u,
+                        human_behavior=getattr(_ws_config, "OVERDRIVE_HUMAN_BEHAVIOR", True),
+                        ocr_fallback=getattr(_ws_config, "OVERDRIVE_OCR_FALLBACK", True),
+                        parallel_timeout=getattr(_ws_config, "OVERDRIVE_PARALLEL_TIMEOUT", 20.0),
+                        ocr_timeout=getattr(_ws_config, "OVERDRIVE_OCR_TIMEOUT", 30.0),
+                        browser_start_delay=getattr(_ws_config, "OVERDRIVE_BROWSER_START_DELAY", 0.75),
+                        browser_concurrency=getattr(_ws_config, "OVERDRIVE_BROWSER_CONCURRENCY", 2),
+                        browser_fanout=getattr(_ws_config, "OVERDRIVE_BROWSER_FANOUT", 4),
+                        browser_idle_timeout=getattr(_ws_config, "OVERDRIVE_BROWSER_IDLE_TIMEOUT", 30.0),
+                    )
+                    if text.strip():
+                        return f"Source: {u}\n[OVERDRIVE]\n\n{text[:12000]}"
+                    return f"Source: {u}\nError: All overdrive methods failed."
+                except Exception as e:
+                    _debug_log(f"overdrive failed for {u}: {e}")
+                    return f"Source: {u}\nError: Overdrive fetch failed: {e}"
 
             if method == "camoufox" or tier == "fortress":
                 try:

@@ -16,12 +16,16 @@ async def dispatch_tool(name: str, arguments: dict) -> list[types.TextContent]:
         VALID_KIND,
         _assemble_guide_content,
         _ensure_guide_layout,
+        _get_all_recipes,
         _get_guides,
         _list_snippet_records,
         _normalize_related_tools,
         _read_snippet_file,
+        _render_recipe_full,
         _resolve_guide,
+        _resolve_recipe,
         _safe_segment,
+        _search_recipes,
         _snippet_exists,
         _snippet_path,
         _utc_now,
@@ -47,6 +51,9 @@ async def dispatch_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
         if name == "get_guide":
             query = str(arguments.get("name_or_index", "")).strip()
+            mode = str(arguments.get("mode", "core")).strip().lower()
+            if mode not in ("core", "core+recipes", "full"):
+                mode = "core"
             if not query:
                 return [types.TextContent(type="text", text="Error: name_or_index is required.")]
 
@@ -61,8 +68,64 @@ async def dispatch_tool(name: str, arguments: dict) -> list[types.TextContent]:
                     )
                 ]
 
-            return [types.TextContent(type="text", text=_assemble_guide_content(guide))]
+            return [types.TextContent(type="text", text=_assemble_guide_content(guide, mode=mode))]
 
+        # Recipe listing and retrieval
+        if name == "list_recipes":
+            guide_filter = str(arguments.get("guide", "")).strip() if arguments.get("guide") else None
+
+            if guide_filter:
+                guide = _resolve_guide(guide_filter)
+                if guide is None:
+                    return [types.TextContent(type="text", text=f"Guide not found: '{guide_filter}'")]
+                from db import _get_recipes
+                recipes = _get_recipes(guide)
+            else:
+                recipes = _get_all_recipes()
+
+            if not recipes:
+                return [types.TextContent(type="text", text="No recipes found.")]
+
+            lines = [f"Available recipes ({len(recipes)} total):", ""]
+            for recipe in recipes:
+                trigger_short = recipe.trigger[:60] + "..." if len(recipe.trigger) > 60 else recipe.trigger
+                lines.append(
+                    f"  [{recipe.owner_guide}] {recipe.slug} -- {recipe.title}"
+                    f"  (domain: {recipe.domain}, trigger: {trigger_short})"
+                )
+            lines.append("")
+            lines.append("Use get_recipe(name_or_query) to load a specific recipe.")
+            return [types.TextContent(type="text", text="\n".join(lines))]
+
+        if name == "get_recipe":
+            query = str(arguments.get("name_or_query", "")).strip()
+            if not query:
+                return [types.TextContent(type="text", text="Error: name_or_query is required.")]
+
+            recipe = _resolve_recipe(query)
+            if recipe is not None:
+                return [types.TextContent(type="text", text=_render_recipe_full(recipe))]
+
+            # Try search fallback
+            results = _search_recipes(query)
+            if len(results) == 1:
+                return [types.TextContent(type="text", text=_render_recipe_full(results[0]))]
+            if len(results) > 1:
+                lines = [f"Multiple recipes match '{query}':"]
+                for r in results:
+                    lines.append(f"  - {r.slug} ({r.owner_guide}) -- {r.title}")
+                lines.append("")
+                lines.append("Specify the exact slug to load one.")
+                return [types.TextContent(type="text", text="\n".join(lines))]
+
+            all_recipes = _get_all_recipes()
+            available = ", ".join(r.slug for r in all_recipes)
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"Recipe not found: '{query}'\nAvailable: {available or 'none'}",
+                )
+            ]
         # Snippet listing
         if name == "list_snippets":
             guide = str(arguments["guide"])
@@ -245,7 +308,8 @@ def register_tools(server) -> None:
                 name="get_guide",
                 description=(
                     "Retrieve the assembled content of a specific tool guide by name or index. "
-                    "This includes the main guide plus active snippet modules."
+                    "Supports modes: core (compact guide + recipe index), "
+                    "core+recipes (guide + full recipes), full (guide + recipes + snippets)."
                 ),
                 inputSchema={
                     "type": "object",
@@ -256,9 +320,55 @@ def register_tools(server) -> None:
                                 "Guide name (full or partial) or 1-based index as a string. "
                                 'Always pass as a string - e.g. "1", "2", "mcp-web-search".'
                             ),
-                        }
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["core", "core+recipes", "full"],
+                            "description": (
+                                "Output mode. core = guide + recipe titles + snippets. "
+                                "core+recipes = guide + full recipes + snippets. "
+                                "full = same as core+recipes."
+                            ),
+                            "default": "core",
+                        },
                     },
                     "required": ["name_or_index"],
+                },
+            ),
+            types.Tool(
+                name="list_recipes",
+                description=(
+                    "List available workflow recipes. Optionally filter by guide name. "
+                    "Recipes are step-by-step task workflows (repo analysis, code edit, PDF processing, etc.)."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "guide": {
+                            "type": "string",
+                            "description": "Optional guide name to filter recipes by.",
+                        },
+                    },
+                },
+            ),
+            types.Tool(
+                name="get_recipe",
+                description=(
+                    "Retrieve a specific workflow recipe by name or search query. "
+                    "Returns the full recipe with goal, workflow steps, stop conditions, and anti-patterns."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "name_or_query": {
+                            "type": "string",
+                            "description": (
+                                "Recipe slug (e.g. 'repo-analysis'), partial name, "
+                                "or search query (e.g. 'analyze repository')."
+                            ),
+                        },
+                    },
+                    "required": ["name_or_query"],
                 },
             ),
             types.Tool(

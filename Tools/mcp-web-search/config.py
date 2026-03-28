@@ -106,6 +106,12 @@ WEB_SEARCH_PREVIEW_LIMIT = 10
 WEB_SEARCH_PREVIEW_CHAR_BUDGET = 6000
 WEB_SEARCH_FETCH_TIMEOUT = 8.0
 WEB_SEARCH_PREVIEW_TOTAL_TIMEOUT = 12.0
+WEB_SEARCH_OVERDRIVE_BATCH_UNLIMITED = True
+WEB_SEARCH_OVERDRIVE_BATCH_FETCH_PREVIEWS = True
+WEB_SEARCH_OVERDRIVE_SNIPPET_CHARS = 1200
+WEB_SEARCH_OVERDRIVE_PREVIEW_LIMIT = 0
+WEB_SEARCH_OVERDRIVE_OUTPUT_CHARS = 2400
+WEB_SEARCH_OVERDRIVE_MIN_CLEAN_CHARS = 200
 
 
 # Source filtering thresholds.
@@ -312,3 +318,26 @@ class ResearchConfig:
 
         kwargs = presets.get(depth, {})
         return cls(depth=depth, **kwargs)
+
+
+# Overdrive Mode settings.
+# Experimental config flag that switches read_page to a multi-method fetch
+# orchestrator for higher page-read success rates at the cost of latency.
+OVERDRIVE: bool = os.getenv("SEARCH_OVERDRIVE", "false").lower() == "true"
+OVERDRIVE_HUMAN_BEHAVIOR: bool = os.getenv("SEARCH_OVERDRIVE_HUMAN_BEHAVIOR", "true").lower() == "true"
+OVERDRIVE_OCR_FALLBACK: bool = os.getenv("SEARCH_OVERDRIVE_OCR_FALLBACK", "true").lower() == "true"
+OVERDRIVE_PARALLEL_TIMEOUT: float = float(os.getenv("SEARCH_OVERDRIVE_PARALLEL_TIMEOUT", "30.0"))
+OVERDRIVE_OCR_TIMEOUT: float = float(os.getenv("SEARCH_OVERDRIVE_OCR_TIMEOUT", "30.0"))
+OVERDRIVE_BROWSER_START_DELAY: float = float(os.getenv("SEARCH_OVERDRIVE_BROWSER_START_DELAY", "2"))
+OVERDRIVE_BROWSER_CONCURRENCY: int = int(os.getenv("SEARCH_OVERDRIVE_BROWSER_CONCURRENCY", "4"))
+OVERDRIVE_BROWSER_FANOUT: int = int(os.getenv("SEARCH_OVERDRIVE_BROWSER_FANOUT", "4"))
+OVERDRIVE_BROWSER_IDLE_TIMEOUT: float = float(os.getenv("SEARCH_OVERDRIVE_BROWSER_IDLE_TIMEOUT", "30.0"))
+OVERDRIVE_TRACE_BROWSERS: bool = os.getenv("SEARCH_OVERDRIVE_TRACE_BROWSERS", "true").lower() == "true"
+MIMIC_USER_AGENT: bool = os.getenv("SEARCH_MIMIC_USER_AGENT", "false").lower() == "true"
+WARP_ENABLED: bool = os.getenv("SEARCH_WARP_ENABLED", "false").lower() == "true"
+WARP_ALL_FAILURES: bool = os.getenv("SEARCH_WARP_ALL_FAILURES", "false").lower() == "true"
+WARP_PROXY_URL: str = os.getenv("SEARCH_WARP_PROXY_URL", "").strip()
+WARP_CLI_PATH: str = os.getenv("SEARCH_WARP_CLI_PATH", "").strip()
+WARP_AUTO_INSTALL_PY_DEPS: bool = os.getenv("SEARCH_WARP_AUTO_INSTALL_PY_DEPS", "true").lower() == "true"
+WARP_ENSURE_PROXY_MODE: bool = os.getenv("SEARCH_WARP_ENSURE_PROXY_MODE", "true").lower() == "true"
+WARP_AUTO_DISCONNECT: bool = os.getenv("SEARCH_WARP_AUTO_DISCONNECT", "true").lower() == "true"

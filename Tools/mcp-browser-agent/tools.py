@@ -204,7 +204,7 @@ def register_tools(server) -> None:
                 name="browser_screenshot",
                 description=(
                     "Take a screenshot of the current page and save it to task/ folder. "
-                    "Returns the file path. Call show_image('task/<filename>') to inspect it visually."
+                    "Returns the file path. Call sandbox read('task/<filename>') to inspect it visually."
                 ),
                 inputSchema={
                     "type": "object",
@@ -425,7 +425,7 @@ def register_tools(server) -> None:
                         type="text",
                         text=(
                             f"Screenshot saved: {file_path}\n"
-                            f"Call show_image('{relative_path}') to inspect visually."
+                            f"Call read('{relative_path}') to inspect visually."
                         ),
                     )
                 ]
