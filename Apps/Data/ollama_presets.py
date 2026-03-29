@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 from django.db import IntegrityError, transaction
+from API import ollama as ollama_api
 from Apps.Data.models import OllamaPreset
 
 DEFAULT_OLLAMA_PRESET_NAME = "Default"
@@ -14,6 +15,14 @@ DEFAULT_OLLAMA_PRESET_CONFIG: dict[str, Any] = {
     "num_predict": 8192,
     "think": True,
     "think_level": "medium",
+}
+OLLAMA_PRESET_CONTROL_KEYS = {
+    "think",
+    "thinking",
+    "reasoning",
+    "think_level",
+    "thinking_level",
+    "reasoning_effort",
 }
 
 
@@ -44,7 +53,24 @@ def normalize_ollama_preset_config(config: dict[str, Any] | None) -> dict[str, A
         return {}
 
     normalized = _normalize_config_value(deepcopy(config))
-    return normalized if isinstance(normalized, dict) else {}
+    if not isinstance(normalized, dict):
+        return {}
+
+    clean_config: dict[str, Any] = {}
+    for key, value in normalized.items():
+        normalized_key = str(key or "").strip()
+        if not normalized_key:
+            continue
+        if normalized_key in OLLAMA_PRESET_CONTROL_KEYS:
+            clean_config[normalized_key] = value
+            continue
+        if normalized_key in ollama_api.OLLAMA_TOP_LEVEL_CHAT_KEYS:
+            clean_config[normalized_key] = value
+            continue
+        if ollama_api.is_supported_runtime_option_key(normalized_key):
+            clean_config[normalized_key] = value
+
+    return clean_config
 
 
 # Pick next custom preset name
@@ -70,7 +96,7 @@ def _serialize_preset(preset: OllamaPreset) -> dict[str, Any]:
         "id": str(preset.id),
         "model_name": preset.model_name,
         "name": preset.name,
-        "config": deepcopy(preset.config or {}),
+        "config": normalize_ollama_preset_config(preset.config or {}),
         "is_default": preset.is_default,
         "is_active": preset.is_active,
     }
@@ -143,7 +169,7 @@ def get_ollama_preset_payload(model_name: str) -> dict[str, Any]:
         "model": model_name,
         "active_preset_id": str(active_preset.id),
         "presets": [_serialize_preset(preset) for preset in presets],
-        "active_config": deepcopy(active_preset.config or {}),
+        "active_config": normalize_ollama_preset_config(active_preset.config or {}),
     }
 
 # Activate preset

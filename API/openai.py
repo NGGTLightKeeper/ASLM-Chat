@@ -48,10 +48,10 @@ def _get_client():
     except ImportError as exc:
         raise ImportError("The 'openai' package is required for OpenAI-compatible support.") from exc
 
-    client_kwargs = {"base_url": settings.get_engine_url("openai")}
-    api_key = settings.get_openai_api_key()
-    if api_key:
-        client_kwargs["api_key"] = api_key
+    client_kwargs = {
+        "base_url": settings.get_engine_url("openai"),
+        "api_key": settings.get_openai_api_key() or "not-needed",
+    }
 
     return OpenAI(**client_kwargs)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import logging
 import threading
+import time
 from typing import Any
 
 import ollama
@@ -25,7 +26,23 @@ def abort_generation() -> None:
 
 OLLAMA_TOP_LEVEL_CHAT_KEYS = {"format", "keep_alive", "logprobs", "top_logprobs"}
 OLLAMA_INTERNAL_CHAT_KEYS = {"system", "prompt", "tool_id", "tool_server_id", "tool_server_ids", "tool_context", "think", "think_level", "engine"}
+OLLAMA_UNSUPPORTED_OPTION_KEYS = {
+    "embedding_only",
+    "f16_kv",
+    "logits_all",
+    "low_vram",
+    "mirostat",
+    "mirostat_eta",
+    "mirostat_tau",
+    "numa",
+    "penalize_newline",
+    "tfs_z",
+    "use_mlock",
+    "vocab_only",
+}
 MAX_TOOL_ROUNDS = 100
+_unsupported_options_lock = threading.Lock()
+_reported_unsupported_option_sets: set[tuple[str, ...]] = set()
 
 
 # Import Ollama service
@@ -39,12 +56,12 @@ def _get_ollama_service_module():
         return None
 
 # Start Ollama runtime
-def prepare_runtime() -> None:
+def prepare_runtime(engine: str | None = None) -> None:
     """Ensure the managed Ollama runtime is running before requests."""
 
     ollama_service = _get_ollama_service_module()
     if ollama_service is not None:
-        ollama_service.start_ollama()
+        ollama_service.start_ollama(engine=engine)
 
 # Stop Ollama runtime
 def cleanup_runtime() -> None:
@@ -53,6 +70,58 @@ def cleanup_runtime() -> None:
     ollama_service = _get_ollama_service_module()
     if ollama_service is not None:
         ollama_service.stop_ollama()
+
+
+def _print_runtime_event(message: str) -> None:
+    """Emit one ASLM-Chat runtime event into the shared console."""
+
+    print(f"[ASLM-Chat] {message}", flush=True)
+
+
+def _is_debug_logging_enabled() -> bool:
+    """Return whether debug-or-higher Ollama adapter events should be printed."""
+
+    return settings.is_console_debug_enabled()
+
+
+def _is_trace_logging_enabled() -> bool:
+    """Return whether trace-level adapter events should be printed."""
+
+    return settings.is_console_trace_enabled()
+
+
+def _preview_jsonish(value: Any, limit: int = 240) -> str:
+    """Return a compact one-line preview for adapter diagnostics."""
+
+    if isinstance(value, str):
+        rendered = value
+    else:
+        try:
+            import json
+
+            rendered = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        except TypeError:
+            rendered = str(value)
+
+    rendered = " ".join(str(rendered or "").split())
+    if len(rendered) <= limit:
+        return rendered
+    return f"{rendered[:max(0, limit - 3)].rstrip()}..."
+
+
+def is_supported_runtime_option_key(option_name: Any) -> bool:
+    """Return whether the option can be forwarded to the current Ollama chat API."""
+
+    normalized = str(option_name or "").strip()
+    return bool(normalized) and normalized not in OLLAMA_UNSUPPORTED_OPTION_KEYS
+
+
+def _summarize_tool_names(tool_calls: list[dict[str, Any]]) -> str:
+    """Return a readable summary of tool aliases requested by the model."""
+
+    names = [str(tool_call.get("name", "") or "").strip() for tool_call in tool_calls]
+    names = [name for name in names if name]
+    return ", ".join(names) if names else "none"
 
 
 # Create Ollama client
@@ -180,14 +249,53 @@ def _normalize_message(raw_message: Any) -> dict[str, Any]:
 
     return normalized_message
 
+
+def _sanitize_request_options(options: Any) -> tuple[Any, list[str]]:
+    """Drop Ollama options that the bundled runtime no longer accepts."""
+
+    if not isinstance(options, dict):
+        return options, []
+
+    clean_options: dict[str, Any] = {}
+    dropped_options: list[str] = []
+    for key, value in options.items():
+        normalized_key = str(key or "").strip()
+        if not is_supported_runtime_option_key(normalized_key):
+            dropped_options.append(normalized_key)
+            continue
+        clean_options[key] = value
+
+    return clean_options, dropped_options
+
+
+def _report_dropped_options(dropped_options: list[str]) -> None:
+    """Log one concise summary when unsupported Ollama options are removed."""
+
+    unique_dropped = tuple(sorted({str(key).strip() for key in dropped_options if str(key).strip()}))
+    if not unique_dropped:
+        return
+
+    with _unsupported_options_lock:
+        if unique_dropped in _reported_unsupported_option_sets:
+            return
+        _reported_unsupported_option_sets.add(unique_dropped)
+
+    _print_runtime_event(
+        "Ollama request sanitized: dropped unsupported options "
+        f"[{', '.join(unique_dropped)}]."
+    )
+
 # Flatten chat options
-def _prepare_chat_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+def _prepare_chat_kwargs_with_metadata(kwargs: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """Move supported top-level Ollama parameters out of nested options."""
 
     call_kwargs = {key: value for key, value in kwargs.items() if key not in OLLAMA_INTERNAL_CHAT_KEYS}
     options = call_kwargs.get("options")
+    dropped_options: list[str] = []
 
     if isinstance(options, dict):
+        options, dropped_options = _sanitize_request_options(options)
+        call_kwargs["options"] = options
         for key in OLLAMA_TOP_LEVEL_CHAT_KEYS:
             if key in options:
                 call_kwargs[key] = options.pop(key)
@@ -203,6 +311,13 @@ def _prepare_chat_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
         else:
             call_kwargs["think"] = think
 
+    return call_kwargs, dropped_options
+
+
+def _prepare_chat_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Compatibility wrapper that returns only the Ollama call kwargs."""
+
+    call_kwargs, _ = _prepare_chat_kwargs_with_metadata(kwargs)
     return call_kwargs
 
 
@@ -359,9 +474,21 @@ def _run_tool_loop(
         yield from _yield_stream_round(_stream_round(client, model_name, messages, base_kwargs))
         return
 
+    if _is_debug_logging_enabled():
+        _print_runtime_event(
+            "Tool loop prepared: "
+            f"engine=ollama-service, "
+            f"model={model_name}, "
+            f"servers={tool_server_ids}, "
+            f"tools={len(tools)}"
+        )
+        if _is_trace_logging_enabled():
+            _print_runtime_event(f"Tool loop base options: {_preview_jsonish(base_kwargs, limit=320)}")
+
     conversation = [dict(message) for message in messages]
 
     for round_index in range(MAX_TOOL_ROUNDS):
+        round_started_at = time.perf_counter()
         assistant_message = yield from _yield_stream_round(
             _stream_round(client, model_name, conversation, base_kwargs, tools=tools)
         )
@@ -377,11 +504,42 @@ def _run_tool_loop(
         yield {"transcript_message": assistant_message}
 
         if not tool_calls:
+            if _is_debug_logging_enabled():
+                _print_runtime_event(
+                    "Tool loop completed: "
+                    f"model={model_name}, "
+                    f"rounds={round_index + 1}, "
+                    f"took={time.perf_counter() - round_started_at:.2f}s, "
+                    "tool_calls=0"
+                )
             return
+
+        if _is_debug_logging_enabled():
+            _print_runtime_event(
+                "Tool round requested: "
+                f"model={model_name}, "
+                f"round={round_index + 1}, "
+                f"count={len(tool_calls)}, "
+                f"aliases={_summarize_tool_names(tool_calls)}"
+            )
+            if _is_trace_logging_enabled():
+                _print_runtime_event(
+                    f"Tool round payload: {_preview_jsonish(tool_calls, limit=420)}"
+                )
 
         for tool_call_index, tool_call in enumerate(tool_calls, start=1):
             tool_event = _build_tool_event(tool_lookup, tool_call)
             yield {"tool_event": tool_event}
+
+            if _is_debug_logging_enabled():
+                _print_runtime_event(
+                    "Tool dispatched: "
+                    f"round={round_index + 1}, "
+                    f"index={tool_call_index}, "
+                    f"alias={tool_event.get('alias')}, "
+                    f"server={tool_event.get('server_id')}, "
+                    f"tool={tool_event.get('tool_id')}"
+                )
 
             call_context = dict(tool_context or {})
             call_context.update(
@@ -409,6 +567,17 @@ def _run_tool_loop(
             ui_tool_message = {k: v for k, v in tool_message.items() if k != "images"}
             if "images" in tool_message:
                 ui_tool_message["content"] = tool_message.get("content", "[image]")
+            if _is_debug_logging_enabled():
+                result_content = ui_tool_message.get("content", "")
+                result_type = "image" if "images" in tool_message else "text"
+                _print_runtime_event(
+                    "Tool result forwarded: "
+                    f"round={round_index + 1}, "
+                    f"index={tool_call_index}, "
+                    f"alias={tool_event.get('alias')}, "
+                    f"type={result_type}, "
+                    f"chars={len(str(result_content or ''))}"
+                )
             yield {"tool_result": ui_tool_message}
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
@@ -437,7 +606,8 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any) -> 
 
     try:
         _abort_event.clear()
-        call_kwargs = _prepare_chat_kwargs(kwargs)
+        call_kwargs, dropped_options = _prepare_chat_kwargs_with_metadata(kwargs)
+        _report_dropped_options(dropped_options)
 
         if tool_server_ids:
             return _run_tool_loop(client, model_name, messages, call_kwargs, tool_server_ids, tool_context)

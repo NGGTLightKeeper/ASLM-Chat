@@ -9,9 +9,12 @@ import json
 import logging
 import re
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+
+from Settings import settings as runtime_settings
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +26,77 @@ TOOL_HANDLER_NAMES = ("TOOL_HANDLERS", "TOOL_EXECUTORS")
 
 _SERVER_CACHE_SIGNATURE: tuple[tuple[str, int], ...] | None = None
 _SERVER_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def _print_runtime_event(message: str) -> None:
+    """Emit one console-visible runtime event."""
+
+    print(f"[ASLM-Chat] {message}", flush=True)
+
+
+def _is_debug_logging_enabled() -> bool:
+    """Return whether debug-or-higher MCP events should be printed."""
+
+    return runtime_settings.is_console_debug_enabled()
+
+
+def _is_trace_logging_enabled() -> bool:
+    """Return whether trace-level MCP events should be printed."""
+
+    return runtime_settings.is_console_trace_enabled()
+
+
+def _preview_jsonish(value: Any, limit: int = 240) -> str:
+    """Return a compact one-line preview for arguments and results."""
+
+    try:
+        if isinstance(value, str):
+            rendered = value
+        else:
+            rendered = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        rendered = str(value)
+
+    rendered = re.sub(r"\s+", " ", str(rendered or "")).strip()
+    if len(rendered) <= limit:
+        return rendered
+    return f"{rendered[:max(0, limit - 3)].rstrip()}..."
+
+
+def _summarize_tool_result(result: Any) -> str:
+    """Return a short textual summary of a tool result payload."""
+
+    if isinstance(result, dict) and "_image_b64" in result:
+        return f"image:{result.get('_mime_type', 'image')} path={result.get('_path', '') or '(inline)'}"
+    if result is None:
+        return "empty"
+    if isinstance(result, str):
+        return f"text chars={len(result)} preview={_preview_jsonish(result, limit=140)}"
+    if isinstance(result, (dict, list, tuple)):
+        try:
+            size_hint = len(result)
+        except TypeError:
+            size_hint = "?"
+        return f"{type(result).__name__} size={size_hint} preview={_preview_jsonish(result, limit=140)}"
+    return f"{type(result).__name__} value={_preview_jsonish(result, limit=140)}"
+
+
+def _summarize_tool_context(context: dict[str, Any]) -> str:
+    """Return a compact summary of the runtime context passed into a tool."""
+
+    parts: list[str] = []
+    for key in ("engine", "model_name", "chat_id", "tool_round_index", "tool_call_index"):
+        value = context.get(key)
+        if value not in {None, ""}:
+            parts.append(f"{key}={value}")
+
+    if _is_trace_logging_enabled():
+        for key in ("server_file", "tools_dir"):
+            value = context.get(key)
+            if value not in {None, ""}:
+                parts.append(f"{key}={value}")
+
+    return ", ".join(parts) if parts else "none"
 
 
 # Clear cached registry
@@ -401,6 +475,24 @@ def build_ollama_tools(
             )
             tool_lookup[alias] = {"server": server_definition, "tool": tool_definition}
 
+    if tools and _is_debug_logging_enabled():
+        selected_servers = []
+        for server_id in server_ids:
+            server_definition = get_server(server_id, engine=engine, model_name=model_name)
+            if server_definition:
+                selected_servers.append(server_definition["id"])
+
+        _print_runtime_event(
+            "Tool registry prepared: "
+            f"engine={engine or 'unknown'}, "
+            f"model={model_name or '(auto)'}, "
+            f"servers={selected_servers or list(server_ids)}, "
+            f"tools={len(tools)}"
+        )
+        if _is_trace_logging_enabled():
+            aliases = ", ".join(sorted(tool_lookup.keys(), key=str.casefold))
+            _print_runtime_event(f"Tool aliases: {aliases}")
+
     return tools, tool_lookup
 
 
@@ -519,6 +611,17 @@ def call_ollama_tool(
     call_context.setdefault("tool_alias", tool_definition["alias"])
     call_context.setdefault("server_file", str(server_definition["server_file"]))
     call_context.setdefault("tools_dir", str(TOOLS_DIR))
+    started_at = time.perf_counter()
+
+    if _is_debug_logging_enabled():
+        _print_runtime_event(
+            "Tool starting: "
+            f"server={server_definition['id']}, "
+            f"tool={tool_definition['id']}, "
+            f"alias={tool_definition['alias']}, "
+            f"context={_summarize_tool_context(call_context)}, "
+            f"args={_preview_jsonish(call_arguments, limit=180)}"
+        )
 
     try:
         handler = server_definition["tool_handlers"].get(tool_definition["id"])
@@ -544,9 +647,35 @@ def call_ollama_tool(
 
         image_payload = _extract_inline_image_payload(result)
         if image_payload is not None:
+            if _is_debug_logging_enabled():
+                _print_runtime_event(
+                    "Tool completed: "
+                    f"server={server_definition['id']}, "
+                    f"tool={tool_definition['id']}, "
+                    f"status=ok, "
+                    f"took={time.perf_counter() - started_at:.2f}s, "
+                    f"result={_summarize_tool_result(image_payload)}"
+                )
             return image_payload
 
+        if _is_debug_logging_enabled():
+            _print_runtime_event(
+                "Tool completed: "
+                f"server={server_definition['id']}, "
+                f"tool={tool_definition['id']}, "
+                f"status=ok, "
+                f"took={time.perf_counter() - started_at:.2f}s, "
+                f"result={_summarize_tool_result(result)}"
+            )
         return _serialize_tool_result(result)
     except Exception as exc:
         logger.exception("Tool execution failed for %s.%s", server_definition["id"], tool_definition["id"])
+        _print_runtime_event(
+            "Tool failed: "
+            f"server={server_definition['id']}, "
+            f"tool={tool_definition['id']}, "
+            f"status=error, "
+            f"took={time.perf_counter() - started_at:.2f}s, "
+            f"error={exc}"
+        )
         return f"Tool execution failed: {exc}"

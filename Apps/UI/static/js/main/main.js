@@ -78,6 +78,20 @@ $(function () {
     lms: 'Example: http://127.0.0.1:1234',
     openai: 'Example: http://127.0.0.1:8000/v1'
   };
+  const OLLAMA_UNSUPPORTED_RUNTIME_PARAMS = new Set([
+    'embedding_only',
+    'f16_kv',
+    'logits_all',
+    'low_vram',
+    'mirostat',
+    'mirostat_eta',
+    'mirostat_tau',
+    'numa',
+    'penalize_newline',
+    'tfs_z',
+    'use_mlock',
+    'vocab_only'
+  ]);
 
   activeEngine = normalizeEngineValue(
     runtimeSettings['llm-engine'] || $('body').data('llm-engine') || 'ollama-service'
@@ -1027,8 +1041,14 @@ $(function () {
 
   function getSupportedParameterDefinitions(engine) {
     const canonicalEngine = normalizeEngineValue(engine);
-    return Object.entries(PARAMETER_DEFINITIONS).filter(function ([, definition]) {
-      return (definition.engines || []).includes(canonicalEngine);
+    return Object.entries(PARAMETER_DEFINITIONS).filter(function ([key, definition]) {
+      if (!(definition.engines || []).includes(canonicalEngine)) {
+        return false;
+      }
+      if (canonicalEngine === 'ollama-service' && OLLAMA_UNSUPPORTED_RUNTIME_PARAMS.has(key)) {
+        return false;
+      }
+      return true;
     });
   }
 
@@ -2125,6 +2145,11 @@ $(function () {
       const defaults = { ...data.defaults };
       delete defaults[thinkState.paramName];
       delete defaults[thinkState.levelParamName];
+      if (getActiveEngine() === 'ollama-service') {
+        OLLAMA_UNSUPPORTED_RUNTIME_PARAMS.forEach(function (key) {
+          delete defaults[key];
+        });
+      }
 
       getSupportedParameterDefinitions(getActiveEngine()).forEach(function ([key, config]) {
         const renderedConfig = { ...config };
@@ -2267,6 +2292,11 @@ $(function () {
 
   function collectOptionsPayload() {
     const payload = collectParameterPayload('#dynamicParameters .dyn-param');
+    if (getActiveEngine() === 'ollama-service') {
+      OLLAMA_UNSUPPORTED_RUNTIME_PARAMS.forEach(function (key) {
+        delete payload[key];
+      });
+    }
 
     if (thinkState.supported) {
       payload[thinkState.paramName] = thinkState.enabled;

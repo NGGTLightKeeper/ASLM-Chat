@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 from typing import Any
 
 from django.http import JsonResponse, StreamingHttpResponse
@@ -30,6 +31,75 @@ logger = logging.getLogger(__name__)
 THINK_PARAM_NAMES = {"think", "thinking", "reasoning"}
 THINK_LEVEL_PARAM_NAMES = {"think_level", "thinking_level", "reasoning_effort"}
 TOOL_CAPABILITY_NAMES = {"tools", "tool", "tool-calling", "tool_calling"}
+
+
+def _print_runtime_event(message: str) -> None:
+    """Emit one concise runtime event for the ASLM console."""
+
+    print(f"[ASLM-Chat] {message}", flush=True)
+
+
+def _is_expected_runtime_error(exc: Exception) -> bool:
+    """Return whether the exception is an expected runtime/connectivity failure."""
+
+    exc_name = type(exc).__name__
+    if exc_name in {"ConnectError", "ConnectionError", "ReadTimeout", "TimeoutException"}:
+        return True
+
+    message = str(exc).lower()
+    expected_markers = (
+        "failed to connect to ollama",
+        "connection refused",
+        "connection error",
+        "connecterror",
+        "timed out",
+        "timeout",
+        "winerror 10061",
+    )
+    return any(marker in message for marker in expected_markers)
+
+
+def _format_runtime_error(engine: str, exc: Exception) -> str:
+    """Return a user-facing runtime error string without noisy transport details."""
+
+    if settings.is_ollama_engine(engine) and _is_expected_runtime_error(exc):
+        return (
+            "Failed to connect to Ollama. Please check that Ollama is downloaded, "
+            "running and accessible. https://ollama.com/download"
+        )
+
+    if engine == "openai" and _is_expected_runtime_error(exc):
+        return "Failed to connect to the configured OpenAI-compatible endpoint."
+
+    if engine == "lms" and _is_expected_runtime_error(exc):
+        return "Failed to connect to LM Studio."
+
+    return str(exc)
+
+
+def _summarize_option_keys(options: dict[str, Any] | None, max_keys: int = 6) -> str:
+    """Return a short, readable summary of option keys."""
+
+    if not isinstance(options, dict) or not options:
+        return "none"
+
+    option_keys = sorted({str(key).strip() for key in options if str(key).strip()}, key=str.casefold)
+    if len(option_keys) <= max_keys:
+        return ", ".join(option_keys)
+    return f"{', '.join(option_keys[:max_keys])}, +{len(option_keys) - max_keys} more"
+
+
+def _count_request_images(messages: list[dict[str, Any]]) -> int:
+    """Count image attachments present in the current outbound request."""
+
+    image_count = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        raw_images = message.get("images")
+        if isinstance(raw_images, list):
+            image_count += len(raw_images)
+    return image_count
 
 
 # Read local GPU devices
@@ -98,9 +168,11 @@ def _load_models_for_engine(engine: str) -> list[str]:
         raw_models = llm_api.get_models(engine)
     except NotImplementedError:
         logger.info("Model listing is not implemented for engine %s", engine)
+        _print_runtime_event(f"Models not supported for engine={engine}.")
         return []
     except Exception as exc:
         logger.warning("Failed to load models for engine %s: %s", engine, exc)
+        _print_runtime_event(f"Model list failed: engine={engine}, error={exc}")
         return []
 
     model_names = []
@@ -391,8 +463,16 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
             parts = line.strip().split()
             if len(parts) < 2:
                 continue
-            key = parts[0].strip().lower()
-            value = " ".join(parts[1:]).strip()
+            if parts[0].strip().lower() == "parameter":
+                if len(parts) < 3:
+                    continue
+                key = parts[1].strip().lower()
+                value = " ".join(parts[2:]).strip()
+            else:
+                key = parts[0].strip().lower()
+                value = " ".join(parts[1:]).strip()
+            if not ollama_api.is_supported_runtime_option_key(key):
+                continue
             normalized = settings.normalize_setting_value(value)
             if key == "stop":
                 existing = defaults.get("stop")
@@ -679,6 +759,29 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
     visible_parts: list[str] = []
     transcript_entries: list[dict[str, Any]] = []
     is_thinking = False
+    failed = False
+    started_at = time.perf_counter()
+    model_name = str(generate_kwargs.get("model_name", "") or "")
+    llm_messages = generate_kwargs.get("messages", [])
+    image_count = _count_request_images(llm_messages if isinstance(llm_messages, list) else [])
+    selected_tool_server_ids = generate_kwargs.get("tool_server_ids", []) or []
+    raw_options = generate_kwargs.get("options", {})
+
+    _print_runtime_event(
+        "Chat started: "
+        f"engine={engine}, "
+        f"model={model_name}, "
+        f"messages={len(llm_messages) if isinstance(llm_messages, list) else 0}, "
+        f"images={image_count}, "
+        f"tools={len(selected_tool_server_ids) if isinstance(selected_tool_server_ids, list) else 0}, "
+        f"options={_summarize_option_keys(raw_options)}"
+    )
+    if settings.is_console_trace_enabled():
+        _print_runtime_event(
+            "Chat trace: "
+            f"tool_servers={selected_tool_server_ids if isinstance(selected_tool_server_ids, list) else []}, "
+            f"options_payload={json.dumps(raw_options, ensure_ascii=False, sort_keys=True) if isinstance(raw_options, dict) else raw_options}"
+        )
 
     try:
         llm_api.prepare_runtime(engine)
@@ -726,10 +829,15 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
                 visible_parts.append(text_part)
                 yield text_part
     except Exception as exc:
-        logger.exception("Error during streaming generation")
+        failed = True
+        formatted_error = _format_runtime_error(engine, exc)
+        if _is_expected_runtime_error(exc):
+            logger.warning("Error during streaming generation: %s", formatted_error)
+        else:
+            logger.exception("Error during streaming generation")
         if is_thinking:
             yield "\n</think>\n"
-        yield f"\n[Error during generation: {exc}]"
+        yield f"\n[Error during generation: {formatted_error}]"
     finally:
         if is_thinking:
             yield "\n</think>\n"
@@ -742,6 +850,17 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
                 content=visible_content,
                 llm_transcript=transcript_entries,
             )
+
+        duration_seconds = time.perf_counter() - started_at
+        _print_runtime_event(
+            "Chat completed: "
+            f"engine={engine}, "
+            f"model={model_name}, "
+            f"status={'failed' if failed else 'ok'}, "
+            f"took={duration_seconds:.2f}s, "
+            f"visible_chars={len(visible_content)}, "
+            f"transcript_entries={len(transcript_entries)}"
+        )
 
 
 # Render main page
@@ -994,15 +1113,31 @@ def get_model_info_api(request):
         return JsonResponse({"error": "Model parameter is required"}, status=400)
 
     engine = _get_active_engine(request.GET.get("engine"))
+    started_at = time.perf_counter()
 
     try:
-        return JsonResponse(_build_model_info_payload(engine, model_name))
+        payload = _build_model_info_payload(engine, model_name)
+        _print_runtime_event(
+            "Model info loaded: "
+            f"engine={engine}, "
+            f"model={model_name}, "
+            f"tools={len(payload.get('available_tool_servers', []) or [])}, "
+            f"options={_summarize_option_keys(payload.get('defaults', {}))}, "
+            f"took={(time.perf_counter() - started_at):.2f}s"
+        )
+        return JsonResponse(payload)
     except NotImplementedError as exc:
         logger.info("Model info is not implemented for engine %s: %s", engine, exc)
+        _print_runtime_event(f"Model info not supported: engine={engine}, model={model_name}")
         return JsonResponse({"error": str(exc)}, status=501)
     except Exception as exc:
-        logger.exception("Error getting model info for %s on engine %s", model_name, engine)
-        return JsonResponse({"error": str(exc)}, status=500)
+        formatted_error = _format_runtime_error(engine, exc)
+        if _is_expected_runtime_error(exc):
+            logger.warning("Error getting model info for %s on engine %s: %s", model_name, engine, formatted_error)
+        else:
+            logger.exception("Error getting model info for %s on engine %s", model_name, engine)
+        _print_runtime_event(f"Model info failed: engine={engine}, model={model_name}, error={formatted_error}")
+        return JsonResponse({"error": formatted_error}, status=500)
 
 
 # Load model list
@@ -1013,7 +1148,12 @@ def get_models_api(request):
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
     engine = _get_active_engine(request.GET.get("engine"))
-    return JsonResponse({"engine": engine, "models": _load_models_for_engine(engine)})
+    started_at = time.perf_counter()
+    models = _load_models_for_engine(engine)
+    _print_runtime_event(
+        f"Models loaded: engine={engine}, count={len(models)}, took={(time.perf_counter() - started_at):.2f}s"
+    )
+    return JsonResponse({"engine": engine, "models": models})
 
 
 # Load tool servers

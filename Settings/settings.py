@@ -39,6 +39,7 @@ DEFAULTS: dict[str, Any] = {
     "ui-port": 30000,
     "api-port": 30001,
     "debug": True,
+    "console_log_level": "debug",
     "secret_key": "",
     "allowed_hosts": ["127.0.0.1", "localhost"],
     "llm-engine": "ollama-service",
@@ -55,6 +56,7 @@ DEFAULTS: dict[str, Any] = {
     "openai_url": "127.0.0.1:8000/v1",
     "openai_api_key": "",
 }
+CONSOLE_LOG_LEVELS = {"basic", "debug", "trace"}
 
 NORMALIZED_ADDRESS_KEYS = {"lms_url", "openai_url"}
 IGNORED_ENV_KEYS = {"ASLM_MODULE_ID", "ASLM_MODULE_DIR"}
@@ -379,6 +381,7 @@ def get_runtime_engine_settings() -> dict[str, Any]:
 
     return {
         "llm-engine": active_engine,
+        "console_log_level": get_console_log_level(),
         "lms_url": normalize_engine_address(get("lms_url", DEFAULTS["lms_url"])),
         "lms_load_config": dict(get("lms_load_config", DEFAULTS["lms_load_config"]) or {}),
         "openai_url": normalize_engine_address(get("openai_url", DEFAULTS["openai_url"])),
@@ -389,6 +392,25 @@ def get_runtime_engine_settings() -> dict[str, Any]:
             "openai": get_engine_url("openai"),
         },
     }
+
+
+def get_console_log_level(default: str = "debug") -> str:
+    """Return the normalized console log detail level."""
+
+    configured = str(get("console_log_level", default) or default).strip().lower()
+    return configured if configured in CONSOLE_LOG_LEVELS else default
+
+
+def is_console_debug_enabled() -> bool:
+    """Return whether debug-or-higher console events should be emitted."""
+
+    return get_console_log_level() in {"debug", "trace"}
+
+
+def is_console_trace_enabled() -> bool:
+    """Return whether the highest-detail console tracing is enabled."""
+
+    return get_console_log_level() == "trace"
 
 # Check engine enabled flag
 def is_engine_enabled(engine: str | None) -> bool:

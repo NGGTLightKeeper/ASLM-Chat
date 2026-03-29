@@ -104,6 +104,25 @@ class OllamaPresetTests(TestCase):
         active = OllamaPreset.objects.get(model_name="llama3", is_active=True)
         self.assertTrue(active.is_default)
 
+    def test_sync_drops_unsupported_runtime_keys_from_preset_config(self):
+        payload = sync_active_ollama_preset(
+            "llama3",
+            {
+                "num_ctx": 65536,
+                "think": True,
+                "mirostat": 2,
+                "numa": True,
+                "vocab_only": True,
+            },
+        )
+
+        active = OllamaPreset.objects.get(id=payload["active_preset_id"])
+        self.assertEqual(active.config["num_ctx"], 65536)
+        self.assertTrue(active.config["think"])
+        self.assertNotIn("mirostat", active.config)
+        self.assertNotIn("numa", active.config)
+        self.assertNotIn("vocab_only", active.config)
+
 
 class LocalServerRegistryTests(ToolRegistryTestCase):
     """Verify discovery and execution of local MCP-style server modules."""

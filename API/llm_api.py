@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 from types import ModuleType
 from typing import Any
@@ -42,6 +43,7 @@ def _get_engine_module(engine: str | None) -> ModuleType:
 def get_models(engine: str | None) -> Any:
     """Return the list of models exposed by the selected engine."""
 
+    prepare_runtime(engine)
     module = _get_engine_module(engine)
     if hasattr(module, "get_models"):
         return module.get_models()
@@ -52,6 +54,7 @@ def get_models(engine: str | None) -> Any:
 def download_model(engine: str | None, model_name: str, **kwargs: Any) -> Any:
     """Download or pull a model through the selected engine adapter."""
 
+    prepare_runtime(engine)
     module = _get_engine_module(engine)
     if hasattr(module, "download_model"):
         return module.download_model(model_name, **kwargs)
@@ -72,6 +75,7 @@ def generate(engine: str | None, model_name: str, messages: list[dict[str, Any]]
 def get_model_settings(engine: str | None, model_name: str) -> Any:
     """Return model metadata exposed by the selected engine."""
 
+    prepare_runtime(engine)
     module = _get_engine_module(engine)
     if hasattr(module, "get_model_settings"):
         return module.get_model_settings(model_name)
@@ -98,7 +102,15 @@ def prepare_runtime(engine: str | None) -> None:
     module = _get_engine_module(engine)
     prepare = getattr(module, "prepare_runtime", None)
     if callable(prepare):
-        prepare()
+        try:
+            parameter_count = len(inspect.signature(prepare).parameters)
+        except (TypeError, ValueError):
+            parameter_count = 0
+
+        if parameter_count >= 1:
+            prepare(engine)
+        else:
+            prepare()
 
 # Stop engine runtime
 def cleanup_runtime(engine: str | None) -> None:

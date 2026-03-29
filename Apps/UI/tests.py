@@ -12,7 +12,7 @@ from django.urls import reverse
 
 from API import llm_api
 from API import mcp as tool_registry
-from API.ollama import _prepare_chat_kwargs
+from API.ollama import _prepare_chat_kwargs, prepare_runtime as prepare_ollama_runtime
 from API.openai import _build_openai_request_options
 from Apps.Data.models import Chat, Message, OllamaPreset
 from Apps.UI.views import _extract_model_name
@@ -115,6 +115,34 @@ class OllamaOptionMappingTests(SimpleTestCase):
         self.assertEqual(payload["think"], "high")
         self.assertEqual(payload["options"]["temperature"], 0.7)
 
+    def test_prepare_chat_kwargs_drops_runtime_options_unsupported_by_current_ollama(self):
+        payload = _prepare_chat_kwargs(
+            {
+                "options": {
+                    "temperature": 0.7,
+                    "num_ctx": 32768,
+                    "mirostat": 2,
+                    "numa": False,
+                    "tfs_z": 1.0,
+                }
+            }
+        )
+
+        self.assertEqual(payload["options"]["temperature"], 0.7)
+        self.assertEqual(payload["options"]["num_ctx"], 32768)
+        self.assertNotIn("mirostat", payload["options"])
+        self.assertNotIn("numa", payload["options"])
+        self.assertNotIn("tfs_z", payload["options"])
+
+    @patch("API.ollama._get_ollama_service_module")
+    def test_prepare_runtime_passes_requested_engine_to_managed_service(self, mock_get_service):
+        mock_service = Mock()
+        mock_get_service.return_value = mock_service
+
+        prepare_ollama_runtime("ollama-service")
+
+        mock_service.start_ollama.assert_called_once_with(engine="ollama-service")
+
 
 class OpenAiOptionMappingTests(SimpleTestCase):
     """Ensure generic runtime options are safely mapped for OpenAI-compatible APIs."""
@@ -139,7 +167,7 @@ class OpenAiOptionMappingTests(SimpleTestCase):
     @patch("openai.OpenAI")
     @patch("API.openai.settings.get_engine_url", return_value="http://127.0.0.1:9000/v1")
     @patch("API.openai.settings.get_openai_api_key", return_value="")
-    def test_openai_client_omits_api_key_when_not_configured(
+    def test_openai_client_uses_placeholder_api_key_when_not_configured(
         self,
         _mock_api_key,
         _mock_engine_url,
@@ -150,7 +178,7 @@ class OpenAiOptionMappingTests(SimpleTestCase):
         mock_openai_client.return_value = Mock()
         _get_client()
 
-        self.assertNotIn("api_key", mock_openai_client.call_args.kwargs)
+        self.assertEqual(mock_openai_client.call_args.kwargs["api_key"], "not-needed")
 
 
 class EngineRegistryTests(SimpleTestCase):
@@ -159,6 +187,30 @@ class EngineRegistryTests(SimpleTestCase):
     def test_reload_model_raises_for_engines_without_reload_support(self):
         with self.assertRaises(NotImplementedError):
             llm_api.reload_model("openai", "gpt-oss")
+
+    @patch("API.llm_api.prepare_runtime")
+    @patch("API.llm_api._get_engine_module")
+    def test_get_models_prepares_runtime_before_listing(self, mock_get_engine_module, mock_prepare_runtime):
+        mock_module = Mock()
+        mock_module.get_models.return_value = ["llama3"]
+        mock_get_engine_module.return_value = mock_module
+
+        self.assertEqual(llm_api.get_models("ollama-service"), ["llama3"])
+        mock_prepare_runtime.assert_called_once_with("ollama-service")
+
+    @patch("API.llm_api.prepare_runtime")
+    @patch("API.llm_api._get_engine_module")
+    def test_get_model_settings_prepares_runtime_before_loading_metadata(
+        self,
+        mock_get_engine_module,
+        mock_prepare_runtime,
+    ):
+        mock_module = Mock()
+        mock_module.get_model_settings.return_value = {"model": "llama3"}
+        mock_get_engine_module.return_value = mock_module
+
+        self.assertEqual(llm_api.get_model_settings("ollama-service", "llama3"), {"model": "llama3"})
+        mock_prepare_runtime.assert_called_once_with("ollama-service")
 
 
 class ChatApiTests(ToolRegistryTestMixin, TestCase):
@@ -223,9 +275,9 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(b''.join(response.streaming_content), b'Done')
-        self.assertEqual(mock_generate.call_args.kwargs["tool_server_id"], "time_suite")
+        self.assertEqual(mock_generate.call_args.kwargs["tool_server_ids"], ["time_suite"])
         self.assertEqual(mock_generate.call_args.kwargs["tool_context"]["engine"], "ollama-service")
-        self.assertEqual(Chat.objects.first().active_tool_slug, 'time_suite')
+        self.assertEqual(Chat.objects.first().active_tool_slug, '["time_suite"]')
 
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
     def test_chat_api_rejects_unknown_tool_server(self, _mock_engine):
@@ -507,9 +559,23 @@ class OllamaPresetApiTests(ToolRegistryTestMixin, TestCase):
                 return "ok"
             ''',
         )
+        OllamaPreset.objects.create(
+            model_name="llama3",
+            name="Default",
+            config={"num_ctx": 32768, "num_predict": 8192},
+            is_default=True,
+            is_active=False,
+        )
+        custom_preset = OllamaPreset.objects.create(
+            model_name="llama3",
+            name="Custom",
+            config={"num_ctx": 65536, "mirostat": 2, "numa": True},
+            is_default=False,
+            is_active=True,
+        )
         mock_get_model_settings.return_value = {
             "modelinfo": {"general.architecture.context_length": 131072},
-            "parameters": "temperature 0.8",
+            "parameters": "temperature 0.8\nPARAMETER mirostat 2\nnuma true",
             "template": "",
             "capabilities": ["tools"],
         }
@@ -525,8 +591,11 @@ class OllamaPresetApiTests(ToolRegistryTestMixin, TestCase):
         self.assertTrue(payload["supports_tool_calling"])
         self.assertEqual(payload["available_tool_servers"][0]["id"], "time_suite")
         self.assertEqual(payload["available_tool_servers"][0]["tool_count"], 2)
-        self.assertEqual(payload["defaults"]["num_ctx"], 32768)
-        self.assertEqual(payload["defaults"]["num_predict"], 8192)
+        self.assertEqual(payload["defaults"]["num_ctx"], 65536)
+        self.assertEqual(payload["defaults"]["temperature"], 0.8)
+        self.assertEqual(payload["ollama_presets"]["active_preset_id"], str(custom_preset.id))
+        self.assertNotIn("mirostat", payload["defaults"])
+        self.assertNotIn("numa", payload["defaults"])
 
     def test_sync_endpoint_clones_default_preset_on_first_change(self):
         response = self.client.post(
