@@ -18,6 +18,7 @@ from sandbox.config import (
     MAX_FIND_RESULTS,
     MAX_GREP_RESULTS,
     MAX_LS_ENTRIES,
+    MAX_OUTPUT_CHARS,
     MAX_READ_BYTES,
 )
 from sandbox.container import exec_bash
@@ -50,7 +51,11 @@ CORE_TOOLS = [
             "navigation (ls, tree, pwd, du, stat, file), "
             "filesystem operations (mkdir, mv, cp, rm, touch, chmod), "
             "execution, tests, builds, installs, git, curl, and any CLI tools. "
-            "Returns exit_code, stdout, stderr, elapsed_ms, and cwd."
+            "Returns exit_code, stdout, stderr, elapsed_ms, and cwd. "
+            "IMPORTANT: For package managers (apt-get, pip, npm, cargo, etc.), container builds (docker build), "
+            "compilation (make, cmake, gcc, rustc, go build), and any long-running install/build commands "
+            "always set timeout_s to at least 300. Default timeout of 60s is only for quick commands. "
+            "Never use a short timeout for apt-get install, apt-get update, or any build/compile steps."
         ),
         "parameters": {
             "type": "object",
@@ -179,25 +184,31 @@ def _format_structured_as_shell(tool_name: str, result: dict[str, Any]) -> str:
 # bash-shaped response dict if handled, or None to fall through to real bash.
 
 def _try_route_cat(match: re.Match, args_str: str) -> dict[str, Any] | None:
-    """Route: cat <file> [with optional flags like -n]."""
+    """Route: cat [flags] <file>... — supports multi-file and unknown flags."""
     parts = _safe_split(args_str)
     files = [p for p in parts if not p.startswith("-")]
     flags = [p for p in parts if p.startswith("-")]
-    if not files or len(files) > 1:
-        return None  # multi-file cat or no file → real bash
-    path = files[0]
-    result = read(path=path, max_bytes=MAX_READ_BYTES)
-    content = _format_structured_as_shell("read", result)
-    if "-n" in flags:
-        numbered = "\n".join(
+    if not files:
+        return None  # no file → real bash (stdin cat)
+    show_numbers = "-n" in flags
+    # Read each file through the supervised path with limits.
+    all_warnings: list[str] = []
+    chunks: list[str] = []
+    per_file_budget = max(MAX_READ_BYTES // len(files), 4096)
+    for path in files:
+        result = read(path=path, max_bytes=per_file_budget)
+        all_warnings.extend(result.get("warnings", []))
+        chunks.append(_format_structured_as_shell("read", result))
+    content = "\n".join(chunks)
+    if show_numbers:
+        content = "\n".join(
             f"{i:>6}\t{line}" for i, line in enumerate(content.split("\n"), 1)
         )
-        content = numbered
-    return _bash_success(content, warnings=result.get("warnings", []))
+    return _bash_success(content, warnings=all_warnings)
 
 
 def _try_route_head(match: re.Match, args_str: str) -> dict[str, Any] | None:
-    """Route: head [-n N] <file>."""
+    """Route: head [-n N] <file>..."""
     parts = _safe_split(args_str)
     n_lines = 10
     files = []
@@ -216,19 +227,24 @@ def _try_route_head(match: re.Match, args_str: str) -> dict[str, Any] | None:
                 return None
             i += 1
         elif parts[i].startswith("-") and parts[i] != "-":
-            return None
+            i += 1  # skip unknown flags instead of falling through
         else:
             files.append(parts[i])
             i += 1
-    if len(files) != 1:
+    if not files:
         return None
-    result = read(path=files[0], start_line=1, end_line=n_lines, max_bytes=MAX_READ_BYTES)
-    content = _format_structured_as_shell("read", result)
-    return _bash_success(content, warnings=result.get("warnings", []))
+    all_warnings: list[str] = []
+    chunks: list[str] = []
+    for f in files:
+        result = read(path=f, start_line=1, end_line=n_lines, max_bytes=MAX_READ_BYTES)
+        all_warnings.extend(result.get("warnings", []))
+        chunks.append(_format_structured_as_shell("read", result))
+    content = "\n".join(chunks)
+    return _bash_success(content, warnings=all_warnings)
 
 
 def _try_route_tail(match: re.Match, args_str: str) -> dict[str, Any] | None:
-    """Route: tail [-n N] <file>."""
+    """Route: tail [-n N] <file>..."""
     parts = _safe_split(args_str)
     n_lines = 10
     files = []
@@ -247,20 +263,26 @@ def _try_route_tail(match: re.Match, args_str: str) -> dict[str, Any] | None:
                 return None
             i += 1
         elif parts[i].startswith("-") and parts[i] != "-":
-            return None
+            i += 1  # skip unknown flags instead of falling through
         else:
             files.append(parts[i])
             i += 1
-    if len(files) != 1:
+    if not files:
         return None
-    full = read(path=files[0], max_bytes=MAX_READ_BYTES)
-    total = full.get("result", {}).get("total_lines", 0)
-    if total == 0:
-        return _bash_success("")
-    start = max(1, total - n_lines + 1)
-    result = read(path=files[0], start_line=start, end_line=total, max_bytes=MAX_READ_BYTES)
-    content = _format_structured_as_shell("read", result)
-    return _bash_success(content, warnings=result.get("warnings", []))
+    all_warnings: list[str] = []
+    chunks: list[str] = []
+    for f in files:
+        full = read(path=f, max_bytes=MAX_READ_BYTES)
+        total = full.get("result", {}).get("total_lines", 0)
+        if total == 0:
+            chunks.append("")
+            continue
+        start = max(1, total - n_lines + 1)
+        result = read(path=f, start_line=start, end_line=total, max_bytes=MAX_READ_BYTES)
+        all_warnings.extend(result.get("warnings", []))
+        chunks.append(_format_structured_as_shell("read", result))
+    content = "\n".join(chunks)
+    return _bash_success(content, warnings=all_warnings)
 
 
 def _try_route_ls(match: re.Match, args_str: str) -> dict[str, Any] | None:
@@ -373,8 +395,43 @@ def _try_route_find(match: re.Match, args_str: str) -> dict[str, Any] | None:
     return _bash_success(content, warnings=result.get("warnings", []))
 
 
+_RG_TYPE_TO_GLOB: dict[str, str] = {
+    "py": "*.py", "python": "*.py",
+    "js": "*.js", "javascript": "*.js",
+    "ts": "*.ts", "typescript": "*.ts",
+    "tsx": "*.tsx",
+    "jsx": "*.jsx",
+    "rs": "*.rs", "rust": "*.rs",
+    "go": "*.go",
+    "java": "*.java",
+    "c": "*.c",
+    "cpp": "*.cpp", "cc": "*.cc", "cxx": "*.cxx",
+    "h": "*.h",
+    "hpp": "*.hpp",
+    "cs": "*.cs", "csharp": "*.cs",
+    "rb": "*.rb", "ruby": "*.rb",
+    "php": "*.php",
+    "html": "*.html",
+    "css": "*.css",
+    "json": "*.json",
+    "yaml": "*.yaml", "yml": "*.yml",
+    "toml": "*.toml",
+    "xml": "*.xml",
+    "md": "*.md", "markdown": "*.md",
+    "sh": "*.sh", "bash": "*.sh",
+    "sql": "*.sql",
+    "lua": "*.lua",
+    "r": "*.r",
+    "swift": "*.swift",
+    "kt": "*.kt", "kotlin": "*.kt",
+    "scala": "*.scala",
+    "tex": "*.tex",
+    "txt": "*.txt",
+}
+
+
 def _try_route_grep(match: re.Match, args_str: str) -> dict[str, Any] | None:
-    """Route: grep [-r] [-i] [-n] [-C N] [-A N] [-B N] <pattern> [path]."""
+    """Route: grep/rg [-r] [-i] [-n] [-C N] [-A N] [-B N] [--type T] <pattern> [path]."""
     parts = _safe_split(args_str)
     pattern = None
     path = "."
@@ -399,6 +456,21 @@ def _try_route_grep(match: re.Match, args_str: str) -> dict[str, Any] | None:
         elif p == "--include" and i + 1 < len(parts):
             glob_pattern = parts[i + 1]
             i += 2
+        elif p in ("-g", "--glob") and i + 1 < len(parts):
+            glob_pattern = parts[i + 1]
+            i += 2
+        elif p in ("-t", "--type") and i + 1 < len(parts):
+            type_name = parts[i + 1].lower()
+            mapped = _RG_TYPE_TO_GLOB.get(type_name)
+            if mapped:
+                glob_pattern = mapped
+            i += 2
+        elif p.startswith("--type="):
+            type_name = p.split("=", 1)[1].lower()
+            mapped = _RG_TYPE_TO_GLOB.get(type_name)
+            if mapped:
+                glob_pattern = mapped
+            i += 1
         elif p in ("-C", "--context") and i + 1 < len(parts):
             try:
                 context_before = context_after = int(parts[i + 1])
@@ -418,7 +490,12 @@ def _try_route_grep(match: re.Match, args_str: str) -> dict[str, Any] | None:
                 return None
             i += 2
         elif p.startswith("-"):
-            return None
+            # Unknown flags — skip rather than falling to real bash.
+            # If the flag takes a value argument, try to skip it too.
+            if i + 1 < len(parts) and not parts[i + 1].startswith("-"):
+                i += 2
+            else:
+                i += 1
         elif pattern is None:
             pattern = p
             i += 1
@@ -734,6 +811,13 @@ _ROUTE_MAP: dict[str, Callable[..., dict[str, Any] | None]] = {
 # considered compound and should NOT be intercepted — they go to real bash.
 _COMPOUND_PATTERN = re.compile(r"[|;`]|\$\(|&&|\|\|")
 
+# Commands whose output is primarily file content — even when they fall
+# through to real bash we enforce MAX_READ_BYTES on stdout.
+_READ_LIKE_COMMANDS = frozenset({
+    "cat", "head", "tail", "less", "more", "sed", "awk",
+    "grep", "egrep", "rg", "ag", "strings", "xxd", "hexdump",
+})
+
 
 def _try_supervise(command: str) -> dict[str, Any] | None:
     """Try to route a shell command to an internal structured tool.
@@ -789,16 +873,27 @@ def _handle_bash(
         stdin=arguments.get("stdin"),
         on_progress=progress_callback,
     )
+
+    # Extra guard: for read-like commands that slipped past the router
+    # (e.g. compound pipes, exotic flags), cap stdout at MAX_READ_BYTES
+    # so the model cannot receive an unbounded file dump.
+    stdout = execution.get("stdout", "")
+    read_like_truncated = False
+    leading_cmd = command.strip().split()[0] if command.strip() else ""
+    if leading_cmd in _READ_LIKE_COMMANDS and len(stdout.encode("utf-8", errors="replace")) > MAX_READ_BYTES:
+        stdout = stdout.encode("utf-8", errors="replace")[:MAX_READ_BYTES].decode("utf-8", errors="ignore")
+        read_like_truncated = True
+
     result = {
         "command": command,
         "cwd": execution.get("cwd", "."),
         "exit_code": execution.get("exit_code"),
-        "stdout": execution.get("stdout", ""),
+        "stdout": stdout,
         "stderr": execution.get("stderr", ""),
         "elapsed_ms": execution.get("elapsed_ms", 0),
     }
     warnings = []
-    if execution.get("truncated"):
+    if execution.get("truncated") or read_like_truncated:
         warnings.append("Command output was truncated.")
 
     if execution.get("error") is None and execution.get("exit_code") == 0:

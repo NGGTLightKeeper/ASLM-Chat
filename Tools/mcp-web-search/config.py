@@ -40,6 +40,24 @@ DOMAIN_PERF_DB: str = str(ROOT_DIR / "_cache" / "domain_performance.db")
 DISCOVERED_ENDPOINTS_DB: str = str(ROOT_DIR / "_cache" / "discovered_endpoints.db")
 
 
+# Source cache settings.
+SOURCE_CACHE_DB: str = str(ROOT_DIR / "_cache" / "source_cache.db")
+SOURCE_CACHE_TTL: int = 86400                         # 24h freshness for cached pages
+SOURCE_CACHE_HARD_EVICT: int = 604800                 # 7-day hard eviction
+SOURCE_CACHE_LOCAL_FIRST: bool = True                 # enable local-first FTS5 search
+SOURCE_CACHE_MIN_LOCAL_RESULTS: int = 3               # min FTS5 hits to skip external search
+SOURCE_CACHE_FETCH_BUDGET: int = 10                   # max new fetches per query
+SOURCE_CACHE_FETCH_CONCURRENCY: int = 6               # max concurrent page fetches
+SOURCE_CACHE_FETCH_TIMEOUT: float = 10.0              # per-page fetch timeout (seconds)
+SOURCE_CACHE_PER_DOMAIN_RPS: float = 1.0              # per-domain rate limit (req/s)
+SOURCE_CACHE_DEPTH_ENABLED: bool = True               # enable background Scrapy depth crawl
+SOURCE_CACHE_DEPTH_LIMIT: int = 1                     # Scrapy DEPTH_LIMIT
+SOURCE_CACHE_DEPTH_MAX_PAGES: int = 20                # CLOSESPIDER_PAGECOUNT per crawl
+SOURCE_CACHE_DEPTH_MAX_DOMAINS: int = 3               # max domains to depth-crawl per query
+SOURCE_CACHE_DEPTH_AUTOTHROTTLE: float = 2.0          # Scrapy AutoThrottle target concurrency
+SOURCE_CACHE_STORE_RAW_HTML: bool = False             # store raw HTML in cache (heavy, ~10x clean_text)
+
+
 # Direct routing settings.
 DIRECT_DOMAIN_MIN_RESULTS: int = 3
 DIRECT_DOMAIN_MAX_PER_QUERY: int = 8
@@ -89,7 +107,11 @@ LLM_MODEL_SYNTHESIS = "local-model"
 # ML model settings.
 EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
 EMBEDDING_FORCE_CPU = False
-GLINER_MODEL = "urchade/gliner_small-v2.1"
+# Good GLiNER-family candidates for quick testing:
+# GLINER_MODEL = "urchade/gliner_small-v2.1"
+# GLINER_MODEL = "urchade/gliner_multi-v2.1"
+# Current experiment: GLiNER2 multilingual model.
+GLINER_MODEL = "fastino/gliner2-multi-v1"
 GLINER_FORCE_CPU = False
 GLINER_THRESHOLD = 0.35
 GLINER_THRESHOLD_RU = 0.25
@@ -182,6 +204,7 @@ class ResearchConfig:
     max_sources_per_iteration: int = 15
     followup_queries_per_iteration: int = 4
     reflection_timeout_sec: float = 120.0
+    reflection_prompt_char_budget: int = 60000
     iteration_search_timeout_sec: float = 240.0
     search_fallback_stage_timeout_sec: float = 120.0
     query_model: str = LLM_MODEL_QUERY_GEN
@@ -192,12 +215,14 @@ class ResearchConfig:
     llm_timeout: float = 900.0
     synthesis_max_tokens: int = 16384
     synthesis_source_cap: int = 48
+    synthesis_batch_char_budget: int = 60000
     synthesis_prompt_char_budget: int = 120000
     enable_background_swarm: bool = False
     background_swarm_min_iteration: int = 2
     background_swarm_poll_every: int = 2
     background_swarm_domains_cap: int = 32
     background_swarm_seed_urls_per_domain: int = 4
+    background_swarm_query_count: int = 4
     background_swarm_discovery_depth: int = 3
     background_swarm_top_k: int = 64
     background_swarm_attach_cap_per_poll: int = 16
@@ -206,6 +231,7 @@ class ResearchConfig:
     background_swarm_max_concurrency: int = 12
     background_swarm_chunk_merge_chars: int = 3200
     background_swarm_min_chunk_relevance: float = 0.30
+    background_swarm_max_total_chunks: int = 1000
     background_swarm_final_wait_timeout_sec: float = 15.0
     domain_scoped_min_results: int = 3
     domain_scoped_max_domains: int = 4
@@ -255,15 +281,18 @@ class ResearchConfig:
                 max_sources_per_iteration=30,
                 followup_queries_per_iteration=5,
                 reflection_timeout_sec=120.0,
+                reflection_prompt_char_budget=90000,
                 iteration_search_timeout_sec=240.0,
                 search_fallback_stage_timeout_sec=120.0,
                 max_chars_per_source=5000,
                 enable_playwright=True,
                 enable_seleniumbase=True,
                 synthesis_source_cap=56,
+                synthesis_batch_char_budget=70000,
                 synthesis_prompt_char_budget=140000,
                 enable_background_swarm=True,
                 background_swarm_min_iteration=1,
+                background_swarm_query_count=4,
                 background_swarm_domains_cap=28,
                 background_swarm_seed_urls_per_domain=3,
                 background_swarm_discovery_depth=3,
@@ -288,6 +317,7 @@ class ResearchConfig:
                 max_sources_per_iteration=40,
                 followup_queries_per_iteration=7,
                 reflection_timeout_sec=120.0,
+                reflection_prompt_char_budget=120000,
                 iteration_search_timeout_sec=300.0,
                 search_fallback_stage_timeout_sec=180.0,
                 max_chars_per_source=6000,
@@ -296,10 +326,12 @@ class ResearchConfig:
                 enable_seleniumbase=False,
                 enable_stealth=True,
                 synthesis_source_cap=64,
+                synthesis_batch_char_budget=80000,
                 synthesis_prompt_char_budget=160000,
                 enable_background_swarm=True,
                 background_swarm_min_iteration=1,
                 background_swarm_poll_every=1,
+                background_swarm_query_count=5,
                 background_swarm_domains_cap=36,
                 background_swarm_seed_urls_per_domain=5,
                 background_swarm_discovery_depth=3,
@@ -323,7 +355,7 @@ class ResearchConfig:
 # Overdrive Mode settings.
 # Experimental config flag that switches read_page to a multi-method fetch
 # orchestrator for higher page-read success rates at the cost of latency.
-OVERDRIVE: bool = os.getenv("SEARCH_OVERDRIVE", "false").lower() == "true"
+OVERDRIVE: bool = os.getenv("SEARCH_OVERDRIVE", "true").lower() == "true"
 OVERDRIVE_HUMAN_BEHAVIOR: bool = os.getenv("SEARCH_OVERDRIVE_HUMAN_BEHAVIOR", "true").lower() == "true"
 OVERDRIVE_OCR_FALLBACK: bool = os.getenv("SEARCH_OVERDRIVE_OCR_FALLBACK", "true").lower() == "true"
 OVERDRIVE_PARALLEL_TIMEOUT: float = float(os.getenv("SEARCH_OVERDRIVE_PARALLEL_TIMEOUT", "30.0"))
@@ -334,10 +366,7 @@ OVERDRIVE_BROWSER_FANOUT: int = int(os.getenv("SEARCH_OVERDRIVE_BROWSER_FANOUT",
 OVERDRIVE_BROWSER_IDLE_TIMEOUT: float = float(os.getenv("SEARCH_OVERDRIVE_BROWSER_IDLE_TIMEOUT", "30.0"))
 OVERDRIVE_TRACE_BROWSERS: bool = os.getenv("SEARCH_OVERDRIVE_TRACE_BROWSERS", "true").lower() == "true"
 MIMIC_USER_AGENT: bool = os.getenv("SEARCH_MIMIC_USER_AGENT", "false").lower() == "true"
-WARP_ENABLED: bool = os.getenv("SEARCH_WARP_ENABLED", "false").lower() == "true"
-WARP_ALL_FAILURES: bool = os.getenv("SEARCH_WARP_ALL_FAILURES", "false").lower() == "true"
-WARP_PROXY_URL: str = os.getenv("SEARCH_WARP_PROXY_URL", "").strip()
-WARP_CLI_PATH: str = os.getenv("SEARCH_WARP_CLI_PATH", "").strip()
-WARP_AUTO_INSTALL_PY_DEPS: bool = os.getenv("SEARCH_WARP_AUTO_INSTALL_PY_DEPS", "true").lower() == "true"
-WARP_ENSURE_PROXY_MODE: bool = os.getenv("SEARCH_WARP_ENSURE_PROXY_MODE", "true").lower() == "true"
-WARP_AUTO_DISCONNECT: bool = os.getenv("SEARCH_WARP_AUTO_DISCONNECT", "true").lower() == "true"
+
+# Wayback Machine fallback settings.
+WAYBACK_ENABLED: bool = os.getenv("SEARCH_WAYBACK_ENABLED", "true").lower() == "true"
+WAYBACK_TIMEOUT: int = int(os.getenv("SEARCH_WAYBACK_TIMEOUT", "30"))

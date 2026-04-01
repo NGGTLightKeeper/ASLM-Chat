@@ -64,6 +64,8 @@ class ResearchState:
     query_plans: list[QueryPlan] = field(default_factory=list)
     raw_results: list[SearchResult] = field(default_factory=list)
     extracted_sources: list[ExtractedSource] = field(default_factory=list)
+    last_iteration_sources: list[ExtractedSource] = field(default_factory=list)
+    synthesis_batch_reports: list[str] = field(default_factory=list)
     final_report: str = ""
     log_lines: list[str] = field(default_factory=list)
     start_time: float = field(default_factory=time.time)

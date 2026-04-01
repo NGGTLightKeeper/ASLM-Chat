@@ -92,6 +92,10 @@ _BLOCK_MARKERS = (
     "just a moment",
     "checking your browser",
     "enable javascript",
+    "does not support javascript",
+    "javascript is required",
+    "please enable javascript",
+    "you need to enable javascript",
 )
 
 
@@ -492,38 +496,6 @@ async def read_url_overdrive(
 
     if result_text is not None:
         return result_text[:char_budget]
-
-    # ------------------------------------------------------------------
-    # Phase B.5 — WARP SOCKS5 proxy fallback
-    # ------------------------------------------------------------------
-    try:
-        from warp_manager import fetch_via_warp_auto
-    except ImportError:
-        try:
-            from .warp_manager import fetch_via_warp_auto  # type: ignore
-        except ImportError:
-            fetch_via_warp_auto = None  # type: ignore
-
-    should_try_warp = bool(
-        getattr(_ws_config, "WARP_ENABLED", True)
-        and (
-            getattr(info, "use_warp", False)
-            or getattr(_ws_config, "WARP_ALL_FAILURES", False)
-        )
-    )
-    if fetch_via_warp_auto is not None and should_try_warp:
-        try:
-            _trace_browser(f"[overdrive] launching warp url={url}")
-            warp_text = await asyncio.wait_for(
-                fetch_via_warp_auto(url, timeout=int(parallel_timeout)),
-                timeout=parallel_timeout + 5,
-            )
-            if _is_valid_text(warp_text):
-                logger.debug("overdrive: winner=warp")
-                _trace_browser(f"[overdrive] winner=warp url={url}")
-                return warp_text[:char_budget]
-        except Exception as exc:
-            logger.debug("overdrive: WARP failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Phase C — OCR fallback

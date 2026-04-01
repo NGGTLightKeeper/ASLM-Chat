@@ -14,6 +14,8 @@ SERVER_ROOT = Path(__file__).resolve().parent
 if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
+from browser import log
+
 MCP_SERVER = {
     "id": "browser_agent",
     "name": "Browser Agent",

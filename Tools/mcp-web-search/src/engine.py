@@ -116,6 +116,7 @@ import hashlib
 import json
 import logging
 import random
+import re
 import sqlite3
 import time
 from threading import Lock
@@ -526,10 +527,21 @@ _ANTIBOT_MARKERS = (
     "enable javascript", "ddos-guard", "robot or human",
 )
 
+# Single-marker phrases that alone indicate a JS-only / no-content response.
+_ANTIBOT_SINGLE = (
+    "your browser does not support javascript",
+    "javascript is required",
+    "please enable javascript",
+    "this site requires javascript",
+    "you need to enable javascript",
+)
+
 
 # Detect anti-bot response text.
 def _is_antibot(text: str) -> bool:
     t = text[:2000].lower()
+    if any(m in t for m in _ANTIBOT_SINGLE):
+        return True
     return sum(1 for m in _ANTIBOT_MARKERS if m in t) >= 2
 
 
@@ -552,7 +564,7 @@ def _normalize_url(url: str) -> str:
 
 # Cheap lexical relevance score: query term overlap in title/snippet/url.
 def _lexical_score(query: str, title: str, snippet: str, url: str) -> float:
-    terms = [t for t in query.lower().split() if len(t) > 2]
+    terms = _query_terms(query)
     if not terms:
         return 0.0
     from urllib.parse import urlparse as _up
@@ -564,6 +576,38 @@ def _lexical_score(query: str, title: str, snippet: str, url: str) -> float:
     snippet_hits = sum(1 for t in terms if t in snippet_l) / n
     url_hits     = sum(1 for t in terms if t in url_path)  / n
     return min(1.0, 0.6 * title_hits + 0.3 * snippet_hits + 0.1 * url_hits)
+
+
+def _text_signature(text: str) -> str:
+    compact = _TEXT_SIG_RE.sub(" ", (text or "").lower()).strip()
+    return " ".join(compact.split())
+
+
+def _preview_adds_value(snippet: str, preview: str) -> bool:
+    sig_snippet = _text_signature(snippet)
+    sig_preview = _text_signature(preview)
+    if not sig_preview:
+        return False
+    if not sig_snippet:
+        return True
+    if sig_preview == sig_snippet:
+        return False
+    if sig_preview.startswith(sig_snippet) or sig_snippet.startswith(sig_preview):
+        shorter = min(len(sig_preview), len(sig_snippet))
+        longer = max(len(sig_preview), len(sig_snippet))
+        if longer > 0 and (shorter / longer) >= 0.85:
+            return False
+    return True
+
+
+def _query_term_match_count(query: str, *texts: str) -> int:
+    terms = _query_terms(query)
+    if not terms:
+        return 0
+    haystack = " ".join(_text_signature(text) for text in texts if text).strip()
+    if not haystack:
+        return 0
+    return sum(1 for term in terms if term in haystack)
 
 
 # Deduplicate a list of SearchResults by normalized URL, domain+title, and snippet.
@@ -660,6 +704,20 @@ _TIER_TRUST_SCORES = {
     "fortress": 0.05,
     "unknown": 0.50,
 }
+_QUERY_STOPWORDS = {
+    "the", "this", "that", "with", "from", "into", "about", "what", "which",
+    "when", "where", "how", "why", "who", "does", "is", "are", "was", "were",
+    "for", "and", "or", "not", "what's", "whats",
+    "что", "такое", "это", "как", "зачем", "почему", "где", "когда", "кто",
+    "для", "или", "про", "об", "от", "из", "на", "по", "ли", "а", "и",
+}
+_TEXT_SIG_RE = re.compile(r"[\W_]+", re.UNICODE)
+
+
+def _query_terms(query: str) -> list[str]:
+    raw_terms = [t.strip().lower() for t in (query or "").split() if len(t.strip()) > 2]
+    filtered = [t for t in raw_terms if t not in _QUERY_STOPWORDS]
+    return filtered or raw_terms
 
 
 def _preview_settings() -> dict:
@@ -692,6 +750,66 @@ def _rank_domain_trust(result: SearchResult, payload: PreviewPayload | None) -> 
     return _TIER_TRUST_SCORES.get(tier, _TIER_TRUST_SCORES["unknown"])
 
 
+def _result_usefulness_score(
+    result: SearchResult,
+    payload: PreviewPayload | None,
+    settings: dict,
+    *,
+    index: int,
+    total: int,
+) -> float:
+    original_rank = 1.0 if total <= 1 else 1.0 - (index / max(total - 1, 1))
+    active_payload = payload if payload is not None else PreviewPayload()
+    query_str = str(settings.get("_query", ""))
+    lex = _lexical_score(query_str, result.title or "", result.snippet or "", result.url)
+    sess = _session_penalty(_normalize_url(result.url))
+    score = (
+        (0.25 * original_rank)
+        + (0.25 * lex)
+        + (0.25 * max(0.0, min(active_payload.semantic_score, 1.0)))
+        + (0.15 * _rank_domain_trust(result, active_payload))
+        + (0.10 * max(0.0, min(active_payload.quality_score, 1.0)))
+        - sess
+    )
+    return max(0.0, score)
+
+
+def _compact_preview_fallback(text: str) -> str:
+    compact = " ".join((text or "").replace("\r", " ").replace("\n", " ").split()).strip(" -|,;")
+    return compact
+
+
+def _adaptive_preview_text(
+    result: SearchResult,
+    payload: PreviewPayload | None,
+    settings: dict,
+    *,
+    index: int,
+    total: int,
+) -> str:
+    usefulness = _result_usefulness_score(result, payload, settings, index=index, total=total)
+    processor = settings.get("processor", {}) if isinstance(settings, dict) else {}
+    max_chars = max(240, int(processor.get("output_chars", 1400) or 1400))
+    min_chars = min(240, max_chars)
+    source_text = _compact_preview_fallback((payload.text if payload else "") or "")
+    if not source_text:
+        source_text = _compact_preview_fallback(result.snippet or "")
+    if not source_text:
+        return ""
+
+    # More useful sources get a larger text budget instead of a hard preview cutoff.
+    ratio = max(0.12, min(usefulness, 1.0))
+    char_budget = int(min_chars + ((max_chars - min_chars) * ratio))
+    if usefulness < 0.16:
+        char_budget = min(char_budget, 220)
+    elif usefulness < 0.28:
+        char_budget = min(char_budget, 420)
+    preview = source_text[:char_budget].rstrip(" ,;:|-")
+    if not _preview_adds_value(result.snippet or "", preview):
+        return ""
+    return preview
+
+
 def _soft_rerank_results(
     results: List[SearchResult],
     payloads: List[PreviewPayload],
@@ -705,22 +823,10 @@ def _soft_rerank_results(
 
     total = len(results)
     padded = list(payloads) + [PreviewPayload() for _ in range(max(0, total - len(payloads)))]
-    query_str = str(settings.get("_query", ""))
     scored = []
     for index, result in enumerate(results):
-        original_rank = 1.0 if total <= 1 else 1.0 - (index / max(total - 1, 1))
         payload = padded[index]
-        lex  = _lexical_score(query_str, result.title or "", result.snippet or "", result.url)
-        nu   = _normalize_url(result.url)
-        sess = _session_penalty(nu)
-        score = (
-            (0.25 * original_rank)
-            + (0.25 * lex)
-            + (0.25 * max(0.0, min(payload.semantic_score, 1.0)))
-            + (0.15 * _rank_domain_trust(result, payload))
-            + (0.10 * max(0.0, min(payload.quality_score, 1.0)))
-            - sess
-        )
+        score = _result_usefulness_score(result, payload, settings, index=index, total=total)
         scored.append((score, index, result, payload))
 
     scored.sort(key=lambda item: (-item[0], item[1]))
@@ -735,14 +841,12 @@ async def _fetch_preview_payloads(
     import aiohttp
     import math
     try:
-        from config import WEB_SEARCH_PREVIEW_CACHE_ENABLED, WEB_SEARCH_PREVIEW_CACHE_TTL, WEB_SEARCH_FETCH_STEALTH, OVERDRIVE as _OVERDRIVE_PREVIEW, MIMIC_USER_AGENT as _MIMIC_USER_AGENT, WARP_ENABLED as _WARP_ENABLED, WARP_ALL_FAILURES as _WARP_ALL_FAILURES, OVERDRIVE_HUMAN_BEHAVIOR as _OD_HUMAN_BEHAVIOR, OVERDRIVE_PARALLEL_TIMEOUT as _OD_PARALLEL_TIMEOUT, OVERDRIVE_OCR_TIMEOUT as _OD_OCR_TIMEOUT, OVERDRIVE_BROWSER_START_DELAY as _OD_BROWSER_START_DELAY, OVERDRIVE_BROWSER_CONCURRENCY as _OD_BROWSER_CONCURRENCY, OVERDRIVE_BROWSER_FANOUT as _OD_BROWSER_FANOUT, OVERDRIVE_BROWSER_IDLE_TIMEOUT as _OD_BROWSER_IDLE_TIMEOUT, OVERDRIVE_TRACE_BROWSERS as _OD_TRACE_BROWSERS
+        from config import WEB_SEARCH_PREVIEW_CACHE_ENABLED, WEB_SEARCH_PREVIEW_CACHE_TTL, WEB_SEARCH_FETCH_STEALTH, OVERDRIVE as _OVERDRIVE_PREVIEW, MIMIC_USER_AGENT as _MIMIC_USER_AGENT, OVERDRIVE_HUMAN_BEHAVIOR as _OD_HUMAN_BEHAVIOR, OVERDRIVE_PARALLEL_TIMEOUT as _OD_PARALLEL_TIMEOUT, OVERDRIVE_OCR_TIMEOUT as _OD_OCR_TIMEOUT, OVERDRIVE_BROWSER_START_DELAY as _OD_BROWSER_START_DELAY, OVERDRIVE_BROWSER_CONCURRENCY as _OD_BROWSER_CONCURRENCY, OVERDRIVE_BROWSER_FANOUT as _OD_BROWSER_FANOUT, OVERDRIVE_BROWSER_IDLE_TIMEOUT as _OD_BROWSER_IDLE_TIMEOUT, OVERDRIVE_TRACE_BROWSERS as _OD_TRACE_BROWSERS
     except ImportError:
         WEB_SEARCH_PREVIEW_CACHE_ENABLED = True
         WEB_SEARCH_PREVIEW_CACHE_TTL     = 1800
         _OVERDRIVE_PREVIEW = False
         _MIMIC_USER_AGENT = True
-        _WARP_ENABLED = True
-        _WARP_ALL_FAILURES = False
         _OD_HUMAN_BEHAVIOR = True
         _OD_PARALLEL_TIMEOUT = 20.0
         _OD_OCR_TIMEOUT = 30.0
@@ -768,8 +872,9 @@ async def _fetch_preview_payloads(
                 settings["processor"]["min_clean_chars"] = overrides["min_clean_chars"]
 
     use_camoufox: bool = bool(overrides.get("use_camoufox", False)) if overrides else False
+    use_wayback:  bool = bool(overrides.get("use_wayback",  False)) if overrides else False
 
-    targets = results[:settings["preview_limit"]]
+    targets = list(results)
     if not targets:
         return []
 
@@ -790,14 +895,8 @@ async def _fetch_preview_payloads(
     async def fetch_one(session: aiohttp.ClientSession, r: SearchResult) -> PreviewPayload:
         info = _result_domain_info(r.url)
         skip_check = _is_skippable(r.url)
-        should_try_warp = bool(
-            _WARP_ENABLED and _OVERDRIVE_PREVIEW and (
-                getattr(info, "use_warp", False) or _WARP_ALL_FAILURES
-            )
-        )
         allow_skip_fallbacks = bool(
-            (_MIMIC_USER_AGENT and getattr(info, "try_preview_bot", False))
-            or should_try_warp
+            _MIMIC_USER_AGENT and getattr(info, "try_preview_bot", False)
         )
         # In deep mode with camoufox, don't skip fortress domains; allow registry-managed rescue paths.
         if skip_check and not use_camoufox and not allow_skip_fallbacks:
@@ -813,26 +912,6 @@ async def _fetch_preview_payloads(
         async with sem:
             raw_html: str | None = None
             tier = str(getattr(info, "tier", "unknown") or "unknown").lower()
-
-            async def _try_warp_fetch() -> str | None:
-                if not should_try_warp:
-                    return None
-                try:
-                    from warp_manager import fetch_via_warp_auto as _warp_fetch
-                except ImportError:
-                    try:
-                        from .warp_manager import fetch_via_warp_auto as _warp_fetch  # type: ignore
-                    except ImportError:
-                        _warp_fetch = None  # type: ignore
-                if _warp_fetch is None:
-                    return None
-                try:
-                    warp_text = await _warp_fetch(r.url, timeout=int(settings["fetch_timeout"]))
-                    if warp_text and not _is_antibot(warp_text):
-                        return warp_text
-                except Exception:
-                    pass
-                return None
 
             async def _try_overdrive_browser_fetch() -> str | None:
                 if not _OVERDRIVE_PREVIEW:
@@ -875,8 +954,6 @@ async def _fetch_preview_payloads(
             if raw_html is None and _OVERDRIVE_PREVIEW:
                 raw_html = await _try_overdrive_browser_fetch()
                 if not raw_html:
-                    raw_html = await _try_warp_fetch()
-                if not raw_html:
                     return PreviewPayload()
 
             # ----- Non-overdrive legacy path -----
@@ -912,9 +989,7 @@ async def _fetch_preview_payloads(
 
                 if raw_html is None:
                     if skip_check:
-                        raw_html = await _try_warp_fetch()
-                        if raw_html is None:
-                            return PreviewPayload()
+                        return PreviewPayload()
                     else:
                         try:
                             async with session.get(r.url, allow_redirects=True) as resp:
@@ -945,6 +1020,21 @@ async def _fetch_preview_payloads(
                             return PreviewPayload()
                     else:
                         return PreviewPayload()
+
+                # Wayback Machine fallback: only in deep/camoufox mode (use_wayback passed via overrides).
+                if (not raw_html or _is_antibot(raw_html)) and use_wayback:
+                    _wb_timeout = 30
+                    try:
+                        from config import WAYBACK_TIMEOUT as _WB_TO
+                        _wb_timeout = _WB_TO
+                    except ImportError:
+                        pass
+                    try:
+                        wb_text = await _fetch_via_wayback(r.url, timeout=_wb_timeout)
+                        if wb_text and not _is_antibot(wb_text):
+                            raw_html = wb_text
+                    except Exception:
+                        pass
 
                 if not raw_html:
                     return PreviewPayload()
@@ -1020,31 +1110,98 @@ async def _prepare_results_with_previews(
     # Resolve effective preview_limit (may be overridden by deep mode).
     base_settings = _preview_settings()
     effective_limit = int(overrides["preview_limit"]) if overrides and "preview_limit" in overrides else base_settings["preview_limit"]
+    fetch_limit = min(len(results), max(effective_limit, min(24, effective_limit * 2)))
 
-    # Cheap pre-filter: score all candidates by lexical+trust, keep top effective_limit+4.
-    pre_limit = effective_limit + 4
-    if len(results) > pre_limit:
-        def _cheap_score(r: SearchResult) -> float:
-            lex = _lexical_score(query, r.title or "", r.snippet or "", r.url)
-            info = _result_domain_info(r.url)
-            tier = str(getattr(info, "tier", "unknown") or "unknown").lower()
-            trust = _TIER_TRUST_SCORES.get(tier, _TIER_TRUST_SCORES["unknown"])
-            return lex + trust
-        results = sorted(results, key=_cheap_score, reverse=True)[:pre_limit]
+    def _cheap_score(r: SearchResult) -> float:
+        lex = _lexical_score(query, r.title or "", r.snippet or "", r.url)
+        info = _result_domain_info(r.url)
+        tier = str(getattr(info, "tier", "unknown") or "unknown").lower()
+        trust = _TIER_TRUST_SCORES.get(tier, _TIER_TRUST_SCORES["unknown"])
+        return lex + trust
+
+    fetch_indices = []
+    if fetch_limit > 0:
+        ranked_indices = sorted(
+            range(len(results)),
+            key=lambda idx: _cheap_score(results[idx]),
+            reverse=True,
+        )
+        fetch_indices = ranked_indices[:fetch_limit]
 
     # Build settings dict with query for lexical scoring in rerank.
     rerank_settings = dict(base_settings)
     rerank_settings["_query"] = query
 
-    payloads = await _fetch_preview_payloads(results, query=query, overrides=overrides)
+    payloads_by_index: dict[int, PreviewPayload] = {}
+    if fetch_indices:
+        fetched_results = [results[idx] for idx in fetch_indices]
+        fetched_payloads = await _fetch_preview_payloads(fetched_results, query=query, overrides=overrides)
+        for idx, payload in zip(fetch_indices, fetched_payloads):
+            payloads_by_index[idx] = payload if isinstance(payload, PreviewPayload) else PreviewPayload()
+
+    payloads = [payloads_by_index.get(idx, PreviewPayload()) for idx in range(len(results))]
     reranked_results, reranked_payloads = _soft_rerank_results(results, payloads, rerank_settings)
 
-    # Update session state with shown results.
-    _session_update(reranked_results[:effective_limit])
+    scored_rows: list[tuple[SearchResult, PreviewPayload, float, float]] = []
+    for index, (result, payload) in enumerate(zip(reranked_results, reranked_payloads)):
+        usefulness = _result_usefulness_score(
+            result,
+            payload,
+            rerank_settings,
+            index=index,
+            total=len(reranked_results),
+        )
+        lex = _lexical_score(query, result.title or "", result.snippet or "", result.url)
+        scored_rows.append((result, payload, usefulness, lex))
 
-    previews = [payload.text for payload in reranked_payloads]
-    previews += [""] * (len(reranked_results) - len(previews))
-    return reranked_results, previews[:len(reranked_results)]
+    if len(scored_rows) > effective_limit:
+        kept_rows: list[tuple[SearchResult, PreviewPayload, float, float]] = []
+        tail_cap = max(4, effective_limit // 2)
+        for index, row in enumerate(scored_rows):
+            result, payload, usefulness, lex = row
+            if index < effective_limit:
+                kept_rows.append(row)
+                continue
+            query_terms = _query_terms(query)
+            term_matches = _query_term_match_count(
+                query,
+                result.title or "",
+                result.snippet or "",
+                result.url,
+                payload.text if payload else "",
+            )
+            title_url_matches = _query_term_match_count(
+                query,
+                result.title or "",
+                result.url,
+            )
+            payload_signal = bool(
+                (payload.text or "").strip()
+                and (
+                    payload.semantic_score >= 0.18
+                    or payload.quality_score >= 0.25
+                    or len((payload.text or "").strip()) >= 220
+                )
+            )
+            single_term_guard_ok = True
+            if len(query_terms) == 1:
+                single_term_guard_ok = title_url_matches > 0
+            if usefulness >= 0.28 and term_matches > 0 and single_term_guard_ok and (lex >= 0.12 or payload_signal or _is_downloadable_ext(result.url)):
+                kept_rows.append(row)
+            if len(kept_rows) >= effective_limit + tail_cap:
+                break
+        scored_rows = kept_rows
+
+    # Update session state with shown results.
+    _session_update([row[0] for row in scored_rows[:effective_limit]])
+
+    previews = [
+        _adaptive_preview_text(result, payload, rerank_settings, index=index, total=len(scored_rows))
+        for index, (result, payload, _, _) in enumerate(scored_rows)
+    ]
+    filtered_results = [row[0] for row in scored_rows]
+    previews += [""] * (len(filtered_results) - len(previews))
+    return filtered_results, previews[:len(filtered_results)]
 
 
 # Merge and allotment helpers.
@@ -1214,12 +1371,10 @@ async def _fetch_with_camoufox(u: str, timeout_sec: int = 30) -> str:
 
 
 # Fetch page text through curl_cffi.
-async def _fetch_with_curl_cffi(u: str, timeout: int = 15) -> str:
-    """Fetch URL using curl_cffi (Chrome TLS fingerprint), return text."""
-    import re
+async def _fetch_curl_cffi_raw(u: str, timeout: int = 15) -> str:
+    """Fetch URL using curl_cffi (Chrome TLS fingerprint), return raw HTML."""
     loop = asyncio.get_running_loop()
 
-    # Perform the curl_cffi request.
     def _do_fetch():
         from curl_cffi import requests as cffi_req
         r = cffi_req.get(u, impersonate="chrome124", timeout=timeout,
@@ -1227,9 +1382,20 @@ async def _fetch_with_curl_cffi(u: str, timeout: int = 15) -> str:
         r.raise_for_status()
         return r.text
 
-    raw = await loop.run_in_executor(None, _do_fetch)
+    return await loop.run_in_executor(None, _do_fetch)
+
+
+def _strip_html_to_text(raw: str) -> str:
+    """Strip HTML tags and collapse whitespace into plain text."""
+    import re
     raw = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', raw, flags=re.IGNORECASE | re.DOTALL)
     return re.sub(r"\s{2,}", "\n", re.sub(r"<[^>]+>", " ", raw)).strip()
+
+
+async def _fetch_with_curl_cffi(u: str, timeout: int = 15) -> str:
+    """Fetch URL using curl_cffi (Chrome TLS fingerprint), return text."""
+    raw = await _fetch_curl_cffi_raw(u, timeout)
+    return _strip_html_to_text(raw)
 
 
 # Fetch and normalize JSON API output.
@@ -1269,6 +1435,69 @@ async def _fetch_json_api(api_url: str, timeout: int = 15) -> str:
             return _json.dumps(obj, ensure_ascii=False, indent=2)[:12000]
         except Exception:
             return text[:12000]
+
+
+# Fetch a page via Wayback Machine (web.archive.org).
+async def _fetch_via_wayback(u: str, timeout: int = 30) -> str:
+    """
+    Fetch a page via Wayback Machine as a last-resort fallback.
+
+    Steps:
+    1. Query CDX API to find the closest available snapshot.
+    2. Download the raw snapshot using the /web/<ts>id_/<url> path
+       (the `id_` flag strips the Archive.org toolbar and injected JS).
+    3. Strip HTML and return plain text.
+
+    Returns empty string on any failure.
+    """
+    import json as _json
+    from urllib.parse import quote as _quote
+
+    loop = asyncio.get_running_loop()
+
+    def _do():
+        import requests as _req
+
+        # Step 1: find latest available snapshot via CDX API.
+        cdx_url = (
+            "https://web.archive.org/cdx/search/cdx"
+            f"?url={_quote(u, safe='')}"
+            "&output=json&limit=1&fl=timestamp,statuscode&filter=statuscode:200&fastLatest=true"
+        )
+        try:
+            cdx_resp = _req.get(
+                cdx_url,
+                timeout=timeout,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; WaybackFetcher/1.0)"},
+            )
+            cdx_resp.raise_for_status()
+            rows = cdx_resp.json()
+        except Exception:
+            return ""
+
+        # rows[0] is the header ["timestamp","statuscode"], rows[1] is first result
+        if not rows or len(rows) < 2:
+            return ""
+        ts = rows[1][0]  # e.g. "20240315123045"
+
+        # Step 2: download the raw snapshot (id_ skips Archive.org toolbar).
+        snap_url = f"https://web.archive.org/web/{ts}id_/{u}"
+        try:
+            snap_resp = _req.get(
+                snap_url,
+                timeout=timeout,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; WaybackFetcher/1.0)"},
+                allow_redirects=True,
+            )
+            snap_resp.raise_for_status()
+            return snap_resp.text
+        except Exception:
+            return ""
+
+    raw_html = await loop.run_in_executor(None, _do)
+    if not raw_html:
+        return ""
+    return _strip_html_to_text(raw_html)
 
 
 # Convert a URL into a safe slug.

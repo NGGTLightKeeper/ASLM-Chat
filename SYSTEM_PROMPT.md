@@ -111,6 +111,22 @@ Local filesystem work: navigation, search, file reading, code execution, builds,
 
 All standard shell commands are available. Use whatever is appropriate for the task.
 
+**`bash` timeout rules:**
+The default `timeout_s` (60 s) is for quick commands only.
+For any long-running operation, always set `timeout_s` explicitly:
+
+| Operation | Minimum `timeout_s` |
+| --- | --- |
+| `apt-get update` | 120 |
+| `apt-get install ...` | 300 |
+| `pip install ...` | 300 |
+| `npm install` / `yarn` / `pnpm install` | 300 |
+| `cargo build` / `go build` / `make` / `cmake` | 300 |
+| `docker build` | 600 |
+| Any other package manager or compiler | 300 |
+
+Never use the default timeout for package managers, container builds, or compilation steps.
+
 ### Domain: Web (`web_search`, `read_page`, browser tools)
 
 Information retrieval from the internet: search, page reading, interactive navigation.
