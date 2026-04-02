@@ -45,10 +45,11 @@ $(function () {
   let selectedToolServerIds = new Set();
   let currentChatId = null;
   let engineSelectionVersion = 0;
+  let modelInfoRequestVersion = 0;
   let activeEngine = 'ollama-service';
-  let lmsLoadConfigDirty = false;
   const modelsCache = {};
   let ollamaPresetState = {
+    engine: '',
     model: '',
     activePresetId: '',
     presets: []
@@ -98,22 +99,32 @@ $(function () {
   );
 
   const visionState = {
-    supported: false,
+    supported: false
+  };
+
+  const fileState = {
+    supported: false
+  };
+
+  const attachmentState = {
     pending: []
   };
 
   const thinkState = {
     supported: false,
     paramName: 'think',
+    toggleSupported: false,
     enabled: true,
     levelSupported: false,
     levelParamName: 'think_level',
+    levelOptions: ['low', 'medium', 'high'],
     level: 'medium'
   };
 
   const toolState = {
     supported: false
   };
+  let currentModelInfo = null;
 
   const PARAMETER_DEFINITIONS = {
     temperature: {
@@ -1020,16 +1031,22 @@ $(function () {
     $modelSelector.empty().append(
       $('<option>').val('').text(placeholderText)
     );
+    currentModelInfo = null;
     resetOllamaPresetUi();
     resetDynamicPanels();
     renderLoadParameters();
     updateVisibleDividers();
     visionState.supported = false;
+    fileState.supported = false;
     thinkState.supported = false;
+    thinkState.toggleSupported = false;
     thinkState.levelSupported = false;
+    thinkState.levelOptions = ['low', 'medium', 'high'];
+    thinkState.enabled = true;
+    thinkState.level = 'medium';
     toolState.supported = false;
     updateAvailableToolServers(defaultAvailableToolServers);
-    updateVisionControls();
+    updateAttachmentControls();
     updateThinkControls();
     renderToolControls();
   }
@@ -1076,6 +1093,7 @@ $(function () {
 
   function resetOllamaPresetUi() {
     ollamaPresetState = {
+      engine: '',
       model: '',
       activePresetId: '',
       presets: []
@@ -1087,12 +1105,14 @@ $(function () {
   }
 
   function applyOllamaPresetState(payload) {
-    if (!payload || getActiveEngine() !== 'ollama-service' || !getSelectedModelName()) {
+    const activeEngine = getActiveEngine();
+    if (!payload || !['ollama-service', 'lms'].includes(activeEngine) || !getSelectedModelName()) {
       resetOllamaPresetUi();
       return;
     }
 
     ollamaPresetState = {
+      engine: activeEngine,
       model: payload.model || getSelectedModelName(),
       activePresetId: payload.active_preset_id || '',
       presets: Array.isArray(payload.presets) ? payload.presets : []
@@ -1113,6 +1133,32 @@ $(function () {
     $ollamaPresetRenameBtn.prop('disabled', isDefaultPreset);
     $ollamaPresetDeleteBtn.prop('disabled', isDefaultPreset);
     $ollamaPresetGroup.show();
+  }
+
+  function isPresetCapableEngine(engine) {
+    return ['ollama-service', 'lms'].includes(normalizeEngineValue(engine));
+  }
+
+  function getPresetApiBase(engine) {
+    const normalizedEngine = normalizeEngineValue(engine);
+    if (normalizedEngine === 'ollama-service') {
+      return '/api/ollama_presets';
+    }
+    if (normalizedEngine === 'lms') {
+      return '/api/lms_presets';
+    }
+    return '';
+  }
+
+  function buildActivePresetConfigPayload() {
+    const engine = getActiveEngine();
+    if (engine === 'lms') {
+      return {
+        load: collectParameterPayload('#group-load .dyn-load-param'),
+        operation: collectOptionsPayload()
+      };
+    }
+    return collectOptionsPayload();
   }
 
   async function postJson(url, payload) {
@@ -1136,7 +1182,9 @@ $(function () {
   }
 
   async function syncActiveOllamaPreset() {
-    if (getActiveEngine() !== 'ollama-service') {
+    const engine = getActiveEngine();
+    const presetApiBase = getPresetApiBase(engine);
+    if (!presetApiBase) {
       return;
     }
 
@@ -1145,15 +1193,15 @@ $(function () {
       return;
     }
 
-    const payload = await postJson('/api/ollama_presets/sync/', {
+    const payload = await postJson(`${presetApiBase}/sync/`, {
       model: modelName,
-      config: collectOptionsPayload()
+      config: buildActivePresetConfigPayload()
     });
     applyOllamaPresetState(payload);
   }
 
   function scheduleOllamaPresetSync() {
-    if (getActiveEngine() !== 'ollama-service') {
+    if (!isPresetCapableEngine(getActiveEngine())) {
       return;
     }
 
@@ -1189,12 +1237,24 @@ $(function () {
   }
 
   async function fetchModelsForEngine(engine) {
-    const response = await fetch(`/api/models/?engine=${encodeURIComponent(engine)}`);
-    if (!response.ok) {
-      throw new Error(`Failed to load models: ${response.status}`);
+    async function runFetch() {
+      const response = await fetch(`/api/models/?engine=${encodeURIComponent(engine)}`);
+      if (!response.ok) {
+        throw new Error(`Failed to load models: ${response.status}`);
+      }
+      const data = await response.json();
+      return data.models || [];
     }
-    const data = await response.json();
-    return data.models || [];
+
+    const models = await runFetch();
+    if (models.length > 0 || normalizeEngineValue(engine) !== 'ollama-service') {
+      return models;
+    }
+
+    await new Promise(function (resolve) {
+      window.setTimeout(resolve, 1200);
+    });
+    return runFetch();
   }
 
   async function ensureModelsLoadedForActiveEngine(options) {
@@ -1238,45 +1298,22 @@ $(function () {
     return runtimeSettings;
   }
 
-  async function reloadSelectedModel(engine, modelName) {
-    if (!modelName) {
-      return;
-    }
-
-    const response = await fetch('/api/reload_model/', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': getCsrfToken()
-      },
-      body: JSON.stringify({
-        engine,
-        model: modelName
-      })
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(function () {
-        return {};
-      });
-      throw new Error(errorData.error || `Failed to reload model: ${response.status}`);
-    }
-  }
-
   async function applyLmsLoadConfigChange() {
     if (getActiveEngine() !== 'lms') {
       return;
     }
 
-    const loadConfig = collectParameterPayload('#group-load .dyn-load-param');
-    runtimeSettings = await saveRuntimeSettings({ lms_load_config: loadConfig });
-    lmsLoadConfigDirty = true;
+    if (currentModelInfo) {
+      currentModelInfo.load_defaults = collectParameterPayload('#group-load .dyn-load-param');
+    }
+    await syncActiveOllamaPreset();
   }
 
   async function applyEngineSelection(engine, options) {
     const settingsOptions = options || {};
     const normalizedEngine = normalizeEngineValue(engine);
     const selectionVersion = ++engineSelectionVersion;
+    modelInfoRequestVersion += 1;
     const previousEngine = activeEngine;
     const autoLoadModels = settingsOptions.autoLoadModels !== false;
 
@@ -1336,11 +1373,11 @@ $(function () {
     }
   }
 
-  function buildChatTitle(text, hasImages) {
+  function buildChatTitle(text, hasAttachments) {
     if (text) {
       return text.substring(0, 40) + (text.length > 40 ? '...' : '');
     }
-    return hasImages ? 'Image chat' : 'New Chat';
+    return hasAttachments ? 'Attachment chat' : 'New Chat';
   }
 
   const STOP_ICON = '<svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
@@ -1351,9 +1388,9 @@ $(function () {
       $sendBtn.prop('disabled', false).addClass('stop-btn').html(STOP_ICON).attr('aria-label', 'Stop generation');
       $sendBtnConv.prop('disabled', false).addClass('stop-btn').html(STOP_ICON).attr('aria-label', 'Stop generation');
     } else {
-      const hasPendingImages = visionState.pending.length > 0;
-      $sendBtn.removeClass('stop-btn').html(SEND_ICON).attr('aria-label', 'Send Message').prop('disabled', !$chatInput.val().trim() && !hasPendingImages);
-      $sendBtnConv.removeClass('stop-btn').html(SEND_ICON).attr('aria-label', 'Send Message').prop('disabled', !$chatInputConv.val().trim() && !hasPendingImages);
+      const hasPendingAttachments = attachmentState.pending.length > 0;
+      $sendBtn.removeClass('stop-btn').html(SEND_ICON).attr('aria-label', 'Send Message').prop('disabled', !$chatInput.val().trim() && !hasPendingAttachments);
+      $sendBtnConv.removeClass('stop-btn').html(SEND_ICON).attr('aria-label', 'Send Message').prop('disabled', !$chatInputConv.val().trim() && !hasPendingAttachments);
     }
   }
 
@@ -1387,20 +1424,20 @@ $(function () {
     currentChatId = null;
     $('#historyList .chat-item').removeClass('active').removeAttr('aria-current');
     $messagesArea.show();
-    clearPendingImages();
+    clearPendingAttachments();
     updateSendButtons();
   }
 
-  function updateVisionControls() {
-    const show = visionState.supported;
-    $('#attachBtn').toggle(show);
-    $('#attachBtnConv').toggle(show);
-    $('#visionBadge').toggle(show);
-    $('#visionBadgeConv').toggle(show);
+  function updateAttachmentControls() {
+    const canAttach = visionState.supported || fileState.supported;
+    $('#attachBtn').toggle(canAttach);
+    $('#attachBtnConv').toggle(canAttach);
+    $('#visionBadge').toggle(visionState.supported);
+    $('#visionBadgeConv').toggle(visionState.supported);
   }
 
-  function clearPendingImages() {
-    visionState.pending = [];
+  function clearPendingAttachments() {
+    attachmentState.pending = [];
     $('#imagePreviewStrip').empty().hide();
     $('#imagePreviewStripConv').empty().hide();
     $('#imageInput').val('');
@@ -1408,27 +1445,70 @@ $(function () {
     updateSendButtons();
   }
 
+  function normalizeAttachment(attachment) {
+    if (!attachment) {
+      return null;
+    }
+
+    if (typeof attachment === 'string') {
+      return {
+        kind: 'image',
+        name: '',
+        mimeType: 'image/jpeg',
+        size: 0,
+        base64: attachment.replace(/^data:[^;]+;base64,/, ''),
+        dataUrl: attachment
+      };
+    }
+
+    const dataUrl = attachment.dataUrl || attachment.data_url || '';
+    const base64 = attachment.base64 || attachment.data || (dataUrl ? dataUrl.replace(/^data:[^;]+;base64,/, '') : '');
+    return {
+      kind: attachment.kind || 'file',
+      name: attachment.name || '',
+      mimeType: attachment.mimeType || attachment.mime_type || 'application/octet-stream',
+      size: attachment.size || attachment.size_bytes || 0,
+      base64,
+      dataUrl: dataUrl || (base64 ? `data:${attachment.mimeType || attachment.mime_type || 'application/octet-stream'};base64,${base64}` : '')
+    };
+  }
+
   function rebuildPreviewStrips() {
     const $strips = $('#imagePreviewStrip, #imagePreviewStripConv');
     $strips.empty();
 
-    if (visionState.pending.length === 0) {
+    if (attachmentState.pending.length === 0) {
       $strips.hide();
       updateSendButtons();
       return;
     }
 
-    visionState.pending.forEach(function (img, idx) {
-      const html = `
-        <div class="img-preview-thumb" data-idx="${idx}">
-          <img src="${img.dataUrl}" alt="Attached image">
-          <button class="img-preview-remove" aria-label="Remove image">
-            <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-              <path d="M18 6L6 18M6 6l12 12"/>
-            </svg>
-          </button>
-        </div>
-      `;
+    attachmentState.pending.forEach(function (attachment, idx) {
+      let html = '';
+      if (attachment.kind === 'image') {
+        html = `
+          <div class="img-preview-thumb" data-idx="${idx}">
+            <img src="${attachment.dataUrl}" alt="Attached image">
+            <button class="img-preview-remove" aria-label="Remove attachment">
+              <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path d="M18 6L6 18M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        `;
+      } else {
+        html = `
+          <div class="file-preview-chip" data-idx="${idx}">
+            <div class="file-preview-name">${escHtml(attachment.name || 'File')}</div>
+            <div class="file-preview-meta">${escHtml(attachment.mimeType || 'application/octet-stream')}</div>
+            <button class="img-preview-remove" aria-label="Remove attachment">
+              <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path d="M18 6L6 18M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        `;
+      }
       $strips.append(html);
     });
 
@@ -1437,30 +1517,41 @@ $(function () {
   }
 
   function handleFileInput(event) {
-    const maxImages = 20;
+    const maxAttachments = 20;
     const files = Array.from(event.target.files || []);
     if (!files.length) {
       return;
     }
 
     files.forEach(function (file) {
-      if (!file.type.startsWith('image/')) {
+      const isImage = file.type.startsWith('image/');
+      if (isImage && !visionState.supported) {
         return;
       }
-      if (visionState.pending.length >= maxImages) {
-        console.warn(`Max ${maxImages} images allowed`);
+      if (!isImage && !fileState.supported) {
+        return;
+      }
+      if (attachmentState.pending.length >= maxAttachments) {
+        console.warn(`Max ${maxAttachments} attachments allowed`);
         return;
       }
 
       const reader = new FileReader();
       reader.onload = function (loadEvent) {
-        if (visionState.pending.length >= maxImages) {
+        if (attachmentState.pending.length >= maxAttachments) {
           return;
         }
 
         const dataUrl = loadEvent.target.result;
         const base64 = dataUrl.split(',')[1];
-        visionState.pending.push({ dataUrl, base64 });
+        attachmentState.pending.push({
+          kind: isImage ? 'image' : 'file',
+          name: file.name || '',
+          mimeType: file.type || 'application/octet-stream',
+          size: file.size || 0,
+          base64,
+          dataUrl
+        });
         rebuildPreviewStrips();
       };
       reader.readAsDataURL(file);
@@ -1507,7 +1598,7 @@ $(function () {
 
   function formatExperimentalParameterLabel(key) {
     return key
-      .replace(/[_-]+/g, ' ')
+      .replace(/[._-]+/g, ' ')
       .replace(/\b\w/g, function (letter) {
         return letter.toUpperCase();
       });
@@ -1539,6 +1630,55 @@ $(function () {
         cursor[part] = {};
       }
       cursor = cursor[part];
+    });
+  }
+
+  function deleteNestedValue(target, path) {
+    const parts = String(path || '').split('.').filter(Boolean);
+    if (!parts.length || !target || typeof target !== 'object') {
+      return;
+    }
+
+    const trail = [];
+    let cursor = target;
+
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      const part = parts[index];
+      if (!cursor || typeof cursor !== 'object' || !(part in cursor)) {
+        return;
+      }
+      trail.push({ parent: cursor, key: part });
+      cursor = cursor[part];
+    }
+
+    if (!cursor || typeof cursor !== 'object') {
+      return;
+    }
+
+    delete cursor[parts[parts.length - 1]];
+
+    for (let index = trail.length - 1; index >= 0; index -= 1) {
+      const entry = trail[index];
+      const child = entry.parent[entry.key];
+      if (child && typeof child === 'object' && !Array.isArray(child) && Object.keys(child).length === 0) {
+        delete entry.parent[entry.key];
+      } else {
+        break;
+      }
+    }
+  }
+
+  function flattenConfigLeaves(source, prefix) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      return prefix ? [{ path: prefix, value: source }] : [];
+    }
+
+    return Object.entries(source).flatMap(function ([key, value]) {
+      const nextPath = prefix ? `${prefix}.${key}` : key;
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return flattenConfigLeaves(value, nextPath);
+      }
+      return [{ path: nextPath, value }];
     });
   }
 
@@ -1994,6 +2134,60 @@ $(function () {
     $group.show();
   }
 
+  function renderExperimentalLoadParameter(path, value) {
+    const leafKey = String(path || '').split('.').filter(Boolean).pop() || String(path || 'value');
+    const parameterKey = `load_${String(path || '').replace(/[^a-zA-Z0-9]+/g, '_')}`;
+    const inferredType = inferExperimentalParameterType(leafKey, value);
+    const valueType = inferredType === 'boolean' ? 'boolean' : inferredType === 'json' ? 'json' : inferredType;
+    let controlHtml = '';
+
+    if (valueType === 'boolean') {
+      controlHtml = `
+        <select
+          class="model-selector setting-select dyn-load-param"
+          id="dyn_${parameterKey}"
+          data-param="${parameterKey}"
+          data-param-path="${path}"
+          data-value-type="boolean">
+          <option value="true"${value ? ' selected' : ''}>True</option>
+          <option value="false"${!value ? ' selected' : ''}>False</option>
+        </select>
+      `;
+    } else if (valueType === 'json') {
+      controlHtml = `
+        <textarea
+          class="setting-textarea dyn-load-param"
+          id="dyn_${parameterKey}"
+          data-param="${parameterKey}"
+          data-param-path="${path}"
+          data-value-type="json"
+          rows="4">${escapeTextareaValue(JSON.stringify(value, null, 2))}</textarea>
+      `;
+    } else {
+      const inputType = valueType === 'string' ? 'text' : 'number';
+      controlHtml = `
+        <input
+          type="${inputType}"
+          class="setting-input dyn-load-param"
+          id="dyn_${parameterKey}"
+          data-param="${parameterKey}"
+          data-param-path="${path}"
+          data-value-type="${valueType === 'integer' ? 'integer' : valueType === 'number' ? 'number' : 'string'}"
+          value="${escapeAttributeValue(String(value ?? ''))}">
+      `;
+    }
+
+    $('#group-load .settings-section-content').append(`
+      <div class="setting-group">
+        <label class="setting-label" for="dyn_${parameterKey}">
+          ${formatExperimentalParameterLabel(path)}
+        </label>
+        ${controlHtml}
+      </div>
+    `);
+    $('#group-load').show();
+  }
+
   function updateVisibleDividers() {
     const visibleGroups = ['load', 'custom', 'settings', 'sampling', 'advanced'].filter(function (groupName) {
       return $(`#group-${groupName}`).is(':visible');
@@ -2025,7 +2219,7 @@ $(function () {
     const engine = getActiveEngine();
     const $group = $('#group-load');
     const $content = $('#group-load .settings-section-content');
-    const loadConfig = runtimeSettings.lms_load_config || {};
+    const loadConfig = (currentModelInfo && currentModelInfo.load_defaults) || runtimeSettings.lms_load_config || {};
     const selectedMainModel = $modelSelector.val() || '';
     const lmsModels = getAvailableModelsForEngine('lms');
 
@@ -2035,6 +2229,8 @@ $(function () {
     if (engine !== 'lms') {
       return;
     }
+
+    const remainingLoadConfig = JSON.parse(JSON.stringify(loadConfig || {}));
 
     Object.entries(LLM_LOAD_PARAMETER_DEFINITIONS).forEach(function ([key, config]) {
       const renderConfig = { ...config };
@@ -2058,6 +2254,44 @@ $(function () {
         paramPath: config.path || key,
         compact: true
       });
+      deleteNestedValue(remainingLoadConfig, config.path || key);
+    });
+
+    flattenConfigLeaves(remainingLoadConfig, '').forEach(function (entry) {
+      if (entry.value === undefined || entry.value === null) {
+        return;
+      }
+      renderExperimentalLoadParameter(entry.path, entry.value);
+    });
+  }
+
+  function renderThinkLevelControls() {
+    const normalizedOptions = Array.isArray(thinkState.levelOptions) && thinkState.levelOptions.length > 0
+      ? thinkState.levelOptions
+      : ['low', 'medium', 'high'];
+
+    ['#thinkLevelSelector', '#thinkLevelSelectorConv'].forEach(function (selectorId) {
+      const $selector = $(selectorId);
+      $selector.empty();
+
+      normalizedOptions.forEach(function (optionValue) {
+        const normalizedValue = String(optionValue || '').trim();
+        if (!normalizedValue) {
+          return;
+        }
+
+        const label = normalizedValue
+          .replace(/[_-]+/g, ' ')
+          .replace(/\b\w/g, function (letter) {
+            return letter.toUpperCase();
+          });
+
+        $selector.append(
+          $('<button type="button" class="think-level-btn">')
+            .attr('data-value', normalizedValue)
+            .text(label)
+        );
+      });
     });
   }
 
@@ -2072,9 +2306,10 @@ $(function () {
         return;
       }
 
-      pair.$toggle.show().toggleClass('active', thinkState.enabled);
+      pair.$toggle.toggle(thinkState.toggleSupported && !thinkState.levelSupported);
+      pair.$toggle.toggleClass('active', thinkState.enabled);
 
-      if (thinkState.levelSupported && thinkState.enabled) {
+      if (thinkState.levelSupported) {
         pair.$selector.show();
         pair.$selector.find('.think-level-btn').each(function () {
           $(this).toggleClass('active', $(this).data('value') === thinkState.level);
@@ -2086,33 +2321,45 @@ $(function () {
   }
 
   async function loadModelInfo(model) {
+    const requestedEngine = getActiveEngine();
+    const requestVersion = ++modelInfoRequestVersion;
+
     if (!model) {
+      currentModelInfo = null;
       resetOllamaPresetUi();
       resetDynamicPanels();
       renderLoadParameters();
       updateVisibleDividers();
       visionState.supported = false;
+      fileState.supported = false;
       thinkState.supported = false;
+      thinkState.toggleSupported = false;
       thinkState.levelSupported = false;
+      thinkState.levelOptions = ['low', 'medium', 'high'];
       toolState.supported = false;
       selectedToolServerIds = new Set();
       updateAvailableToolServers(defaultAvailableToolServers);
-      updateVisionControls();
+      updateAttachmentControls();
       updateThinkControls();
       renderToolControls();
       return;
     }
 
     try {
-      const response = await fetch(`/api/model_info/?engine=${encodeURIComponent(getActiveEngine())}&model=${encodeURIComponent(model)}`);
+      const response = await fetch(`/api/model_info/?engine=${encodeURIComponent(requestedEngine)}&model=${encodeURIComponent(model)}`);
       if (!response.ok) {
         throw new Error(`Failed to load model info: ${response.status}`);
       }
 
+      if (requestVersion !== modelInfoRequestVersion || requestedEngine !== getActiveEngine() || model !== getSelectedModelName()) {
+        return;
+      }
+
       const data = await response.json();
+      currentModelInfo = data;
       resetDynamicPanels();
+      applyOllamaPresetState(data.ollama_presets || data.lms_presets || null);
       renderLoadParameters();
-      applyOllamaPresetState(data.ollama_presets || null);
 
       toolState.supported = !!data.supports_tool_calling;
       updateAvailableToolServers(data.available_tool_servers || defaultAvailableToolServers);
@@ -2122,19 +2369,27 @@ $(function () {
       renderToolControls();
 
       visionState.supported = !!data.supports_vision;
-      updateVisionControls();
-      clearPendingImages();
+      fileState.supported = !!data.supports_files;
+      updateAttachmentControls();
+      clearPendingAttachments();
 
       thinkState.supported = !!data.supports_thinking;
       thinkState.paramName = data.think_param_name || 'think';
+      thinkState.toggleSupported = data.supports_think_toggle === undefined
+        ? !!data.supports_thinking
+        : !!data.supports_think_toggle;
       thinkState.levelSupported = !!data.supports_think_level;
       thinkState.levelParamName = data.think_level_param_name || 'think_level';
+      thinkState.levelOptions = Array.isArray(data.think_level_options) && data.think_level_options.length > 0
+        ? data.think_level_options.map(function (value) { return String(value); })
+        : ['low', 'medium', 'high'];
       thinkState.enabled = data.defaults && data.defaults[thinkState.paramName] !== undefined
         ? String(data.defaults[thinkState.paramName]).toLowerCase() === 'true' || data.defaults[thinkState.paramName] === true
         : true;
       thinkState.level = data.defaults && data.defaults[thinkState.levelParamName] !== undefined
         ? String(data.defaults[thinkState.levelParamName])
-        : 'medium';
+        : (thinkState.levelOptions[0] || 'medium');
+      renderThinkLevelControls();
       updateThinkControls();
 
       if (!data.defaults) {
@@ -2199,6 +2454,26 @@ $(function () {
 
       updateVisibleDividers();
     } catch (error) {
+      if (requestVersion !== modelInfoRequestVersion) {
+        return;
+      }
+      currentModelInfo = null;
+      resetOllamaPresetUi();
+      resetDynamicPanels();
+      renderLoadParameters();
+      updateVisibleDividers();
+      updateAvailableToolServers(defaultAvailableToolServers);
+      visionState.supported = false;
+      fileState.supported = false;
+      thinkState.supported = false;
+      thinkState.toggleSupported = false;
+      thinkState.levelSupported = false;
+      thinkState.levelOptions = ['low', 'medium', 'high'];
+      toolState.supported = false;
+      renderThinkLevelControls();
+      updateAttachmentControls();
+      updateThinkControls();
+      renderToolControls();
       console.error('Failed to load model parameters', error);
     }
   }
@@ -2298,11 +2573,11 @@ $(function () {
       });
     }
 
-    if (thinkState.supported) {
+    if (thinkState.supported && thinkState.toggleSupported && !thinkState.levelSupported) {
       payload[thinkState.paramName] = thinkState.enabled;
-      if (thinkState.levelSupported) {
-        payload[thinkState.levelParamName] = thinkState.level;
-      }
+    }
+    if (thinkState.supported && thinkState.levelSupported) {
+      payload[thinkState.levelParamName] = thinkState.level;
     }
 
     return payload;
@@ -2357,15 +2632,27 @@ $(function () {
   function parseMessageTimeline(rawText) {
     const source = String(rawText || '');
     const segments = [];
-    // Maps alias → tool segment so tool_result markers can attach result to it.
     const toolSegmentByAlias = {};
     let cursor = 0;
 
+    function sanitizeVisibleText(value) {
+      return String(value || '')
+        .replace(/<\|start\|>\s*(assistant|user|system)?\s*(<\|channel\|>\s*(final|analysis|commentary))?\s*(<\|message\|>)?/gi, '')
+        .replace(/<\|start\|>/gi, '')
+        .replace(/<\|channel\|>\s*(final|analysis|commentary)/gi, '')
+        .replace(/<\|message\|>/gi, '')
+        .replace(/<\|return\|>/gi, '')
+        .replace(/<\|startoftext\|>/gi, '')
+        .replace(/<\|im_(start|end)\|>/gi, '')
+        .replace(/<\|(assistant|user|system|endoftext)\|>/gi, '');
+    }
+
     function pushTextSegment(value) {
-      if (!value || !value.trim()) {
+      const sanitizedValue = sanitizeVisibleText(value);
+      if (!sanitizedValue || !sanitizedValue.trim()) {
         return;
       }
-      segments.push({ type: 'text', content: value });
+      segments.push({ type: 'text', content: sanitizedValue });
     }
 
     while (cursor < source.length) {
@@ -2394,13 +2681,13 @@ $(function () {
       if (next.kind === 'thought') {
         const thinkEnd = source.indexOf('</think>', next.pos + 7);
         if (thinkEnd === -1) {
-          const content = source.substring(next.pos + 7).trim();
+          const content = sanitizeVisibleText(source.substring(next.pos + 7)).trim();
           if (content) {
             segments.push({ type: 'thought', content });
           }
           break;
         }
-        const content = source.substring(next.pos + 7, thinkEnd).trim();
+        const content = sanitizeVisibleText(source.substring(next.pos + 7, thinkEnd)).trim();
         if (content) {
           segments.push({ type: 'thought', content });
         }
@@ -2454,7 +2741,13 @@ $(function () {
       }
     }
 
-    return { segments };
+    const visibleText = segments
+      .filter(function (segment) { return segment.type === 'text'; })
+      .map(function (segment) { return segment.content; })
+      .join('\n\n')
+      .trim();
+
+    return { segments, visibleText };
   }
 
   function renderMarkdownSegment(content) {
@@ -2564,10 +2857,10 @@ $(function () {
   function renderMessageHtml($msgRow, rawText) {
     const parsed = parseMessageTimeline(rawText);
     renderActivityTimeline($msgRow, parsed.segments);
-    $msgRow.find('.msg-bubble').attr('data-raw', rawText);
+    $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
 
-  function appendMessage(role, text, images, timestamp, options) {
+  function appendMessage(role, text, attachments, timestamp, options) {
     const viewOptions = options || {};
     const isUser = role === 'user';
     const label = isUser ? 'You' : 'ASLM';
@@ -2577,13 +2870,33 @@ $(function () {
       : '';
     const messageKey = viewOptions.messageKey || '';
 
-    let imagesHtml = '';
-    if (isUser && images && images.length > 0) {
-      const content = images.map(function (image) {
-        const src = typeof image === 'string' ? image : image.dataUrl;
-        return `<img src="${src}" alt="Attached image">`;
-      }).join('');
-      imagesHtml = `<div class="msg-images">${content}</div>`;
+    let attachmentsHtml = '';
+    if (isUser && attachments && attachments.length > 0) {
+      const imageHtml = attachments
+        .filter(function (attachment) {
+          return typeof attachment === 'string' || attachment.kind === 'image';
+        })
+        .map(function (attachment) {
+          const normalizedAttachment = normalizeAttachment(attachment);
+          const src = normalizedAttachment ? normalizedAttachment.dataUrl : '';
+          return `<img src="${src}" alt="Attached image">`;
+        }).join('');
+      const fileHtml = attachments
+        .filter(function (attachment) {
+          return typeof attachment !== 'string' && attachment.kind === 'file';
+        })
+        .map(function (attachment) {
+          return `
+            <div class="msg-file-chip">
+              <div class="msg-file-name">${escHtml(attachment.name || 'File')}</div>
+              <div class="msg-file-meta">${escHtml(attachment.mimeType || attachment.mime_type || 'application/octet-stream')}</div>
+            </div>
+          `;
+        }).join('');
+      attachmentsHtml = `
+        ${imageHtml ? `<div class="msg-images">${imageHtml}</div>` : ''}
+        ${fileHtml ? `<div class="msg-files">${fileHtml}</div>` : ''}
+      `;
     }
 
     const messageId = viewOptions.messageId || '';
@@ -2610,14 +2923,17 @@ $(function () {
             ${queuedBadge}
           </div>
           ${!isUser ? '<div class="msg-activity-stream" style="display:none;"></div>' : ''}
-          <div class="msg-bubble">${imagesHtml}</div>
+          <div class="msg-bubble">${attachmentsHtml}</div>
           ${msgActionsHtml}
         </div>
       </div>
     `);
 
     if (isUser) {
-      $row.find('.msg-bubble').attr('data-raw', text).append($('<span>').text(text));
+      $row.find('.msg-bubble')
+        .attr('data-raw', text)
+        .attr('data-attachments', JSON.stringify(attachments || []))
+        .append($('<span>').text(text));
     } else if (Array.isArray(viewOptions.activitySegments) && viewOptions.activitySegments.length > 0) {
       $row.find('.msg-bubble').attr('data-raw', text);
       renderActivityTimeline($row, viewOptions.activitySegments);
@@ -2694,13 +3010,10 @@ $(function () {
     return match ? decodeURIComponent(match[1]) : null;
   }
 
-  function clonePendingImages(images) {
-    return (images || []).map(function (image) {
-      return {
-        base64: image.base64,
-        dataUrl: image.dataUrl
-      };
-    });
+  function clonePendingAttachments(attachments) {
+    return (attachments || [])
+      .map(normalizeAttachment)
+      .filter(Boolean);
   }
 
   async function resolveModelForRequest(request) {
@@ -2729,14 +3042,6 @@ $(function () {
 
       request.model = selectedModel;
 
-      if (request.engine === 'lms' && lmsLoadConfigDirty) {
-        await reloadSelectedModel('lms', selectedModel);
-        if (request.engine === getActiveEngine()) {
-          await loadModelInfo(selectedModel);
-        }
-        lmsLoadConfigDirty = false;
-      }
-
       const payload = {
         engine: request.engine,
         message: request.text,
@@ -2750,9 +3055,15 @@ $(function () {
         payload.tool_server_ids = request.toolServerIds;
       }
 
-      if (request.images.length > 0) {
-        payload.images = request.images.map(function (img) {
-          return img.base64;
+      if (request.attachments.length > 0) {
+        payload.attachments = request.attachments.map(function (attachment) {
+          return {
+            kind: attachment.kind,
+            name: attachment.name,
+            mime_type: attachment.mimeType,
+            size_bytes: attachment.size,
+            data: attachment.base64
+          };
         });
       }
 
@@ -2792,14 +3103,14 @@ $(function () {
         if ($(`#historyList .chat-item[data-chat-id="${currentChatId}"]`).length === 0) {
           $('#historyList .empty-state').remove();
 
-          const title = buildChatTitle(request.text, request.images.length > 0);
+          const title = buildChatTitle(request.text, request.attachments.length > 0);
           const $newItem = $(buildChatItemHtml(currentChatId, title, 'just now', true));
 
           $('#historyList .chat-item').removeClass('active').removeAttr('aria-current');
           $('#historyList').prepend($newItem);
         }
 
-        const chatTitle = buildChatTitle(request.text, request.images.length > 0);
+        const chatTitle = buildChatTitle(request.text, request.attachments.length > 0);
         $chatTitle.text(chatTitle);
         document.title = `${chatTitle} - ASLM`;
         history.pushState({ chatId: currentChatId }, chatTitle, `/chat/${currentChatId}/`);
@@ -2897,11 +3208,11 @@ $(function () {
     }
   }
 
-  function buildQueuedRequest(text, imagesToSend) {
+  function buildQueuedRequest(text, attachmentsToSend) {
     return {
       id: `queued-${++queuedMessageCounter}`,
       text,
-      images: clonePendingImages(imagesToSend),
+      attachments: clonePendingAttachments(attachmentsToSend),
       engine: getActiveEngine(),
       preferredModel: getSelectedModelName(),
       systemPrompt: $('#systemPrompt').val(),
@@ -2912,11 +3223,11 @@ $(function () {
   }
 
   function sendMessage(text, $input) {
-    if (!text && visionState.pending.length === 0) {
+    if (!text && attachmentState.pending.length === 0) {
       return;
     }
 
-    const imagesToSend = clonePendingImages(visionState.pending);
+    const attachmentsToSend = clonePendingAttachments(attachmentState.pending);
     const queued = isChatGenerating || chatRequestQueue.length > 0;
 
     if ($welcomeScreen.is(':visible')) {
@@ -2925,14 +3236,14 @@ $(function () {
       $chatInputConv.val('').css('height', 'auto').focus();
     }
 
-    const request = buildQueuedRequest(text, imagesToSend);
-    request.$userRow = appendMessage('user', text, imagesToSend, null, {
+    const request = buildQueuedRequest(text, attachmentsToSend);
+    request.$userRow = appendMessage('user', text, attachmentsToSend, null, {
       queued,
       messageKey: request.id
     });
 
     $input.val('').css('height', 'auto');
-    clearPendingImages();
+    clearPendingAttachments();
     updateSendButtons();
 
     chatRequestQueue.push(request);
@@ -3083,11 +3394,11 @@ $(function () {
         if (!data.user_message) { return; }
 
         const text = data.user_message.content || '';
-        const images = (data.user_message.images || []).map(function (src) {
-          return { base64: src.replace(/^data:[^;]+;base64,/, ''), dataUrl: src };
-        });
+        const attachments = (data.user_message.attachments || [])
+          .map(normalizeAttachment)
+          .filter(Boolean);
 
-        const request = buildQueuedRequest(text, images);
+        const request = buildQueuedRequest(text, attachments);
         request.$userRow = { length: 0 }; // No new user bubble — message already in DOM.
         request.chatId = currentChatId;
 
@@ -3131,7 +3442,14 @@ $(function () {
       updateRegenButtons();
 
       // Build a new request with the user's original text.
-      const request = buildQueuedRequest(userText, []);
+      let userAttachments = [];
+      try {
+        userAttachments = JSON.parse($userMsg.find('.msg-bubble').attr('data-attachments') || '[]');
+      } catch (_error) {
+        userAttachments = [];
+      }
+
+      const request = buildQueuedRequest(userText, userAttachments);
       request.$userRow = { length: 0 }; // User message already in DOM.
       request.chatId = currentChatId;
 
@@ -3218,10 +3536,16 @@ $(function () {
         $conversationInput.show();
 
         data.messages.forEach(function (message) {
-          appendMessage(message.role, message.content, message.images || [], message.created_at, {
+          appendMessage(
+            message.role,
+            message.content,
+            (message.attachments || message.images || []).map(normalizeAttachment).filter(Boolean),
+            message.created_at,
+            {
             activitySegments: Array.isArray(message.activity_segments) ? message.activity_segments : [],
             messageId: message.id
-          });
+            }
+          );
         });
 
         scrollBottom();
@@ -3266,7 +3590,7 @@ $(function () {
   $messagesInner.on('click', '.msg-copy-btn', function () {
     const $btn = $(this);
     const $bubble = $btn.closest('.msg-body').find('.msg-bubble');
-    const text = $bubble.attr('data-raw') || $bubble.text();
+    const text = $bubble.attr('data-copy') || $bubble.attr('data-raw') || $bubble.text();
 
     function onCopied() {
       const orig = $btn.html();
@@ -3332,8 +3656,8 @@ $(function () {
 
   $(document).on('click', '.img-preview-remove', function (event) {
     event.stopPropagation();
-    const index = $(this).closest('.img-preview-thumb').data('idx');
-    visionState.pending.splice(index, 1);
+    const index = $(this).closest('[data-idx]').data('idx');
+    attachmentState.pending.splice(index, 1);
     rebuildPreviewStrips();
   });
 
@@ -3342,7 +3666,7 @@ $(function () {
   });
 
   $(document).on('click', '.think-toggle-btn', function () {
-    if (!thinkState.supported) {
+    if (!thinkState.supported || !thinkState.toggleSupported || thinkState.levelSupported) {
       return;
     }
     thinkState.enabled = !thinkState.enabled;
@@ -3351,6 +3675,9 @@ $(function () {
   });
 
   $(document).on('click', '.think-level-btn', function () {
+    if (!thinkState.supported || !thinkState.levelSupported) {
+      return;
+    }
     thinkState.level = $(this).data('value');
     updateThinkControls();
     scheduleOllamaPresetSync();
@@ -3602,12 +3929,13 @@ $(function () {
   $ollamaPresetSelector.on('change', async function () {
     const presetId = $(this).val();
     const modelName = getSelectedModelName();
-    if (getActiveEngine() !== 'ollama-service' || !presetId || !modelName) {
+    const presetApiBase = getPresetApiBase(getActiveEngine());
+    if (!presetApiBase || !presetId || !modelName) {
       return;
     }
 
     try {
-      const payload = await postJson('/api/ollama_presets/select/', {
+      const payload = await postJson(`${presetApiBase}/select/`, {
         model: modelName,
         preset_id: presetId
       });
@@ -3620,7 +3948,8 @@ $(function () {
 
   $ollamaPresetCreateBtn.on('click', async function () {
     const modelName = getSelectedModelName();
-    if (getActiveEngine() !== 'ollama-service' || !modelName) {
+    const presetApiBase = getPresetApiBase(getActiveEngine());
+    if (!presetApiBase || !modelName) {
       return;
     }
 
@@ -3630,12 +3959,13 @@ $(function () {
     }
 
     try {
-      const payload = await postJson('/api/ollama_presets/create/', {
+      const payload = await postJson(`${presetApiBase}/create/`, {
         model: modelName,
         name: requestedName.trim(),
-        config: collectOptionsPayload()
+        config: buildActivePresetConfigPayload()
       });
       applyOllamaPresetState(payload);
+      await loadModelInfo(modelName);
     } catch (error) {
       console.error('Failed to create Ollama preset:', error);
     }
@@ -3644,7 +3974,8 @@ $(function () {
   $ollamaPresetRenameBtn.on('click', async function () {
     const activePreset = getActiveOllamaPreset();
     const modelName = getSelectedModelName();
-    if (getActiveEngine() !== 'ollama-service' || !modelName || !activePreset || activePreset.is_default) {
+    const presetApiBase = getPresetApiBase(getActiveEngine());
+    if (!presetApiBase || !modelName || !activePreset || activePreset.is_default) {
       return;
     }
 
@@ -3654,7 +3985,7 @@ $(function () {
     }
 
     try {
-      const payload = await postJson('/api/ollama_presets/rename/', {
+      const payload = await postJson(`${presetApiBase}/rename/`, {
         model: modelName,
         preset_id: activePreset.id,
         name: requestedName.trim()
@@ -3668,7 +3999,8 @@ $(function () {
   $ollamaPresetDeleteBtn.on('click', async function () {
     const activePreset = getActiveOllamaPreset();
     const modelName = getSelectedModelName();
-    if (getActiveEngine() !== 'ollama-service' || !modelName || !activePreset || activePreset.is_default) {
+    const presetApiBase = getPresetApiBase(getActiveEngine());
+    if (!presetApiBase || !modelName || !activePreset || activePreset.is_default) {
       return;
     }
 
@@ -3677,7 +4009,7 @@ $(function () {
     }
 
     try {
-      const payload = await postJson('/api/ollama_presets/delete/', {
+      const payload = await postJson(`${presetApiBase}/delete/`, {
         model: modelName,
         preset_id: activePreset.id
       });

@@ -25,7 +25,21 @@ def abort_generation() -> None:
 
 
 OLLAMA_TOP_LEVEL_CHAT_KEYS = {"format", "keep_alive", "logprobs", "top_logprobs"}
-OLLAMA_INTERNAL_CHAT_KEYS = {"system", "prompt", "tool_id", "tool_server_id", "tool_server_ids", "tool_context", "think", "think_level", "engine"}
+OLLAMA_INTERNAL_CHAT_KEYS = {
+    "system",
+    "prompt",
+    "tool_id",
+    "tool_server_id",
+    "tool_server_ids",
+    "tool_context",
+    "think",
+    "think_level",
+    "think_param_name",
+    "think_level_param_name",
+    "load_config",
+    "sync_operation_defaults",
+    "engine",
+}
 OLLAMA_UNSUPPORTED_OPTION_KEYS = {
     "embedding_only",
     "f16_kv",

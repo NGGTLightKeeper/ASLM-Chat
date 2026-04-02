@@ -28,6 +28,12 @@ urlpatterns = [
     path("api/ollama_presets/create/", views.create_ollama_preset_api, name="create_ollama_preset_api"),
     path("api/ollama_presets/rename/", views.rename_ollama_preset_api, name="rename_ollama_preset_api"),
     path("api/ollama_presets/delete/", views.delete_ollama_preset_api, name="delete_ollama_preset_api"),
+    path("api/lms_presets/", views.get_lms_presets_api, name="lms_presets_api"),
+    path("api/lms_presets/sync/", views.sync_lms_preset_api, name="sync_lms_preset_api"),
+    path("api/lms_presets/select/", views.select_lms_preset_api, name="select_lms_preset_api"),
+    path("api/lms_presets/create/", views.create_lms_preset_api, name="create_lms_preset_api"),
+    path("api/lms_presets/rename/", views.rename_lms_preset_api, name="rename_lms_preset_api"),
+    path("api/lms_presets/delete/", views.delete_lms_preset_api, name="delete_lms_preset_api"),
     
     path("api/reload_model/", views.reload_model_api, name="reload_model_api"),
     path("api/runtime_settings/", views.runtime_settings_api, name="runtime_settings_api"),

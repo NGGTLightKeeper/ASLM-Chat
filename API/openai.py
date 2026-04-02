@@ -65,6 +65,7 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
         role = str(message.get("role", "user")).lower()
         content = message.get("content", "") or ""
         images = message.get("images") or []
+        image_mime_types = message.get("image_mime_types") or []
 
         # Image inputs require multipart content instead of a plain string.
         if images:
@@ -72,11 +73,14 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
             if content:
                 content_parts.append({"type": "text", "text": content})
 
-            for image_base64 in images:
+            for index, image_base64 in enumerate(images):
+                image_mime_type = "image/jpeg"
+                if index < len(image_mime_types):
+                    image_mime_type = str(image_mime_types[index] or image_mime_type)
                 content_parts.append(
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"},
+                        "image_url": {"url": f"data:{image_mime_type};base64,{image_base64}"},
                     }
                 )
 

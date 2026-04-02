@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import textwrap
 from pathlib import Path
@@ -12,10 +13,15 @@ from django.urls import reverse
 
 from API import llm_api
 from API import mcp as tool_registry
+from API.lms import (
+    _prepare_openai_prediction_options,
+    _serialize_model_info,
+    get_model_settings as get_lms_model_settings,
+)
 from API.ollama import _prepare_chat_kwargs, prepare_runtime as prepare_ollama_runtime
 from API.openai import _build_openai_request_options
-from Apps.Data.models import Chat, Message, OllamaPreset
-from Apps.UI.views import _extract_model_name
+from Apps.Data.models import Chat, LmsPreset, Message, MessageAttachment, OllamaPreset
+from Apps.UI.views import _extract_model_name, _format_runtime_error, _strip_llm_control_tokens
 
 
 class ToolRegistryTestMixin:
@@ -134,6 +140,26 @@ class OllamaOptionMappingTests(SimpleTestCase):
         self.assertNotIn("numa", payload["options"])
         self.assertNotIn("tfs_z", payload["options"])
 
+    def test_prepare_chat_kwargs_ignores_lms_only_internal_keys(self):
+        payload = _prepare_chat_kwargs(
+            {
+                "stream": True,
+                "think": True,
+                "think_param_name": "ext.virtualModel.customField.qwen.enableThinking",
+                "think_level_param_name": "ext.virtualModel.customField.openai.reasoningEffort",
+                "load_config": {"contextLength": 32768},
+                "sync_operation_defaults": {"ext.virtualModel.customField.qwen.enableThinking": False},
+                "options": {"temperature": 0.7},
+            }
+        )
+
+        self.assertNotIn("think_param_name", payload)
+        self.assertNotIn("think_level_param_name", payload)
+        self.assertNotIn("load_config", payload)
+        self.assertNotIn("sync_operation_defaults", payload)
+        self.assertEqual(payload["think"], True)
+        self.assertEqual(payload["options"]["temperature"], 0.7)
+
     @patch("API.ollama._get_ollama_service_module")
     def test_prepare_runtime_passes_requested_engine_to_managed_service(self, mock_get_service):
         mock_service = Mock()
@@ -211,6 +237,93 @@ class EngineRegistryTests(SimpleTestCase):
 
         self.assertEqual(llm_api.get_model_settings("ollama-service", "llama3"), {"model": "llama3"})
         mock_prepare_runtime.assert_called_once_with("ollama-service")
+
+
+class LmsAdapterTests(SimpleTestCase):
+    """Cover LM Studio metadata normalization and capability fallback."""
+
+    def test_serialize_model_info_reads_nested_info_wrapper(self):
+        class Info:
+            model_key = "qwen3"
+            display_name = "Qwen 3"
+            vision = True
+            trained_for_tool_use = True
+            max_context_length = 65536
+
+        class Wrapper:
+            info = Info()
+
+        payload = _serialize_model_info(Wrapper())
+
+        self.assertEqual(payload["modelKey"], "qwen3")
+        self.assertTrue(payload["vision"])
+        self.assertTrue(payload["trainedForToolUse"])
+        self.assertEqual(payload["maxContextLength"], 65536)
+
+    @patch("API.lms._close_client")
+    @patch("API.lms._get_client")
+    def test_get_model_settings_uses_downloaded_model_info_when_direct_lookup_fails(
+        self,
+        mock_get_client,
+        _mock_close_client,
+    ):
+        class DownloadedInfo:
+            model_key = "qwen3"
+            vision = True
+            trained_for_tool_use = True
+            max_context_length = 65536
+
+        class DownloadedModel:
+            info = DownloadedInfo()
+
+        client = Mock()
+        client.llm.get_model_info.side_effect = RuntimeError("not loaded")
+        client.list_downloaded_models.return_value = [DownloadedModel()]
+        mock_get_client.return_value = (Mock(), client)
+
+        payload = get_lms_model_settings("qwen3")
+
+        self.assertTrue(payload["supports_vision"])
+        self.assertTrue(payload["supports_tool_calling"])
+        self.assertEqual(payload["context_length"], 65536)
+
+    def test_prepare_openai_prediction_options_keeps_lms_custom_values_in_extra_body(self):
+        payload = _prepare_openai_prediction_options(
+            {
+                "temperature": 0.2,
+                "contextOverflowPolicy": "truncateMiddle",
+                "draftModel": "qwen/qwen3.5-0.5b",
+            },
+            think_level="high",
+        )
+
+        self.assertEqual(payload["temperature"], 0.2)
+        self.assertEqual(payload["reasoning_effort"], "high")
+        self.assertNotIn("contextOverflowPolicy", payload)
+        self.assertEqual(payload["extra_body"]["contextOverflowPolicy"], "truncateMiddle")
+        self.assertEqual(payload["extra_body"]["draftModel"], "qwen/qwen3.5-0.5b")
+        self.assertIn("reasoningParsing", payload["extra_body"])
+
+
+class ViewFormattingTests(SimpleTestCase):
+    """Keep user-visible LM output clean and actionable."""
+
+    def test_strip_llm_control_tokens_removes_service_markers(self):
+        self.assertEqual(
+            _strip_llm_control_tokens("<|start|>assistant<|channel|>final<|message|>Hello"),
+            "Hello",
+        )
+
+    def test_format_runtime_error_hides_lms_model_load_verbosity(self):
+        message = _format_runtime_error(
+            "lms",
+            RuntimeError(
+                "Model get/load error: V Cache Quantization requires flash attention to be enabled."
+            ),
+        )
+
+        self.assertIn("Flash Attention", message)
+        self.assertNotIn("Model get/load error", message)
 
 
 class ChatApiTests(ToolRegistryTestMixin, TestCase):
@@ -318,6 +431,79 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertIn('\"tool_id\": \"time_now\"', body)
         self.assertIn('Done', body)
 
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="lms")
+    def test_chat_api_persists_generic_attachments_and_builds_lms_messages(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+    ):
+        mock_generate.return_value = [{"message": {"content": "Done"}}]
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data=json.dumps(
+                {
+                    "message": "Hello",
+                    "model": "qwen",
+                    "attachments": [
+                        {
+                            "kind": "image",
+                            "name": "photo.png",
+                            "mime_type": "image/png",
+                            "data": "iVBORw0KGgo=",
+                        },
+                        {
+                            "kind": "file",
+                            "name": "note.txt",
+                            "mime_type": "text/plain",
+                            "data": "SGVsbG8gZnJvbSBmaWxl",
+                        },
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        b"".join(response.streaming_content)
+        self.assertEqual(MessageAttachment.objects.count(), 2)
+
+        outbound_messages = mock_generate.call_args.kwargs["messages"]
+        current_user_message = outbound_messages[-1]
+        self.assertEqual(current_user_message["role"], "user")
+        self.assertEqual(len(current_user_message["images"]), 1)
+        self.assertIn("[Attached file: note.txt]", current_user_message["content"])
+        self.assertIn("Hello from file", current_user_message["content"])
+
+    @patch("Apps.UI.views.llm_api.get_model_settings", return_value={"supports_tool_calling": False, "supports_files": True})
+    @patch("Apps.UI.views._get_active_engine", return_value="lms")
+    def test_chat_api_rejects_tool_server_when_lms_model_lacks_tool_support(
+        self,
+        _mock_engine,
+        _mock_model_settings,
+    ):
+        self.write_server(
+            'time_suite',
+            '''
+            MCP_SERVER = {"id": "time_suite", "name": "Time Suite"}
+            TOOLS = [{"id": "time_now", "name": "Current Time", "parameters": {"type": "object", "properties": {}}}]
+            def call_tool(tool_id, arguments, context=None):
+                return "ok"
+            ''',
+        )
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"Hello","model":"qwen","tool_server_id":"time_suite"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("does not support tool calling", response.json()["error"])
+
 
     @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")
@@ -416,6 +602,30 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         b"".join(response.streaming_content)
         history_messages = mock_generate.call_args.kwargs["messages"]
         self.assertEqual(history_messages[1], {"role": "assistant", "content": "Visible answer"})
+
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="lms")
+    def test_chat_api_strips_service_control_tokens_from_visible_output(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+    ):
+        mock_generate.return_value = [
+            {"message": {"content": "<|start|>assistant<|channel|>final<|message|>Hello"}},
+        ]
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"Hi","model":"qwen3"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content).decode("utf-8"), "Hello")
+        assistant_message = Message.objects.filter(role="assistant").latest("created_at")
+        self.assertEqual(assistant_message.content, "Hello")
 
 
 class RuntimeSettingsApiTests(TestCase):
@@ -658,3 +868,75 @@ class OllamaPresetApiTests(ToolRegistryTestMixin, TestCase):
         )
 
         self.assertEqual(response.status_code, 501)
+
+
+class LmsPresetApiTests(TestCase):
+    """Cover LM Studio preset API endpoints and model-info integration."""
+
+    @patch("Apps.UI.views.llm_api.get_model_settings")
+    @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
+    def test_model_info_includes_active_lms_preset_defaults(self, mock_preset_settings, mock_model_settings):
+        base_settings = {
+            "context_length": 65536,
+            "defaults": {"temperature": 0.7, "think": True},
+            "load_defaults": {"contextLength": 32768, "flashAttention": True},
+            "supports_thinking": True,
+            "supports_think_level": False,
+            "think_param_name": "think",
+            "think_level_param_name": "reasoning_effort",
+            "supports_vision": True,
+            "supports_tool_calling": True,
+            "supports_files": True,
+            "runtime_limits": {"gpu_devices": [{"id": 0, "name": "RTX"}], "gpu_count": 1, "main_gpu_max": 0},
+            "custom_fields": [],
+            "capabilities": ["vision", "tools", "thinking", "files"],
+        }
+        mock_model_settings.return_value = base_settings
+        mock_preset_settings.return_value = base_settings
+
+        default_preset = LmsPreset.objects.create(
+            model_name="qwen3",
+            name="Default",
+            config={"load": {"contextLength": 32768}, "operation": {"temperature": 0.7}},
+            is_default=True,
+            is_active=False,
+        )
+        custom_preset = LmsPreset.objects.create(
+            model_name="qwen3",
+            name="Reasoning Off",
+            config={"load": {"contextLength": 65536}, "operation": {"temperature": 0.2, "think": False}},
+            is_default=False,
+            is_active=True,
+        )
+
+        response = self.client.get(
+            reverse("model_info_api"),
+            {"engine": "lms", "model": "qwen3"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("lms_presets", payload)
+        self.assertEqual(payload["defaults"]["temperature"], 0.2)
+        self.assertFalse(payload["defaults"]["think"])
+        self.assertEqual(payload["load_defaults"]["contextLength"], 65536)
+        self.assertEqual(payload["lms_presets"]["active_preset_id"], str(custom_preset.id))
+        self.assertEqual(default_preset.name, "Default")
+
+    @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
+    def test_sync_endpoint_clones_default_lms_preset_on_first_change(self, mock_get_model_settings):
+        mock_get_model_settings.return_value = {
+            "load_defaults": {"contextLength": 32768},
+            "defaults": {"temperature": 0.7},
+        }
+
+        response = self.client.post(
+            reverse("sync_lms_preset_api"),
+            data='{"model":"qwen3","config":{"load":{"contextLength":65536},"operation":{"temperature":0.2,"think":false}}}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload["presets"]), 2)
+        self.assertEqual(LmsPreset.objects.filter(model_name="qwen3").count(), 2)

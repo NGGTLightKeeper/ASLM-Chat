@@ -47,7 +47,7 @@ TOOLS = [
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
     """Expose this tool server only for Ollama tool-calling flows."""
 
-    return engine == "ollama-service"
+    return engine in ("ollama-service", "lms")
 
 
 # Read optional label

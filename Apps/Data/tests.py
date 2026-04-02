@@ -9,13 +9,19 @@ from unittest.mock import patch
 from django.test import TestCase
 
 from API import mcp as tool_registry
-from Apps.Data.models import Chat, Message, MessageImage, MessageRole, OllamaPreset
+from Apps.Data.models import Chat, LmsPreset, Message, MessageImage, MessageRole, OllamaPreset
 from Apps.Data.ollama_presets import (
     DEFAULT_OLLAMA_PRESET_CONFIG,
     create_ollama_preset,
     delete_ollama_preset,
     ensure_ollama_preset_state,
     sync_active_ollama_preset,
+)
+from Apps.Data.lms_presets import (
+    create_lms_preset,
+    delete_lms_preset,
+    ensure_lms_preset_state,
+    sync_active_lms_preset,
 )
 
 
@@ -122,6 +128,63 @@ class OllamaPresetTests(TestCase):
         self.assertNotIn("mirostat", active.config)
         self.assertNotIn("numa", active.config)
         self.assertNotIn("vocab_only", active.config)
+
+
+class LmsPresetTests(TestCase):
+    """Verify per-model LM Studio preset lifecycle helpers."""
+
+    @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
+    def test_ensure_state_creates_default_preset(self, mock_get_model_settings):
+        mock_get_model_settings.return_value = {
+            "load_defaults": {"contextLength": 32768, "flashAttention": True},
+            "defaults": {"temperature": 0.7, "think": True},
+        }
+
+        presets, active_preset = ensure_lms_preset_state("qwen3")
+
+        self.assertEqual(len(presets), 1)
+        self.assertTrue(active_preset.is_default)
+        self.assertTrue(active_preset.is_active)
+        self.assertEqual(active_preset.config["load"]["contextLength"], 32768)
+        self.assertEqual(active_preset.config["operation"]["temperature"], 0.7)
+
+    @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
+    def test_sync_from_default_creates_custom_active_preset(self, mock_get_model_settings):
+        mock_get_model_settings.return_value = {
+            "load_defaults": {"contextLength": 32768},
+            "defaults": {"temperature": 0.7},
+        }
+
+        payload = sync_active_lms_preset(
+            "qwen3",
+            {
+                "load": {"contextLength": 65536, "flashAttention": True},
+                "operation": {"temperature": 0.2, "think": False},
+            },
+        )
+
+        self.assertEqual(LmsPreset.objects.filter(model_name="qwen3").count(), 2)
+        active = LmsPreset.objects.get(id=payload["active_preset_id"])
+        self.assertFalse(active.is_default)
+        self.assertEqual(active.config["load"]["contextLength"], 65536)
+        self.assertFalse(active.config["operation"]["think"])
+
+    @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
+    def test_delete_active_custom_preset_falls_back_to_default(self, mock_get_model_settings):
+        mock_get_model_settings.return_value = {
+            "load_defaults": {"contextLength": 32768},
+            "defaults": {"temperature": 0.7},
+        }
+        created = create_lms_preset(
+            "qwen3",
+            name="Coding",
+            config={"load": {"contextLength": 65536}, "operation": {"temperature": 0.2}},
+            activate=True,
+        )
+        delete_lms_preset("qwen3", created["active_preset_id"])
+
+        active = LmsPreset.objects.get(model_name="qwen3", is_active=True)
+        self.assertTrue(active.is_default)
 
 
 class LocalServerRegistryTests(ToolRegistryTestCase):
