@@ -443,7 +443,7 @@ class ResearchConfig:
 # Overdrive Mode settings.
 # Experimental config flag that switches read_page to a multi-method fetch
 # orchestrator for higher page-read success rates at the cost of latency.
-OVERDRIVE: bool = os.getenv("SEARCH_OVERDRIVE", "true").lower() == "true"
+OVERDRIVE: bool = os.getenv("SEARCH_OVERDRIVE", "false").lower() == "true"
 OVERDRIVE_HUMAN_BEHAVIOR: bool = os.getenv("SEARCH_OVERDRIVE_HUMAN_BEHAVIOR", "true").lower() == "true"
 OVERDRIVE_OCR_FALLBACK: bool = os.getenv("SEARCH_OVERDRIVE_OCR_FALLBACK", "true").lower() == "true"
 OVERDRIVE_PARALLEL_TIMEOUT: float = float(os.getenv("SEARCH_OVERDRIVE_PARALLEL_TIMEOUT", "30.0"))
