@@ -13,6 +13,13 @@ from typing import Optional
 
 logger = logging.getLogger("ddgs_client")
 
+try:
+    from config import DDGS_MAX_RETRIES, DDGS_REQUEST_DELAY, DDGS_TIMEOUT
+except ImportError:
+    DDGS_REQUEST_DELAY = (0.15, 0.6)
+    DDGS_TIMEOUT = 5
+    DDGS_MAX_RETRIES = 1
+
 
 # Compatibility imports.
 try:
@@ -61,8 +68,8 @@ BACKEND_PRESETS = {
     "medical": "google,brave",
     "ru": "yandex,google",
 }
-BACKEND_FALLBACK = ["google,brave", "yandex,yahoo", "mojeek", "auto"]
-BACKEND_SITE_QUERY = ["yandex,yahoo", "yandex", "brave,mojeek", "auto"]
+BACKEND_FALLBACK = ["google,brave", "mojeek", "auto"]
+BACKEND_SITE_QUERY = ["yandex,yahoo", "auto"]
 
 
 # DDGS client.
@@ -231,7 +238,7 @@ class DDGSClient:
             try:
                 # Spread requests a little even on the first attempt, then back off harder.
                 if attempt > 0:
-                    delay = min(5 * attempt + random.uniform(0, 2), 20)
+                    delay = min(2 * attempt + random.uniform(0, 0.5), 4)
                     time.sleep(delay)
                 else:
                     time.sleep(random.uniform(*self.request_delay))
@@ -357,9 +364,9 @@ def get_ddgs_client(
             proxies=proxies or [],
             cache_db=cache_db,
             cache_ttl=3600,
-            request_delay=(0.5, 1.5),
-            timeout=10,
-            max_retries=2,
+            request_delay=DDGS_REQUEST_DELAY,
+            timeout=DDGS_TIMEOUT,
+            max_retries=DDGS_MAX_RETRIES,
         )
 
     return _client

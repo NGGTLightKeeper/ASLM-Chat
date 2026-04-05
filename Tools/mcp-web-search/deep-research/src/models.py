@@ -49,6 +49,12 @@ class ExtractedSource:
     entities: list[dict[str, Any]] = field(default_factory=list)
     relevant_chunks: str = ""
     summary: str = ""
+    # Triage metadata (populated by LLM triage step).
+    sub_topic: str = ""
+    content_type: str = ""
+    evidence_strength: str = ""
+    source_character: str = ""
+    perspective: str = ""
 
 
 # Research state models.

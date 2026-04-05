@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import hashlib
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.endpoint_overlay import normalize_domain
 from src.llm_client import call_llm_json
+
+try:
+    from src.config import DEEP_RESEARCH_ROOT as _DR_ROOT
+except Exception:
+    _DR_ROOT = Path(__file__).resolve().parents[3]  # type: ignore
+
+_SWARM_HTTP_CACHE_DB: str = str(Path(_DR_ROOT) / "_cache" / "swarm_http_cache.db")
 
 try:
     from src.background_agent import EphemeralStore, ResearchTask, TaskOrchestrator
@@ -25,6 +33,39 @@ _BACKGROUND_SWARM_DOMAIN_BLOCKLIST = {
     "wikipedia.org",
     "quora.com",
 }
+
+
+def _preview_text(text: str, limit: int = 140) -> str:
+    """Compress one text fragment for swarm debug logging."""
+
+    compact = " ".join((text or "").split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _background_swarm_tasks_schema(task_count: int) -> Dict[str, Any]:
+    return {
+        "type": "array",
+        "minItems": max(1, int(task_count)),
+        "maxItems": max(1, int(task_count)),
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["label", "query", "target_domains", "goal"],
+            "properties": {
+                "label": {"type": "string", "minLength": 2, "maxLength": 64},
+                "query": {"type": "string", "minLength": 2, "maxLength": 96},
+                "target_domains": {
+                    "type": "array",
+                    "minItems": 0,
+                    "maxItems": 4,
+                    "items": {"type": "string", "minLength": 3, "maxLength": 100},
+                },
+                "goal": {"type": "string", "minLength": 0, "maxLength": 180},
+            },
+        },
+    }
 
 
 # Validate a normalized domain name.
@@ -213,7 +254,18 @@ async def _generate_background_swarm_tasks(
         "- No site operators, no quotes, no punctuation-heavy text\n"
         "- No duplicate or near-duplicate tasks\n"
     )
-    raw = await call_llm_json(prompt=prompt, model=cfg.query_model, temperature=0.3)
+    raw = await call_llm_json(
+        prompt=prompt,
+        model=cfg.query_model,
+        temperature=0.3,
+        json_schema=_background_swarm_tasks_schema(query_limit),
+        schema_name="background_swarm_tasks",
+        structured_output=bool(getattr(cfg, "structured_output_enabled", True)),
+        strict=bool(getattr(cfg, "structured_output_strict", True)),
+        reasoning_effort=str(getattr(cfg, "reasoning_effort", "low")),
+        reasoning_tokens=int(getattr(cfg, "reasoning_tokens", 2048)),
+        concise_reasoning_prompt=str(getattr(cfg, "concise_reasoning_prompt", "")),
+    )
     if isinstance(raw, list):
         validated = _validate_swarm_tasks(raw, limit=query_limit, query_type=state.query_type)
         if validated:
@@ -305,6 +357,8 @@ async def start_background_swarm(
         )
         store.start_cleanup_loop(interval_sec=90.0)
         orchestrator = TaskOrchestrator(max_concurrent=1)
+        swarm_task_timeout = max(0.0, float(getattr(cfg, "background_swarm_task_timeout_sec", 0.0)))
+        swarm_bfs_fraction = max(0.10, min(0.70, float(getattr(cfg, "background_swarm_bfs_fraction", 0.40))))
         task = ResearchTask(
             task_id=swarm_id,
             query=current_query,
@@ -332,6 +386,9 @@ async def start_background_swarm(
             use_stealth=bool(getattr(cfg, "enable_stealth", True)),
             use_playwright=bool(getattr(cfg, "enable_playwright", False)),
             progress_callback=lambda m: state.log(f"  [swarm] {m}"),
+            http_cache_db=_SWARM_HTTP_CACHE_DB,
+            task_timeout_sec=swarm_task_timeout,
+            bfs_budget_fraction=swarm_bfs_fraction,
         )
         await orchestrator.submit(
             task.run, task_id=swarm_id, max_retries=1, retry_base_delay=5.0
@@ -478,6 +535,21 @@ async def drain_background_swarm(
     if not swarm_hits:
         return []
 
+    state.log(f"  [swarm] search returned {len(swarm_hits)} hits (top_k={top_k})")
+    for index, hit in enumerate(swarm_hits[: min(8, len(swarm_hits))], 1):
+        meta = hit.metadata or {}
+        url = str(meta.get("url") or "").strip() or "-"
+        title = _preview_text(str(meta.get("title") or url), 90)
+        method = str(meta.get("method") or "background_swarm")
+        score = float(getattr(hit, "score", 0.0) or 0.0)
+        chunk_preview = _preview_text(hit.chunk or "", 160)
+        state.log(
+            f"  [swarm] hit {index}: score={score:.3f} method={method} "
+            f"title='{title}' url={url}"
+        )
+        if chunk_preview:
+            state.log(f"  [swarm] hit {index} chunk: {chunk_preview}")
+
     grouped: Dict[str, list] = defaultdict(list)
     for hit in swarm_hits:
         meta = hit.metadata or {}
@@ -539,6 +611,13 @@ async def drain_background_swarm(
         source._relevance = max(0.0, min(1.0, avg_score))  # type: ignore[attr-defined]
         merged_sources.append(source)
         seen_hashes.add(content_hash)
+        state.log(
+            f"  [swarm] attach candidate: score={avg_score:.3f} chunks={len(chunks)} "
+            f"chars={len(merged_text)} title='{_preview_text(title, 90)}' url={url}"
+        )
+        state.log(
+            f"  [swarm] attach preview: {_preview_text(merged_text, 220)}"
+        )
         if len(merged_sources) >= attach_cap:
             break
 

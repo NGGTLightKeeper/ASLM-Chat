@@ -59,7 +59,7 @@ Typical coding flow:
 ```text
 bash("ls -la")
 bash("grep -rn 'pattern' .")
-bash("cat file.py")
+bash("sed -n '1,80p' file.py")
 edit("file.py", old_str, new_str)
 bash("python file.py")
 ```

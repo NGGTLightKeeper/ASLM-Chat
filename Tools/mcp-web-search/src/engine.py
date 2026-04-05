@@ -1104,6 +1104,12 @@ async def _prepare_results_with_previews(
 
     # Dedup by domain+title and snippet similarity before fetching.
     results = _dedup_results(results)
+    # Semantic dedup on snippets (lightweight MinHash pass).
+    try:
+        from deep_research.src.semantic_dedup import minhash_dedup
+        results = minhash_dedup(results, lambda r: r.snippet)
+    except Exception:
+        pass  # datasketch not installed or import path differs
     if not results:
         return [], []
 

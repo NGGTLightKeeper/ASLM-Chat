@@ -128,5 +128,10 @@
   "mcp": {
     "default_profile": "balanced",
     "include_raw_reports_in_full": true
+  },
+  "blackboard": {
+    "enabled": true,
+    "max_signals_per_read": 20,
+    "signal_max_chars": 300
   }
 }

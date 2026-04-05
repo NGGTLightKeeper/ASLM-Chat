@@ -46,6 +46,7 @@ Retrieves a specific recipe by:
 - search query (matches title, domain, trigger, tools)
 
 Returns the full recipe with goal, workflow steps, stop conditions, and anti-patterns.
+For matching tasks, the recipe is meant to be treated as a direct workflow instruction, not an optional suggestion.
 
 ### `list_snippets(guide, include_deprecated=false)`
 

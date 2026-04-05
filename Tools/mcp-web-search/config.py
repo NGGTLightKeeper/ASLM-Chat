@@ -32,7 +32,9 @@ YACY_PASS = os.getenv("ASLM_YACY_PASS", "admin123")
 # DDGS settings.
 DDGS_PROXIES: list[str] = []
 DDGS_CACHE_DB: Optional[str] = str(ROOT_DIR / "_cache" / "ddgs_cache.db")
-DDGS_REQUEST_DELAY = (1.0, 2.5)
+DDGS_REQUEST_DELAY = (0.15, 0.6)
+DDGS_TIMEOUT: int = 5
+DDGS_MAX_RETRIES: int = 1
 
 
 # Domain learning databases.
@@ -102,6 +104,16 @@ STEALTH_ENABLE_CAMOUFOX: bool = True
 LLM_MODEL_QUERY_GEN = "local-model"
 LLM_MODEL_SUMMARIZE = "local-model"
 LLM_MODEL_SYNTHESIS = "local-model"
+LLM_STRUCTURED_OUTPUT_ENABLED = True
+LLM_STRUCTURED_OUTPUT_STRICT = True
+LLM_REASONING_EFFORT = ""
+LLM_REASONING_TOKENS = 0
+LLM_REASONING_PROMPT = ""
+# Reasoning style supported by the currently-loaded LMS model:
+#   "effort"  — thinking models (Qwen3-235B-A22B, DeepSeek-R1, …): accepts low/medium/high
+#   "on_off"  — non-thinking reasoning models (Qwen3.5, …): accepts only on/off
+#   "none"    — model has no reasoning support at all, don't send reasoning params
+LLM_REASONING_MODE = "effort"
 
 
 # ML model settings.
@@ -208,6 +220,11 @@ class ResearchConfig:
     iteration_search_timeout_sec: float = 240.0
     search_fallback_stage_timeout_sec: float = 120.0
     query_model: str = LLM_MODEL_QUERY_GEN
+    structured_output_enabled: bool = LLM_STRUCTURED_OUTPUT_ENABLED
+    structured_output_strict: bool = LLM_STRUCTURED_OUTPUT_STRICT
+    reasoning_effort: str = LLM_REASONING_EFFORT
+    reasoning_tokens: int = LLM_REASONING_TOKENS
+    concise_reasoning_prompt: str = LLM_REASONING_PROMPT
     enable_source_summaries: bool = False
     summarize_model: str = LLM_MODEL_SUMMARIZE
     summarize_parallel_agents: int = 1
@@ -215,6 +232,15 @@ class ResearchConfig:
     llm_timeout: float = 900.0
     synthesis_max_tokens: int = 16384
     synthesis_source_cap: int = 48
+    # Minimum quality score (0..1) a "rejected" source must have to be used as
+    # cap-filler when preferred sources are fewer than synthesis_source_cap.
+    # Sources below this threshold are dropped even when cap is not reached.
+    # 0.0 = disabled (original behaviour).
+    synthesis_min_source_quality: float = 0.55
+    final_source_cleanup_enabled: bool = True
+    final_source_rank_model: str = LLM_MODEL_SUMMARIZE
+    final_source_rank_batch_size: int = 8
+    final_source_rank_timeout_sec: float = 90.0
     synthesis_batch_char_budget: int = 60000
     synthesis_prompt_char_budget: int = 120000
     enable_background_swarm: bool = False
@@ -232,9 +258,61 @@ class ResearchConfig:
     background_swarm_chunk_merge_chars: int = 3200
     background_swarm_min_chunk_relevance: float = 0.30
     background_swarm_max_total_chunks: int = 1000
-    background_swarm_final_wait_timeout_sec: float = 15.0
+    background_swarm_final_wait_timeout_sec: float = 500.0
+    background_swarm_standalone_timeout_sec: float = 300.0
+    # Adaptive time-budget: total wall-clock per swarm task (0 = unlimited).
+    # BFS gets bfs_fraction of that, crawling gets the rest.
+    background_swarm_task_timeout_sec: float = 0.0
+    background_swarm_bfs_fraction: float = 0.40
     domain_scoped_min_results: int = 3
     domain_scoped_max_domains: int = 4
+
+    # Semantic dedup settings.
+    semantic_dedup_enabled: bool = True
+    semantic_dedup_minhash_threshold: float = 0.7
+    semantic_dedup_embedding_threshold: float = 0.85
+    semantic_dedup_batch_size: int = 4
+
+    # LLM triage settings.
+    enable_triage: bool = False
+    triage_batch_size: int = 4
+    triage_model: str = LLM_MODEL_SUMMARIZE
+    triage_timeout: float = 60.0
+
+    # Smart batching settings.
+    smart_batching_enabled: bool = True
+    smart_batching_content_type_priority: list[str] = field(default_factory=lambda: [
+        "documentation", "research", "benchmark", "tutorial",
+        "news", "opinion", "forum", "other",
+    ])
+
+    # Overdrive multiplier — scales quantity-related fields.
+    overdrive_multiplier: float = 1.0
+
+    # Multiplier target fields (quantity knobs that scale with overdrive).
+    _MULTIPLIER_FIELDS: tuple = (
+        "num_queries",
+        "max_sources",
+        "max_urls_to_extract_per_pass",
+        "ddgs_results_per_query",
+        "max_sources_per_iteration",
+        "followup_queries_per_iteration",
+        "synthesis_source_cap",
+        "background_swarm_top_k",
+        "background_swarm_attach_cap_per_poll",
+    )
+
+    def apply_multiplier(self) -> "ResearchConfig":
+        """Scale quantity-related fields by *overdrive_multiplier* and return self."""
+
+        m = max(0.5, min(3.0, self.overdrive_multiplier))
+        if m == 1.0:
+            return self
+        for name in self._MULTIPLIER_FIELDS:
+            original = getattr(self, name, None)
+            if isinstance(original, int):
+                setattr(self, name, max(1, int(original * m)))
+        return self
 
     # Preset builders.
     # Build a preset from a named depth level.
@@ -285,9 +363,11 @@ class ResearchConfig:
                 iteration_search_timeout_sec=240.0,
                 search_fallback_stage_timeout_sec=120.0,
                 max_chars_per_source=5000,
+                enable_triage=True,
                 enable_playwright=True,
                 enable_seleniumbase=True,
                 synthesis_source_cap=56,
+                final_source_rank_batch_size=8,
                 synthesis_batch_char_budget=70000,
                 synthesis_prompt_char_budget=140000,
                 enable_background_swarm=True,
@@ -303,7 +383,10 @@ class ResearchConfig:
                 background_swarm_max_concurrency=12,
                 background_swarm_chunk_merge_chars=3000,
                 background_swarm_min_chunk_relevance=0.28,
-                background_swarm_final_wait_timeout_sec=15.0,
+                background_swarm_final_wait_timeout_sec=500.0,
+                background_swarm_standalone_timeout_sec=300.0,
+                background_swarm_task_timeout_sec=500.0,
+                background_swarm_bfs_fraction=0.40,
             ),
             "extra": dict(
                 num_queries=14,
@@ -322,10 +405,12 @@ class ResearchConfig:
                 search_fallback_stage_timeout_sec=180.0,
                 max_chars_per_source=6000,
                 content_fetch_auto_cap=32,
+                enable_triage=True,
                 enable_playwright=True,
                 enable_seleniumbase=False,
                 enable_stealth=True,
                 synthesis_source_cap=64,
+                final_source_rank_batch_size=10,
                 synthesis_batch_char_budget=80000,
                 synthesis_prompt_char_budget=160000,
                 enable_background_swarm=True,
@@ -342,7 +427,10 @@ class ResearchConfig:
                 background_swarm_max_concurrency=14,
                 background_swarm_chunk_merge_chars=3600,
                 background_swarm_min_chunk_relevance=0.28,
-                background_swarm_final_wait_timeout_sec=15.0,
+                background_swarm_final_wait_timeout_sec=500.0,
+                background_swarm_standalone_timeout_sec=300.0,
+                background_swarm_task_timeout_sec=500.0,
+                background_swarm_bfs_fraction=0.40,
                 domain_scoped_min_results=4,
                 domain_scoped_max_domains=5,
             ),

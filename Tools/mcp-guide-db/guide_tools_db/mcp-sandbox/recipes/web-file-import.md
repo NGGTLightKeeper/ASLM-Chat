@@ -36,7 +36,7 @@ import_web_file(url, save_to="downloads/", allowed_types=["text"])
 **Files over 50 MB or when you need precise control:**
 
 ```text
-bash("curl -L -o task/downloads/file.csv https://example.com/large.csv")
+bash("curl -L -o downloads/file.csv https://example.com/large.csv")
 ```
 
 **When the URL is confirmed by search/read_page hint:**
@@ -46,8 +46,8 @@ Use `import_web_file` -- it handles content-type detection and safe naming.
 ### Step 2 -- Verify the download
 
 ```text
-bash("ls -la task/downloads/")
-bash("file task/downloads/file.pdf")
+bash("ls -la downloads/")
+bash("file downloads/file.pdf")
 ```
 
 ### Step 3 -- Hand off to processing recipe
@@ -64,7 +64,7 @@ Based on file type:
 
 ## Stop conditions
 
-- File downloaded and verified in `task/`
+- File downloaded and verified in the sandbox workspace
 - Handoff to the correct processing recipe initiated
 
 ## Anti-patterns

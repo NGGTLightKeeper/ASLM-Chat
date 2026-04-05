@@ -278,6 +278,7 @@ async def _bfs_discover_urls(
     http_cache: Optional["HTTPCache"] = None,
     metrics: Optional["CrawlMetrics"] = None,
     query: Optional[str] = None,
+    deadline: float = 0.0,
 ) -> List[str]:
     """
     Frontier-driven BFS with URL normalization, deduplication, robots checks,
@@ -357,6 +358,12 @@ async def _bfs_discover_urls(
 
     # Main BFS loop.
     while frontier.has_next():
+        if deadline > 0.0 and time.time() >= deadline:
+            logger.info(
+                f"BFS deadline reached: {frontier.seen_count} URLs discovered, "
+                f"stopping early to preserve crawl budget"
+            )
+            break
         entry = frontier.pop()
         if entry is None:
             break
@@ -1037,6 +1044,11 @@ class ResearchTask:
         http_cache_db: Optional[str] = None,
         crawl_queue_db: Optional[str] = None,
         http_cache_max_age: int = 3600,
+        # Adaptive time-budget: total wall-clock budget for the whole task.
+        # When > 0, BFS is limited to task_timeout_sec * bfs_budget_fraction,
+        # leaving the rest for actual crawling.
+        task_timeout_sec: float = 0.0,
+        bfs_budget_fraction: float = 0.40,
     ):
         self.task_id = task_id
         self.query = query
@@ -1054,6 +1066,8 @@ class ResearchTask:
         self.chunk_max_chars = chunk_max_chars
         self.min_chunk_relevance = max(0.0, float(min_chunk_relevance))
         self.max_total_chunks = max(0, int(max_total_chunks))
+        self.task_timeout_sec = max(0.0, float(task_timeout_sec))
+        self.bfs_budget_fraction = max(0.05, min(0.90, float(bfs_budget_fraction)))
         self._progress = progress_callback or (lambda msg: logger.info(f"[{task_id}] {msg}"))
 
         # Extended architecture components.
@@ -1089,6 +1103,15 @@ class ResearchTask:
         self._progress(f"Domains: {', '.join(self.domains)}")
 
         # Step 1: BFS frontier URL discovery.
+        # Compute deadline so BFS yields to the crawl phase with enough budget left.
+        bfs_deadline = 0.0
+        if self.task_timeout_sec > 0:
+            bfs_deadline = t0 + self.task_timeout_sec * self.bfs_budget_fraction
+            self._progress(
+                f"Adaptive budget: total={self.task_timeout_sec:.0f}s "
+                f"bfs≤{self.task_timeout_sec * self.bfs_budget_fraction:.0f}s "
+                f"crawl≥{self.task_timeout_sec * (1 - self.bfs_budget_fraction):.0f}s"
+            )
         try:
             urls = await _bfs_discover_urls(
                 self.domains,
@@ -1100,6 +1123,7 @@ class ResearchTask:
                 http_cache=self._http_cache,
                 metrics=self._metrics,
                 query=self.query,
+                deadline=bfs_deadline,
             )
         except Exception as e:
             logger.warning(f"BFS discovery failed ({e}), falling back to static URLs")

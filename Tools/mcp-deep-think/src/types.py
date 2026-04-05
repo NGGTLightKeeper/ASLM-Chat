@@ -420,6 +420,8 @@ class AgentState(BaseModel):
     report_draft: AgentReportDraft | None = None
     pending_required_tools: list[ActionType] = Field(default_factory=list)
     finish_blockers: list[str] = Field(default_factory=list)
+    last_blackboard_read: float = 0.0
+    blackboard_signals_seen: int = 0
 
     def observation_summary(self) -> str:
         """Build a short evidence summary for the next agent prompt."""

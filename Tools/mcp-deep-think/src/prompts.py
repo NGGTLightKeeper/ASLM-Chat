@@ -216,6 +216,7 @@ def build_agent_step_prompt(
     evidence_summary: str,
     iteration: int,
     max_iterations: int,
+    blackboard_context: str = "",
 ) -> str:
     """Build the prompt used for one agent decision step."""
 
@@ -243,7 +244,7 @@ Scratchpad:
 Current evidence:
 {evidence_summary}
 
-Allowed actions:
+{f"Signals from other agents:{chr(10)}{blackboard_context}{chr(10)}" if blackboard_context else ""}Allowed actions:
 {tools_text}
 
 Rules:

@@ -28,8 +28,8 @@ Process media files: convert formats, extract text from images (OCR), transcribe
 ### Step 1 -- Classify the media
 
 ```text
-bash("file task/media/input.png")
-bash("ls -la task/media/")
+bash("file media/input.png")
+bash("ls -la media/")
 ```
 
 ### Step 2 -- Choose the right tool
@@ -37,37 +37,37 @@ bash("ls -la task/media/")
 **OCR (text from images):**
 
 ```text
-bash("tesseract task/media/page.png stdout -l eng")
+bash("tesseract media/page.png stdout -l eng")
 ```
 
 For Russian + English:
 ```text
-bash("tesseract task/media/page.png stdout -l rus+eng")
+bash("tesseract media/page.png stdout -l rus+eng")
 ```
 
 **Image conversion/manipulation:**
 
 ```text
-bash("convert task/media/input.png -resize 800x600 task/media/output.jpg")
+bash("convert media/input.png -resize 800x600 media/output.jpg")
 ```
 
 **Audio/video with ffmpeg:**
 
 ```text
-bash("ffmpeg -i task/media/video.mp4 -vn -acodec mp3 task/media/audio.mp3")
+bash("ffmpeg -i media/video.mp4 -vn -acodec mp3 media/audio.mp3")
 ```
 
 **Audio transcription (whisper):**
 
 ```text
-bash("python -c \"from faster_whisper import WhisperModel; m=WhisperModel('base'); segs,_=m.transcribe('task/media/audio.mp3'); print('\\n'.join(s.text for s in segs))\"")
+bash("python -c \"from faster_whisper import WhisperModel; m=WhisperModel('base'); segs,_=m.transcribe('media/audio.mp3'); print('\\n'.join(s.text for s in segs))\"")
 ```
 
 ### Step 3 -- Verify output
 
 ```text
-bash("file task/media/output.jpg")
-bash("ls -la task/media/output.jpg")
+bash("file media/output.jpg")
+bash("ls -la media/output.jpg")
 ```
 
 For OCR, review the extracted text and clean up if needed.

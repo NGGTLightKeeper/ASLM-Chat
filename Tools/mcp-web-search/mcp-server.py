@@ -65,7 +65,7 @@ TOOLS = [
             "Fetch and extract text content from one or more URLs (HTML, PDF, GitHub, YouTube). "
             "Automatically routes by domain registry: json_api domains use REST endpoints, hardened domains use Chrome TLS fingerprint, fortress domains are skipped. "
             "YouTube URLs return a transcript. PDF URLs return extracted text. Reddit URLs use the JSON API. "
-            "save=True writes each page to task/pages/<slug>.json in the workspace instead of returning content. "
+            "save=True writes each page to _sandbox/pages/<slug>.json in the workspace instead of returning content. "
             "Returns 'Source: <url>' header followed by extracted text for each URL."
         ),
         "parameters": {
@@ -80,7 +80,7 @@ TOOLS = [
                 },
                 "save": {
                     "type": "boolean",
-                    "description": "Save extracted content to task/pages/ instead of returning it.",
+                    "description": "Save extracted content to _sandbox/pages/ instead of returning it.",
                     "default": False,
                 },
             },
@@ -122,7 +122,7 @@ TOOLS = [
             "Download a file from a URL and save it to the task workspace. "
             "Only call this when you have confirmed the URL points to a real downloadable file — either from a search result FILE/PDF badge or a read_page hint. "
             "Do NOT call speculatively or for web pages, documentation sites, or GitHub repo root URLs. "
-            "save_to sets the subdirectory inside task/ (default: downloads/). "
+            "save_to sets the subdirectory inside _sandbox/ (default: downloads/). "
             "allowed_types filters by category: text (.pdf .docx .csv .json .xml), media (.mp3 .mp4 .jpg .png), archive (.zip .tar .gz .7z), data (.sqlite .db). "
             "max_size_mb aborts download if file exceeds the limit (hard cap: 50 MB). "
             "Returns status, saved file path, size_bytes, and content_type."
@@ -133,7 +133,7 @@ TOOLS = [
                 "url": {"type": "string"},
                 "save_to": {
                     "type": "string",
-                    "description": "Subdirectory inside task/ to save the file.",
+                    "description": "Subdirectory inside _sandbox/ to save the file.",
                     "default": "downloads/",
                 },
                 "allowed_types": {
@@ -782,7 +782,7 @@ def register_tools(mcp) -> None:
           - fortress/skip domains -> skipped
         Falls back to httpx for unknown domains.
 
-        save=True: save each page as JSON to task/pages/<slug>.json in the sandbox workspace.
+        save=True: save each page as JSON to _sandbox/pages/<slug>.json in the sandbox workspace.
           Returns only "Saved: <path>" on success or an error message - no page content.
           Nothing is written if the page fails to load.
         """
@@ -1009,7 +1009,7 @@ def register_tools(mcp) -> None:
                     import traceback as _tb
                     _debug_log(f"page_normalizer failed for {u}: {e}\n{_tb.format_exc()}")
 
-                saved = f"Saved: task/pages/{dest_raw.name}"
+                saved = f"Saved: _sandbox/pages/{dest_raw.name}"
                 if dest_clean.exists():
                     saved += f" + {dest_clean.name}"
                 return saved
@@ -1257,7 +1257,7 @@ def register_tools(mcp) -> None:
            without a direct file extension (.zip, .pdf, etc.).
         4. One call per file. Do not retry the same URL more than once.
 
-        save_to: subdirectory inside task/ to save the file (default: "downloads/")
+        save_to: subdirectory inside _sandbox/ to save the file (default: "downloads/")
         allowed_types: restrict by category - ["text", "media", "archive", "data"]
             text:    .pdf .docx .xlsx .csv .txt .md .json .xml .html
             media:   .mp3 .mp4 .wav .webm .mkv .jpg .jpeg .png .gif .webp

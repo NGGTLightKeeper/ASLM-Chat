@@ -442,7 +442,7 @@ def register_tools(mcp) -> None:
           - fortress/skip domains -> skipped
         Falls back to httpx for unknown domains.
 
-        save=True: save each page as JSON to task/pages/<slug>.json in the sandbox workspace.
+        save=True: save each page as JSON to _sandbox/pages/<slug>.json in the sandbox workspace.
           Returns only "Saved: <path>" on success or an error message - no page content.
           Nothing is written if the page fails to load.
         """
@@ -698,7 +698,7 @@ def register_tools(mcp) -> None:
                     import traceback as _tb
                     _debug_log(f"page_normalizer failed for {u}: {e}\n{_tb.format_exc()}")
 
-                saved = f"Saved: task/pages/{dest_raw.name}"
+                saved = f"Saved: _sandbox/pages/{dest_raw.name}"
                 if dest_clean.exists():
                     saved += f" + {dest_clean.name}"
                 return saved
@@ -890,7 +890,7 @@ def register_tools(mcp) -> None:
            without a direct file extension (.zip, .pdf, etc.).
         4. One call per file. Do not retry the same URL more than once.
 
-        save_to: subdirectory inside task/ to save the file (default: "downloads/")
+        save_to: subdirectory inside _sandbox/ to save the file (default: "downloads/")
         allowed_types: restrict by category - ["text", "media", "archive", "data"]
             text:    .pdf .docx .xlsx .csv .txt .md .json .xml .html
             media:   .mp3 .mp4 .wav .webm .mkv .jpg .jpeg .png .gif .webp

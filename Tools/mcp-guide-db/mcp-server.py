@@ -63,7 +63,10 @@ TOOLS = [
     {
         "id": "get_recipe",
         "name": "Get Recipe",
-        "description": "Retrieve a specific workflow recipe by name or search query.",
+        "description": (
+            "Retrieve a specific workflow recipe by name or search query. "
+            "For matching tasks, the returned recipe must be followed as a binding procedure."
+        ),
         "parameters": {
             "type": "object",
             "properties": {

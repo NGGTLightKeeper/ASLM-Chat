@@ -1,4 +1,4 @@
-"""Sandbox v2 tool API.
+"""Sandbox tool API.
 
 Public tool surface for the model: bash, write, edit.
 All shell commands issued through bash pass through a supervisor that routes
@@ -14,6 +14,10 @@ import shlex
 from typing import Any, Callable
 
 from sandbox.config import (
+    CONTAINER_WORKSPACE,
+    DEFAULT_TASK_DIR,
+    MAX_CAT_FILE_BYTES,
+    MAX_CAT_LINE_THRESHOLD,
     DEFAULT_TIMEOUT,
     MAX_FIND_RESULTS,
     MAX_GREP_RESULTS,
@@ -22,8 +26,28 @@ from sandbox.config import (
     MAX_READ_BYTES,
 )
 from sandbox.container import exec_bash
+from sandbox.presenters import (
+    present_auto_preview,
+    present_grep_results,
+    present_read_slice,
+)
+from sandbox.controller import dispatch as controller_dispatch
+from sandbox.session_state import get_session_state
 from sandbox.responses import error_response, exception_response, success_response
-from sandbox.workspace import delete, edit, find, grep, ls, mkdir, move, read, write
+from sandbox.workspace import (
+    delete,
+    describe,
+    edit,
+    find,
+    grep,
+    ls,
+    mkdir,
+    move,
+    normalize_model_relative_path,
+    read,
+    resolve_model_path,
+    write,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +56,10 @@ MCP_SERVER = {
     "name": "Sandbox",
     "description": (
         "Linux sandbox with shared workspace. "
-        "bash is the primary interface — use it for everything: "
-        "navigation, inspection, search, execution, builds, installs, tests, "
-        "and filesystem operations. "
-        "write and edit are for creating/modifying files."
+        "bash for execution, builds, tests, git, and system commands. "
+        "File inspection and search return structured previews "
+        "with navigation aids automatically. "
+        "write and edit for creating/modifying files."
     ),
 }
 
@@ -46,12 +70,16 @@ CORE_TOOLS = [
         "id": "bash",
         "name": "Run Bash",
         "description": (
-            "Run a shell command inside the Linux container. Use this for everything: "
-            "file inspection (cat, head, tail, less), search (grep, find, fd, rg, glob patterns), "
-            "navigation (ls, tree, pwd, du, stat, file), "
-            "filesystem operations (mkdir, mv, cp, rm, touch, chmod), "
-            "execution, tests, builds, installs, git, curl, and any CLI tools. "
+            "Run a shell command inside the Linux container. "
+            "Best for: execution, builds, tests, installs, git, curl, and system commands. "
+            "File reads and searches are automatically enhanced with structured previews, "
+            "metadata headers, and navigation aids. "
             "Returns exit_code, stdout, stderr, elapsed_ms, and cwd. "
+            "SCOPE: bash has full access to the entire container filesystem — "
+            "use absolute paths like /etc, /usr, /tmp freely when needed. "
+            "The default working directory '.' is the sandbox workspace root (_sandbox/). "
+            "write and edit are restricted to the workspace root only — "
+            "to place a file outside the workspace, create it with write first, then move it with bash('mv file /target/path'). "
             "IMPORTANT: For package managers (apt-get, pip, npm, cargo, etc.), container builds (docker build), "
             "compilation (make, cmake, gcc, rustc, go build), and any long-running install/build commands "
             "always set timeout_s to at least 300. Default timeout of 60s is only for quick commands. "
@@ -133,7 +161,14 @@ def _format_structured_as_shell(tool_name: str, result: dict[str, Any]) -> str:
             return f"[binary file: {inner.get('mime', '?')}, {inner.get('size_bytes', 0)} bytes]"
         if inner.get("kind") == "image":
             return f"[image: {inner.get('mime', '?')}, {inner.get('size_bytes', 0)} bytes]"
-        return content
+        return present_read_slice(
+            path=inner.get("path", "?"),
+            content=content,
+            start_line=inner.get("start_line", 1),
+            end_line=inner.get("end_line", 1),
+            total_lines=inner.get("total_lines", 0),
+            size_bytes=inner.get("size_bytes", 0),
+        )
 
     if tool_name == "ls":
         entries = inner.get("entries", [])
@@ -155,12 +190,11 @@ def _format_structured_as_shell(tool_name: str, result: dict[str, Any]) -> str:
 
     if tool_name == "grep":
         matches = inner.get("matches", [])
-        if not matches:
-            return "(no matches)"
-        lines = []
-        for m in matches:
-            lines.append(f"{m['path']}:{m['line_number']}:{m['line']}")
-        return "\n".join(lines)
+        return present_grep_results(
+            matches=matches,
+            pattern=inner.get("pattern", "?"),
+            path=inner.get("path", "."),
+        )
 
     if tool_name == "mkdir":
         created = inner.get("created", False)
@@ -183,7 +217,48 @@ def _format_structured_as_shell(tool_name: str, result: dict[str, Any]) -> str:
 # Each route handler receives the regex match and args string, returns a
 # bash-shaped response dict if handled, or None to fall through to real bash.
 
-def _try_route_cat(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _build_large_file_preview(path: str, meta: dict[str, Any]) -> str:
+    """Build a structured preview for a large file.
+
+    Replaces the dead-end refusal.  The model gets a navigable map
+    (structure + head + tail + next-step anchors) instead of a wall.
+    """
+
+    # Read content up to MAX_READ_BYTES (for structure extraction + head).
+    head_result = read(path=path, max_bytes=MAX_READ_BYTES)
+    head_inner = head_result.get("result", {})
+    content = head_inner.get("content", "")
+    total_lines = head_inner.get("total_lines", 0)
+    size_bytes = head_inner.get("size_bytes", meta.get("size_bytes", 0))
+    mime = head_inner.get("mime", meta.get("mime", "text/plain"))
+    head_lines = content.split("\n") if content else []
+
+    # Read the tail separately (the main read may have been truncated).
+    tail_lines: list[str] = []
+    tail_start_line = 0
+    if total_lines > 45:
+        tail_start = max(1, total_lines - 15)
+        tail_result = read(
+            path=path, start_line=tail_start, end_line=total_lines,
+            max_bytes=MAX_READ_BYTES,
+        )
+        tail_content = tail_result.get("result", {}).get("content", "")
+        tail_lines = tail_content.split("\n") if tail_content else []
+        tail_start_line = tail_start
+
+    return present_auto_preview(
+        path=head_inner.get("path", normalize_model_relative_path(path)),
+        head_lines=head_lines,
+        total_lines=total_lines,
+        size_bytes=size_bytes,
+        mime=mime,
+        kind="text",
+        tail_lines=tail_lines or None,
+        tail_start_line=tail_start_line,
+    )
+
+
+def _try_route_cat(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: cat [flags] <file>... — supports multi-file and unknown flags."""
     parts = _safe_split(args_str)
     files = [p for p in parts if not p.startswith("-")]
@@ -191,23 +266,45 @@ def _try_route_cat(match: re.Match, args_str: str) -> dict[str, Any] | None:
     if not files:
         return None  # no file → real bash (stdin cat)
     show_numbers = "-n" in flags
-    # Read each file through the supervised path with limits.
+    resolved_files = [resolve_model_path(path, cwd) for path in files]
     all_warnings: list[str] = []
     chunks: list[str] = []
     per_file_budget = max(MAX_READ_BYTES // len(files), 4096)
-    for path in files:
-        result = read(path=path, max_bytes=per_file_budget)
-        all_warnings.extend(result.get("warnings", []))
-        chunks.append(_format_structured_as_shell("read", result))
+    for path in resolved_files:
+        metadata = describe(path)
+        meta_inner = metadata.get("result", {})
+        size = int(meta_inner.get("size_bytes", 0))
+        kind = meta_inner.get("kind", "text")
+        if kind == "text" and size > MAX_CAT_FILE_BYTES:
+            # Auto-preview for large files instead of dead-end refusal.
+            preview = _build_large_file_preview(path, meta_inner)
+            all_warnings.append(
+                f"Large file ({size} bytes): showing structured preview with navigation aids."
+            )
+            chunks.append(preview)
+        else:
+            result = read(path=path, max_bytes=per_file_budget)
+            all_warnings.extend(result.get("warnings", []))
+            inner = result.get("result", {})
+            total_lines = inner.get("total_lines", 0)
+            if kind == "text" and total_lines > MAX_CAT_LINE_THRESHOLD:
+                # File is small in bytes but long in lines — still show file_map.
+                preview = _build_large_file_preview(path, meta_inner)
+                all_warnings.append(
+                    f"Long file ({total_lines} lines): showing structured preview with navigation aids."
+                )
+                chunks.append(preview)
+            else:
+                chunks.append(_format_structured_as_shell("read", result))
     content = "\n".join(chunks)
     if show_numbers:
         content = "\n".join(
             f"{i:>6}\t{line}" for i, line in enumerate(content.split("\n"), 1)
         )
-    return _bash_success(content, warnings=all_warnings)
+    return _bash_success(content, warnings=all_warnings, cwd=cwd)
 
 
-def _try_route_head(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_head(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: head [-n N] <file>..."""
     parts = _safe_split(args_str)
     n_lines = 10
@@ -236,14 +333,19 @@ def _try_route_head(match: re.Match, args_str: str) -> dict[str, Any] | None:
     all_warnings: list[str] = []
     chunks: list[str] = []
     for f in files:
-        result = read(path=f, start_line=1, end_line=n_lines, max_bytes=MAX_READ_BYTES)
+        result = read(
+            path=resolve_model_path(f, cwd),
+            start_line=1,
+            end_line=n_lines,
+            max_bytes=MAX_READ_BYTES,
+        )
         all_warnings.extend(result.get("warnings", []))
         chunks.append(_format_structured_as_shell("read", result))
     content = "\n".join(chunks)
-    return _bash_success(content, warnings=all_warnings)
+    return _bash_success(content, warnings=all_warnings, cwd=cwd)
 
 
-def _try_route_tail(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_tail(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: tail [-n N] <file>..."""
     parts = _safe_split(args_str)
     n_lines = 10
@@ -272,20 +374,21 @@ def _try_route_tail(match: re.Match, args_str: str) -> dict[str, Any] | None:
     all_warnings: list[str] = []
     chunks: list[str] = []
     for f in files:
-        full = read(path=f, max_bytes=MAX_READ_BYTES)
+        target = resolve_model_path(f, cwd)
+        full = read(path=target, max_bytes=MAX_READ_BYTES)
         total = full.get("result", {}).get("total_lines", 0)
         if total == 0:
             chunks.append("")
             continue
         start = max(1, total - n_lines + 1)
-        result = read(path=f, start_line=start, end_line=total, max_bytes=MAX_READ_BYTES)
+        result = read(path=target, start_line=start, end_line=total, max_bytes=MAX_READ_BYTES)
         all_warnings.extend(result.get("warnings", []))
         chunks.append(_format_structured_as_shell("read", result))
     content = "\n".join(chunks)
-    return _bash_success(content, warnings=all_warnings)
+    return _bash_success(content, warnings=all_warnings, cwd=cwd)
 
 
-def _try_route_ls(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_ls(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: ls [flags] [path]."""
     parts = _safe_split(args_str)
     path = "."
@@ -296,12 +399,17 @@ def _try_route_ls(match: re.Match, args_str: str) -> dict[str, Any] | None:
                 include_hidden = True
         else:
             path = p
-    result = ls(path=path, depth=1, max_entries=MAX_LS_ENTRIES, include_hidden=include_hidden)
+    result = ls(
+        path=resolve_model_path(path, cwd),
+        depth=1,
+        max_entries=MAX_LS_ENTRIES,
+        include_hidden=include_hidden,
+    )
     content = _format_structured_as_shell("ls", result)
-    return _bash_success(content, warnings=result.get("warnings", []))
+    return _bash_success(content, warnings=result.get("warnings", []), cwd=cwd)
 
 
-def _try_route_tree(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_tree(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: tree [path] [-L depth]."""
     parts = _safe_split(args_str)
     path = "."
@@ -324,12 +432,13 @@ def _try_route_tree(match: re.Match, args_str: str) -> dict[str, Any] | None:
         else:
             path = p
             i += 1
-    result = ls(path=path, depth=depth, max_entries=MAX_LS_ENTRIES, include_hidden=include_hidden)
+    resolved_path = resolve_model_path(path, cwd)
+    result = ls(path=resolved_path, depth=depth, max_entries=MAX_LS_ENTRIES, include_hidden=include_hidden)
     entries = result.get("result", {}).get("entries", [])
     if not entries:
-        return _bash_success(f"{path}\n\n0 directories, 0 files")
+        return _bash_success(f"{resolved_path}\n\n0 directories, 0 files", cwd=cwd)
     # Build tree-like output
-    lines = [path]
+    lines = [resolved_path]
     dirs = 0
     files_count = 0
     for e in entries:
@@ -342,10 +451,10 @@ def _try_route_tree(match: re.Match, args_str: str) -> dict[str, Any] | None:
             lines.append(f"{indent}{name}")
             files_count += 1
     lines.append(f"\n{dirs} directories, {files_count} files")
-    return _bash_success("\n".join(lines), warnings=result.get("warnings", []))
+    return _bash_success("\n".join(lines), warnings=result.get("warnings", []), cwd=cwd)
 
 
-def _try_route_find(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_find(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: find <path> [-name pattern] [-type f|d] [-maxdepth N]."""
     parts = _safe_split(args_str)
     path = "."
@@ -385,14 +494,14 @@ def _try_route_find(match: re.Match, args_str: str) -> dict[str, Any] | None:
         else:
             return None
     result = find(
-        path=path,
+        path=resolve_model_path(path, cwd),
         name_pattern=name_pattern,
         type=find_type,
         max_depth=max_depth,
         max_results=MAX_FIND_RESULTS,
     )
     content = _format_structured_as_shell("find", result)
-    return _bash_success(content, warnings=result.get("warnings", []))
+    return _bash_success(content, warnings=result.get("warnings", []), cwd=cwd)
 
 
 _RG_TYPE_TO_GLOB: dict[str, str] = {
@@ -430,7 +539,7 @@ _RG_TYPE_TO_GLOB: dict[str, str] = {
 }
 
 
-def _try_route_grep(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_grep(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: grep/rg [-r] [-i] [-n] [-C N] [-A N] [-B N] [--type T] <pattern> [path]."""
     parts = _safe_split(args_str)
     pattern = None
@@ -506,7 +615,7 @@ def _try_route_grep(match: re.Match, args_str: str) -> dict[str, Any] | None:
         return None
     result = grep(
         pattern=pattern,
-        path=path,
+        path=resolve_model_path(path, cwd),
         glob=glob_pattern,
         case_sensitive=case_sensitive,
         context_before=context_before,
@@ -514,10 +623,10 @@ def _try_route_grep(match: re.Match, args_str: str) -> dict[str, Any] | None:
         max_results=MAX_GREP_RESULTS,
     )
     content = _format_structured_as_shell("grep", result)
-    return _bash_success(content, warnings=result.get("warnings", []))
+    return _bash_success(content, warnings=result.get("warnings", []), cwd=cwd)
 
 
-def _try_route_sed_read(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_sed_read(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: sed -n '<start>,<end>p' <file> → read with line range."""
     parts = _safe_split(args_str)
     if len(parts) < 2:
@@ -547,18 +656,24 @@ def _try_route_sed_read(match: re.Match, args_str: str) -> dict[str, Any] | None
         return None
     start = int(range_match.group(1))
     end = int(range_match.group(2)) if range_match.group(2) else start
-    result = read(path=file_path, start_line=start, end_line=end, max_bytes=MAX_READ_BYTES)
+    result = read(
+        path=resolve_model_path(file_path, cwd),
+        start_line=start,
+        end_line=end,
+        max_bytes=MAX_READ_BYTES,
+    )
     content = _format_structured_as_shell("read", result)
-    return _bash_success(content, warnings=result.get("warnings", []))
+    return _bash_success(content, warnings=result.get("warnings", []), cwd=cwd)
 
 
-def _try_route_wc(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_wc(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: wc [-l] <file> → read metadata."""
     parts = _safe_split(args_str)
     files = [p for p in parts if not p.startswith("-")]
     if len(files) != 1:
         return None
-    result = read(path=files[0], max_bytes=MAX_READ_BYTES)
+    target = resolve_model_path(files[0], cwd)
+    result = read(path=target, max_bytes=MAX_READ_BYTES)
     inner = result.get("result", {})
     total_lines = inner.get("total_lines", 0)
     size_bytes = inner.get("size_bytes", 0)
@@ -566,13 +681,13 @@ def _try_route_wc(match: re.Match, args_str: str) -> dict[str, Any] | None:
     word_count = len(content_text.split()) if content_text else 0
     flags = [p for p in parts if p.startswith("-")]
     if "-l" in flags:
-        output = f"{total_lines} {files[0]}"
+        output = f"{total_lines} {target}"
     else:
-        output = f"  {total_lines}  {word_count}  {size_bytes} {files[0]}"
-    return _bash_success(output)
+        output = f"  {total_lines}  {word_count}  {size_bytes} {target}"
+    return _bash_success(output, cwd=cwd)
 
 
-def _try_route_mkdir(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_mkdir(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: mkdir [-p] <path>."""
     parts = _safe_split(args_str)
     parents = False
@@ -586,28 +701,28 @@ def _try_route_mkdir(match: re.Match, args_str: str) -> dict[str, Any] | None:
             dirs.append(p)
     if len(dirs) != 1:
         return None
-    result = mkdir(path=dirs[0], parents=parents)
+    result = mkdir(path=resolve_model_path(dirs[0], cwd), parents=parents)
     content = _format_structured_as_shell("mkdir", result)
-    return _bash_success(content, warnings=result.get("warnings", []))
+    return _bash_success(content, warnings=result.get("warnings", []), cwd=cwd)
 
 
-def _try_route_touch(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_touch(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: touch <file> → create empty file if it doesn't exist."""
     parts = _safe_split(args_str)
     files = [p for p in parts if not p.startswith("-")]
     if len(files) != 1:
         return None
-    path = files[0]
+    path = resolve_model_path(files[0], cwd)
     # Check if file exists via read; if not, create it
     try:
         read(path=path, max_bytes=1)
-        return _bash_success("")  # file exists, touch is no-op
+        return _bash_success("", cwd=cwd)  # file exists, touch is no-op
     except FileNotFoundError:
         result = write(path=path, content="")
-        return _bash_success("", warnings=result.get("warnings", []))
+        return _bash_success("", warnings=result.get("warnings", []), cwd=cwd)
 
 
-def _try_route_mv(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_mv(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: mv [-f] <src> <dst>."""
     parts = _safe_split(args_str)
     overwrite = False
@@ -621,12 +736,16 @@ def _try_route_mv(match: re.Match, args_str: str) -> dict[str, Any] | None:
             paths.append(p)
     if len(paths) != 2:
         return None
-    result = move(src=paths[0], dst=paths[1], overwrite=overwrite)
+    result = move(
+        src=resolve_model_path(paths[0], cwd),
+        dst=resolve_model_path(paths[1], cwd),
+        overwrite=overwrite,
+    )
     content = _format_structured_as_shell("move", result)
-    return _bash_success(content, warnings=result.get("warnings", []))
+    return _bash_success(content, warnings=result.get("warnings", []), cwd=cwd)
 
 
-def _try_route_cp(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_cp(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: cp <src> <dst> — single-file copy only, complex cp goes to real bash."""
     parts = _safe_split(args_str)
     paths = []
@@ -642,18 +761,18 @@ def _try_route_cp(match: re.Match, args_str: str) -> dict[str, Any] | None:
         return None
     # Single-file copy: read then write
     try:
-        source = read(path=paths[0], max_bytes=MAX_READ_BYTES)
+        source = read(path=resolve_model_path(paths[0], cwd), max_bytes=MAX_READ_BYTES)
         inner = source.get("result", {})
         if inner.get("kind") != "text":
             return None  # binary/image copy → real bash
         content = inner.get("content", "")
-        result = write(path=paths[1], content=content)
-        return _bash_success("", warnings=result.get("warnings", []))
+        result = write(path=resolve_model_path(paths[1], cwd), content=content)
+        return _bash_success("", warnings=result.get("warnings", []), cwd=cwd)
     except Exception:
         return None
 
 
-def _try_route_rm(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_rm(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: rm [-r] [-f] <path>."""
     parts = _safe_split(args_str)
     recursive = False
@@ -669,37 +788,42 @@ def _try_route_rm(match: re.Match, args_str: str) -> dict[str, Any] | None:
             paths.append(p)
     if len(paths) != 1:
         return None
-    result = delete(path=paths[0], recursive=recursive)
+    result = delete(path=resolve_model_path(paths[0], cwd), recursive=recursive)
     content = _format_structured_as_shell("delete", result)
-    return _bash_success(content, warnings=result.get("warnings", []))
+    return _bash_success(content, warnings=result.get("warnings", []), cwd=cwd)
 
 
-def _try_route_pwd(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_pwd(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: pwd → return task root."""
-    return _bash_success("/workspace/task")
+    normalized_cwd = normalize_model_relative_path(cwd)
+    container_root = f"{CONTAINER_WORKSPACE}/{DEFAULT_TASK_DIR}"
+    if normalized_cwd in ("", "."):
+        return _bash_success(container_root, cwd=cwd)
+    return _bash_success(f"{container_root}/{normalized_cwd}", cwd=cwd)
 
 
-def _try_route_file(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_file(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: file <path> → read metadata."""
     parts = _safe_split(args_str)
     files = [p for p in parts if not p.startswith("-")]
     if len(files) != 1:
         return None
-    result = read(path=files[0], max_bytes=1)
+    target = resolve_model_path(files[0], cwd)
+    result = describe(path=target)
     inner = result.get("result", {})
     kind = inner.get("kind", "unknown")
     mime = inner.get("mime", "application/octet-stream")
     size = inner.get("size_bytes", 0)
-    return _bash_success(f"{files[0]}: {mime} ({kind}, {size} bytes)")
+    return _bash_success(f"{target}: {mime} ({kind}, {size} bytes)", cwd=cwd)
 
 
-def _try_route_stat(match: re.Match, args_str: str) -> dict[str, Any] | None:
+def _try_route_stat(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
     """Route: stat <path> → file metadata."""
     parts = _safe_split(args_str)
     files = [p for p in parts if not p.startswith("-")]
     if len(files) != 1:
         return None
-    result = read(path=files[0], max_bytes=1)
+    result = describe(path=resolve_model_path(files[0], cwd))
     inner = result.get("result", {})
     path = inner.get("path", files[0])
     size = inner.get("size_bytes", 0)
@@ -713,7 +837,7 @@ def _try_route_stat(match: re.Match, args_str: str) -> dict[str, Any] | None:
     ]
     if inner.get("total_lines"):
         lines.append(f" Lines: {inner['total_lines']}")
-    return _bash_success("\n".join(lines))
+    return _bash_success("\n".join(lines), cwd=cwd)
 
 
 def _safe_split(s: str) -> list[str]:
@@ -724,10 +848,42 @@ def _safe_split(s: str) -> list[str]:
         return s.split()
 
 
+def _normalize_cwd_argument(raw_cwd: Any) -> str:
+    """Normalize a bash cwd argument and treat null-like values as root."""
+
+    if raw_cwd is None:
+        return "."
+    cwd = str(raw_cwd).strip()
+    if not cwd or cwd.lower() == "none":
+        return "."
+    return cwd
+
+
+def _extract_target_path(args_str: str, cwd: str = ".", skip_first: bool = False) -> str | None:
+    """Extract the primary file/directory target from command arguments.
+
+    Used by session state to track what the model is looking at.
+    skip_first=True skips the first non-flag argument (for grep/rg where
+    the first non-flag arg is the pattern, not the path).
+    Returns the resolved path, or None.
+    """
+
+    parts = _safe_split(args_str)
+    skipped = 0
+    for p in parts:
+        if not p.startswith("-"):
+            if skip_first and skipped == 0:
+                skipped += 1
+                continue
+            return resolve_model_path(p, cwd)
+    return None
+
+
 def _bash_success(
     stdout: str,
     stderr: str = "",
     warnings: list[str] | None = None,
+    cwd: str = ".",
 ) -> dict[str, Any]:
     """Build a bash-shaped success envelope from routed output."""
     return success_response(
@@ -737,7 +893,7 @@ def _bash_success(
             "stdout": stdout,
             "stderr": stderr,
             "elapsed_ms": 0,
-            "cwd": ".",
+            "cwd": normalize_model_relative_path(cwd),
             "routed": True,
         },
         warnings=warnings,
@@ -748,6 +904,7 @@ def _bash_error(
     message: str,
     stderr: str = "",
     exit_code: int = 1,
+    cwd: str = ".",
 ) -> dict[str, Any]:
     """Build a bash-shaped error envelope from a routed failure."""
     return error_response(
@@ -759,10 +916,28 @@ def _bash_error(
             "stdout": "",
             "stderr": stderr or message,
             "elapsed_ms": 0,
-            "cwd": ".",
+            "cwd": normalize_model_relative_path(cwd),
             "routed": True,
         },
     )
+
+
+def _is_path_resolution_error(exc: Exception) -> bool:
+    """Return True when a supervisor failure should fall back to real bash."""
+
+    message = str(exc)
+    if isinstance(exc, (FileNotFoundError, NotADirectoryError)):
+        return True
+    if isinstance(exc, ValueError):
+        path_markers = (
+            "must be relative to the model workspace root",
+            "Access denied:",
+            "Path not found:",
+            "File not found:",
+            "Not a directory:",
+        )
+        return any(marker in message for marker in path_markers)
+    return False
 
 
 # Ordered list of (command name, router-function).
@@ -807,9 +982,10 @@ _ROUTE_MAP: dict[str, Callable[..., dict[str, Any] | None]] = {
     name: fn for name, fn in _ROUTES
 }
 
-# Commands that involve pipes, semicolons, &&, ||, backticks, or $() are
-# considered compound and should NOT be intercepted — they go to real bash.
-_COMPOUND_PATTERN = re.compile(r"[|;`]|\$\(|&&|\|\|")
+# Only plain `|` pipelines between read-only commands go through
+# the intent controller.  &&, ||, ;, subshells, and redirections
+# still go directly to real bash.
+_CHAIN_PATTERN = re.compile(r"&&|\|\||;|`|\$\(|>>?|<")
 
 # Commands whose output is primarily file content — even when they fall
 # through to real bash we enforce MAX_READ_BYTES on stdout.
@@ -819,15 +995,62 @@ _READ_LIKE_COMMANDS = frozenset({
 })
 
 
-def _try_supervise(command: str) -> dict[str, Any] | None:
+_READ_COMMANDS = frozenset({"cat", "head", "tail", "less", "more", "sed"})
+_SEARCH_COMMANDS = frozenset({"grep", "egrep", "rg"})
+_SURVEY_COMMANDS = frozenset({"ls", "tree", "find", "fd"})
+
+
+def _try_supervise(command: str, cwd: str = ".") -> dict[str, Any] | None:
     """Try to route a shell command to an internal structured tool.
 
     Returns a bash-shaped response dict if the command was handled,
     or None if it should go to real bash.
+
+    Routing order:
+      1. Intent controller — handles OPEN/LOCATE/SURVEY including compound
+         read-only pipelines (cat x | head, cat x | grep, etc.)
+      2. _ROUTE_MAP — handles MUTATE commands (mkdir, mv, cp, rm, touch)
+         and falls back for anything the controller doesn't cover
     """
-    if _COMPOUND_PATTERN.search(command):
+
+    # Complex chains (&&, ||, ;, subshells, redirections) always go to
+    # real bash — intent controller only handles plain `|` pipelines.
+    if _CHAIN_PATTERN.search(command):
         return None
 
+    state = get_session_state()
+
+    # 1) Intent controller: OPEN / LOCATE / SURVEY (+ compound pipelines)
+    try:
+        routed = controller_dispatch(
+            command=command,
+            cwd=cwd,
+            state=state,
+            make_bash_success=_bash_success,
+            make_bash_error=lambda msg, stderr="", cwd=cwd: _bash_error(
+                msg, stderr=stderr, exit_code=1, cwd=cwd
+            ),
+        )
+    except Exception as exc:
+        if _is_path_resolution_error(exc):
+            logger.debug(
+                "Controller path resolution failed for %r; falling back to real bash: %s",
+                command, exc,
+            )
+            return None
+        logger.debug("Controller dispatch error for %r: %s", command, exc)
+        return None
+
+    if routed is not None:
+        # Inject compact exploration context
+        ctx = state.compact_context()
+        if ctx and routed.get("ok"):
+            stdout = routed.get("result", {}).get("stdout", "")
+            if stdout:
+                routed["result"]["stdout"] = f"{stdout}\n\n{ctx}"
+        return routed
+
+    # 2) No compound pipelines past this point for _ROUTE_MAP
     m = _SIMPLE_COMMAND_RE.match(command)
     if not m:
         return None
@@ -840,14 +1063,39 @@ def _try_supervise(command: str) -> dict[str, Any] | None:
         return None
 
     try:
-        return router(m, args_str)
-    except FileNotFoundError as exc:
-        return _bash_error(str(exc), exit_code=1)
-    except NotADirectoryError as exc:
-        return _bash_error(str(exc), exit_code=1)
+        result = router(m, args_str, cwd)
     except Exception as exc:
+        if _is_path_resolution_error(exc):
+            logger.debug(
+                "Supervisor path resolution failed for '%s'; falling back: %s",
+                cmd, exc,
+            )
+            return None
         logger.debug("Supervisor routing failed for '%s': %s", cmd, exc)
         return None
+
+    if result is None:
+        return None
+
+    # Update session state for ROUTE_MAP-handled commands
+    # For search commands (grep/rg) the first non-flag arg is the pattern,
+    # not the path — skip it to get the actual target path.
+    target_file = _extract_target_path(args_str, cwd, skip_first=(cmd in _SEARCH_COMMANDS))
+    if cmd in _READ_COMMANDS:
+        state.record_touch(target_file, "open")
+    elif cmd in _SEARCH_COMMANDS:
+        state.record_touch(target_file, "locate")
+    elif cmd in _SURVEY_COMMANDS:
+        state.record_touch(target_file, "survey")
+
+    # Inject compact exploration context
+    ctx = state.compact_context()
+    if ctx and result.get("ok"):
+        stdout = result.get("result", {}).get("stdout", "")
+        if stdout:
+            result["result"]["stdout"] = f"{stdout}\n\n{ctx}"
+
+    return result
 
 
 # ── Tool handlers ────────────────────────────────────────────────────
@@ -859,16 +1107,17 @@ def _handle_bash(
     progress_callback: Callable[[float, str], None] | None = None,
 ) -> dict[str, Any]:
     command = str(arguments.get("command", ""))
+    cwd = _normalize_cwd_argument(arguments.get("cwd", "."))
 
     # Try supervisor routing first.
-    routed = _try_supervise(command)
+    routed = _try_supervise(command, cwd=cwd)
     if routed is not None:
         return routed
 
     # Real bash execution.
     execution = exec_bash(
         command=command,
-        cwd=str(arguments.get("cwd", ".")),
+        cwd=cwd,
         timeout_s=int(arguments.get("timeout_s", DEFAULT_TIMEOUT)),
         stdin=arguments.get("stdin"),
         on_progress=progress_callback,

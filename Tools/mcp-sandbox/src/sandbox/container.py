@@ -276,8 +276,6 @@ def _build_run_command(
     if include_storage_limit and STORAGE_LIMIT:
         command.extend(["--storage-opt", f"size={STORAGE_LIMIT}"])
 
-    command.extend(["--gpus", "all"])
-
     task_host_path = os.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR)
     os.makedirs(task_host_path, exist_ok=True)
 
