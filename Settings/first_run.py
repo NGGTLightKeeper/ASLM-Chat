@@ -27,7 +27,6 @@ def _build_initial_settings(existing: dict[str, Any], ui_port: int, api_port: in
             "debug": existing.get("debug", False),
             "llm-engine": existing.get("llm-engine", "ollama-service"),
             "lms_url": existing.get("lms_url", "127.0.0.1:1234"),
-            "lms_load_config": existing.get("lms_load_config", {}),
             "use-yacy": existing.get("use-yacy", False),
             "openai_url": existing.get("openai_url", "127.0.0.1:8000/v1"),
             "openai_api_key": existing.get("openai_api_key", ""),

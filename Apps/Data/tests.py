@@ -136,7 +136,6 @@ class LmsPresetTests(TestCase):
     @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
     def test_ensure_state_creates_default_preset(self, mock_get_model_settings):
         mock_get_model_settings.return_value = {
-            "load_defaults": {"contextLength": 32768, "flashAttention": True},
             "defaults": {"temperature": 0.7, "think": True},
         }
 
@@ -145,20 +144,17 @@ class LmsPresetTests(TestCase):
         self.assertEqual(len(presets), 1)
         self.assertTrue(active_preset.is_default)
         self.assertTrue(active_preset.is_active)
-        self.assertEqual(active_preset.config["load"]["contextLength"], 32768)
         self.assertEqual(active_preset.config["operation"]["temperature"], 0.7)
 
     @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
     def test_sync_from_default_creates_custom_active_preset(self, mock_get_model_settings):
         mock_get_model_settings.return_value = {
-            "load_defaults": {"contextLength": 32768},
             "defaults": {"temperature": 0.7},
         }
 
         payload = sync_active_lms_preset(
             "qwen3",
             {
-                "load": {"contextLength": 65536, "flashAttention": True},
                 "operation": {"temperature": 0.2, "think": False},
             },
         )
@@ -166,19 +162,17 @@ class LmsPresetTests(TestCase):
         self.assertEqual(LmsPreset.objects.filter(model_name="qwen3").count(), 2)
         active = LmsPreset.objects.get(id=payload["active_preset_id"])
         self.assertFalse(active.is_default)
-        self.assertEqual(active.config["load"]["contextLength"], 65536)
         self.assertFalse(active.config["operation"]["think"])
 
     @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
     def test_delete_active_custom_preset_falls_back_to_default(self, mock_get_model_settings):
         mock_get_model_settings.return_value = {
-            "load_defaults": {"contextLength": 32768},
             "defaults": {"temperature": 0.7},
         }
         created = create_lms_preset(
             "qwen3",
             name="Coding",
-            config={"load": {"contextLength": 65536}, "operation": {"temperature": 0.2}},
+            config={"operation": {"temperature": 0.2}},
             activate=True,
         )
         delete_lms_preset("qwen3", created["active_preset_id"])

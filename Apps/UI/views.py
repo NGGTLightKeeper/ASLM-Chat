@@ -886,7 +886,6 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
         return {
             "context_length": 8192,
             "defaults": {},
-            "load_defaults": {},
             "supports_thinking": False,
             "supports_think_toggle": False,
             "supports_think_level": False,
@@ -916,7 +915,6 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
     return {
         "context_length": int(context_length),
         "defaults": defaults,
-        "load_defaults": settings_data.get("load_defaults", {}) if isinstance(settings_data.get("load_defaults", {}), dict) else {},
         "supports_thinking": bool(settings_data.get("supports_thinking", False)),
         "supports_think_toggle": bool(settings_data.get("supports_think_toggle", settings_data.get("supports_thinking", False))),
         "supports_think_level": bool(settings_data.get("supports_think_level", False)),
@@ -966,10 +964,6 @@ def _build_model_info_payload(
         preset_payload = get_lms_preset_payload(model_name)
         active_config = preset_payload.get("active_config", {}) if isinstance(preset_payload, dict) else {}
         if isinstance(active_config, dict):
-            payload["load_defaults"] = {
-                **payload.get("load_defaults", {}),
-                **(active_config.get("load", {}) if isinstance(active_config.get("load", {}), dict) else {}),
-            }
             payload["defaults"] = {
                 **payload.get("defaults", {}),
                 **(active_config.get("operation", {}) if isinstance(active_config.get("operation", {}), dict) else {}),
@@ -1139,7 +1133,6 @@ def _build_generate_kwargs(
     selected_tool_servers: list[dict[str, Any]],
     think_param_name: str = "think",
     think_level_param_name: str = "think_level",
-    load_config: dict[str, Any] | None = None,
     sync_operation_defaults: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build keyword arguments for ``llm_api.generate``."""
@@ -1161,8 +1154,6 @@ def _build_generate_kwargs(
         generate_kwargs["think_level_param_name"] = think_level_param_name
     if clean_options:
         generate_kwargs["options"] = clean_options
-    if engine == "lms" and isinstance(load_config, dict) and load_config:
-        generate_kwargs["load_config"] = load_config
     if engine == "lms" and isinstance(sync_operation_defaults, dict) and sync_operation_defaults:
         generate_kwargs["sync_operation_defaults"] = sync_operation_defaults
 
@@ -1396,15 +1387,6 @@ def chat_api(request):
             selected_tool_servers,
             think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
             think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
-            load_config=(
-                (
-                    model_info_payload.get("lms_presets", {}).get("active_config", {}).get("load", {})
-                    if isinstance(model_info_payload.get("lms_presets"), dict)
-                    else model_info_payload.get("load_defaults", {})
-                )
-                if engine == "lms"
-                else {}
-            ),
             sync_operation_defaults=(
                 {
                     **(
@@ -1919,35 +1901,6 @@ def delete_lms_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Reload selected model
-def reload_model_api(request):
-    """Reload the selected model when the active engine supports explicit reload."""
-
-    if request.method != "POST":
-        return JsonResponse({"error": "Invalid request method"}, status=405)
-
-    try:
-        data = _read_json_request_body(request)
-    except ValueError as exc:
-        return JsonResponse({"error": str(exc)}, status=400)
-
-    model_name = str(data.get("model", "") or "").strip()
-    engine = _get_active_engine(data.get("engine"))
-    if not model_name:
-        return JsonResponse({"error": "Model parameter is required"}, status=400)
-
-    try:
-        llm_api.reload_model(engine, model_name)
-    except NotImplementedError as exc:
-        logger.info("Model reload is not implemented for engine %s: %s", engine, exc)
-        return JsonResponse({"error": str(exc)}, status=501)
-    except Exception as exc:
-        logger.exception("Error reloading model %s on engine %s", model_name, engine)
-        return JsonResponse({"error": str(exc)}, status=500)
-
-    return JsonResponse({"engine": engine, "model": model_name, "reloaded": True})
-
-
 # Read or update runtime settings
 def runtime_settings_api(request):
     """Read or update runtime engine settings used by the chat UI."""
@@ -1963,7 +1916,7 @@ def runtime_settings_api(request):
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
 
-    allowed_keys = {"llm-engine", "lms_url", "lms_load_config", "openai_url", "openai_api_key"}
+    allowed_keys = {"llm-engine", "lms_url", "openai_url", "openai_api_key"}
 
     previous_engine = settings.get_llm_engine()
     next_engine = previous_engine
@@ -1976,8 +1929,6 @@ def runtime_settings_api(request):
         if raw_key == "llm-engine":
             value = settings.normalize_engine_name(raw_value)
             next_engine = value
-        elif raw_key == "lms_load_config":
-            value = raw_value if isinstance(raw_value, dict) else {}
         else:
             value = str(raw_value or "").strip()
 

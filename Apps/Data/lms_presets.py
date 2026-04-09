@@ -12,7 +12,6 @@ from Apps.Data.models import LmsPreset
 
 DEFAULT_LMS_PRESET_NAME = "Default"
 DEFAULT_LMS_PRESET_CONFIG: dict[str, Any] = {
-    "load": {},
     "operation": {},
 }
 
@@ -42,11 +41,15 @@ def normalize_lms_preset_config(config: dict[str, Any] | None) -> dict[str, Any]
     if not isinstance(config, dict):
         return deepcopy(DEFAULT_LMS_PRESET_CONFIG)
 
-    load_config = config.get("load", {})
-    operation_config = config.get("operation", {})
+    operation_config = config.get("operation")
+    if not isinstance(operation_config, dict):
+        operation_config = {
+            key: value
+            for key, value in config.items()
+            if key != "load"
+        }
 
     normalized = {
-        "load": _normalize_config_value(deepcopy(load_config)) or {},
         "operation": _normalize_config_value(deepcopy(operation_config)) or {},
     }
     return normalized
@@ -58,7 +61,6 @@ def _get_default_lms_preset_config(model_name: str) -> dict[str, Any]:
     settings_payload = lms_api.get_model_settings(model_name)
     return normalize_lms_preset_config(
         {
-            "load": settings_payload.get("load_defaults", {}) or {},
             "operation": settings_payload.get("defaults", {}) or {},
         }
     )

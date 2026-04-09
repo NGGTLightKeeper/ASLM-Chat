@@ -34,7 +34,6 @@ urlpatterns = [
     path("api/lms_presets/create/", views.create_lms_preset_api, name="create_lms_preset_api"),
     path("api/lms_presets/rename/", views.rename_lms_preset_api, name="rename_lms_preset_api"),
     path("api/lms_presets/delete/", views.delete_lms_preset_api, name="delete_lms_preset_api"),
-    
-    path("api/reload_model/", views.reload_model_api, name="reload_model_api"),
+
     path("api/runtime_settings/", views.runtime_settings_api, name="runtime_settings_api"),
 ]

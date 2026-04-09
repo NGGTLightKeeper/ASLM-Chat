@@ -702,179 +702,6 @@ $(function () {
     }
   };
 
-  const LLM_LOAD_PARAMETER_DEFINITIONS = {
-    contextLength: {
-      label: 'Context Length',
-      type: 'optional-number',
-      path: 'contextLength',
-      min: 1,
-      max: 131072,
-      step: 256,
-      decimals: 0,
-      fallback: null
-    },
-    gpu_ratio: {
-      label: 'GPU Ratio',
-      type: 'optional-number',
-      path: 'gpu.ratio',
-      min: 0,
-      max: 1,
-      step: 0.01,
-      decimals: 2,
-      fallback: null
-    },
-    gpu_mainGpu: {
-      label: 'Main GPU',
-      type: 'optional-number',
-      path: 'gpu.mainGpu',
-      min: 0,
-      max: 16,
-      step: 1,
-      decimals: 0,
-      fallback: null
-    },
-    gpu_splitStrategy: {
-      label: 'GPU Split Strategy',
-      type: 'select',
-      valueType: 'string',
-      path: 'gpu.splitStrategy',
-      options: [
-        { value: '', label: 'Automatic' },
-        { value: 'evenly', label: 'Evenly' },
-        { value: 'favorMainGpu', label: 'Favor Main GPU' }
-      ],
-      fallback: ''
-    },
-    gpu_disabledGpus: {
-      label: 'Disabled GPUs',
-      type: 'json',
-      path: 'gpu.disabledGpus',
-      fallback: null
-    },
-    gpuStrictVramCap: {
-      label: 'Strict VRAM Cap',
-      type: 'boolean',
-      path: 'gpuStrictVramCap',
-      fallback: false
-    },
-    offloadKVCacheToGpu: {
-      label: 'Offload KV Cache To GPU',
-      type: 'boolean',
-      path: 'offloadKVCacheToGpu',
-      fallback: false
-    },
-    ropeFrequencyBase: {
-      label: 'RoPE Frequency Base',
-      type: 'optional-number',
-      path: 'ropeFrequencyBase',
-      min: 0,
-      max: 1000000,
-      step: 1,
-      decimals: 0,
-      fallback: null
-    },
-    ropeFrequencyScale: {
-      label: 'RoPE Frequency Scale',
-      type: 'optional-number',
-      path: 'ropeFrequencyScale',
-      min: 0,
-      max: 1000,
-      step: 0.01,
-      decimals: 2,
-      fallback: null
-    },
-    evalBatchSize: {
-      label: 'Eval Batch Size',
-      type: 'optional-number',
-      path: 'evalBatchSize',
-      min: 1,
-      max: 8192,
-      step: 1,
-      decimals: 0,
-      fallback: null
-    },
-    flashAttention: {
-      label: 'Flash Attention',
-      type: 'boolean',
-      path: 'flashAttention',
-      fallback: false
-    },
-    keepModelInMemory: {
-      label: 'Keep Model In Memory',
-      type: 'boolean',
-      path: 'keepModelInMemory',
-      fallback: false
-    },
-    seed: {
-      label: 'Seed',
-      type: 'optional-number',
-      path: 'seed',
-      min: 0,
-      max: 2147483647,
-      step: 1,
-      decimals: 0,
-      fallback: null
-    },
-    useFp16ForKVCache: {
-      label: 'Use FP16 For KV Cache',
-      type: 'boolean',
-      path: 'useFp16ForKVCache',
-      fallback: false
-    },
-    tryMmap: {
-      label: 'Try Memory Map',
-      type: 'boolean',
-      path: 'tryMmap',
-      fallback: false
-    },
-    numExperts: {
-      label: 'Num Experts',
-      type: 'optional-number',
-      path: 'numExperts',
-      min: 1,
-      max: 256,
-      step: 1,
-      decimals: 0,
-      fallback: null
-    },
-    llamaKCacheQuantizationType: {
-      label: 'K Cache Quantization',
-      type: 'select',
-      valueType: 'string',
-      path: 'llamaKCacheQuantizationType',
-      options: [
-        { value: '', label: 'Automatic' },
-        { value: 'f32', label: 'f32' },
-        { value: 'f16', label: 'f16' },
-        { value: 'q8_0', label: 'q8_0' },
-        { value: 'q4_0', label: 'q4_0' },
-        { value: 'q4_1', label: 'q4_1' },
-        { value: 'iq4_nl', label: 'iq4_nl' },
-        { value: 'q5_0', label: 'q5_0' },
-        { value: 'q5_1', label: 'q5_1' }
-      ],
-      fallback: ''
-    },
-    llamaVCacheQuantizationType: {
-      label: 'V Cache Quantization',
-      type: 'select',
-      valueType: 'string',
-      path: 'llamaVCacheQuantizationType',
-      options: [
-        { value: '', label: 'Automatic' },
-        { value: 'f32', label: 'f32' },
-        { value: 'f16', label: 'f16' },
-        { value: 'q8_0', label: 'q8_0' },
-        { value: 'q4_0', label: 'q4_0' },
-        { value: 'q4_1', label: 'q4_1' },
-        { value: 'iq4_nl', label: 'iq4_nl' },
-        { value: 'q5_0', label: 'q5_0' },
-        { value: 'q5_1', label: 'q5_1' }
-      ],
-      fallback: ''
-    }
-  };
-
   const LLM_PARAMETER_OPTION_SETS = {
     reasoning_effort: ['minimal', 'low', 'medium', 'high', 'xhigh'],
     think_level: ['low', 'medium', 'high'],
@@ -1034,7 +861,6 @@ $(function () {
     currentModelInfo = null;
     resetOllamaPresetUi();
     resetDynamicPanels();
-    renderLoadParameters();
     updateVisibleDividers();
     visionState.supported = false;
     fileState.supported = false;
@@ -1151,10 +977,8 @@ $(function () {
   }
 
   function buildActivePresetConfigPayload() {
-    const engine = getActiveEngine();
-    if (engine === 'lms') {
+    if (getActiveEngine() === 'lms') {
       return {
-        load: collectParameterPayload('#group-load .dyn-load-param'),
         operation: collectOptionsPayload()
       };
     }
@@ -1296,17 +1120,6 @@ $(function () {
 
     runtimeSettings = await response.json();
     return runtimeSettings;
-  }
-
-  async function applyLmsLoadConfigChange() {
-    if (getActiveEngine() !== 'lms') {
-      return;
-    }
-
-    if (currentModelInfo) {
-      currentModelInfo.load_defaults = collectParameterPayload('#group-load .dyn-load-param');
-    }
-    await syncActiveOllamaPreset();
   }
 
   async function applyEngineSelection(engine, options) {
@@ -2134,62 +1947,8 @@ $(function () {
     $group.show();
   }
 
-  function renderExperimentalLoadParameter(path, value) {
-    const leafKey = String(path || '').split('.').filter(Boolean).pop() || String(path || 'value');
-    const parameterKey = `load_${String(path || '').replace(/[^a-zA-Z0-9]+/g, '_')}`;
-    const inferredType = inferExperimentalParameterType(leafKey, value);
-    const valueType = inferredType === 'boolean' ? 'boolean' : inferredType === 'json' ? 'json' : inferredType;
-    let controlHtml = '';
-
-    if (valueType === 'boolean') {
-      controlHtml = `
-        <select
-          class="model-selector setting-select dyn-load-param"
-          id="dyn_${parameterKey}"
-          data-param="${parameterKey}"
-          data-param-path="${path}"
-          data-value-type="boolean">
-          <option value="true"${value ? ' selected' : ''}>True</option>
-          <option value="false"${!value ? ' selected' : ''}>False</option>
-        </select>
-      `;
-    } else if (valueType === 'json') {
-      controlHtml = `
-        <textarea
-          class="setting-textarea dyn-load-param"
-          id="dyn_${parameterKey}"
-          data-param="${parameterKey}"
-          data-param-path="${path}"
-          data-value-type="json"
-          rows="4">${escapeTextareaValue(JSON.stringify(value, null, 2))}</textarea>
-      `;
-    } else {
-      const inputType = valueType === 'string' ? 'text' : 'number';
-      controlHtml = `
-        <input
-          type="${inputType}"
-          class="setting-input dyn-load-param"
-          id="dyn_${parameterKey}"
-          data-param="${parameterKey}"
-          data-param-path="${path}"
-          data-value-type="${valueType === 'integer' ? 'integer' : valueType === 'number' ? 'number' : 'string'}"
-          value="${escapeAttributeValue(String(value ?? ''))}">
-      `;
-    }
-
-    $('#group-load .settings-section-content').append(`
-      <div class="setting-group">
-        <label class="setting-label" for="dyn_${parameterKey}">
-          ${formatExperimentalParameterLabel(path)}
-        </label>
-        ${controlHtml}
-      </div>
-    `);
-    $('#group-load').show();
-  }
-
   function updateVisibleDividers() {
-    const visibleGroups = ['load', 'custom', 'settings', 'sampling', 'advanced'].filter(function (groupName) {
+    const visibleGroups = ['custom', 'settings', 'sampling', 'advanced'].filter(function (groupName) {
       return $(`#group-${groupName}`).is(':visible');
     });
 
@@ -2212,56 +1971,6 @@ $(function () {
       }
 
       $(`#divider-${groupName}`).show();
-    });
-  }
-
-  function renderLoadParameters() {
-    const engine = getActiveEngine();
-    const $group = $('#group-load');
-    const $content = $('#group-load .settings-section-content');
-    const loadConfig = (currentModelInfo && currentModelInfo.load_defaults) || runtimeSettings.lms_load_config || {};
-    const selectedMainModel = $modelSelector.val() || '';
-    const lmsModels = getAvailableModelsForEngine('lms');
-
-    $content.empty();
-    $group.hide();
-
-    if (engine !== 'lms') {
-      return;
-    }
-
-    const remainingLoadConfig = JSON.parse(JSON.stringify(loadConfig || {}));
-
-    Object.entries(LLM_LOAD_PARAMETER_DEFINITIONS).forEach(function ([key, config]) {
-      const renderConfig = { ...config };
-
-      if (key === 'draftModel') {
-        const draftOptions = lmsModels
-          .filter(function (modelName) {
-            return modelName && modelName !== selectedMainModel;
-          })
-          .map(function (modelName) {
-            return { value: modelName, label: modelName };
-          });
-
-        renderConfig.options = [{ value: '', label: 'Disabled' }, ...draftOptions];
-      }
-
-      const currentValue = getNestedValue(loadConfig, config.path || key);
-      renderKnownParameter(key, renderConfig, currentValue, {
-        groupId: '#group-load',
-        paramClass: 'dyn-load-param',
-        paramPath: config.path || key,
-        compact: true
-      });
-      deleteNestedValue(remainingLoadConfig, config.path || key);
-    });
-
-    flattenConfigLeaves(remainingLoadConfig, '').forEach(function (entry) {
-      if (entry.value === undefined || entry.value === null) {
-        return;
-      }
-      renderExperimentalLoadParameter(entry.path, entry.value);
     });
   }
 
@@ -2328,7 +2037,6 @@ $(function () {
       currentModelInfo = null;
       resetOllamaPresetUi();
       resetDynamicPanels();
-      renderLoadParameters();
       updateVisibleDividers();
       visionState.supported = false;
       fileState.supported = false;
@@ -2359,7 +2067,6 @@ $(function () {
       currentModelInfo = data;
       resetDynamicPanels();
       applyOllamaPresetState(data.ollama_presets || data.lms_presets || null);
-      renderLoadParameters();
 
       toolState.supported = !!data.supports_tool_calling;
       updateAvailableToolServers(data.available_tool_servers || defaultAvailableToolServers);
@@ -2460,7 +2167,6 @@ $(function () {
       currentModelInfo = null;
       resetOllamaPresetUi();
       resetDynamicPanels();
-      renderLoadParameters();
       updateVisibleDividers();
       updateAvailableToolServers(defaultAvailableToolServers);
       visionState.supported = false;
@@ -3778,12 +3484,6 @@ $(function () {
       $target.val('');
     }
 
-    if ($(this).closest('#group-load').length > 0) {
-      applyLmsLoadConfigChange().catch(function (error) {
-        console.error('Failed to update LM Studio load config:', error);
-      });
-    }
-
     scheduleOllamaPresetSync();
   });
 
@@ -4030,22 +3730,6 @@ $(function () {
     }
 
     scheduleOllamaPresetSync();
-  });
-
-  $(document).on('change', '#group-load .dyn-load-param', function () {
-    applyLmsLoadConfigChange().catch(function (error) {
-      console.error('Failed to update LM Studio load config:', error);
-    });
-  });
-
-  $(document).on('blur', '#group-load .dyn-load-param', function () {
-    if ($(this).is(':checkbox')) {
-      return;
-    }
-
-    applyLmsLoadConfigChange().catch(function (error) {
-      console.error('Failed to update LM Studio load config:', error);
-    });
   });
 
   window.addEventListener('popstate', function (event) {

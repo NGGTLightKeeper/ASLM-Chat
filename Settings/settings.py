@@ -50,7 +50,6 @@ DEFAULTS: dict[str, Any] = {
     "ollama-service_models": None,
     "lms": False,
     "lms_url": "127.0.0.1:1234",
-    "lms_load_config": {},
     "use-yacy": False,
     "openai": False,
     "openai_url": "127.0.0.1:8000/v1",
@@ -186,6 +185,7 @@ def _normalize_loaded_settings(data: dict[str, Any]) -> dict[str, Any]:
     """Return a normalized settings snapshot ready for use."""
 
     normalized = dict(data)
+    normalized.pop("lms_load_config", None)
 
     for key in NORMALIZED_ADDRESS_KEYS:
         normalized[key] = normalize_engine_address(normalized.get(key, DEFAULTS.get(key, "")))
@@ -383,7 +383,6 @@ def get_runtime_engine_settings() -> dict[str, Any]:
         "llm-engine": active_engine,
         "console_log_level": get_console_log_level(),
         "lms_url": normalize_engine_address(get("lms_url", DEFAULTS["lms_url"])),
-        "lms_load_config": dict(get("lms_load_config", DEFAULTS["lms_load_config"]) or {}),
         "openai_url": normalize_engine_address(get("openai_url", DEFAULTS["openai_url"])),
         "has_openai_api_key": bool(openai_api_key),
         "engine_urls": {

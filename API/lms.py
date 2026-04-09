@@ -20,8 +20,6 @@ logger = logging.getLogger(__name__)
 
 _abort_event = threading.Event()
 _model_state_lock = threading.Lock()
-_loaded_model_name = ""
-_loaded_model_config_signature = ""
 _synced_operation_defaults_signatures: dict[str, str] = {}
 
 
@@ -81,34 +79,6 @@ OPENAI_DIRECT_OPTION_KEYS = {
 }
 
 
-def _get_load_config(override: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Return the saved LM Studio load config without empty values."""
-
-    raw_config = override if override is not None else (settings.get("lms_load_config", {}) or {})
-    if not isinstance(raw_config, dict):
-        return {}
-
-    def _clean(value: Any) -> Any:
-        if isinstance(value, dict):
-            cleaned_items: dict[str, Any] = {}
-            for key, item in value.items():
-                cleaned_item = _clean(item)
-                if cleaned_item is not None:
-                    cleaned_items[key] = cleaned_item
-            return cleaned_items or None
-
-        if isinstance(value, list):
-            return value or None
-
-        if value in ("", None):
-            return None
-
-        return value
-
-    cleaned_config = _clean(raw_config)
-    return cleaned_config if isinstance(cleaned_config, dict) else {}
-
-
 def _extract_api_host(raw_address: str) -> str:
     """Normalize the configured LM Studio address into a client host value."""
 
@@ -148,12 +118,9 @@ def _close_client(client: Any) -> None:
         pass
 
 
-def _get_model_handle(client: Any, model_name: str, load_config: dict[str, Any] | None = None):
-    """Create a model handle with the current persisted load config."""
+def _get_model_handle(client: Any, model_name: str):
+    """Return an SDK handle for one already-loaded model."""
 
-    normalized_load_config = _get_load_config(load_config)
-    if normalized_load_config:
-        return client.llm.model(model_name, config=normalized_load_config)
     return client.llm.model(model_name)
 
 
@@ -276,71 +243,23 @@ def _list_loaded_model_names(client: Any) -> list[str]:
     return _collect_unique_model_names(loaded_models)
 
 
-def _unload_loaded_models(client: Any, except_model_name: str = "") -> None:
-    """Unload loaded models, optionally preserving one currently active model."""
+def _assert_model_is_loaded(client: Any, model_name: str) -> None:
+    """Raise when the requested model is not already loaded in LM Studio."""
 
-    try:
-        loaded_models = list(client.list_loaded_models())
-    except Exception:
-        loaded_models = []
-
-    for entry in loaded_models:
-        loaded_name = _coerce_model_name(entry)
-        if except_model_name and loaded_name == except_model_name:
-            continue
-
-        unload = getattr(entry, "unload", None)
-        if callable(unload):
-            try:
-                unload()
-                continue
-            except Exception:
-                pass
-
-        if not loaded_name:
-            continue
-        try:
-            client.llm.unload(loaded_name)
-        except Exception:
-            continue
-
-
-def _ensure_model_ready_for_generation(client: Any, model_name: str, load_config: dict[str, Any] | None = None):
-    """Reuse the active model when possible and reload only on real changes."""
-
-    global _loaded_model_name, _loaded_model_config_signature
-
-    normalized_load_config = _get_load_config(load_config)
-    config_signature = _config_signature(normalized_load_config)
     loaded_model_names = _list_loaded_model_names(client)
+    if any(_model_identifiers_match(model_name, loaded_name) for loaded_name in loaded_model_names):
+        return
 
-    with _model_state_lock:
-        matching_loaded_model = any(
-            _model_identifiers_match(model_name, loaded_name) or _model_identifiers_match(_loaded_model_name, loaded_name)
-            for loaded_name in loaded_model_names
-        )
-        can_reuse_loaded_model = (
-            bool(_loaded_model_name)
-            and _model_identifiers_match(_loaded_model_name, model_name)
-            and _loaded_model_config_signature == config_signature
-            and (not loaded_model_names or matching_loaded_model or len(loaded_model_names) == 1)
+    if loaded_model_names:
+        raise RuntimeError(
+            f"LM Studio model is not loaded: {model_name}. "
+            f"Loaded models: {', '.join(loaded_model_names)}"
         )
 
-    if can_reuse_loaded_model:
-        return _get_model_handle(client, model_name, load_config=normalized_load_config)
-
-    _unload_loaded_models(client)
-
-    handle = _get_model_handle(client, model_name, load_config=normalized_load_config)
-    get_context_length = getattr(handle, "get_context_length", None)
-    if callable(get_context_length):
-        get_context_length()
-
-    with _model_state_lock:
-        _loaded_model_name = model_name
-        _loaded_model_config_signature = config_signature
-
-    return handle
+    raise RuntimeError(
+        f"LM Studio model is not loaded: {model_name}. "
+        "Load the model in LM Studio first."
+    )
 
 
 def _serialize_model_info(info: Any) -> dict[str, Any]:
@@ -622,12 +541,12 @@ def _get_model_index_record(model_name: str) -> dict[str, Any]:
     return exact_match or {}
 
 
-def _get_disk_model_default_config(model_name: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return saved LM Studio default load/operation config for one model."""
+def _get_disk_model_operation_defaults(model_name: str) -> dict[str, Any]:
+    """Return saved LM Studio operation defaults for one model."""
 
     owner, separator, name = model_name.partition("/")
     if not separator or not owner or not name:
-        return {}, {}
+        return {}
 
     config_path = os.path.join(
         _get_lmstudio_home(),
@@ -638,13 +557,12 @@ def _get_disk_model_default_config(model_name: str) -> tuple[dict[str, Any], dic
     )
     payload = _read_json_file(config_path)
     if not isinstance(payload, dict):
-        return {}, {}
+        return {}
 
-    load_fields = payload.get("load", {}).get("fields", []) if isinstance(payload.get("load"), dict) else []
     operation_fields = payload.get("operation", {}).get("fields", []) if isinstance(payload.get("operation"), dict) else []
-    return (
-        _kv_fields_to_client_config("llm.load", load_fields if isinstance(load_fields, list) else []),
-        _kv_fields_to_client_config("llm.prediction", operation_fields if isinstance(operation_fields, list) else []),
+    return _kv_fields_to_client_config(
+        "llm.prediction",
+        operation_fields if isinstance(operation_fields, list) else [],
     )
 
 
@@ -722,19 +640,6 @@ def _sync_operation_defaults_to_disk(model_name: str, operation_config: dict[str
 
     with _model_state_lock:
         _synced_operation_defaults_signatures[model_name] = signature
-
-
-def _get_handle_load_defaults(client: Any, model_name: str) -> dict[str, Any]:
-    """Return resolved LM Studio load defaults from the SDK model handle."""
-
-    try:
-        handle = client.llm.model(model_name)
-        get_load_config = getattr(handle, "get_load_config", None)
-        if not callable(get_load_config):
-            return {}
-        return _normalize_model_config(get_load_config())
-    except Exception:
-        return {}
 
 
 def _extract_reasoning_settings(operation_defaults: dict[str, Any]) -> tuple[Any | None, Any | None]:
@@ -885,7 +790,7 @@ def _sanitize_generated_text(text: str) -> str:
 
 
 def _get_model_info(client: Any, model_name: str) -> tuple[Any | None, dict[str, Any]]:
-    """Return model info from the SDK or downloaded model listing."""
+    """Return model info from the SDK or loaded-model listing."""
 
     try:
         info = client.llm.get_model_info(model_name)
@@ -894,12 +799,12 @@ def _get_model_info(client: Any, model_name: str) -> tuple[Any | None, dict[str,
         pass
 
     try:
-        downloaded_models = list(client.list_downloaded_models())
+        loaded_models = list(client.list_loaded_models())
     except Exception:
-        downloaded_models = []
+        loaded_models = []
 
-    for entry in downloaded_models:
-        if _coerce_model_name(entry) == model_name:
+    for entry in loaded_models:
+        if _model_identifiers_match(model_name, _coerce_model_name(entry)):
             return entry, _serialize_model_info(entry)
 
     return None, {"model": model_name}
@@ -1486,17 +1391,7 @@ def _conversation_uses_tools(messages: list[dict[str, Any]]) -> bool:
 
 
 def get_models() -> list[Any]:
-    """Return models visible to the configured LM Studio server."""
-
-    try:
-        downloaded_models = _list_models_with_client("list_downloaded_models")
-    except Exception as exc:
-        logger.error("[LM Studio API] Error listing downloaded models: %s", exc)
-        return []
-
-    merged_models = _collect_unique_model_names(downloaded_models)
-    if merged_models:
-        return merged_models
+    """Return models that are already loaded in the configured LM Studio server."""
 
     try:
         loaded_models = _list_models_with_client("list_loaded_models")
@@ -1508,61 +1403,9 @@ def get_models() -> list[Any]:
 
 
 def cleanup_runtime() -> None:
-    """Unload every currently loaded LM Studio model."""
+    """LM Studio model lifecycle is managed outside this adapter."""
 
-    global _loaded_model_name, _loaded_model_config_signature
-
-    try:
-        loaded_models = _list_models_with_client("list_loaded_models")
-    except Exception as exc:
-        logger.warning("[LM Studio API] Could not list loaded models for unload: %s", exc)
-        return
-
-    for entry in loaded_models:
-        unload = getattr(entry, "unload", None)
-        if callable(unload):
-            try:
-                unload()
-                continue
-            except Exception as exc:
-                logger.warning("[LM Studio API] Failed to unload model via handle: %s", exc)
-
-        model_name = _coerce_model_name(entry)
-        if not model_name:
-            continue
-
-        _lms, client = _get_client()
-        try:
-            unload_method = getattr(client.llm, "unload", None)
-            if callable(unload_method):
-                unload_method(model_name)
-        except Exception as exc:
-            logger.warning("[LM Studio API] Failed to unload model %s: %s", model_name, exc)
-        finally:
-            _close_client(client)
-
-    with _model_state_lock:
-        _loaded_model_name = ""
-        _loaded_model_config_signature = ""
-
-
-def reload_model(model_name: str) -> None:
-    """Unload all models and reload the selected one with current settings."""
-
-    global _loaded_model_name, _loaded_model_config_signature
-
-    if not model_name:
-        return
-
-    _lms, client = _get_client()
-    try:
-        _unload_loaded_models(client)
-        with _model_state_lock:
-            _loaded_model_name = ""
-            _loaded_model_config_signature = ""
-        _ensure_model_ready_for_generation(client, model_name)
-    finally:
-        _close_client(client)
+    return None
 
 
 def download_model(model_name: str, **kwargs: Any) -> Any:
@@ -1585,7 +1428,6 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
     tool_context = dict(kwargs.pop("tool_context", {}) or {})
     stream = bool(kwargs.get("stream", False))
     raw_options = dict(kwargs.get("options", {}) or {})
-    load_config = dict(kwargs.get("load_config", {}) or {})
     sync_operation_defaults = dict(kwargs.get("sync_operation_defaults", {}) or {})
     think = kwargs.get("think")
     think_level = kwargs.get("think_level")
@@ -1595,13 +1437,13 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
     _abort_event.clear()
     _sync_operation_defaults_to_disk(model_name, sync_operation_defaults)
 
-    if tool_server_ids or _conversation_uses_tools(messages):
-        _lms, preload_client = _get_client()
-        try:
-            _ensure_model_ready_for_generation(preload_client, model_name, load_config=load_config)
-        finally:
-            _close_client(preload_client)
+    _lms, preload_client = _get_client()
+    try:
+        _assert_model_is_loaded(preload_client, model_name)
+    finally:
+        _close_client(preload_client)
 
+    if tool_server_ids or _conversation_uses_tools(messages):
         openai_client = _get_openai_client()
         options = _prepare_openai_prediction_options(
             raw_options,
@@ -1620,7 +1462,8 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
 
     _lms, client = _get_client()
     try:
-        model = _ensure_model_ready_for_generation(client, model_name, load_config=load_config)
+        _assert_model_is_loaded(client, model_name)
+        model = _get_model_handle(client, model_name)
         chat = _build_native_chat_history(client, messages)
         options = _prepare_native_prediction_options(
             raw_options,
@@ -1638,20 +1481,20 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
 
 
 def get_model_settings(model_name: str) -> dict[str, Any]:
-    """Return capability metadata without loading the selected model early."""
+    """Return capability metadata for one already-loaded LM Studio model."""
 
     _lms, client = _get_client()
     try:
+        _assert_model_is_loaded(client, model_name)
         raw_info = _get_raw_model_info(client, model_name)
         info, fallback_info = _get_model_info(client, model_name)
-        handle_load_defaults = _get_handle_load_defaults(client, model_name)
     finally:
         _close_client(client)
 
     model_index_record = _get_model_index_record(model_name)
     model_virtual = model_index_record.get("virtual", {}) if isinstance(model_index_record, dict) else {}
     indexed_custom_fields = model_virtual.get("customFieldDefinitions", []) if isinstance(model_virtual, dict) else []
-    disk_load_defaults, disk_operation_defaults = _get_disk_model_default_config(model_name)
+    disk_operation_defaults = _get_disk_model_operation_defaults(model_name)
 
     raw_info = raw_info or fallback_info or {}
     if indexed_custom_fields and not isinstance(raw_info.get("customFields"), list):
@@ -1661,8 +1504,6 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
 
     metadata_overrides = _normalize_model_config(raw_info.get("metadataOverrides") or {})
     config_payload = _normalize_model_config(raw_info.get("config") or {})
-    load_defaults = _merge_nested_dicts(handle_load_defaults, _normalize_model_config(config_payload.get("load") or {}))
-    load_defaults = _merge_nested_dicts(load_defaults, disk_load_defaults)
     operation_defaults = _merge_nested_dicts(_normalize_model_config(config_payload.get("operation") or {}), disk_operation_defaults)
 
     custom_fields = raw_info.get("customFields") if isinstance(raw_info.get("customFields"), list) else []
@@ -1739,7 +1580,6 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
         "model": model_name,
         "context_length": int(context_length),
         "defaults": operation_defaults,
-        "load_defaults": load_defaults,
         "supports_thinking": supports_thinking,
         "supports_think_toggle": supports_think_toggle,
         "supports_think_level": supports_think_level,
