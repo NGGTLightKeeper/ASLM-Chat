@@ -921,6 +921,7 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
         "think_param_name": settings_data.get("think_param_name", "think"),
         "think_level_param_name": settings_data.get("think_level_param_name", "think_level"),
         "think_level_options": settings_data.get("think_level_options", []) if isinstance(settings_data.get("think_level_options", []), list) else [],
+        "supported_parameters": settings_data.get("supported_parameters", []) if isinstance(settings_data.get("supported_parameters", []), list) else [],
         "supports_vision": "vision" in normalized_capabilities or bool(settings_data.get("supports_vision", False)),
         "supports_tool_calling": bool(settings_data.get("supports_tool_calling", False)),
         "supports_files": bool(settings_data.get("supports_files", False)),
@@ -1018,10 +1019,10 @@ def _validate_tool_server_support(
 ) -> None:
     """Raise when tools are requested for a model that should not call tools."""
 
-    if not tool_server_ids or engine != "lms":
+    if not tool_server_ids or engine not in {"lms", "openai"}:
         return
 
-    payload = payload or _build_model_info_payload(engine, model_name)
+    payload = payload or _build_model_info_payload(engine, model_name, allow_fallback=True)
     if payload.get("supports_tool_calling"):
         return
 
@@ -1148,9 +1149,9 @@ def _build_generate_kwargs(
         generate_kwargs["think"] = think_value
     if think_level_value is not None:
         generate_kwargs["think_level"] = think_level_value
-    if engine == "lms" and think_param_name:
+    if engine in {"lms", "openai"} and think_param_name:
         generate_kwargs["think_param_name"] = think_param_name
-    if engine == "lms" and think_level_param_name:
+    if engine in {"lms", "openai"} and think_level_param_name:
         generate_kwargs["think_level_param_name"] = think_level_param_name
     if clean_options:
         generate_kwargs["options"] = clean_options
@@ -1332,7 +1333,7 @@ def chat_api(request):
         if not user_message and not attachments:
             return JsonResponse({"error": "Missing message or attachments"}, status=400)
 
-        if engine == "lms":
+        if engine in {"lms", "openai"}:
             model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
         else:
             model_info_payload = _build_fallback_model_info_payload(engine, model_name)
@@ -1433,7 +1434,7 @@ def abort_generation_api(request):
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
     try:
-        ollama_api.abort_generation()
+        llm_api.abort_generation(_get_active_engine())
         return JsonResponse({"ok": True})
     except Exception as exc:
         logger.exception("Failed to abort generation")

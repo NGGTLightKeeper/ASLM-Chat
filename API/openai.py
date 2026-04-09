@@ -2,17 +2,77 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import re
+import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any
 
+from API import mcp as tool_registry
 from Settings import settings
 
 logger = logging.getLogger(__name__)
 
+_abort_event = threading.Event()
+_metadata_cache_lock = threading.Lock()
+_supplemental_models_cache: dict[str, list[dict[str, Any]]] = {}
+
+MAX_TOOL_ROUNDS = 100
+REASONING_TAG_PAIRS = (
+    ("<think>", "</think>"),
+    ("<thinking>", "</thinking>"),
+    ("<reasoning>", "</reasoning>"),
+)
+CONTROL_TOKEN_PATTERNS = (
+    re.compile(
+        r"<\|start\|>\s*(?:assistant|user|system)?\s*(?:<\|channel\|>\s*(?:final|analysis|commentary))?\s*(?:<\|message\|>)?",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(r"<\|start\|>", flags=re.IGNORECASE),
+    re.compile(r"<\|channel\|>\s*(?:final|analysis|commentary)", flags=re.IGNORECASE),
+    re.compile(r"<\|message\|>", flags=re.IGNORECASE),
+    re.compile(r"<\|return\|>", flags=re.IGNORECASE),
+    re.compile(r"<\|startoftext\|>", flags=re.IGNORECASE),
+    re.compile(r"<\|im_(?:start|end)\|>", flags=re.IGNORECASE),
+    re.compile(r"<\|(?:assistant|user|system|endoftext)\|>", flags=re.IGNORECASE),
+)
+THINK_PARAM_NAMES = {"think", "thinking", "reasoning"}
+THINK_LEVEL_PARAM_NAMES = {"think_level", "thinking_level", "reasoning_effort"}
+TOOL_CAPABILITY_NAMES = {
+    "tool",
+    "tools",
+    "tool_calling",
+    "tool_use",
+    "function_calling",
+    "functions",
+    "supports_tools",
+    "supports_tool_calling",
+    "trained_for_tool_use",
+}
+VISION_CAPABILITY_NAMES = {
+    "vision",
+    "image",
+    "images",
+    "image_input",
+    "image_inputs",
+    "multimodal",
+    "multimodal_input",
+    "supports_vision",
+}
+REASONING_CAPABILITY_NAMES = {
+    "think",
+    "thinking",
+    "reasoning",
+    "chain_of_thought",
+    "supports_reasoning",
+    "reasoning_enabled",
+}
 DIRECT_OPTION_ALIASES = {
     "num_predict": "max_tokens",
 }
-
 DIRECT_OPTION_KEYS = {
     "frequency_penalty",
     "logprobs",
@@ -30,16 +90,770 @@ DIRECT_OPTION_KEYS = {
     "stop",
     "stream_options",
     "temperature",
-    "top_logprobs",
     "tool_choice",
     "tools",
+    "top_logprobs",
     "top_p",
     "user",
     "verbosity",
 }
+DEFAULT_CONTAINER_KEYS = {
+    "defaults",
+    "default_parameters",
+    "default_settings",
+    "parameters",
+    "settings",
+}
+PARAMETER_CONTAINER_KEYS = {
+    "supported_parameters",
+    "parameter_schema",
+    "parameters",
+}
 
 
-# Create OpenAI client
+def abort_generation() -> None:
+    """Signal the active OpenAI-compatible generation to stop."""
+
+    _abort_event.set()
+
+
+def _close_client(client: Any) -> None:
+    """Safely close a client instance when the SDK exposes ``close``."""
+
+    try:
+        client.close()
+    except Exception:
+        pass
+
+
+def _normalize_key_name(value: Any) -> str:
+    """Return a normalized lower-case identifier for one key or token."""
+
+    return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+
+
+def _bool_from_value(value: Any, default: bool = False) -> bool:
+    """Return a predictable boolean from JSON-like payloads."""
+
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on", "enabled", "supported"}:
+            return True
+        if normalized in {"false", "0", "no", "off", "disabled", "unsupported"}:
+            return False
+    return bool(value)
+
+
+def _coerce_positive_int(value: Any) -> int | None:
+    """Convert a scalar into a positive integer when possible."""
+
+    if isinstance(value, bool):
+        return None
+    try:
+        numeric_value = int(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric_value if numeric_value > 0 else None
+
+
+def _merge_nested_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge two dictionaries without mutating either input."""
+
+    merged = dict(base or {})
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_nested_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _clean_nested_config(value: Any) -> Any:
+    """Drop empty nested config values while preserving scalar defaults."""
+
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key, child in value.items():
+            normalized_child = _clean_nested_config(child)
+            if normalized_child in ({}, [], "", None):
+                continue
+            normalized[str(key)] = normalized_child
+        return normalized
+
+    if isinstance(value, list):
+        normalized_list = [_clean_nested_config(child) for child in value]
+        return [child for child in normalized_list if child not in ({}, [], "", None)]
+
+    return value
+
+
+def _to_plain_data(value: Any) -> Any:
+    """Convert SDK objects into plain Python containers."""
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, dict):
+        return {str(key): _to_plain_data(child) for key, child in value.items()}
+
+    if isinstance(value, (list, tuple, set)):
+        return [_to_plain_data(child) for child in value]
+
+    serialized: Any = None
+    for attr_name in ("to_dict", "model_dump", "dict"):
+        serializer = getattr(value, attr_name, None)
+        if not callable(serializer):
+            continue
+
+        try:
+            if attr_name == "model_dump":
+                serialized = serializer(mode="python", exclude_none=False)
+            else:
+                serialized = serializer()
+        except TypeError:
+            try:
+                serialized = serializer()
+            except Exception:
+                continue
+        except Exception:
+            continue
+        break
+
+    if isinstance(serialized, dict):
+        normalized = {str(key): _to_plain_data(child) for key, child in serialized.items()}
+        model_extra = getattr(value, "model_extra", None)
+        if isinstance(model_extra, dict):
+            for key, child in model_extra.items():
+                normalized.setdefault(str(key), _to_plain_data(child))
+        return normalized
+
+    if isinstance(serialized, (list, tuple)):
+        return [_to_plain_data(child) for child in serialized]
+
+    if hasattr(value, "__dict__"):
+        serialized_dict = {
+            str(key): _to_plain_data(child)
+            for key, child in vars(value).items()
+            if not str(key).startswith("_")
+        }
+        if serialized_dict:
+            model_extra = getattr(value, "model_extra", None)
+            if isinstance(model_extra, dict):
+                for key, child in model_extra.items():
+                    serialized_dict.setdefault(str(key), _to_plain_data(child))
+            return serialized_dict
+
+    return str(value)
+
+
+def _normalize_model_identifier(value: Any) -> str:
+    """Return a normalized model identifier for fuzzy comparisons."""
+
+    return str(value or "").strip().strip("/").lower()
+
+
+def _model_identifiers_match(expected: Any, actual: Any) -> bool:
+    """Return whether two model identifiers likely refer to the same model."""
+
+    normalized_expected = _normalize_model_identifier(expected)
+    normalized_actual = _normalize_model_identifier(actual)
+    if not normalized_expected or not normalized_actual:
+        return False
+    if normalized_expected == normalized_actual:
+        return True
+
+    expected_tail = normalized_expected.rsplit("/", 1)[-1]
+    actual_tail = normalized_actual.rsplit("/", 1)[-1]
+    return bool(expected_tail) and expected_tail == actual_tail
+
+
+def _iter_values_for_keys(source: Any, target_keys: set[str]):
+    """Yield every nested value whose normalized key matches one target key."""
+
+    if isinstance(source, dict):
+        for key, value in source.items():
+            if _normalize_key_name(key) in target_keys:
+                yield value
+            yield from _iter_values_for_keys(value, target_keys)
+        return
+
+    if isinstance(source, list):
+        for item in source:
+            yield from _iter_values_for_keys(item, target_keys)
+
+
+def _extract_named_values(value: Any) -> set[str]:
+    """Extract normalized names from capability-like metadata payloads."""
+
+    if isinstance(value, str):
+        normalized = _normalize_key_name(value)
+        return {normalized} if normalized else set()
+
+    if isinstance(value, dict):
+        normalized_values: set[str] = set()
+        for key, child in value.items():
+            normalized_key = _normalize_key_name(key)
+            if isinstance(child, bool):
+                if child and normalized_key:
+                    normalized_values.add(normalized_key)
+                continue
+
+            if isinstance(child, (str, int, float)) and normalized_key in {
+                "ability",
+                "capability",
+                "feature",
+                "id",
+                "kind",
+                "modality",
+                "name",
+                "parameter",
+                "type",
+                "value",
+            }:
+                normalized_child = _normalize_key_name(child)
+                if normalized_child:
+                    normalized_values.add(normalized_child)
+
+            normalized_values.update(_extract_named_values(child))
+        return normalized_values
+
+    if isinstance(value, list):
+        normalized_values: set[str] = set()
+        for child in value:
+            normalized_values.update(_extract_named_values(child))
+        return normalized_values
+
+    return set()
+
+
+def _extract_capability_tokens(raw_model: dict[str, Any]) -> set[str]:
+    """Return normalized feature tokens exposed by one model payload."""
+
+    capability_tokens: set[str] = set()
+    for container in _iter_values_for_keys(
+        raw_model,
+        {
+            "abilities",
+            "ability",
+            "capabilities",
+            "features",
+            "feature_flags",
+            "input_modalities",
+            "modalities",
+            "output_modalities",
+            "supported_modalities",
+            "tags",
+            "traits",
+        },
+    ):
+        capability_tokens.update(_extract_named_values(container))
+    return capability_tokens
+
+
+def _extract_feature_flag(raw_model: dict[str, Any], feature_names: set[str]) -> bool | None:
+    """Return an explicit boolean capability flag when the payload exposes one."""
+
+    normalized_targets = {_normalize_key_name(name) for name in feature_names}
+    matched_values: list[bool] = []
+
+    def visit(source: Any) -> None:
+        if isinstance(source, dict):
+            for key, value in source.items():
+                normalized_key = _normalize_key_name(key)
+                if normalized_key in normalized_targets:
+                    if isinstance(value, dict):
+                        availability_flags = [
+                            _bool_from_value(value.get(flag_key), default=False)
+                            for flag_key in ("supported", "available")
+                            if flag_key in value
+                        ]
+                        if availability_flags:
+                            matched_values.append(any(availability_flags))
+                        elif any(
+                            _normalize_key_name(child_key) not in {"enabled", "value", "default", "default_value"}
+                            for child_key in value.keys()
+                        ):
+                            matched_values.append(True)
+                        elif "enabled" in value:
+                            matched_values.append(_bool_from_value(value.get("enabled"), default=False))
+                        elif "value" in value:
+                            matched_values.append(_bool_from_value(value.get("value"), default=False))
+                        else:
+                            matched_values.append(bool(value))
+                    else:
+                        matched_values.append(_bool_from_value(value, default=False))
+                visit(value)
+            return
+
+        if isinstance(source, list):
+            for item in source:
+                visit(item)
+
+    visit(raw_model)
+
+    if not matched_values:
+        return None
+    return any(matched_values)
+
+
+def _extract_defaults_from_container(container: Any) -> dict[str, Any]:
+    """Extract parameter defaults from one OpenAI-compatible config container."""
+
+    if not isinstance(container, dict):
+        return {}
+
+    defaults: dict[str, Any] = {}
+    properties = container.get("properties")
+    if isinstance(properties, dict):
+        defaults = _merge_nested_dicts(defaults, _extract_defaults_from_container(properties))
+
+    for key, value in container.items():
+        normalized_key = _normalize_key_name(key)
+        if normalized_key in {
+            "description",
+            "enum",
+            "items",
+            "options",
+            "properties",
+            "required",
+            "schema",
+            "title",
+            "type",
+            "values",
+        }:
+            continue
+
+        if isinstance(value, dict):
+            if "default" in value:
+                defaults[str(key)] = _to_plain_data(value.get("default"))
+                continue
+            if "defaultValue" in value:
+                defaults[str(key)] = _to_plain_data(value.get("defaultValue"))
+                continue
+            if "value" in value and not any(
+                _normalize_key_name(child_key) in {"description", "enum", "options", "title", "type", "values"}
+                for child_key in value.keys()
+            ):
+                defaults[str(key)] = _to_plain_data(value.get("value"))
+                continue
+            continue
+
+        if isinstance(value, (str, int, float, bool, list)):
+            defaults[str(key)] = _to_plain_data(value)
+
+    cleaned_defaults = _clean_nested_config(defaults)
+    return cleaned_defaults if isinstance(cleaned_defaults, dict) else {}
+
+
+def _extract_option_values(definition: Any) -> list[str]:
+    """Extract enumerated option values from one parameter definition."""
+
+    raw_options: Any = []
+    if isinstance(definition, dict):
+        for key in ("enum", "options", "values", "allowed_values", "allowedValues"):
+            candidate = definition.get(key)
+            if isinstance(candidate, list):
+                raw_options = candidate
+                break
+    elif isinstance(definition, list):
+        raw_options = definition
+
+    normalized_options: list[str] = []
+    if not isinstance(raw_options, list):
+        return normalized_options
+
+    for option in raw_options:
+        if isinstance(option, dict):
+            option_value = option.get("value", option.get("id", option.get("name", option.get("key"))))
+        else:
+            option_value = option
+        normalized_value = str(option_value or "").strip().lower()
+        if not normalized_value or normalized_value in normalized_options:
+            continue
+        normalized_options.append(normalized_value)
+
+    return normalized_options
+
+
+def _extract_reasoning_metadata(raw_model: dict[str, Any]) -> tuple[Any | None, Any | None, list[str]]:
+    """Return reasoning toggle default, level default, and supported levels."""
+
+    toggle_default = None
+    level_default = None
+    level_options: list[str] = []
+
+    for container in _iter_values_for_keys(raw_model, {"reasoning", "thinking"}):
+        if not isinstance(container, dict):
+            continue
+
+        for key in ("enabled", "available", "supported", "value"):
+            if toggle_default is None and key in container:
+                toggle_default = container.get(key)
+                break
+
+        if toggle_default is None:
+            for key in ("default", "defaultValue"):
+                if key not in container:
+                    continue
+                default_value = container.get(key)
+                normalized_default = str(default_value or "").strip().lower()
+                if normalized_default in {"on", "off", "true", "false"}:
+                    toggle_default = normalized_default in {"on", "true"}
+                    break
+
+        for key in ("effort", "level", "reasoning_effort", "thinking_level"):
+            candidate = container.get(key)
+            if candidate is None:
+                continue
+
+            if isinstance(candidate, dict):
+                if level_default is None:
+                    for default_key in ("default", "defaultValue", "value"):
+                        if default_key in candidate:
+                            level_default = candidate.get(default_key)
+                            break
+                if not level_options:
+                    level_options = _extract_option_values(candidate)
+            else:
+                if level_default is None:
+                    level_default = candidate
+
+        if not level_options:
+            for key in ("levels", "options", "values", "allowed_options", "allowedValues"):
+                candidate = container.get(key)
+                if candidate is None:
+                    continue
+                level_options = _extract_option_values(candidate)
+                if level_options:
+                    break
+
+        normalized_level_options = [str(option).strip().lower() for option in level_options if str(option).strip()]
+        if normalized_level_options and set(normalized_level_options).issubset({"on", "off", "true", "false"}):
+            if toggle_default is None:
+                normalized_default = str(container.get("default", container.get("defaultValue", "")) or "").strip().lower()
+                if normalized_default in {"on", "true"}:
+                    toggle_default = True
+                elif normalized_default in {"off", "false"}:
+                    toggle_default = False
+            level_options = []
+            level_default = None
+
+    return toggle_default, level_default, level_options
+
+
+def _extract_defaults(raw_model: dict[str, Any]) -> dict[str, Any]:
+    """Return normalized default runtime options exposed by one model."""
+
+    defaults: dict[str, Any] = {}
+
+    for container in _iter_values_for_keys(raw_model, DEFAULT_CONTAINER_KEYS):
+        extracted = _extract_defaults_from_container(container)
+        if extracted:
+            defaults = _merge_nested_dicts(defaults, extracted)
+
+    reasoning_toggle_default, reasoning_level_default, _reasoning_level_options = _extract_reasoning_metadata(raw_model)
+    if reasoning_toggle_default is not None and "think" not in defaults:
+        defaults["think"] = reasoning_toggle_default
+    if reasoning_level_default is not None and "reasoning_effort" not in defaults:
+        defaults["reasoning_effort"] = reasoning_level_default
+
+    cleaned_defaults = _clean_nested_config(defaults)
+    return cleaned_defaults if isinstance(cleaned_defaults, dict) else {}
+
+
+def _extract_parameter_names_from_container(container: Any) -> set[str]:
+    """Extract parameter identifiers from one OpenAI-compatible schema container."""
+
+    parameter_names: set[str] = set()
+
+    if isinstance(container, dict):
+        properties = container.get("properties")
+        if isinstance(properties, dict):
+            parameter_names.update(_extract_parameter_names_from_container(properties))
+
+        for key, value in container.items():
+            normalized_key = _normalize_key_name(key)
+            if normalized_key in {
+                "default",
+                "default_value",
+                "description",
+                "enum",
+                "items",
+                "options",
+                "properties",
+                "required",
+                "schema",
+                "title",
+                "type",
+                "values",
+            }:
+                if normalized_key in {"schema", "items"}:
+                    parameter_names.update(_extract_parameter_names_from_container(value))
+                continue
+
+            if isinstance(value, dict):
+                nested_keys = {_normalize_key_name(child_key) for child_key in value.keys()}
+                if nested_keys & {"default", "default_value", "description", "enum", "options", "properties", "type", "values"}:
+                    parameter_names.add(str(key))
+                    parameter_names.update(_extract_parameter_names_from_container(value.get("properties")))
+                    continue
+                parameter_names.update(_extract_parameter_names_from_container(value))
+                continue
+
+            if isinstance(value, list):
+                if value and all(isinstance(item, (str, dict)) for item in value):
+                    parameter_names.add(str(key))
+                for item in value:
+                    parameter_names.update(_extract_parameter_names_from_container(item))
+                continue
+
+            if isinstance(value, (str, int, float, bool)):
+                parameter_names.add(str(key))
+
+        return parameter_names
+
+    if isinstance(container, list):
+        for item in container:
+            if isinstance(item, (str, int, float)):
+                parameter_name = str(item).strip()
+                if parameter_name:
+                    parameter_names.add(parameter_name)
+                continue
+            if not isinstance(item, dict):
+                continue
+            parameter_name = item.get("name", item.get("id", item.get("key", item.get("parameter"))))
+            if parameter_name:
+                parameter_names.add(str(parameter_name))
+            for key in ("properties", "schema", "items"):
+                parameter_names.update(_extract_parameter_names_from_container(item.get(key)))
+
+    return parameter_names
+
+
+def _extract_supported_parameter_names(raw_model: dict[str, Any], defaults: dict[str, Any]) -> set[str]:
+    """Return normalized runtime parameter names exposed by one model payload."""
+
+    parameter_names = {str(key) for key in defaults.keys()}
+    for container in _iter_values_for_keys(raw_model, PARAMETER_CONTAINER_KEYS):
+        parameter_names.update(_extract_parameter_names_from_container(container))
+    return {name for name in parameter_names if _normalize_key_name(name)}
+
+
+def _extract_parameter_option_values(raw_model: dict[str, Any], parameter_names: set[str]) -> list[str]:
+    """Extract one parameter's supported option values from nested model metadata."""
+
+    normalized_targets = {_normalize_key_name(name) for name in parameter_names if _normalize_key_name(name)}
+    collected_options: list[str] = []
+
+    def register_options(definition: Any) -> None:
+        for option in _extract_option_values(definition):
+            if option not in collected_options:
+                collected_options.append(option)
+
+    def visit(source: Any) -> None:
+        if isinstance(source, dict):
+            for key, value in source.items():
+                if _normalize_key_name(key) in normalized_targets:
+                    register_options(value)
+                visit(value)
+            return
+
+        if isinstance(source, list):
+            for item in source:
+                if isinstance(item, dict):
+                    parameter_name = item.get("name", item.get("id", item.get("key", item.get("parameter"))))
+                    if _normalize_key_name(parameter_name) in normalized_targets:
+                        register_options(item)
+                visit(item)
+
+    visit(raw_model)
+    return collected_options
+
+
+def _resolve_parameter_name(
+    parameter_names: set[str],
+    candidate_names: set[str],
+    default_name: str,
+) -> str:
+    """Resolve one provider parameter name using exact and suffix matching."""
+
+    normalized_map = {
+        _normalize_key_name(parameter_name): str(parameter_name)
+        for parameter_name in parameter_names
+        if _normalize_key_name(parameter_name)
+    }
+
+    for candidate_name in candidate_names:
+        resolved = normalized_map.get(_normalize_key_name(candidate_name))
+        if resolved:
+            return resolved
+
+    for normalized_name, original_name in normalized_map.items():
+        for candidate_name in candidate_names:
+            normalized_candidate = _normalize_key_name(candidate_name)
+            if normalized_candidate and normalized_name.endswith(normalized_candidate):
+                return original_name
+
+    return default_name
+
+
+def _extract_context_length(raw_model: dict[str, Any]) -> int:
+    """Return the best context-length value visible in the model metadata."""
+
+    context_values: list[int] = []
+    for value in _iter_values_for_keys(
+        raw_model,
+        {
+            "context_length",
+            "context_window",
+            "input_token_limit",
+            "max_context_length",
+            "max_context_window",
+            "max_input_tokens",
+            "max_tokens",
+        },
+    ):
+        if isinstance(value, dict):
+            for key in ("limit", "max", "value"):
+                numeric_value = _coerce_positive_int(value.get(key))
+                if numeric_value is not None:
+                    context_values.append(numeric_value)
+        else:
+            numeric_value = _coerce_positive_int(value)
+            if numeric_value is not None:
+                context_values.append(numeric_value)
+
+    return max(context_values) if context_values else 8192
+
+
+def _iter_companion_metadata_roots() -> list[str]:
+    """Return candidate companion API roots derived from the configured base URL."""
+
+    configured_base_url = str(settings.get_engine_url("openai") or "").strip().rstrip("/")
+    if not configured_base_url:
+        return []
+
+    roots = [configured_base_url]
+    try:
+        parsed = urllib.parse.urlsplit(configured_base_url)
+    except ValueError:
+        return roots
+
+    path = parsed.path.rstrip("/")
+    if re.search(r"/v\d+$", path, flags=re.IGNORECASE):
+        trimmed_path = re.sub(r"/v\d+$", "", path, flags=re.IGNORECASE)
+        companion_root = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, trimmed_path or "/", "", "")).rstrip("/")
+        if companion_root and companion_root not in roots:
+            roots.append(companion_root)
+
+    return roots
+
+
+def _fetch_json_url(url: str) -> dict[str, Any] | None:
+    """Return parsed JSON from one URL when it resolves successfully."""
+
+    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8", "replace"))
+    except (OSError, ValueError, urllib.error.URLError, urllib.error.HTTPError):
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
+
+def _extract_model_catalog_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize one companion catalog payload into a list of model records."""
+
+    raw_items: Any = payload.get("models", payload.get("data", []))
+    if not isinstance(raw_items, list):
+        return []
+
+    normalized_items: list[dict[str, Any]] = []
+    for raw_item in raw_items:
+        item = _to_plain_data(raw_item)
+        if isinstance(item, dict):
+            normalized_items.append(item)
+    return normalized_items
+
+
+def _load_companion_model_catalog(url: str) -> list[dict[str, Any]]:
+    """Load and cache one companion model catalog endpoint."""
+
+    with _metadata_cache_lock:
+        if url in _supplemental_models_cache:
+            return list(_supplemental_models_cache[url])
+
+    payload = _fetch_json_url(url)
+    if payload is None:
+        return []
+
+    models = _extract_model_catalog_items(payload)
+
+    with _metadata_cache_lock:
+        _supplemental_models_cache[url] = list(models)
+    return models
+
+
+def _get_companion_model_payload(model_name: str) -> dict[str, Any]:
+    """Return supplemental read-only metadata from companion model catalogs."""
+
+    for root in _iter_companion_metadata_roots():
+        for relative_path in ("/api/v1/models", "/api/v0/models"):
+            models = _load_companion_model_catalog(f"{root}{relative_path}")
+            for payload in models:
+                candidate_name = payload.get("id", payload.get("key", payload.get("model", payload.get("name"))))
+                if _model_identifiers_match(model_name, candidate_name):
+                    return payload
+
+    return {}
+
+
+def _get_model_payload(client: Any, model_name: str) -> dict[str, Any]:
+    """Return the richest model metadata available from the remote endpoint."""
+
+    listed_match: dict[str, Any] = {}
+    try:
+        listed_models = list(getattr(client.models.list(), "data", []) or [])
+    except Exception:
+        listed_models = []
+
+    for listed_model in listed_models:
+        payload = _to_plain_data(listed_model)
+        if not isinstance(payload, dict):
+            continue
+
+        candidate_name = payload.get("id", payload.get("model", payload.get("name")))
+        if _model_identifiers_match(model_name, candidate_name):
+            listed_match = payload
+            break
+
+    retrieved_payload: dict[str, Any] = {}
+    retrieve_error: Exception | None = None
+    try:
+        raw_model = client.models.retrieve(model_name)
+        payload = _to_plain_data(raw_model)
+        if isinstance(payload, dict):
+            retrieved_payload = payload
+    except Exception as exc:
+        retrieve_error = exc
+
+    if retrieve_error is not None and not listed_match:
+        logger.error("[OpenAI API] Error fetching settings for %s: %s", model_name, retrieve_error)
+        raise retrieve_error
+
+    companion_payload = _get_companion_model_payload(model_name)
+    merged_payload = _merge_nested_dicts(listed_match, companion_payload)
+    merged_payload = _merge_nested_dicts(merged_payload, retrieved_payload)
+    if not merged_payload:
+        merged_payload = {"id": model_name, "model": model_name}
+    return merged_payload
+
+
 def _get_client():
     """Create an OpenAI-compatible client using the configured base URL."""
 
@@ -48,14 +862,206 @@ def _get_client():
     except ImportError as exc:
         raise ImportError("The 'openai' package is required for OpenAI-compatible support.") from exc
 
-    client_kwargs = {
-        "base_url": settings.get_engine_url("openai"),
-        "api_key": settings.get_openai_api_key() or "not-needed",
-    }
+    return OpenAI(
+        base_url=settings.get_engine_url("openai"),
+        api_key=settings.get_openai_api_key() or "not-needed",
+    )
 
-    return OpenAI(**client_kwargs)
 
-# Convert chat messages
+def _sanitize_generated_text(text: str) -> str:
+    """Drop service control tokens that should never reach the chat UI."""
+
+    cleaned = str(text or "")
+    for pattern in CONTROL_TOKEN_PATTERNS:
+        cleaned = pattern.sub("", cleaned)
+    return cleaned
+
+
+def _extract_text_fragment(value: Any, *, reasoning: bool) -> str:
+    """Extract text or reasoning text from one OpenAI-compatible payload fragment."""
+
+    if value is None:
+        return ""
+
+    if isinstance(value, str):
+        return _sanitize_generated_text(value)
+
+    plain_value = _to_plain_data(value)
+    if isinstance(plain_value, str):
+        return _sanitize_generated_text(plain_value)
+
+    if isinstance(plain_value, list):
+        return "".join(_extract_text_fragment(item, reasoning=reasoning) for item in plain_value)
+
+    if not isinstance(plain_value, dict):
+        return ""
+
+    item_type = _normalize_key_name(
+        plain_value.get("type", plain_value.get("content_type", plain_value.get("kind", "")))
+    )
+    is_reasoning_item = "reasoning" in item_type or "thinking" in item_type
+
+    if reasoning and not is_reasoning_item:
+        for key in (
+            "reasoning",
+            "reasoning_content",
+            "reasoning_details",
+            "reasoning_text",
+            "thinking",
+            "thinking_text",
+        ):
+            if key not in plain_value:
+                continue
+            extracted = _extract_text_fragment(plain_value[key], reasoning=True)
+            if extracted:
+                return extracted
+        return ""
+
+    if not reasoning and is_reasoning_item:
+        return ""
+
+    preferred_keys = (
+        (
+            "reasoning",
+            "reasoning_content",
+            "reasoning_details",
+            "reasoning_text",
+            "thinking",
+            "thinking_text",
+            "text",
+            "content",
+            "value",
+        )
+        if reasoning
+        else ("text", "content", "value")
+    )
+
+    for key in preferred_keys:
+        if key not in plain_value:
+            continue
+        if reasoning and key in {"text", "content", "value"} and item_type and not is_reasoning_item:
+            continue
+        extracted = _extract_text_fragment(plain_value[key], reasoning=reasoning)
+        if extracted:
+            return extracted
+
+    for key in ("parts", "message", "delta"):
+        if key not in plain_value:
+            continue
+        extracted = _extract_text_fragment(plain_value[key], reasoning=reasoning)
+        if extracted:
+            return extracted
+
+    return ""
+
+
+def _extract_content_text_from_payload(payload: dict[str, Any]) -> str:
+    """Return visible content text from one choice delta or message payload."""
+
+    for key in ("content", "text", "output_text"):
+        if key not in payload:
+            continue
+        extracted = _extract_text_fragment(payload.get(key), reasoning=False)
+        if extracted:
+            return extracted
+    return ""
+
+
+def _extract_reasoning_text_from_payload(payload: dict[str, Any]) -> str:
+    """Return reasoning text from one choice delta or message payload."""
+
+    for key in (
+        "reasoning",
+        "reasoning_content",
+        "reasoning_details",
+        "reasoning_text",
+        "thinking",
+        "thinking_text",
+    ):
+        if key not in payload:
+            continue
+        extracted = _extract_text_fragment(payload.get(key), reasoning=True)
+        if extracted:
+            return extracted
+
+    raw_content = payload.get("content")
+    if isinstance(raw_content, (dict, list)):
+        return _extract_text_fragment(raw_content, reasoning=True)
+    return ""
+
+
+def _extract_reasoning_type(payload: dict[str, Any]) -> str | None:
+    """Return the reasoning-fragment type when the backend exposes one."""
+
+    for key in ("reasoning_type", "reasoningType", "type"):
+        raw_value = payload.get(key)
+        normalized = _normalize_key_name(raw_value)
+        if not normalized:
+            continue
+        if normalized in {"reasoning", "reasoning_end_tag", "reasoning_start_tag"}:
+            return str(raw_value)
+    return None
+
+
+def _normalize_tool_call_arguments(raw_arguments: Any) -> dict[str, Any]:
+    """Return one tool-call arguments payload as a dictionary."""
+
+    if raw_arguments is None:
+        return {}
+    if isinstance(raw_arguments, dict):
+        return raw_arguments
+    if isinstance(raw_arguments, str):
+        stripped_value = raw_arguments.strip()
+        if not stripped_value:
+            return {}
+        try:
+            parsed_value = json.loads(stripped_value)
+        except (TypeError, json.JSONDecodeError):
+            return {"value": stripped_value}
+        return parsed_value if isinstance(parsed_value, dict) else {"value": parsed_value}
+    return {"value": raw_arguments}
+
+
+def _merge_tool_call_delta(tool_calls_by_index: dict[int, dict[str, Any]], raw_tool_call: dict[str, Any]) -> None:
+    """Merge one streamed tool-call fragment into the accumulated call set."""
+
+    try:
+        index = int(raw_tool_call.get("index", len(tool_calls_by_index)))
+    except (TypeError, ValueError):
+        index = len(tool_calls_by_index)
+
+    entry = tool_calls_by_index.setdefault(
+        index,
+        {
+            "id": "",
+            "type": "function",
+            "function": {"name": "", "arguments": ""},
+        },
+    )
+
+    tool_id = raw_tool_call.get("id")
+    if tool_id:
+        entry["id"] = str(tool_id)
+
+    tool_type = raw_tool_call.get("type")
+    if tool_type:
+        entry["type"] = str(tool_type)
+
+    function_payload = raw_tool_call.get("function")
+    if not isinstance(function_payload, dict):
+        function_payload = {}
+
+    function_name = function_payload.get("name")
+    if function_name:
+        entry["function"]["name"] += str(function_name)
+
+    raw_arguments = function_payload.get("arguments")
+    if isinstance(raw_arguments, dict):
+        raw_arguments = json.dumps(raw_arguments, ensure_ascii=False)
+    if raw_arguments:
+        entry["function"]["arguments"] += str(raw_arguments)
+
+
 def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert ASLM chat messages into OpenAI-compatible payloads."""
 
@@ -67,7 +1073,16 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
         images = message.get("images") or []
         image_mime_types = message.get("image_mime_types") or []
 
-        # Image inputs require multipart content instead of a plain string.
+        if role == "tool":
+            payload.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": message.get("tool_call_id", message.get("name", "call")),
+                    "content": content,
+                }
+            )
+            continue
+
         if images:
             content_parts: list[dict[str, Any]] = []
             if content:
@@ -84,15 +1099,22 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
                     }
                 )
 
-            payload.append({"role": role, "content": content_parts})
-            continue
+            entry: dict[str, Any] = {"role": role, "content": content_parts}
+        else:
+            entry = {"role": role, "content": content}
 
-        payload.append({"role": role, "content": content})
+        if role == "assistant" and message.get("tool_calls"):
+            entry["tool_calls"] = message["tool_calls"]
+
+        payload.append(entry)
 
     return payload
 
-# Split request options
-def _build_openai_request_options(options: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+
+def _build_openai_request_options(
+    options: dict[str, Any],
+    **kwargs: Any,
+) -> dict[str, Any]:
     """Split generic generation options into direct kwargs and ``extra_body``."""
 
     direct_options: dict[str, Any] = {}
@@ -105,9 +1127,20 @@ def _build_openai_request_options(options: dict[str, Any], **kwargs: Any) -> dic
         else:
             extra_body[raw_key] = raw_value
 
+    think = kwargs.get("think")
     think_level = kwargs.get("think_level")
-    if think_level and "reasoning_effort" not in direct_options and "reasoning_effort" not in extra_body:
-        direct_options["reasoning_effort"] = think_level
+    think_param_name = str(kwargs.get("think_param_name", "think") or "think")
+    think_level_param_name = str(kwargs.get("think_level_param_name", "reasoning_effort") or "reasoning_effort")
+
+    if think is not None and think_param_name:
+        normalized_think_key = DIRECT_OPTION_ALIASES.get(think_param_name, think_param_name)
+        target_options = direct_options if normalized_think_key in DIRECT_OPTION_KEYS else extra_body
+        target_options.setdefault(normalized_think_key, think)
+
+    if think_level is not None and think_level_param_name:
+        normalized_level_key = DIRECT_OPTION_ALIASES.get(think_level_param_name, think_level_param_name)
+        target_options = direct_options if normalized_level_key in DIRECT_OPTION_KEYS else extra_body
+        target_options.setdefault(normalized_level_key, think_level)
 
     if extra_body:
         merged_extra_body = dict(direct_options.get("extra_body", {}) or {})
@@ -117,86 +1150,604 @@ def _build_openai_request_options(options: dict[str, Any], **kwargs: Any) -> dic
     return direct_options
 
 
-# List remote models
+def _build_tool_event(tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]) -> dict[str, Any]:
+    """Serialize one tool invocation so the UI can render it during streaming."""
+
+    alias = tool_call.get("name", "")
+    lookup_entry = tool_lookup.get(alias, {})
+    server_definition = lookup_entry.get("server", {})
+    tool_definition = lookup_entry.get("tool", {})
+
+    return {
+        "alias": alias,
+        "server_id": server_definition.get("id") or "",
+        "server_name": server_definition.get("name") or server_definition.get("id") or "",
+        "tool_id": tool_definition.get("id") or alias,
+        "tool_name": tool_definition.get("name") or alias,
+        "arguments": tool_call.get("arguments") or {},
+    }
+
+
+def _build_tool_message(
+    tool_name: str,
+    tool_call_id: str,
+    content: str | dict[str, Any],
+    tool_event: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a tool message payload for the OpenAI-compatible conversation."""
+
+    payload: dict[str, Any] = {
+        "role": "tool",
+        "tool_call_id": tool_call_id,
+        "name": tool_name,
+        "content": content if isinstance(content, str) else str(content),
+    }
+
+    if tool_event:
+        payload.update(
+            {
+                "alias": tool_event.get("alias") or tool_name,
+                "server_id": tool_event.get("server_id") or "",
+                "server_name": tool_event.get("server_name") or "",
+                "tool_id": tool_event.get("tool_id") or tool_name,
+                "tool_display_name": tool_event.get("tool_name") or tool_name,
+                "arguments": tool_event.get("arguments") or {},
+            }
+        )
+
+    return payload
+
+
+class _ReasoningTextParser:
+    """Split streamed reasoning text from visible content."""
+
+    def __init__(self, tag_pairs: tuple[tuple[str, str], ...] = REASONING_TAG_PAIRS) -> None:
+        self._start_tags = [start for start, _end in tag_pairs]
+        self._end_tags = [end for _start, end in tag_pairs]
+        self._in_reasoning = False
+        self._pending = ""
+
+    @staticmethod
+    def _find_next_tag(source: str, tags: list[str]) -> tuple[int, str] | None:
+        next_match: tuple[int, str] | None = None
+        for tag in tags:
+            index = source.find(tag)
+            if index == -1:
+                continue
+            if next_match is None or index < next_match[0]:
+                next_match = (index, tag)
+        return next_match
+
+    @staticmethod
+    def _split_possible_tag_prefix(source: str, tags: list[str]) -> tuple[str, str]:
+        reserve = 0
+        for tag in tags:
+            max_check = min(len(tag) - 1, len(source))
+            for size in range(max_check, 0, -1):
+                if source.endswith(tag[:size]):
+                    reserve = max(reserve, size)
+                    break
+        if reserve:
+            return source[:-reserve], source[-reserve:]
+        return source, ""
+
+    def feed(self, content: str, reasoning_type: str | None = None) -> tuple[str, str]:
+        """Return parsed ``(thinking, visible_content)`` fragments."""
+
+        thinking_parts: list[str] = []
+        content_parts: list[str] = []
+
+        normalized_reasoning_type = _normalize_key_name(reasoning_type)
+        if normalized_reasoning_type == "reasoning_start_tag":
+            self._in_reasoning = True
+            return "", ""
+        if normalized_reasoning_type == "reasoning_end_tag":
+            self._in_reasoning = False
+            return "", ""
+        if normalized_reasoning_type == "reasoning":
+            return str(content or ""), ""
+
+        source = f"{self._pending}{content or ''}"
+        self._pending = ""
+
+        while source:
+            tags = self._end_tags if self._in_reasoning else self._start_tags
+            next_tag = self._find_next_tag(source, tags)
+            if next_tag is None:
+                visible, pending = self._split_possible_tag_prefix(source, tags)
+                if self._in_reasoning:
+                    thinking_parts.append(visible)
+                else:
+                    content_parts.append(visible)
+                self._pending = pending
+                break
+
+            index, tag = next_tag
+            chunk = source[:index]
+            if chunk:
+                if self._in_reasoning:
+                    thinking_parts.append(chunk)
+                else:
+                    content_parts.append(chunk)
+            source = source[index + len(tag):]
+            self._in_reasoning = not self._in_reasoning
+
+        return "".join(thinking_parts), "".join(content_parts)
+
+    def flush(self) -> tuple[str, str]:
+        """Flush any pending partial fragment at the end of the stream."""
+
+        pending = self._pending
+        self._pending = ""
+        if not pending:
+            return "", ""
+        if self._in_reasoning:
+            return pending, ""
+        return "", pending
+
+
+def _parse_payload_fragments(
+    parser: _ReasoningTextParser,
+    payload: dict[str, Any],
+) -> tuple[str, str]:
+    """Parse visible and reasoning fragments from one choice payload."""
+
+    thinking_parts: list[str] = []
+    content_parts: list[str] = []
+
+    reasoning_fragment = _extract_reasoning_text_from_payload(payload)
+    if reasoning_fragment:
+        thinking_part, content_part = parser.feed(reasoning_fragment, reasoning_type="reasoning")
+        if thinking_part:
+            thinking_parts.append(thinking_part)
+        if content_part:
+            content_parts.append(content_part)
+
+    content_fragment = _extract_content_text_from_payload(payload)
+    if content_fragment:
+        thinking_part, content_part = parser.feed(
+            content_fragment,
+            reasoning_type=_extract_reasoning_type(payload),
+        )
+        if thinking_part:
+            thinking_parts.append(thinking_part)
+        if content_part:
+            content_parts.append(content_part)
+
+    return "".join(thinking_parts), "".join(content_parts)
+
+
+def _stream_openai_round(
+    client: Any,
+    model_name: str,
+    conversation: list[dict[str, Any]],
+    options: dict[str, Any],
+    *,
+    tools: list[dict[str, Any]] | None = None,
+    stream: bool = True,
+):
+    """Stream one OpenAI-compatible round and return the assembled assistant message."""
+
+    request_kwargs: dict[str, Any] = dict(options)
+    if tools:
+        request_kwargs["tools"] = tools
+        request_kwargs["tool_choice"] = "auto"
+
+    assistant_content = ""
+    assistant_thinking = ""
+    tool_calls_by_index: dict[int, dict[str, Any]] = {}
+    parser = _ReasoningTextParser()
+    yielded_chunk = False
+
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=conversation,
+        stream=stream,
+        **request_kwargs,
+    )
+
+    if stream:
+        for raw_chunk in response:
+            if _abort_event.is_set():
+                break
+
+            chunk_payload = _to_plain_data(raw_chunk)
+            choices = chunk_payload.get("choices", []) if isinstance(chunk_payload, dict) else []
+            for choice in choices if isinstance(choices, list) else []:
+                if not isinstance(choice, dict):
+                    continue
+
+                delta_payload = _to_plain_data(choice.get("delta", {}))
+                if not isinstance(delta_payload, dict):
+                    delta_payload = {}
+
+                thinking_part, content_part = _parse_payload_fragments(parser, delta_payload)
+                if thinking_part or content_part:
+                    yielded_chunk = True
+                    assistant_content += content_part
+                    assistant_thinking += thinking_part
+                    payload = {"role": "assistant", "content": content_part}
+                    if thinking_part:
+                        payload["thinking"] = thinking_part
+                    yield {"message": payload}
+
+                raw_tool_calls = delta_payload.get("tool_calls", delta_payload.get("toolCalls", []))
+                if isinstance(raw_tool_calls, list):
+                    for raw_tool_call in raw_tool_calls:
+                        normalized_tool_call = _to_plain_data(raw_tool_call)
+                        if isinstance(normalized_tool_call, dict):
+                            _merge_tool_call_delta(tool_calls_by_index, normalized_tool_call)
+    else:
+        response_payload = _to_plain_data(response)
+        choices = response_payload.get("choices", []) if isinstance(response_payload, dict) else []
+        for choice in choices if isinstance(choices, list) else []:
+            if not isinstance(choice, dict):
+                continue
+
+            message_payload = _to_plain_data(choice.get("message", {}))
+            if not isinstance(message_payload, dict):
+                message_payload = {}
+
+            thinking_part, content_part = _parse_payload_fragments(parser, message_payload)
+            if thinking_part or content_part:
+                yielded_chunk = True
+                assistant_content += content_part
+                assistant_thinking += thinking_part
+                payload = {"role": "assistant", "content": content_part}
+                if thinking_part:
+                    payload["thinking"] = thinking_part
+                yield {"message": payload}
+
+            raw_tool_calls = message_payload.get("tool_calls", message_payload.get("toolCalls", []))
+            if isinstance(raw_tool_calls, list):
+                for index, raw_tool_call in enumerate(raw_tool_calls):
+                    normalized_tool_call = _to_plain_data(raw_tool_call)
+                    if isinstance(normalized_tool_call, dict) and "index" not in normalized_tool_call:
+                        normalized_tool_call["index"] = index
+                    if isinstance(normalized_tool_call, dict):
+                        _merge_tool_call_delta(tool_calls_by_index, normalized_tool_call)
+
+    tail_thinking, tail_content = parser.flush()
+    if tail_thinking or tail_content:
+        yielded_chunk = True
+        assistant_content += tail_content
+        assistant_thinking += tail_thinking
+        payload = {"role": "assistant", "content": tail_content}
+        if tail_thinking:
+            payload["thinking"] = tail_thinking
+        yield {"message": payload}
+
+    assistant_message: dict[str, Any] = {"role": "assistant", "content": assistant_content}
+    if assistant_thinking:
+        assistant_message["thinking"] = assistant_thinking
+
+    assembled_tool_calls = [tool_calls_by_index[index] for index in sorted(tool_calls_by_index)]
+    if assembled_tool_calls:
+        assistant_message["tool_calls"] = assembled_tool_calls
+
+    if not yielded_chunk and (assistant_content or assistant_thinking):
+        yield {"message": assistant_message}
+
+    return assistant_message
+
+
+def _yield_stream_round(round_stream):
+    """Yield every chunk from a round stream and return the final assistant message."""
+
+    while True:
+        try:
+            yield next(round_stream)
+        except StopIteration as stop:
+            return stop.value or {"role": "assistant", "content": ""}
+
+
+def _run_tool_loop(
+    client: Any,
+    model_name: str,
+    messages: list[dict[str, Any]],
+    options: dict[str, Any],
+    tool_server_ids: list[str],
+    tool_context: dict[str, Any],
+    *,
+    stream: bool = True,
+):
+    """Resolve local tools through OpenAI-compatible function calling."""
+
+    tools, tool_lookup = tool_registry.build_ollama_tools(
+        tool_server_ids,
+        engine="openai",
+        model_name=model_name,
+    )
+
+    if not tools:
+        yield from _yield_stream_round(
+            _stream_openai_round(
+                client,
+                model_name,
+                _build_openai_messages(messages),
+                options,
+                stream=stream,
+            )
+        )
+        return
+
+    conversation = _build_openai_messages(messages)
+
+    for round_index in range(MAX_TOOL_ROUNDS):
+        assistant_message = yield from _yield_stream_round(
+            _stream_openai_round(
+                client,
+                model_name,
+                conversation,
+                options,
+                tools=tools,
+                stream=stream,
+            )
+        )
+        conversation.append(assistant_message)
+
+        raw_tool_calls = assistant_message.get("tool_calls") or []
+        if not raw_tool_calls:
+            yield {"transcript_message": assistant_message}
+            return
+
+        tool_calls: list[dict[str, Any]] = []
+        for raw_tool_call in raw_tool_calls:
+            if not isinstance(raw_tool_call, dict):
+                continue
+            function_payload = raw_tool_call.get("function", {})
+            if not isinstance(function_payload, dict):
+                function_payload = {}
+            tool_calls.append(
+                {
+                    "id": str(raw_tool_call.get("id") or f"call_{round_index}_{len(tool_calls)}"),
+                    "name": str(function_payload.get("name") or ""),
+                    "arguments": _normalize_tool_call_arguments(function_payload.get("arguments")),
+                }
+            )
+
+        yield {"transcript_message": assistant_message}
+
+        for tool_call_index, tool_call in enumerate(tool_calls, start=1):
+            tool_event = _build_tool_event(tool_lookup, tool_call)
+            yield {"tool_event": tool_event}
+
+            call_context = dict(tool_context or {})
+            call_context.update(
+                {
+                    "engine": "openai",
+                    "model_name": model_name,
+                    "tool_alias": tool_call["name"],
+                    "tool_arguments": tool_call.get("arguments") or {},
+                    "tool_call_index": tool_call_index,
+                    "tool_round_index": round_index + 1,
+                }
+            )
+
+            tool_result = tool_registry.call_ollama_tool(
+                tool_lookup,
+                tool_call["name"],
+                tool_call.get("arguments") or {},
+                context=call_context,
+            )
+            if isinstance(tool_result, dict) and "_image_b64" in tool_result:
+                tool_result = f"[Image: {tool_result.get('_path', 'image')}]"
+
+            tool_message = _build_tool_message(
+                tool_call["name"],
+                tool_call["id"],
+                tool_result,
+                tool_event,
+            )
+            conversation.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call["id"],
+                    "content": tool_message["content"],
+                }
+            )
+            yield {"tool_result": dict(tool_message)}
+
+    yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
+
+
+def _conversation_uses_tools(messages: list[dict[str, Any]]) -> bool:
+    """Return whether the current conversation already contains tool state."""
+
+    for message in messages:
+        if str(message.get("role", "")).lower() == "tool":
+            return True
+        if message.get("tool_calls"):
+            return True
+    return False
+
+
 def get_models() -> list[Any]:
     """Return models exposed by the configured OpenAI-compatible endpoint."""
 
     client = _get_client()
     try:
         response = client.models.list()
+        return [_to_plain_data(item) for item in list(getattr(response, "data", []) or [])]
     except Exception as exc:
         logger.error("[OpenAI API] Error listing models: %s", exc)
         return []
+    finally:
+        _close_client(client)
 
-    return list(getattr(response, "data", []) or [])
 
-# Reject local download request
 def download_model(model_name: str, **kwargs: Any) -> Any:
     """Raise because OpenAI-compatible endpoints expose remote models only."""
 
     raise NotImplementedError("OpenAI-compatible models are remote and cannot be downloaded locally.")
 
-# Read model metadata
+
 def get_model_settings(model_name: str) -> dict[str, Any]:
-    """Return basic metadata for a model from an OpenAI-compatible endpoint."""
+    """Return capability metadata for one model from an OpenAI-compatible endpoint."""
 
     client = _get_client()
     try:
-        model = client.models.retrieve(model_name)
-    except Exception as exc:
-        logger.error("[OpenAI API] Error fetching settings for %s: %s", model_name, exc)
-        raise
+        raw_model = _get_model_payload(client, model_name)
+        defaults = _extract_defaults(raw_model)
+        supported_parameter_names = _extract_supported_parameter_names(raw_model, defaults)
+        capability_tokens = _extract_capability_tokens(raw_model)
 
-    raw_model = model.to_dict() if hasattr(model, "to_dict") else {}
-    return {
-        "model": model_name,
-        "context_length": raw_model.get("context_length", raw_model.get("max_context_length", 8192)),
-        "defaults": {},
-        "supports_thinking": False,
-        "supports_think_level": False,
-        "supports_vision": False,
-        "capabilities": [],
-        "raw": raw_model,
-    }
+        reasoning_toggle_default, reasoning_level_default, reasoning_level_options = _extract_reasoning_metadata(raw_model)
+        parameter_names = set(supported_parameter_names) | {str(key) for key in defaults.keys()}
+
+        think_param_name = _resolve_parameter_name(parameter_names, THINK_PARAM_NAMES, "think")
+        think_level_param_name = _resolve_parameter_name(parameter_names, THINK_LEVEL_PARAM_NAMES, "reasoning_effort")
+
+        if reasoning_toggle_default is not None and think_param_name not in defaults:
+            defaults[think_param_name] = reasoning_toggle_default
+        if reasoning_level_default is not None and think_level_param_name not in defaults:
+            defaults[think_level_param_name] = reasoning_level_default
+
+        if not reasoning_level_options:
+            reasoning_level_options = _extract_parameter_option_values(
+                raw_model,
+                {think_level_param_name, *THINK_LEVEL_PARAM_NAMES},
+            )
+
+        explicit_tool_support = _extract_feature_flag(raw_model, TOOL_CAPABILITY_NAMES)
+        explicit_vision_support = _extract_feature_flag(raw_model, VISION_CAPABILITY_NAMES)
+        explicit_reasoning_support = _extract_feature_flag(raw_model, REASONING_CAPABILITY_NAMES)
+
+        supports_tool_calling = (
+            bool(explicit_tool_support)
+            or bool(capability_tokens & TOOL_CAPABILITY_NAMES)
+            or any(
+                _normalize_key_name(parameter_name) in {"parallel_tool_calls", "tool_choice", "tools"}
+                for parameter_name in supported_parameter_names
+            )
+        )
+        supports_vision = (
+            bool(explicit_vision_support)
+            or bool(capability_tokens & VISION_CAPABILITY_NAMES)
+        )
+        if supports_tool_calling:
+            supported_parameter_names.update({"tools", "tool_choice"})
+        supports_think_toggle = (
+            think_param_name in defaults
+            or any(_normalize_key_name(parameter_name) == _normalize_key_name(think_param_name) for parameter_name in supported_parameter_names)
+            or isinstance(reasoning_toggle_default, bool)
+        )
+        supports_think_level = (
+            think_level_param_name in defaults
+            or any(_normalize_key_name(parameter_name) == _normalize_key_name(think_level_param_name) for parameter_name in supported_parameter_names)
+            or bool(reasoning_level_options)
+            or (
+                reasoning_level_default is not None
+                and str(reasoning_level_default or "").strip().lower() not in {"on", "off", "true", "false"}
+            )
+        )
+        supports_thinking = (
+            bool(explicit_reasoning_support)
+            or bool(capability_tokens & REASONING_CAPABILITY_NAMES)
+            or supports_think_toggle
+            or supports_think_level
+        )
+        if supports_think_toggle:
+            supported_parameter_names.add(think_param_name)
+        if supports_think_level:
+            supported_parameter_names.add(think_level_param_name)
+            if think_level_param_name not in defaults and reasoning_level_default is not None:
+                defaults[think_level_param_name] = reasoning_level_default
+
+        capabilities: list[str] = []
+        if supports_vision:
+            capabilities.append("vision")
+        if supports_tool_calling:
+            capabilities.append("tools")
+        if supports_thinking:
+            capabilities.append("thinking")
+        capabilities.append("files")
+
+        return {
+            "model": model_name,
+            "context_length": _extract_context_length(raw_model),
+            "defaults": defaults,
+            "supported_parameters": sorted(supported_parameter_names, key=str.casefold),
+            "supports_thinking": supports_thinking,
+            "supports_think_toggle": supports_think_toggle,
+            "supports_think_level": supports_think_level,
+            "think_param_name": think_param_name,
+            "think_level_param_name": think_level_param_name,
+            "think_level_options": reasoning_level_options,
+            "supports_vision": supports_vision,
+            "supports_tool_calling": supports_tool_calling,
+            # ASLM-Chat file attachments are serialized into universal text context.
+            "supports_files": True,
+            "capabilities": capabilities,
+            "runtime_limits": {},
+            "custom_fields": [],
+            "raw": raw_model,
+        }
+    finally:
+        _close_client(client)
 
 
-# Generate OpenAI response
 def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
     """Generate a streamed or non-streamed response through an OpenAI-compatible API."""
 
-    client = _get_client()
-    options = dict(kwargs.get("options", {}) or {})
+    raw_ids = kwargs.pop("tool_server_ids", None) or kwargs.pop("tool_server_id", None) or kwargs.pop("tool_id", None)
+    if isinstance(raw_ids, str):
+        tool_server_ids = [raw_ids] if raw_ids.strip() else []
+    elif isinstance(raw_ids, list):
+        tool_server_ids = [str(server_id) for server_id in raw_ids if str(server_id).strip()]
+    else:
+        tool_server_ids = []
+
+    tool_context = dict(kwargs.pop("tool_context", {}) or {})
     stream = bool(kwargs.get("stream", False))
-    prepared_messages = _build_openai_messages(messages)
     request_options = _build_openai_request_options(
-        options,
+        dict(kwargs.get("options", {}) or {}),
         think=kwargs.get("think"),
         think_level=kwargs.get("think_level"),
+        think_param_name=kwargs.get("think_param_name", "think"),
+        think_level_param_name=kwargs.get("think_level_param_name", "reasoning_effort"),
     )
+    conversation = _build_openai_messages(messages)
 
+    client = _get_client()
     try:
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=prepared_messages,
-            stream=stream,
-            **request_options,
-        )
+        _abort_event.clear()
 
-        # Keep one outgoing shape for both stream and non-stream modes.
-        if stream:
-            for chunk in response:
-                for choice in getattr(chunk, "choices", []) or []:
-                    delta = getattr(choice, "delta", None)
-                    content = getattr(delta, "content", "") if delta else ""
-                    if content:
-                        yield {"message": {"content": content}}
+        if tool_server_ids:
+            yield from _run_tool_loop(
+                client,
+                model_name,
+                messages,
+                request_options,
+                tool_server_ids,
+                tool_context,
+                stream=stream,
+            )
             return
 
-        for choice in getattr(response, "choices", []) or []:
-            message = getattr(choice, "message", None)
-            content = getattr(message, "content", "") if message else ""
-            if content:
-                yield {"message": {"content": content}}
+        if _conversation_uses_tools(messages):
+            yield from _yield_stream_round(
+                _stream_openai_round(
+                    client,
+                    model_name,
+                    conversation,
+                    request_options,
+                    stream=stream,
+                )
+            )
+            return
+
+        yield from _yield_stream_round(
+            _stream_openai_round(
+                client,
+                model_name,
+                conversation,
+                request_options,
+                stream=stream,
+            )
+        )
     except Exception as exc:
         logger.error("[OpenAI API] Error generating response from %s: %s", model_name, exc)
         raise
+    finally:
+        _close_client(client)

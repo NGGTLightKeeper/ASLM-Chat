@@ -19,7 +19,11 @@ from API.lms import (
     get_model_settings as get_lms_model_settings,
 )
 from API.ollama import _prepare_chat_kwargs, prepare_runtime as prepare_ollama_runtime
-from API.openai import _build_openai_request_options
+from API.openai import (
+    _build_openai_request_options,
+    generate as generate_openai,
+    get_model_settings as get_openai_model_settings,
+)
 from Apps.Data.models import Chat, LmsPreset, Message, MessageAttachment, OllamaPreset
 from Apps.UI.views import _extract_model_name, _format_runtime_error, _strip_llm_control_tokens
 
@@ -205,6 +209,163 @@ class OpenAiOptionMappingTests(SimpleTestCase):
         _get_client()
 
         self.assertEqual(mock_openai_client.call_args.kwargs["api_key"], "not-needed")
+
+
+class OpenAiAdapterTests(SimpleTestCase):
+    """Cover extended OpenAI-compatible capability parsing and reasoning output."""
+
+    @patch("API.openai._get_client")
+    def test_get_model_settings_reads_openai_capabilities_and_reasoning(self, mock_get_client):
+        client = Mock()
+        client.models.list.return_value = Mock(
+            data=[
+                {
+                    "id": "gpt-test",
+                    "capabilities": {"tools": True, "vision": True},
+                    "reasoning": {
+                        "enabled": True,
+                        "effort": {
+                            "default": "high",
+                            "options": ["low", "medium", "high"],
+                        },
+                    },
+                    "context_length": 65536,
+                }
+            ]
+        )
+        client.models.retrieve.return_value = {
+            "id": "gpt-test",
+            "supported_parameters": {
+                "tools": {"type": "array"},
+                "tool_choice": {"type": "string"},
+                "reasoning_effort": {"enum": ["low", "medium", "high"]},
+            },
+            "defaults": {"temperature": 0.2},
+        }
+        mock_get_client.return_value = client
+
+        payload = get_openai_model_settings("gpt-test")
+
+        self.assertTrue(payload["supports_tool_calling"])
+        self.assertTrue(payload["supports_vision"])
+        self.assertTrue(payload["supports_thinking"])
+        self.assertTrue(payload["supports_think_toggle"])
+        self.assertTrue(payload["supports_think_level"])
+        self.assertTrue(payload["supports_files"])
+        self.assertEqual(payload["think_level_param_name"], "reasoning_effort")
+        self.assertEqual(payload["defaults"]["temperature"], 0.2)
+        self.assertEqual(payload["defaults"]["reasoning_effort"], "high")
+        self.assertEqual(payload["think_level_options"], ["low", "medium", "high"])
+        self.assertEqual(payload["context_length"], 65536)
+        self.assertIn("tool_choice", payload["supported_parameters"])
+
+    @patch("API.openai._get_client")
+    def test_get_model_settings_reads_direct_feature_flags_and_scalar_supported_parameters(self, mock_get_client):
+        client = Mock()
+        client.models.list.return_value = Mock(
+            data=[
+                {
+                    "id": "gpt-test",
+                    "vision": True,
+                    "tool_calling": True,
+                    "reasoning": True,
+                    "input_modalities": ["text", "image"],
+                }
+            ]
+        )
+        client.models.retrieve.return_value = {
+            "id": "gpt-test",
+            "supported_parameters": ["temperature", "tools", "tool_choice", "reasoning_effort"],
+        }
+        mock_get_client.return_value = client
+
+        payload = get_openai_model_settings("gpt-test")
+
+        self.assertTrue(payload["supports_tool_calling"])
+        self.assertTrue(payload["supports_vision"])
+        self.assertTrue(payload["supports_thinking"])
+        self.assertTrue(payload["supports_think_level"])
+        self.assertFalse(payload["supports_think_toggle"])
+        self.assertIn("reasoning_effort", payload["supported_parameters"])
+
+    @patch("API.openai._get_client")
+    def test_generate_stream_parses_reasoning_and_visible_content(self, mock_get_client):
+        client = Mock()
+        client.chat.completions.create.return_value = [
+            {"choices": [{"delta": {"reasoning_content": "Plan first."}}]},
+            {"choices": [{"delta": {"content": "Final answer"}}]},
+        ]
+        mock_get_client.return_value = client
+
+        chunks = list(
+            generate_openai(
+                "gpt-test",
+                [{"role": "user", "content": "Hi"}],
+                stream=True,
+            )
+        )
+
+        self.assertEqual(chunks[0]["message"]["thinking"], "Plan first.")
+        self.assertEqual(chunks[0]["message"]["content"], "")
+        self.assertEqual(chunks[1]["message"]["content"], "Final answer")
+
+    @patch("API.openai._get_client")
+    def test_generate_stream_does_not_duplicate_plain_content_into_thinking(self, mock_get_client):
+        client = Mock()
+        client.chat.completions.create.return_value = [
+            {"choices": [{"delta": {"content": "Hello"}}]},
+            {"choices": [{"delta": {"content": " world"}}]},
+        ]
+        mock_get_client.return_value = client
+
+        chunks = list(
+            generate_openai(
+                "gpt-test",
+                [{"role": "user", "content": "Hi"}],
+                stream=True,
+            )
+        )
+
+        self.assertEqual([chunk["message"]["content"] for chunk in chunks], ["Hello", " world"])
+        self.assertTrue(all("thinking" not in chunk["message"] for chunk in chunks))
+
+    @patch("API.openai._get_companion_model_payload")
+    @patch("API.openai._get_client")
+    def test_get_model_settings_reads_companion_metadata_without_generation(
+        self,
+        mock_get_client,
+        mock_get_companion_payload,
+    ):
+        client = Mock()
+        client.models.list.return_value = Mock(data=[{"id": "gpt-probe", "object": "model", "owned_by": "org"}])
+        client.models.retrieve.return_value = {"id": "gpt-probe", "object": "model", "owned_by": "org"}
+        mock_get_companion_payload.return_value = {
+            "key": "gpt-probe",
+            "type": "llm",
+            "max_context_length": 131072,
+            "capabilities": {
+                "vision": True,
+                "trained_for_tool_use": True,
+                "reasoning": {
+                    "allowed_options": ["off", "on"],
+                    "default": "on",
+                },
+            },
+        }
+        mock_get_client.return_value = client
+
+        payload = get_openai_model_settings("gpt-probe")
+
+        self.assertTrue(payload["supports_tool_calling"])
+        self.assertTrue(payload["supports_thinking"])
+        self.assertTrue(payload["supports_vision"])
+        self.assertFalse(payload["supports_think_level"])
+        self.assertTrue(payload["supports_think_toggle"])
+        self.assertEqual(payload["think_level_options"], [])
+        self.assertEqual(payload["defaults"]["think"], True)
+        self.assertIn("tool_choice", payload["supported_parameters"])
+        self.assertIn("tools", payload["supported_parameters"])
+        client.chat.completions.create.assert_not_called()
 
 
 class EngineRegistryTests(SimpleTestCase):
@@ -500,6 +661,34 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         response = self.client.post(
             reverse("chat_api"),
             data='{"message":"Hello","model":"qwen","tool_server_id":"time_suite"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("does not support tool calling", response.json()["error"])
+
+    @patch("Apps.UI.views.llm_api.get_model_settings", return_value={"supports_tool_calling": False, "supports_files": True})
+    @patch("Apps.UI.views._get_active_engine", return_value="openai")
+    def test_chat_api_rejects_tool_server_when_openai_model_lacks_tool_support(
+        self,
+        _mock_engine,
+        _mock_model_settings,
+    ):
+        self.write_server(
+            'time_suite',
+            '''
+            MCP_SERVER = {"id": "time_suite", "name": "Time Suite"}
+            TOOLS = [{"id": "time_now", "name": "Current Time", "parameters": {"type": "object", "properties": {}}}]
+            def supports(engine=None, model_name=None):
+                return engine == "openai"
+            def call_tool(tool_id, arguments, context=None):
+                return "ok"
+            ''',
+        )
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"Hello","model":"gpt-test","tool_server_id":"time_suite"}',
             content_type="application/json",
         )
 

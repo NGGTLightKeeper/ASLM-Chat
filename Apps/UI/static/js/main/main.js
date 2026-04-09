@@ -125,6 +125,14 @@ $(function () {
     supported: false
   };
   let currentModelInfo = null;
+  const THINK_PARAMETER_KEYS = new Set([
+    'think',
+    'think_level',
+    'thinking',
+    'reasoning',
+    'thinking_level',
+    'reasoning_effort'
+  ]);
 
   const PARAMETER_DEFINITIONS = {
     temperature: {
@@ -727,6 +735,18 @@ $(function () {
     return ENGINE_ALIASES[normalized] || normalized || 'ollama-service';
   }
 
+  function normalizeParameterName(param) {
+    return String(param || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+
+  function isThinkingParameterKey(param) {
+    return THINK_PARAMETER_KEYS.has(normalizeParameterName(param));
+  }
+
   function getEngineAddressKey(engine) {
     return ENGINE_ADDRESS_KEYS[normalizeEngineValue(engine)] || null;
   }
@@ -886,6 +906,9 @@ $(function () {
     const canonicalEngine = normalizeEngineValue(engine);
     return Object.entries(PARAMETER_DEFINITIONS).filter(function ([key, definition]) {
       if (!(definition.engines || []).includes(canonicalEngine)) {
+        return false;
+      }
+      if (isThinkingParameterKey(key)) {
         return false;
       }
       if (canonicalEngine === 'ollama-service' && OLLAMA_UNSUPPORTED_RUNTIME_PARAMS.has(key)) {

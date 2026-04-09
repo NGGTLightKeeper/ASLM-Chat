@@ -71,6 +71,28 @@ def generate(engine: str | None, model_name: str, messages: list[dict[str, Any]]
 
     raise NotImplementedError(f"Engine {engine} does not implement generate")
 
+
+def abort_generation(engine: str | None = None) -> None:
+    """Signal the active generation for one engine or every loaded adapter."""
+
+    if engine is None:
+        module_names = {module_name for module_name in ENGINE_MODULES.values()}
+        for module_name in module_names:
+            try:
+                module = importlib.import_module(module_name)
+            except ImportError:
+                continue
+
+            abort = getattr(module, "abort_generation", None)
+            if callable(abort):
+                abort()
+        return
+
+    module = _get_engine_module(engine)
+    abort = getattr(module, "abort_generation", None)
+    if callable(abort):
+        abort()
+
 # Read model settings
 def get_model_settings(engine: str | None, model_name: str) -> Any:
     """Return model metadata exposed by the selected engine."""
