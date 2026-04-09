@@ -59,7 +59,7 @@ TOOLS = [
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
     """Expose this tool server for engines that support tool-calling."""
 
-    return engine in ("ollama-service", "lms")
+    return engine in ("ollama-service", "lms", "openai")
 
 
 async def _run_with_optional_keepalive(coro, session=None, interval: float = 10.0):
