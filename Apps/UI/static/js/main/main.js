@@ -48,6 +48,8 @@ $(function () {
   let modelInfoRequestVersion = 0;
   let activeEngine = 'ollama-service';
   const modelsCache = {};
+  let lmsModelsRefreshTimer = null;
+  let lmsModelsRefreshInFlight = false;
   let ollamaPresetState = {
     engine: '',
     model: '',
@@ -756,6 +758,77 @@ $(function () {
     return key ? (runtimeSettings[key] || '') : '';
   }
 
+  function normalizeAddressForParsing(value) {
+    const rawValue = String(value || '').trim();
+    if (!rawValue) {
+      return '';
+    }
+
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(rawValue)) {
+      return rawValue;
+    }
+
+    return `http://${rawValue}`;
+  }
+
+  function isLocalHostname(hostname) {
+    const normalizedHost = String(hostname || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^\[|\]$/g, '');
+
+    if (!normalizedHost) {
+      return true;
+    }
+
+    if (['localhost', '0.0.0.0', '127.0.0.1', '::1'].includes(normalizedHost)) {
+      return true;
+    }
+
+    if (/^127(?:\.\d{1,3}){3}$/.test(normalizedHost)) {
+      return true;
+    }
+
+    if (/^10(?:\.\d{1,3}){3}$/.test(normalizedHost)) {
+      return true;
+    }
+
+    if (/^192\.168(?:\.\d{1,3}){2}$/.test(normalizedHost)) {
+      return true;
+    }
+
+    if (/^169\.254(?:\.\d{1,3}){2}$/.test(normalizedHost)) {
+      return true;
+    }
+
+    const privateRangeMatch = normalizedHost.match(/^172\.(\d{1,3})(?:\.\d{1,3}){2}$/);
+    if (privateRangeMatch) {
+      const secondOctet = Number(privateRangeMatch[1]);
+      if (secondOctet >= 16 && secondOctet <= 31) {
+        return true;
+      }
+    }
+
+    if (/^(?:fc|fd)[0-9a-f:]*$/i.test(normalizedHost)) {
+      return true;
+    }
+
+    return /^fe80:/i.test(normalizedHost);
+  }
+
+  function isLocalLmsAddress() {
+    const address = normalizeAddressForParsing(getEngineAddress('lms'));
+    if (!address) {
+      return true;
+    }
+
+    try {
+      return isLocalHostname(new URL(address).hostname);
+    } catch (_error) {
+      return true;
+    }
+  }
+
   function setEngineAddressStatus(text, state) {
     $engineAddressStatus.text(text || '');
     $engineAddressStatus.removeClass('is-pending is-error');
@@ -900,6 +973,110 @@ $(function () {
   function clearModelCache(engine) {
     const canonicalEngine = normalizeEngineValue(engine);
     delete modelsCache[canonicalEngine];
+  }
+
+  function normalizeModelNames(models) {
+    return Array.from(new Set(
+      (Array.isArray(models) ? models : []).map(function (modelName) {
+        return String(modelName || '').trim();
+      }).filter(Boolean)
+    ));
+  }
+
+  function areModelListsEqual(left, right) {
+    const first = normalizeModelNames(left);
+    const second = normalizeModelNames(right);
+    if (first.length !== second.length) {
+      return false;
+    }
+
+    return first.every(function (modelName, index) {
+      return modelName === second[index];
+    });
+  }
+
+  function clearLmsModelsRefreshTimer() {
+    if (lmsModelsRefreshTimer !== null) {
+      window.clearTimeout(lmsModelsRefreshTimer);
+      lmsModelsRefreshTimer = null;
+    }
+  }
+
+  function getLmsModelsRefreshInterval() {
+    return isLocalLmsAddress() ? 3000 : 15000;
+  }
+
+  function scheduleLmsModelsRefresh(delayMs) {
+    clearLmsModelsRefreshTimer();
+
+    if (getActiveEngine() !== 'lms') {
+      return;
+    }
+
+    const intervalMs = typeof delayMs === 'number' ? delayMs : getLmsModelsRefreshInterval();
+    lmsModelsRefreshTimer = window.setTimeout(function () {
+      refreshLmsModels().catch(function (error) {
+        console.error('Failed to refresh LMS models:', error);
+      });
+    }, intervalMs);
+  }
+
+  function syncLmsModelsRefresh() {
+    if (getActiveEngine() !== 'lms') {
+      clearLmsModelsRefreshTimer();
+      return;
+    }
+
+    scheduleLmsModelsRefresh();
+  }
+
+  async function refreshLmsModels() {
+    clearLmsModelsRefreshTimer();
+
+    if (getActiveEngine() !== 'lms') {
+      return;
+    }
+
+    if (lmsModelsRefreshInFlight) {
+      scheduleLmsModelsRefresh();
+      return;
+    }
+
+    const refreshVersion = engineSelectionVersion;
+    const previousModels = normalizeModelNames(modelsCache.lms || getAvailableModelsForEngine('lms'));
+    const previousSelectedModel = getSelectedModelName();
+    const hadRenderedOptions = $modelSelector.children().length > 0;
+
+    lmsModelsRefreshInFlight = true;
+
+    try {
+      const refreshedModels = normalizeModelNames(await fetchModelsForEngine('lms'));
+
+      if (refreshVersion !== engineSelectionVersion || getActiveEngine() !== 'lms') {
+        return;
+      }
+
+      modelsCache.lms = refreshedModels;
+
+      const shouldRerender = !hadRenderedOptions
+        || !areModelListsEqual(previousModels, refreshedModels)
+        || (previousSelectedModel && !refreshedModels.includes(previousSelectedModel));
+
+      if (!shouldRerender) {
+        return;
+      }
+
+      const selectedModel = renderModelOptions(refreshedModels, previousSelectedModel);
+      if (selectedModel !== previousSelectedModel) {
+        await loadModelInfo(selectedModel);
+      }
+    } finally {
+      lmsModelsRefreshInFlight = false;
+
+      if (refreshVersion === engineSelectionVersion && getActiveEngine() === 'lms') {
+        scheduleLmsModelsRefresh();
+      }
+    }
   }
 
   function getSupportedParameterDefinitions(engine) {
@@ -1061,7 +1238,7 @@ $(function () {
   }
 
   function renderModelOptions(models, preferredModel) {
-    const uniqueModels = Array.from(new Set(models || []));
+    const uniqueModels = normalizeModelNames(models);
     const fallbackModel = uniqueModels[0] || '';
     const selectedModel = uniqueModels.includes(preferredModel) ? preferredModel : fallbackModel;
 
@@ -1154,6 +1331,7 @@ $(function () {
     const autoLoadModels = settingsOptions.autoLoadModels !== false;
 
     activeEngine = normalizedEngine;
+    clearLmsModelsRefreshTimer();
     $('body').data('llm-engine', normalizedEngine);
     $engineSelector.val(normalizedEngine);
     updateEngineAddressUi();
@@ -1172,6 +1350,7 @@ $(function () {
           resetModelUiState('No models available');
         }
       }
+      syncLmsModelsRefresh();
       return;
     }
 
@@ -1198,6 +1377,8 @@ $(function () {
           resetModelUiState('No models available');
         }
       }
+
+      syncLmsModelsRefresh();
     } catch (error) {
       activeEngine = previousEngine;
       runtimeSettings['llm-engine'] = previousEngine;
@@ -1205,6 +1386,7 @@ $(function () {
       $engineSelector.val(previousEngine);
       updateEngineAddressUi();
       resetModelUiState('Models load on demand');
+      syncLmsModelsRefresh();
       throw error;
     }
   }
@@ -3568,8 +3750,11 @@ $(function () {
       return;
     }
 
+    clearLmsModelsRefreshTimer();
+
     if ((runtimeSettings[addressKey] || '') === addressValue) {
       setEngineAddressStatus('Saved', null);
+      syncLmsModelsRefresh();
       return;
     }
 
@@ -3587,9 +3772,11 @@ $(function () {
       await ensureModelsLoadedForActiveEngine({
         preferredModel: ''
       });
+      syncLmsModelsRefresh();
     } catch (error) {
       console.error('Failed to save engine address:', error);
       setEngineAddressStatus('Error', 'error');
+      syncLmsModelsRefresh();
     }
   });
 
