@@ -181,10 +181,14 @@ cython_debug/
 .cursorindexingignore
 .claude
 
+# VS Code
+.vscode
+
 # MCP tools test logs and test data
 Tools/tests
 deploy.bat
 task
+*.pid
 
 # Deep Think
 Tools/mcp-deep-think/_out/

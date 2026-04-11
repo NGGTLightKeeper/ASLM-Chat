@@ -9,9 +9,12 @@ import json
 import logging
 import re
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+
+from Settings import settings as runtime_settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +28,86 @@ _SERVER_CACHE_SIGNATURE: tuple[tuple[str, int], ...] | None = None
 _SERVER_CACHE: dict[str, dict[str, Any]] = {}
 
 
-# Clear cached registry
+# Print one shared runtime event.
+def _print_runtime_event(message: str) -> None:
+    """Emit one console-visible runtime event."""
+
+    print(f"[ASLM-Chat] {message}", flush=True)
+
+
+# Check whether debug logging is enabled.
+def _is_debug_logging_enabled() -> bool:
+    """Return whether debug-or-higher MCP events should be printed."""
+
+    return runtime_settings.is_console_debug_enabled()
+
+
+# Check whether trace logging is enabled.
+def _is_trace_logging_enabled() -> bool:
+    """Return whether trace-level MCP events should be printed."""
+
+    return runtime_settings.is_console_trace_enabled()
+
+
+# Render one compact debug preview.
+def _preview_jsonish(value: Any, limit: int = 240) -> str:
+    """Return a compact one-line preview for arguments and results."""
+
+    try:
+        if isinstance(value, str):
+            rendered = value
+        else:
+            rendered = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        rendered = str(value)
+
+    rendered = re.sub(r"\s+", " ", str(rendered or "")).strip()
+    if len(rendered) <= limit:
+        return rendered
+    return f"{rendered[:max(0, limit - 3)].rstrip()}..."
+
+
+# Summarize one tool result.
+def _summarize_tool_result(result: Any) -> str:
+    """Return a short textual summary of a tool result payload."""
+
+    if isinstance(result, dict) and "_image_b64" in result:
+        return f"image:{result.get('_mime_type', 'image')} path={result.get('_path', '') or '(inline)'}"
+    if result is None:
+        return "empty"
+    if isinstance(result, str):
+        return f"text chars={len(result)} preview={_preview_jsonish(result, limit=140)}"
+    if isinstance(result, (dict, list, tuple)):
+        try:
+            size_hint = len(result)
+        except TypeError:
+            size_hint = "?"
+        return f"{type(result).__name__} size={size_hint} preview={_preview_jsonish(result, limit=140)}"
+    return f"{type(result).__name__} value={_preview_jsonish(result, limit=140)}"
+
+
+# Summarize one tool context.
+def _summarize_tool_context(context: dict[str, Any]) -> str:
+    """Return a compact summary of the runtime context passed into a tool."""
+
+    parts: list[str] = []
+    for key in ("engine", "model_name", "chat_id", "tool_round_index", "tool_call_index"):
+        value = context.get(key)
+        if value not in {None, ""}:
+            parts.append(f"{key}={value}")
+
+    if _is_trace_logging_enabled():
+        for key in ("server_file", "tools_dir"):
+            value = context.get(key)
+            if value not in {None, ""}:
+                parts.append(f"{key}={value}")
+
+    return ", ".join(parts) if parts else "none"
+
+
+
+# Manage the server discovery cache.
+# Clear the cached registry.
 def reset_cache() -> None:
     """Clear cached discovery so local edits are picked up immediately."""
 
@@ -35,7 +117,7 @@ def reset_cache() -> None:
     _SERVER_CACHE = {}
 
 
-# Hash local server files
+# Yield one server's source files.
 def _iter_server_source_files(server_dir: Path):
     """Yield relevant source files for one local MCP server."""
 
@@ -49,6 +131,7 @@ def _iter_server_source_files(server_dir: Path):
         yield path
 
 
+# Build the server cache signature.
 def _server_signature() -> tuple[tuple[str, int], ...]:
     """Build a stable signature for every local MCP server source file."""
 
@@ -72,6 +155,7 @@ def _server_signature() -> tuple[tuple[str, int], ...]:
     return tuple(entries)
 
 
+# Yield server entrypoint files.
 def _iter_server_files():
     """Yield top-level MCP server entrypoints from the Tools directory."""
 
@@ -83,14 +167,16 @@ def _iter_server_files():
         if child.is_dir() and server_file.is_file():
             yield server_file
 
-# Normalize server id
+
+# Load and normalize server definitions.
+# Normalize one server id.
 def _slugify(value: str) -> str:
     """Normalize folder and public identifiers into a stable slug."""
 
     normalized = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
     return normalized or "tool"
 
-# Load server module
+# Purge modules from one server root.
 def _purge_modules_under(server_root: Path) -> None:
     """Drop previously imported modules loaded from one tool directory."""
 
@@ -114,6 +200,7 @@ def _purge_modules_under(server_root: Path) -> None:
         sys.modules.pop(module_name, None)
 
 
+# Load one server module.
 def _load_module(server_file: Path) -> ModuleType:
     """Load one ``mcp-server.py`` file into an isolated Python module."""
 
@@ -129,7 +216,7 @@ def _load_module(server_file: Path) -> ModuleType:
     return module
 
 
-# Normalize tool schema
+# Normalize one tool schema.
 def _normalize_schema(schema: Any) -> dict[str, Any]:
     """Return a JSON-schema-like mapping suitable for tool payloads."""
 
@@ -144,7 +231,7 @@ def _normalize_schema(schema: Any) -> dict[str, Any]:
 
     return normalized
 
-# Find server dispatcher
+# Resolve the server dispatcher.
 def _resolve_server_callable(module: ModuleType):
     """Return the generic server dispatcher when one is exported."""
 
@@ -155,7 +242,7 @@ def _resolve_server_callable(module: ModuleType):
 
     return None
 
-# Collect tool handlers
+# Collect explicit tool handlers.
 def _normalize_tool_handlers(module: ModuleType) -> dict[str, Any]:
     """Return explicit per-tool handlers exported by a server module."""
 
@@ -175,7 +262,7 @@ def _normalize_tool_handlers(module: ModuleType) -> dict[str, Any]:
 
     return normalized_handlers
 
-# Validate tool list
+# Validate the tool list.
 def _normalize_server_tools(raw_tools: Any, server_id: str) -> list[dict[str, Any]]:
     """Validate and normalize tool definitions exposed by one server."""
 
@@ -211,11 +298,12 @@ def _normalize_server_tools(raw_tools: Any, server_id: str) -> list[dict[str, An
 
     return normalized_tools
 
-# Build server definition
+# Build one server definition.
 def _extract_server_definition(module: ModuleType, folder_name: str, server_file: Path) -> dict[str, Any]:
     """Validate a local MCP module and normalize its public metadata."""
 
     raw_server: Any = {}
+    # Support both current and legacy metadata export names.
     for attr_name in SERVER_METADATA_NAMES:
         raw_server = getattr(module, attr_name, None)
         if raw_server is not None:
@@ -240,6 +328,8 @@ def _extract_server_definition(module: ModuleType, folder_name: str, server_file
     server_callable = _resolve_server_callable(module)
     tools = _normalize_server_tools(raw_tools, server_id)
 
+    # A server is valid only if it exposes either dedicated handlers per tool
+    # or one generic dispatcher that can receive tool invocations.
     if not tool_handlers and server_callable is None:
         raise ValueError(
             "MCP server module must expose TOOL_HANDLERS or a generic call_tool/tool dispatcher"
@@ -258,13 +348,17 @@ def _extract_server_definition(module: ModuleType, folder_name: str, server_file
     }
 
 
-# Refresh server registry
+
+# Expose the server registry.
+# Refresh the server registry.
 def _ensure_registry_loaded() -> dict[str, dict[str, Any]]:
     """Discover and cache valid local MCP-style server modules."""
 
     global _SERVER_CACHE_SIGNATURE, _SERVER_CACHE
 
     signature = _server_signature()
+    # The cache is keyed by file mtimes so local edits become visible without
+    # forcing a full rediscovery on every call.
     if signature == _SERVER_CACHE_SIGNATURE:
         return _SERVER_CACHE
 
@@ -283,7 +377,7 @@ def _ensure_registry_loaded() -> dict[str, dict[str, Any]]:
     _SERVER_CACHE = discovered
     return _SERVER_CACHE
 
-# Check server support
+# Check whether one server is supported.
 def _server_is_supported(
     server_definition: dict[str, Any],
     engine: str | None,
@@ -308,7 +402,7 @@ def _server_is_supported(
         logger.warning("Server %s support check failed: %s", server_definition["id"], exc)
         return False
 
-# List matching servers
+# List matching servers.
 def list_servers(engine: str | None = None, model_name: str | None = None) -> list[dict[str, Any]]:
     """Return discovered servers that support the current engine and model."""
 
@@ -319,7 +413,7 @@ def list_servers(engine: str | None = None, model_name: str | None = None) -> li
         if _server_is_supported(server_definition, engine, model_name)
     ]
 
-# Get matching server
+# Get one matching server.
 def get_server(
     server_id: str | None,
     engine: str | None = None,
@@ -341,7 +435,9 @@ def get_server(
     return server_definition
 
 
-# Serialize one tool
+
+# Serialize registry data.
+# Serialize one tool.
 def _serialize_tool(tool_definition: dict[str, Any]) -> dict[str, Any]:
     """Return the frontend-facing representation of one tool."""
 
@@ -351,7 +447,7 @@ def _serialize_tool(tool_definition: dict[str, Any]) -> dict[str, Any]:
         "description": tool_definition["description"],
     }
 
-# Serialize one server
+# Serialize one server.
 def _serialize_server(server_definition: dict[str, Any]) -> dict[str, Any]:
     """Return the frontend-facing representation of one server."""
 
@@ -364,7 +460,7 @@ def _serialize_server(server_definition: dict[str, Any]) -> dict[str, Any]:
         "tools": tools,
     }
 
-# Build Ollama tools
+# Build Ollama-compatible tool definitions.
 def build_ollama_tools(
     server_ids: str | list[str] | None,
     engine: str | None = None,
@@ -387,6 +483,8 @@ def build_ollama_tools(
 
         for tool_definition in server_definition["tools"]:
             alias = tool_definition["alias"]
+            # Tool aliases are global in the conversation, so skip duplicates
+            # when multiple selected servers resolve to the same public alias.
             if alias in tool_lookup:
                 continue
             tools.append(
@@ -401,22 +499,42 @@ def build_ollama_tools(
             )
             tool_lookup[alias] = {"server": server_definition, "tool": tool_definition}
 
+    if tools and _is_debug_logging_enabled():
+        selected_servers = []
+        for server_id in server_ids:
+            server_definition = get_server(server_id, engine=engine, model_name=model_name)
+            if server_definition:
+                selected_servers.append(server_definition["id"])
+
+        _print_runtime_event(
+            "Tool registry prepared: "
+            f"engine={engine or 'unknown'}, "
+            f"model={model_name or '(auto)'}, "
+            f"servers={selected_servers or list(server_ids)}, "
+            f"tools={len(tools)}"
+        )
+        if _is_trace_logging_enabled():
+            aliases = ", ".join(sorted(tool_lookup.keys(), key=str.casefold))
+            _print_runtime_event(f"Tool aliases: {aliases}")
+
     return tools, tool_lookup
 
 
-# Run async callable
+
+# Execute tool callables.
+# Run one async callable.
 async def _run_async_callable(callable_fn, *args: Any) -> Any:
     """Execute an async callable with the provided arguments."""
 
     return await callable_fn(*args)
 
-# Run sync callable
+# Run one sync callable.
 def _run_sync_callable(callable_fn, *args: Any) -> Any:
     """Execute a synchronous callable with the provided arguments."""
 
     return callable_fn(*args)
 
-# Execute callable safely
+# Execute one callable safely.
 def _execute_callable(callable_fn, *args: Any) -> Any:
     """Execute sync and async callables behind one shared helper."""
 
@@ -425,7 +543,7 @@ def _execute_callable(callable_fn, *args: Any) -> Any:
 
     return _run_sync_callable(callable_fn, *args)
 
-# Dispatch generic handler
+# Dispatch one generic server handler.
 def _dispatch_server_callable(
     callable_fn,
     tool_id: str,
@@ -436,6 +554,8 @@ def _dispatch_server_callable(
 
     parameter_names = list(inspect.signature(callable_fn).parameters)
 
+    # Accept older dispatchers that still use positional signatures instead of
+    # the newer ``(tool_id, arguments, context)`` convention.
     if len(parameter_names) <= 1:
         return _execute_callable(callable_fn, arguments)
 
@@ -449,7 +569,9 @@ def _dispatch_server_callable(
     return _execute_callable(callable_fn, tool_id, arguments, context)
 
 
-# Serialize tool result
+
+# Serialize tool results.
+# Serialize one tool result.
 def _serialize_tool_result(result: Any) -> str:
     """Convert a tool result into text suitable for a model tool message."""
 
@@ -465,6 +587,7 @@ def _serialize_tool_result(result: Any) -> str:
     return str(result)
 
 
+# Extract one inline image payload.
 def _extract_inline_image_payload(result: Any) -> dict[str, Any] | None:
     """Extract an Ollama image payload from the sandbox v2 read envelope."""
 
@@ -489,7 +612,7 @@ def _extract_inline_image_payload(result: Any) -> dict[str, Any] | None:
         "_path": payload.get("path", ""),
     }
 
-# Execute local tool
+# Execute one local tool.
 def call_ollama_tool(
     tool_lookup: dict[str, dict[str, Any]],
     alias: str,
@@ -519,13 +642,25 @@ def call_ollama_tool(
     call_context.setdefault("tool_alias", tool_definition["alias"])
     call_context.setdefault("server_file", str(server_definition["server_file"]))
     call_context.setdefault("tools_dir", str(TOOLS_DIR))
+    started_at = time.perf_counter()
+
+    if _is_debug_logging_enabled():
+        _print_runtime_event(
+            "Tool starting: "
+            f"server={server_definition['id']}, "
+            f"tool={tool_definition['id']}, "
+            f"alias={tool_definition['alias']}, "
+            f"context={_summarize_tool_context(call_context)}, "
+            f"args={_preview_jsonish(call_arguments, limit=180)}"
+        )
 
     try:
         handler = server_definition["tool_handlers"].get(tool_definition["id"])
         if handler is None:
             handler = server_definition["tool_handlers"].get(tool_definition["alias"])
 
-        # Prefer a dedicated handler, then fall back to the shared dispatcher.
+        # Prefer a dedicated handler when present, then fall back to the
+        # generic dispatcher exported by the server module.
         if handler is not None:
             signature = inspect.signature(handler)
             if len(signature.parameters) <= 1:
@@ -542,11 +677,39 @@ def call_ollama_tool(
         else:
             return f"Tool execution failed: no handler registered for {tool_definition['id']}"
 
+        # Image payloads stay structured so multimodal adapters can feed them
+        # back to the model without flattening them into plain text.
         image_payload = _extract_inline_image_payload(result)
         if image_payload is not None:
+            if _is_debug_logging_enabled():
+                _print_runtime_event(
+                    "Tool completed: "
+                    f"server={server_definition['id']}, "
+                    f"tool={tool_definition['id']}, "
+                    f"status=ok, "
+                    f"took={time.perf_counter() - started_at:.2f}s, "
+                    f"result={_summarize_tool_result(image_payload)}"
+                )
             return image_payload
 
+        if _is_debug_logging_enabled():
+            _print_runtime_event(
+                "Tool completed: "
+                f"server={server_definition['id']}, "
+                f"tool={tool_definition['id']}, "
+                f"status=ok, "
+                f"took={time.perf_counter() - started_at:.2f}s, "
+                f"result={_summarize_tool_result(result)}"
+            )
         return _serialize_tool_result(result)
     except Exception as exc:
         logger.exception("Tool execution failed for %s.%s", server_definition["id"], tool_definition["id"])
+        _print_runtime_event(
+            "Tool failed: "
+            f"server={server_definition['id']}, "
+            f"tool={tool_definition['id']}, "
+            f"status=error, "
+            f"took={time.perf_counter() - started_at:.2f}s, "
+            f"error={exc}"
+        )
         return f"Tool execution failed: {exc}"

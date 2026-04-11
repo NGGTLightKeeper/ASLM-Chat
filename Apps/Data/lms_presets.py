@@ -7,30 +7,19 @@ from typing import Any
 
 from django.db import IntegrityError, transaction
 
-from API import ollama as ollama_api
-from Apps.Data.models import OllamaPreset
+from API import lms as lms_api
+from Apps.Data.models import LmsPreset
 
-DEFAULT_OLLAMA_PRESET_NAME = "Default"
-DEFAULT_OLLAMA_PRESET_CONFIG: dict[str, Any] = {
-    "num_ctx": 32768,
-    "num_predict": 8192,
-    "think": True,
-    "think_level": "medium",
-}
-OLLAMA_PRESET_CONTROL_KEYS = {
-    "think",
-    "thinking",
-    "reasoning",
-    "think_level",
-    "thinking_level",
-    "reasoning_effort",
+DEFAULT_LMS_PRESET_NAME = "Default"
+DEFAULT_LMS_PRESET_CONFIG: dict[str, Any] = {
+    "operation": {},
 }
 
 
 # Normalize preset payload values.
 # Remove empty nested values while preserving scalar types.
 def _normalize_config_value(value: Any) -> Any:
-    """Remove empty values while preserving Ollama scalar types."""
+    """Remove empty values while preserving scalar types."""
 
     if isinstance(value, dict):
         normalized: dict[str, Any] = {}
@@ -39,7 +28,7 @@ def _normalize_config_value(value: Any) -> Any:
             if normalized_child in ({}, [], "", None):
                 continue
 
-            normalized[key] = normalized_child
+            normalized[str(key)] = normalized_child
         return normalized
 
     if isinstance(value, list):
@@ -48,44 +37,45 @@ def _normalize_config_value(value: Any) -> Any:
 
     return value
 
-# Keep only supported preset keys.
-def normalize_ollama_preset_config(config: dict[str, Any] | None) -> dict[str, Any]:
-    """Return a compact preset config ready for storage."""
+# Keep the stored payload compact and predictable.
+def normalize_lms_preset_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    """Return a compact LM Studio preset config ready for storage."""
 
     if not isinstance(config, dict):
-        return {}
+        return deepcopy(DEFAULT_LMS_PRESET_CONFIG)
 
-    normalized = _normalize_config_value(deepcopy(config))
-    if not isinstance(normalized, dict):
-        return {}
+    operation_config = config.get("operation")
+    if not isinstance(operation_config, dict):
+        operation_config = {
+            key: value
+            for key, value in config.items()
+            if key != "load"
+        }
 
-    clean_config: dict[str, Any] = {}
-    for key, value in normalized.items():
-        normalized_key = str(key or "").strip()
-        if not normalized_key:
-            continue
-
-        if normalized_key in OLLAMA_PRESET_CONTROL_KEYS:
-            clean_config[normalized_key] = value
-            continue
-
-        if normalized_key in ollama_api.OLLAMA_TOP_LEVEL_CHAT_KEYS:
-            clean_config[normalized_key] = value
-            continue
-
-        if ollama_api.is_supported_runtime_option_key(normalized_key):
-            clean_config[normalized_key] = value
-
-    return clean_config
+    normalized = {
+        "operation": _normalize_config_value(deepcopy(operation_config)) or {},
+    }
+    return normalized
 
 
 # Resolve preset records.
+# Load the built-in defaults from the selected model.
+def _get_default_lms_preset_config(model_name: str) -> dict[str, Any]:
+    """Read the default LM Studio config baked into the selected model."""
+
+    settings_payload = lms_api.get_model_settings(model_name)
+    return normalize_lms_preset_config(
+        {
+            "operation": settings_payload.get("defaults", {}) or {},
+        }
+    )
+
 # Pick the next available custom preset name.
 def _next_custom_preset_name(model_name: str) -> str:
     """Generate the next free custom preset name for a model."""
 
     existing_names = set(
-        OllamaPreset.objects.filter(model_name=model_name).values_list("name", flat=True)
+        LmsPreset.objects.filter(model_name=model_name).values_list("name", flat=True)
     )
     index = 1
 
@@ -97,25 +87,25 @@ def _next_custom_preset_name(model_name: str) -> str:
         index += 1
 
 # Convert a preset model into API payload data.
-def _serialize_preset(preset: OllamaPreset) -> dict[str, Any]:
+def _serialize_preset(preset: LmsPreset) -> dict[str, Any]:
     """Convert a preset model into the frontend JSON shape."""
 
     return {
         "id": str(preset.id),
         "model_name": preset.model_name,
         "name": preset.name,
-        "config": normalize_ollama_preset_config(preset.config or {}),
+        "config": normalize_lms_preset_config(preset.config or {}),
         "is_default": preset.is_default,
         "is_active": preset.is_active,
     }
 
 # Find one preset in a loaded collection.
-def _get_preset_by_id(presets: list[OllamaPreset], preset_id: str) -> OllamaPreset:
+def _get_preset_by_id(presets: list[LmsPreset], preset_id: str) -> LmsPreset:
     """Return one preset from a loaded list or raise when it is missing."""
 
     preset = next((item for item in presets if str(item.id) == str(preset_id)), None)
     if preset is None:
-        raise OllamaPreset.DoesNotExist("Preset not found")
+        raise LmsPreset.DoesNotExist("Preset not found")
 
     return preset
 
@@ -123,25 +113,25 @@ def _get_preset_by_id(presets: list[OllamaPreset], preset_id: str) -> OllamaPres
 # Maintain preset state.
 # Ensure one default preset and one active preset exist for a model.
 @transaction.atomic
-def ensure_ollama_preset_state(model_name: str) -> tuple[list[OllamaPreset], OllamaPreset]:
+def ensure_lms_preset_state(model_name: str) -> tuple[list[LmsPreset], LmsPreset]:
     """Ensure a model has one default preset and one active preset."""
 
     normalized_model = str(model_name or "").strip()
     if not normalized_model:
-        raise ValueError("Model name is required for Ollama presets")
+        raise ValueError("Model name is required for LM Studio presets")
 
     presets = list(
-        OllamaPreset.objects.select_for_update()
+        LmsPreset.objects.select_for_update()
         .filter(model_name=normalized_model)
         .order_by("-is_active", "-is_default", "name")
     )
 
     # Seed the first default preset when the model has no saved state yet.
     if not presets:
-        default_preset = OllamaPreset.objects.create(
+        default_preset = LmsPreset.objects.create(
             model_name=normalized_model,
-            name=DEFAULT_OLLAMA_PRESET_NAME,
-            config=deepcopy(DEFAULT_OLLAMA_PRESET_CONFIG),
+            name=DEFAULT_LMS_PRESET_NAME,
+            config=_get_default_lms_preset_config(normalized_model),
             is_default=True,
             is_active=True,
         )
@@ -164,32 +154,32 @@ def ensure_ollama_preset_state(model_name: str) -> tuple[list[OllamaPreset], Oll
             preset.save(update_fields=["is_active"])
 
     presets = list(
-        OllamaPreset.objects.filter(model_name=normalized_model)
+        LmsPreset.objects.filter(model_name=normalized_model)
         .order_by("-is_active", "-is_default", "name")
     )
     return presets, active_preset
 
 # Return the preset payload for one model.
-def get_ollama_preset_payload(model_name: str) -> dict[str, Any]:
+def get_lms_preset_payload(model_name: str) -> dict[str, Any]:
     """Return presets and the active config for the selected model."""
 
-    presets, active_preset = ensure_ollama_preset_state(model_name)
+    presets, active_preset = ensure_lms_preset_state(model_name)
     return {
         "model": model_name,
         "active_preset_id": str(active_preset.id),
         "presets": [_serialize_preset(preset) for preset in presets],
-        "active_config": normalize_ollama_preset_config(active_preset.config or {}),
+        "active_config": normalize_lms_preset_config(active_preset.config or {}),
     }
 
 # Mark one preset as active.
 @transaction.atomic
-def activate_ollama_preset(model_name: str, preset_id: str) -> dict[str, Any]:
+def activate_lms_preset(model_name: str, preset_id: str) -> dict[str, Any]:
     """Mark one preset as active for its model."""
 
-    presets, _active_preset = ensure_ollama_preset_state(model_name)
+    presets, _active_preset = ensure_lms_preset_state(model_name)
     preset = _get_preset_by_id(presets, preset_id)
 
-    OllamaPreset.objects.filter(model_name=model_name, is_active=True).exclude(pk=preset.pk).update(
+    LmsPreset.objects.filter(model_name=model_name, is_active=True).exclude(pk=preset.pk).update(
         is_active=False
     )
 
@@ -197,11 +187,11 @@ def activate_ollama_preset(model_name: str, preset_id: str) -> dict[str, Any]:
         preset.is_active = True
         preset.save(update_fields=["is_active"])
 
-    return get_ollama_preset_payload(model_name)
+    return get_lms_preset_payload(model_name)
 
 # Create a new custom preset.
 @transaction.atomic
-def create_ollama_preset(
+def create_lms_preset(
     model_name: str,
     *,
     name: str | None = None,
@@ -212,16 +202,16 @@ def create_ollama_preset(
 
     normalized_model = str(model_name or "").strip()
     if not normalized_model:
-        raise ValueError("Model name is required for Ollama presets")
+        raise ValueError("Model name is required for LM Studio presets")
 
     base_name = str(name or "").strip() or _next_custom_preset_name(normalized_model)
 
-    # Start custom presets from normalized input or the built-in baseline.
+    # Start custom presets from normalized input or model defaults.
     try:
-        preset = OllamaPreset.objects.create(
+        preset = LmsPreset.objects.create(
             model_name=normalized_model,
             name=base_name,
-            config=normalize_ollama_preset_config(config) or deepcopy(DEFAULT_OLLAMA_PRESET_CONFIG),
+            config=normalize_lms_preset_config(config) or _get_default_lms_preset_config(normalized_model),
             is_default=False,
             is_active=False,
         )
@@ -229,20 +219,20 @@ def create_ollama_preset(
         raise ValueError(f"A preset named '{base_name}' already exists for {normalized_model}.") from exc
 
     if activate:
-        return activate_ollama_preset(normalized_model, str(preset.id))
+        return activate_lms_preset(normalized_model, str(preset.id))
 
-    return get_ollama_preset_payload(normalized_model)
+    return get_lms_preset_payload(normalized_model)
 
 # Rename a custom preset.
 @transaction.atomic
-def rename_ollama_preset(model_name: str, preset_id: str, new_name: str) -> dict[str, Any]:
+def rename_lms_preset(model_name: str, preset_id: str, new_name: str) -> dict[str, Any]:
     """Rename a custom preset without changing its config."""
 
     normalized_name = str(new_name or "").strip()
     if not normalized_name:
         raise ValueError("Preset name cannot be empty")
 
-    presets, _active_preset = ensure_ollama_preset_state(model_name)
+    presets, _active_preset = ensure_lms_preset_state(model_name)
     preset = _get_preset_by_id(presets, preset_id)
     if preset.is_default:
         raise ValueError("The default preset cannot be renamed")
@@ -253,14 +243,14 @@ def rename_ollama_preset(model_name: str, preset_id: str, new_name: str) -> dict
     except IntegrityError as exc:
         raise ValueError(f"A preset named '{normalized_name}' already exists for {model_name}.") from exc
 
-    return get_ollama_preset_payload(model_name)
+    return get_lms_preset_payload(model_name)
 
 # Delete a custom preset.
 @transaction.atomic
-def delete_ollama_preset(model_name: str, preset_id: str) -> dict[str, Any]:
+def delete_lms_preset(model_name: str, preset_id: str) -> dict[str, Any]:
     """Delete a custom preset and restore the default when needed."""
 
-    presets, _active_preset = ensure_ollama_preset_state(model_name)
+    presets, _active_preset = ensure_lms_preset_state(model_name)
     preset = _get_preset_by_id(presets, preset_id)
     if preset.is_default:
         raise ValueError("The default preset cannot be deleted")
@@ -268,28 +258,28 @@ def delete_ollama_preset(model_name: str, preset_id: str) -> dict[str, Any]:
     was_active = preset.is_active
     preset.delete()
 
-    payload = get_ollama_preset_payload(model_name)
+    payload = get_lms_preset_payload(model_name)
     if not was_active:
         return payload
 
     default_preset = next(item for item in payload["presets"] if item.get("is_default"))
-    return activate_ollama_preset(model_name, default_preset["id"])
+    return activate_lms_preset(model_name, default_preset["id"])
 
 # Persist changes into the active preset.
 @transaction.atomic
-def sync_active_ollama_preset(model_name: str, config: dict[str, Any]) -> dict[str, Any]:
+def sync_active_lms_preset(model_name: str, config: dict[str, Any]) -> dict[str, Any]:
     """Persist UI changes into the active preset."""
 
     normalized_model = str(model_name or "").strip()
-    normalized_config = normalize_ollama_preset_config(config)
-    presets, active_preset = ensure_ollama_preset_state(normalized_model)
+    normalized_config = normalize_lms_preset_config(config)
+    presets, active_preset = ensure_lms_preset_state(normalized_model)
 
     # Editing the default preset should create a custom active copy.
     if active_preset.is_default:
-        if normalize_ollama_preset_config(active_preset.config) == normalized_config:
-            return get_ollama_preset_payload(normalized_model)
+        if normalize_lms_preset_config(active_preset.config) == normalized_config:
+            return get_lms_preset_payload(normalized_model)
 
-        return create_ollama_preset(
+        return create_lms_preset(
             normalized_model,
             config=normalized_config,
             activate=True,
@@ -298,4 +288,4 @@ def sync_active_ollama_preset(model_name: str, config: dict[str, Any]) -> dict[s
     # Custom active presets can be updated in place.
     active_preset.config = normalized_config
     active_preset.save(update_fields=["config", "updated_at"])
-    return get_ollama_preset_payload(normalized_model)
+    return get_lms_preset_payload(normalized_model)

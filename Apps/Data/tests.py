@@ -6,10 +6,17 @@ import tempfile
 import textwrap
 from pathlib import Path
 from unittest.mock import patch
+
 from django.test import TestCase
 
 from API import mcp as tool_registry
-from Apps.Data.models import Chat, Message, MessageImage, MessageRole, OllamaPreset
+from Apps.Data.lms_presets import (
+    create_lms_preset,
+    delete_lms_preset,
+    ensure_lms_preset_state,
+    sync_active_lms_preset,
+)
+from Apps.Data.models import Chat, LmsPreset, Message, MessageImage, MessageRole, OllamaPreset
 from Apps.Data.ollama_presets import (
     DEFAULT_OLLAMA_PRESET_CONFIG,
     create_ollama_preset,
@@ -19,10 +26,12 @@ from Apps.Data.ollama_presets import (
 )
 
 
+# Shared test helpers.
+# Provide isolated tool-registry fixtures for tests.
 class ToolRegistryTestCase(TestCase):
     """Provide helpers for exercising local ``Tools/*/mcp-server.py`` discovery."""
 
-    # Create isolated Tools directory
+    # Create an isolated tools directory.
     def setUp(self):
         super().setUp()
         self._tools_dir_context = tempfile.TemporaryDirectory()
@@ -31,14 +40,14 @@ class ToolRegistryTestCase(TestCase):
         self.tools_patch.start()
         tool_registry.reset_cache()
 
-    # Restore original registry state
+    # Restore the original registry state.
     def tearDown(self):
         tool_registry.reset_cache()
         self.tools_patch.stop()
         self._tools_dir_context.cleanup()
         super().tearDown()
 
-    # Write temporary MCP server
+    # Write a temporary MCP server module.
     def write_server(self, folder: str, body: str) -> None:
         server_dir = self.tools_dir / folder
         server_dir.mkdir(parents=True, exist_ok=True)
@@ -48,9 +57,13 @@ class ToolRegistryTestCase(TestCase):
         )
         tool_registry.reset_cache()
 
+
+# Attachment model tests.
+# Verify helper behavior for legacy image records.
 class MessageImageTests(TestCase):
     """Verify helper serialization on stored message images."""
 
+    # Ensure data URLs include the expected prefix.
     def test_data_url_builds_valid_prefix(self):
         chat = Chat.objects.create(title="Test")
         message = Message.objects.create(chat=chat, role=MessageRole.USER, content="Hello")
@@ -63,9 +76,12 @@ class MessageImageTests(TestCase):
         self.assertEqual(image.data_url(), "data:image/png;base64,abc123")
 
 
+# Ollama preset tests.
+# Verify the Ollama preset lifecycle for one model.
 class OllamaPresetTests(TestCase):
     """Verify per-model Ollama preset lifecycle helpers."""
 
+    # Create the default preset when no saved state exists.
     def test_ensure_state_creates_default_preset(self):
         presets, active_preset = ensure_ollama_preset_state("llama3")
 
@@ -75,6 +91,7 @@ class OllamaPresetTests(TestCase):
         self.assertEqual(active_preset.config["num_ctx"], DEFAULT_OLLAMA_PRESET_CONFIG["num_ctx"])
         self.assertEqual(active_preset.config["num_predict"], DEFAULT_OLLAMA_PRESET_CONFIG["num_predict"])
 
+    # Clone the default preset when the active config changes.
     def test_sync_from_default_creates_custom_active_preset(self):
         payload = sync_active_ollama_preset(
             "llama3",
@@ -92,6 +109,7 @@ class OllamaPresetTests(TestCase):
         self.assertEqual(active.config["num_ctx"], 65536)
         self.assertEqual(active.config["think_level"], "high")
 
+    # Fall back to the default preset after deleting the active custom one.
     def test_delete_active_custom_preset_falls_back_to_default(self):
         created = create_ollama_preset(
             "llama3",
@@ -104,10 +122,89 @@ class OllamaPresetTests(TestCase):
         active = OllamaPreset.objects.get(model_name="llama3", is_active=True)
         self.assertTrue(active.is_default)
 
+    # Drop unsupported runtime keys before saving a preset.
+    def test_sync_drops_unsupported_runtime_keys_from_preset_config(self):
+        payload = sync_active_ollama_preset(
+            "llama3",
+            {
+                "num_ctx": 65536,
+                "think": True,
+                "mirostat": 2,
+                "numa": True,
+                "vocab_only": True,
+            },
+        )
 
+        active = OllamaPreset.objects.get(id=payload["active_preset_id"])
+        self.assertEqual(active.config["num_ctx"], 65536)
+        self.assertTrue(active.config["think"])
+        self.assertNotIn("mirostat", active.config)
+        self.assertNotIn("numa", active.config)
+        self.assertNotIn("vocab_only", active.config)
+
+
+# LM Studio preset tests.
+# Verify the LM Studio preset lifecycle for one model.
+class LmsPresetTests(TestCase):
+    """Verify per-model LM Studio preset lifecycle helpers."""
+
+    # Create the default preset from model defaults when no state exists.
+    @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
+    def test_ensure_state_creates_default_preset(self, mock_get_model_settings):
+        mock_get_model_settings.return_value = {
+            "defaults": {"temperature": 0.7, "think": True},
+        }
+
+        presets, active_preset = ensure_lms_preset_state("qwen3")
+
+        self.assertEqual(len(presets), 1)
+        self.assertTrue(active_preset.is_default)
+        self.assertTrue(active_preset.is_active)
+        self.assertEqual(active_preset.config["operation"]["temperature"], 0.7)
+
+    # Clone the default preset when the active config changes.
+    @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
+    def test_sync_from_default_creates_custom_active_preset(self, mock_get_model_settings):
+        mock_get_model_settings.return_value = {
+            "defaults": {"temperature": 0.7},
+        }
+
+        payload = sync_active_lms_preset(
+            "qwen3",
+            {
+                "operation": {"temperature": 0.2, "think": False},
+            },
+        )
+
+        self.assertEqual(LmsPreset.objects.filter(model_name="qwen3").count(), 2)
+        active = LmsPreset.objects.get(id=payload["active_preset_id"])
+        self.assertFalse(active.is_default)
+        self.assertFalse(active.config["operation"]["think"])
+
+    # Fall back to the default preset after deleting the active custom one.
+    @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
+    def test_delete_active_custom_preset_falls_back_to_default(self, mock_get_model_settings):
+        mock_get_model_settings.return_value = {
+            "defaults": {"temperature": 0.7},
+        }
+        created = create_lms_preset(
+            "qwen3",
+            name="Coding",
+            config={"operation": {"temperature": 0.2}},
+            activate=True,
+        )
+        delete_lms_preset("qwen3", created["active_preset_id"])
+
+        active = LmsPreset.objects.get(model_name="qwen3", is_active=True)
+        self.assertTrue(active.is_default)
+
+
+# Tool registry tests.
+# Verify MCP-style local server discovery and execution.
 class LocalServerRegistryTests(ToolRegistryTestCase):
     """Verify discovery and execution of local MCP-style server modules."""
 
+    # Discover valid local server modules.
     def test_list_servers_discovers_valid_server_modules(self):
         self.write_server(
             "time_suite",
@@ -144,6 +241,7 @@ class LocalServerRegistryTests(ToolRegistryTestCase):
         self.assertEqual(payload[0]["tool_count"], 2)
         self.assertEqual(payload[0]["tools"][0]["id"], "time_now")
 
+    # Hide servers that do not support the requested engine.
     def test_supports_filter_hides_servers_for_unsupported_engines(self):
         self.write_server(
             "ollama_only",
@@ -162,6 +260,7 @@ class LocalServerRegistryTests(ToolRegistryTestCase):
         self.assertEqual(tool_registry.list_servers(engine="openai"), [])
         self.assertEqual(tool_registry.list_servers(engine="ollama-service")[0]["id"], "ollama_only")
 
+    # Build one OpenAI-style tool entry per local server tool.
     def test_build_ollama_tools_registers_multiple_tools(self):
         self.write_server(
             "multi",
@@ -186,6 +285,7 @@ class LocalServerRegistryTests(ToolRegistryTestCase):
         self.assertIn("multi__alpha", lookup)
         self.assertEqual(lookup["multi__alpha"]["tool"]["id"], "alpha")
 
+    # Pass context through tool execution and serialize the result.
     def test_call_ollama_tool_serializes_results_and_passes_context(self):
         self.write_server(
             "context_suite",

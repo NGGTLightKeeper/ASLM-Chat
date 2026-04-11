@@ -156,7 +156,7 @@ TOOLS = [
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
     """Expose this tool server for engines that support tool-calling."""
 
-    return engine in ("ollama-service", "lms")
+    return engine in ("ollama-service", "lms", "openai", "google-genai")
 
 
 _REGISTERED_TOOL_FUNCTIONS: dict[str, Any] | None = None
