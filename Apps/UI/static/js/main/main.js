@@ -2337,7 +2337,7 @@ $(function () {
 
   // Update visible dividers.
   function updateVisibleDividers() {
-    const visibleGroups = ['custom', 'settings', 'sampling', 'advanced'].filter(function (groupName) {
+    const visibleGroups = ['load', 'custom', 'settings', 'sampling', 'advanced'].filter(function (groupName) {
       return $(`#group-${groupName}`).is(':visible');
     });
 

@@ -152,6 +152,7 @@ class MainViewTests(ToolRegistryTestMixin, TestCase):
                 "tools": [{"id": "time_now", "name": "Current Time", "description": ""}],
             }],
         )
+        self.assertContains(response, 'id="group-load"')
 
 
 # Ensure Ollama-only thinking parameters are normalized before request dispatch.
