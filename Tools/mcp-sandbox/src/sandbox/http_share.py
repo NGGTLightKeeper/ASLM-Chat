@@ -98,8 +98,16 @@ class FileShareHandler(SimpleHTTPRequestHandler):
         if not subpath or subpath == "/":
             subpath = "index.html"
 
+        # Decode percent-encoding a second time to catch double-encoded
+        # traversal sequences like %252e%252e%252f → %2e%2e%2f → ../
+        subpath = unquote(subpath)
+
+        # Strip any leading slashes so os.path.join can't treat it as absolute.
+        subpath = subpath.lstrip("/")
+
         safe_path = os.path.normpath(os.path.join(base_dir, subpath))
-        if not safe_path.startswith(os.path.normpath(base_dir)):
+        norm_base = os.path.normpath(base_dir)
+        if not (safe_path == norm_base or safe_path.startswith(norm_base + os.sep)):
             self.send_error(403, "Access denied")
             return
 

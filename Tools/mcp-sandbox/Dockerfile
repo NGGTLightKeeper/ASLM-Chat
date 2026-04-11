@@ -1,11 +1,8 @@
-FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
+FROM python:3.11-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    python3-dev \
     bash \
     build-essential \
     coreutils \
@@ -16,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gawk \
     git \
     grep \
+    iproute2 \
     less \
     libgl1 \
     libglib2.0-0 \
@@ -29,8 +27,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-
-RUN ln -s /usr/bin/python3 /usr/bin/python
 
 RUN pip install --no-cache-dir --upgrade pip
 
@@ -49,9 +45,12 @@ RUN pip install --no-cache-dir \
     yt-dlp \
     youtube-transcript-api
 
-# Pre-download Whisper small model so it's baked into the image
+# Pre-download Whisper small model — CPU mode, int8
 RUN python3 -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
+
+COPY docker/start-container.sh /usr/local/bin/start-container.sh
+RUN chmod +x /usr/local/bin/start-container.sh
 
 WORKDIR /workspace
 
-CMD ["tail", "-f", "/dev/null"]
+CMD ["/usr/local/bin/start-container.sh"]

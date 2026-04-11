@@ -1,6 +1,9 @@
+// Copyright NGGT.LightKeeper. All Rights Reserved.
+
 'use strict';
 
 $(function () {
+  // Cache shared DOM nodes.
   const $newChatBtn = $('#newChatBtn');
   const $historyList = $('#historyList');
   const $chatTitle = $('#chatTitle');
@@ -27,81 +30,162 @@ $(function () {
   const $ollamaPresetCreateBtn = $('#ollamaPresetCreateBtn');
   const $ollamaPresetRenameBtn = $('#ollamaPresetRenameBtn');
   const $ollamaPresetDeleteBtn = $('#ollamaPresetDeleteBtn');
-  const $toolToggleBtn = $('#toolToggleBtn');
-  const $toolToggleBtnConv = $('#toolToggleBtnConv');
-  const $toolSelectorPanel = $('#toolSelectorPanel');
-  const $toolSelectorPanelConv = $('#toolSelectorPanelConv');
-  const $toolSelector = $('#toolSelector');
-  const $toolSelectorConv = $('#toolSelectorConv');
+  const $groupTools = $('#group-tools');
+  const $dividerTools = $('#divider-tools');
+  const $toolInspectorModal = $('#toolInspectorModal');
 
+  // Wire the tool inspector modal.
+  $('#toolInspectorClose').on('click', function () { $toolInspectorModal.removeClass('open'); });
+  $toolInspectorModal.on('click', function (e) {
+    if ($(e.target).is($toolInspectorModal)) { $toolInspectorModal.removeClass('open'); }
+  });
+  $(document).on('keydown', function (e) {
+    if (e.key === 'Escape') { $toolInspectorModal.removeClass('open'); }
+  });
+
+  // Track runtime and chat state.
   let runtimeSettings = parseJsonScript('runtimeSettingsData') || {};
   const defaultAvailableToolServers = parseJsonScript('availableToolServersData') || [];
+  const uiIconPaths = parseJsonScript('uiIconPathsData') || {};
   let availableToolServers = Array.isArray(defaultAvailableToolServers) ? defaultAvailableToolServers.slice() : [];
-  let selectedToolServerId = '';
-  let toolSelectorOpen = false;
+  let selectedToolServerIds = new Set();
   let currentChatId = null;
   let engineSelectionVersion = 0;
+  let modelInfoRequestVersion = 0;
   let activeEngine = 'ollama-service';
-  let lmsLoadConfigDirty = false;
   const modelsCache = {};
+  let lmsModelsRefreshTimer = null;
+  let lmsModelsRefreshInFlight = false;
   let ollamaPresetState = {
+    engine: '',
     model: '',
     activePresetId: '',
     presets: []
   };
   let ollamaPresetSyncTimer = null;
   let isChatGenerating = false;
+  let currentAbortController = null;
   let queuedMessageCounter = 0;
   const chatRequestQueue = [];
 
+  // Map engine-specific configuration.
   const ENGINE_ALIASES = {
     ollama: 'ollama-service',
     'ollama-service': 'ollama-service',
     lms: 'lms',
     'lm-studio': 'lms',
     openai: 'openai',
-    'openai-api': 'openai'
+    'openai-api': 'openai',
+    'google-genai': 'google-genai',
+    google_genai: 'google-genai',
+    google: 'google-genai',
+    gemini: 'google-genai'
   };
 
   const ENGINE_ADDRESS_KEYS = {
     lms: 'lms_url',
-    openai: 'openai_url'
+    openai: 'openai_url',
+    'google-genai': 'google_genai_url'
   };
 
+  const ENGINE_API_KEY_KEYS = {
+    openai: 'openai_api_key',
+    'google-genai': 'google_genai_api_key'
+  };
+
+  // Describe engine-specific UI hints and limits.
   const ENGINE_ADDRESS_HINTS = {
     'ollama-service': 'Ollama uses the local service managed by ASLM.',
     lms: 'Example: http://127.0.0.1:1234',
-    openai: 'Example: http://127.0.0.1:8000/v1'
+    openai: 'Example: http://127.0.0.1:8000/v1',
+    'google-genai': 'Example: https://generativelanguage.googleapis.com'
   };
+  const OLLAMA_UNSUPPORTED_RUNTIME_PARAMS = new Set([
+    'embedding_only',
+    'f16_kv',
+    'logits_all',
+    'low_vram',
+    'mirostat',
+    'mirostat_eta',
+    'mirostat_tau',
+    'numa',
+    'penalize_newline',
+    'tfs_z',
+    'use_mlock',
+    'vocab_only'
+  ]);
 
   activeEngine = normalizeEngineValue(
     runtimeSettings['llm-engine'] || $('body').data('llm-engine') || 'ollama-service'
   );
+  function svgIcon(iconPath, attrs) {
+    return `<svg ${attrs}><use href="${iconPath}#icon"></use></svg>`;
+  }
 
+  const STOP_ICON = svgIcon(uiIconPaths.stopSquare, 'width="18" height="18" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"');
+  const SEND_ICON = svgIcon(uiIconPaths.send, 'width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"');
+  const REMOVE_ATTACHMENT_ICON = svgIcon(uiIconPaths.removeAttachment, 'width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"');
+  const COPY_MESSAGE_ICON = svgIcon(uiIconPaths.copy, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"');
+  const REGENERATE_ICON = svgIcon(uiIconPaths.refresh, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"');
+  const DELETE_MESSAGE_ICON = svgIcon(uiIconPaths.trash, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"');
+  const COPIED_ICON = svgIcon(uiIconPaths.check, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"');
+  const CHAT_ITEM_ICON = svgIcon(uiIconPaths.chatBubble, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"');
+  const CHAT_ITEM_MENU_ICON = svgIcon(uiIconPaths.ellipsisVertical, 'width="14" height="14" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"');
+
+  function buildMessageActionsHtml() {
+    return `<div class="msg-actions">
+      <button class="msg-action-btn msg-copy-btn" title="Copy" aria-label="Copy message">${COPY_MESSAGE_ICON}</button>
+      <button class="msg-action-btn msg-regen-btn" title="Regenerate" aria-label="Regenerate response">${REGENERATE_ICON}</button>
+      <button class="msg-action-btn msg-delete-btn" title="Delete" aria-label="Delete message">${DELETE_MESSAGE_ICON}</button>
+    </div>`;
+  }
+
+  // Track model capabilities and request attachments.
   const visionState = {
-    supported: false,
+    supported: false
+  };
+
+  const fileState = {
+    supported: false
+  };
+
+  const attachmentState = {
     pending: []
   };
 
   const thinkState = {
     supported: false,
     paramName: 'think',
+    toggleSupported: false,
     enabled: true,
     levelSupported: false,
     levelParamName: 'think_level',
+    levelOptions: ['low', 'medium', 'high'],
     level: 'medium'
   };
 
   const toolState = {
     supported: false
   };
+  let currentModelInfo = null;
 
+  // Identify parameters related to visible reasoning controls.
+  const THINK_PARAMETER_KEYS = new Set([
+    'think',
+    'think_level',
+    'thinking',
+    'reasoning',
+    'thinking_level',
+    'reasoning_effort'
+  ]);
+
+  // Describe supported parameter controls.
   const PARAMETER_DEFINITIONS = {
     temperature: {
       label: 'Temperature',
       type: 'range',
       group: 'settings',
-      engines: ['ollama-service', 'lms', 'openai'],
+      engines: ['ollama-service', 'lms', 'openai', 'google-genai'],
       min: 0,
       max: 2,
       step: 0.1,
@@ -264,7 +348,7 @@ $(function () {
       label: 'Seed',
       type: 'optional-number',
       group: 'advanced',
-      engines: ['ollama-service', 'openai'],
+      engines: ['ollama-service', 'openai', 'google-genai'],
       min: 0,
       max: 2147483647,
       step: 1,
@@ -276,7 +360,7 @@ $(function () {
       label: 'Top P',
       type: 'range',
       group: 'sampling',
-      engines: ['ollama-service', 'openai'],
+      engines: ['ollama-service', 'openai', 'google-genai'],
       min: 0,
       max: 1,
       step: 0.01,
@@ -287,7 +371,7 @@ $(function () {
       label: 'Top K',
       type: 'range',
       group: 'sampling',
-      engines: ['ollama-service'],
+      engines: ['ollama-service', 'google-genai'],
       min: 1,
       max: 1000,
       step: 1,
@@ -584,6 +668,54 @@ $(function () {
       ],
       fallback: ''
     },
+    max_output_tokens: {
+      label: 'Max Output Tokens',
+      type: 'range',
+      group: 'settings',
+      engines: ['google-genai'],
+      min: 1,
+      max: 32768,
+      step: 32,
+      decimals: 0,
+      fallback: 8192
+    },
+    candidate_count: {
+      label: 'Candidates',
+      type: 'range',
+      group: 'advanced',
+      engines: ['google-genai'],
+      min: 1,
+      max: 8,
+      step: 1,
+      decimals: 0,
+      fallback: 1
+    },
+    stop_sequences: {
+      label: 'Stop Sequences',
+      type: 'json',
+      group: 'advanced',
+      engines: ['google-genai'],
+      fallback: null
+    },
+    response_logprobs: {
+      label: 'Response Logprobs',
+      type: 'boolean',
+      group: 'advanced',
+      engines: ['google-genai'],
+      fallback: false
+    },
+    response_mime_type: {
+      label: 'Response MIME Type',
+      type: 'select',
+      valueType: 'string',
+      group: 'advanced',
+      engines: ['google-genai'],
+      options: [
+        { value: 'text/plain', label: 'Text' },
+        { value: 'application/json', label: 'JSON' }
+      ],
+      fallback: 'text/plain'
+    },
     max_completion_tokens: {
       label: 'Max Completion Tokens',
       type: 'range',
@@ -599,7 +731,7 @@ $(function () {
       label: 'Presence Penalty',
       type: 'range',
       group: 'sampling',
-      engines: ['openai'],
+      engines: ['openai', 'google-genai'],
       min: -2,
       max: 2,
       step: 0.1,
@@ -610,7 +742,7 @@ $(function () {
       label: 'Frequency Penalty',
       type: 'range',
       group: 'sampling',
-      engines: ['openai'],
+      engines: ['openai', 'google-genai'],
       min: -2,
       max: 2,
       step: 0.1,
@@ -672,186 +804,16 @@ $(function () {
     }
   };
 
-  const LLM_LOAD_PARAMETER_DEFINITIONS = {
-    contextLength: {
-      label: 'Context Length',
-      type: 'optional-number',
-      path: 'contextLength',
-      min: 1,
-      max: 131072,
-      step: 256,
-      decimals: 0,
-      fallback: null
-    },
-    gpu_ratio: {
-      label: 'GPU Ratio',
-      type: 'optional-number',
-      path: 'gpu.ratio',
-      min: 0,
-      max: 1,
-      step: 0.01,
-      decimals: 2,
-      fallback: null
-    },
-    gpu_mainGpu: {
-      label: 'Main GPU',
-      type: 'optional-number',
-      path: 'gpu.mainGpu',
-      min: 0,
-      max: 16,
-      step: 1,
-      decimals: 0,
-      fallback: null
-    },
-    gpu_splitStrategy: {
-      label: 'GPU Split Strategy',
-      type: 'select',
-      valueType: 'string',
-      path: 'gpu.splitStrategy',
-      options: [
-        { value: '', label: 'Automatic' },
-        { value: 'evenly', label: 'Evenly' },
-        { value: 'favorMainGpu', label: 'Favor Main GPU' }
-      ],
-      fallback: ''
-    },
-    gpu_disabledGpus: {
-      label: 'Disabled GPUs',
-      type: 'json',
-      path: 'gpu.disabledGpus',
-      fallback: null
-    },
-    gpuStrictVramCap: {
-      label: 'Strict VRAM Cap',
-      type: 'boolean',
-      path: 'gpuStrictVramCap',
-      fallback: false
-    },
-    offloadKVCacheToGpu: {
-      label: 'Offload KV Cache To GPU',
-      type: 'boolean',
-      path: 'offloadKVCacheToGpu',
-      fallback: false
-    },
-    ropeFrequencyBase: {
-      label: 'RoPE Frequency Base',
-      type: 'optional-number',
-      path: 'ropeFrequencyBase',
-      min: 0,
-      max: 1000000,
-      step: 1,
-      decimals: 0,
-      fallback: null
-    },
-    ropeFrequencyScale: {
-      label: 'RoPE Frequency Scale',
-      type: 'optional-number',
-      path: 'ropeFrequencyScale',
-      min: 0,
-      max: 1000,
-      step: 0.01,
-      decimals: 2,
-      fallback: null
-    },
-    evalBatchSize: {
-      label: 'Eval Batch Size',
-      type: 'optional-number',
-      path: 'evalBatchSize',
-      min: 1,
-      max: 8192,
-      step: 1,
-      decimals: 0,
-      fallback: null
-    },
-    flashAttention: {
-      label: 'Flash Attention',
-      type: 'boolean',
-      path: 'flashAttention',
-      fallback: false
-    },
-    keepModelInMemory: {
-      label: 'Keep Model In Memory',
-      type: 'boolean',
-      path: 'keepModelInMemory',
-      fallback: false
-    },
-    seed: {
-      label: 'Seed',
-      type: 'optional-number',
-      path: 'seed',
-      min: 0,
-      max: 2147483647,
-      step: 1,
-      decimals: 0,
-      fallback: null
-    },
-    useFp16ForKVCache: {
-      label: 'Use FP16 For KV Cache',
-      type: 'boolean',
-      path: 'useFp16ForKVCache',
-      fallback: false
-    },
-    tryMmap: {
-      label: 'Try Memory Map',
-      type: 'boolean',
-      path: 'tryMmap',
-      fallback: false
-    },
-    numExperts: {
-      label: 'Num Experts',
-      type: 'optional-number',
-      path: 'numExperts',
-      min: 1,
-      max: 256,
-      step: 1,
-      decimals: 0,
-      fallback: null
-    },
-    llamaKCacheQuantizationType: {
-      label: 'K Cache Quantization',
-      type: 'select',
-      valueType: 'string',
-      path: 'llamaKCacheQuantizationType',
-      options: [
-        { value: '', label: 'Automatic' },
-        { value: 'f32', label: 'f32' },
-        { value: 'f16', label: 'f16' },
-        { value: 'q8_0', label: 'q8_0' },
-        { value: 'q4_0', label: 'q4_0' },
-        { value: 'q4_1', label: 'q4_1' },
-        { value: 'iq4_nl', label: 'iq4_nl' },
-        { value: 'q5_0', label: 'q5_0' },
-        { value: 'q5_1', label: 'q5_1' }
-      ],
-      fallback: ''
-    },
-    llamaVCacheQuantizationType: {
-      label: 'V Cache Quantization',
-      type: 'select',
-      valueType: 'string',
-      path: 'llamaVCacheQuantizationType',
-      options: [
-        { value: '', label: 'Automatic' },
-        { value: 'f32', label: 'f32' },
-        { value: 'f16', label: 'f16' },
-        { value: 'q8_0', label: 'q8_0' },
-        { value: 'q4_0', label: 'q4_0' },
-        { value: 'q4_1', label: 'q4_1' },
-        { value: 'iq4_nl', label: 'iq4_nl' },
-        { value: 'q5_0', label: 'q5_0' },
-        { value: 'q5_1', label: 'q5_1' }
-      ],
-      fallback: ''
-    }
-  };
-
   const LLM_PARAMETER_OPTION_SETS = {
     reasoning_effort: ['minimal', 'low', 'medium', 'high', 'xhigh'],
     think_level: ['low', 'medium', 'high'],
-    thinking_level: ['low', 'medium', 'high'],
+    thinking_level: ['minimal', 'low', 'medium', 'high'],
     verbosity: ['low', 'medium', 'high']
   };
 
+  // Engine and runtime configuration helpers.
+
+  // Parse JSON from an embedded script tag.
   function parseJsonScript(id) {
     const element = document.getElementById(id);
     if (!element) {
@@ -865,20 +827,133 @@ $(function () {
     }
   }
 
+  // Normalize engine value.
   function normalizeEngineValue(engine) {
     const normalized = String(engine || '').trim().toLowerCase();
     return ENGINE_ALIASES[normalized] || normalized || 'ollama-service';
   }
 
+  // Normalize parameter name.
+  function normalizeParameterName(param) {
+    return String(param || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+
+  // Check whether this parameter controls thinking output.
+  function isThinkingParameterKey(param) {
+    return THINK_PARAMETER_KEYS.has(normalizeParameterName(param));
+  }
+
+  // Get engine address key.
   function getEngineAddressKey(engine) {
     return ENGINE_ADDRESS_KEYS[normalizeEngineValue(engine)] || null;
   }
 
+  // Get engine address.
   function getEngineAddress(engine) {
     const key = getEngineAddressKey(engine);
     return key ? (runtimeSettings[key] || '') : '';
   }
 
+  // Get engine API key key.
+  function getEngineApiKeyKey(engine) {
+    const canonicalEngine = normalizeEngineValue(engine);
+    const runtimeKeys = runtimeSettings.engine_api_key_keys || {};
+    return runtimeKeys[canonicalEngine] || ENGINE_API_KEY_KEYS[canonicalEngine] || null;
+  }
+
+  // Check whether an API key is stored for the engine.
+  function hasStoredEngineApiKey(engine) {
+    const canonicalEngine = normalizeEngineValue(engine);
+    const engineApiKeys = runtimeSettings.engine_api_keys || {};
+    if (typeof engineApiKeys[canonicalEngine] === 'boolean') {
+      return engineApiKeys[canonicalEngine];
+    }
+
+    const legacyFlag = `has_${canonicalEngine.replace(/-/g, '_')}_api_key`;
+    return !!runtimeSettings[legacyFlag];
+  }
+
+  // Normalize address for parsing.
+  function normalizeAddressForParsing(value) {
+    const rawValue = String(value || '').trim();
+    if (!rawValue) {
+      return '';
+    }
+
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(rawValue)) {
+      return rawValue;
+    }
+
+    return `http://${rawValue}`;
+  }
+
+  // Check whether the hostname points to a local address.
+  function isLocalHostname(hostname) {
+    const normalizedHost = String(hostname || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^\[|\]$/g, '');
+
+    if (!normalizedHost) {
+      return true;
+    }
+
+    if (['localhost', '0.0.0.0', '127.0.0.1', '::1'].includes(normalizedHost)) {
+      return true;
+    }
+
+    if (/^127(?:\.\d{1,3}){3}$/.test(normalizedHost)) {
+      return true;
+    }
+
+    if (/^10(?:\.\d{1,3}){3}$/.test(normalizedHost)) {
+      return true;
+    }
+
+    if (/^192\.168(?:\.\d{1,3}){2}$/.test(normalizedHost)) {
+      return true;
+    }
+
+    if (/^169\.254(?:\.\d{1,3}){2}$/.test(normalizedHost)) {
+      return true;
+    }
+
+    // Detect the RFC1918 172.16.0.0/12 private range separately because only a
+    // subset of 172.x.x.x addresses should be considered local.
+    const privateRangeMatch = normalizedHost.match(/^172\.(\d{1,3})(?:\.\d{1,3}){2}$/);
+    if (privateRangeMatch) {
+      const secondOctet = Number(privateRangeMatch[1]);
+      if (secondOctet >= 16 && secondOctet <= 31) {
+        return true;
+      }
+    }
+
+    if (/^(?:fc|fd)[0-9a-f:]*$/i.test(normalizedHost)) {
+      return true;
+    }
+
+    return /^fe80:/i.test(normalizedHost);
+  }
+
+  // Check whether the current LM Studio address is local.
+  function isLocalLmsAddress() {
+    const address = normalizeAddressForParsing(getEngineAddress('lms'));
+    if (!address) {
+      return true;
+    }
+
+    try {
+      return isLocalHostname(new URL(address).hostname);
+    } catch (_error) {
+      return true;
+    }
+  }
+
+  // Set engine address status.
   function setEngineAddressStatus(text, state) {
     $engineAddressStatus.text(text || '');
     $engineAddressStatus.removeClass('is-pending is-error');
@@ -888,6 +963,7 @@ $(function () {
     }
   }
 
+  // Set engine API key status.
   function setEngineApiKeyStatus(text, state) {
     $engineApiKeyStatus.text(text || '');
     $engineApiKeyStatus.removeClass('is-pending is-error');
@@ -897,17 +973,22 @@ $(function () {
     }
   }
 
+  // Get active engine.
   function getActiveEngine() {
     return activeEngine;
   }
 
+  // Update engine address UI.
   function updateEngineAddressUi() {
     const engine = getActiveEngine();
     const addressKey = getEngineAddressKey(engine);
     const hasEditableAddress = Boolean(addressKey);
-    const hasApiKeySupport = engine === 'openai';
-    const hasStoredApiKey = hasApiKeySupport && !!runtimeSettings.has_openai_api_key;
+    const apiKeyKey = getEngineApiKeyKey(engine);
+    const hasApiKeySupport = Boolean(apiKeyKey);
+    const hasStoredApiKey = hasApiKeySupport && hasStoredEngineApiKey(engine);
 
+    // Address and API-key controls are engine-specific, so rebuild their
+    // visible state from the canonical runtime settings on every engine switch.
     $engineAddressGroup.toggle(hasEditableAddress);
     $engineAddressHint.text(ENGINE_ADDRESS_HINTS[engine] || 'Configure the selected engine endpoint.');
     $engineApiKeyGroup.toggle(hasApiKeySupport);
@@ -936,101 +1017,240 @@ $(function () {
     setEngineApiKeyStatus(hasStoredApiKey ? 'On' : 'Off', null);
   }
 
+  // Normalize tool server id.
   function normalizeToolServerId(serverId) {
     return String(serverId || '').trim();
   }
 
-  function getSelectedToolServerDefinition() {
-    return (availableToolServers || []).find(function (server) {
-      return normalizeToolServerId(server.id) === selectedToolServerId;
-    }) || null;
-  }
-
+  // Update available tool servers.
   function updateAvailableToolServers(tools) {
     availableToolServers = Array.isArray(tools) ? tools.slice() : [];
-    if (!availableToolServers.some(function (server) { return normalizeToolServerId(server.id) === selectedToolServerId; })) {
-      selectedToolServerId = '';
-    }
+    const validIds = new Set(availableToolServers.map(function (s) { return normalizeToolServerId(s.id); }));
+    selectedToolServerIds.forEach(function (id) {
+      if (!validIds.has(id)) selectedToolServerIds.delete(id);
+    });
     renderToolControls();
   }
 
-  function applySelectedToolServerId(serverId) {
-    const normalizedServerId = normalizeToolServerId(serverId);
-    selectedToolServerId = availableToolServers.some(function (server) {
-      return normalizeToolServerId(server.id) === normalizedServerId;
-    }) ? normalizedServerId : '';
+  // Apply selected tool server ids.
+  function applySelectedToolServerIds(ids) {
+    selectedToolServerIds = new Set();
+    const validIds = new Set(availableToolServers.map(function (s) { return normalizeToolServerId(s.id); }));
+    (Array.isArray(ids) ? ids : (ids ? [ids] : [])).forEach(function (id) {
+      const normalized = normalizeToolServerId(id);
+      if (validIds.has(normalized)) selectedToolServerIds.add(normalized);
+    });
     renderToolControls();
   }
 
+  // Render tool controls.
   function renderToolControls() {
     const hasToolSupport = toolState.supported && Array.isArray(availableToolServers) && availableToolServers.length > 0;
-    const selectedTool = getSelectedToolServerDefinition();
-    const buttonLabel = selectedTool ? selectedTool.name : 'Tools';
 
-    if (!hasToolSupport) {
-      toolSelectorOpen = false;
-    }
+    $groupTools.toggle(hasToolSupport);
+    $dividerTools.toggle(hasToolSupport);
 
-    [$toolToggleBtn, $toolToggleBtnConv].forEach(function ($button) {
-      $button.toggle(hasToolSupport);
-      $button.toggleClass('active', !!selectedTool);
-      $button.find('.tool-toggle-label').text(buttonLabel);
-    });
+    const $content = $groupTools.find('.settings-section-content');
+    $content.empty();
 
-    [$toolSelector, $toolSelectorConv].forEach(function ($select) {
-      $select.empty().append($('<option>').val('').text('No server'));
-      (availableToolServers || []).forEach(function (toolServer) {
-        const toolServerId = normalizeToolServerId(toolServer.id);
-        const toolCount = Number(toolServer.tool_count || (toolServer.tools || []).length || 0);
-        const optionLabel = toolCount > 1
-          ? `${toolServer.name || toolServerId} (${toolCount} tools)`
-          : (toolServer.name || toolServerId);
-        const $option = $('<option>').val(toolServerId).text(optionLabel);
-        if (toolServerId === selectedToolServerId) {
-          $option.prop('selected', true);
+    if (!hasToolSupport) return;
+
+    const $list = $('<div class="tool-server-list" id="toolServerList">');
+    availableToolServers.forEach(function (server) {
+      const serverId = normalizeToolServerId(server.id);
+      const toolCount = Number(server.tool_count || (server.tools || []).length || 0);
+      const label = toolCount > 0 ? `${server.name || serverId} (${toolCount} tools)` : (server.name || serverId);
+      const checked = selectedToolServerIds.has(serverId);
+
+      const $row = $('<label class="tool-server-row">');
+      const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
+      const $name = $('<span class="tool-server-name">').text(label);
+
+      // Keep the Set as the single source of truth, then rebuild the checkbox
+      // list from that state whenever capabilities or selected model change.
+      $checkbox.on('change', function () {
+        if (this.checked) {
+          selectedToolServerIds.add(serverId);
+        } else {
+          selectedToolServerIds.delete(serverId);
         }
-        $select.append($option);
       });
-      $select.val(selectedToolServerId || '');
+
+      $row.append($checkbox).append($name);
+      $list.append($row);
     });
 
-    [$toolSelectorPanel, $toolSelectorPanelConv].forEach(function ($panel) {
-      $panel.toggle(hasToolSupport && toolSelectorOpen);
-    });
+    $content.append($list);
   }
 
+  // Reset model UI state.
   function resetModelUiState(message) {
     const placeholderText = message || 'Models load on demand';
     $modelSelector.empty().append(
       $('<option>').val('').text(placeholderText)
     );
+    currentModelInfo = null;
     resetOllamaPresetUi();
     resetDynamicPanels();
-    renderLoadParameters();
     updateVisibleDividers();
     visionState.supported = false;
+    fileState.supported = false;
     thinkState.supported = false;
+    thinkState.toggleSupported = false;
     thinkState.levelSupported = false;
+    thinkState.levelOptions = ['low', 'medium', 'high'];
+    thinkState.enabled = true;
+    thinkState.level = 'medium';
     toolState.supported = false;
     updateAvailableToolServers(defaultAvailableToolServers);
-    toolSelectorOpen = false;
-    updateVisionControls();
+    updateAttachmentControls();
     updateThinkControls();
     renderToolControls();
   }
 
+  // Model loading and preset helpers.
+
+  // Clear cached models for one engine.
   function clearModelCache(engine) {
     const canonicalEngine = normalizeEngineValue(engine);
     delete modelsCache[canonicalEngine];
   }
 
-  function getSupportedParameterDefinitions(engine) {
-    const canonicalEngine = normalizeEngineValue(engine);
-    return Object.entries(PARAMETER_DEFINITIONS).filter(function ([, definition]) {
-      return (definition.engines || []).includes(canonicalEngine);
+  // Normalize model names.
+  function normalizeModelNames(models) {
+    return Array.from(new Set(
+      (Array.isArray(models) ? models : []).map(function (modelName) {
+        return String(modelName || '').trim();
+      }).filter(Boolean)
+    ));
+  }
+
+  // Compare two normalized model lists.
+  function areModelListsEqual(left, right) {
+    const first = normalizeModelNames(left);
+    const second = normalizeModelNames(right);
+    if (first.length !== second.length) {
+      return false;
+    }
+
+    return first.every(function (modelName, index) {
+      return modelName === second[index];
     });
   }
 
+  // Clear LM Studio models refresh timer.
+  function clearLmsModelsRefreshTimer() {
+    if (lmsModelsRefreshTimer !== null) {
+      window.clearTimeout(lmsModelsRefreshTimer);
+      lmsModelsRefreshTimer = null;
+    }
+  }
+
+  // Get LM Studio models refresh interval.
+  function getLmsModelsRefreshInterval() {
+    return isLocalLmsAddress() ? 3000 : 15000;
+  }
+
+  // Schedule LM Studio models refresh.
+  function scheduleLmsModelsRefresh(delayMs) {
+    clearLmsModelsRefreshTimer();
+
+    if (getActiveEngine() !== 'lms') {
+      return;
+    }
+
+    const intervalMs = typeof delayMs === 'number' ? delayMs : getLmsModelsRefreshInterval();
+    lmsModelsRefreshTimer = window.setTimeout(function () {
+      refreshLmsModels().catch(function (error) {
+        console.error('Failed to refresh LMS models:', error);
+      });
+    }, intervalMs);
+  }
+
+  // Sync LM Studio models refresh.
+  function syncLmsModelsRefresh() {
+    if (getActiveEngine() !== 'lms') {
+      clearLmsModelsRefreshTimer();
+      return;
+    }
+
+    scheduleLmsModelsRefresh();
+  }
+
+  // Refresh LM Studio models in the background.
+  async function refreshLmsModels() {
+    clearLmsModelsRefreshTimer();
+
+    if (getActiveEngine() !== 'lms') {
+      return;
+    }
+
+    if (lmsModelsRefreshInFlight) {
+      scheduleLmsModelsRefresh();
+      return;
+    }
+
+    const refreshVersion = engineSelectionVersion;
+    const previousModels = normalizeModelNames(modelsCache.lms || getAvailableModelsForEngine('lms'));
+    const previousSelectedModel = getSelectedModelName();
+    const hadRenderedOptions = $modelSelector.children().length > 0;
+
+    lmsModelsRefreshInFlight = true;
+
+    try {
+      const refreshedModels = normalizeModelNames(await fetchModelsForEngine('lms'));
+
+      // Ignore refresh results that race behind a later engine switch.
+      if (refreshVersion !== engineSelectionVersion || getActiveEngine() !== 'lms') {
+        return;
+      }
+
+      modelsCache.lms = refreshedModels;
+
+      // Re-render only when the visible selector would actually change or when
+      // the previously selected model disappeared from the refreshed list.
+      const shouldRerender = !hadRenderedOptions
+        || !areModelListsEqual(previousModels, refreshedModels)
+        || (previousSelectedModel && !refreshedModels.includes(previousSelectedModel));
+
+      if (!shouldRerender) {
+        return;
+      }
+
+      const selectedModel = renderModelOptions(refreshedModels, previousSelectedModel);
+      if (selectedModel !== previousSelectedModel) {
+        await loadModelInfo(selectedModel);
+      }
+    } finally {
+      lmsModelsRefreshInFlight = false;
+
+      if (refreshVersion === engineSelectionVersion && getActiveEngine() === 'lms') {
+        scheduleLmsModelsRefresh();
+      }
+    }
+  }
+
+  // Get supported parameter definitions.
+  function getSupportedParameterDefinitions(engine) {
+    const canonicalEngine = normalizeEngineValue(engine);
+    return Object.entries(PARAMETER_DEFINITIONS).filter(function ([key, definition]) {
+      if (!(definition.engines || []).includes(canonicalEngine)) {
+        return false;
+      }
+
+      // Thinking controls are rendered separately so they can stay synchronized
+      // with dedicated toggle and level widgets instead of generic fields.
+      if (isThinkingParameterKey(key)) {
+        return false;
+      }
+      if (canonicalEngine === 'ollama-service' && OLLAMA_UNSUPPORTED_RUNTIME_PARAMS.has(key)) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Get available models for engine.
   function getAvailableModelsForEngine(engine) {
     const canonicalEngine = normalizeEngineValue(engine);
 
@@ -1043,18 +1263,22 @@ $(function () {
     }).get().filter(Boolean);
   }
 
+  // Get selected model name.
   function getSelectedModelName() {
     return String($modelSelector.val() || '').trim();
   }
 
+  // Get active Ollama preset.
   function getActiveOllamaPreset() {
     return (ollamaPresetState.presets || []).find(function (preset) {
       return preset.id === ollamaPresetState.activePresetId;
     }) || null;
   }
 
+  // Reset Ollama preset UI.
   function resetOllamaPresetUi() {
     ollamaPresetState = {
+      engine: '',
       model: '',
       activePresetId: '',
       presets: []
@@ -1065,18 +1289,23 @@ $(function () {
     $ollamaPresetDeleteBtn.prop('disabled', true);
   }
 
+  // Apply Ollama preset state.
   function applyOllamaPresetState(payload) {
-    if (!payload || getActiveEngine() !== 'ollama-service' || !getSelectedModelName()) {
+    const activeEngine = getActiveEngine();
+    if (!payload || !['ollama-service', 'lms'].includes(activeEngine) || !getSelectedModelName()) {
       resetOllamaPresetUi();
       return;
     }
 
     ollamaPresetState = {
+      engine: activeEngine,
       model: payload.model || getSelectedModelName(),
       activePresetId: payload.active_preset_id || '',
       presets: Array.isArray(payload.presets) ? payload.presets : []
     };
 
+    // Rebuild the selector from backend state every time so rename/delete/sync
+    // operations never depend on stale client-side preset labels.
     $ollamaPresetSelector.empty();
     ollamaPresetState.presets.forEach(function (preset) {
       const label = preset.is_default ? `${preset.name} (Default)` : preset.name;
@@ -1094,6 +1323,34 @@ $(function () {
     $ollamaPresetGroup.show();
   }
 
+  // Check whether preset management is supported for the engine.
+  function isPresetCapableEngine(engine) {
+    return ['ollama-service', 'lms'].includes(normalizeEngineValue(engine));
+  }
+
+  // Get preset API base.
+  function getPresetApiBase(engine) {
+    const normalizedEngine = normalizeEngineValue(engine);
+    if (normalizedEngine === 'ollama-service') {
+      return '/api/ollama_presets';
+    }
+    if (normalizedEngine === 'lms') {
+      return '/api/lms_presets';
+    }
+    return '';
+  }
+
+  // Build active preset config payload.
+  function buildActivePresetConfigPayload() {
+    if (getActiveEngine() === 'lms') {
+      return {
+        operation: collectOptionsPayload()
+      };
+    }
+    return collectOptionsPayload();
+  }
+
+  // Post JSON and return the parsed response.
   async function postJson(url, payload) {
     const response = await fetch(url, {
       method: 'POST',
@@ -1114,8 +1371,11 @@ $(function () {
     return response.json();
   }
 
+  // Sync active Ollama preset.
   async function syncActiveOllamaPreset() {
-    if (getActiveEngine() !== 'ollama-service') {
+    const engine = getActiveEngine();
+    const presetApiBase = getPresetApiBase(engine);
+    if (!presetApiBase) {
       return;
     }
 
@@ -1124,15 +1384,16 @@ $(function () {
       return;
     }
 
-    const payload = await postJson('/api/ollama_presets/sync/', {
+    const payload = await postJson(`${presetApiBase}/sync/`, {
       model: modelName,
-      config: collectOptionsPayload()
+      config: buildActivePresetConfigPayload()
     });
     applyOllamaPresetState(payload);
   }
 
+  // Schedule Ollama preset sync.
   function scheduleOllamaPresetSync() {
-    if (getActiveEngine() !== 'ollama-service') {
+    if (!isPresetCapableEngine(getActiveEngine())) {
       return;
     }
 
@@ -1144,8 +1405,9 @@ $(function () {
     }, 220);
   }
 
+  // Render model options.
   function renderModelOptions(models, preferredModel) {
-    const uniqueModels = Array.from(new Set(models || []));
+    const uniqueModels = normalizeModelNames(models);
     const fallbackModel = uniqueModels[0] || '';
     const selectedModel = uniqueModels.includes(preferredModel) ? preferredModel : fallbackModel;
 
@@ -1167,21 +1429,40 @@ $(function () {
     return selectedModel;
   }
 
+  // Fetch models for engine.
   async function fetchModelsForEngine(engine) {
-    const response = await fetch(`/api/models/?engine=${encodeURIComponent(engine)}`);
-    if (!response.ok) {
-      throw new Error(`Failed to load models: ${response.status}`);
+    // Run the model fetch request.
+    async function runFetch() {
+      const response = await fetch(`/api/models/?engine=${encodeURIComponent(engine)}`);
+      if (!response.ok) {
+        throw new Error(`Failed to load models: ${response.status}`);
+      }
+      const data = await response.json();
+      return data.models || [];
     }
-    const data = await response.json();
-    return data.models || [];
+
+    const models = await runFetch();
+    if (models.length > 0 || normalizeEngineValue(engine) !== 'ollama-service') {
+      return models;
+    }
+
+    // Ollama can briefly report no models while the managed service is still
+    // warming up, so retry once before surfacing an empty selector.
+    await new Promise(function (resolve) {
+      window.setTimeout(resolve, 1200);
+    });
+    return runFetch();
   }
 
+  // Ensure models are loaded for the active engine.
   async function ensureModelsLoadedForActiveEngine(options) {
     const loadOptions = options || {};
     const engine = getActiveEngine();
     const preferredModel = loadOptions.preferredModel || $modelSelector.val() || '';
     let selectedModel = '';
 
+    // Reuse cached model lists when possible so repeated engine visits do not
+    // trigger avoidable discovery requests.
     if (Array.isArray(modelsCache[engine]) && modelsCache[engine].length > 0) {
       selectedModel = renderModelOptions(modelsCache[engine], preferredModel);
       await loadModelInfo(selectedModel);
@@ -1196,6 +1477,33 @@ $(function () {
     return selectedModel;
   }
 
+  // Refresh the active engine model list.
+  async function refreshActiveEngineModels(options) {
+    const refreshOptions = options || {};
+    const engine = normalizeEngineValue(refreshOptions.engine || getActiveEngine());
+    const preferredModel = Object.prototype.hasOwnProperty.call(refreshOptions, 'preferredModel')
+      ? (refreshOptions.preferredModel || '')
+      : ($modelSelector.val() || '');
+    const selectionVersion = typeof refreshOptions.selectionVersion === 'number'
+      ? refreshOptions.selectionVersion
+      : engineSelectionVersion;
+
+    clearModelCache(engine);
+
+    // Refresh requests can outlive the engine that triggered them, so bail out
+    // before mutating the selector if a newer engine selection already won.
+    if (selectionVersion !== engineSelectionVersion || engine !== getActiveEngine()) {
+      return '';
+    }
+
+    updateEngineAddressUi();
+    resetModelUiState(refreshOptions.loadingMessage || 'Loading models...');
+    return ensureModelsLoadedForActiveEngine({
+      preferredModel: preferredModel
+    });
+  }
+
+  // Save runtime settings.
   async function saveRuntimeSettings(patch) {
     const response = await fetch('/api/runtime_settings/', {
       method: 'POST',
@@ -1217,55 +1525,25 @@ $(function () {
     return runtimeSettings;
   }
 
-  async function reloadSelectedModel(engine, modelName) {
-    if (!modelName) {
-      return;
-    }
-
-    const response = await fetch('/api/reload_model/', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': getCsrfToken()
-      },
-      body: JSON.stringify({
-        engine,
-        model: modelName
-      })
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(function () {
-        return {};
-      });
-      throw new Error(errorData.error || `Failed to reload model: ${response.status}`);
-    }
-  }
-
-  async function applyLmsLoadConfigChange() {
-    if (getActiveEngine() !== 'lms') {
-      return;
-    }
-
-    const loadConfig = collectParameterPayload('#group-load .dyn-load-param');
-    runtimeSettings = await saveRuntimeSettings({ lms_load_config: loadConfig });
-    lmsLoadConfigDirty = true;
-  }
-
+  // Apply engine selection.
   async function applyEngineSelection(engine, options) {
     const settingsOptions = options || {};
     const normalizedEngine = normalizeEngineValue(engine);
     const selectionVersion = ++engineSelectionVersion;
+    modelInfoRequestVersion += 1;
     const previousEngine = activeEngine;
     const autoLoadModels = settingsOptions.autoLoadModels !== false;
 
     activeEngine = normalizedEngine;
+    clearLmsModelsRefreshTimer();
     $('body').data('llm-engine', normalizedEngine);
     $engineSelector.val(normalizedEngine);
     updateEngineAddressUi();
     resetModelUiState('Models load on demand');
 
     if (settingsOptions.persist === false) {
+      // During bootstrap we can switch engines locally without round-tripping
+      // through the settings API, but we still reuse the same UI reset flow.
       runtimeSettings['llm-engine'] = normalizedEngine;
       clearModelCache(normalizedEngine);
       if (autoLoadModels) {
@@ -1278,10 +1556,13 @@ $(function () {
           resetModelUiState('No models available');
         }
       }
+      syncLmsModelsRefresh();
       return;
     }
 
     try {
+      // Persist the engine first so the backend runtime and the UI stay aligned
+      // before any model discovery requests are issued.
       setEngineAddressStatus('Switching...', 'pending');
       runtimeSettings = await saveRuntimeSettings({ 'llm-engine': normalizedEngine });
       runtimeSettings['llm-engine'] = normalizedEngine;
@@ -1304,31 +1585,70 @@ $(function () {
           resetModelUiState('No models available');
         }
       }
+
+      syncLmsModelsRefresh();
     } catch (error) {
+      // Roll back the visible engine selection when persistence fails so the
+      // controls still describe the runtime state the backend is using.
       activeEngine = previousEngine;
       runtimeSettings['llm-engine'] = previousEngine;
       $('body').data('llm-engine', previousEngine);
       $engineSelector.val(previousEngine);
       updateEngineAddressUi();
       resetModelUiState('Models load on demand');
+      syncLmsModelsRefresh();
       throw error;
     }
   }
 
-  function buildChatTitle(text, hasImages) {
+  // Chat input and attachment helpers.
+
+  // Build chat title.
+  function buildChatTitle(text, hasAttachments) {
     if (text) {
       return text.substring(0, 40) + (text.length > 40 ? '...' : '');
     }
-    return hasImages ? 'Image chat' : 'New Chat';
+    return hasAttachments ? 'Attachment chat' : 'New Chat';
   }
 
+  // Update send buttons.
   function updateSendButtons() {
-    const hasPendingImages = visionState.pending.length > 0;
-    $sendBtn.prop('disabled', !$chatInput.val().trim() && !hasPendingImages);
-    $sendBtnConv.prop('disabled', !$chatInputConv.val().trim() && !hasPendingImages);
+    if (isChatGenerating) {
+      $sendBtn.prop('disabled', false).addClass('stop-btn').html(STOP_ICON).attr('aria-label', 'Stop generation');
+      $sendBtnConv.prop('disabled', false).addClass('stop-btn').html(STOP_ICON).attr('aria-label', 'Stop generation');
+    } else {
+      // Both composers share the same pending attachment state, so either send
+      // button stays enabled when attachments are queued without text.
+      const hasPendingAttachments = attachmentState.pending.length > 0;
+      $sendBtn.removeClass('stop-btn').html(SEND_ICON).attr('aria-label', 'Send Message').prop('disabled', !$chatInput.val().trim() && !hasPendingAttachments);
+      $sendBtnConv.removeClass('stop-btn').html(SEND_ICON).attr('aria-label', 'Send Message').prop('disabled', !$chatInputConv.val().trim() && !hasPendingAttachments);
+    }
   }
 
+  // Update regen buttons.
+  function updateRegenButtons() {
+    // Hide all regen buttons first.
+    $messagesInner.find('.msg-regen-btn').hide();
+
+    // Show regen on the very last assistant message.
+    const $allMsgs = $messagesInner.find('.msg');
+    const $lastAssistant = $messagesInner.find('.msg.assistant').last();
+    if ($lastAssistant.length) {
+      $lastAssistant.find('.msg-regen-btn').show();
+
+      // Also show regen on the user message right before the last assistant message,
+      // but only if that user message is immediately preceding.
+      const $prev = $lastAssistant.prev('.msg.user');
+      if ($prev.length) {
+        $prev.find('.msg-regen-btn').show();
+      }
+    }
+  }
+
+  // Start new chat.
   function startNewChat() {
+    // Reset only the conversation surface; model and runtime selections stay
+    // intact so starting over does not wipe the current environment.
     $chatTitle.text('New Chat');
     document.title = 'ASLM Chat';
     $messagesInner.find('.msg').remove();
@@ -1339,20 +1659,22 @@ $(function () {
     currentChatId = null;
     $('#historyList .chat-item').removeClass('active').removeAttr('aria-current');
     $messagesArea.show();
-    clearPendingImages();
+    clearPendingAttachments();
     updateSendButtons();
   }
 
-  function updateVisionControls() {
-    const show = visionState.supported;
-    $('#attachBtn').toggle(show);
-    $('#attachBtnConv').toggle(show);
-    $('#visionBadge').toggle(show);
-    $('#visionBadgeConv').toggle(show);
+  // Update attachment controls.
+  function updateAttachmentControls() {
+    const canAttach = visionState.supported || fileState.supported;
+    $('#attachBtn').toggle(canAttach);
+    $('#attachBtnConv').toggle(canAttach);
+    $('#visionBadge').toggle(visionState.supported);
+    $('#visionBadgeConv').toggle(visionState.supported);
   }
 
-  function clearPendingImages() {
-    visionState.pending = [];
+  // Clear pending attachments.
+  function clearPendingAttachments() {
+    attachmentState.pending = [];
     $('#imagePreviewStrip').empty().hide();
     $('#imagePreviewStripConv').empty().hide();
     $('#imageInput').val('');
@@ -1360,27 +1682,72 @@ $(function () {
     updateSendButtons();
   }
 
+  // Normalize attachment.
+  function normalizeAttachment(attachment) {
+    if (!attachment) {
+      return null;
+    }
+
+    // Accept both legacy image strings and normalized attachment objects so
+    // old chat payloads and new API responses share one client-side shape.
+    if (typeof attachment === 'string') {
+      return {
+        kind: 'image',
+        name: '',
+        mimeType: 'image/jpeg',
+        size: 0,
+        base64: attachment.replace(/^data:[^;]+;base64,/, ''),
+        dataUrl: attachment
+      };
+    }
+
+    const dataUrl = attachment.dataUrl || attachment.data_url || '';
+    const base64 = attachment.base64 || attachment.data || (dataUrl ? dataUrl.replace(/^data:[^;]+;base64,/, '') : '');
+    return {
+      kind: attachment.kind || 'file',
+      name: attachment.name || '',
+      mimeType: attachment.mimeType || attachment.mime_type || 'application/octet-stream',
+      size: attachment.size || attachment.size_bytes || 0,
+      base64,
+      dataUrl: dataUrl || (base64 ? `data:${attachment.mimeType || attachment.mime_type || 'application/octet-stream'};base64,${base64}` : '')
+    };
+  }
+
+  // Rebuild attachment preview strips.
   function rebuildPreviewStrips() {
     const $strips = $('#imagePreviewStrip, #imagePreviewStripConv');
     $strips.empty();
 
-    if (visionState.pending.length === 0) {
+    if (attachmentState.pending.length === 0) {
       $strips.hide();
       updateSendButtons();
       return;
     }
 
-    visionState.pending.forEach(function (img, idx) {
-      const html = `
-        <div class="img-preview-thumb" data-idx="${idx}">
-          <img src="${img.dataUrl}" alt="Attached image">
-          <button class="img-preview-remove" aria-label="Remove image">
-            <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-              <path d="M18 6L6 18M6 6l12 12"/>
-            </svg>
-          </button>
-        </div>
-      `;
+    // The welcome and conversation composers mirror the same attachment state,
+    // so render both preview strips from one normalized pending list.
+    attachmentState.pending.forEach(function (attachment, idx) {
+      let html = '';
+      if (attachment.kind === 'image') {
+        html = `
+          <div class="img-preview-thumb" data-idx="${idx}">
+            <img src="${attachment.dataUrl}" alt="Attached image">
+            <button class="img-preview-remove" aria-label="Remove attachment">
+              ${REMOVE_ATTACHMENT_ICON}
+            </button>
+          </div>
+        `;
+      } else {
+        html = `
+          <div class="file-preview-chip" data-idx="${idx}">
+            <div class="file-preview-name">${escHtml(attachment.name || 'File')}</div>
+            <div class="file-preview-meta">${escHtml(attachment.mimeType || 'application/octet-stream')}</div>
+            <button class="img-preview-remove" aria-label="Remove attachment">
+              ${REMOVE_ATTACHMENT_ICON}
+            </button>
+          </div>
+        `;
+      }
       $strips.append(html);
     });
 
@@ -1388,31 +1755,45 @@ $(function () {
     updateSendButtons();
   }
 
+  // Read selected attachments from the file input.
   function handleFileInput(event) {
-    const maxImages = 20;
+    const maxAttachments = 20;
     const files = Array.from(event.target.files || []);
     if (!files.length) {
       return;
     }
 
     files.forEach(function (file) {
-      if (!file.type.startsWith('image/')) {
+      const isImage = file.type.startsWith('image/');
+      if (isImage && !visionState.supported) {
         return;
       }
-      if (visionState.pending.length >= maxImages) {
-        console.warn(`Max ${maxImages} images allowed`);
+      if (!isImage && !fileState.supported) {
+        return;
+      }
+      if (attachmentState.pending.length >= maxAttachments) {
+        console.warn(`Max ${maxAttachments} attachments allowed`);
         return;
       }
 
       const reader = new FileReader();
       reader.onload = function (loadEvent) {
-        if (visionState.pending.length >= maxImages) {
+        // Re-check limits inside onload because multiple FileReader callbacks
+        // can complete out of order after the initial synchronous loop.
+        if (attachmentState.pending.length >= maxAttachments) {
           return;
         }
 
         const dataUrl = loadEvent.target.result;
         const base64 = dataUrl.split(',')[1];
-        visionState.pending.push({ dataUrl, base64 });
+        attachmentState.pending.push({
+          kind: isImage ? 'image' : 'file',
+          name: file.name || '',
+          mimeType: file.type || 'application/octet-stream',
+          size: file.size || 0,
+          base64,
+          dataUrl
+        });
         rebuildPreviewStrips();
       };
       reader.readAsDataURL(file);
@@ -1421,7 +1802,12 @@ $(function () {
     $(event.target).val('');
   }
 
+  // Dynamic parameter panel helpers.
+
+  // Get parameter group.
   function getParameterGroup(paramKey) {
+    // Prefer explicit group metadata, then fall back to a heuristic grouping so
+    // unrecognized parameters still land in a predictable sidebar section.
     if (PARAMETER_DEFINITIONS[paramKey] && PARAMETER_DEFINITIONS[paramKey].group) {
       return `#group-${PARAMETER_DEFINITIONS[paramKey].group}`;
     }
@@ -1437,6 +1823,7 @@ $(function () {
     return '#group-advanced';
   }
 
+  // Infer experimental parameter type.
   function inferExperimentalParameterType(key, value) {
     if (typeof value === 'boolean') {
       return 'boolean';
@@ -1457,14 +1844,16 @@ $(function () {
     return 'string';
   }
 
+  // Format experimental parameter label.
   function formatExperimentalParameterLabel(key) {
     return key
-      .replace(/[_-]+/g, ' ')
+      .replace(/[._-]+/g, ' ')
       .replace(/\b\w/g, function (letter) {
         return letter.toUpperCase();
       });
   }
 
+  // Get nested value.
   function getNestedValue(source, path) {
     return String(path || '').split('.').reduce(function (current, key) {
       if (!current || typeof current !== 'object') {
@@ -1474,6 +1863,7 @@ $(function () {
     }, source);
   }
 
+  // Set nested value.
   function setNestedValue(target, path, value) {
     const parts = String(path || '').split('.').filter(Boolean);
     if (!parts.length) {
@@ -1494,6 +1884,62 @@ $(function () {
     });
   }
 
+  // Delete nested value.
+  function deleteNestedValue(target, path) {
+    const parts = String(path || '').split('.').filter(Boolean);
+    if (!parts.length || !target || typeof target !== 'object') {
+      return;
+    }
+
+    const trail = [];
+    let cursor = target;
+
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      const part = parts[index];
+      if (!cursor || typeof cursor !== 'object' || !(part in cursor)) {
+        return;
+      }
+      trail.push({ parent: cursor, key: part });
+      cursor = cursor[part];
+    }
+
+    if (!cursor || typeof cursor !== 'object') {
+      return;
+    }
+
+    delete cursor[parts[parts.length - 1]];
+
+    // Prune empty parent objects on the way back up so optional nested fields
+    // disappear cleanly from the final payload instead of leaving `{}` shells.
+    for (let index = trail.length - 1; index >= 0; index -= 1) {
+      const entry = trail[index];
+      const child = entry.parent[entry.key];
+      if (child && typeof child === 'object' && !Array.isArray(child) && Object.keys(child).length === 0) {
+        delete entry.parent[entry.key];
+      } else {
+        break;
+      }
+    }
+  }
+
+  // Flatten config leaves.
+  function flattenConfigLeaves(source, prefix) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      return prefix ? [{ path: prefix, value: source }] : [];
+    }
+
+    // Flatten nested objects into dot-path leaves so preset state can be
+    // compared and rendered through the generic parameter helpers.
+    return Object.entries(source).flatMap(function ([key, value]) {
+      const nextPath = prefix ? `${prefix}.${key}` : key;
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return flattenConfigLeaves(value, nextPath);
+      }
+      return [{ path: nextPath, value }];
+    });
+  }
+
+  // Reset dynamic panels.
   function resetDynamicPanels() {
     $('.settings-section').filter(function () {
       return this.id.startsWith('group-')
@@ -1505,11 +1951,14 @@ $(function () {
     $('.settings-divider[id^="divider-"]').not('#divider-connection').hide();
   }
 
+  // Get parameter note.
   function getParameterNote(config) {
     if (!config) {
       return '';
     }
 
+    // Prefer backend-provided notes, then synthesize a compact hint from the
+    // parameter shape so controls remain self-describing even without docs.
     if (config.note) {
       return config.note;
     }
@@ -1540,6 +1989,7 @@ $(function () {
     return '';
   }
 
+  // Format parameter meta value.
   function formatParameterMetaValue(value) {
     if (value === null || value === undefined || value === '') {
       return 'auto';
@@ -1547,6 +1997,7 @@ $(function () {
     return String(value);
   }
 
+  // Get parameter meta.
   function getParameterMeta(config) {
     if (!config) {
       return [];
@@ -1568,6 +2019,7 @@ $(function () {
     return meta;
   }
 
+  // Get input placeholder.
   function getInputPlaceholder(config) {
     if (!config) {
       return '';
@@ -1592,6 +2044,7 @@ $(function () {
     return '';
   }
 
+  // Render parameter meta.
   function renderParameterMeta(config) {
     const metaItems = getParameterMeta(config);
     if (!metaItems.length) {
@@ -1612,11 +2065,14 @@ $(function () {
     `;
   }
 
+  // Build token step values.
   function buildTokenStepValues(minValue, maxValue) {
     const values = [];
     const normalizedMin = Math.max(128, Number(minValue) || 128);
     const normalizedMax = Math.max(normalizedMin, Number(maxValue) || normalizedMin);
 
+    // Use finer granularity for smaller contexts, then switch to coarser steps
+    // so very large token windows remain usable on a slider.
     for (let value = normalizedMin; value <= Math.min(normalizedMax, 1024); value += 128) {
       values.push(value);
     }
@@ -1637,6 +2093,7 @@ $(function () {
     return values;
   }
 
+  // Resolve token range value.
   function resolveTokenRangeValue(rawValue, allowedValues) {
     const numericValue = Number(rawValue);
     if (!allowedValues.length) {
@@ -1652,6 +2109,7 @@ $(function () {
     }, allowedValues[0]);
   }
 
+  // Render known parameter.
   function renderKnownParameter(key, config, value, renderOptions) {
     const options = renderOptions || {};
     const groupId = options.groupId || getParameterGroup(key);
@@ -1666,6 +2124,9 @@ $(function () {
     const metaHtml = renderParameterMeta(config);
     let html = '';
 
+    // Build one control shape per known parameter type, but keep the resulting
+    // markup normalized so collection can read everything through shared
+    // `data-*` attributes later.
     if (config.type === 'select') {
       const valueType = config.valueType || 'string';
       const normalizedValue = value === undefined || value === null ? config.fallback : value;
@@ -1875,10 +2336,13 @@ $(function () {
       `;
     }
 
+    // Rendering stays append-only because panels are reset before each model
+    // refresh, which keeps the branch logic here simple.
     $content.append(html);
     $group.show();
   }
 
+  // Render experimental parameter.
   function renderExperimentalParameter(key, value) {
     const groupId = getParameterGroup(key);
     const $group = $(groupId);
@@ -1887,6 +2351,8 @@ $(function () {
     const label = formatExperimentalParameterLabel(key);
     let controlHtml = '';
 
+    // Unknown backend fields fall back to a generic control palette instead of
+    // disappearing from the UI, which keeps newly exposed parameters editable.
     if (valueType === 'boolean') {
       controlHtml = `
         <select
@@ -1946,11 +2412,14 @@ $(function () {
     $group.show();
   }
 
+  // Update visible dividers.
   function updateVisibleDividers() {
     const visibleGroups = ['load', 'custom', 'settings', 'sampling', 'advanced'].filter(function (groupName) {
       return $(`#group-${groupName}`).is(':visible');
     });
 
+    // Dividers are computed after all groups are rendered so spacing stays
+    // coherent even when engines expose very different panel combinations.
     if (visibleGroups.length > 0) {
       $('#divider-system').show();
     }
@@ -1973,46 +2442,40 @@ $(function () {
     });
   }
 
-  function renderLoadParameters() {
-    const engine = getActiveEngine();
-    const $group = $('#group-load');
-    const $content = $('#group-load .settings-section-content');
-    const loadConfig = runtimeSettings.lms_load_config || {};
-    const selectedMainModel = $modelSelector.val() || '';
-    const lmsModels = getAvailableModelsForEngine('lms');
+  // Render think level controls.
+  function renderThinkLevelControls() {
+    const normalizedOptions = Array.isArray(thinkState.levelOptions) && thinkState.levelOptions.length > 0
+      ? thinkState.levelOptions
+      : ['low', 'medium', 'high'];
 
-    $content.empty();
-    $group.hide();
+    // Rebuild both selectors from the same normalized option set to keep the
+    // welcome composer and conversation composer visually identical.
+    ['#thinkLevelSelector', '#thinkLevelSelectorConv'].forEach(function (selectorId) {
+      const $selector = $(selectorId);
+      $selector.empty();
 
-    if (engine !== 'lms') {
-      return;
-    }
+      normalizedOptions.forEach(function (optionValue) {
+        const normalizedValue = String(optionValue || '').trim();
+        if (!normalizedValue) {
+          return;
+        }
 
-    Object.entries(LLM_LOAD_PARAMETER_DEFINITIONS).forEach(function ([key, config]) {
-      const renderConfig = { ...config };
-
-      if (key === 'draftModel') {
-        const draftOptions = lmsModels
-          .filter(function (modelName) {
-            return modelName && modelName !== selectedMainModel;
-          })
-          .map(function (modelName) {
-            return { value: modelName, label: modelName };
+        const label = normalizedValue
+          .replace(/[_-]+/g, ' ')
+          .replace(/\b\w/g, function (letter) {
+            return letter.toUpperCase();
           });
 
-        renderConfig.options = [{ value: '', label: 'Disabled' }, ...draftOptions];
-      }
-
-      const currentValue = getNestedValue(loadConfig, config.path || key);
-      renderKnownParameter(key, renderConfig, currentValue, {
-        groupId: '#group-load',
-        paramClass: 'dyn-load-param',
-        paramPath: config.path || key,
-        compact: true
+        $selector.append(
+          $('<button type="button" class="think-level-btn">')
+            .attr('data-value', normalizedValue)
+            .text(label)
+        );
       });
     });
   }
 
+  // Update think controls.
   function updateThinkControls() {
     [
       { $toggle: $('#thinkToggleBtn'), $selector: $('#thinkLevelSelector') },
@@ -2024,9 +2487,10 @@ $(function () {
         return;
       }
 
-      pair.$toggle.show().toggleClass('active', thinkState.enabled);
+      pair.$toggle.toggle(thinkState.toggleSupported && !thinkState.levelSupported);
+      pair.$toggle.toggleClass('active', thinkState.enabled);
 
-      if (thinkState.levelSupported && thinkState.enabled) {
+      if (thinkState.levelSupported) {
         pair.$selector.show();
         pair.$selector.find('.think-level-btn').each(function () {
           $(this).toggleClass('active', $(this).data('value') === thinkState.level);
@@ -2037,58 +2501,79 @@ $(function () {
     });
   }
 
+  // Load model info.
   async function loadModelInfo(model) {
+    const requestedEngine = getActiveEngine();
+    const requestVersion = ++modelInfoRequestVersion;
+
     if (!model) {
+      // Reset every model-dependent UI fragment when the selection becomes
+      // empty so stale capabilities do not leak into the next request.
+      currentModelInfo = null;
       resetOllamaPresetUi();
       resetDynamicPanels();
-      renderLoadParameters();
       updateVisibleDividers();
       visionState.supported = false;
+      fileState.supported = false;
       thinkState.supported = false;
+      thinkState.toggleSupported = false;
       thinkState.levelSupported = false;
+      thinkState.levelOptions = ['low', 'medium', 'high'];
       toolState.supported = false;
-      selectedToolServerId = '';
-      toolSelectorOpen = false;
+      selectedToolServerIds = new Set();
       updateAvailableToolServers(defaultAvailableToolServers);
-      updateVisionControls();
+      updateAttachmentControls();
       updateThinkControls();
       renderToolControls();
       return;
     }
 
     try {
-      const response = await fetch(`/api/model_info/?engine=${encodeURIComponent(getActiveEngine())}&model=${encodeURIComponent(model)}`);
+      const response = await fetch(`/api/model_info/?engine=${encodeURIComponent(requestedEngine)}&model=${encodeURIComponent(model)}`);
       if (!response.ok) {
         throw new Error(`Failed to load model info: ${response.status}`);
       }
 
+      // Drop late responses from older requests after fast engine/model
+      // switches so the sidebar never renders mismatched capabilities.
+      if (requestVersion !== modelInfoRequestVersion || requestedEngine !== getActiveEngine() || model !== getSelectedModelName()) {
+        return;
+      }
+
       const data = await response.json();
+      currentModelInfo = data;
       resetDynamicPanels();
-      renderLoadParameters();
-      applyOllamaPresetState(data.ollama_presets || null);
+      applyOllamaPresetState(data.ollama_presets || data.lms_presets || null);
 
       toolState.supported = !!data.supports_tool_calling;
       updateAvailableToolServers(data.available_tool_servers || defaultAvailableToolServers);
       if (!toolState.supported) {
-        selectedToolServerId = '';
-        toolSelectorOpen = false;
+        selectedToolServerIds = new Set();
       }
       renderToolControls();
 
       visionState.supported = !!data.supports_vision;
-      updateVisionControls();
-      clearPendingImages();
+      fileState.supported = !!data.supports_files;
+      updateAttachmentControls();
+      clearPendingAttachments();
 
       thinkState.supported = !!data.supports_thinking;
       thinkState.paramName = data.think_param_name || 'think';
+      thinkState.toggleSupported = data.supports_think_toggle === undefined
+        ? !!data.supports_thinking
+        : !!data.supports_think_toggle;
       thinkState.levelSupported = !!data.supports_think_level;
       thinkState.levelParamName = data.think_level_param_name || 'think_level';
+      thinkState.levelOptions = Array.isArray(data.think_level_options) && data.think_level_options.length > 0
+        ? data.think_level_options.map(function (value) { return String(value); })
+        : ['low', 'medium', 'high'];
       thinkState.enabled = data.defaults && data.defaults[thinkState.paramName] !== undefined
         ? String(data.defaults[thinkState.paramName]).toLowerCase() === 'true' || data.defaults[thinkState.paramName] === true
         : true;
       thinkState.level = data.defaults && data.defaults[thinkState.levelParamName] !== undefined
         ? String(data.defaults[thinkState.levelParamName])
-        : 'medium';
+        : (thinkState.levelOptions[0] || 'medium');
+      renderThinkLevelControls();
       updateThinkControls();
 
       if (!data.defaults) {
@@ -2096,10 +2581,21 @@ $(function () {
         return;
       }
 
+      // Remove UI-owned thinking flags from the generic defaults payload. They
+      // are rendered through dedicated controls and re-injected when options
+      // are collected for a request.
       const defaults = { ...data.defaults };
       delete defaults[thinkState.paramName];
       delete defaults[thinkState.levelParamName];
+      if (getActiveEngine() === 'ollama-service') {
+        OLLAMA_UNSUPPORTED_RUNTIME_PARAMS.forEach(function (key) {
+          delete defaults[key];
+        });
+      }
 
+      // Known parameters get runtime-aware limits and metadata before
+      // rendering; everything left over falls back to the experimental panel
+      // so model-specific fields are still editable without hardcoding them.
       getSupportedParameterDefinitions(getActiveEngine()).forEach(function ([key, config]) {
         const renderedConfig = { ...config };
         const runtimeLimits = data.runtime_limits || {};
@@ -2110,6 +2606,10 @@ $(function () {
         if (key === 'num_predict') {
           renderedConfig.max = Math.max(1024, Math.min(32768, data.context_length || renderedConfig.max || 32768));
           renderedConfig.note = `Maximum generated tokens. Limit: ${renderedConfig.max}.`;
+        }
+        if (key === 'max_output_tokens' && runtimeLimits.output_token_limit) {
+          renderedConfig.max = runtimeLimits.output_token_limit;
+          renderedConfig.note = `Maximum generated tokens. Model limit: ${runtimeLimits.output_token_limit}.`;
         }
         if (key === 'num_gpu' && runtimeLimits.model_layers) {
           renderedConfig.max = runtimeLimits.model_layers;
@@ -2148,10 +2648,32 @@ $(function () {
 
       updateVisibleDividers();
     } catch (error) {
+      // On failure we deliberately fall back to a clean UI state instead of
+      // leaving partial controls from the previous successful model load.
+      if (requestVersion !== modelInfoRequestVersion) {
+        return;
+      }
+      currentModelInfo = null;
+      resetOllamaPresetUi();
+      resetDynamicPanels();
+      updateVisibleDividers();
+      updateAvailableToolServers(defaultAvailableToolServers);
+      visionState.supported = false;
+      fileState.supported = false;
+      thinkState.supported = false;
+      thinkState.toggleSupported = false;
+      thinkState.levelSupported = false;
+      thinkState.levelOptions = ['low', 'medium', 'high'];
+      toolState.supported = false;
+      renderThinkLevelControls();
+      updateAttachmentControls();
+      updateThinkControls();
+      renderToolControls();
       console.error('Failed to load model parameters', error);
     }
   }
 
+  // Collect parameter payload.
   function collectParameterPayload(selector) {
     const payload = {};
     $(selector).each(function () {
@@ -2161,6 +2683,8 @@ $(function () {
       const scale = $(this).data('scale');
       let rawValue = $(this).is(':checkbox') ? ($(this).is(':checked') ? 'true' : 'false') : $(this).val();
 
+      // Token ranges render as compact slider indices in the DOM, so convert
+      // them back into the actual token values before typing the payload.
       if (scale === 'token-range') {
         const allowedValues = JSON.parse($(this).attr('data-allowed-values') || '[]');
         const resolvedValue = allowedValues[parseInt(rawValue, 10)] || allowedValues[0] || 0;
@@ -2203,6 +2727,8 @@ $(function () {
           return;
         }
 
+        // Optional numeric fields are omitted entirely when disabled so the
+        // backend can keep its own defaults instead of receiving sentinel data.
         const integerValue = parseInt(rawValue, 10);
         if (!Number.isNaN(integerValue)) {
           setNestedValue(payload, paramPath, integerValue);
@@ -2239,24 +2765,38 @@ $(function () {
     return payload;
   }
 
+  // Collect options payload.
   function collectOptionsPayload() {
     const payload = collectParameterPayload('#dynamicParameters .dyn-param');
+    if (getActiveEngine() === 'ollama-service') {
+      // The UI can display legacy or model-reported fields that newer Ollama
+      // builds no longer accept, so strip them before sending runtime options.
+      OLLAMA_UNSUPPORTED_RUNTIME_PARAMS.forEach(function (key) {
+        delete payload[key];
+      });
+    }
 
-    if (thinkState.supported) {
+    // Thinking controls live outside the generic parameter panel, so merge
+    // them into the final request only after the generic payload is built.
+    if (thinkState.supported && thinkState.toggleSupported && !thinkState.levelSupported) {
       payload[thinkState.paramName] = thinkState.enabled;
-      if (thinkState.levelSupported) {
-        payload[thinkState.levelParamName] = thinkState.level;
-      }
+    }
+    if (thinkState.supported && thinkState.levelSupported) {
+      payload[thinkState.levelParamName] = thinkState.level;
     }
 
     return payload;
   }
 
+  // Message rendering helpers.
+
+  // Format the current time.
   function timeNow(dateInput) {
     const date = dateInput ? new Date(dateInput) : new Date();
     return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   }
 
+  // Escape HTML.
   function escHtml(str) {
     return String(str)
       .replace(/&/g, '&amp;')
@@ -2265,6 +2805,7 @@ $(function () {
       .replace(/\n/g, '<br>');
   }
 
+  // Escape attribute value.
   function escapeAttributeValue(str) {
     return String(str)
       .replace(/&/g, '&amp;')
@@ -2273,6 +2814,7 @@ $(function () {
       .replace(/>/g, '&gt;');
   }
 
+  // Escape textarea value.
   function escapeTextareaValue(str) {
     return String(str)
       .replace(/&/g, '&amp;')
@@ -2280,54 +2822,90 @@ $(function () {
       .replace(/>/g, '&gt;');
   }
 
+  // Open tool inspector.
+  function openToolInspector(seg) {
+    const $modal = $('#toolInspectorModal');
+    $modal.find('.tool-inspector-title').text(seg.toolName || seg.alias || seg.toolId || 'Tool');
+    $modal.find('.tool-inspector-server').text(seg.serverName || seg.serverId || '');
+
+    const argsText = Object.keys(seg.arguments || {}).length > 0
+      ? JSON.stringify(seg.arguments, null, 2)
+      : '(no arguments)';
+    $modal.find('.tool-inspector-in').text(argsText);
+
+    const resultText = seg.result !== null && seg.result !== undefined
+      ? String(seg.result)
+      : '(pending)';
+    $modal.find('.tool-inspector-out').text(resultText);
+
+    $modal.addClass('open');
+  }
+
+  // Parse message timeline.
   function parseMessageTimeline(rawText) {
     const source = String(rawText || '');
     const segments = [];
+    const toolSegmentByAlias = {};
     let cursor = 0;
 
-    function pushTextSegment(value) {
-      if (!value || !value.trim()) {
-        return;
-      }
-      segments.push({ type: 'text', content: value });
+    // Sanitize visible text before rendering it.
+    function sanitizeVisibleText(value) {
+      return String(value || '')
+        .replace(/<\|start\|>\s*(assistant|user|system)?\s*(<\|channel\|>\s*(final|analysis|commentary))?\s*(<\|message\|>)?/gi, '')
+        .replace(/<\|start\|>/gi, '')
+        .replace(/<\|channel\|>\s*(final|analysis|commentary)/gi, '')
+        .replace(/<\|message\|>/gi, '')
+        .replace(/<\|return\|>/gi, '')
+        .replace(/<\|startoftext\|>/gi, '')
+        .replace(/<\|im_(start|end)\|>/gi, '')
+        .replace(/<\|(assistant|user|system|endoftext)\|>/gi, '');
     }
 
+    // Append visible text as one timeline segment.
+    function pushTextSegment(value) {
+      const sanitizedValue = sanitizeVisibleText(value);
+      if (!sanitizedValue || !sanitizedValue.trim()) {
+        return;
+      }
+      segments.push({ type: 'text', content: sanitizedValue });
+    }
+
+    // Walk the raw assistant transcript as a lightweight state machine so
+    // visible text, thought blocks, tool calls, and tool results can be
+    // reconstructed from one streamed string.
     while (cursor < source.length) {
       const thinkStart = source.indexOf('<think>', cursor);
-      const toolStart = source.indexOf('<tool_call>', cursor);
-      const hasThink = thinkStart !== -1;
-      const hasTool = toolStart !== -1;
+      const toolCallStart = source.indexOf('<tool_call>', cursor);
+      const toolResultStart = source.indexOf('<tool_result>', cursor);
 
-      if (!hasThink && !hasTool) {
+      const candidates = [
+        thinkStart !== -1 ? { pos: thinkStart, kind: 'thought' } : null,
+        toolCallStart !== -1 ? { pos: toolCallStart, kind: 'tool' } : null,
+        toolResultStart !== -1 ? { pos: toolResultStart, kind: 'result' } : null,
+      ].filter(Boolean);
+
+      if (candidates.length === 0) {
         pushTextSegment(source.substring(cursor));
         break;
       }
 
-      let nextStart = -1;
-      let nextType = '';
-      if (hasThink && (!hasTool || thinkStart < toolStart)) {
-        nextStart = thinkStart;
-        nextType = 'thought';
-      } else {
-        nextStart = toolStart;
-        nextType = 'tool';
+      candidates.sort(function (a, b) { return a.pos - b.pos; });
+      const next = candidates[0];
+
+      if (next.pos > cursor) {
+        pushTextSegment(source.substring(cursor, next.pos));
       }
 
-      if (nextStart > cursor) {
-        pushTextSegment(source.substring(cursor, nextStart));
-      }
-
-      if (nextType === 'thought') {
-        const thinkEnd = source.indexOf('</think>', nextStart + 7);
+      if (next.kind === 'thought') {
+        const thinkEnd = source.indexOf('</think>', next.pos + 7);
         if (thinkEnd === -1) {
-          const content = source.substring(nextStart + 7).trim();
+          const content = sanitizeVisibleText(source.substring(next.pos + 7)).trim();
           if (content) {
             segments.push({ type: 'thought', content });
           }
           break;
         }
-
-        const content = source.substring(nextStart + 7, thinkEnd).trim();
+        const content = sanitizeVisibleText(source.substring(next.pos + 7, thinkEnd)).trim();
         if (content) {
           segments.push({ type: 'thought', content });
         }
@@ -2335,32 +2913,65 @@ $(function () {
         continue;
       }
 
-      const toolEnd = source.indexOf('</tool_call>', nextStart + 11);
-      if (toolEnd === -1) {
-        break;
+      if (next.kind === 'tool') {
+        const toolEnd = source.indexOf('</tool_call>', next.pos + 11);
+        if (toolEnd === -1) { break; }
+        const payload = source.substring(next.pos + 11, toolEnd);
+        try {
+          const parsed = JSON.parse(payload);
+          const alias = String(parsed.alias || '').trim();
+          const seg = {
+            type: 'tool',
+            alias,
+            serverId: String(parsed.server_id || '').trim(),
+            serverName: String(parsed.server_name || '').trim(),
+            toolId: String(parsed.tool_id || '').trim(),
+            toolName: String(parsed.tool_name || '').trim(),
+            arguments: parsed.arguments && typeof parsed.arguments === 'object' ? parsed.arguments : {},
+            result: null,
+          };
+          segments.push(seg);
+
+          // Tool results arrive later as separate markers, so keep a lookup by
+          // alias and patch the same segment when the result marker appears.
+          if (alias) { toolSegmentByAlias[alias] = seg; }
+        } catch (_error) {
+          // Ignore malformed markers.
+        }
+        cursor = toolEnd + 12;
+        continue;
       }
 
-      const payload = source.substring(nextStart + 11, toolEnd);
-      try {
-        const parsed = JSON.parse(payload);
-        segments.push({
-          type: 'tool',
-          alias: String(parsed.alias || '').trim(),
-          serverId: String(parsed.server_id || '').trim(),
-          serverName: String(parsed.server_name || '').trim(),
-          toolId: String(parsed.tool_id || '').trim(),
-          toolName: String(parsed.tool_name || '').trim(),
-          arguments: parsed.arguments && typeof parsed.arguments === 'object' ? parsed.arguments : {}
-        });
-      } catch (_error) {
-        // Ignore malformed inline markers instead of breaking the rest of the message.
+      if (next.kind === 'result') {
+        const resultEnd = source.indexOf('</tool_result>', next.pos + 13);
+        if (resultEnd === -1) { break; }
+        const payload = source.substring(next.pos + 13, resultEnd);
+        try {
+          const parsed = JSON.parse(payload);
+          const alias = String(parsed.alias || '').trim();
+          const content = String(parsed.content || '');
+          const target = toolSegmentByAlias[alias];
+          if (target) {
+            target.result = content;
+          }
+        } catch (_error) {
+          // Ignore malformed markers.
+        }
+        cursor = resultEnd + 14;
+        continue;
       }
-      cursor = toolEnd + 12;
     }
 
-    return { segments };
+    const visibleText = segments
+      .filter(function (segment) { return segment.type === 'text'; })
+      .map(function (segment) { return segment.content; })
+      .join('\n\n')
+      .trim();
+
+    return { segments, visibleText };
   }
 
+  // Render markdown segment.
   function renderMarkdownSegment(content) {
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
       return escHtml(content);
@@ -2368,6 +2979,7 @@ $(function () {
     return DOMPurify.sanitize(marked.parse(content));
   }
 
+  // Get expanded thought indices.
   function getExpandedThoughtIndices($msgRow) {
     const rawValue = String($msgRow.attr('data-expanded-thoughts') || '').trim();
     if (!rawValue) {
@@ -2382,6 +2994,7 @@ $(function () {
     );
   }
 
+  // Set expanded thought indices.
   function setExpandedThoughtIndices($msgRow, expandedIndices) {
     const normalized = Array.from(expandedIndices)
       .filter(function (value) { return Number.isInteger(value) && value >= 0; })
@@ -2395,6 +3008,7 @@ $(function () {
     $msgRow.attr('data-expanded-thoughts', normalized.join(','));
   }
 
+  // Render activity timeline.
   function renderActivityTimeline($msgRow, segments) {
     const $stream = $msgRow.find('.msg-activity-stream');
     const $bubble = $msgRow.find('.msg-bubble');
@@ -2411,6 +3025,11 @@ $(function () {
 
     const expandedThoughts = getExpandedThoughtIndices($msgRow);
     let thoughtIndex = -1;
+    let toolSegmentIndex = 0;
+    const toolSegments = segments.filter(function (s) { return s.type === 'tool'; });
+
+    // Thought expansion state is persisted on the row itself so re-renders
+    // during streaming do not collapse sections the user already opened.
     const html = segments.map(function (segment) {
       if (segment.type === 'thought') {
         thoughtIndex += 1;
@@ -2426,16 +3045,16 @@ $(function () {
       if (segment.type === 'tool') {
         const label = escHtml(segment.toolName || segment.alias || segment.toolId || 'Tool');
         const badge = escHtml(segment.serverName || segment.serverId || 'server');
-        const argumentKeys = Object.keys(segment.arguments || {});
-        const note = argumentKeys.length > 0
-          ? `<div class="msg-tool-call-note">Args: ${escHtml(argumentKeys.join(', '))}</div>`
-          : '';
+        const hasResult = segment.result !== null && segment.result !== undefined;
+        const statusDot = hasResult
+          ? '<span class="msg-tool-call-dot msg-tool-call-dot--done"></span>'
+          : '<span class="msg-tool-call-dot msg-tool-call-dot--pending"></span>';
 
         return `
-          <div class="msg-tool-call-card">
+          <div class="msg-tool-call-card" data-tool-segment-index="${toolSegmentIndex++}">
             <div class="msg-tool-call-main">
+              ${statusDot}
               <div class="msg-tool-call-name">${label}</div>
-              ${note}
             </div>
             <div class="msg-tool-call-badge">${badge}</div>
           </div>
@@ -2452,14 +3071,28 @@ $(function () {
     $bubble.empty();
     $stream.html(html).show();
     setExpandedThoughtIndices($msgRow, expandedThoughts);
+
+    // Tool cards are rendered from plain HTML, so bind inspector handlers only
+    // after the final DOM for this render pass exists.
+    $stream.find('.msg-tool-call-card[data-tool-segment-index]').each(function () {
+      const idx = parseInt($(this).attr('data-tool-segment-index'), 10);
+      const seg = toolSegments[idx];
+      if (!seg) { return; }
+      $(this).on('click', function () {
+        openToolInspector(seg);
+      });
+    });
   }
 
+  // Render message HTML.
   function renderMessageHtml($msgRow, rawText) {
     const parsed = parseMessageTimeline(rawText);
     renderActivityTimeline($msgRow, parsed.segments);
+    $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
 
-  function appendMessage(role, text, images, timestamp, options) {
+  // Append message.
+  function appendMessage(role, text, attachments, timestamp, options) {
     const viewOptions = options || {};
     const isUser = role === 'user';
     const label = isUser ? 'You' : 'ASLM';
@@ -2469,17 +3102,42 @@ $(function () {
       : '';
     const messageKey = viewOptions.messageKey || '';
 
-    let imagesHtml = '';
-    if (isUser && images && images.length > 0) {
-      const content = images.map(function (image) {
-        const src = typeof image === 'string' ? image : image.dataUrl;
-        return `<img src="${src}" alt="Attached image">`;
-      }).join('');
-      imagesHtml = `<div class="msg-images">${content}</div>`;
+    let attachmentsHtml = '';
+    if (isUser && attachments && attachments.length > 0) {
+      // Persist enough attachment metadata in the DOM for copy/regenerate flows
+      // without having to hit the backend to rebuild the original request.
+      const imageHtml = attachments
+        .filter(function (attachment) {
+          return typeof attachment === 'string' || attachment.kind === 'image';
+        })
+        .map(function (attachment) {
+          const normalizedAttachment = normalizeAttachment(attachment);
+          const src = normalizedAttachment ? normalizedAttachment.dataUrl : '';
+          return `<img src="${src}" alt="Attached image">`;
+        }).join('');
+      const fileHtml = attachments
+        .filter(function (attachment) {
+          return typeof attachment !== 'string' && attachment.kind === 'file';
+        })
+        .map(function (attachment) {
+          return `
+            <div class="msg-file-chip">
+              <div class="msg-file-name">${escHtml(attachment.name || 'File')}</div>
+              <div class="msg-file-meta">${escHtml(attachment.mimeType || attachment.mime_type || 'application/octet-stream')}</div>
+            </div>
+          `;
+        }).join('');
+      attachmentsHtml = `
+        ${imageHtml ? `<div class="msg-images">${imageHtml}</div>` : ''}
+        ${fileHtml ? `<div class="msg-files">${fileHtml}</div>` : ''}
+      `;
     }
 
+    const messageId = viewOptions.messageId || '';
+    const msgActionsHtml = buildMessageActionsHtml();
+
     const $row = $(`
-      <div class="msg ${role}${viewOptions.queued ? ' is-queued' : ''}" data-message-key="${escapeAttributeValue(messageKey)}">
+      <div class="msg ${role}${viewOptions.queued ? ' is-queued' : ''}" data-message-key="${escapeAttributeValue(messageKey)}"${messageId ? ` data-message-id="${messageId}"` : ''}>
         <div class="msg-avatar">${isUser ? 'U' : 'A'}</div>
         <div class="msg-body">
           <div class="msg-meta">
@@ -2488,25 +3146,34 @@ $(function () {
             ${queuedBadge}
           </div>
           ${!isUser ? '<div class="msg-activity-stream" style="display:none;"></div>' : ''}
-          <div class="msg-bubble">${imagesHtml}</div>
+          <div class="msg-bubble">${attachmentsHtml}</div>
+          ${msgActionsHtml}
         </div>
       </div>
     `);
 
     if (isUser) {
-      $row.find('.msg-bubble').append($('<span>').text(text));
+      $row.find('.msg-bubble')
+        .attr('data-raw', text)
+        .attr('data-attachments', JSON.stringify(attachments || []))
+        .append($('<span>').text(text));
     } else if (Array.isArray(viewOptions.activitySegments) && viewOptions.activitySegments.length > 0) {
+      // Server-loaded messages can arrive with pre-parsed activity segments, so
+      // skip transcript parsing and render the structured timeline directly.
+      $row.find('.msg-bubble').attr('data-raw', text);
       renderActivityTimeline($row, viewOptions.activitySegments);
     } else {
       renderMessageHtml($row, text);
     }
 
     $messagesInner.append($row);
+    updateRegenButtons();
     scrollBottom();
     return $row;
   }
 
 
+  // Set queued message state.
   function setQueuedMessageState($row, queued) {
     if (!$row || !$row.length) {
       return;
@@ -2526,6 +3193,7 @@ $(function () {
     }
   }
 
+  // Append typing.
   function appendTyping(timestamp) {
     const timeStr = timeNow(timestamp);
     const $row = $(`
@@ -2552,10 +3220,12 @@ $(function () {
     return $row;
   }
 
+  // Scroll the message list to the bottom.
   function scrollBottom() {
     $messagesArea.scrollTop($messagesArea[0].scrollHeight);
   }
 
+  // Get CSRF token.
   function getCsrfToken() {
     const tokenInput = document.querySelector('[name=csrfmiddlewaretoken]');
     if (tokenInput) {
@@ -2564,20 +3234,20 @@ $(function () {
     return getCookie('csrftoken');
   }
 
+  // Get cookie.
   function getCookie(name) {
     const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
     return match ? decodeURIComponent(match[1]) : null;
   }
 
-  function clonePendingImages(images) {
-    return (images || []).map(function (image) {
-      return {
-        base64: image.base64,
-        dataUrl: image.dataUrl
-      };
-    });
+  // Clone pending attachments.
+  function clonePendingAttachments(attachments) {
+    return (attachments || [])
+      .map(normalizeAttachment)
+      .filter(Boolean);
   }
 
+  // Resolve model for request.
   async function resolveModelForRequest(request) {
     const preferredModel = String(request.model || request.preferredModel || '').trim();
     if (preferredModel) {
@@ -2593,6 +3263,7 @@ $(function () {
     return models[0] || '';
   }
 
+  // Stream chat.
   async function streamChat(request, $msgRow) {
     const $bubbleContent = $msgRow.find('.msg-bubble');
 
@@ -2604,14 +3275,6 @@ $(function () {
 
       request.model = selectedModel;
 
-      if (request.engine === 'lms' && lmsLoadConfigDirty) {
-        await reloadSelectedModel('lms', selectedModel);
-        if (request.engine === getActiveEngine()) {
-          await loadModelInfo(selectedModel);
-        }
-        lmsLoadConfigDirty = false;
-      }
-
       const payload = {
         engine: request.engine,
         message: request.text,
@@ -2621,23 +3284,33 @@ $(function () {
         options: request.options || {}
       };
 
-      if (request.toolServerId) {
-        payload.tool_server_id = request.toolServerId;
+      if (request.toolServerIds && request.toolServerIds.length > 0) {
+        payload.tool_server_ids = request.toolServerIds;
       }
 
-      if (request.images.length > 0) {
-        payload.images = request.images.map(function (img) {
-          return img.base64;
+      if (request.attachments.length > 0) {
+        // Normalize attachments to the backend contract here so queue entries
+        // can keep the richer client-side shape needed by the UI.
+        payload.attachments = request.attachments.map(function (attachment) {
+          return {
+            kind: attachment.kind,
+            name: attachment.name,
+            mime_type: attachment.mimeType,
+            size_bytes: attachment.size,
+            data: attachment.base64
+          };
         });
       }
 
+      currentAbortController = new AbortController();
       const response = await fetch('/api/chat/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-CSRFToken': getCsrfToken()
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: currentAbortController.signal
       });
 
       $bubbleContent.empty();
@@ -2656,6 +3329,10 @@ $(function () {
       if (returnedChatId && currentChatId !== returnedChatId) {
         currentChatId = returnedChatId;
         request.chatId = returnedChatId;
+
+        // When the first streamed response creates a brand-new chat, patch that
+        // id into every queued follow-up request so the whole batch stays in
+        // the same conversation.
         chatRequestQueue.forEach(function (queuedRequest) {
           if (!queuedRequest.chatId) {
             queuedRequest.chatId = returnedChatId;
@@ -2665,28 +3342,14 @@ $(function () {
         if ($(`#historyList .chat-item[data-chat-id="${currentChatId}"]`).length === 0) {
           $('#historyList .empty-state').remove();
 
-          const title = buildChatTitle(request.text, request.images.length > 0);
-          const $newItem = $(`
-            <a class="chat-item active" aria-current="page"
-               href="/chat/${currentChatId}/"
-               data-chat-id="${currentChatId}">
-              <div class="chat-item-icon">
-                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-                </svg>
-              </div>
-              <div class="chat-item-body">
-                <span class="chat-item-title">${escHtml(title)}</span>
-                <span class="chat-item-date">just now</span>
-              </div>
-            </a>
-          `);
+          const title = buildChatTitle(request.text, request.attachments.length > 0);
+          const $newItem = $(buildChatItemHtml(currentChatId, title, 'just now', true));
 
           $('#historyList .chat-item').removeClass('active').removeAttr('aria-current');
           $('#historyList').prepend($newItem);
         }
 
-        const chatTitle = buildChatTitle(request.text, request.images.length > 0);
+        const chatTitle = buildChatTitle(request.text, request.attachments.length > 0);
         $chatTitle.text(chatTitle);
         document.title = `${chatTitle} - ASLM`;
         history.pushState({ chatId: currentChatId }, chatTitle, `/chat/${currentChatId}/`);
@@ -2695,29 +3358,55 @@ $(function () {
       const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let fullText = '';
+      const signal = currentAbortController ? currentAbortController.signal : null;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
+      // Wrap reader.read() so it rejects immediately when the signal fires.
+      function readOrAbort() {
+        if (!signal) { return reader.read(); }
+        if (signal.aborted) { return Promise.reject(new DOMException('Aborted', 'AbortError')); }
+        return Promise.race([
+          reader.read(),
+          new Promise(function (_, reject) {
+            signal.addEventListener('abort', function () {
+              reject(new DOMException('Aborted', 'AbortError'));
+            }, { once: true });
+          })
+        ]);
+      }
+
+      try {
+        while (true) {
+          const { done, value } = await readOrAbort();
+          if (done) { break; }
+
+          const chunk = decoder.decode(value, { stream: true });
+          fullText += chunk;
+
+          // Re-render from the accumulated transcript on every chunk because
+          // tool markers and thought blocks can change earlier portions of the
+          // visible timeline, not just append plain text.
+          const area = $messagesArea[0];
+          const isNearBottom = area.scrollHeight - area.clientHeight <= area.scrollTop + 50;
+          renderMessageHtml($msgRow, fullText);
+
+          if (isNearBottom) { scrollBottom(); }
         }
-
-        const chunk = decoder.decode(value, { stream: true });
-        fullText += chunk;
-
-        const area = $messagesArea[0];
-        const isNearBottom = area.scrollHeight - area.clientHeight <= area.scrollTop + 50;
-        renderMessageHtml($msgRow, fullText);
-
-        if (isNearBottom) {
-          scrollBottom();
-        }
+      } catch (readError) {
+        if (readError.name !== 'AbortError') { throw readError; }
+      } finally {
+        reader.cancel();
+        reader.releaseLock();
       }
     } catch (error) {
-      $bubbleContent.html(`[Error: failed to connect to server - ${error.message}]`);
+      if (error.name !== 'AbortError') {
+        $bubbleContent.html(`[Error: failed to connect to server - ${error.message}]`);
+      }
+    } finally {
+      currentAbortController = null;
     }
   }
 
+  // Process chat queue.
   async function processChatQueue() {
     if (isChatGenerating || chatRequestQueue.length === 0) {
       return;
@@ -2738,34 +3427,47 @@ $(function () {
     try {
       await streamChat(request, $assistantRow);
     } finally {
+      // Inject action panel if not already present (streaming msg didn't have it)
+      if ($assistantRow.find('.msg-actions').length === 0) {
+        $assistantRow.find('.msg-body').append(buildMessageActionsHtml());
+      }
+      updateRegenButtons();
       isChatGenerating = false;
       updateSendButtons();
       if (chatRequestQueue.length > 0) {
+        // Process follow-up requests serially so chat order and shared runtime
+        // state stay deterministic even when users send messages quickly.
         processChatQueue();
       }
     }
   }
 
-  function buildQueuedRequest(text, imagesToSend) {
+  // Request queue and generation helpers.
+
+  // Build queued request.
+  function buildQueuedRequest(text, attachmentsToSend) {
+    // Snapshot all mutable UI state now so queued follow-up requests are not
+    // affected by later control changes while another message is streaming.
     return {
       id: `queued-${++queuedMessageCounter}`,
       text,
-      images: clonePendingImages(imagesToSend),
+      attachments: clonePendingAttachments(attachmentsToSend),
       engine: getActiveEngine(),
       preferredModel: getSelectedModelName(),
       systemPrompt: $('#systemPrompt').val(),
       options: collectOptionsPayload(),
-      toolServerId: toolState.supported ? selectedToolServerId : '',
+      toolServerIds: toolState.supported ? Array.from(selectedToolServerIds) : [],
       chatId: currentChatId
     };
   }
 
+  // Send message.
   function sendMessage(text, $input) {
-    if (!text && visionState.pending.length === 0) {
+    if (!text && attachmentState.pending.length === 0) {
       return;
     }
 
-    const imagesToSend = clonePendingImages(visionState.pending);
+    const attachmentsToSend = clonePendingAttachments(attachmentState.pending);
     const queued = isChatGenerating || chatRequestQueue.length > 0;
 
     if ($welcomeScreen.is(':visible')) {
@@ -2774,20 +3476,266 @@ $(function () {
       $chatInputConv.val('').css('height', 'auto').focus();
     }
 
-    const request = buildQueuedRequest(text, imagesToSend);
-    request.$userRow = appendMessage('user', text, imagesToSend, null, {
+    // Render the user bubble immediately, then let the request queue serialize
+    // backend work behind the scenes.
+    const request = buildQueuedRequest(text, attachmentsToSend);
+    request.$userRow = appendMessage('user', text, attachmentsToSend, null, {
       queued,
       messageKey: request.id
     });
 
     $input.val('').css('height', 'auto');
-    clearPendingImages();
+    clearPendingAttachments();
     updateSendButtons();
 
     chatRequestQueue.push(request);
     processChatQueue();
   }
 
+  // Chat history and menu helpers.
+
+  // Build chat item HTML.
+  function buildChatItemHtml(chatId, title, dateStr, active) {
+    const activeAttr = active ? ' class="chat-item active" aria-current="page"' : ' class="chat-item"';
+    return `
+      <a${activeAttr} href="/chat/${chatId}/" data-chat-id="${escapeAttributeValue(chatId)}">
+        <div class="chat-item-icon">
+          ${CHAT_ITEM_ICON}
+        </div>
+        <div class="chat-item-body">
+          <span class="chat-item-title">${escHtml(title)}</span>
+          <span class="chat-item-date">${escHtml(dateStr)}</span>
+        </div>
+        <button class="chat-item-menu-btn" aria-label="Chat options">
+          ${CHAT_ITEM_MENU_ICON}
+        </button>
+      </a>
+    `;
+  }
+
+  // Chat item context menu
+  let $activeMenuTarget = null;
+  const $dropdown = $('#chatItemDropdown');
+
+  // Open chat menu.
+  function openChatMenu($item, event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    $activeMenuTarget = $item;
+    const rect = $item[0].getBoundingClientRect();
+
+    // Anchor the dropdown to the chat item bounds so it stays aligned even
+    // when the history list scrolls inside its own sidebar.
+    $dropdown.css({
+      top: rect.bottom + window.scrollY + 2,
+      left: rect.left + window.scrollX,
+      minWidth: rect.width,
+    }).show();
+  }
+
+  // Close chat menu.
+  function closeChatMenu() {
+    $dropdown.hide();
+    $activeMenuTarget = null;
+  }
+
+  $(document).on('click', function (e) {
+    if (!$(e.target).closest('#chatItemDropdown, .chat-item-menu-btn').length) {
+      closeChatMenu();
+    }
+  });
+
+  $(document).on('click', '.chat-item-menu-btn', function (event) {
+    const $item = $(this).closest('.chat-item');
+    if ($activeMenuTarget && $activeMenuTarget.is($item)) {
+      closeChatMenu();
+    } else {
+      openChatMenu($item, event);
+    }
+  });
+
+  $('#chatRenameBtn').on('click', function () {
+    if (!$activeMenuTarget) { return; }
+    const $item = $activeMenuTarget;
+    const chatId = $item.data('chat-id');
+    const currentTitle = $item.find('.chat-item-title').text();
+    closeChatMenu();
+
+    const newTitle = window.prompt('Rename chat:', currentTitle);
+    if (!newTitle || !newTitle.trim() || newTitle.trim() === currentTitle) { return; }
+
+    $.ajax({
+      url: `/api/chat/${chatId}/rename/`,
+      method: 'PATCH',
+      contentType: 'application/json',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+      data: JSON.stringify({ title: newTitle.trim() }),
+      success: function (data) {
+        if (!data.ok) { return; }
+        $item.find('.chat-item-title').text(data.title);
+        if (chatId === currentChatId) {
+          $chatTitle.text(data.title);
+          document.title = `${data.title} - ASLM`;
+        }
+      }
+    });
+  });
+
+  $('#chatDeleteBtn').on('click', function () {
+    if (!$activeMenuTarget) { return; }
+    const $item = $activeMenuTarget;
+    const chatId = $item.data('chat-id');
+    const title = $item.find('.chat-item-title').text();
+    closeChatMenu();
+
+    if (!window.confirm(`Delete "${title}"?`)) { return; }
+
+    $.ajax({
+      url: `/api/chat/${chatId}/delete/`,
+      method: 'DELETE',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+      success: function (data) {
+        if (!data.ok) { return; }
+        $item.remove();
+        if (!$('#historyList .chat-item:not(.empty-state)').length) {
+          $('#historyList').append('<div class="chat-item empty-state"><span class="chat-item-title">No previous chats</span></div>');
+        }
+        if (chatId === currentChatId) {
+          startNewChat();
+        }
+      }
+    });
+  });
+
+  // Abort generation.
+  function abortGeneration() {
+    if (currentAbortController) {
+      currentAbortController.abort();
+    }
+
+    // Flip local generation state first so the UI reacts immediately even if
+    // the backend abort request resolves a little later.
+    isChatGenerating = false;
+    updateSendButtons();
+    // Tell the backend to stop Ollama immediately.
+    fetch('/api/chat/abort/', {
+      method: 'POST',
+      headers: { 'X-CSRFToken': getCsrfToken() }
+    }).catch(function () {});
+  }
+
+  // Run regenerate.
+  function doRegenerate() {
+    if (!currentChatId) { return; }
+
+    $.ajax({
+      url: `/api/chat/${currentChatId}/last/`,
+      method: 'DELETE',
+      contentType: 'application/json',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+      success: function (data) {
+        if (!data.ok) { return; }
+
+        // Remove last assistant bubble from DOM.
+        const $msgs = $messagesInner.find('.msg.assistant');
+        if ($msgs.length) { $msgs.last().remove(); }
+        updateSendButtons();
+
+        if (!data.user_message) { return; }
+
+        const text = data.user_message.content || '';
+        const attachments = (data.user_message.attachments || [])
+          .map(normalizeAttachment)
+          .filter(Boolean);
+
+        // The user turn already exists in the DOM and database, so only the
+        // assistant response is removed and then queued again.
+        const request = buildQueuedRequest(text, attachments);
+        request.$userRow = { length: 0 }; // User bubble already exists in the DOM.
+        request.chatId = currentChatId;
+
+        chatRequestQueue.push(request);
+        processChatQueue();
+      },
+      error: function () {
+        console.error('Failed to delete last assistant message');
+      }
+    });
+  }
+
+  // Regenerate last response.
+  function regenerateLastResponse() {
+    if (!currentChatId) { return; }
+    if (isChatGenerating) {
+      // Stop current generation first, then regenerate after backend confirms stop.
+      abortGeneration();
+      // Small delay to let the stream close before deleting the (partial) message.
+      setTimeout(doRegenerate, 300);
+    } else {
+      doRegenerate();
+    }
+  }
+
+  // Regenerate from user message.
+  function regenerateFromUserMessage($userMsg) {
+    if (!currentChatId || isChatGenerating) { return; }
+
+    // Get the user's original text from the bubble data-raw attribute.
+    const userText = $userMsg.find('.msg-bubble').attr('data-raw') || $userMsg.find('.msg-bubble').text();
+    if (!userText.trim()) { return; }
+
+    // Find the next assistant message (the response to this user message).
+    const $nextAssistant = $userMsg.next('.msg.assistant');
+    if (!$nextAssistant.length) { return; }
+
+    const assistantMessageId = $nextAssistant.data('message-id');
+
+    // Run regeneration for the selected user message.
+    function doUserRegen() {
+      // Remove assistant message from DOM.
+      $nextAssistant.remove();
+      updateRegenButtons();
+
+      // Build a new request with the user's original text.
+      let userAttachments = [];
+      try {
+        userAttachments = JSON.parse($userMsg.find('.msg-bubble').attr('data-attachments') || '[]');
+      } catch (_error) {
+        userAttachments = [];
+      }
+
+      const request = buildQueuedRequest(userText, userAttachments);
+      request.$userRow = { length: 0 }; // User message already in DOM.
+      request.chatId = currentChatId;
+
+      // Delete only the paired assistant reply; the original user bubble stays
+      // visible and becomes the anchor for the regenerated answer.
+      chatRequestQueue.push(request);
+      processChatQueue();
+    }
+
+    if (assistantMessageId) {
+      // Delete the assistant message from backend first.
+      $.ajax({
+        url: `/api/message/${assistantMessageId}/delete/`,
+        method: 'DELETE',
+        headers: { 'X-CSRFToken': getCsrfToken() },
+        success: function (data) {
+          if (data.ok) {
+            doUserRegen();
+          }
+        },
+        error: function () {
+          console.error('Failed to delete assistant message for regen', assistantMessageId);
+        }
+      });
+    } else {
+      doUserRegen();
+    }
+  }
+
+  // Wire input.
   function wireInput($input, $button) {
     $input.on('input', function () {
       this.style.height = 'auto';
@@ -2795,6 +3743,8 @@ $(function () {
       updateSendButtons();
     });
 
+    // Enter sends, Shift+Enter inserts a newline, and the same button becomes
+    // a stop control while generation is active.
     $input.on('keydown', function (event) {
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
@@ -2805,12 +3755,17 @@ $(function () {
     });
 
     $button.on('click', function () {
+      if (isChatGenerating && currentAbortController) {
+        abortGeneration();
+        return;
+      }
       if (!$button.prop('disabled')) {
         sendMessage($input.val().trim(), $input);
       }
     });
   }
 
+  // Load chat.
   function loadChat(chatId, pushState) {
     if (!chatId || currentChatId === chatId) {
       return;
@@ -2829,7 +3784,7 @@ $(function () {
         $(`#historyList .chat-item[data-chat-id="${chatId}"]`).addClass('active').attr('aria-current', 'page');
 
         const title = data.title || 'Chat';
-        applySelectedToolServerId(data.active_tool_server_id || '');
+        applySelectedToolServerIds(data.active_tool_server_ids || []);
         $chatTitle.text(title);
         document.title = `${title} - ASLM`;
 
@@ -2842,10 +3797,19 @@ $(function () {
         $messagesArea.show();
         $conversationInput.show();
 
+        // Rehydrate the timeline exactly as the server stored it, including
+        // attachments and structured activity segments for assistant messages.
         data.messages.forEach(function (message) {
-          appendMessage(message.role, message.content, message.images || [], message.created_at, {
-            activitySegments: Array.isArray(message.activity_segments) ? message.activity_segments : []
-          });
+          appendMessage(
+            message.role,
+            message.content,
+            (message.attachments || message.images || []).map(normalizeAttachment).filter(Boolean),
+            message.created_at,
+            {
+            activitySegments: Array.isArray(message.activity_segments) ? message.activity_segments : [],
+            messageId: message.id
+            }
+          );
         });
 
         scrollBottom();
@@ -2877,6 +3841,75 @@ $(function () {
     }
   });
 
+  $messagesInner.on('click', '.msg-regen-btn', function () {
+    const $msg = $(this).closest('.msg');
+    if ($msg.hasClass('user')) {
+      // User message regen: delete the next assistant message, then re-send.
+      regenerateFromUserMessage($msg);
+    } else {
+      regenerateLastResponse();
+    }
+  });
+
+  $messagesInner.on('click', '.msg-copy-btn', function () {
+    const $btn = $(this);
+    const $bubble = $btn.closest('.msg-body').find('.msg-bubble');
+    const text = $bubble.attr('data-copy') || $bubble.attr('data-raw') || $bubble.text();
+
+    // Restore the copy button after feedback.
+    function onCopied() {
+      const orig = $btn.html();
+      $btn.html(COPIED_ICON);
+      setTimeout(function () { $btn.html(orig); }, 1200);
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(onCopied).catch(function () {
+        fallbackCopy(text, onCopied);
+      });
+    } else {
+      fallbackCopy(text, onCopied);
+    }
+  });
+
+  // Run copy.
+  function fallbackCopy(text, onSuccess) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      if (document.execCommand('copy')) { onSuccess && onSuccess(); }
+    } catch (_) {}
+    document.body.removeChild(ta);
+  }
+
+  $messagesInner.on('click', '.msg-delete-btn', function () {
+    const $msg = $(this).closest('.msg');
+    const messageId = $msg.data('message-id');
+    if (!messageId) {
+      $msg.remove();
+      updateRegenButtons();
+      return;
+    }
+    $.ajax({
+      url: `/api/message/${messageId}/delete/`,
+      method: 'DELETE',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+      success: function (data) {
+        if (data.ok) {
+          $msg.remove();
+          updateRegenButtons();
+        }
+      },
+      error: function () {
+        console.error('Failed to delete message', messageId);
+      }
+    });
+  });
+
   $('#imageInput, #imageInputConv').on('change', handleFileInput);
 
   $(document).on('click', '#attachBtn', function () {
@@ -2889,8 +3922,8 @@ $(function () {
 
   $(document).on('click', '.img-preview-remove', function (event) {
     event.stopPropagation();
-    const index = $(this).closest('.img-preview-thumb').data('idx');
-    visionState.pending.splice(index, 1);
+    const index = $(this).closest('[data-idx]').data('idx');
+    attachmentState.pending.splice(index, 1);
     rebuildPreviewStrips();
   });
 
@@ -2899,7 +3932,7 @@ $(function () {
   });
 
   $(document).on('click', '.think-toggle-btn', function () {
-    if (!thinkState.supported) {
+    if (!thinkState.supported || !thinkState.toggleSupported || thinkState.levelSupported) {
       return;
     }
     thinkState.enabled = !thinkState.enabled;
@@ -2908,6 +3941,9 @@ $(function () {
   });
 
   $(document).on('click', '.think-level-btn', function () {
+    if (!thinkState.supported || !thinkState.levelSupported) {
+      return;
+    }
     thinkState.level = $(this).data('value');
     updateThinkControls();
     scheduleOllamaPresetSync();
@@ -3008,12 +4044,6 @@ $(function () {
       $target.val('');
     }
 
-    if ($(this).closest('#group-load').length > 0) {
-      applyLmsLoadConfigChange().catch(function (error) {
-        console.error('Failed to update LM Studio load config:', error);
-      });
-    }
-
     scheduleOllamaPresetSync();
   });
 
@@ -3075,33 +4105,35 @@ $(function () {
       return;
     }
 
+    clearLmsModelsRefreshTimer();
+
     if ((runtimeSettings[addressKey] || '') === addressValue) {
       setEngineAddressStatus('Saved', null);
+      syncLmsModelsRefresh();
       return;
     }
 
     try {
       setEngineAddressStatus('Saving...', 'pending');
       runtimeSettings = await saveRuntimeSettings({ [addressKey]: addressValue });
-      clearModelCache(engine);
-
-      if (selectionVersion !== engineSelectionVersion) {
-        return;
-      }
-
-      updateEngineAddressUi();
-      resetModelUiState('Loading models...');
-      await ensureModelsLoadedForActiveEngine({
+      await refreshActiveEngineModels({
+        engine: engine,
+        selectionVersion: selectionVersion,
         preferredModel: ''
       });
+      syncLmsModelsRefresh();
     } catch (error) {
       console.error('Failed to save engine address:', error);
+      resetModelUiState('No models available');
       setEngineAddressStatus('Error', 'error');
+      syncLmsModelsRefresh();
     }
   });
 
   $engineApiKeyEnabled.on('change', async function () {
-    if (getActiveEngine() !== 'openai') {
+    const engine = getActiveEngine();
+    const apiKeyKey = getEngineApiKeyKey(engine);
+    if (!apiKeyKey) {
       return;
     }
 
@@ -3114,11 +4146,16 @@ $(function () {
     }
 
     try {
+      const selectionVersion = ++engineSelectionVersion;
       setEngineApiKeyStatus('Saving...', 'pending');
-      runtimeSettings = await saveRuntimeSettings({ openai_api_key: '' });
-      updateEngineAddressUi();
+      runtimeSettings = await saveRuntimeSettings({ [apiKeyKey]: '' });
+      await refreshActiveEngineModels({
+        engine: engine,
+        selectionVersion: selectionVersion
+      });
     } catch (error) {
       console.error('Failed to update API key state:', error);
+      resetModelUiState('No models available');
       setEngineApiKeyStatus('Error', 'error');
     }
   });
@@ -3131,23 +4168,30 @@ $(function () {
   });
 
   $engineApiKeyInput.on('blur', async function () {
-    if (getActiveEngine() !== 'openai' || !$engineApiKeyEnabled.is(':checked')) {
+    const engine = getActiveEngine();
+    const apiKeyKey = getEngineApiKeyKey(engine);
+    if (!apiKeyKey || !$engineApiKeyEnabled.is(':checked')) {
       return;
     }
 
     const apiKeyValue = $(this).val().trim();
     if (!apiKeyValue) {
-      setEngineApiKeyStatus(runtimeSettings.has_openai_api_key ? 'On' : 'Off', null);
+      setEngineApiKeyStatus(hasStoredEngineApiKey(engine) ? 'On' : 'Off', null);
       return;
     }
 
     try {
+      const selectionVersion = ++engineSelectionVersion;
       setEngineApiKeyStatus('Saving...', 'pending');
-      runtimeSettings = await saveRuntimeSettings({ openai_api_key: apiKeyValue });
+      runtimeSettings = await saveRuntimeSettings({ [apiKeyKey]: apiKeyValue });
       $engineApiKeyInput.val('');
-      updateEngineAddressUi();
+      await refreshActiveEngineModels({
+        engine: engine,
+        selectionVersion: selectionVersion
+      });
     } catch (error) {
       console.error('Failed to save API key:', error);
+      resetModelUiState('No models available');
       setEngineApiKeyStatus('Error', 'error');
     }
   });
@@ -3159,12 +4203,13 @@ $(function () {
   $ollamaPresetSelector.on('change', async function () {
     const presetId = $(this).val();
     const modelName = getSelectedModelName();
-    if (getActiveEngine() !== 'ollama-service' || !presetId || !modelName) {
+    const presetApiBase = getPresetApiBase(getActiveEngine());
+    if (!presetApiBase || !presetId || !modelName) {
       return;
     }
 
     try {
-      const payload = await postJson('/api/ollama_presets/select/', {
+      const payload = await postJson(`${presetApiBase}/select/`, {
         model: modelName,
         preset_id: presetId
       });
@@ -3177,7 +4222,8 @@ $(function () {
 
   $ollamaPresetCreateBtn.on('click', async function () {
     const modelName = getSelectedModelName();
-    if (getActiveEngine() !== 'ollama-service' || !modelName) {
+    const presetApiBase = getPresetApiBase(getActiveEngine());
+    if (!presetApiBase || !modelName) {
       return;
     }
 
@@ -3187,12 +4233,13 @@ $(function () {
     }
 
     try {
-      const payload = await postJson('/api/ollama_presets/create/', {
+      const payload = await postJson(`${presetApiBase}/create/`, {
         model: modelName,
         name: requestedName.trim(),
-        config: collectOptionsPayload()
+        config: buildActivePresetConfigPayload()
       });
       applyOllamaPresetState(payload);
+      await loadModelInfo(modelName);
     } catch (error) {
       console.error('Failed to create Ollama preset:', error);
     }
@@ -3201,7 +4248,8 @@ $(function () {
   $ollamaPresetRenameBtn.on('click', async function () {
     const activePreset = getActiveOllamaPreset();
     const modelName = getSelectedModelName();
-    if (getActiveEngine() !== 'ollama-service' || !modelName || !activePreset || activePreset.is_default) {
+    const presetApiBase = getPresetApiBase(getActiveEngine());
+    if (!presetApiBase || !modelName || !activePreset || activePreset.is_default) {
       return;
     }
 
@@ -3211,7 +4259,7 @@ $(function () {
     }
 
     try {
-      const payload = await postJson('/api/ollama_presets/rename/', {
+      const payload = await postJson(`${presetApiBase}/rename/`, {
         model: modelName,
         preset_id: activePreset.id,
         name: requestedName.trim()
@@ -3222,24 +4270,11 @@ $(function () {
     }
   });
 
-  $toolToggleBtn.add($toolToggleBtnConv).on('click', function () {
-    if (!toolState.supported || !availableToolServers.length) {
-      return;
-    }
-    toolSelectorOpen = !toolSelectorOpen;
-    renderToolControls();
-  });
-
-  $toolSelector.add($toolSelectorConv).on('change', function () {
-    selectedToolServerId = normalizeToolServerId($(this).val());
-    toolSelectorOpen = false;
-    renderToolControls();
-  });
-
   $ollamaPresetDeleteBtn.on('click', async function () {
     const activePreset = getActiveOllamaPreset();
     const modelName = getSelectedModelName();
-    if (getActiveEngine() !== 'ollama-service' || !modelName || !activePreset || activePreset.is_default) {
+    const presetApiBase = getPresetApiBase(getActiveEngine());
+    if (!presetApiBase || !modelName || !activePreset || activePreset.is_default) {
       return;
     }
 
@@ -3248,7 +4283,7 @@ $(function () {
     }
 
     try {
-      const payload = await postJson('/api/ollama_presets/delete/', {
+      const payload = await postJson(`${presetApiBase}/delete/`, {
         model: modelName,
         preset_id: activePreset.id
       });
@@ -3271,22 +4306,6 @@ $(function () {
     scheduleOllamaPresetSync();
   });
 
-  $(document).on('change', '#group-load .dyn-load-param', function () {
-    applyLmsLoadConfigChange().catch(function (error) {
-      console.error('Failed to update LM Studio load config:', error);
-    });
-  });
-
-  $(document).on('blur', '#group-load .dyn-load-param', function () {
-    if ($(this).is(':checkbox')) {
-      return;
-    }
-
-    applyLmsLoadConfigChange().catch(function (error) {
-      console.error('Failed to update LM Studio load config:', error);
-    });
-  });
-
   window.addEventListener('popstate', function (event) {
     if (event.state && event.state.chatId) {
       loadChat(event.state.chatId, false);
@@ -3301,7 +4320,7 @@ $(function () {
   }
 
   updateAvailableToolServers(defaultAvailableToolServers);
-  applySelectedToolServerId('');
+  applySelectedToolServerIds([]);
   updateEngineAddressUi();
   resetModelUiState('Loading models...');
   applyEngineSelection(getActiveEngine(), {

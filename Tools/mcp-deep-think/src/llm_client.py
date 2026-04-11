@@ -148,20 +148,24 @@ class LLMClient:
         """Resolve the chat completions endpoint for OpenAI-compatible engines."""
 
         normalized_engine = str(engine or "").strip().lower()
-        if normalized_engine == "ollama-service":
-            return self.base_url
 
         try:
             from Settings import settings as aslm_settings
 
-            if normalized_engine == "openai":
+            if normalized_engine == "ollama-service":
+                port = aslm_settings.get("ollama-service_port", 30002)
+                endpoint = f"http://127.0.0.1:{port}"
+            elif normalized_engine == "openai":
                 endpoint = aslm_settings.get_engine_url("openai")
             elif normalized_engine == "lms":
                 endpoint = aslm_settings.get_engine_url("lms")
             else:
                 endpoint = ""
         except Exception:
-            endpoint = ""
+            if normalized_engine == "ollama-service":
+                endpoint = "http://127.0.0.1:30002"
+            else:
+                endpoint = ""
 
         raw_base = str(endpoint or self.base_url).strip().rstrip("/")
         if not raw_base:
@@ -300,7 +304,11 @@ class LLMClient:
             return configured
 
         if runtime_engine == "ollama-service":
-            return await self._resolve_ollama_model(force_refresh=force_refresh)
+            try:
+                import ollama as _ollama_sdk  # noqa: F401
+                return await self._resolve_ollama_model(force_refresh=force_refresh)
+            except ImportError:
+                pass  # fall through to httpx model resolution
 
         cached_model = self._resolved_models.get(runtime_engine)
         if cached_model and not force_refresh:
@@ -389,14 +397,21 @@ class LLMClient:
         runtime_engine = self._runtime_engine()
         model_name = await self._resolve_model()
         if runtime_engine == "ollama-service":
-            return await self._chat_completion_ollama(
-                model_name=model_name,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stop_sequences=stop_sequences,
-                json_mode=json_mode,
-            )
+            try:
+                import ollama as _ollama_sdk  # noqa: F401
+                ollama_available = True
+            except ImportError:
+                ollama_available = False
+
+            if ollama_available:
+                return await self._chat_completion_ollama(
+                    model_name=model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stop_sequences=stop_sequences,
+                    json_mode=json_mode,
+                )
 
         payload = {
             "model": model_name,

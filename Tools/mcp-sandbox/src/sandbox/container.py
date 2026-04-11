@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 from sandbox.config import (
     CONTAINER_NAME,
@@ -20,14 +22,20 @@ from sandbox.config import (
     MAX_OUTPUT_CHARS,
     MEMORY_LIMIT,
     MEMORY_SWAP_LIMIT,
+    NETWORK_LIMIT_MBIT,
     PIDS_LIMIT,
     SANDBOX_IMAGE,
     SANDBOX_IMAGE_SOURCE,
     SNAPSHOT_IMAGE_PREFIX,
     STORAGE_LIMIT,
+    THREAD_LIMIT,
     WINDOWS_DOCKER_DESKTOP_PATHS,
 )
-from sandbox.workspace import get_secure_task_path, normalize_relative_path, task_root
+from sandbox.workspace import (
+    get_secure_task_path,
+    normalize_model_relative_path,
+    task_root,
+)
 
 
 # Output helpers.
@@ -63,6 +71,22 @@ def _run_command(
         timeout=timeout,
         check=check,
     )
+
+
+def _read_stream_chunks(
+    stream,
+    sink: list[str],
+    callback: Callable[[str], None] | None = None,
+) -> None:
+    """Read process output in chunks and forward it to an optional callback."""
+
+    while True:
+        chunk = stream.read(1024)
+        if not chunk:
+            break
+        sink.append(chunk)
+        if callback is not None:
+            callback(chunk)
 
 
 # Docker availability checks.
@@ -246,10 +270,11 @@ def _build_run_command(
         "--no-healthcheck",
     ]
 
+    if NETWORK_LIMIT_MBIT > 0:
+        command.extend(["--cap-add", "NET_ADMIN"])
+
     if include_storage_limit and STORAGE_LIMIT:
         command.extend(["--storage-opt", f"size={STORAGE_LIMIT}"])
-
-    command.extend(["--gpus", "all"])
 
     task_host_path = os.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR)
     os.makedirs(task_host_path, exist_ok=True)
@@ -260,13 +285,39 @@ def _build_run_command(
             f"{task_host_path}:{CONTAINER_WORKSPACE}",
             "-w",
             CONTAINER_WORKSPACE,
+            "-e",
+            f"SANDBOX_NETWORK_LIMIT_MBIT={NETWORK_LIMIT_MBIT}",
+            "-e",
+            f"SANDBOX_THREAD_LIMIT={THREAD_LIMIT}",
+            "-e",
+            f"OMP_NUM_THREADS={THREAD_LIMIT}",
+            "-e",
+            f"OPENBLAS_NUM_THREADS={THREAD_LIMIT}",
+            "-e",
+            f"MKL_NUM_THREADS={THREAD_LIMIT}",
+            "-e",
+            f"NUMEXPR_NUM_THREADS={THREAD_LIMIT}",
+            "-e",
+            f"VECLIB_MAXIMUM_THREADS={THREAD_LIMIT}",
             image_name,
-            "tail",
-            "-f",
-            "/dev/null",
         ]
     )
     return command
+
+
+def _container_volume_matches() -> bool:
+    """Return True when the running container mounts the expected host path."""
+
+    expected = os.path.normcase(os.path.normpath(os.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR)))
+    result = _run_command(
+        ["docker", "inspect", "--format", "{{range .Mounts}}{{.Source}}{{end}}", CONTAINER_NAME],
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return True  # Can't inspect — don't recreate unnecessarily.
+
+    actual = os.path.normcase(os.path.normpath(result.stdout.strip()))
+    return actual == expected
 
 
 def _storage_limit_unsupported(stderr_text: str) -> bool:
@@ -293,14 +344,19 @@ def _ensure_container_running(image_name: str = SANDBOX_IMAGE) -> tuple[bool, st
         return False, docker_message
 
     if _container_is_running():
-        return True, "Container is running."
+        if _container_volume_matches():
+            return True, "Container is running."
+        # Volume mismatch — remove and recreate with the correct mount.
+        _run_command(["docker", "rm", "-f", CONTAINER_NAME], timeout=30)
 
     if _container_exists():
-        start_result = _run_command(["docker", "start", CONTAINER_NAME], timeout=30)
-        if start_result.returncode == 0:
-            return True, f"Container '{CONTAINER_NAME}' started."
-
-        return False, start_result.stderr.strip() or "Failed to start existing container."
+        if not _container_volume_matches():
+            _run_command(["docker", "rm", "-f", CONTAINER_NAME], timeout=30)
+        else:
+            start_result = _run_command(["docker", "start", CONTAINER_NAME], timeout=30)
+            if start_result.returncode == 0:
+                return True, f"Container '{CONTAINER_NAME}' started."
+            return False, start_result.stderr.strip() or "Failed to start existing container."
 
     build_ok, build_message = _ensure_image()
     if not build_ok:
@@ -456,6 +512,9 @@ def exec_bash(
     cwd: str = ".",
     timeout_s: int = DEFAULT_TIMEOUT,
     stdin: str | None = None,
+    on_stdout: Callable[[str], None] | None = None,
+    on_stderr: Callable[[str], None] | None = None,
+    on_progress: Callable[[float, str], None] | None = None,
 ) -> dict:
     """Execute a bash command inside the sandbox container."""
 
@@ -464,10 +523,10 @@ def exec_bash(
 
     target_dir = get_secure_task_path(cwd, kind="cwd")
     if not target_dir.exists():
-        raise FileNotFoundError(f"cwd not found: {normalize_relative_path(cwd)}")
+        raise FileNotFoundError(f"cwd not found: {normalize_model_relative_path(cwd)}")
 
     if not target_dir.is_dir():
-        raise NotADirectoryError(f"cwd is not a directory: {normalize_relative_path(cwd)}")
+        raise NotADirectoryError(f"cwd is not a directory: {normalize_model_relative_path(cwd)}")
 
     container_ok, container_message = _ensure_container_running()
     if not container_ok:
@@ -508,34 +567,93 @@ def exec_bash(
     ]
 
     try:
-        result = _run_command(exec_cmd, timeout=timeout_s, input_text=stdin)
-    except subprocess.TimeoutExpired:
-        restart_container()
+        process = subprocess.Popen(
+            exec_cmd,
+            stdin=subprocess.PIPE if stdin is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+    except Exception as exc:
         return {
-            "ok": False,
             "exit_code": None,
             "stdout": "",
             "stderr": "",
+            "error": str(exc),
+            "elapsed_ms": int((time.time() - start_time) * 1000),
+            "truncated": False,
+            "cwd": normalize_model_relative_path(cwd),
+        }
+
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    stdout_thread = threading.Thread(
+        target=_read_stream_chunks,
+        args=(process.stdout, stdout_chunks, on_stdout),
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_read_stream_chunks,
+        args=(process.stderr, stderr_chunks, on_stderr),
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+
+    if stdin is not None and process.stdin is not None:
+        try:
+            process.stdin.write(stdin)
+        except BrokenPipeError:
+            pass
+        finally:
+            process.stdin.close()
+
+    try:
+        while process.poll() is None:
+            elapsed_s = time.time() - start_time
+            if elapsed_s >= timeout_s:
+                process.kill()
+                raise subprocess.TimeoutExpired(exec_cmd, timeout_s)
+            if on_progress is not None:
+                progress = min(95.0, max(5.0, (elapsed_s / timeout_s) * 90.0))
+                on_progress(progress, f"Running bash in {normalize_model_relative_path(cwd)}")
+            time.sleep(0.2)
+
+        stdout_thread.join(timeout=2)
+        stderr_thread.join(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        stdout_thread.join(timeout=2)
+        stderr_thread.join(timeout=2)
+        restart_container()
+        return {
+            "exit_code": None,
+            "stdout": "".join(stdout_chunks),
+            "stderr": "".join(stderr_chunks),
             "error": (
                 f"Execution timed out after {timeout_s} seconds. "
                 "Container restarted to free resources."
             ),
             "elapsed_ms": int((time.time() - start_time) * 1000),
             "truncated": False,
+            "cwd": normalize_model_relative_path(cwd),
         }
 
-    stdout_value, trunc_out = _truncate(result.stdout)
-    stderr_value, trunc_err = _truncate(result.stderr)
+    stdout_value, trunc_out = _truncate("".join(stdout_chunks))
+    stderr_value, trunc_err = _truncate("".join(stderr_chunks))
+
+    if on_progress is not None:
+        on_progress(100.0, f"Bash finished in {normalize_model_relative_path(cwd)}")
 
     return {
-        "ok": result.returncode == 0,
-        "exit_code": result.returncode,
+        "exit_code": process.returncode,
         "stdout": stdout_value,
         "stderr": stderr_value,
-        "error": None if result.returncode == 0 else f"Exit code: {result.returncode}",
+        "error": None if process.returncode == 0 else f"Exit code: {process.returncode}",
         "elapsed_ms": int((time.time() - start_time) * 1000),
         "truncated": trunc_out or trunc_err,
-        "cwd": normalize_relative_path(cwd),
+        "cwd": normalize_model_relative_path(cwd),
     }
 
 
@@ -585,6 +703,15 @@ def get_status() -> dict:
             container_status = ps_result.stdout.strip()
             container_running = container_status.lower().startswith("up")
 
+    task_dir = task_root()
+    task_entries: list[str] = []
+    task_exists = task_dir.exists()
+    if task_exists:
+        try:
+            task_entries = sorted(item.name for item in task_dir.iterdir())
+        except OSError:
+            task_entries = []
+
     return {
         "ok": True,
         "docker_cli_available": docker_cli,
@@ -598,14 +725,19 @@ def get_status() -> dict:
         "workspace_container": CONTAINER_WORKSPACE,
         "model_workspace_host": str(task_root()),
         "model_workspace_container": CONTAINER_WORKSPACE,
+        "task_dir_exists": task_exists,
+        "task_entry_count": len(task_entries),
+        "task_entry_sample": task_entries[:20],
         "bash_default_cwd": ".",
         "http_share_base_url": f"http://127.0.0.1:{HTTP_PORT}",
         "limits": {
             "cpus": CPU_LIMIT,
+            "threads": THREAD_LIMIT,
             "memory": MEMORY_LIMIT,
             "memory_swap": MEMORY_SWAP_LIMIT,
             "pids_limit": PIDS_LIMIT,
             "storage_limit": STORAGE_LIMIT,
+            "network_limit_mbit": NETWORK_LIMIT_MBIT,
         },
         "docker_server_version": (daemon_details or {}).get("ServerVersion"),
         "docker_driver": (daemon_details or {}).get("Driver"),

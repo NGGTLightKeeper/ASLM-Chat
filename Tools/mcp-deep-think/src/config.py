@@ -42,6 +42,13 @@ class SearchConfig(BaseModel):
     enable_lightweight_read: bool = True
     lightweight_read_top_results: int = 1
     lightweight_read_char_budget: int = 2000
+    overdrive: bool = False
+    overdrive_human_behavior: bool = True
+    overdrive_ocr_fallback: bool = True
+    overdrive_parallel_timeout: float = 20.0
+    overdrive_ocr_timeout: float = 30.0
+    overdrive_browser_start_delay: float = 0.75
+    overdrive_browser_concurrency: int = 2
 
 
 # Sandbox settings
@@ -88,6 +95,13 @@ class ProfileConfig(BaseModel):
     per_agent_timeout_seconds: float | None = None
 
 
+# Blackboard settings
+class BlackboardConfig(BaseModel):
+    enabled: bool = True
+    max_signals_per_read: int = 20
+    signal_max_chars: int = 300
+
+
 # Per-agent runtime overrides
 class AgentRuntimeConfig(BaseModel):
     enabled: bool = True
@@ -107,6 +121,7 @@ class Settings(BaseModel):
     agents: dict[str, AgentRuntimeConfig] = Field(default_factory=dict)
     output: OutputConfig = Field(default_factory=OutputConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
+    blackboard: BlackboardConfig = Field(default_factory=BlackboardConfig)
     config_path: Path = DEFAULT_CONFIG_PATH
 
     @property
@@ -120,7 +135,7 @@ class Settings(BaseModel):
 
         # Keep the default output under the shared task workspace.
         if root_dir == "_out":
-            return WORKSPACE_ROOT / "task" / "deep-think"
+            return WORKSPACE_ROOT / "_sandbox" / "deep-think"
 
         return PROJECT_ROOT / root_dir
 
@@ -134,7 +149,10 @@ class Settings(BaseModel):
     def agent_runtime(self, agent_id: str) -> AgentRuntimeConfig:
         """Return runtime overrides for a specific agent id."""
 
-        return self.agents.get(agent_id, AgentRuntimeConfig())
+        runtime = self.agents.get(agent_id, AgentRuntimeConfig())
+        if self.search.overdrive:
+            return runtime.model_copy(update={"has_search": True, "has_python": True})
+        return runtime
 
 
     # Compatibility aliases
@@ -206,7 +224,18 @@ class Settings(BaseModel):
 
 
 # Environment overrides
+# ASLM injects settings as ASLM_<KEY> environment variables at module startup.
+# lms_url arrives as "host:port", so we normalize it to a full chat completions URL.
+def _aslm_lms_url() -> str | None:
+    raw = os.getenv("ASLM_LMS_URL")
+    if raw is None:
+        return None
+    url = raw if raw.startswith("http") else f"http://{raw}"
+    return url.rstrip("/") + "/v1/chat/completions"
+
+
 _ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
+    # ASLM native vars (populated automatically by the launcher).
     "DEEP_THINK_LM_STUDIO_URL": ("llm", "base_url"),
     "DEEP_THINK_LM_STUDIO_MODEL": ("llm", "model"),
     "DEEP_THINK_LLM_TIMEOUT_SECONDS": ("llm", "timeout_seconds"),
@@ -221,6 +250,14 @@ _ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
     "DEEP_THINK_SANDBOX_CONTAINER": ("sandbox", "container_name"),
     "DEEP_THINK_SANDBOX_IMAGE": ("sandbox", "image"),
     "DEEP_THINK_SANDBOX_IMAGE_SOURCE": ("sandbox", "image_source"),
+    # Overdrive mode overrides (also respond to SEARCH_OVERDRIVE_* vars).
+    "SEARCH_OVERDRIVE": ("search", "overdrive"),
+    "SEARCH_OVERDRIVE_HUMAN_BEHAVIOR": ("search", "overdrive_human_behavior"),
+    "SEARCH_OVERDRIVE_OCR_FALLBACK": ("search", "overdrive_ocr_fallback"),
+    "SEARCH_OVERDRIVE_PARALLEL_TIMEOUT": ("search", "overdrive_parallel_timeout"),
+    "SEARCH_OVERDRIVE_OCR_TIMEOUT": ("search", "overdrive_ocr_timeout"),
+    "SEARCH_OVERDRIVE_BROWSER_START_DELAY": ("search", "overdrive_browser_start_delay"),
+    "SEARCH_OVERDRIVE_BROWSER_CONCURRENCY": ("search", "overdrive_browser_concurrency"),
 }
 
 
@@ -253,9 +290,15 @@ def _coerce_env_value(raw: str) -> Any:
         return raw
 
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
-    """Apply legacy environment overrides onto the loaded config payload."""
+    """Apply environment overrides onto the loaded config payload."""
 
     updated = deepcopy(data)
+
+    # Apply ASLM_LMS_URL first so DEEP_THINK_LM_STUDIO_URL can still override it.
+    aslm_url = _aslm_lms_url()
+    if aslm_url is not None:
+        updated.setdefault("llm", {})["base_url"] = aslm_url
+
     for env_name, path in _ENV_OVERRIDES.items():
         raw = os.getenv(env_name)
         if raw is None:

@@ -17,7 +17,7 @@ SNAPSHOT_IMAGE_PREFIX = os.getenv(
     f"{CONTAINER_NAME}-snapshot",
 )
 CONTAINER_WORKSPACE = "/workspace"
-DEFAULT_TASK_DIR = os.getenv("SANDBOX_DEFAULT_TASK_DIR", "task")
+DEFAULT_TASK_DIR = os.getenv("SANDBOX_DEFAULT_TASK_DIR", "_sandbox")
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[4]
 _DEFAULT_SANDBOX_DIR = os.path.join(os.path.expanduser("~"), ".sandbox-workspace")
@@ -42,12 +42,27 @@ TOKEN_TTL_SECONDS = int(os.getenv("SANDBOX_TOKEN_TTL_SECONDS", "1800"))
 MAX_OUTPUT_CHARS = int(os.getenv("SANDBOX_MAX_OUTPUT_CHARS", "40000"))
 DEFAULT_TIMEOUT = int(os.getenv("SANDBOX_DEFAULT_TIMEOUT", "60"))
 OCR_TIMEOUT = int(os.getenv("SANDBOX_OCR_TIMEOUT", "60"))
+MAX_READ_BYTES = int(os.getenv("SANDBOX_MAX_READ_BYTES", "200000"))
+MAX_CAT_FILE_BYTES = int(os.getenv("SANDBOX_MAX_CAT_FILE_BYTES", "30720"))
+MAX_CAT_LINE_THRESHOLD = int(os.getenv("SANDBOX_MAX_CAT_LINE_THRESHOLD", "300"))
+MAX_IMAGE_PREVIEW_BYTES = int(os.getenv("SANDBOX_MAX_IMAGE_PREVIEW_BYTES", "2000000"))
+MAX_LS_ENTRIES = int(os.getenv("SANDBOX_MAX_LS_ENTRIES", "500"))
+MAX_FIND_RESULTS = int(os.getenv("SANDBOX_MAX_FIND_RESULTS", "200"))
+MAX_GREP_RESULTS = int(os.getenv("SANDBOX_MAX_GREP_RESULTS", "200"))
 
-CPU_LIMIT = os.getenv("SANDBOX_CPU_LIMIT", "1")
+# Presentation layer tuning.
+
+FILE_MAP_MIN_LINES = int(os.getenv("SANDBOX_FILE_MAP_MIN_LINES", "200"))
+GREP_CLUSTER_THRESHOLD = int(os.getenv("SANDBOX_GREP_CLUSTER_THRESHOLD", "30"))
+MAX_FILE_MAP_SYMBOLS = int(os.getenv("SANDBOX_MAX_FILE_MAP_SYMBOLS", "50"))
+LOOP_BREAK_THRESHOLD = int(os.getenv("SANDBOX_LOOP_BREAK_THRESHOLD", "3"))
+CPU_LIMIT = os.getenv("SANDBOX_CPU_LIMIT", "4")
+THREAD_LIMIT = int(os.getenv("SANDBOX_THREAD_LIMIT", "4"))
 MEMORY_LIMIT = os.getenv("SANDBOX_MEMORY_LIMIT", "3g")
 MEMORY_SWAP_LIMIT = os.getenv("SANDBOX_MEMORY_SWAP_LIMIT", "4g")
 PIDS_LIMIT = os.getenv("SANDBOX_PIDS_LIMIT", "256")
 STORAGE_LIMIT = os.getenv("SANDBOX_STORAGE_LIMIT", "12G")
+NETWORK_LIMIT_MBIT = int(os.getenv("SANDBOX_NETWORK_LIMIT_MBIT", "100"))
 DOCKER_START_TIMEOUT_SECONDS = int(
     os.getenv("SANDBOX_DOCKER_START_TIMEOUT_SECONDS", "60")
 )
@@ -59,6 +74,23 @@ WINDOWS_DOCKER_DESKTOP_PATHS = [
     os.path.expandvars(r"%ProgramFiles%\Docker\Docker\Docker Desktop.exe"),
     os.path.expandvars(r"%LocalAppData%\Docker\Docker Desktop.exe"),
 ]
+
+
+IGNORED_DIR_NAMES = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".idea",
+    ".vscode",
+    "__pycache__",
+    ".pytest_cache",
+    "node_modules",
+    "dist",
+    "build",
+    "target",
+    ".next",
+    ".nuxt",
+}
 
 
 # Workspace validation.

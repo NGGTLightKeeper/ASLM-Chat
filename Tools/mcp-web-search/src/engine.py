@@ -116,6 +116,7 @@ import hashlib
 import json
 import logging
 import random
+import re
 import sqlite3
 import time
 from threading import Lock
@@ -301,11 +302,18 @@ _server_debug_enabled = os.getenv("MCP_WEB_SEARCH_DEBUG", "").strip().lower() in
     "on",
 }
 
+_trace_browsers_enabled = os.getenv("SEARCH_OVERDRIVE_TRACE_BROWSERS", "true").strip().lower() == "true"
+
 
 # Write server debug output when enabled.
 def _debug_log(message: str) -> None:
     if _server_debug_enabled:
         print(message, file=sys.stderr)
+
+
+def _trace_browser_log(message: str) -> None:
+    if _trace_browsers_enabled:
+        print(message, file=sys.stderr, flush=True)
 
 _HERE       = Path(__file__).resolve().parent
 PROJECT_DIR = _HERE.parent
@@ -326,6 +334,11 @@ try:
     _domain_registry = _DomainRegistry()
 except Exception as _e:
     _domain_registry = None
+
+try:
+    from content_processor import PreviewPayload, build_preview_payload, get_preview_settings, warm_preview_models
+except ImportError:
+    from .content_processor import PreviewPayload, build_preview_payload, get_preview_settings, warm_preview_models  # type: ignore
 
 
 # Formatting helpers.
@@ -367,13 +380,67 @@ def _youtube_video_id(url: str) -> str | None:
 
 # Fetch transcript text for a YouTube URL.
 def _youtube_transcript(url: str) -> str:
-    """Fetch YouTube transcript: youtube-transcript-api first, yt-dlp as fallback."""
+    """Fetch YouTube transcript: yt-dlp first, youtube-transcript-api as fallback."""
     import re as _re
     video_id = _youtube_video_id(url)
     if not video_id:
         return f"Error: Could not extract video ID from: {url}"
 
-    # --- Attempt 1: youtube-transcript-api ---
+    yt_dlp_error = None
+
+    # --- Attempt 1: yt-dlp ---
+    try:
+        import yt_dlp, tempfile, os, glob as _glob
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ydl_opts = {
+                "skip_download": True,
+                "writesubtitles": True,
+                "writeautomaticsub": True,
+                "subtitleslangs": ["ru", "en"],
+                "subtitlesformat": "vtt",
+                "outtmpl": os.path.join(tmpdir, "sub"),
+                "quiet": False,
+                "no_warnings": False,
+                "logger": type("Logger", (), {"debug": lambda x: None, "info": lambda x: None, "warning": _debug_log, "error": _debug_log})(),
+            }
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+            except Exception as e:
+                yt_dlp_error = f"Video not accessible or no subtitles: {url}"
+                _debug_log(f"yt-dlp download failed: {e}")
+            else:
+                vtt_files = _glob.glob(os.path.join(tmpdir, "*.vtt"))
+                if not vtt_files:
+                    yt_dlp_error = f"No subtitles available for: {url}"
+                    _debug_log(f"No VTT files for {video_id}")
+                else:
+                    raw = open(vtt_files[0], encoding="utf-8", errors="replace").read()
+                    if not raw:
+                        yt_dlp_error = f"Subtitle file is empty for: {url}"
+                    else:
+                        lines = raw.splitlines()
+                        text_lines = []
+                        seen = set()
+                        for line in lines:
+                            line = line.strip()
+                            if not line or line.startswith("WEBVTT") or "-->" in line or _re.match(r"^\d+$", line):
+                                continue
+                            clean = _re.sub(r"<[^>]+>", "", line).strip()
+                            if clean and clean not in seen:
+                                seen.add(clean)
+                                text_lines.append(clean)
+
+                        if text_lines:
+                            text = " ".join(text_lines)
+                            return f"YouTube transcript (yt-dlp)\nVideo: {url}\n\n{text}"
+
+                        yt_dlp_error = f"No text extracted from subtitles for: {url}"
+    except Exception as e:
+        yt_dlp_error = f"Failed to fetch transcript for {url}: {e}"
+        _debug_log(f"yt-dlp failed for {video_id}: {e}")
+
+    # --- Attempt 2: youtube-transcript-api ---
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
         api = YouTubeTranscriptApi()
@@ -405,58 +472,13 @@ def _youtube_transcript(url: str) -> str:
                 return f"YouTube transcript (youtube-transcript-api)\nVideo: {url}\n\n{text}"
     except Exception as e:
         _debug_log(f"youtube-transcript-api import/init failed: {e}")
-
-    # --- Attempt 2: yt-dlp ---
-    try:
-        import yt_dlp, tempfile, os, glob as _glob
-        with tempfile.TemporaryDirectory() as tmpdir:
-            ydl_opts = {
-                "skip_download": True,
-                "writesubtitles": True,
-                "writeautomaticsub": True,
-                "subtitleslangs": ["ru", "en"],
-                "subtitlesformat": "vtt",
-                "outtmpl": os.path.join(tmpdir, "sub"),
-                "quiet": False,
-                "no_warnings": False,
-                "logger": type("Logger", (), {"debug": lambda x: None, "info": lambda x: None, "warning": _debug_log, "error": _debug_log})(),
-            }
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
-            except Exception as e:
-                _debug_log(f"yt-dlp download failed: {e}")
-                return f"Error: Video not accessible or no subtitles: {url}"
-
-            vtt_files = _glob.glob(os.path.join(tmpdir, "*.vtt"))
-            if not vtt_files:
-                _debug_log(f"No VTT files for {video_id}")
-                return f"Error: No subtitles available for: {url}"
-
-            raw = open(vtt_files[0], encoding="utf-8", errors="replace").read()
-            if not raw:
-                return f"Error: Subtitle file is empty for: {url}"
-
-            lines = raw.splitlines()
-            text_lines = []
-            seen = set()
-            for line in lines:
-                line = line.strip()
-                if not line or line.startswith("WEBVTT") or "-->" in line or _re.match(r"^\d+$", line):
-                    continue
-                clean = _re.sub(r"<[^>]+>", "", line).strip()
-                if clean and clean not in seen:
-                    seen.add(clean)
-                    text_lines.append(clean)
-
-            if not text_lines:
-                return f"Error: No text extracted from subtitles for: {url}"
-
-            text = " ".join(text_lines)
-            return f"YouTube transcript (yt-dlp)\nVideo: {url}\n\n{text}"
-    except Exception as e:
-        _debug_log(f"yt-dlp failed for {video_id}: {e}")
-        return f"Error: Failed to fetch transcript for {url}: {e}"
+    if yt_dlp_error:
+        return (
+            f"Error: yt-dlp failed for {url}. "
+            f"Fallback via youtube-transcript-api also failed. "
+            f"yt-dlp detail: {yt_dlp_error}"
+        )
+    return f"Error: Failed to fetch transcript for {url}"
 
 
 # Return whether a URL should be skipped for text extraction.
@@ -505,11 +527,160 @@ _ANTIBOT_MARKERS = (
     "enable javascript", "ddos-guard", "robot or human",
 )
 
+# Single-marker phrases that alone indicate a JS-only / no-content response.
+_ANTIBOT_SINGLE = (
+    "your browser does not support javascript",
+    "javascript is required",
+    "please enable javascript",
+    "this site requires javascript",
+    "you need to enable javascript",
+)
+
 
 # Detect anti-bot response text.
 def _is_antibot(text: str) -> bool:
     t = text[:2000].lower()
+    if any(m in t for m in _ANTIBOT_SINGLE):
+        return True
     return sum(1 for m in _ANTIBOT_MARKERS if m in t) >= 2
+
+
+# Normalize a URL for dedup/cache (strip tracking params, trailing slash).
+def _normalize_url(url: str) -> str:
+    from urllib.parse import urlparse as _up, urlunparse as _uu, urlencode as _ue, parse_qsl as _pqs
+    _TRACKING = frozenset({
+        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+        "utm_id", "fbclid", "gclid", "msclkid", "mc_cid", "mc_eid",
+        "ref", "referrer", "source", "_ga", "yclid", "ysclid",
+    })
+    try:
+        p = _up(url)
+        clean_qs = _ue([(k, v) for k, v in _pqs(p.query) if k.lower() not in _TRACKING])
+        norm = _uu((p.scheme.lower(), p.netloc.lower(), p.path.rstrip("/") or "/", p.params, clean_qs, ""))
+        return norm
+    except Exception:
+        return url
+
+
+# Cheap lexical relevance score: query term overlap in title/snippet/url.
+def _lexical_score(query: str, title: str, snippet: str, url: str) -> float:
+    terms = _query_terms(query)
+    if not terms:
+        return 0.0
+    from urllib.parse import urlparse as _up
+    url_path = (_up(url).path or "").lower()
+    title_l   = title.lower()
+    snippet_l = snippet.lower()
+    n = len(terms)
+    title_hits   = sum(1 for t in terms if t in title_l)   / n
+    snippet_hits = sum(1 for t in terms if t in snippet_l) / n
+    url_hits     = sum(1 for t in terms if t in url_path)  / n
+    return min(1.0, 0.6 * title_hits + 0.3 * snippet_hits + 0.1 * url_hits)
+
+
+def _text_signature(text: str) -> str:
+    compact = _TEXT_SIG_RE.sub(" ", (text or "").lower()).strip()
+    return " ".join(compact.split())
+
+
+def _preview_adds_value(snippet: str, preview: str) -> bool:
+    sig_snippet = _text_signature(snippet)
+    sig_preview = _text_signature(preview)
+    if not sig_preview:
+        return False
+    if not sig_snippet:
+        return True
+    if sig_preview == sig_snippet:
+        return False
+    if sig_preview.startswith(sig_snippet) or sig_snippet.startswith(sig_preview):
+        shorter = min(len(sig_preview), len(sig_snippet))
+        longer = max(len(sig_preview), len(sig_snippet))
+        if longer > 0 and (shorter / longer) >= 0.85:
+            return False
+    return True
+
+
+def _query_term_match_count(query: str, *texts: str) -> int:
+    terms = _query_terms(query)
+    if not terms:
+        return 0
+    haystack = " ".join(_text_signature(text) for text in texts if text).strip()
+    if not haystack:
+        return 0
+    return sum(1 for term in terms if term in haystack)
+
+
+# Deduplicate a list of SearchResults by normalized URL, domain+title, and snippet.
+def _dedup_results(results: List[SearchResult]) -> List[SearchResult]:
+    seen_urls: set = set()
+    seen_keys: set = set()
+    out: List[SearchResult] = []
+    for r in results:
+        nu = _normalize_url(r.url)
+        if nu in seen_urls:
+            continue
+        seen_urls.add(nu)
+        from urllib.parse import urlparse as _up
+        domain = _up(r.url).netloc.lower()
+        title_key = f"{domain}||{r.title.strip().lower()[:60]}"
+        # First 12 words of snippet as near-dup signature.
+        snip_key = " ".join((r.snippet or "").lower().split()[:12])
+        if title_key in seen_keys or (snip_key and snip_key in seen_keys):
+            continue
+        seen_keys.add(title_key)
+        if snip_key:
+            seen_keys.add(snip_key)
+        out.append(r)
+    return out
+
+
+# In-process preview cache.
+_preview_cache: dict = {}   # normalized_url -> (PreviewPayload, timestamp)
+
+# Session anti-repeat state.
+_session_urls: dict    = {}  # normalized_url -> last_shown timestamp
+_session_domains: dict = {}  # domain -> shown count (rolling session)
+_SESSION_URL_TTL    = 3600.0
+_SESSION_DOMAIN_TTL = 3600.0
+
+
+def _session_cleanup() -> None:
+    """Remove stale session entries older than TTL."""
+    now = time.time()
+    for k in list(_session_urls.keys()):
+        if now - _session_urls[k] > _SESSION_URL_TTL:
+            del _session_urls[k]
+    # Domain counts decay: rebuild from remaining urls.
+    _session_domains.clear()
+    from urllib.parse import urlparse as _up
+    for u in _session_urls:
+        d = _up(u).netloc.lower()
+        _session_domains[d] = _session_domains.get(d, 0) + 1
+
+
+def _session_penalty(normalized_url: str) -> float:
+    """Return a score penalty for already-shown URLs/domains."""
+    penalty = 0.0
+    if normalized_url in _session_urls:
+        penalty += 0.15
+    from urllib.parse import urlparse as _up
+    domain = _up(normalized_url).netloc.lower()
+    count = _session_domains.get(domain, 0)
+    if count >= 2:
+        penalty += 0.08 * (count - 1)
+    return min(penalty, 0.40)
+
+
+def _session_update(results: List[SearchResult]) -> None:
+    """Mark results as shown in session state."""
+    now = time.time()
+    from urllib.parse import urlparse as _up
+    _session_cleanup()
+    for r in results:
+        nu = _normalize_url(r.url)
+        _session_urls[nu] = now
+        domain = _up(nu).netloc.lower()
+        _session_domains[domain] = _session_domains.get(domain, 0) + 1
 
 
 # Convert raw HTML into plain text.
@@ -523,78 +694,556 @@ def _html_to_text(raw_html: str) -> str:
 
 # Preview fetching helpers.
 
-_PREVIEW_LIMIT       = 6
-_PREVIEW_CHARS       = 600
-_FETCH_TIMEOUT       = 4.0
-_FETCH_TOTAL_TIMEOUT = 4.5
-_FETCH_CONCURRENCY   = 4
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 _YACY_SEARCH_TIMEOUT = 10.0
 _DDGS_SEARCH_TIMEOUT = 9.0
+_TIER_TRUST_SCORES = {
+    "friendly": 1.0,
+    "moderate": 0.75,
+    "hardened": 0.35,
+    "fortress": 0.05,
+    "unknown": 0.50,
+}
+_QUERY_STOPWORDS = {
+    "the", "this", "that", "with", "from", "into", "about", "what", "which",
+    "when", "where", "how", "why", "who", "does", "is", "are", "was", "were",
+    "for", "and", "or", "not", "what's", "whats",
+    "что", "такое", "это", "как", "зачем", "почему", "где", "когда", "кто",
+    "для", "или", "про", "об", "от", "из", "на", "по", "ли", "а", "и",
+}
+_TEXT_SIG_RE = re.compile(r"[\W_]+", re.UNICODE)
 
 
-# Fetch lightweight previews for search results.
-async def _fetch_previews(results: List[SearchResult]) -> List[str]:
+def _query_terms(query: str) -> list[str]:
+    raw_terms = [t.strip().lower() for t in (query or "").split() if len(t.strip()) > 2]
+    filtered = [t for t in raw_terms if t not in _QUERY_STOPWORDS]
+    return filtered or raw_terms
+
+
+def _preview_settings() -> dict:
+    settings = get_preview_settings()
+    return {
+        "preview_limit": max(0, int(settings.get("preview_limit", 10) or 0)),
+        "fetch_timeout": float(settings.get("fetch_timeout", 6.0) or 6.0),
+        "total_timeout": float(settings.get("total_timeout", 12.0) or 12.0),
+        "concurrency": max(1, int(settings.get("concurrency", 4) or 1)),
+        "mode": str(settings.get("mode", "semantic") or "semantic").lower(),
+        "rerank": str(settings.get("rerank", "soft") or "soft").lower(),
+        "processor": settings,
+    }
+
+
+def _result_domain_info(url: str):
+    if _domain_registry is None:
+        return None
+    try:
+        return _domain_registry.lookup(url)
+    except Exception:
+        return None
+
+
+def _rank_domain_trust(result: SearchResult, payload: PreviewPayload | None) -> float:
+    if payload is None or not payload.text:
+        return 0.0
+    info = _result_domain_info(result.url)
+    tier = str(getattr(info, "tier", "unknown") or "unknown").lower()
+    return _TIER_TRUST_SCORES.get(tier, _TIER_TRUST_SCORES["unknown"])
+
+
+def _result_usefulness_score(
+    result: SearchResult,
+    payload: PreviewPayload | None,
+    settings: dict,
+    *,
+    index: int,
+    total: int,
+) -> float:
+    original_rank = 1.0 if total <= 1 else 1.0 - (index / max(total - 1, 1))
+    active_payload = payload if payload is not None else PreviewPayload()
+    query_str = str(settings.get("_query", ""))
+    lex = _lexical_score(query_str, result.title or "", result.snippet or "", result.url)
+    sess = _session_penalty(_normalize_url(result.url))
+    score = (
+        (0.25 * original_rank)
+        + (0.25 * lex)
+        + (0.25 * max(0.0, min(active_payload.semantic_score, 1.0)))
+        + (0.15 * _rank_domain_trust(result, active_payload))
+        + (0.10 * max(0.0, min(active_payload.quality_score, 1.0)))
+        - sess
+    )
+    return max(0.0, score)
+
+
+def _compact_preview_fallback(text: str) -> str:
+    compact = " ".join((text or "").replace("\r", " ").replace("\n", " ").split()).strip(" -|,;")
+    return compact
+
+
+def _adaptive_preview_text(
+    result: SearchResult,
+    payload: PreviewPayload | None,
+    settings: dict,
+    *,
+    index: int,
+    total: int,
+) -> str:
+    usefulness = _result_usefulness_score(result, payload, settings, index=index, total=total)
+    processor = settings.get("processor", {}) if isinstance(settings, dict) else {}
+    max_chars = max(240, int(processor.get("output_chars", 1400) or 1400))
+    min_chars = min(240, max_chars)
+    source_text = _compact_preview_fallback((payload.text if payload else "") or "")
+    if not source_text:
+        source_text = _compact_preview_fallback(result.snippet or "")
+    if not source_text:
+        return ""
+
+    # More useful sources get a larger text budget instead of a hard preview cutoff.
+    ratio = max(0.12, min(usefulness, 1.0))
+    char_budget = int(min_chars + ((max_chars - min_chars) * ratio))
+    if usefulness < 0.16:
+        char_budget = min(char_budget, 220)
+    elif usefulness < 0.28:
+        char_budget = min(char_budget, 420)
+    preview = source_text[:char_budget].rstrip(" ,;:|-")
+    if not _preview_adds_value(result.snippet or "", preview):
+        return ""
+    return preview
+
+
+def _soft_rerank_results(
+    results: List[SearchResult],
+    payloads: List[PreviewPayload],
+    settings: dict,
+) -> tuple[List[SearchResult], List[PreviewPayload]]:
+    if not results:
+        return [], []
+    if settings.get("mode") != "semantic" or settings.get("rerank") != "soft":
+        padded = list(payloads) + [PreviewPayload() for _ in range(max(0, len(results) - len(payloads)))]
+        return list(results), padded[:len(results)]
+
+    total = len(results)
+    padded = list(payloads) + [PreviewPayload() for _ in range(max(0, total - len(payloads)))]
+    scored = []
+    for index, result in enumerate(results):
+        payload = padded[index]
+        score = _result_usefulness_score(result, payload, settings, index=index, total=total)
+        scored.append((score, index, result, payload))
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [item[2] for item in scored], [item[3] for item in scored]
+
+
+async def _fetch_preview_payloads(
+    results: List[SearchResult],
+    query: str = "",
+    overrides: dict | None = None,
+) -> List[PreviewPayload]:
     import aiohttp
+    import math
+    try:
+        from config import WEB_SEARCH_PREVIEW_CACHE_ENABLED, WEB_SEARCH_PREVIEW_CACHE_TTL, WEB_SEARCH_FETCH_STEALTH, OVERDRIVE as _OVERDRIVE_PREVIEW, MIMIC_USER_AGENT as _MIMIC_USER_AGENT, OVERDRIVE_HUMAN_BEHAVIOR as _OD_HUMAN_BEHAVIOR, OVERDRIVE_PARALLEL_TIMEOUT as _OD_PARALLEL_TIMEOUT, OVERDRIVE_OCR_TIMEOUT as _OD_OCR_TIMEOUT, OVERDRIVE_BROWSER_START_DELAY as _OD_BROWSER_START_DELAY, OVERDRIVE_BROWSER_CONCURRENCY as _OD_BROWSER_CONCURRENCY, OVERDRIVE_BROWSER_FANOUT as _OD_BROWSER_FANOUT, OVERDRIVE_BROWSER_IDLE_TIMEOUT as _OD_BROWSER_IDLE_TIMEOUT, OVERDRIVE_TRACE_BROWSERS as _OD_TRACE_BROWSERS
+    except ImportError:
+        WEB_SEARCH_PREVIEW_CACHE_ENABLED = True
+        WEB_SEARCH_PREVIEW_CACHE_TTL     = 1800
+        _OVERDRIVE_PREVIEW = False
+        _MIMIC_USER_AGENT = True
+        _OD_HUMAN_BEHAVIOR = True
+        _OD_PARALLEL_TIMEOUT = 20.0
+        _OD_OCR_TIMEOUT = 30.0
+        _OD_BROWSER_START_DELAY = 0.75
+        _OD_BROWSER_CONCURRENCY = 4
+        _OD_BROWSER_FANOUT = 4
+        _OD_BROWSER_IDLE_TIMEOUT = 30.0
+        _OD_TRACE_BROWSERS = True
+        WEB_SEARCH_FETCH_STEALTH         = True
 
-    targets = results[:_PREVIEW_LIMIT]
+    settings = _preview_settings()
+
+    # Apply caller overrides (deep mode passes higher limits, timeouts, quality profile).
+    if overrides:
+        for k in ("preview_limit", "fetch_timeout", "total_timeout", "concurrency"):
+            if k in overrides:
+                settings[k] = overrides[k]
+        if "output_chars" in overrides or "min_clean_chars" in overrides:
+            settings["processor"] = dict(settings["processor"])
+            if "output_chars" in overrides:
+                settings["processor"]["output_chars"] = overrides["output_chars"]
+            if "min_clean_chars" in overrides:
+                settings["processor"]["min_clean_chars"] = overrides["min_clean_chars"]
+
+    use_camoufox: bool = bool(overrides.get("use_camoufox", False)) if overrides else False
+    use_wayback:  bool = bool(overrides.get("use_wayback",  False)) if overrides else False
+
+    targets = list(results)
     if not targets:
         return []
 
-    sem       = asyncio.Semaphore(_FETCH_CONCURRENCY)
-    timeout   = aiohttp.ClientTimeout(total=_FETCH_TIMEOUT)
-    connector = aiohttp.TCPConnector(limit=_FETCH_CONCURRENCY * 4, limit_per_host=2, ttl_dns_cache=120)
+    now = time.time()
+    sem = asyncio.Semaphore(settings["concurrency"])
+    timeout = aiohttp.ClientTimeout(total=settings["fetch_timeout"])
+    connector = aiohttp.TCPConnector(
+        limit=settings["concurrency"] * 4,
+        limit_per_host=2,
+        ttl_dns_cache=120,
+    )
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(None, lambda: warm_preview_models(settings["processor"]))
+    except Exception:
+        pass
 
-    # Fetch one preview snippet.
-    async def fetch_one(session: aiohttp.ClientSession, r: SearchResult) -> str:
-        if _is_skippable(r.url):
-            return ""
+    async def fetch_one(session: aiohttp.ClientSession, r: SearchResult) -> PreviewPayload:
+        info = _result_domain_info(r.url)
+        skip_check = _is_skippable(r.url)
+        allow_skip_fallbacks = bool(
+            _MIMIC_USER_AGENT and getattr(info, "try_preview_bot", False)
+        )
+        # In deep mode with camoufox, don't skip fortress domains; allow registry-managed rescue paths.
+        if skip_check and not use_camoufox and not allow_skip_fallbacks:
+            return PreviewPayload()
+
+        # Check preview cache first.
+        nu = _normalize_url(r.url)
+        if WEB_SEARCH_PREVIEW_CACHE_ENABLED:
+            cached = _preview_cache.get(nu)
+            if cached and (time.time() - cached[1]) < WEB_SEARCH_PREVIEW_CACHE_TTL:
+                return cached[0]
+
         async with sem:
-            try:
-                async with session.get(r.url, allow_redirects=True) as resp:
-                    raw_html = await resp.text(errors="replace")
-                    if _is_antibot(raw_html):
-                        return ""
-                    return _html_to_text(raw_html)[:_PREVIEW_CHARS]
-            except Exception:
-                return ""
+            raw_html: str | None = None
+            tier = str(getattr(info, "tier", "unknown") or "unknown").lower()
 
+            async def _try_overdrive_browser_fetch() -> str | None:
+                if not _OVERDRIVE_PREVIEW:
+                    return None
+                if _OD_TRACE_BROWSERS:
+                    _trace_browser_log(f"[web_search] escalating_to_overdrive_browser url={r.url}")
+                try:
+                    from overdrive import read_url_overdrive as _read_url_overdrive
+                except ImportError:
+                    try:
+                        from .overdrive import read_url_overdrive as _read_url_overdrive  # type: ignore
+                    except ImportError:
+                        _read_url_overdrive = None  # type: ignore
+                if _read_url_overdrive is None:
+                    return None
+                try:
+                    browser_text = await _read_url_overdrive(
+                        r.url,
+                        human_behavior=_OD_HUMAN_BEHAVIOR,
+                        ocr_fallback=False,
+                        parallel_timeout=max(float(settings["fetch_timeout"]) + 2.0, float(_OD_PARALLEL_TIMEOUT)),
+                        ocr_timeout=float(_OD_OCR_TIMEOUT),
+                        browser_start_delay=float(_OD_BROWSER_START_DELAY),
+                        browser_concurrency=int(_OD_BROWSER_CONCURRENCY),
+                        browser_fanout=int(_OD_BROWSER_FANOUT),
+                        browser_idle_timeout=float(_OD_BROWSER_IDLE_TIMEOUT),
+                        char_budget=max(int(settings["processor"].get("output_chars", 1400)) * 2, 4000),
+                    )
+                    if browser_text and not _is_antibot(browser_text):
+                        if _OD_TRACE_BROWSERS:
+                            _trace_browser_log(f"[web_search] overdrive_browser_success url={r.url} chars={len(browser_text)}")
+                        return browser_text
+                except Exception:
+                    pass
+                if _OD_TRACE_BROWSERS:
+                    _trace_browser_log(f"[web_search] overdrive_browser_failed url={r.url}")
+                return None
+
+            # ----- Overdrive path: single call does httpx + curl_cffi + browsers in parallel -----
+            if raw_html is None and _OVERDRIVE_PREVIEW:
+                raw_html = await _try_overdrive_browser_fetch()
+                if not raw_html:
+                    return PreviewPayload()
+
+            # ----- Non-overdrive legacy path -----
+            if raw_html is None and not _OVERDRIVE_PREVIEW:
+                # Deep mode: camoufox for fortress domains.
+                if use_camoufox and tier == "fortress":
+                    try:
+                        raw_html = await _fetch_with_camoufox(r.url, timeout_sec=int(settings["fetch_timeout"]))
+                    except Exception:
+                        return PreviewPayload()
+                    if not raw_html or _is_antibot(raw_html):
+                        return PreviewPayload()
+
+                # Tier 1: preview-bot UA probe for flagged domains.
+                if raw_html is None and _MIMIC_USER_AGENT and getattr(info, "try_preview_bot", False):
+                    try:
+                        from preview_bot_fetcher import probe_with_preview_bots as _bot_fetch
+                    except ImportError:
+                        from .preview_bot_fetcher import probe_with_preview_bots as _bot_fetch  # type: ignore
+                    try:
+                        bot_text = await _bot_fetch(r.url, timeout=int(settings["fetch_timeout"]))
+                        if bot_text and not _is_antibot(bot_text):
+                            raw_html = bot_text
+                    except Exception:
+                        pass
+
+                # For hardened domains use curl_cffi directly when stealth is enabled.
+                if raw_html is None and WEB_SEARCH_FETCH_STEALTH and tier == "hardened":
+                    try:
+                        raw_html = await _fetch_with_curl_cffi(r.url, timeout=int(settings["fetch_timeout"] + 3))
+                    except Exception:
+                        pass
+
+                if raw_html is None:
+                    if skip_check:
+                        return PreviewPayload()
+                    else:
+                        try:
+                            async with session.get(r.url, allow_redirects=True) as resp:
+                                if resp.status >= 400:
+                                    return PreviewPayload()
+                                content_type = (resp.headers.get("Content-Type") or "").lower()
+                                if content_type and all(marker not in content_type for marker in ("html", "xml", "text")):
+                                    return PreviewPayload()
+                                raw_html = await resp.text(errors="replace")
+                        except Exception:
+                            return PreviewPayload()
+
+                # Stealth fallback when anti-bot detected.
+                if _is_antibot(raw_html):
+                    if use_camoufox:
+                        try:
+                            raw_html = await _fetch_with_camoufox(r.url, timeout_sec=int(settings["fetch_timeout"]))
+                        except Exception:
+                            raw_html = None
+                        if not raw_html or _is_antibot(raw_html):
+                            return PreviewPayload()
+                    elif WEB_SEARCH_FETCH_STEALTH:
+                        try:
+                            raw_html = await _fetch_with_curl_cffi(r.url, timeout=int(settings["fetch_timeout"] + 3))
+                        except Exception:
+                            return PreviewPayload()
+                        if _is_antibot(raw_html):
+                            return PreviewPayload()
+                    else:
+                        return PreviewPayload()
+
+                # Wayback Machine fallback: only in deep/camoufox mode (use_wayback passed via overrides).
+                if (not raw_html or _is_antibot(raw_html)) and use_wayback:
+                    _wb_timeout = 30
+                    try:
+                        from config import WAYBACK_TIMEOUT as _WB_TO
+                        _wb_timeout = _WB_TO
+                    except ImportError:
+                        pass
+                    try:
+                        wb_text = await _fetch_via_wayback(r.url, timeout=_wb_timeout)
+                        if wb_text and not _is_antibot(wb_text):
+                            raw_html = wb_text
+                    except Exception:
+                        pass
+
+                if not raw_html:
+                    return PreviewPayload()
+
+            try:
+                payload = await loop.run_in_executor(
+                    None,
+                    lambda: build_preview_payload(
+                        r.url,
+                        raw_html,
+                        query=query,
+                        domain_info=info,
+                        settings=settings["processor"],
+                    ),
+                )
+            except Exception:
+                return PreviewPayload()
+
+            # Store in preview cache.
+            if WEB_SEARCH_PREVIEW_CACHE_ENABLED and payload.text:
+                _preview_cache[nu] = (payload, time.time())
+            return payload
+
+    tasks = []
     try:
         async with aiohttp.ClientSession(
-            timeout=timeout, connector=connector, headers={"User-Agent": _UA},
+            timeout=timeout,
+            connector=connector,
+            headers={"User-Agent": _UA},
         ) as session:
-            raw = await asyncio.wait_for(
-                asyncio.gather(*[fetch_one(session, r) for r in targets], return_exceptions=True),
-                timeout=_FETCH_TOTAL_TIMEOUT,
+            tasks = [asyncio.create_task(fetch_one(session, r)) for r in targets]
+            effective_total_timeout = max(
+                settings["total_timeout"],
+                (settings["fetch_timeout"] * max(1, math.ceil(len(targets) / max(settings["concurrency"], 1)))) + 2.0,
             )
+            done, pending = await asyncio.wait(tasks, timeout=effective_total_timeout)
+            for task in pending:
+                task.cancel()
+            raw = []
+            for index, task in enumerate(tasks):
+                if task in done:
+                    try:
+                        raw.append(task.result())
+                    except Exception:
+                        raw.append(PreviewPayload())
+                else:
+                    raw.append(PreviewPayload())
     except Exception:
-        return [""] * len(targets)
+        return [PreviewPayload() for _ in targets]
 
-    return [p if isinstance(p, str) else "" for p in raw]
+    return [item if isinstance(item, PreviewPayload) else PreviewPayload() for item in raw]
+
+
+# Fetch lightweight previews for search results.
+async def _fetch_previews(results: List[SearchResult], query: str = "") -> List[str]:
+    payloads = await _fetch_preview_payloads(results, query=query)
+    return [payload.text for payload in payloads]
+
+
+async def _prepare_results_with_previews(
+    results: List[SearchResult],
+    query: str = "",
+    overrides: dict | None = None,
+) -> tuple[List[SearchResult], List[str]]:
+    if not results:
+        return [], []
+
+    # Dedup by domain+title and snippet similarity before fetching.
+    results = _dedup_results(results)
+    # Semantic dedup on snippets (lightweight MinHash pass).
+    try:
+        from deep_research.src.semantic_dedup import minhash_dedup
+        results = minhash_dedup(results, lambda r: r.snippet)
+    except Exception:
+        pass  # datasketch not installed or import path differs
+    if not results:
+        return [], []
+
+    # Resolve effective preview_limit (may be overridden by deep mode).
+    base_settings = _preview_settings()
+    effective_limit = int(overrides["preview_limit"]) if overrides and "preview_limit" in overrides else base_settings["preview_limit"]
+    fetch_limit = min(len(results), max(effective_limit, min(24, effective_limit * 2)))
+
+    def _cheap_score(r: SearchResult) -> float:
+        lex = _lexical_score(query, r.title or "", r.snippet or "", r.url)
+        info = _result_domain_info(r.url)
+        tier = str(getattr(info, "tier", "unknown") or "unknown").lower()
+        trust = _TIER_TRUST_SCORES.get(tier, _TIER_TRUST_SCORES["unknown"])
+        return lex + trust
+
+    fetch_indices = []
+    if fetch_limit > 0:
+        ranked_indices = sorted(
+            range(len(results)),
+            key=lambda idx: _cheap_score(results[idx]),
+            reverse=True,
+        )
+        fetch_indices = ranked_indices[:fetch_limit]
+
+    # Build settings dict with query for lexical scoring in rerank.
+    rerank_settings = dict(base_settings)
+    rerank_settings["_query"] = query
+
+    payloads_by_index: dict[int, PreviewPayload] = {}
+    if fetch_indices:
+        fetched_results = [results[idx] for idx in fetch_indices]
+        fetched_payloads = await _fetch_preview_payloads(fetched_results, query=query, overrides=overrides)
+        for idx, payload in zip(fetch_indices, fetched_payloads):
+            payloads_by_index[idx] = payload if isinstance(payload, PreviewPayload) else PreviewPayload()
+
+    payloads = [payloads_by_index.get(idx, PreviewPayload()) for idx in range(len(results))]
+    reranked_results, reranked_payloads = _soft_rerank_results(results, payloads, rerank_settings)
+
+    scored_rows: list[tuple[SearchResult, PreviewPayload, float, float]] = []
+    for index, (result, payload) in enumerate(zip(reranked_results, reranked_payloads)):
+        usefulness = _result_usefulness_score(
+            result,
+            payload,
+            rerank_settings,
+            index=index,
+            total=len(reranked_results),
+        )
+        lex = _lexical_score(query, result.title or "", result.snippet or "", result.url)
+        scored_rows.append((result, payload, usefulness, lex))
+
+    if len(scored_rows) > effective_limit:
+        kept_rows: list[tuple[SearchResult, PreviewPayload, float, float]] = []
+        tail_cap = max(4, effective_limit // 2)
+        for index, row in enumerate(scored_rows):
+            result, payload, usefulness, lex = row
+            if index < effective_limit:
+                kept_rows.append(row)
+                continue
+            query_terms = _query_terms(query)
+            term_matches = _query_term_match_count(
+                query,
+                result.title or "",
+                result.snippet or "",
+                result.url,
+                payload.text if payload else "",
+            )
+            title_url_matches = _query_term_match_count(
+                query,
+                result.title or "",
+                result.url,
+            )
+            payload_signal = bool(
+                (payload.text or "").strip()
+                and (
+                    payload.semantic_score >= 0.18
+                    or payload.quality_score >= 0.25
+                    or len((payload.text or "").strip()) >= 220
+                )
+            )
+            single_term_guard_ok = True
+            if len(query_terms) == 1:
+                single_term_guard_ok = title_url_matches > 0
+            if usefulness >= 0.28 and term_matches > 0 and single_term_guard_ok and (lex >= 0.12 or payload_signal or _is_downloadable_ext(result.url)):
+                kept_rows.append(row)
+            if len(kept_rows) >= effective_limit + tail_cap:
+                break
+        scored_rows = kept_rows
+
+    # Update session state with shown results.
+    _session_update([row[0] for row in scored_rows[:effective_limit]])
+
+    previews = [
+        _adaptive_preview_text(result, payload, rerank_settings, index=index, total=len(scored_rows))
+        for index, (result, payload, _, _) in enumerate(scored_rows)
+    ]
+    filtered_results = [row[0] for row in scored_rows]
+    previews += [""] * (len(filtered_results) - len(previews))
+    return filtered_results, previews[:len(filtered_results)]
 
 
 # Merge and allotment helpers.
 
 # Merge YaCy and DDGS results proportionally.
 def _proportional_merge(yacy: list, ddgs: list, cap: int) -> list:
-    """Merge YaCy and DDGS results proportionally up to cap total."""
+    """Merge YaCy and DDGS results proportionally up to cap total, deduping by normalized URL."""
     yn, dn = len(yacy), len(ddgs)
     if yn == 0:
-        return ddgs[:cap]
-    if dn == 0:
-        return yacy[:cap]
-    yr_take = max(1, round(cap * yn / (yn + dn)))
-    dr_take = cap - yr_take
-    if yr_take > yn:
-        yr_take = yn
-        dr_take = min(cap - yr_take, dn)
-    elif dr_take > dn:
-        dr_take = dn
-        yr_take = min(cap - dr_take, yn)
-    yr_s, dr_s = yacy[:yr_take], ddgs[:dr_take]
-    merged = [x for pair in zip(yr_s, dr_s) for x in pair]
-    merged += yr_s[len(dr_s):] + dr_s[len(yr_s):]
-    return merged
+        raw = ddgs[:cap * 2]
+    elif dn == 0:
+        raw = yacy[:cap * 2]
+    else:
+        yr_take = max(1, round(cap * yn / (yn + dn)))
+        dr_take = cap - yr_take
+        if yr_take > yn:
+            yr_take = yn
+            dr_take = min(cap - yr_take, dn)
+        elif dr_take > dn:
+            dr_take = dn
+            yr_take = min(cap - dr_take, yn)
+        yr_s, dr_s = yacy[:yr_take + 4], ddgs[:dr_take + 4]
+        raw = [x for pair in zip(yr_s, dr_s) for x in pair]
+        raw += yr_s[len(dr_s):] + dr_s[len(yr_s):]
+
+    # Dedup by normalized URL.
+    seen: set = set()
+    out = []
+    for r in raw:
+        nu = _normalize_url(getattr(r, "url", ""))
+        if nu and nu not in seen:
+            seen.add(nu)
+            out.append(r)
+        if len(out) >= cap:
+            break
+    return out
 
 
 # Distribute slots across result groups proportionally.
@@ -728,12 +1377,10 @@ async def _fetch_with_camoufox(u: str, timeout_sec: int = 30) -> str:
 
 
 # Fetch page text through curl_cffi.
-async def _fetch_with_curl_cffi(u: str, timeout: int = 15) -> str:
-    """Fetch URL using curl_cffi (Chrome TLS fingerprint), return text."""
-    import re
+async def _fetch_curl_cffi_raw(u: str, timeout: int = 15) -> str:
+    """Fetch URL using curl_cffi (Chrome TLS fingerprint), return raw HTML."""
     loop = asyncio.get_running_loop()
 
-    # Perform the curl_cffi request.
     def _do_fetch():
         from curl_cffi import requests as cffi_req
         r = cffi_req.get(u, impersonate="chrome124", timeout=timeout,
@@ -741,9 +1388,20 @@ async def _fetch_with_curl_cffi(u: str, timeout: int = 15) -> str:
         r.raise_for_status()
         return r.text
 
-    raw = await loop.run_in_executor(None, _do_fetch)
+    return await loop.run_in_executor(None, _do_fetch)
+
+
+def _strip_html_to_text(raw: str) -> str:
+    """Strip HTML tags and collapse whitespace into plain text."""
+    import re
     raw = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', raw, flags=re.IGNORECASE | re.DOTALL)
     return re.sub(r"\s{2,}", "\n", re.sub(r"<[^>]+>", " ", raw)).strip()
+
+
+async def _fetch_with_curl_cffi(u: str, timeout: int = 15) -> str:
+    """Fetch URL using curl_cffi (Chrome TLS fingerprint), return text."""
+    raw = await _fetch_curl_cffi_raw(u, timeout)
+    return _strip_html_to_text(raw)
 
 
 # Fetch and normalize JSON API output.
@@ -783,6 +1441,69 @@ async def _fetch_json_api(api_url: str, timeout: int = 15) -> str:
             return _json.dumps(obj, ensure_ascii=False, indent=2)[:12000]
         except Exception:
             return text[:12000]
+
+
+# Fetch a page via Wayback Machine (web.archive.org).
+async def _fetch_via_wayback(u: str, timeout: int = 30) -> str:
+    """
+    Fetch a page via Wayback Machine as a last-resort fallback.
+
+    Steps:
+    1. Query CDX API to find the closest available snapshot.
+    2. Download the raw snapshot using the /web/<ts>id_/<url> path
+       (the `id_` flag strips the Archive.org toolbar and injected JS).
+    3. Strip HTML and return plain text.
+
+    Returns empty string on any failure.
+    """
+    import json as _json
+    from urllib.parse import quote as _quote
+
+    loop = asyncio.get_running_loop()
+
+    def _do():
+        import requests as _req
+
+        # Step 1: find latest available snapshot via CDX API.
+        cdx_url = (
+            "https://web.archive.org/cdx/search/cdx"
+            f"?url={_quote(u, safe='')}"
+            "&output=json&limit=1&fl=timestamp,statuscode&filter=statuscode:200&fastLatest=true"
+        )
+        try:
+            cdx_resp = _req.get(
+                cdx_url,
+                timeout=timeout,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; WaybackFetcher/1.0)"},
+            )
+            cdx_resp.raise_for_status()
+            rows = cdx_resp.json()
+        except Exception:
+            return ""
+
+        # rows[0] is the header ["timestamp","statuscode"], rows[1] is first result
+        if not rows or len(rows) < 2:
+            return ""
+        ts = rows[1][0]  # e.g. "20240315123045"
+
+        # Step 2: download the raw snapshot (id_ skips Archive.org toolbar).
+        snap_url = f"https://web.archive.org/web/{ts}id_/{u}"
+        try:
+            snap_resp = _req.get(
+                snap_url,
+                timeout=timeout,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; WaybackFetcher/1.0)"},
+                allow_redirects=True,
+            )
+            snap_resp.raise_for_status()
+            return snap_resp.text
+        except Exception:
+            return ""
+
+    raw_html = await loop.run_in_executor(None, _do)
+    if not raw_html:
+        return ""
+    return _strip_html_to_text(raw_html)
 
 
 # Convert a URL into a safe slug.

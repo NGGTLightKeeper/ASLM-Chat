@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import html
+import io
 import logging
+import random
 import re
 import sys
 from datetime import datetime, timedelta
@@ -20,6 +22,26 @@ from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 from .config import settings
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Optional overdrive dependencies
+# ---------------------------------------------------------------------------
+
+try:
+    from patchright.async_api import async_playwright as _patchright_playwright
+    _PATCHRIGHT_AVAILABLE = True
+except ImportError:
+    _PATCHRIGHT_AVAILABLE = False
+    logger.debug("Patchright not installed, overdrive will skip it")
+
+try:
+    import pytesseract
+    from PIL import Image
+    _OCR_AVAILABLE = True
+except ImportError:
+    _OCR_AVAILABLE = False
+    logger.debug("OCR dependencies not installed, overdrive OCR will skip it")
 
 
 # Shared search integrations
@@ -411,7 +433,17 @@ class SearchClient:
 
         host = urlparse(url).netloc.lower().removeprefix("www.")
         if host in {"reddit.com", "old.reddit.com"} or host.endswith(".reddit.com"):
-            return await self._fetch_reddit_json(url)
+            text = await self._fetch_reddit_json(url)
+            if text.strip():
+                return text
+            # .json API blocked (403) — fall through to overdrive/httpx
+            if settings.search.overdrive:
+                return await self._read_url_overdrive(url)
+            return ""
+
+        # Overdrive mode: multi-method staggered race.
+        if settings.search.overdrive:
+            return await self._read_url_overdrive(url)
 
         client = await self._get_http_client()
         try:
@@ -434,6 +466,240 @@ class SearchClient:
         raw = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", raw, flags=re.IGNORECASE | re.DOTALL)
         text = re.sub(r"\s{2,}", "\n", re.sub(r"<[^>]+>", " ", raw)).strip()
         return unquote(text[: settings.search.lightweight_read_char_budget])
+
+
+    # ------------------------------------------------------------------
+    # Overdrive fetch methods
+    # ------------------------------------------------------------------
+
+    _browser_semaphore: asyncio.Semaphore | None = None
+
+    @staticmethod
+    def _html_to_text(raw_html: str) -> str:
+        """Cheap tag-stripping to get readable text from HTML."""
+        raw = re.sub(
+            r"<(script|style)[^>]*>.*?</\1>", "", raw_html,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        return re.sub(r"\s{2,}", "\n", re.sub(r"<[^>]+>", " ", raw)).strip()
+
+    _BLOCK_MARKERS = (
+        "access denied", "403 forbidden", "cloudflare",
+        "just a moment", "checking your browser", "enable javascript",
+    )
+
+    @classmethod
+    def _is_valid_text(cls, text: str) -> bool:
+        """Return True when *text* looks like real page content."""
+        stripped = text.strip()
+        if len(stripped) <= 150:
+            return False
+        lowered = stripped[:2000].lower()
+        return not any(m in lowered for m in cls._BLOCK_MARKERS)
+
+    async def _fetch_httpx(self, url: str) -> str:
+        """Overdrive method 1: plain httpx GET."""
+        client = await self._get_http_client()
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return self._html_to_text(resp.text)
+
+    async def _fetch_curl_cffi(self, url: str) -> str:
+        """Overdrive method 2: curl_cffi with Chrome TLS fingerprint."""
+        from curl_cffi import requests as cffi_requests
+        loop = asyncio.get_running_loop()
+
+        def _do():
+            r = cffi_requests.get(
+                url, impersonate="chrome124", timeout=15,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            )
+            r.raise_for_status()
+            return r.text
+
+        raw = await loop.run_in_executor(None, _do)
+        return self._html_to_text(raw)
+
+    async def _fetch_camoufox_overdrive(self, url: str) -> tuple[str, Optional[bytes]]:
+        """Overdrive method 3: standalone Camoufox (Firefox).
+
+        Returns ``(text, screenshot_bytes | None)``.
+        """
+        loop = asyncio.get_running_loop()
+        human = settings.search.overdrive_human_behavior
+
+        def _run_in_thread():
+            import asyncio as _aio
+            if sys.platform == "win32":
+                _aio.set_event_loop_policy(_aio.WindowsProactorEventLoopPolicy())
+
+            async def _do():
+                from camoufox.async_api import AsyncCamoufox
+                screenshot: bytes | None = None
+                async with AsyncCamoufox(headless=True) as browser:
+                    page = await browser.new_page()
+                    try:
+                        await page.goto(url, wait_until="networkidle", timeout=30_000)
+                        if human:
+                            await asyncio.sleep(random.uniform(0.5, 2.0))
+                            scroll_px = random.randint(200, 600)
+                            await page.mouse.move(random.randint(100, 400), random.randint(100, 300))
+                            await page.mouse.move(random.randint(400, 800), random.randint(200, 500))
+                            await page.evaluate(f"window.scrollBy(0, {scroll_px})")
+                            await asyncio.sleep(random.uniform(0.3, 0.8))
+                        text = await page.inner_text("body")
+                        try:
+                            screenshot = await page.screenshot(type="png")
+                        except Exception:
+                            pass
+                        return text, screenshot
+                    finally:
+                        await page.close()
+
+            return _aio.run(_do())
+
+        return await loop.run_in_executor(None, _run_in_thread)
+
+    async def _fetch_patchright(self, url: str) -> tuple[str, Optional[bytes]]:
+        """Overdrive method 4: Patchright Chromium.
+
+        Returns ``(text, screenshot_bytes | None)``.
+        """
+        if not _PATCHRIGHT_AVAILABLE:
+            return "", None
+
+        pw = await _patchright_playwright()
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            try:
+                await page.goto(url, wait_until="networkidle", timeout=30_000)
+                text = await page.evaluate("document.body.innerText")
+                screenshot: bytes | None = None
+                try:
+                    screenshot = await page.screenshot(type="png")
+                except Exception:
+                    pass
+                return text or "", screenshot
+            finally:
+                await page.close()
+        finally:
+            await browser.close()
+            await pw.stop()
+
+    async def _fetch_ocr_fallback(self, screenshot_bytes: bytes) -> str:
+        """Overdrive method 5: Tesseract OCR on a browser screenshot."""
+        if not _OCR_AVAILABLE or not screenshot_bytes:
+            return ""
+        loop = asyncio.get_running_loop()
+
+        def _do_ocr():
+            image = Image.open(io.BytesIO(screenshot_bytes))
+            return pytesseract.image_to_string(image, lang="eng+rus")
+
+        return await asyncio.wait_for(
+            loop.run_in_executor(None, _do_ocr),
+            timeout=settings.search.overdrive_ocr_timeout,
+        )
+
+    async def _read_url_overdrive(self, url: str) -> str:
+        """Overdrive orchestrator: staggered race of multiple fetch methods."""
+
+        cfg = settings.search
+        char_budget = cfg.lightweight_read_char_budget
+
+        # Lazy-init browser semaphore.
+        if SearchClient._browser_semaphore is None:
+            SearchClient._browser_semaphore = asyncio.Semaphore(cfg.overdrive_browser_concurrency)
+        sem = SearchClient._browser_semaphore
+
+        best_screenshot: bytes | None = None
+        result_text: str | None = None
+        done_event = asyncio.Event()
+
+        async def _race_fast(coro, label: str):
+            nonlocal result_text
+            try:
+                text = await coro
+                if self._is_valid_text(text):
+                    if result_text is None:
+                        result_text = text
+                        done_event.set()
+                        logger.debug("overdrive: winner=%s", label)
+            except Exception as exc:
+                logger.debug("overdrive: %s failed: %s", label, exc)
+
+        async def _race_browser(coro_fn, label: str):
+            nonlocal result_text, best_screenshot
+            async with sem:
+                try:
+                    text, screenshot = await coro_fn()
+                    if screenshot and best_screenshot is None:
+                        best_screenshot = screenshot
+                    if self._is_valid_text(text):
+                        if result_text is None:
+                            result_text = text
+                            done_event.set()
+                            logger.debug("overdrive: winner=%s", label)
+                except Exception as exc:
+                    logger.debug("overdrive: %s failed: %s", label, exc)
+
+        # Phase A — fast methods.
+        fast_tasks = [
+            asyncio.create_task(_race_fast(self._fetch_httpx(url), "httpx")),
+            asyncio.create_task(_race_fast(self._fetch_curl_cffi(url), "curl_cffi")),
+        ]
+
+        try:
+            await asyncio.wait_for(done_event.wait(), timeout=cfg.overdrive_browser_start_delay)
+        except asyncio.TimeoutError:
+            pass
+
+        if result_text is not None:
+            for t in fast_tasks:
+                t.cancel()
+            return unquote(result_text[:char_budget])
+
+        # Phase B — browser methods.
+        browser_tasks: list[asyncio.Task] = [
+            asyncio.create_task(
+                _race_browser(lambda: self._fetch_camoufox_overdrive(url), "camoufox")
+            ),
+        ]
+        if _PATCHRIGHT_AVAILABLE:
+            browser_tasks.append(
+                asyncio.create_task(
+                    _race_browser(lambda: self._fetch_patchright(url), "patchright")
+                )
+            )
+
+        all_tasks = fast_tasks + browser_tasks
+
+        try:
+            await asyncio.wait_for(done_event.wait(), timeout=cfg.overdrive_parallel_timeout)
+        except asyncio.TimeoutError:
+            pass
+
+        for t in all_tasks:
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(*all_tasks, return_exceptions=True)
+
+        if result_text is not None:
+            return unquote(result_text[:char_budget])
+
+        # Phase C — OCR fallback.
+        if cfg.overdrive_ocr_fallback and _OCR_AVAILABLE and best_screenshot:
+            try:
+                ocr_text = await self._fetch_ocr_fallback(best_screenshot)
+                if self._is_valid_text(ocr_text):
+                    logger.debug("overdrive: winner=ocr")
+                    return unquote(ocr_text[:char_budget])
+            except Exception as exc:
+                logger.debug("overdrive: OCR failed: %s", exc)
+
+        logger.debug("overdrive: all methods failed for %s", url)
+        return ""
 
     async def _enrich_with_light_reads(self, results: list[SearchResult]) -> list[SearchResult]:
         """Attach lightweight page text to the top configured results."""

@@ -51,27 +51,31 @@ _CONFIG_OVERRIDES = {
 }
 
 
+# Print verbose YaCy service output
 def _log(message: str, log: bool) -> None:
-    """Print a YaCy service log line when verbose output is enabled."""
+    """Print a YaCy service message when verbose output is enabled."""
 
     if log:
         print(f"[ASLM-Chat] {message}")
 
 
+# Print warning output
 def _warn(message: str) -> None:
     """Print a YaCy warning message."""
 
     print(f"[ASLM-Chat] Warning: {message}")
 
 
+# Read YaCy feature flag
 def is_enabled() -> bool:
-    """Return whether YaCy is enabled in ASLM settings."""
+    """Return whether YaCy is enabled in settings."""
 
     return bool(settings.get("use-yacy", False))
 
 
+# Check local YaCy readiness
 def _is_ready(timeout: float = 1.5) -> bool:
-    """Return whether the local YaCy HTTP endpoint is already responding."""
+    """Return whether the local YaCy HTTP endpoint is responding."""
 
     try:
         with urlopen(f"{YACY_URL}/", timeout=timeout) as response:
@@ -80,74 +84,94 @@ def _is_ready(timeout: float = 1.5) -> bool:
         return False
 
 
+# Wait for local YaCy readiness
 def _wait_until_ready(timeout_seconds: float = 45.0) -> bool:
     """Wait until YaCy starts serving HTTP requests."""
 
     deadline = time.time() + timeout_seconds
+
     while time.time() < deadline:
         if _is_ready():
             return True
+
         time.sleep(0.5)
+
     return False
 
 
+# Resolve YaCy start script
 def _start_script() -> Path | None:
     """Return the platform-specific YaCy start script when available."""
 
     candidates = ("startYACY.bat", "startYACY.sh") if os.name == "nt" else ("startYACY.sh", "startYACY.bat")
+
     for name in candidates:
         path = YACY_RUNTIME_DIR / name
         if path.exists():
             return path
+
     return None
 
 
+# Resolve YaCy stop script
 def _stop_script() -> Path | None:
     """Return the platform-specific YaCy stop script when available."""
 
     candidates = ("stopYACY.bat", "stopYACY.sh") if os.name == "nt" else ("stopYACY.sh", "stopYACY.bat")
+
     for name in candidates:
         path = YACY_RUNTIME_DIR / name
         if path.exists():
             return path
+
     return None
 
 
+# Find extracted YaCy root directory
 def _locate_extracted_root(root: Path) -> Path | None:
     """Find the extracted YaCy application root containing a start script."""
 
     for script_name in ("startYACY.bat", "startYACY.sh"):
         for candidate in root.rglob(script_name):
             return candidate.parent
+
     return None
 
 
+# Extract a tar archive safely
 def _safe_extract(archive: tarfile.TarFile, destination: Path) -> None:
     """Safely extract a tar archive into the requested destination."""
 
     destination_root = destination.resolve()
+
     for member in archive.getmembers():
         member_path = (destination / member.name).resolve()
         if not member_path.is_relative_to(destination_root):
             raise ValueError(f"Archive member escapes destination: {member.name}")
+
     archive.extractall(destination)
 
 
+# Apply managed YaCy configuration
 def _configure_yacy(log: bool) -> None:
-    """Apply the low-resource YaCy configuration used by ASLM-Chat."""
+    """Apply the bundled low-resource YaCy configuration."""
 
+    # Prepare config paths.
     settings_dir = YACY_RUNTIME_DIR / "DATA" / "SETTINGS"
     settings_dir.mkdir(parents=True, exist_ok=True)
     conf_path = settings_dir / "yacy.conf"
     defaults_path = YACY_RUNTIME_DIR / "defaults" / "yacy.init"
 
+    # Bootstrap the runtime config from defaults when needed.
     if not conf_path.exists() and defaults_path.exists():
         shutil.copyfile(defaults_path, conf_path)
 
+    # Read the current config so overrides can be merged in place.
     lines: list[str] = []
     if conf_path.exists():
         lines = conf_path.read_text(encoding="utf-8", errors="replace").splitlines()
 
+    # Apply or append the managed override values.
     updated_lines = list(lines)
     for key, value in _CONFIG_OVERRIDES.items():
         prefix = f"{key}="
@@ -158,17 +182,21 @@ def _configure_yacy(log: bool) -> None:
         else:
             updated_lines.append(value)
 
+    # Persist the merged config back to disk.
     conf_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
     _log(f"YaCy configuration applied at: {conf_path}", log)
 
 
+# Install bundled YaCy runtime
 def ensure_installed(log: bool = False) -> bool:
     """Download and configure YaCy into the bundled runtime directory."""
 
+    # Reuse the existing runtime when it is already present.
     if _start_script() is not None:
         _configure_yacy(log)
         return True
 
+    # Prepare the service directory before downloading the runtime archive.
     YACY_SERVICE_DIR.mkdir(parents=True, exist_ok=True)
 
     _log("Downloading YaCy runtime...", log)
@@ -178,12 +206,14 @@ def ensure_installed(log: bool = False) -> bool:
         extract_dir = temp_root / "extract"
         extract_dir.mkdir(parents=True, exist_ok=True)
 
+        # Download the latest YaCy release archive.
         try:
             urlretrieve(YACY_DOWNLOAD_URL, archive_path)
         except Exception as exc:
             _warn(f"Could not download YaCy from {YACY_DOWNLOAD_URL}: {exc}")
             return False
 
+        # Extract the downloaded archive into a temporary workspace.
         try:
             with tarfile.open(archive_path, "r:gz") as archive:
                 _safe_extract(archive, extract_dir)
@@ -191,27 +221,33 @@ def ensure_installed(log: bool = False) -> bool:
             _warn(f"Could not extract the YaCy archive: {exc}")
             return False
 
+        # Locate the actual runtime root produced by the archive layout.
         extracted_root = _locate_extracted_root(extract_dir)
         if extracted_root is None:
             _warn("Could not locate the extracted YaCy runtime files.")
             return False
 
+        # Replace the bundled runtime with the freshly extracted files.
         if YACY_RUNTIME_DIR.exists():
             shutil.rmtree(YACY_RUNTIME_DIR)
 
         shutil.copytree(extracted_root, YACY_RUNTIME_DIR)
 
+    # Finalize the runtime with ASLM-managed configuration.
     _configure_yacy(log)
     _log(f"YaCy runtime installed at: {YACY_RUNTIME_DIR}", log)
     return _start_script() is not None
 
 
+# Install bundled YaCy database snapshot
 def ensure_database_snapshot(log: bool = False) -> bool:
-    """Download and extract the optional YaCy database snapshot into the runtime."""
+    """Download and extract the optional YaCy database snapshot."""
 
+    # Ensure the runtime exists before attempting to hydrate its data.
     if not ensure_installed(log=log):
         return False
 
+    # Skip snapshot installation when runtime data already exists.
     data_dir = YACY_RUNTIME_DIR / "DATA"
     existing_entries = [
         entry for entry in data_dir.iterdir()
@@ -221,10 +257,14 @@ def ensure_database_snapshot(log: bool = False) -> bool:
         _log(f"YaCy database snapshot already present in: {data_dir}", log)
         return True
 
+    # Import the Hugging Face helper lazily because it is optional.
     try:
         from huggingface_hub import hf_hub_download
     except ImportError as exc:
-        _warn(f"Could not install YaCy database snapshot because huggingface_hub is unavailable: {exc}")
+        _warn(
+            "Could not install YaCy database snapshot because "
+            f"huggingface_hub is unavailable: {exc}"
+        )
         return False
 
     _log("Downloading YaCy database snapshot from Hugging Face...", log)
@@ -233,6 +273,7 @@ def ensure_database_snapshot(log: bool = False) -> bool:
         download_dir = temp_root / "downloads"
         download_dir.mkdir(parents=True, exist_ok=True)
 
+        # Download the compressed snapshot archive into a temporary folder.
         try:
             archive_path = Path(
                 hf_hub_download(
@@ -246,6 +287,7 @@ def ensure_database_snapshot(log: bool = False) -> bool:
             _warn(f"Could not download the YaCy database snapshot: {exc}")
             return False
 
+        # Extract the snapshot directly into the managed runtime.
         try:
             with tarfile.open(archive_path, "r:gz") as archive:
                 _safe_extract(archive, YACY_RUNTIME_DIR)
@@ -257,26 +299,32 @@ def ensure_database_snapshot(log: bool = False) -> bool:
     return True
 
 
+# Start bundled YaCy service
 def start_yacy(log: bool = False) -> bool:
-    """Start YaCy when it is enabled in ASLM settings."""
+    """Start YaCy when it is enabled in settings."""
 
     global _STARTED_BY_ASLM
 
+    # Stop early when the feature is disabled.
     if not is_enabled():
         _log("YaCy is disabled in settings; skipping startup.", log)
         return False
 
+    # Reuse the existing local service when it is already reachable.
     if _is_ready():
         _log("YaCy is already running.", log)
         return True
 
+    # Ensure the runtime exists before launching the service.
     if not ensure_installed(log=log):
         return False
 
+    # Validate the external Java dependency required by YaCy.
     if shutil.which("java") is None:
         _warn("YaCy requires Java 11+ in PATH, but no Java runtime was found.")
         return False
 
+    # Resolve the platform-specific launch script.
     script = _start_script()
     if script is None:
         _warn("YaCy start script is missing after installation.")
@@ -284,6 +332,7 @@ def start_yacy(log: bool = False) -> bool:
 
     _log("Starting YaCy service...", log)
     try:
+        # Use the native script for the current platform.
         if script.suffix.lower() == ".bat":
             subprocess.Popen(
                 ["cmd", "/c", script.name],
@@ -303,6 +352,7 @@ def start_yacy(log: bool = False) -> bool:
         _warn(f"Could not start YaCy: {exc}")
         return False
 
+    # Wait until the HTTP endpoint is available before reporting success.
     if not _wait_until_ready():
         _warn("YaCy did not become ready in time after startup.")
         return False
@@ -312,14 +362,17 @@ def start_yacy(log: bool = False) -> bool:
     return True
 
 
+# Stop bundled YaCy service
 def stop_yacy(log: bool = False) -> None:
     """Stop YaCy when it was started by the current ASLM process."""
 
     global _STARTED_BY_ASLM
 
+    # Leave external YaCy instances untouched.
     if not _STARTED_BY_ASLM:
         return
 
+    # Resolve the platform-specific stop script.
     script = _stop_script()
     if script is None:
         _warn("YaCy stop script is missing; leaving the service running.")
@@ -327,6 +380,7 @@ def stop_yacy(log: bool = False) -> None:
 
     _log("Stopping YaCy service...", log)
     try:
+        # Use the native stop command for the current platform.
         if script.suffix.lower() == ".bat":
             subprocess.run(
                 ["cmd", "/c", script.name],

@@ -32,6 +32,7 @@ class DomainInfo:
     rate_limit_headers: List[str] = field(default_factory=list)
     notes: str = ""
     response_time_ms: Optional[int] = None  # measured p95 latency from bench_domains.py
+    try_preview_bot: bool = False  # try social-media bot UA probe (Telegrambot, WhatsApp, etc.)
 
 # Access strategy models.
 # Resolved access strategy record.
@@ -125,6 +126,7 @@ class DomainRegistry:
                     rate_limit_headers=entry.get("rate_limit_headers") or [],
                     notes=entry.get("notes") or "",
                     response_time_ms=int(v) if (v := entry.get("response_time_ms")) is not None else None,
+                    try_preview_bot=bool(entry.get("try_preview_bot", False)),
                 )
                 if not info.topics:
                     info.topics = ["general"]
@@ -187,6 +189,7 @@ class DomainRegistry:
             rate_limit_headers=list(static_info.rate_limit_headers),
             notes=static_info.notes,
             response_time_ms=static_info.response_time_ms,
+            try_preview_bot=static_info.try_preview_bot,
         )
 
     # Lookup helpers.
@@ -283,6 +286,13 @@ class DomainRegistry:
 
         return self.lookup(url_or_domain).method == "camoufox"
 
+    # Strategy helpers.
+    def should_try_preview_bot(self, url_or_domain: str) -> bool:
+        """Return whether the domain should try the preview-bot probe."""
+
+        return self.lookup(url_or_domain).try_preview_bot
+
+    # Strategy helpers.
     # Strategy helpers.
     def get_feed_url(self, url_or_domain: str) -> Optional[str]:
         """Return the best known feed URL for a domain or URL."""

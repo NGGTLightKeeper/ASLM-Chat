@@ -1,5 +1,7 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from typing import Optional
 from .config import GLINER_FORCE_CPU, GLINER_MODEL, GLINER_THRESHOLD, GLINER_THRESHOLD_RU
 
@@ -84,6 +86,11 @@ def get_labels_for_query(
 # Model lifecycle helpers.
 _model = None
 
+
+def _is_gliner2_model(model_name: Optional[str] = None) -> bool:
+    name = (model_name or GLINER_MODEL or "").strip().lower()
+    return "gliner2" in name
+
 # Model lifecycle helpers.
 def _get_gliner_device() -> str:
     """Choose the device used for GLiNER inference."""
@@ -108,18 +115,79 @@ def _get_model():
     global _model
 
     if _model is None:
-        from gliner import GLiNER
-
         device = _get_gliner_device()
-        _model = GLiNER.from_pretrained(GLINER_MODEL)
-        try:
-            import torch
+        if _is_gliner2_model():
+            from gliner2 import GLiNER2
 
-            _model = _model.to(torch.device(device))
-        except Exception:
-            pass
+            kwargs = {}
+            if device != "cpu":
+                kwargs["map_location"] = device
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                _model = GLiNER2.from_pretrained(GLINER_MODEL, **kwargs)
+        else:
+            from gliner import GLiNER
+
+            _model = GLiNER.from_pretrained(GLINER_MODEL)
+            try:
+                import torch
+
+                _model = _model.to(torch.device(device))
+            except Exception:
+                pass
 
     return _model
+
+
+def _normalize_flat_entity(entity: dict, default_label: str = "") -> Optional[dict]:
+    text = str(entity.get("text", "")).strip()
+    label = str(entity.get("label", default_label)).strip()
+    score = entity.get("score", entity.get("confidence", 0.0))
+    if not text or not label:
+        return None
+    try:
+        score_value = round(float(score), 3)
+    except Exception:
+        score_value = 0.0
+    return {
+        "text": text,
+        "label": label,
+        "score": score_value,
+    }
+
+
+def _normalize_gliner2_output(raw_entities) -> list[dict]:
+    if not raw_entities:
+        return []
+
+    if isinstance(raw_entities, list):
+        normalized = []
+        for item in raw_entities:
+            if isinstance(item, dict):
+                flat = _normalize_flat_entity(item)
+                if flat is not None:
+                    normalized.append(flat)
+        return normalized
+
+    entities_map = raw_entities.get("entities", raw_entities) if isinstance(raw_entities, dict) else {}
+    if not isinstance(entities_map, dict):
+        return []
+
+    normalized = []
+    for label, items in entities_map.items():
+        if isinstance(items, dict):
+            items = [items]
+        if not isinstance(items, list):
+            items = [items]
+        for item in items:
+            if isinstance(item, str):
+                flat = {"text": item.strip(), "label": str(label).strip(), "score": 1.0}
+            elif isinstance(item, dict):
+                flat = _normalize_flat_entity(item, default_label=str(label).strip())
+            else:
+                flat = None
+            if flat is not None and flat["text"] and flat["label"]:
+                normalized.append(flat)
+    return normalized
 
 # Entity extraction helpers.
 def extract_entities(
@@ -137,15 +205,31 @@ def extract_entities(
 
     chunk = text[:max_length]
     try:
+        if _is_gliner2_model():
+            try:
+                raw_entities = model.extract_entities(
+                    chunk,
+                    labels,
+                    threshold=threshold,
+                    include_confidence=True,
+                )
+            except TypeError:
+                raw_entities = model.extract_entities(
+                    chunk,
+                    labels,
+                    threshold=threshold,
+                )
+            return _normalize_gliner2_output(raw_entities)
+
         raw_entities = model.predict_entities(chunk, labels, threshold=threshold)
-        return [
-            {
-                "text": entity["text"],
-                "label": entity["label"],
-                "score": round(entity["score"], 3),
-            }
-            for entity in raw_entities
-        ]
+        normalized = []
+        for entity in raw_entities:
+            if not isinstance(entity, dict):
+                continue
+            flat = _normalize_flat_entity(entity)
+            if flat is not None:
+                normalized.append(flat)
+        return normalized
     except Exception:
         return []
 
