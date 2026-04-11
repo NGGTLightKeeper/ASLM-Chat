@@ -111,12 +111,15 @@ PARAMETER_CONTAINER_KEYS = {
 }
 
 
+# Manage adapter runtime state.
+# Stop the active generation.
 def abort_generation() -> None:
     """Signal the active OpenAI-compatible generation to stop."""
 
     _abort_event.set()
 
 
+# Close one client safely.
 def _close_client(client: Any) -> None:
     """Safely close a client instance when the SDK exposes ``close``."""
 
@@ -126,12 +129,14 @@ def _close_client(client: Any) -> None:
         pass
 
 
+# Normalize one metadata key.
 def _normalize_key_name(value: Any) -> str:
     """Return a normalized lower-case identifier for one key or token."""
 
     return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
 
 
+# Coerce one boolean-like value.
 def _bool_from_value(value: Any, default: bool = False) -> bool:
     """Return a predictable boolean from JSON-like payloads."""
 
@@ -148,6 +153,7 @@ def _bool_from_value(value: Any, default: bool = False) -> bool:
     return bool(value)
 
 
+# Coerce one positive integer.
 def _coerce_positive_int(value: Any) -> int | None:
     """Convert a scalar into a positive integer when possible."""
 
@@ -160,6 +166,7 @@ def _coerce_positive_int(value: Any) -> int | None:
     return numeric_value if numeric_value > 0 else None
 
 
+# Merge nested dictionaries.
 def _merge_nested_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge two dictionaries without mutating either input."""
 
@@ -172,6 +179,7 @@ def _merge_nested_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[
     return merged
 
 
+# Remove empty nested config values.
 def _clean_nested_config(value: Any) -> Any:
     """Drop empty nested config values while preserving scalar defaults."""
 
@@ -191,6 +199,7 @@ def _clean_nested_config(value: Any) -> Any:
     return value
 
 
+# Convert SDK objects into plain data.
 def _to_plain_data(value: Any) -> Any:
     """Convert SDK objects into plain Python containers."""
 
@@ -250,12 +259,16 @@ def _to_plain_data(value: Any) -> Any:
     return str(value)
 
 
+
+# Inspect model metadata.
+# Normalize one model identifier.
 def _normalize_model_identifier(value: Any) -> str:
     """Return a normalized model identifier for fuzzy comparisons."""
 
     return str(value or "").strip().strip("/").lower()
 
 
+# Compare two model identifiers.
 def _model_identifiers_match(expected: Any, actual: Any) -> bool:
     """Return whether two model identifiers likely refer to the same model."""
 
@@ -271,6 +284,7 @@ def _model_identifiers_match(expected: Any, actual: Any) -> bool:
     return bool(expected_tail) and expected_tail == actual_tail
 
 
+# Yield nested values for matching keys.
 def _iter_values_for_keys(source: Any, target_keys: set[str]):
     """Yield every nested value whose normalized key matches one target key."""
 
@@ -286,6 +300,7 @@ def _iter_values_for_keys(source: Any, target_keys: set[str]):
             yield from _iter_values_for_keys(item, target_keys)
 
 
+# Extract normalized names from metadata.
 def _extract_named_values(value: Any) -> set[str]:
     """Extract normalized names from capability-like metadata payloads."""
 
@@ -330,6 +345,7 @@ def _extract_named_values(value: Any) -> set[str]:
     return set()
 
 
+# Collect capability tokens.
 def _extract_capability_tokens(raw_model: dict[str, Any]) -> set[str]:
     """Return normalized feature tokens exposed by one model payload."""
 
@@ -354,18 +370,23 @@ def _extract_capability_tokens(raw_model: dict[str, Any]) -> set[str]:
     return capability_tokens
 
 
+# Extract one explicit feature flag.
 def _extract_feature_flag(raw_model: dict[str, Any], feature_names: set[str]) -> bool | None:
     """Return an explicit boolean capability flag when the payload exposes one."""
 
     normalized_targets = {_normalize_key_name(name) for name in feature_names}
     matched_values: list[bool] = []
 
+    # Walk nested metadata until a matching flag is found.
     def visit(source: Any) -> None:
         if isinstance(source, dict):
             for key, value in source.items():
                 normalized_key = _normalize_key_name(key)
                 if normalized_key in normalized_targets:
                     if isinstance(value, dict):
+                        # Providers expose the same capability in several shapes,
+                        # so prefer explicit support flags before falling back to
+                        # looser truthy heuristics.
                         availability_flags = [
                             _bool_from_value(value.get(flag_key), default=False)
                             for flag_key in ("supported", "available")
@@ -400,6 +421,9 @@ def _extract_feature_flag(raw_model: dict[str, Any], feature_names: set[str]) ->
     return any(matched_values)
 
 
+
+# Derive runtime defaults and supported parameters.
+# Extract defaults from one container.
 def _extract_defaults_from_container(container: Any) -> dict[str, Any]:
     """Extract parameter defaults from one OpenAI-compatible config container."""
 
@@ -449,6 +473,7 @@ def _extract_defaults_from_container(container: Any) -> dict[str, Any]:
     return cleaned_defaults if isinstance(cleaned_defaults, dict) else {}
 
 
+# Extract enumerated option values.
 def _extract_option_values(definition: Any) -> list[str]:
     """Extract enumerated option values from one parameter definition."""
 
@@ -479,6 +504,7 @@ def _extract_option_values(definition: Any) -> list[str]:
     return normalized_options
 
 
+# Extract reasoning metadata.
 def _extract_reasoning_metadata(raw_model: dict[str, Any]) -> tuple[Any | None, Any | None, list[str]]:
     """Return reasoning toggle default, level default, and supported levels."""
 
@@ -490,6 +516,8 @@ def _extract_reasoning_metadata(raw_model: dict[str, Any]) -> tuple[Any | None, 
         if not isinstance(container, dict):
             continue
 
+        # First collect the on/off default, then look for a separate effort
+        # field if the provider exposes reasoning levels independently.
         for key in ("enabled", "available", "supported", "value"):
             if toggle_default is None and key in container:
                 toggle_default = container.get(key)
@@ -533,6 +561,8 @@ def _extract_reasoning_metadata(raw_model: dict[str, Any]) -> tuple[Any | None, 
 
         normalized_level_options = [str(option).strip().lower() for option in level_options if str(option).strip()]
         if normalized_level_options and set(normalized_level_options).issubset({"on", "off", "true", "false"}):
+            # Some backends report boolean-style options in the level field.
+            # Treat those as toggle metadata instead of fake effort levels.
             if toggle_default is None:
                 normalized_default = str(container.get("default", container.get("defaultValue", "")) or "").strip().lower()
                 if normalized_default in {"on", "true"}:
@@ -545,6 +575,7 @@ def _extract_reasoning_metadata(raw_model: dict[str, Any]) -> tuple[Any | None, 
     return toggle_default, level_default, level_options
 
 
+# Extract normalized runtime defaults.
 def _extract_defaults(raw_model: dict[str, Any]) -> dict[str, Any]:
     """Return normalized default runtime options exposed by one model."""
 
@@ -565,6 +596,7 @@ def _extract_defaults(raw_model: dict[str, Any]) -> dict[str, Any]:
     return cleaned_defaults if isinstance(cleaned_defaults, dict) else {}
 
 
+# Extract parameter names from one container.
 def _extract_parameter_names_from_container(container: Any) -> set[str]:
     """Extract parameter identifiers from one OpenAI-compatible schema container."""
 
@@ -596,6 +628,8 @@ def _extract_parameter_names_from_container(container: Any) -> set[str]:
                 continue
 
             if isinstance(value, dict):
+                # Nested dicts may be either real parameter definitions or just
+                # more structural schema nodes, so inspect their keys first.
                 nested_keys = {_normalize_key_name(child_key) for child_key in value.keys()}
                 if nested_keys & {"default", "default_value", "description", "enum", "options", "properties", "type", "values"}:
                     parameter_names.add(str(key))
@@ -634,6 +668,7 @@ def _extract_parameter_names_from_container(container: Any) -> set[str]:
     return parameter_names
 
 
+# Extract supported parameter names.
 def _extract_supported_parameter_names(raw_model: dict[str, Any], defaults: dict[str, Any]) -> set[str]:
     """Return normalized runtime parameter names exposed by one model payload."""
 
@@ -643,17 +678,20 @@ def _extract_supported_parameter_names(raw_model: dict[str, Any], defaults: dict
     return {name for name in parameter_names if _normalize_key_name(name)}
 
 
+# Extract supported parameter options.
 def _extract_parameter_option_values(raw_model: dict[str, Any], parameter_names: set[str]) -> list[str]:
     """Extract one parameter's supported option values from nested model metadata."""
 
     normalized_targets = {_normalize_key_name(name) for name in parameter_names if _normalize_key_name(name)}
     collected_options: list[str] = []
 
+    # Keep option values unique while preserving discovery order.
     def register_options(definition: Any) -> None:
         for option in _extract_option_values(definition):
             if option not in collected_options:
                 collected_options.append(option)
 
+    # Recurse through dict and list payloads to find matching parameters.
     def visit(source: Any) -> None:
         if isinstance(source, dict):
             for key, value in source.items():
@@ -674,6 +712,7 @@ def _extract_parameter_option_values(raw_model: dict[str, Any], parameter_names:
     return collected_options
 
 
+# Resolve one provider parameter name.
 def _resolve_parameter_name(
     parameter_names: set[str],
     candidate_names: set[str],
@@ -701,6 +740,7 @@ def _resolve_parameter_name(
     return default_name
 
 
+# Extract the best context length value.
 def _extract_context_length(raw_model: dict[str, Any]) -> int:
     """Return the best context-length value visible in the model metadata."""
 
@@ -730,6 +770,9 @@ def _extract_context_length(raw_model: dict[str, Any]) -> int:
     return max(context_values) if context_values else 8192
 
 
+
+# Load companion metadata.
+# Collect companion metadata roots.
 def _iter_companion_metadata_roots() -> list[str]:
     """Return candidate companion API roots derived from the configured base URL."""
 
@@ -753,6 +796,7 @@ def _iter_companion_metadata_roots() -> list[str]:
     return roots
 
 
+# Fetch JSON from one URL.
 def _fetch_json_url(url: str) -> dict[str, Any] | None:
     """Return parsed JSON from one URL when it resolves successfully."""
 
@@ -766,6 +810,7 @@ def _fetch_json_url(url: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+# Extract model catalog entries.
 def _extract_model_catalog_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalize one companion catalog payload into a list of model records."""
 
@@ -781,6 +826,7 @@ def _extract_model_catalog_items(payload: dict[str, Any]) -> list[dict[str, Any]
     return normalized_items
 
 
+# Load one companion catalog.
 def _load_companion_model_catalog(url: str) -> list[dict[str, Any]]:
     """Load and cache one companion model catalog endpoint."""
 
@@ -799,6 +845,7 @@ def _load_companion_model_catalog(url: str) -> list[dict[str, Any]]:
     return models
 
 
+# Find one model in companion metadata.
 def _get_companion_model_payload(model_name: str) -> dict[str, Any]:
     """Return supplemental read-only metadata from companion model catalogs."""
 
@@ -813,11 +860,14 @@ def _get_companion_model_payload(model_name: str) -> dict[str, Any]:
     return {}
 
 
+# Fetch one model payload from the endpoint.
 def _get_model_payload(client: Any, model_name: str) -> dict[str, Any]:
     """Return the richest model metadata available from the remote endpoint."""
 
     listed_match: dict[str, Any] = {}
     try:
+        # Listing is usually cheaper and often returns extra catalog metadata
+        # even when direct retrieval is partially implemented.
         listed_models = list(getattr(client.models.list(), "data", []) or [])
     except Exception:
         listed_models = []
@@ -835,6 +885,7 @@ def _get_model_payload(client: Any, model_name: str) -> dict[str, Any]:
     retrieved_payload: dict[str, Any] = {}
     retrieve_error: Exception | None = None
     try:
+        # Retrieval is authoritative when it works, so merge it last.
         raw_model = client.models.retrieve(model_name)
         payload = _to_plain_data(raw_model)
         if isinstance(payload, dict):
@@ -846,6 +897,8 @@ def _get_model_payload(client: Any, model_name: str) -> dict[str, Any]:
         logger.error("[OpenAI API] Error fetching settings for %s: %s", model_name, retrieve_error)
         raise retrieve_error
 
+    # Merge from lowest to highest confidence so provider-specific catalog
+    # hints can fill gaps without overriding explicit model data.
     companion_payload = _get_companion_model_payload(model_name)
     merged_payload = _merge_nested_dicts(listed_match, companion_payload)
     merged_payload = _merge_nested_dicts(merged_payload, retrieved_payload)
@@ -854,6 +907,9 @@ def _get_model_payload(client: Any, model_name: str) -> dict[str, Any]:
     return merged_payload
 
 
+
+# Build request and response payloads.
+# Create the OpenAI-compatible client.
 def _get_client():
     """Create an OpenAI-compatible client using the configured base URL."""
 
@@ -868,6 +924,7 @@ def _get_client():
     )
 
 
+# Remove control tokens from generated text.
 def _sanitize_generated_text(text: str) -> str:
     """Drop service control tokens that should never reach the chat UI."""
 
@@ -877,6 +934,7 @@ def _sanitize_generated_text(text: str) -> str:
     return cleaned
 
 
+# Extract one text fragment.
 def _extract_text_fragment(value: Any, *, reasoning: bool) -> str:
     """Extract text or reasoning text from one OpenAI-compatible payload fragment."""
 
@@ -902,6 +960,8 @@ def _extract_text_fragment(value: Any, *, reasoning: bool) -> str:
     is_reasoning_item = "reasoning" in item_type or "thinking" in item_type
 
     if reasoning and not is_reasoning_item:
+        # Reasoning text is often nested under dedicated fields even when the
+        # outer item looks like a generic content wrapper.
         for key in (
             "reasoning",
             "reasoning_content",
@@ -955,6 +1015,7 @@ def _extract_text_fragment(value: Any, *, reasoning: bool) -> str:
     return ""
 
 
+# Extract visible content text.
 def _extract_content_text_from_payload(payload: dict[str, Any]) -> str:
     """Return visible content text from one choice delta or message payload."""
 
@@ -967,6 +1028,7 @@ def _extract_content_text_from_payload(payload: dict[str, Any]) -> str:
     return ""
 
 
+# Extract reasoning text.
 def _extract_reasoning_text_from_payload(payload: dict[str, Any]) -> str:
     """Return reasoning text from one choice delta or message payload."""
 
@@ -990,6 +1052,7 @@ def _extract_reasoning_text_from_payload(payload: dict[str, Any]) -> str:
     return ""
 
 
+# Extract one reasoning fragment type.
 def _extract_reasoning_type(payload: dict[str, Any]) -> str | None:
     """Return the reasoning-fragment type when the backend exposes one."""
 
@@ -1003,6 +1066,7 @@ def _extract_reasoning_type(payload: dict[str, Any]) -> str | None:
     return None
 
 
+# Normalize tool call arguments.
 def _normalize_tool_call_arguments(raw_arguments: Any) -> dict[str, Any]:
     """Return one tool-call arguments payload as a dictionary."""
 
@@ -1022,6 +1086,7 @@ def _normalize_tool_call_arguments(raw_arguments: Any) -> dict[str, Any]:
     return {"value": raw_arguments}
 
 
+# Merge one streamed tool-call delta.
 def _merge_tool_call_delta(tool_calls_by_index: dict[int, dict[str, Any]], raw_tool_call: dict[str, Any]) -> None:
     """Merge one streamed tool-call fragment into the accumulated call set."""
 
@@ -1062,6 +1127,7 @@ def _merge_tool_call_delta(tool_calls_by_index: dict[int, dict[str, Any]], raw_t
         entry["function"]["arguments"] += str(raw_arguments)
 
 
+# Build OpenAI-compatible messages.
 def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert ASLM chat messages into OpenAI-compatible payloads."""
 
@@ -1111,6 +1177,7 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
     return payload
 
 
+# Build OpenAI request options.
 def _build_openai_request_options(
     options: dict[str, Any],
     **kwargs: Any,
@@ -1120,6 +1187,8 @@ def _build_openai_request_options(
     direct_options: dict[str, Any] = {}
     extra_body: dict[str, Any] = {}
 
+    # Keep known OpenAI kwargs at the top level and forward everything else
+    # through ``extra_body`` for compatible backends with custom fields.
     for raw_key, raw_value in (options or {}).items():
         normalized_key = DIRECT_OPTION_ALIASES.get(raw_key, raw_key)
         if normalized_key in DIRECT_OPTION_KEYS:
@@ -1150,6 +1219,9 @@ def _build_openai_request_options(
     return direct_options
 
 
+
+# Build tool feedback payloads.
+# Build one tool event.
 def _build_tool_event(tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]) -> dict[str, Any]:
     """Serialize one tool invocation so the UI can render it during streaming."""
 
@@ -1168,6 +1240,7 @@ def _build_tool_event(tool_lookup: dict[str, dict[str, Any]], tool_call: dict[st
     }
 
 
+# Build one tool message.
 def _build_tool_message(
     tool_name: str,
     tool_call_id: str,
@@ -1198,9 +1271,12 @@ def _build_tool_message(
     return payload
 
 
+
+# Parse streamed reasoning fragments.
 class _ReasoningTextParser:
     """Split streamed reasoning text from visible content."""
 
+    # Initialize parser state.
     def __init__(self, tag_pairs: tuple[tuple[str, str], ...] = REASONING_TAG_PAIRS) -> None:
         self._start_tags = [start for start, _end in tag_pairs]
         self._end_tags = [end for _start, end in tag_pairs]
@@ -1231,6 +1307,7 @@ class _ReasoningTextParser:
             return source[:-reserve], source[-reserve:]
         return source, ""
 
+    # Parse one streamed fragment.
     def feed(self, content: str, reasoning_type: str | None = None) -> tuple[str, str]:
         """Return parsed ``(thinking, visible_content)`` fragments."""
 
@@ -1274,6 +1351,7 @@ class _ReasoningTextParser:
 
         return "".join(thinking_parts), "".join(content_parts)
 
+    # Flush any buffered fragment.
     def flush(self) -> tuple[str, str]:
         """Flush any pending partial fragment at the end of the stream."""
 
@@ -1286,6 +1364,9 @@ class _ReasoningTextParser:
         return "", pending
 
 
+
+# Stream tool-aware OpenAI conversations.
+# Parse payload fragments.
 def _parse_payload_fragments(
     parser: _ReasoningTextParser,
     payload: dict[str, Any],
@@ -1317,6 +1398,7 @@ def _parse_payload_fragments(
     return "".join(thinking_parts), "".join(content_parts)
 
 
+# Stream one OpenAI round.
 def _stream_openai_round(
     client: Any,
     model_name: str,
@@ -1347,6 +1429,8 @@ def _stream_openai_round(
     )
 
     if stream:
+        # Streaming deltas arrive fragment-by-fragment, so accumulate both the
+        # visible text and partially-built tool calls.
         for raw_chunk in response:
             if _abort_event.is_set():
                 break
@@ -1378,6 +1462,8 @@ def _stream_openai_round(
                         if isinstance(normalized_tool_call, dict):
                             _merge_tool_call_delta(tool_calls_by_index, normalized_tool_call)
     else:
+        # Non-streaming responses still reuse the same parsers so both code
+        # paths produce the same assistant payload shape.
         response_payload = _to_plain_data(response)
         choices = response_payload.get("choices", []) if isinstance(response_payload, dict) else []
         for choice in choices if isinstance(choices, list) else []:
@@ -1407,6 +1493,7 @@ def _stream_openai_round(
                     if isinstance(normalized_tool_call, dict):
                         _merge_tool_call_delta(tool_calls_by_index, normalized_tool_call)
 
+    # Flush any trailing partial tag fragment that was held back between chunks.
     tail_thinking, tail_content = parser.flush()
     if tail_thinking or tail_content:
         yielded_chunk = True
@@ -1431,6 +1518,7 @@ def _stream_openai_round(
     return assistant_message
 
 
+# Drain one streamed round.
 def _yield_stream_round(round_stream):
     """Yield every chunk from a round stream and return the final assistant message."""
 
@@ -1441,6 +1529,7 @@ def _yield_stream_round(round_stream):
             return stop.value or {"role": "assistant", "content": ""}
 
 
+# Run the tool loop.
 def _run_tool_loop(
     client: Any,
     model_name: str,
@@ -1474,6 +1563,8 @@ def _run_tool_loop(
     conversation = _build_openai_messages(messages)
 
     for round_index in range(MAX_TOOL_ROUNDS):
+        # Each round lets the model either finish or request another batch of
+        # local tool calls to continue the conversation.
         assistant_message = yield from _yield_stream_round(
             _stream_openai_round(
                 client,
@@ -1492,6 +1583,7 @@ def _run_tool_loop(
             return
 
         tool_calls: list[dict[str, Any]] = []
+        # Normalize tool-call payloads into one internal shape before dispatch.
         for raw_tool_call in raw_tool_calls:
             if not isinstance(raw_tool_call, dict):
                 continue
@@ -1539,6 +1631,8 @@ def _run_tool_loop(
                 tool_result,
                 tool_event,
             )
+            # Feed the tool result back as a standard tool-role message so the
+            # next model round can continue from the resolved state.
             conversation.append(
                 {
                     "role": "tool",
@@ -1551,6 +1645,9 @@ def _run_tool_loop(
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
 
 
+
+# Expose the public adapter API.
+# Detect tool usage in the conversation.
 def _conversation_uses_tools(messages: list[dict[str, Any]]) -> bool:
     """Return whether the current conversation already contains tool state."""
 
@@ -1562,6 +1659,7 @@ def _conversation_uses_tools(messages: list[dict[str, Any]]) -> bool:
     return False
 
 
+# List available models.
 def get_models() -> list[Any]:
     """Return models exposed by the configured OpenAI-compatible endpoint."""
 
@@ -1576,17 +1674,21 @@ def get_models() -> list[Any]:
         _close_client(client)
 
 
+# Reject local download requests.
 def download_model(model_name: str, **kwargs: Any) -> Any:
     """Raise because OpenAI-compatible endpoints expose remote models only."""
 
     raise NotImplementedError("OpenAI-compatible models are remote and cannot be downloaded locally.")
 
 
+# Read one model's settings.
 def get_model_settings(model_name: str) -> dict[str, Any]:
     """Return capability metadata for one model from an OpenAI-compatible endpoint."""
 
     client = _get_client()
     try:
+        # Build defaults and supported parameter names first, then layer the
+        # higher-level capabilities inferred from those raw hints.
         raw_model = _get_model_payload(client, model_name)
         defaults = _extract_defaults(raw_model)
         supported_parameter_names = _extract_supported_parameter_names(raw_model, defaults)
@@ -1613,6 +1715,8 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
         explicit_vision_support = _extract_feature_flag(raw_model, VISION_CAPABILITY_NAMES)
         explicit_reasoning_support = _extract_feature_flag(raw_model, REASONING_CAPABILITY_NAMES)
 
+        # Capability inference combines explicit booleans, capability tokens,
+        # and parameter availability because providers expose metadata unevenly.
         supports_tool_calling = (
             bool(explicit_tool_support)
             or bool(capability_tokens & TOOL_CAPABILITY_NAMES)
@@ -1654,6 +1758,7 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
             if think_level_param_name not in defaults and reasoning_level_default is not None:
                 defaults[think_level_param_name] = reasoning_level_default
 
+        # Keep the exported capability list small and UI-oriented.
         capabilities: list[str] = []
         if supports_vision:
             capabilities.append("vision")
@@ -1687,9 +1792,11 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
         _close_client(client)
 
 
+# Generate one model response.
 def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
     """Generate a streamed or non-streamed response through an OpenAI-compatible API."""
 
+    # Accept historical single-id inputs and normalize them into one list.
     raw_ids = kwargs.pop("tool_server_ids", None) or kwargs.pop("tool_server_id", None) or kwargs.pop("tool_id", None)
     if isinstance(raw_ids, str):
         tool_server_ids = [raw_ids] if raw_ids.strip() else []
@@ -1713,6 +1820,8 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
     try:
         _abort_event.clear()
 
+        # Tool-enabled conversations stay in the tool loop so the adapter can
+        # execute local tools between model rounds.
         if tool_server_ids:
             yield from _run_tool_loop(
                 client,
@@ -1725,6 +1834,8 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
             )
             return
 
+        # Conversations that already contain tool state must stay on the same
+        # OpenAI-compatible message format even without new tool servers.
         if _conversation_uses_tools(messages):
             yield from _yield_stream_round(
                 _stream_openai_round(

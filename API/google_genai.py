@@ -921,11 +921,15 @@ def _build_model_capability_snapshot(
 
     supports_generate_content = cached_capabilities.get("supports_generate_content")
     if not isinstance(supports_generate_content, bool):
+        # The public model listing does not always expose one clean boolean, so
+        # fall back to supported action names when the cache is still empty.
         supports_generate_content = any("generatecontent" in action for action in supported_actions)
 
     supports_tool_calling = cached_capabilities.get("supports_tool_calling")
     if not isinstance(supports_tool_calling, bool):
         probed_tool_support = None
+        # Probe only when static metadata is inconclusive, because it is a real
+        # request against the current endpoint and API key.
         if explicit_tool_support is None and allow_tool_probe and supports_generate_content:
             probed_tool_support = _probe_tool_calling_support(client, model_name)
         supports_tool_calling = (
@@ -960,6 +964,8 @@ def _build_model_capability_snapshot(
             or bool(capability_tokens & REASONING_CAPABILITY_NAMES)
         )
 
+    # Reuse cached level options before probing because level support is often
+    # learned from previous failed or successful runtime requests.
     think_level_options = list(explicit_reasoning_level_options)
     cached_level_options = cached_capabilities.get("think_level_options")
     if not think_level_options and isinstance(cached_level_options, list):
@@ -1006,7 +1012,8 @@ def _probe_tool_calling_support(client: Any, model_name: str) -> bool | None:
     if isinstance(cached_value, bool):
         return cached_value
 
-
+    # Send the smallest possible tool-enabled request so failures reveal
+    # endpoint capability rather than model-behavior differences.
     probe_config = {
         "temperature": 0,
         "max_output_tokens": 1,
@@ -1054,6 +1061,7 @@ def _probe_thinking_level_support(client: Any, model_name: str) -> bool | None:
     if isinstance(cached_value, bool):
         return cached_value
 
+    # Keep the probe tiny so it validates parameter acceptance with minimal cost.
     probe_config = {
         "temperature": 0,
         "max_output_tokens": 1,
@@ -1113,6 +1121,8 @@ def _probe_model_availability(client: Any, model_name: str) -> bool:
         )
     except Exception as exc:
         learning_reason = _learn_from_google_error(model_name, exc)
+        # Some failures mean the model should be hidden, while others are
+        # treated as soft availability because the endpoint still recognized it.
         if learning_reason in {"unsupported_generate_content", "zero_quota"}:
             return False
         _set_cached_model_availability(model_name, True, learning_reason or "probe_failed_open")
@@ -1200,6 +1210,8 @@ def _normalize_google_request_parts(raw_parts: Any) -> list[dict[str, Any]]:
                 normalized_parts.append({"text": text_value})
             continue
 
+        # Preserve already-Gemini-shaped parts first so transcript replay does
+        # not lose fields that the generic OpenAI shape does not model.
         direct_part: dict[str, Any] = {}
         if raw_part.get("text") is not None:
             direct_part["text"] = str(raw_part.get("text") or "")
@@ -1260,6 +1272,8 @@ def _normalize_google_request_parts(raw_parts: Any) -> list[dict[str, Any]]:
             continue
 
         part_type = _normalize_key_name(raw_part.get("type"))
+        # Fall back to OpenAI-style content-part normalization when the payload
+        # came from a provider-agnostic transcript entry.
         if part_type in {"text", "input_text"}:
             text_value = str(raw_part.get("text", "") or "")
             if text_value:
@@ -1369,6 +1383,8 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
             contents.append({"role": "user", "parts": parts})
             continue
 
+        # Prefer preserved Gemini-native parts when they exist so follow-up
+        # rounds can replay tool calls and thought signatures losslessly.
         structured_parts = _normalize_google_request_parts(
             message.get("google_parts")
             if isinstance(message.get("google_parts"), list)
@@ -1396,6 +1412,8 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
                 )
 
         if role == "assistant" and not used_structured_parts:
+            # Rebuild assistant tool calls from the generic transcript shape
+            # when no Gemini-native parts were stored with the message.
             for raw_tool_call in message.get("tool_calls") or []:
                 function_payload = raw_tool_call.get("function", {}) if isinstance(raw_tool_call, dict) else {}
                 function_name = str(function_payload.get("name", "") or "").strip()
@@ -1495,6 +1513,8 @@ def _build_google_request_config(
     if isinstance(preconfigured_thinking, dict):
         thinking_config.update(preconfigured_thinking)
 
+    # Keep only the Gemini-supported top-level keys and collect thinking fields
+    # separately so custom aliases can be normalized in one place.
     for raw_key, raw_value in (options or {}).items():
         normalized_key = GOOGLE_OPTION_ALIASES.get(str(raw_key), str(raw_key))
         if normalized_key == "thinking_config":
@@ -1515,6 +1535,8 @@ def _build_google_request_config(
     normalized_level_param_name = _normalize_key_name(think_level_param_name)
 
     if think is not None:
+        # Gemini models vary between boolean thought toggles and budget-style
+        # reasoning controls, so map the shared ASLM fields carefully.
         if normalized_think_param_name == "thinking_budget":
             thinking_config["thinking_budget"] = int(think)
         elif normalized_think_param_name == "include_thoughts":
@@ -1534,6 +1556,8 @@ def _build_google_request_config(
         config["thinking_config"] = thinking_config
 
     if tools:
+        # Disable automatic client-side execution because ASLM resolves tools
+        # locally and needs the raw function-call payloads back.
         config["tools"] = tools
         config["automatic_function_calling"] = {"disable": True}
         tool_config = dict(config.get("tool_config", {}) or {})
@@ -1808,6 +1832,8 @@ def _stream_google_round(
 
     while True:
         try:
+            # Retry in-place when the endpoint rejects ``thinking_level`` so a
+            # learned compatibility fix can salvage the same request.
             response = (
                 client.models.generate_content_stream(model=model_name, contents=contents, config=effective_config)
                 if stream
@@ -1826,6 +1852,8 @@ def _stream_google_round(
                     if history_part is not None:
                         assistant_history_parts.append(history_part)
 
+                # Parse visible text, reasoning fragments, and function calls
+                # from the same chunk so transcript replay stays ordered.
                 thinking_part, content_part, chunk_tool_calls = _parse_google_response_parts(
                     parser,
                     chunk_parts,
@@ -1852,6 +1880,8 @@ def _stream_google_round(
                     yield {"message": payload}
 
                 for tool_call_index, tool_call in enumerate(chunk_tool_calls, start=1):
+                    # Gemini can repeat the same tool call across chunks, so
+                    # deduplicate by a stable serialized signature.
                     tool_call_id = str(tool_call.get("id") or f"call_{len(tool_calls) + tool_call_index}_{tool_call['name']}")
                     signature = json.dumps(
                         {
@@ -1885,6 +1915,7 @@ def _stream_google_round(
                 continue
             raise
 
+    # Flush any buffered tag fragment once the SDK stream is finished.
     tail_thinking, tail_content = parser.flush()
     if tail_thinking or tail_content:
         yielded_chunk = True
@@ -1958,6 +1989,8 @@ def _assistant_message_to_content(assistant_message: dict[str, Any]) -> dict[str
     if parts:
         return {"role": "model", "parts": parts}
 
+    # Fall back to the generic transcript shape when Gemini-native parts were
+    # not preserved on the assembled assistant message.
     parts = []
     visible_content = str(assistant_message.get("content", "") or "")
     if visible_content:
@@ -2024,6 +2057,8 @@ def _run_tool_loop(
         return
 
     for round_index in range(MAX_TOOL_ROUNDS):
+        # Re-apply learned preferences each round because earlier failures may
+        # have updated the runtime capability cache.
         request_config = _apply_learned_request_preferences(model_name, request_config)
         assistant_message = yield from _yield_stream_round(
             _stream_google_round(client, model_name, conversation, request_config, stream=stream)
@@ -2039,6 +2074,8 @@ def _run_tool_loop(
             return
 
         tool_calls: list[dict[str, Any]] = []
+        # Convert provider payloads into the adapter's shared dispatch format
+        # before handing them to the local MCP tool bridge.
         for tool_call_index, raw_tool_call in enumerate(raw_tool_calls, start=1):
             function_payload = raw_tool_call.get("function", {}) if isinstance(raw_tool_call, dict) else {}
             function_name = str(function_payload.get("name", "") or "").strip()
@@ -2087,6 +2124,8 @@ def _run_tool_loop(
                 tool_result,
                 tool_event,
             )
+            # Gemini expects tool results as ``function_response`` parts in the
+            # next user turn rather than as OpenAI-style tool-role messages.
             tool_response_parts.append(
                 {
                     "function_response": {
@@ -2128,6 +2167,8 @@ def get_models() -> list[Any]:
             model_name = _extract_model_name(payload)
             if not model_name:
                 continue
+            # Skip probing here to keep model listing fast; detailed checks are
+            # deferred until a specific model is inspected or used.
             capability_snapshot = _build_model_capability_snapshot(
                 client,
                 model_name,
@@ -2177,6 +2218,7 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
         _close_client(client)
 
     defaults: dict[str, Any] = {}
+    # Export stable defaults only for values that the public metadata exposes.
     for field_name in ("temperature", "top_p", "top_k"):
         if raw_model.get(field_name) is not None:
             defaults[field_name] = raw_model[field_name]
@@ -2195,6 +2237,8 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
         defaults.setdefault("include_thoughts", True)
 
     supported_parameters = set()
+    # Supported parameters are derived from the resolved capability snapshot
+    # rather than blindly exposing every known Gemini config field.
     if capability_snapshot["supports_generate_content"]:
         supported_parameters.update(
             {
@@ -2302,6 +2346,9 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
             )
             return
 
+        # Tool transcripts already stored in the conversation must keep using
+        # the Gemini round helper so follow-up turns preserve provider-specific
+        # assistant parts and function calls.
         # Preserve existing tool transcripts when the conversation already contains them.
         if _conversation_uses_tools(messages):
             assistant_message = yield from _yield_stream_round(

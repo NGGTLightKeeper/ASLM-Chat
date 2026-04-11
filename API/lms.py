@@ -23,6 +23,7 @@ _model_state_lock = threading.Lock()
 _synced_operation_defaults_signatures: dict[str, str] = {}
 
 
+# Stop the active LM Studio generation.
 def abort_generation() -> None:
     """Signal the active LM Studio generation to stop."""
 
@@ -79,6 +80,9 @@ OPENAI_DIRECT_OPTION_KEYS = {
 }
 
 
+
+# Build LM Studio SDK clients.
+# Normalize the configured API host.
 def _extract_api_host(raw_address: str) -> str:
     """Normalize the configured LM Studio address into a client host value."""
 
@@ -90,6 +94,7 @@ def _extract_api_host(raw_address: str) -> str:
     return raw_address.strip().rstrip("/")
 
 
+# Import the LM Studio SDK.
 def _get_sdk():
     """Import the LM Studio SDK lazily so the app can boot without it."""
 
@@ -101,6 +106,7 @@ def _get_sdk():
     return lms
 
 
+# Create a fresh SDK client.
 def _get_client():
     """Create a fresh LM Studio client for the configured server."""
 
@@ -109,6 +115,7 @@ def _get_client():
     return lms, lms.Client(api_host)
 
 
+# Close one SDK client safely.
 def _close_client(client: Any) -> None:
     """Safely close a client instance when the SDK exposes ``close``."""
 
@@ -118,12 +125,14 @@ def _close_client(client: Any) -> None:
         pass
 
 
+# Get one model handle.
 def _get_model_handle(client: Any, model_name: str):
     """Return an SDK handle for one already-loaded model."""
 
     return client.llm.model(model_name)
 
 
+# Extract one model name.
 def _coerce_model_name(entry: Any) -> str:
     """Extract a stable model identifier from LM Studio SDK objects."""
 
@@ -160,6 +169,7 @@ def _coerce_model_name(entry: Any) -> str:
     return ""
 
 
+# Collect unique model names.
 def _collect_unique_model_names(entries: list[Any]) -> list[str]:
     """Return unique model names while preserving the original order."""
 
@@ -176,6 +186,7 @@ def _collect_unique_model_names(entries: list[Any]) -> list[str]:
     return unique_names
 
 
+# List models through one client method.
 def _list_models_with_client(method_name: str) -> list[Any]:
     """Call one LM Studio listing method and always close the client."""
 
@@ -186,6 +197,9 @@ def _list_models_with_client(method_name: str) -> list[Any]:
         _close_client(client)
 
 
+
+# Normalize LM Studio metadata.
+# Coerce one boolean-like value.
 def _bool_from_value(value: Any, default: bool = False) -> bool:
     """Return a predictable boolean from SDK and dict payloads."""
 
@@ -202,6 +216,7 @@ def _bool_from_value(value: Any, default: bool = False) -> bool:
     return bool(value)
 
 
+# Build one config signature.
 def _config_signature(config: dict[str, Any]) -> str:
     """Return a stable hashable signature for one LM Studio config."""
 
@@ -211,12 +226,14 @@ def _config_signature(config: dict[str, Any]) -> str:
         return str(config or {})
 
 
+# Normalize one model identifier.
 def _normalize_model_identifier(value: Any) -> str:
     """Return a normalized model identifier for fuzzy LM Studio comparisons."""
 
     return str(value or "").strip().strip("/").lower()
 
 
+# Compare two model identifiers.
 def _model_identifiers_match(expected: Any, actual: Any) -> bool:
     """Return whether two LM Studio model identifiers likely refer to the same model."""
 
@@ -232,6 +249,7 @@ def _model_identifiers_match(expected: Any, actual: Any) -> bool:
     return bool(expected_tail) and expected_tail == actual_tail
 
 
+# List loaded model names.
 def _list_loaded_model_names(client: Any) -> list[str]:
     """Return loaded model names visible to the current LM Studio client."""
 
@@ -243,6 +261,7 @@ def _list_loaded_model_names(client: Any) -> list[str]:
     return _collect_unique_model_names(loaded_models)
 
 
+# Ensure one model is loaded.
 def _assert_model_is_loaded(client: Any, model_name: str) -> None:
     """Raise when the requested model is not already loaded in LM Studio."""
 
@@ -262,6 +281,7 @@ def _assert_model_is_loaded(client: Any, model_name: str) -> None:
     )
 
 
+# Serialize one model info payload.
 def _serialize_model_info(info: Any) -> dict[str, Any]:
     """Convert SDK model info into a JSON-compatible dictionary."""
 
@@ -314,6 +334,7 @@ def _serialize_model_info(info: Any) -> dict[str, Any]:
     return payload
 
 
+# Fetch one raw model info payload.
 def _get_raw_model_info(client: Any, model_name: str) -> dict[str, Any]:
     """Return the raw LM Studio model-info payload when the SDK exposes it."""
 
@@ -330,6 +351,7 @@ def _get_raw_model_info(client: Any, model_name: str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+# Remove empty nested config values.
 def _clean_nested_config(value: Any) -> Any:
     """Drop empty nested config values while preserving scalars."""
 
@@ -349,6 +371,7 @@ def _clean_nested_config(value: Any) -> Any:
     return value
 
 
+# Normalize one model config payload.
 def _normalize_model_config(config: Any) -> dict[str, Any]:
     """Return a normalized dictionary for raw LM Studio config sections."""
 
@@ -360,6 +383,7 @@ def _normalize_model_config(config: Any) -> dict[str, Any]:
     return normalized if isinstance(normalized, dict) else {}
 
 
+# Merge nested dictionaries.
 def _merge_nested_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge two dictionaries without mutating either input."""
 
@@ -372,6 +396,7 @@ def _merge_nested_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[
     return merged
 
 
+# Resolve the LM Studio home directory.
 def _get_lmstudio_home() -> str:
     """Return the local LM Studio home directory."""
 
@@ -379,6 +404,7 @@ def _get_lmstudio_home() -> str:
     return os.path.join(user_home, ".lmstudio")
 
 
+# Read one JSON file.
 def _read_json_file(path: str) -> Any:
     """Return decoded JSON from one file path when it exists."""
 
@@ -392,6 +418,9 @@ def _read_json_file(path: str) -> Any:
         return None
 
 
+
+# Normalize LM Studio KV config fields.
+# Unwrap one KV field value.
 def _unwrap_kv_field_value(value: Any) -> Any:
     """Convert LM Studio checkbox-like KV values into plain Python values."""
 
@@ -402,6 +431,7 @@ def _unwrap_kv_field_value(value: Any) -> Any:
     return value
 
 
+# Set one nested client value.
 def _set_nested_client_value(target: dict[str, Any], path: str, value: Any) -> None:
     """Assign one normalized value into a nested client-config dictionary."""
 
@@ -419,6 +449,7 @@ def _set_nested_client_value(target: dict[str, Any], path: str, value: Any) -> N
     cursor[parts[-1]] = value
 
 
+# Apply one KV mapping.
 def _apply_kv_mapping(target: dict[str, Any], mapping: Any, parts: list[str], value: Any) -> bool:
     """Apply one LM Studio KV field through the SDK mapping when possible."""
 
@@ -442,6 +473,7 @@ def _apply_kv_mapping(target: dict[str, Any], mapping: Any, parts: list[str], va
     return False
 
 
+# Build one fallback KV path.
 def _kv_field_fallback_path(prefix: str, remainder: str) -> str:
     """Return a best-effort client path for one unmapped LM Studio KV field."""
 
@@ -461,6 +493,7 @@ def _kv_field_fallback_path(prefix: str, remainder: str) -> str:
     return remainder.split(".")[-1]
 
 
+# Convert KV fields into client config.
 def _kv_fields_to_client_config(section_key: str, fields: list[dict[str, Any]]) -> dict[str, Any]:
     """Convert LM Studio KV field lists into the adapter's client-config shape."""
 
@@ -500,6 +533,8 @@ def _kv_fields_to_client_config(section_key: str, fields: list[dict[str, Any]]) 
 
         if matched_prefix:
             remainder = raw_key[len(matched_prefix) + 1 :]
+            # Prefer SDK-provided mappings when available, but keep a fallback
+            # path so custom or newer fields still reach the runtime config.
             if _apply_kv_mapping(normalized, mapping, remainder.split("."), raw_value):
                 continue
             value = _clean_nested_config(_unwrap_kv_field_value(raw_value))
@@ -521,6 +556,9 @@ def _kv_fields_to_client_config(section_key: str, fields: list[dict[str, Any]]) 
     return _normalize_model_config(normalized)
 
 
+
+# Read and sync persisted LM Studio defaults.
+# Read one model index record.
 def _get_model_index_record(model_name: str) -> dict[str, Any]:
     """Return the local LM Studio model-index record for one model identifier."""
 
@@ -541,6 +579,7 @@ def _get_model_index_record(model_name: str) -> dict[str, Any]:
     return exact_match or {}
 
 
+# Read disk operation defaults.
 def _get_disk_model_operation_defaults(model_name: str) -> dict[str, Any]:
     """Return saved LM Studio operation defaults for one model."""
 
@@ -566,6 +605,7 @@ def _get_disk_model_operation_defaults(model_name: str) -> dict[str, Any]:
     )
 
 
+# Build the default-config path.
 def _get_model_default_config_path(model_name: str) -> str:
     """Return the LM Studio user default-config path for one model."""
 
@@ -582,6 +622,7 @@ def _get_model_default_config_path(model_name: str) -> str:
     )
 
 
+# Sync operation defaults to disk.
 def _sync_operation_defaults_to_disk(model_name: str, operation_config: dict[str, Any] | None) -> None:
     """Persist custom LM Studio operation fields so the server applies them during generation."""
 
@@ -595,6 +636,7 @@ def _sync_operation_defaults_to_disk(model_name: str, operation_config: dict[str
             continue
         custom_fields.append({"key": normalized_key, "value": operation_config[key]})
 
+    # Skip disk writes when the generated custom-field payload is unchanged.
     signature = _config_signature({"fields": custom_fields})
     with _model_state_lock:
         if _synced_operation_defaults_signatures.get(model_name) == signature:
@@ -618,6 +660,8 @@ def _sync_operation_defaults_to_disk(model_name: str, operation_config: dict[str
         existing_fields = []
 
     preserved_fields = []
+    # Only rewrite the extension-backed custom fields and preserve everything
+    # else exactly as LM Studio already stored it.
     for field in existing_fields:
         if not isinstance(field, dict):
             continue
@@ -642,6 +686,9 @@ def _sync_operation_defaults_to_disk(model_name: str, operation_config: dict[str
         _synced_operation_defaults_signatures[model_name] = signature
 
 
+
+# Derive runtime capabilities and request options.
+# Extract reasoning settings.
 def _extract_reasoning_settings(operation_defaults: dict[str, Any]) -> tuple[Any | None, Any | None]:
     """Return canonical reasoning toggle and level defaults from operation config."""
 
@@ -662,6 +709,7 @@ def _extract_reasoning_settings(operation_defaults: dict[str, Any]) -> tuple[Any
     return think_value, think_level_value
 
 
+# Collect reasoning field hints.
 def _collect_reasoning_field_hints(field_definition: dict[str, Any]) -> str:
     """Build one searchable string for reasoning custom-field detection."""
 
@@ -678,6 +726,7 @@ def _collect_reasoning_field_hints(field_definition: dict[str, Any]) -> str:
     return " ".join(parts).strip().lower()
 
 
+# Detect custom reasoning fields.
 def _detect_reasoning_custom_fields(raw_info: dict[str, Any]) -> tuple[str | None, Any | None, str | None, Any | None]:
     """Infer reasoning toggle/level custom fields from LM Studio model metadata."""
 
@@ -698,6 +747,8 @@ def _detect_reasoning_custom_fields(raw_info: dict[str, Any]) -> tuple[str | Non
         if "reason" not in hint_blob and "think" not in hint_blob:
             continue
 
+        # Use both field type and hint text because LM Studio custom fields
+        # are flexible and rarely provide one canonical reasoning schema.
         field_type = str(field_definition.get("type") or "").strip().lower()
         default_value = field_definition.get("defaultValue")
 
@@ -715,6 +766,7 @@ def _detect_reasoning_custom_fields(raw_info: dict[str, Any]) -> tuple[str | Non
     return toggle_param_name, toggle_default, level_param_name, level_default
 
 
+# Extract reasoning level options.
 def _extract_reasoning_level_options(raw_info: dict[str, Any]) -> list[str]:
     """Return supported reasoning level values from LM Studio custom fields."""
 
@@ -749,6 +801,7 @@ def _extract_reasoning_level_options(raw_info: dict[str, Any]) -> list[str]:
     return []
 
 
+# Detect local GPU devices.
 def _get_local_gpu_devices() -> list[dict[str, Any]]:
     """Return local NVIDIA GPU devices with both numeric ids and labels."""
 
@@ -780,6 +833,7 @@ def _get_local_gpu_devices() -> list[dict[str, Any]]:
     return devices
 
 
+# Remove control tokens from generated text.
 def _sanitize_generated_text(text: str) -> str:
     """Drop service control tokens that should never reach the chat UI."""
 
@@ -789,6 +843,7 @@ def _sanitize_generated_text(text: str) -> str:
     return cleaned
 
 
+# Read one model info payload.
 def _get_model_info(client: Any, model_name: str) -> tuple[Any | None, dict[str, Any]]:
     """Return model info from the SDK or loaded-model listing."""
 
@@ -810,6 +865,7 @@ def _get_model_info(client: Any, model_name: str) -> tuple[Any | None, dict[str,
     return None, {"model": model_name}
 
 
+# Build reasoning parsing config.
 def _build_reasoning_parsing_config(enabled: bool) -> dict[str, Any]:
     """Return the default reasoning parsing config for LM Studio."""
 
@@ -820,6 +876,7 @@ def _build_reasoning_parsing_config(enabled: bool) -> dict[str, Any]:
     }
 
 
+# Append one raw KV field.
 def _append_raw_kv_field(target: dict[str, Any], key: str, value: Any) -> None:
     """Append one raw LM Studio KV field to a request config."""
 
@@ -840,6 +897,7 @@ def _append_raw_kv_field(target: dict[str, Any], key: str, value: Any) -> None:
     target["raw"] = raw_config
 
 
+# Prepare native prediction options.
 def _prepare_native_prediction_options(
     options: dict[str, Any] | None,
     think: Any = None,
@@ -854,6 +912,7 @@ def _prepare_native_prediction_options(
     return prepared
 
 
+# Prepare OpenAI-compatible prediction options.
 def _prepare_openai_prediction_options(
     options: dict[str, Any] | None,
     think: Any = None,
@@ -886,6 +945,7 @@ def _prepare_openai_prediction_options(
     return direct_options
 
 
+# Create the OpenAI-compatible LM Studio client.
 def _get_openai_client():
     """Create an OpenAI client pointing at the LM Studio server."""
 
@@ -903,6 +963,7 @@ def _get_openai_client():
     return OpenAI(base_url=raw_url, api_key="lm-studio")
 
 
+# Build OpenAI-compatible messages.
 def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert ASLM chat messages into OpenAI-compatible payloads."""
 
@@ -950,6 +1011,7 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
     return payload
 
 
+# Build one tool event.
 def _build_tool_event(tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]) -> dict[str, Any]:
     """Serialize one tool invocation so the UI can render it during streaming."""
 
@@ -968,6 +1030,7 @@ def _build_tool_event(tool_lookup: dict[str, dict[str, Any]], tool_call: dict[st
     }
 
 
+# Build one tool message.
 def _build_tool_message(
     tool_name: str,
     tool_call_id: str,
@@ -998,9 +1061,12 @@ def _build_tool_message(
     return payload
 
 
+
+# Parse streamed reasoning fragments.
 class _ReasoningTextParser:
     """Split streamed reasoning text from visible content."""
 
+    # Initialize parser state.
     def __init__(self, tag_pairs: tuple[tuple[str, str], ...] = REASONING_TAG_PAIRS) -> None:
         self._tag_pairs = tag_pairs
         self._start_tags = [start for start, _end in tag_pairs]
@@ -1008,6 +1074,7 @@ class _ReasoningTextParser:
         self._in_reasoning = False
         self._pending = ""
 
+    # Find the next matching tag.
     @staticmethod
     def _find_next_tag(source: str, tags: list[str]) -> tuple[int, str] | None:
         next_match: tuple[int, str] | None = None
@@ -1019,6 +1086,7 @@ class _ReasoningTextParser:
                 next_match = (index, tag)
         return next_match
 
+    # Preserve a possible partial tag suffix.
     @staticmethod
     def _split_possible_tag_prefix(source: str, tags: list[str]) -> tuple[str, str]:
         reserve = 0
@@ -1032,6 +1100,7 @@ class _ReasoningTextParser:
             return source[:-reserve], source[-reserve:]
         return source, ""
 
+    # Parse one streamed fragment.
     def feed(self, content: str, reasoning_type: str | None = None) -> tuple[str, str]:
         """Return parsed ``(thinking, visible_content)`` fragments."""
 
@@ -1074,6 +1143,7 @@ class _ReasoningTextParser:
 
         return "".join(thinking_parts), "".join(content_parts)
 
+    # Flush any buffered fragment.
     def flush(self) -> tuple[str, str]:
         """Flush any pending partial fragment at the end of the stream."""
 
@@ -1086,6 +1156,9 @@ class _ReasoningTextParser:
         return "", pending
 
 
+
+# Stream native and OpenAI-compatible LM Studio conversations.
+# Upload one image handle.
 def _prepare_image_handle(client: Any, image_base64: str, name: str) -> Any:
     """Upload one image to LM Studio and return its file handle."""
 
@@ -1093,6 +1166,7 @@ def _prepare_image_handle(client: Any, image_base64: str, name: str) -> Any:
     return client.prepare_image(io.BytesIO(image_bytes), name=name)
 
 
+# Build native chat history.
 def _build_native_chat_history(client: Any, messages: list[dict[str, Any]]):
     """Convert generic chat messages into an LM Studio chat history."""
 
@@ -1121,6 +1195,8 @@ def _build_native_chat_history(client: Any, messages: list[dict[str, Any]]):
             )
             continue
 
+        # LM Studio expects uploaded image handles instead of inline base64, so
+        # prepare those files before adding the user message.
         prepared_images = []
         for image_index, image_base64 in enumerate(images, start=1):
             prepared_images.append(
@@ -1135,6 +1211,7 @@ def _build_native_chat_history(client: Any, messages: list[dict[str, Any]]):
     return chat
 
 
+# Stream one native LM Studio response.
 def _stream_native_response(model: Any, chat: Any, options: dict[str, Any], stream: bool):
     """Yield parsed LM Studio SDK output."""
 
@@ -1144,6 +1221,8 @@ def _stream_native_response(model: Any, chat: Any, options: dict[str, Any], stre
     yielded_chunk = False
 
     if stream:
+        # Native streaming emits small fragments plus reasoning annotations, so
+        # parse them incrementally and keep an assembled final message.
         for fragment in model.respond_stream(chat, config=options or None):
             if _abort_event.is_set():
                 break
@@ -1162,6 +1241,8 @@ def _stream_native_response(model: Any, chat: Any, options: dict[str, Any], stre
                 payload["thinking"] = thinking_part
             yield {"message": payload}
     else:
+        # Reuse the same parser in non-streaming mode so both paths emit the
+        # same final assistant shape.
         result = model.respond(chat, config=options or None)
         result_content = _sanitize_generated_text(str(getattr(result, "content", "") or ""))
         thinking_part, content_part = parser.feed(result_content, reasoning_type="none")
@@ -1191,6 +1272,7 @@ def _stream_native_response(model: Any, chat: Any, options: dict[str, Any], stre
         yield {"message": assistant_message}
 
 
+# Stream one OpenAI-compatible LM Studio round.
 def _stream_openai_round(
     client,
     model_name: str,
@@ -1210,6 +1292,8 @@ def _stream_openai_round(
     tool_calls_by_index: dict[int, dict[str, Any]] = {}
     parser = _ReasoningTextParser()
 
+    # LM Studio's OpenAI-compatible endpoint streams deltas, so tool calls must
+    # be reconstructed chunk-by-chunk just like provider OpenAI responses.
     for chunk in client.chat.completions.create(
         model=model_name,
         messages=conversation,
@@ -1235,6 +1319,7 @@ def _stream_openai_round(
                         payload["thinking"] = thinking_part
                     yield {"message": payload}
 
+            # Tool-call ids, names, and JSON arguments may arrive separately.
             for tc in getattr(delta, "tool_calls", []) or []:
                 idx = getattr(tc, "index", 0)
                 if idx not in tool_calls_by_index:
@@ -1272,6 +1357,7 @@ def _stream_openai_round(
     return assistant_message
 
 
+# Drain one streamed round.
 def _yield_stream_round(round_stream):
     """Yield every chunk from a round stream and return the final assistant message."""
 
@@ -1282,6 +1368,7 @@ def _yield_stream_round(round_stream):
             return stop.value or {"role": "assistant", "content": ""}
 
 
+# Run the tool loop.
 def _run_tool_loop(
     client,
     model_name: str,
@@ -1307,6 +1394,8 @@ def _run_tool_loop(
     conversation = _build_openai_messages(messages)
 
     for round_index in range(MAX_TOOL_ROUNDS):
+        # Each round either completes the answer or produces another batch of
+        # tool calls that must be executed locally.
         assistant_message = yield from _yield_stream_round(
             _stream_openai_round(client, model_name, conversation, options, tools=tools)
         )
@@ -1318,6 +1407,8 @@ def _run_tool_loop(
             return
 
         tool_calls = []
+        # Convert OpenAI-compatible tool payloads into the internal dispatch
+        # shape used by the shared MCP tool bridge.
         for tc in raw_tool_calls:
             fn = tc.get("function", {})
             name = fn.get("name", "")
@@ -1367,6 +1458,8 @@ def _run_tool_loop(
                 tool_result,
                 tool_event,
             )
+            # The next model round consumes the resolved tool result as a
+            # standard tool-role message in the conversation history.
             conversation.append(
                 {
                     "role": "tool",
@@ -1379,6 +1472,9 @@ def _run_tool_loop(
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
 
 
+
+# Expose the public adapter API.
+# Detect tool usage in the conversation.
 def _conversation_uses_tools(messages: list[dict[str, Any]]) -> bool:
     """Return whether the current conversation already contains tool state."""
 
@@ -1390,6 +1486,7 @@ def _conversation_uses_tools(messages: list[dict[str, Any]]) -> bool:
     return False
 
 
+# List available models.
 def get_models() -> list[Any]:
     """Return models that are already loaded in the configured LM Studio server."""
 
@@ -1402,21 +1499,25 @@ def get_models() -> list[Any]:
     return _collect_unique_model_names(loaded_models)
 
 
+# Release runtime resources when needed.
 def cleanup_runtime() -> None:
     """LM Studio model lifecycle is managed outside this adapter."""
 
     return None
 
 
+# Reject local download requests.
 def download_model(model_name: str, **kwargs: Any) -> Any:
     """Raise because LM Studio downloads are managed outside this adapter."""
 
     raise NotImplementedError("LM Studio model downloads are managed by LM Studio.")
 
 
+# Generate one model response.
 def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
     """Generate a streamed or non-streamed response through LM Studio."""
 
+    # Normalize legacy single-id inputs into the shared multi-server format.
     raw_ids = kwargs.pop("tool_server_ids", None) or kwargs.pop("tool_server_id", None) or kwargs.pop("tool_id", None)
     if isinstance(raw_ids, str):
         tool_server_ids = [raw_ids] if raw_ids.strip() else []
@@ -1437,6 +1538,8 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
     _abort_event.clear()
     _sync_operation_defaults_to_disk(model_name, sync_operation_defaults)
 
+    # Validate early so both native and OpenAI-compatible paths fail fast when
+    # the requested model is not loaded in LM Studio.
     _lms, preload_client = _get_client()
     try:
         _assert_model_is_loaded(preload_client, model_name)
@@ -1444,6 +1547,8 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
         _close_client(preload_client)
 
     if tool_server_ids or _conversation_uses_tools(messages):
+        # Tool-aware flows use the OpenAI-compatible endpoint because it
+        # exposes tool calling, while plain chats can stay on the native SDK.
         openai_client = _get_openai_client()
         options = _prepare_openai_prediction_options(
             raw_options,
@@ -1480,6 +1585,7 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
         _close_client(client)
 
 
+# Read one model's settings.
 def get_model_settings(model_name: str) -> dict[str, Any]:
     """Return capability metadata for one already-loaded LM Studio model."""
 
@@ -1496,6 +1602,8 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
     indexed_custom_fields = model_virtual.get("customFieldDefinitions", []) if isinstance(model_virtual, dict) else []
     disk_operation_defaults = _get_disk_model_operation_defaults(model_name)
 
+    # Merge runtime info, indexed metadata, and user defaults so the settings
+    # panel reflects what LM Studio will actually use for this model.
     raw_info = raw_info or fallback_info or {}
     if indexed_custom_fields and not isinstance(raw_info.get("customFields"), list):
         raw_info["customFields"] = indexed_custom_fields
@@ -1523,6 +1631,8 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
     if isinstance(reasoning_config, dict) and set(reasoning_config.keys()).issubset({"enabled", "effort"}):
         operation_defaults.pop("reasoning", None)
 
+    # Normalize canonical ASLM keys even when LM Studio stores provider-specific
+    # reasoning fields under custom names.
     if think_value is not None and "think" not in operation_defaults:
         operation_defaults["think"] = think_value
     if think_level_value is not None and "reasoning_effort" not in operation_defaults:
