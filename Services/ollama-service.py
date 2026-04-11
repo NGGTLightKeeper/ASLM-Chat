@@ -40,6 +40,7 @@ SERVER_CONFIG_ENV_KEYS = (
 )
 
 
+# Describe desired Ollama runtime state
 @dataclass(frozen=True)
 class OllamaDesiredState:
     """Describe whether the managed Ollama runtime should currently be active."""
@@ -50,7 +51,7 @@ class OllamaDesiredState:
     should_run: bool
 
 
-# Read saved service PID
+# Read tracked Ollama PID
 def _read_pid() -> int | None:
     """Return the saved Ollama PID when it exists."""
 
@@ -68,7 +69,7 @@ def _read_pid() -> int | None:
         return None
 
 
-# Save service PID
+# Write tracked Ollama PID
 def _write_pid(pid: int) -> None:
     """Persist the managed Ollama PID on disk."""
 
@@ -76,7 +77,7 @@ def _write_pid(pid: int) -> None:
     PID_FILE.write_text(str(pid), encoding="utf-8")
 
 
-# Delete saved service PID
+# Clear tracked Ollama PID
 def _clear_pid() -> None:
     """Remove the saved Ollama PID file."""
 
@@ -86,7 +87,7 @@ def _clear_pid() -> None:
         pass
 
 
-# Check saved process state
+# Check tracked process state
 def _is_pid_running(pid: int | None) -> bool:
     """Return whether the given PID still points to a live process."""
 
@@ -101,7 +102,7 @@ def _is_pid_running(pid: int | None) -> bool:
     return True
 
 
-# Read desired runtime state
+# Resolve desired runtime state
 def _get_desired_state(requested_engine: str | None = None) -> OllamaDesiredState:
     """Return whether the managed Ollama runtime should currently be running."""
 
@@ -117,15 +118,17 @@ def _get_desired_state(requested_engine: str | None = None) -> OllamaDesiredStat
     )
 
 
-# Build service environment
+# Build managed runtime environment
 def _build_service_environment() -> tuple[dict[str, str], int]:
     """Return the environment variables used to launch the managed Ollama service."""
 
     ollama_models = settings.get("ollama-service_models")
     ollama_port = int(settings.get("ollama-service_port", 30002))
 
+    # Start from the current process environment and overlay managed values.
     env = os.environ.copy()
     env["OLLAMA_HOST"] = f"127.0.0.1:{ollama_port}"
+
     if ollama_models:
         env["OLLAMA_MODELS"] = str(ollama_models)
     else:
@@ -142,7 +145,11 @@ def _sanitize_console_line(message: str) -> str:
     return cleaned.rstrip("\r\n")
 
 
-def _truncate_console_line(message: str, limit: int = MAX_CONSOLE_LINE_LENGTH) -> str:
+# Truncate one console line
+def _truncate_console_line(
+    message: str,
+    limit: int = MAX_CONSOLE_LINE_LENGTH,
+) -> str:
     """Trim long console lines so ASLM stays readable."""
 
     if settings.is_console_trace_enabled():
@@ -152,9 +159,11 @@ def _truncate_console_line(message: str, limit: int = MAX_CONSOLE_LINE_LENGTH) -
 
     if len(message) <= limit:
         return message
+
     return f"{message[:max(0, limit - 3)].rstrip()}..."
 
 
+# Parse structured Ollama log fields
 def _parse_structured_log_fields(message: str) -> dict[str, str]:
     """Parse Ollama's key=value log format into a dictionary."""
 
@@ -167,24 +176,29 @@ def _parse_structured_log_fields(message: str) -> dict[str, str]:
     for token in tokens:
         if "=" not in token:
             continue
+
         key, value = token.split("=", 1)
         normalized_key = key.strip().strip('"')
         if not normalized_key:
             continue
+
         fields[normalized_key] = value
 
     return fields
 
 
+# Extract one environment value from a log blob
 def _extract_env_value(env_blob: str, env_key: str) -> str:
     """Extract one environment variable value from Ollama's server-config dump."""
 
     match = re.search(rf"{re.escape(env_key)}:([^ ]+)", env_blob)
     if not match:
         return ""
+
     return match.group(1).strip()
 
 
+# Collect leftover structured log details
 def _collect_remaining_field_details(
     fields: dict[str, str],
     *,
@@ -201,9 +215,11 @@ def _collect_remaining_field_details(
     for key in sorted(fields, key=str.casefold):
         if key in excluded:
             continue
+
         value = str(fields.get(key, "") or "").strip()
         if not value:
             continue
+
         details.append(f"{key}={value}")
         if max_items is not None and len(details) >= max_items:
             break
@@ -211,6 +227,7 @@ def _collect_remaining_field_details(
     return details
 
 
+# Summarize model load request details
 def _summarize_load_request(request_blob: str) -> list[str]:
     """Extract useful runner load-request fields from Ollama trace lines."""
 
@@ -224,6 +241,7 @@ def _summarize_load_request(request_blob: str) -> list[str]:
         "threads": r"NumThreads:([0-9]+)",
         "gpu_layers": r"GPULayers:([^ ]+)",
     }
+
     for label, pattern in patterns.items():
         match = re.search(pattern, request_blob)
         if match:
@@ -232,6 +250,7 @@ def _summarize_load_request(request_blob: str) -> list[str]:
     return details
 
 
+# Format one GIN access log line
 def _format_gin_line(message: str) -> str | None:
     """Convert GIN access logs into a compact summary."""
 
@@ -254,19 +273,26 @@ def _format_gin_line(message: str) -> str | None:
     )
 
 
+# Format one backend loader log line
 def _format_backend_line(message: str) -> str:
     """Convert backend loader logs into a shorter, more useful summary."""
 
     backend_path = message.partition(" from ")[2].strip()
     if backend_path:
         backend_name = Path(backend_path).name
-        return _truncate_console_line(f"[Ollama][Backend] {message.partition(': ')[2].split(' from ')[0]} ({backend_name})")
+        backend_summary = message.partition(": ")[2].split(" from ")[0]
+        return _truncate_console_line(
+            f"[Ollama][Backend] {backend_summary} ({backend_name})"
+        )
+
     return _truncate_console_line(f"[Ollama][Backend] {message}")
 
 
+# Format one structured Ollama log line
 def _format_structured_ollama_line(message: str) -> str | None:
     """Convert Ollama structured logs into concise console lines."""
 
+    # Parse key=value pairs from Ollama's structured logger output.
     fields = _parse_structured_log_fields(message)
     if not fields:
         return None
@@ -275,6 +301,8 @@ def _format_structured_ollama_line(message: str) -> str | None:
     source = fields.get("source", "")
     raw_message = fields.get("msg", "").strip()
     trace_enabled = settings.is_console_trace_enabled()
+
+    # Recover readable summaries for trace lines without a direct message.
     if not raw_message and not trace_enabled:
         source_key = source.casefold()
         if "cpu_windows.go" in source_key:
@@ -295,6 +323,7 @@ def _format_structured_ollama_line(message: str) -> str | None:
     summary = raw_message
     details: list[str] = []
 
+    # Collapse known high-signal log messages into compact summaries.
     if raw_message == "server config":
         env_blob = fields.get("env", "")
         for env_key in SERVER_CONFIG_ENV_KEYS:
@@ -333,7 +362,12 @@ def _format_structured_ollama_line(message: str) -> str | None:
             details.append(f"total_vram={fields['total_vram']}")
         summary = "VRAM-based default context"
     elif raw_message == "gpu memory":
-        for key, label in (("available", "available"), ("free", "free"), ("minimum", "minimum"), ("id", "gpu")):
+        for key, label in (
+            ("available", "available"),
+            ("free", "free"),
+            ("minimum", "minimum"),
+            ("id", "gpu"),
+        ):
             value = fields.get(key)
             if value:
                 details.append(f"{label}={value}")
@@ -350,7 +384,9 @@ def _format_structured_ollama_line(message: str) -> str | None:
         if fields.get("requested"):
             details.append(f"requested={fields['requested']}")
         summary = "Loading model"
-    elif raw_message == "Load request" or (source == "runner.go:1284" and fields.get("request")):
+    elif raw_message == "Load request" or (
+        source == "runner.go:1284" and fields.get("request")
+    ):
         details.extend(_summarize_load_request(fields.get("request", "")))
         summary = "Load request"
     elif raw_message == "Model metadata" or source == "ggml.go:136":
@@ -363,12 +399,14 @@ def _format_structured_ollama_line(message: str) -> str | None:
         compiler = fields.get("compiler")
         if compiler:
             details.append(f"compiler={compiler}")
-        cpu_flags = []
+
+        cpu_flags: list[str] = []
         for candidate in ("CPU.0.AVX2", "CPU.0.AVX512", "CPU.0.FMA", "CPU.0.F16C"):
             if fields.get(candidate) == "1":
                 cpu_flags.append(candidate.split(".")[-1])
         if cpu_flags:
             details.append(f"cpu_flags={','.join(cpu_flags)}")
+
         cuda_archs = fields.get("CUDA.0.ARCHS")
         if cuda_archs:
             details.append(f"cuda_archs={cuda_archs}")
@@ -408,6 +446,7 @@ def _format_structured_ollama_line(message: str) -> str | None:
             if value:
                 details.append(f"{label}={value}")
 
+    # Append extra trace-only fields when detailed console output is enabled.
     if trace_enabled:
         trace_details = _collect_remaining_field_details(
             fields,
@@ -418,6 +457,7 @@ def _format_structured_ollama_line(message: str) -> str | None:
             if item not in details:
                 details.append(item)
 
+    # Render the final console line in ASLM's compact format.
     source_suffix = f"[{source}]" if source else ""
     rendered = f"[Ollama][{level}]{source_suffix} {summary}"
     if details:
@@ -426,6 +466,7 @@ def _format_structured_ollama_line(message: str) -> str | None:
     return _truncate_console_line(rendered)
 
 
+# Format one raw console log line
 def _format_console_log_line(message: str) -> str | None:
     """Convert raw Ollama output into a readable console line."""
 
@@ -455,7 +496,7 @@ def _print_status(message: str) -> None:
     print(f"[ASLM-Chat] {message}", flush=True)
 
 
-# Read recent service log lines
+# Read recent managed log lines
 def _read_recent_log_lines(limit: int = RECENT_LOG_LINE_COUNT) -> list[str]:
     """Return the latest non-empty log lines from the managed Ollama log file."""
 
@@ -476,7 +517,7 @@ def _read_recent_log_lines(limit: int = RECENT_LOG_LINE_COUNT) -> list[str]:
     return list(recent_lines)
 
 
-# Stream new log lines
+# Stream new managed log lines
 def _stream_new_log_lines(position: int) -> int:
     """Print all new managed Ollama log lines since the given file offset."""
 
@@ -509,7 +550,7 @@ def _stream_new_log_lines(position: int) -> int:
         return position
 
 
-# Stream log file in the background
+# Stream the managed log file forever
 def _stream_log_file_forever() -> None:
     """Mirror managed Ollama log lines into the current process stdout."""
 
@@ -517,9 +558,11 @@ def _stream_log_file_forever() -> None:
     log_position = 0
 
     while True:
+        # Read the latest tracked runtime state.
         tracked_pid = _read_pid()
         is_running = _is_pid_running(tracked_pid)
 
+        # Start or continue streaming when the managed runtime is alive.
         if is_running and tracked_pid:
             if tracked_pid != last_pid:
                 recent_lines = _read_recent_log_lines()
@@ -528,14 +571,17 @@ def _stream_log_file_forever() -> None:
                     rendered_line = _format_console_log_line(line)
                     if rendered_line:
                         print(rendered_line, flush=True)
+
                 try:
                     log_position = LOG_FILE.stat().st_size
                 except OSError:
                     log_position = 0
+
                 last_pid = tracked_pid
 
             log_position = _stream_new_log_lines(log_position)
         else:
+            # Flush the tail once when the managed runtime disappears.
             if last_pid is not None:
                 log_position = _stream_new_log_lines(log_position)
                 _print_status(f"Managed Ollama service stopped (last PID: {last_pid}).")
@@ -563,7 +609,7 @@ def _ensure_log_streaming() -> None:
         _log_stream_thread.start()
 
 
-# Wait for HTTP readiness
+# Wait for Ollama HTTP readiness
 def _wait_until_ready(timeout_seconds: float = 15.0) -> bool:
     """Wait until the local Ollama HTTP endpoint starts responding."""
 
@@ -582,6 +628,7 @@ def _wait_until_ready(timeout_seconds: float = 15.0) -> bool:
     return False
 
 
+# Wait for an existing Ollama runtime
 def _wait_for_existing_runtime(timeout_seconds: float = 2.0) -> bool:
     """Give a separately launched Ollama runtime a short chance to appear."""
 
@@ -592,27 +639,31 @@ def _wait_for_existing_runtime(timeout_seconds: float = 2.0) -> bool:
             return True
         if _wait_until_ready(timeout_seconds=0.25):
             return True
+
         time.sleep(0.1)
 
     return False
 
 
+# Detect ASLM-managed execution context
 def _is_running_inside_aslm() -> bool:
     """Return whether the current process is launched by ASLM module infrastructure."""
 
     return bool(os.environ.get("ASLM_MODULE_ID") or os.environ.get("ASLM_MODULE_DIR"))
 
 
-# Start managed service
+# Start managed Ollama service
 def start_ollama(engine: str | None = None) -> bool:
     """Start the local Ollama service when the active engine requires it."""
 
     global _ollama_process
 
+    # Check whether the current engine selection should manage Ollama at all.
     desired_state = _get_desired_state(engine)
     if not desired_state.should_run:
         return False
 
+    # Reuse an already available runtime instead of starting a new one.
     if _wait_for_existing_runtime(timeout_seconds=1.5):
         tracked_pid = _read_pid()
         if tracked_pid and _is_pid_running(tracked_pid):
@@ -621,24 +672,33 @@ def start_ollama(engine: str | None = None) -> bool:
             logger.info("Ollama service is already reachable on the configured port.")
         return True
 
+    # Give the dedicated ASLM runtime a chance to come up before falling back.
     if _is_running_inside_aslm():
-        logger.info("Waiting for dedicated Ollama runtime process to become ready inside ASLM.")
+        logger.info(
+            "Waiting for dedicated Ollama runtime process to become ready inside ASLM."
+        )
         if _wait_until_ready(timeout_seconds=8.0):
             logger.info("Dedicated Ollama runtime became reachable on the configured port.")
             return True
 
-        _print_status("Dedicated Ollama runtime is not ready yet. Starting fallback local Ollama process...")
+        _print_status(
+            "Dedicated Ollama runtime is not ready yet. "
+            "Starting fallback local Ollama process..."
+        )
 
+    # Avoid duplicate local launches when the PID file becomes valid meanwhile.
     tracked_pid = _read_pid()
     if tracked_pid and _is_pid_running(tracked_pid):
         logger.info("Ollama service is already running (PID: %s)", tracked_pid)
         return True
 
+    # Validate the configured executable path before spawning the runtime.
     ollama_path = settings.get("ollama-service_path")
     if not ollama_path or not os.path.exists(ollama_path):
         _print_status(f"Ollama service is enabled but not found at: {ollama_path}")
         return False
 
+    # Prepare the launch environment and log streaming infrastructure.
     env, ollama_port = _build_service_environment()
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     _ensure_log_streaming()
@@ -650,6 +710,7 @@ def start_ollama(engine: str | None = None) -> bool:
         f"models={env.get('OLLAMA_MODELS', '(default)')}"
     )
 
+    # Spawn a detached local runtime and redirect its output into the log file.
     try:
         if os.name == "nt":
             creationflags = (
@@ -658,6 +719,7 @@ def start_ollama(engine: str | None = None) -> bool:
             )
         else:
             creationflags = 0
+
         with LOG_FILE.open("w", encoding="utf-8", errors="replace") as log_handle:
             _ollama_process = subprocess.Popen(
                 [ollama_path, "serve"],
@@ -669,9 +731,15 @@ def start_ollama(engine: str | None = None) -> bool:
 
         _write_pid(_ollama_process.pid)
 
+        # Report startup status based on HTTP readiness, not process spawn alone.
         if not _wait_until_ready():
-            logger.warning("Ollama process started but the HTTP endpoint did not become ready in time.")
-            _print_status(f"Ollama service started (PID: {_ollama_process.pid}) but did not become ready in time.")
+            logger.warning(
+                "Ollama process started but the HTTP endpoint did not become ready in time."
+            )
+            _print_status(
+                f"Ollama service started (PID: {_ollama_process.pid}) "
+                "but did not become ready in time."
+            )
         else:
             _print_status(f"Ollama service started successfully (PID: {_ollama_process.pid})")
 
@@ -683,19 +751,23 @@ def start_ollama(engine: str | None = None) -> bool:
         return False
 
 
+# Run dedicated Ollama runtime process
 def run_ollama_runtime(log: bool = False) -> int:
-    """Replace the current process with ``ollama serve`` for a dedicated ASLM console session."""
+    """Replace the current process with ``ollama serve``."""
 
+    # Skip the command when the managed runtime is disabled.
     desired_state = _get_desired_state("ollama-service")
     if not desired_state.is_enabled:
         _print_status("Ollama runtime command skipped: ollama-service is not enabled.")
         return 0
 
+    # Validate the configured runtime executable.
     ollama_path = settings.get("ollama-service_path")
     if not ollama_path or not os.path.exists(ollama_path):
         _print_status(f"Ollama runtime command failed: executable not found at {ollama_path}")
         return 1
 
+    # Persist the current PID before replacing the process image.
     env, ollama_port = _build_service_environment()
     _write_pid(os.getpid())
 
@@ -715,18 +787,20 @@ def run_ollama_runtime(log: bool = False) -> int:
         return 1
 
 
-# Stop managed service
+# Stop managed Ollama service
 def stop_ollama() -> None:
     """Stop the managed Ollama service when a tracked PID exists."""
 
     global _ollama_process
 
+    # Exit quietly when there is no tracked runtime.
     pid = _read_pid()
     if not pid:
         _ollama_process = None
         return
 
     try:
+        # Use the native process termination method for the current platform.
         if os.name == "nt":
             subprocess.run(
                 ["taskkill", "/PID", str(pid), "/T", "/F"],
@@ -743,7 +817,7 @@ def stop_ollama() -> None:
         _clear_pid()
 
 
-# Watch managed service and stream logs
+# Run managed Ollama log console
 def run_ollama_console(log: bool = False) -> None:
     """Stream the managed Ollama log file into stdout."""
 
