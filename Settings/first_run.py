@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 TOOLS_DIR = BASE_DIR / "Tools"
 
 
-# Build first-run settings payload
+# Build the initial settings payload for the first run.
 def _build_initial_settings(existing: dict[str, Any], ui_port: int, api_port: int) -> dict[str, Any]:
     """Return the initial settings payload while preserving existing values."""
 
@@ -30,15 +30,20 @@ def _build_initial_settings(existing: dict[str, Any], ui_port: int, api_port: in
             "use-yacy": existing.get("use-yacy", False),
             "openai_url": existing.get("openai_url", "127.0.0.1:8000/v1"),
             "openai_api_key": existing.get("openai_api_key", ""),
+            "google_genai_url": existing.get("google_genai_url", "generativelanguage.googleapis.com"),
+            "google_genai_api_key": existing.get("google_genai_api_key", ""),
         }
     )
     return initial
 
+
+# Print a standardized bootstrap warning.
 def _print_warning(message: str) -> None:
     """Print a standardized first-run warning message."""
 
     print(f"[ASLM-Chat] Warning: {message}")
 
+# Run an optional bootstrap command without failing the setup.
 def _run_optional_command(
     command: list[str],
     *,
@@ -76,6 +81,8 @@ def _run_optional_command(
 
     return True
 
+
+# Ensure Playwright browsers are installed.
 def _ensure_playwright_browsers(log: bool) -> None:
     """Install Playwright browsers needed by the bundled tools."""
 
@@ -89,6 +96,7 @@ def _ensure_playwright_browsers(log: bool) -> None:
         log=log,
     )
 
+# Ensure the Camoufox browser binary is available.
 def _ensure_camoufox_binary(log: bool) -> None:
     """Download the Camoufox browser binary when available."""
 
@@ -102,6 +110,7 @@ def _ensure_camoufox_binary(log: bool) -> None:
         log=log,
     )
 
+# Ensure required NLTK datasets are installed.
 def _ensure_nltk_data(log: bool) -> None:
     """Download the NLTK datasets expected by the tool stack."""
 
@@ -122,12 +131,14 @@ def _ensure_nltk_data(log: bool) -> None:
             ok = nltk.download(package, quiet=not log)
         except Exception:
             ok = False
+
         if not ok:
             failed.append(package)
 
     if failed:
         _print_warning(f"NLTK data download failed for: {', '.join(failed)}")
 
+# Ensure the default spaCy English model is installed.
 def _ensure_spacy_model(log: bool) -> None:
     """Install the default spaCy English model when missing."""
 
@@ -146,6 +157,7 @@ def _ensure_spacy_model(log: bool) -> None:
         log=log,
     )
 
+# Ensure the bundled YaCy runtime is installed when enabled.
 def _ensure_yacy_installed(log: bool) -> None:
     """Install and configure the bundled YaCy runtime when enabled."""
 
@@ -158,6 +170,7 @@ def _ensure_yacy_installed(log: bool) -> None:
     if not yacy_service.ensure_installed(log=log):
         _print_warning("YaCy bootstrap did not complete successfully.")
 
+# Run all optional tool bootstrap steps.
 def _run_tool_bootstrap(log: bool, use_yacy: bool) -> None:
     """Run post-dependency bootstrap tasks that were previously handled by install.bat."""
 
@@ -170,11 +183,13 @@ def _run_tool_bootstrap(log: bool, use_yacy: bool) -> None:
     _ensure_camoufox_binary(log)
     _ensure_nltk_data(log)
     _ensure_spacy_model(log)
+
     if use_yacy:
         _ensure_yacy_installed(log)
 
-# Print first-run summary
-def _print_summary(settings_file, initial: dict[str, Any]) -> None:
+
+# Print the first-run summary.
+def _print_summary(settings_file: Path, initial: dict[str, Any]) -> None:
     """Print a short summary of the written first-run settings."""
 
     print(f"[ASLM-Chat] Settings written to: {settings_file}")
@@ -184,10 +199,11 @@ def _print_summary(settings_file, initial: dict[str, Any]) -> None:
     print(f"[ASLM-Chat]   llm-engine : {initial['llm-engine']}")
     print(f"[ASLM-Chat]   lms_url    : {initial['lms_url']}")
     print(f"[ASLM-Chat]   openai_url : {initial['openai_url']}")
+    print(f"[ASLM-Chat]   google_url : {initial['google_genai_url']}")
     print("[ASLM-Chat] First-run setup complete.")
 
 
-# Run first-run setup
+# Run the first-run setup workflow.
 def run(log: bool = False, ui_port: int = 30000, api_port: int = 30001) -> None:
     """Create the initial settings file while preserving existing values."""
 

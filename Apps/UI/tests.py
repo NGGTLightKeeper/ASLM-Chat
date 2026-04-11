@@ -11,8 +11,14 @@ from unittest.mock import Mock, patch
 from django.test import Client, SimpleTestCase, TestCase
 from django.urls import reverse
 
+from API import google_genai as google_genai_api
 from API import llm_api
 from API import mcp as tool_registry
+from API.google_genai import (
+    generate as generate_google_genai,
+    get_model_settings as get_google_genai_model_settings,
+    get_models as get_google_genai_models,
+)
 from API.lms import (
     _prepare_openai_prediction_options,
     _serialize_model_info,
@@ -28,10 +34,40 @@ from Apps.Data.models import Chat, LmsPreset, Message, MessageAttachment, Ollama
 from Apps.UI.views import _extract_model_name, _format_runtime_error, _strip_llm_control_tokens
 
 
+# Small structured error helper for Google GenAI adapter tests.
+class FakeGoogleError(Exception):
+    """Small structured error helper for Google GenAI adapter tests."""
+
+    # Initialize the instance.
+    def __init__(
+        self,
+        code: int,
+        status: str,
+        message: str,
+        *,
+        details: list[dict[str, object]] | None = None,
+    ) -> None:
+        self.code = code
+        self.status = status
+        self.message = message
+        self.details = {
+            "error": {
+                "code": code,
+                "status": status,
+                "message": message,
+                "details": details or [],
+            }
+        }
+        super().__init__(f"{code} {status}. {self.details}")
+
+
+# Shared test helpers.
+
+# Patch the local tools directory for endpoint tests.
 class ToolRegistryTestMixin:
     """Patch the local tools directory for endpoint tests."""
 
-    # Create isolated Tools directory
+    # Create an isolated tools directory.
     def setUp(self):
         super().setUp()
         self._tools_dir_context = tempfile.TemporaryDirectory()
@@ -40,14 +76,14 @@ class ToolRegistryTestMixin:
         self.tools_patch.start()
         tool_registry.reset_cache()
 
-    # Restore original registry state
+    # Restore the original registry state.
     def tearDown(self):
         tool_registry.reset_cache()
         self.tools_patch.stop()
         self._tools_dir_context.cleanup()
         super().tearDown()
 
-    # Write temporary MCP server
+    # Write a temporary MCP server.
     def write_server(self, folder: str, body: str) -> None:
         server_dir = self.tools_dir / folder
         server_dir.mkdir(parents=True, exist_ok=True)
@@ -57,17 +93,23 @@ class ToolRegistryTestMixin:
         )
         tool_registry.reset_cache()
 
+# Model and adapter parsing tests.
+
+# Cover adapter-specific model list formats.
 class ModelNameExtractionTests(SimpleTestCase):
     """Cover adapter-specific model list formats."""
 
+    # Test extracts name from string.
     def test_extracts_name_from_string(self):
         self.assertEqual(_extract_model_name("llama3"), "llama3")
 
+    # Test extracts name from mapping.
     def test_extracts_name_from_mapping(self):
         self.assertEqual(_extract_model_name({"model": "qwen"}), "qwen")
         self.assertEqual(_extract_model_name({"name": "gpt-oss"}), "gpt-oss")
         self.assertEqual(_extract_model_name({"model_key": "mistral-nemo"}), "mistral-nemo")
 
+    # Test prefers id over friendly name.
     def test_prefers_id_over_friendly_name(self):
         self.assertEqual(
             _extract_model_name({"id": "openai/gpt-oss-20b", "name": "OpenAI: GPT OSS 20B"}),
@@ -75,9 +117,13 @@ class ModelNameExtractionTests(SimpleTestCase):
         )
 
 
+# View and runtime mapping tests.
+
+# Verify that the main page uses the configured engine and local server helpers.
 class MainViewTests(ToolRegistryTestMixin, TestCase):
     """Verify that the main page uses the configured engine and local server helpers."""
 
+    # Test main view includes runtime settings and local servers.
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
     def test_main_view_includes_runtime_settings_and_local_servers(self, _mock_engine):
         self.write_server(
@@ -108,9 +154,11 @@ class MainViewTests(ToolRegistryTestMixin, TestCase):
         )
 
 
+# Ensure Ollama-only thinking parameters are normalized before request dispatch.
 class OllamaOptionMappingTests(SimpleTestCase):
     """Ensure Ollama-only thinking parameters are normalized before request dispatch."""
 
+    # Test prepare chat kwargs maps think level into think.
     def test_prepare_chat_kwargs_maps_think_level_into_think(self):
         payload = _prepare_chat_kwargs(
             {
@@ -125,6 +173,7 @@ class OllamaOptionMappingTests(SimpleTestCase):
         self.assertEqual(payload["think"], "high")
         self.assertEqual(payload["options"]["temperature"], 0.7)
 
+    # Test prepare chat kwargs drops runtime options unsupported by current Ollama.
     def test_prepare_chat_kwargs_drops_runtime_options_unsupported_by_current_ollama(self):
         payload = _prepare_chat_kwargs(
             {
@@ -144,6 +193,7 @@ class OllamaOptionMappingTests(SimpleTestCase):
         self.assertNotIn("numa", payload["options"])
         self.assertNotIn("tfs_z", payload["options"])
 
+    # Test prepare chat kwargs ignores LM Studio only internal keys.
     def test_prepare_chat_kwargs_ignores_lms_only_internal_keys(self):
         payload = _prepare_chat_kwargs(
             {
@@ -164,6 +214,7 @@ class OllamaOptionMappingTests(SimpleTestCase):
         self.assertEqual(payload["think"], True)
         self.assertEqual(payload["options"]["temperature"], 0.7)
 
+    # Test prepare runtime passes requested engine to managed service.
     @patch("API.ollama._get_ollama_service_module")
     def test_prepare_runtime_passes_requested_engine_to_managed_service(self, mock_get_service):
         mock_service = Mock()
@@ -174,9 +225,11 @@ class OllamaOptionMappingTests(SimpleTestCase):
         mock_service.start_ollama.assert_called_once_with(engine="ollama-service")
 
 
+# Ensure generic runtime options are safely mapped for OpenAI-compatible APIs.
 class OpenAiOptionMappingTests(SimpleTestCase):
     """Ensure generic runtime options are safely mapped for OpenAI-compatible APIs."""
 
+    # Test maps supported options and keeps custom values in extra body.
     def test_maps_supported_options_and_keeps_custom_values_in_extra_body(self):
         payload = _build_openai_request_options(
             {
@@ -194,6 +247,7 @@ class OpenAiOptionMappingTests(SimpleTestCase):
         self.assertEqual(payload["extra_body"]["num_ctx"], 4096)
         self.assertEqual(payload["extra_body"]["top_k"], 40)
 
+    # Test OpenAI client uses placeholder API key when not configured.
     @patch("openai.OpenAI")
     @patch("API.openai.settings.get_engine_url", return_value="http://127.0.0.1:9000/v1")
     @patch("API.openai.settings.get_openai_api_key", return_value="")
@@ -211,9 +265,11 @@ class OpenAiOptionMappingTests(SimpleTestCase):
         self.assertEqual(mock_openai_client.call_args.kwargs["api_key"], "not-needed")
 
 
+# Cover extended OpenAI-compatible capability parsing and reasoning output.
 class OpenAiAdapterTests(SimpleTestCase):
     """Cover extended OpenAI-compatible capability parsing and reasoning output."""
 
+    # Test get model settings reads OpenAI capabilities and reasoning.
     @patch("API.openai._get_client")
     def test_get_model_settings_reads_openai_capabilities_and_reasoning(self, mock_get_client):
         client = Mock()
@@ -259,6 +315,7 @@ class OpenAiAdapterTests(SimpleTestCase):
         self.assertEqual(payload["context_length"], 65536)
         self.assertIn("tool_choice", payload["supported_parameters"])
 
+    # Test get model settings reads direct feature flags and scalar supported parameters.
     @patch("API.openai._get_client")
     def test_get_model_settings_reads_direct_feature_flags_and_scalar_supported_parameters(self, mock_get_client):
         client = Mock()
@@ -288,6 +345,7 @@ class OpenAiAdapterTests(SimpleTestCase):
         self.assertFalse(payload["supports_think_toggle"])
         self.assertIn("reasoning_effort", payload["supported_parameters"])
 
+    # Test generate stream parses reasoning and visible content.
     @patch("API.openai._get_client")
     def test_generate_stream_parses_reasoning_and_visible_content(self, mock_get_client):
         client = Mock()
@@ -309,6 +367,7 @@ class OpenAiAdapterTests(SimpleTestCase):
         self.assertEqual(chunks[0]["message"]["content"], "")
         self.assertEqual(chunks[1]["message"]["content"], "Final answer")
 
+    # Test generate stream does not duplicate plain content into thinking.
     @patch("API.openai._get_client")
     def test_generate_stream_does_not_duplicate_plain_content_into_thinking(self, mock_get_client):
         client = Mock()
@@ -329,6 +388,7 @@ class OpenAiAdapterTests(SimpleTestCase):
         self.assertEqual([chunk["message"]["content"] for chunk in chunks], ["Hello", " world"])
         self.assertTrue(all("thinking" not in chunk["message"] for chunk in chunks))
 
+    # Test get model settings reads companion metadata without generation.
     @patch("API.openai._get_companion_model_payload")
     @patch("API.openai._get_client")
     def test_get_model_settings_reads_companion_metadata_without_generation(
@@ -368,13 +428,262 @@ class OpenAiAdapterTests(SimpleTestCase):
         client.chat.completions.create.assert_not_called()
 
 
+# Cover Google GenAI filtering, capability learning, and thinking fallback.
+class GoogleGenAiAdapterTests(SimpleTestCase):
+    """Cover Google GenAI filtering, capability learning, and thinking fallback."""
+
+    # Set up the test fixture.
+    def setUp(self):
+        super().setUp()
+        google_genai_api._reset_runtime_caches()
+
+    # Tear down the test fixture.
+    def tearDown(self):
+        google_genai_api._reset_runtime_caches()
+        super().tearDown()
+
+    # Test get models filters out non generate content models.
+    @patch("API.google_genai._close_client")
+    @patch("API.google_genai._get_client")
+    def test_get_models_filters_out_non_generate_content_models(self, mock_get_client, _mock_close_client):
+        client = Mock()
+        payloads = [
+            {"name": "models/gemini-2.5-flash", "supported_actions": ["generateContent"]},
+            {"name": "models/veo-3.0-generate-001", "supported_actions": ["generateVideos"]},
+        ]
+        client.models.list.side_effect = lambda config=None: payloads
+        mock_get_client.return_value = client
+
+        models = get_google_genai_models()
+
+        self.assertEqual([entry["model"] for entry in models], ["gemini-2.5-flash"])
+        client.models.generate_content.assert_not_called()
+
+    # Test get models hides zero quota models for current key after runtime learning.
+    @patch("API.google_genai._close_client")
+    @patch("API.google_genai._get_client")
+    @patch("API.google_genai.settings.get_engine_url", return_value="https://generativelanguage.googleapis.com")
+    @patch("API.google_genai.settings.get_google_genai_api_key", return_value="key-a")
+    def test_get_models_hides_zero_quota_models_for_current_key_after_runtime_learning(
+        self,
+        _mock_api_key,
+        _mock_engine_url,
+        mock_get_client,
+        _mock_close_client,
+    ):
+        client = Mock()
+        payloads = [{"name": "models/gemini-3.1-pro", "supported_actions": ["generateContent"]}]
+        client.models.list.side_effect = lambda config=None: payloads
+        client.models.generate_content.side_effect = FakeGoogleError(
+            429,
+            "RESOURCE_EXHAUSTED",
+            "Quota exceeded for model gemini-3.1-pro. limit: 0.",
+            details=[{"violations": [{"quotaDimensions": {"model": "gemini-3.1-pro"}}]}],
+        )
+        mock_get_client.return_value = client
+
+        with self.assertRaises(FakeGoogleError):
+            list(
+                generate_google_genai(
+                    "gemini-3.1-pro",
+                    [{"role": "user", "content": "Hi"}],
+                    stream=False,
+                )
+            )
+
+        self.assertEqual(get_google_genai_models(), [])
+        self.assertEqual(client.models.generate_content.call_count, 1)
+
+    # Test get models keeps temporarily rate limited models visible.
+    @patch("API.google_genai._close_client")
+    @patch("API.google_genai._get_client")
+    @patch("API.google_genai.settings.get_engine_url", return_value="https://generativelanguage.googleapis.com")
+    @patch("API.google_genai.settings.get_google_genai_api_key", return_value="key-a")
+    def test_get_models_keeps_temporarily_rate_limited_models_visible(
+        self,
+        _mock_api_key,
+        _mock_engine_url,
+        mock_get_client,
+        _mock_close_client,
+    ):
+        client = Mock()
+        payloads = [{"name": "models/gemini-2.5-pro", "supported_actions": ["generateContent"]}]
+        client.models.list.side_effect = lambda config=None: payloads
+        client.models.generate_content.side_effect = FakeGoogleError(
+            429,
+            "RESOURCE_EXHAUSTED",
+            "Quota exceeded for model gemini-2.5-pro. limit: 8. Please retry later.",
+            details=[{"violations": [{"quotaDimensions": {"model": "gemini-2.5-pro"}}]}],
+        )
+        mock_get_client.return_value = client
+
+        with self.assertRaises(FakeGoogleError):
+            list(
+                generate_google_genai(
+                    "gemini-2.5-pro",
+                    [{"role": "user", "content": "Hi"}],
+                    stream=False,
+                )
+            )
+
+        models = get_google_genai_models()
+        cached_models = get_google_genai_models()
+
+        self.assertEqual([entry["model"] for entry in models], ["gemini-2.5-pro"])
+        self.assertEqual([entry["model"] for entry in cached_models], ["gemini-2.5-pro"])
+        self.assertEqual(client.models.generate_content.call_count, 1)
+
+    # Test get model settings returns toggle when thinking level is unsupported.
+    @patch("API.google_genai._close_client")
+    @patch("API.google_genai._get_client")
+    def test_get_model_settings_returns_toggle_when_thinking_level_is_unsupported(
+        self,
+        mock_get_client,
+        _mock_close_client,
+    ):
+        client = Mock()
+        client.models.get.return_value = {
+            "name": "models/gemini-2.5-flash",
+            "supported_actions": ["generateContent"],
+            "thinking": True,
+            "tools": True,
+            "output_token_limit": 65536,
+        }
+
+        # Simulate the Gemini generation endpoint.
+        def generate_content(*, model, contents, config):
+            thinking_config = config.get("thinking_config", {})
+            if thinking_config.get("thinking_level") is not None:
+                raise FakeGoogleError(
+                    400,
+                    "INVALID_ARGUMENT",
+                    "Thinking level is not supported for this model.",
+                )
+            return {"candidates": [{"content": {"parts": [{"text": "OK"}]}}]}
+
+        client.models.generate_content.side_effect = generate_content
+        mock_get_client.return_value = client
+
+        payload = get_google_genai_model_settings("gemini-2.5-flash")
+
+        self.assertTrue(payload["supports_thinking"])
+        self.assertTrue(payload["supports_think_toggle"])
+        self.assertFalse(payload["supports_think_level"])
+        self.assertEqual(payload["think_level_options"], [])
+        self.assertTrue(payload["defaults"]["include_thoughts"])
+        self.assertEqual(payload["defaults"]["max_output_tokens"], 8192)
+        self.assertEqual(payload["runtime_limits"]["output_token_limit"], 65536)
+        self.assertNotIn("thinking_level", payload["supported_parameters"])
+
+    # Test generate retries without thinking level when model rejects it.
+    @patch("API.google_genai._close_client")
+    @patch("API.google_genai._get_client")
+    def test_generate_retries_without_thinking_level_when_model_rejects_it(
+        self,
+        mock_get_client,
+        _mock_close_client,
+    ):
+        client = Mock()
+        captured_configs: list[dict[str, object]] = []
+
+        # Simulate a retry flow that rejects thinking_level once.
+        def generate_content(*, model, contents, config):
+            captured_configs.append(config)
+            thinking_config = dict(config.get("thinking_config", {}) or {})
+            if thinking_config.get("thinking_level") is not None:
+                raise FakeGoogleError(
+                    400,
+                    "INVALID_ARGUMENT",
+                    "Thinking level is not supported for this model.",
+                )
+            return {"candidates": [{"content": {"parts": [{"text": "Final answer"}]}}]}
+
+        client.models.generate_content.side_effect = generate_content
+        mock_get_client.return_value = client
+
+        chunks = list(
+            generate_google_genai(
+                "gemini-2.5-flash",
+                [{"role": "user", "content": "Hi"}],
+                stream=False,
+                think_level="high",
+            )
+        )
+
+        self.assertTrue(any(chunk.get("message", {}).get("content") == "Final answer" for chunk in chunks))
+        self.assertEqual(len(captured_configs), 2)
+        self.assertEqual(
+            captured_configs[0]["thinking_config"]["thinking_level"],
+            "HIGH",
+        )
+        self.assertNotIn("thinking_level", captured_configs[1]["thinking_config"])
+        cached_capabilities = google_genai_api._get_cached_model_capabilities("gemini-2.5-flash")
+        self.assertFalse(cached_capabilities["supports_think_level"])
+
+    # Test learned availability is scoped to API key.
+    @patch("API.google_genai._close_client")
+    @patch("API.google_genai._get_client")
+    @patch("API.google_genai.settings.get_engine_url", return_value="https://generativelanguage.googleapis.com")
+    def test_learned_availability_is_scoped_to_api_key(
+        self,
+        _mock_engine_url,
+        mock_get_client,
+        _mock_close_client,
+    ):
+        client_blocked = Mock()
+        client_allowed = Mock()
+        payloads = [{"name": "models/gemini-3.1-pro", "supported_actions": ["generateContent"]}]
+        client_blocked.models.list.side_effect = lambda config=None: payloads
+        client_allowed.models.list.side_effect = lambda config=None: payloads
+        client_blocked.models.generate_content.side_effect = FakeGoogleError(
+            429,
+            "RESOURCE_EXHAUSTED",
+            "Quota exceeded for model gemini-3.1-pro. limit: 0.",
+            details=[{"violations": [{"quotaDimensions": {"model": "gemini-3.1-pro"}}]}],
+        )
+        client_allowed.models.generate_content.return_value = {
+            "candidates": [{"content": {"parts": [{"text": "OK"}]}}]
+        }
+        key_state = {"value": "key-a"}
+
+        # Get API key.
+        def get_api_key():
+            return key_state["value"]
+
+        # Get client for key.
+        def get_client_for_key():
+            return client_blocked if key_state["value"] == "key-a" else client_allowed
+
+        mock_get_client.side_effect = get_client_for_key
+
+        with patch("API.google_genai.settings.get_google_genai_api_key", side_effect=get_api_key):
+            with self.assertRaises(FakeGoogleError):
+                list(
+                    generate_google_genai(
+                        "gemini-3.1-pro",
+                        [{"role": "user", "content": "Hi"}],
+                        stream=False,
+                    )
+                )
+            self.assertEqual(get_google_genai_models(), [])
+            key_state["value"] = "key-b"
+            models = get_google_genai_models()
+
+        self.assertEqual([entry["model"] for entry in models], ["gemini-3.1-pro"])
+        self.assertEqual(client_blocked.models.generate_content.call_count, 1)
+        client_allowed.models.generate_content.assert_not_called()
+
+
+# Cover generic engine registry behavior for optional capabilities.
 class EngineRegistryTests(SimpleTestCase):
     """Cover generic engine registry behavior for optional capabilities."""
 
+    # Test reload model raises for engines without reload support.
     def test_reload_model_raises_for_engines_without_reload_support(self):
         with self.assertRaises(NotImplementedError):
             llm_api.reload_model("openai", "gpt-oss")
 
+    # Test get models prepares runtime before listing.
     @patch("API.llm_api.prepare_runtime")
     @patch("API.llm_api._get_engine_module")
     def test_get_models_prepares_runtime_before_listing(self, mock_get_engine_module, mock_prepare_runtime):
@@ -385,6 +694,7 @@ class EngineRegistryTests(SimpleTestCase):
         self.assertEqual(llm_api.get_models("ollama-service"), ["llama3"])
         mock_prepare_runtime.assert_called_once_with("ollama-service")
 
+    # Test get model settings prepares runtime before loading metadata.
     @patch("API.llm_api.prepare_runtime")
     @patch("API.llm_api._get_engine_module")
     def test_get_model_settings_prepares_runtime_before_loading_metadata(
@@ -400,10 +710,13 @@ class EngineRegistryTests(SimpleTestCase):
         mock_prepare_runtime.assert_called_once_with("ollama-service")
 
 
+# Cover LM Studio metadata normalization and capability fallback.
 class LmsAdapterTests(SimpleTestCase):
     """Cover LM Studio metadata normalization and capability fallback."""
 
+    # Test serialize model info reads nested info wrapper.
     def test_serialize_model_info_reads_nested_info_wrapper(self):
+        # Define info.
         class Info:
             model_key = "qwen3"
             display_name = "Qwen 3"
@@ -411,6 +724,7 @@ class LmsAdapterTests(SimpleTestCase):
             trained_for_tool_use = True
             max_context_length = 65536
 
+        # Define wrapper.
         class Wrapper:
             info = Info()
 
@@ -421,6 +735,7 @@ class LmsAdapterTests(SimpleTestCase):
         self.assertTrue(payload["trainedForToolUse"])
         self.assertEqual(payload["maxContextLength"], 65536)
 
+    # Test get model settings uses loaded model info when direct lookup fails.
     @patch("API.lms._close_client")
     @patch("API.lms._get_client")
     def test_get_model_settings_uses_loaded_model_info_when_direct_lookup_fails(
@@ -428,12 +743,14 @@ class LmsAdapterTests(SimpleTestCase):
         mock_get_client,
         _mock_close_client,
     ):
+        # Define loaded info.
         class LoadedInfo:
             model_key = "qwen3"
             vision = True
             trained_for_tool_use = True
             max_context_length = 65536
 
+        # Define loaded model.
         class LoadedModel:
             info = LoadedInfo()
 
@@ -448,6 +765,7 @@ class LmsAdapterTests(SimpleTestCase):
         self.assertTrue(payload["supports_tool_calling"])
         self.assertEqual(payload["context_length"], 65536)
 
+    # Test prepare OpenAI prediction options keeps LM Studio custom values in extra body.
     def test_prepare_openai_prediction_options_keeps_lms_custom_values_in_extra_body(self):
         payload = _prepare_openai_prediction_options(
             {
@@ -466,15 +784,18 @@ class LmsAdapterTests(SimpleTestCase):
         self.assertIn("reasoningParsing", payload["extra_body"])
 
 
+# Keep user-visible LM output clean and actionable.
 class ViewFormattingTests(SimpleTestCase):
     """Keep user-visible LM output clean and actionable."""
 
+    # Test strip LLM control tokens removes service markers.
     def test_strip_llm_control_tokens_removes_service_markers(self):
         self.assertEqual(
             _strip_llm_control_tokens("<|start|>assistant<|channel|>final<|message|>Hello"),
             "Hello",
         )
 
+    # Test format runtime error hides LM Studio model load verbosity.
     def test_format_runtime_error_hides_lms_model_load_verbosity(self):
         message = _format_runtime_error(
             "lms",
@@ -487,13 +808,16 @@ class ViewFormattingTests(SimpleTestCase):
         self.assertNotIn("Model get/load error", message)
 
 
+# Exercise chat API basics without calling a real model backend.
 class ChatApiTests(ToolRegistryTestMixin, TestCase):
     """Exercise chat API basics without calling a real model backend."""
 
+    # Set up the test fixture.
     def setUp(self):
         super().setUp()
         self.client = Client()
 
+    # Test chat API creates new chat and streams response.
     @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
@@ -518,6 +842,7 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(Chat.objects.first().messages.count(), 2)
         mock_prepare_runtime.assert_called_once_with("ollama-service")
 
+    # Test chat API passes selected tool server to Ollama.
     @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
@@ -553,6 +878,7 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(mock_generate.call_args.kwargs["tool_context"]["engine"], "ollama-service")
         self.assertEqual(Chat.objects.first().active_tool_slug, '["time_suite"]')
 
+    # Test chat API rejects unknown tool server.
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
     def test_chat_api_rejects_unknown_tool_server(self, _mock_engine):
         response = self.client.post(
@@ -564,6 +890,7 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Unknown or unsupported tool server", response.json()["error"])
 
+    # Test chat API stream includes server and tool markers.
     @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
@@ -592,6 +919,7 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertIn('\"tool_id\": \"time_now\"', body)
         self.assertIn('Done', body)
 
+    # Test chat API persists generic attachments and builds LM Studio messages.
     @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")
     @patch("Apps.UI.views._get_active_engine", return_value="lms")
@@ -639,6 +967,7 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertIn("[Attached file: note.txt]", current_user_message["content"])
         self.assertIn("Hello from file", current_user_message["content"])
 
+    # Test chat API rejects tool server when LM Studio model lacks tool support.
     @patch("Apps.Data.lms_presets.lms_api.get_model_settings", return_value={"supports_tool_calling": False, "supports_files": True})
     @patch("Apps.UI.views.llm_api.get_model_settings", return_value={"supports_tool_calling": False, "supports_files": True})
     @patch("Apps.UI.views._get_active_engine", return_value="lms")
@@ -667,6 +996,7 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("does not support tool calling", response.json()["error"])
 
+    # Test chat API rejects tool server when OpenAI model lacks tool support.
     @patch("Apps.UI.views.llm_api.get_model_settings", return_value={"supports_tool_calling": False, "supports_files": True})
     @patch("Apps.UI.views._get_active_engine", return_value="openai")
     def test_chat_api_rejects_tool_server_when_openai_model_lacks_tool_support(
@@ -696,6 +1026,7 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertIn("does not support tool calling", response.json()["error"])
 
 
+    # Test chat API saves visible content and machine transcript.
     @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
@@ -728,6 +1059,7 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(assistant_message.llm_transcript[1]["role"], "tool")
         self.assertEqual(assistant_message.llm_transcript[1]["server_name"], "Time Suite")
 
+    # Test chat API uses stored transcript for follow up messages.
     @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
@@ -765,6 +1097,7 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(history_messages[2]["name"], "time_suite__time_now")
         self.assertEqual(history_messages[-1]["content"], "Follow up")
 
+    # Test chat API strips legacy UI markup when transcript is missing.
     @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
@@ -794,6 +1127,7 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         history_messages = mock_generate.call_args.kwargs["messages"]
         self.assertEqual(history_messages[1], {"role": "assistant", "content": "Visible answer"})
 
+    # Test chat API strips service control tokens from visible output.
     @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")
     @patch("Apps.UI.views._get_active_engine", return_value="lms")
@@ -819,15 +1153,18 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(assistant_message.content, "Hello")
 
 
+# Verify runtime settings and dynamic model selection endpoints.
 class RuntimeSettingsApiTests(TestCase):
     """Verify runtime settings and dynamic model selection endpoints."""
 
+    # Test get runtime settings payload.
     def test_get_runtime_settings_payload(self):
         response = self.client.get(reverse("runtime_settings_api"))
 
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("models", response.json())
 
+    # Test post runtime settings updates engine.
     @patch("Apps.UI.views.llm_api.handle_engine_transition")
     def test_post_runtime_settings_updates_engine(self, mock_transition):
         response = self.client.post(
@@ -845,6 +1182,7 @@ class RuntimeSettingsApiTests(TestCase):
         mock_transition.assert_called_once()
         self.assertEqual(mock_transition.call_args.args[1], "openai")
 
+    # Test models API returns engine specific models.
     @patch("Apps.UI.views._load_models_for_engine", return_value=["llama3"])
     def test_models_api_returns_engine_specific_models(self, mock_models):
         response = self.client.get(reverse("models_api"), {"engine": "lms"})
@@ -853,6 +1191,7 @@ class RuntimeSettingsApiTests(TestCase):
         self.assertEqual(response.json(), {"engine": "lms", "models": ["llama3"]})
         mock_models.assert_called_once_with("lms")
 
+    # Test runtime settings payload does not expose API key.
     @patch("Apps.UI.views.settings.get_supported_engines", return_value=[])
     @patch(
         "Apps.UI.views.settings.get_runtime_engine_settings",
@@ -877,9 +1216,11 @@ class RuntimeSettingsApiTests(TestCase):
         self.assertNotIn("openai_api_key", payload)
 
 
+# Cover local tool-server listing and chat persistence endpoints.
 class ToolApiTests(ToolRegistryTestMixin, TestCase):
     """Cover local tool-server listing and chat persistence endpoints."""
 
+    # Test tools API returns discovered servers.
     def test_tools_api_returns_discovered_servers(self):
         self.write_server(
             'time_suite',
@@ -905,6 +1246,7 @@ class ToolApiTests(ToolRegistryTestMixin, TestCase):
             }],
         )
 
+    # Test load chat API returns active tool server id.
     def test_load_chat_api_returns_active_tool_server_id(self):
         chat = Chat.objects.create(title="Chat", active_tool_slug="time_suite")
         Message.objects.create(
@@ -928,9 +1270,11 @@ class ToolApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(payload["messages"][0]["activity_segments"][1]["type"], "tool")
 
 
+# Cover Ollama preset API endpoints and model-info integration.
 class OllamaPresetApiTests(ToolRegistryTestMixin, TestCase):
     """Cover Ollama preset API endpoints and model-info integration."""
 
+    # Test model info includes active Ollama preset defaults and servers.
     @patch("Apps.UI.views.llm_api.get_model_settings")
     def test_model_info_includes_active_ollama_preset_defaults_and_servers(self, mock_get_model_settings):
         self.write_server(
@@ -985,6 +1329,7 @@ class OllamaPresetApiTests(ToolRegistryTestMixin, TestCase):
         self.assertNotIn("mirostat", payload["defaults"])
         self.assertNotIn("numa", payload["defaults"])
 
+    # Test sync endpoint clones default preset on first change.
     def test_sync_endpoint_clones_default_preset_on_first_change(self):
         response = self.client.post(
             reverse("sync_ollama_preset_api"),
@@ -997,6 +1342,7 @@ class OllamaPresetApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(len(payload["presets"]), 2)
         self.assertEqual(OllamaPreset.objects.filter(model_name="llama3").count(), 2)
 
+    # Test create rename delete endpoints manage custom preset.
     def test_create_rename_delete_endpoints_manage_custom_preset(self):
         created = self.client.post(
             reverse("create_ollama_preset_api"),
@@ -1022,6 +1368,7 @@ class OllamaPresetApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(deleted.status_code, 200)
         self.assertEqual(OllamaPreset.objects.filter(model_name="llama3").count(), 1)
 
+    # Test duplicate preset name returns validation error.
     def test_duplicate_preset_name_returns_validation_error(self):
         self.client.post(
             reverse("create_ollama_preset_api"),
@@ -1038,9 +1385,11 @@ class OllamaPresetApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(duplicate.status_code, 400)
         self.assertIn("already exists", duplicate.json()["error"])
 
+# Cover LM Studio preset API endpoints and model-info integration.
 class LmsPresetApiTests(TestCase):
     """Cover LM Studio preset API endpoints and model-info integration."""
 
+    # Test model info includes active LM Studio preset defaults.
     @patch("Apps.UI.views.llm_api.get_model_settings")
     @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
     def test_model_info_includes_active_lms_preset_defaults(self, mock_preset_settings, mock_model_settings):
@@ -1089,6 +1438,7 @@ class LmsPresetApiTests(TestCase):
         self.assertEqual(payload["lms_presets"]["active_preset_id"], str(custom_preset.id))
         self.assertEqual(default_preset.name, "Default")
 
+    # Test sync endpoint clones default LM Studio preset on first change.
     @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
     def test_sync_endpoint_clones_default_lms_preset_on_first_change(self, mock_get_model_settings):
         mock_get_model_settings.return_value = {

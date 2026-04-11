@@ -19,10 +19,14 @@ ENGINE_MODULES = {
     "lm-studio": "API.lms",
     "openai": "API.openai",
     "openai-api": "API.openai",
+    "google-genai": "API.google_genai",
+    "google_genai": "API.google_genai",
+    "google": "API.google_genai",
+    "gemini": "API.google_genai",
 }
 
 
-# Load adapter module
+# Resolve the engine adapter module.
 def _get_engine_module(engine: str | None) -> ModuleType:
     """Load the adapter module for the selected LLM engine."""
 
@@ -39,7 +43,7 @@ def _get_engine_module(engine: str | None) -> ModuleType:
         raise ImportError(f"Failed to load engine module {module_name}: {exc}") from exc
 
 
-# List engine models
+# List models exposed by one engine.
 def get_models(engine: str | None) -> Any:
     """Return the list of models exposed by the selected engine."""
 
@@ -50,7 +54,7 @@ def get_models(engine: str | None) -> Any:
 
     raise NotImplementedError(f"Engine {engine} does not implement get_models")
 
-# Download engine model
+# Download a model through one engine.
 def download_model(engine: str | None, model_name: str, **kwargs: Any) -> Any:
     """Download or pull a model through the selected engine adapter."""
 
@@ -61,7 +65,7 @@ def download_model(engine: str | None, model_name: str, **kwargs: Any) -> Any:
 
     raise NotImplementedError(f"Engine {engine} does not implement download_model")
 
-# Generate engine response
+# Generate a response through one engine.
 def generate(engine: str | None, model_name: str, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
     """Generate a chat response through the selected engine adapter."""
 
@@ -72,6 +76,7 @@ def generate(engine: str | None, model_name: str, messages: list[dict[str, Any]]
     raise NotImplementedError(f"Engine {engine} does not implement generate")
 
 
+# Abort active generation for one engine or all loaded engines.
 def abort_generation(engine: str | None = None) -> None:
     """Signal the active generation for one engine or every loaded adapter."""
 
@@ -93,7 +98,7 @@ def abort_generation(engine: str | None = None) -> None:
     if callable(abort):
         abort()
 
-# Read model settings
+# Read model metadata from one engine.
 def get_model_settings(engine: str | None, model_name: str) -> Any:
     """Return model metadata exposed by the selected engine."""
 
@@ -104,7 +109,7 @@ def get_model_settings(engine: str | None, model_name: str) -> Any:
 
     raise NotImplementedError(f"Engine {engine} does not implement get_model_settings")
 
-# Reload selected model
+# Reload one model when the adapter supports it.
 def reload_model(engine: str | None, model_name: str) -> None:
     """Reload the selected model when the engine supports explicit reloads."""
 
@@ -117,24 +122,27 @@ def reload_model(engine: str | None, model_name: str) -> None:
     raise NotImplementedError(f"Engine {engine} does not implement reload_model")
 
 
-# Start engine runtime
+# Prepare one engine runtime before use.
 def prepare_runtime(engine: str | None) -> None:
     """Prepare the selected engine runtime before it is used."""
 
     module = _get_engine_module(engine)
     prepare = getattr(module, "prepare_runtime", None)
-    if callable(prepare):
-        try:
-            parameter_count = len(inspect.signature(prepare).parameters)
-        except (TypeError, ValueError):
-            parameter_count = 0
+    if not callable(prepare):
+        return
 
-        if parameter_count >= 1:
-            prepare(engine)
-        else:
-            prepare()
+    try:
+        parameter_count = len(inspect.signature(prepare).parameters)
+    except (TypeError, ValueError):
+        parameter_count = 0
 
-# Stop engine runtime
+    if parameter_count >= 1:
+        prepare(engine)
+        return
+
+    prepare()
+
+# Clean up one engine runtime.
 def cleanup_runtime(engine: str | None) -> None:
     """Release runtime resources for the selected engine."""
 
@@ -143,7 +151,7 @@ def cleanup_runtime(engine: str | None) -> None:
     if callable(cleanup):
         cleanup()
 
-# Switch active runtime
+# Switch runtime ownership between engines.
 def handle_engine_transition(previous_engine: str | None, next_engine: str | None) -> None:
     """Switch runtime resources when the active engine changes."""
 

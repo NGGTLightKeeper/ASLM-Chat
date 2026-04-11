@@ -73,12 +73,14 @@ LLM_CONTROL_TOKEN_PATTERNS = (
 )
 
 
+# Emit one concise runtime event for the ASLM console.
 def _print_runtime_event(message: str) -> None:
     """Emit one concise runtime event for the ASLM console."""
 
     print(f"[ASLM-Chat] {message}", flush=True)
 
 
+# Return whether the exception is an expected runtime/connectivity failure.
 def _is_expected_runtime_error(exc: Exception) -> bool:
     """Return whether the exception is an expected runtime/connectivity failure."""
 
@@ -99,6 +101,7 @@ def _is_expected_runtime_error(exc: Exception) -> bool:
     return any(marker in message for marker in expected_markers)
 
 
+# Return a user-facing runtime error string without noisy transport details.
 def _format_runtime_error(engine: str, exc: Exception) -> str:
     """Return a user-facing runtime error string without noisy transport details."""
 
@@ -114,8 +117,15 @@ def _format_runtime_error(engine: str, exc: Exception) -> str:
     if engine == "openai" and _is_expected_runtime_error(exc):
         return "Failed to connect to the configured OpenAI-compatible endpoint."
 
+    if engine == "google-genai" and _is_expected_runtime_error(exc):
+        return "Failed to connect to the configured Google GenAI endpoint."
+
     if engine == "lms" and _is_expected_runtime_error(exc):
         return "Failed to connect to LM Studio."
+
+    if engine == "google-genai":
+        if any(marker in normalized_message for marker in ("api key", "permission denied", "unauthenticated", "unauthorized")):
+            return "Google GenAI authentication failed. Check the configured API key."
 
     if engine == "lms":
         if "v cache quantization requires flash attention" in normalized_message:
@@ -129,6 +139,7 @@ def _format_runtime_error(engine: str, exc: Exception) -> str:
     return message
 
 
+# Remove assistant-control tokens that should never be shown to the user.
 def _strip_llm_control_tokens(content: str) -> str:
     """Remove assistant-control tokens that should never be shown to the user."""
 
@@ -138,6 +149,7 @@ def _strip_llm_control_tokens(content: str) -> str:
     return cleaned
 
 
+# Return a short, readable summary of option keys.
 def _summarize_option_keys(options: dict[str, Any] | None, max_keys: int = 6) -> str:
     """Return a short, readable summary of option keys."""
 
@@ -150,6 +162,7 @@ def _summarize_option_keys(options: dict[str, Any] | None, max_keys: int = 6) ->
     return f"{', '.join(option_keys[:max_keys])}, +{len(option_keys) - max_keys} more"
 
 
+# Count image attachments present in the current outbound request.
 def _count_request_images(messages: list[dict[str, Any]]) -> int:
     """Count image attachments present in the current outbound request."""
 
@@ -163,6 +176,7 @@ def _count_request_images(messages: list[dict[str, Any]]) -> int:
     return image_count
 
 
+# Return decoded bytes for one base64 payload or data URL.
 def _decode_base64_payload(raw_value: Any) -> bytes:
     """Return decoded bytes for one base64 payload or data URL."""
 
@@ -182,6 +196,7 @@ def _decode_base64_payload(raw_value: Any) -> bytes:
         return base64.b64decode(payload)
 
 
+# Split a data URL into MIME type and base64 payload.
 def _parse_data_url(raw_value: Any) -> tuple[str, str]:
     """Split a data URL into MIME type and base64 payload."""
 
@@ -196,6 +211,7 @@ def _parse_data_url(raw_value: Any) -> tuple[str, str]:
     return mime_type, encoded
 
 
+# Return the normalized attachment kind for the payload.
 def _guess_attachment_kind(mime_type: str, name: str = "") -> str:
     """Return the normalized attachment kind for the payload."""
 
@@ -210,6 +226,7 @@ def _guess_attachment_kind(mime_type: str, name: str = "") -> str:
     return MessageAttachmentKind.FILE
 
 
+# Normalize one incoming attachment payload into the storage shape.
 def _normalize_attachment_payload(raw_attachment: Any, order: int) -> dict[str, Any] | None:
     """Normalize one incoming attachment payload into the storage shape."""
 
@@ -271,6 +288,7 @@ def _normalize_attachment_payload(raw_attachment: Any, order: int) -> dict[str, 
     }
 
 
+# Return a normalized list of request attachments.
 def _normalize_request_attachments(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Return a normalized list of request attachments."""
 
@@ -284,6 +302,7 @@ def _normalize_request_attachments(data: dict[str, Any]) -> list[dict[str, Any]]
     return normalized
 
 
+# Convert a persisted attachment-like object into the frontend payload.
 def _serialize_attachment_record(attachment: Any) -> dict[str, Any]:
     """Convert a persisted attachment-like object into the frontend payload."""
 
@@ -311,6 +330,7 @@ def _serialize_attachment_record(attachment: Any) -> dict[str, Any]:
     return {}
 
 
+# Return all persisted attachments for a message in a shared shape.
 def _get_message_attachments(message: Message) -> list[dict[str, Any]]:
     """Return all persisted attachments for a message in a shared shape."""
 
@@ -321,12 +341,14 @@ def _get_message_attachments(message: Message) -> list[dict[str, Any]]:
     return combined
 
 
+# Decode one serialized attachment payload into bytes.
 def _attachment_data_to_bytes(attachment: dict[str, Any]) -> bytes:
     """Decode one serialized attachment payload into bytes."""
 
     return _decode_base64_payload(attachment.get("data_url") or attachment.get("data"))
 
 
+# Return whether the attachment should be decoded as text.
 def _is_text_attachment(mime_type: str, name: str) -> bool:
     """Return whether the attachment should be decoded as text."""
 
@@ -345,6 +367,7 @@ def _is_text_attachment(mime_type: str, name: str) -> bool:
     return Path(name or "").suffix.lower() in TEXT_ATTACHMENT_EXTENSIONS
 
 
+# Trim attachment text so prompts stay bounded.
 def _truncate_attachment_text(text: str, limit: int = ATTACHMENT_TEXT_CHAR_LIMIT) -> str:
     """Trim attachment text so prompts stay bounded."""
 
@@ -354,6 +377,7 @@ def _truncate_attachment_text(text: str, limit: int = ATTACHMENT_TEXT_CHAR_LIMIT
     return f"{normalized[:limit].rstrip()}\n...[truncated]"
 
 
+# Extract prompt-friendly text from a file attachment when possible.
 def _extract_attachment_text(attachment: dict[str, Any]) -> str:
     """Extract prompt-friendly text from a file attachment when possible."""
 
@@ -384,6 +408,7 @@ def _extract_attachment_text(attachment: dict[str, Any]) -> str:
     return ""
 
 
+# Serialize one non-image attachment into universal text context.
 def _build_file_attachment_prompt_block(attachment: dict[str, Any]) -> str:
     """Serialize one non-image attachment into universal text context."""
 
@@ -410,6 +435,7 @@ def _build_file_attachment_prompt_block(attachment: dict[str, Any]) -> str:
     )
 
 
+# Attach images and file context to one outbound LLM message.
 def _apply_attachments_to_llm_entry(entry: dict[str, Any], attachments: list[dict[str, Any]]) -> dict[str, Any]:
     """Attach images and file context to one outbound LLM message."""
 
@@ -544,6 +570,10 @@ def _build_runtime_settings_payload() -> dict[str, Any]:
     active_engine = _get_active_engine(runtime_settings.get("llm-engine"))
     runtime_settings["llm-engine"] = active_engine
     runtime_settings["active_url"] = runtime_settings["engine_urls"].get(active_engine, "")
+    engine_api_keys = runtime_settings.get("engine_api_keys", {})
+    runtime_settings["active_has_api_key"] = bool(
+        engine_api_keys.get(active_engine, runtime_settings.get("active_has_api_key", False))
+    )
     runtime_settings["engine_options"] = settings.get_supported_engines()
     return runtime_settings
 
@@ -607,6 +637,9 @@ def _normalize_transcript_entries(raw_entries: Any) -> list[dict[str, Any]]:
             thinking = str(raw_entry.get("thinking", "") or "")
             if thinking:
                 entry["thinking"] = thinking
+            google_parts = raw_entry.get("google_parts")
+            if isinstance(google_parts, list):
+                entry["google_parts"] = google_parts
             tool_calls = raw_entry.get("tool_calls")
             if isinstance(tool_calls, list):
                 entry["tool_calls"] = tool_calls
@@ -642,6 +675,8 @@ def _build_llm_history_entries(message: Message) -> list[dict[str, Any]]:
             if entry["role"] == "assistant":
                 if entry.get("thinking"):
                     payload["thinking"] = entry["thinking"]
+                if isinstance(entry.get("google_parts"), list):
+                    payload["google_parts"] = entry["google_parts"]
                 if isinstance(entry.get("tool_calls"), list):
                     payload["tool_calls"] = entry["tool_calls"]
             else:
@@ -941,6 +976,7 @@ def _build_fallback_model_info_payload(engine: str, model_name: str) -> dict[str
     return payload
 
 
+# Load adapter metadata and normalize it for the frontend.
 def _build_model_info_payload(
     engine: str,
     model_name: str,
@@ -1011,6 +1047,7 @@ def _resolve_tool_servers(engine: str, model_name: str, tool_server_ids: list[st
     return resolved
 
 
+# Raise when tools are requested for a model that should not call tools.
 def _validate_tool_server_support(
     engine: str,
     model_name: str,
@@ -1019,7 +1056,7 @@ def _validate_tool_server_support(
 ) -> None:
     """Raise when tools are requested for a model that should not call tools."""
 
-    if not tool_server_ids or engine not in {"lms", "openai"}:
+    if not tool_server_ids or engine not in {"lms", "openai", "google-genai"}:
         return
 
     payload = payload or _build_model_info_payload(engine, model_name, allow_fallback=True)
@@ -1149,9 +1186,9 @@ def _build_generate_kwargs(
         generate_kwargs["think"] = think_value
     if think_level_value is not None:
         generate_kwargs["think_level"] = think_level_value
-    if engine in {"lms", "openai"} and think_param_name:
+    if engine in {"lms", "openai", "google-genai"} and think_param_name:
         generate_kwargs["think_param_name"] = think_param_name
-    if engine in {"lms", "openai"} and think_level_param_name:
+    if engine in {"lms", "openai", "google-genai"} and think_level_param_name:
         generate_kwargs["think_level_param_name"] = think_level_param_name
     if clean_options:
         generate_kwargs["options"] = clean_options
@@ -1292,11 +1329,13 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
         )
 
 
-# Render main page
+# Chat page views.
+
+# Render the main chat page.
 class MainView(TemplateView):
     template_name = "main/main.html"
 
-    # Build main page context
+    # Build the main page context.
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
         """Return template context for the main chat page."""
 
@@ -1305,7 +1344,9 @@ class MainView(TemplateView):
         return context
 
 
-# Handle chat request
+# Chat session APIs.
+
+# Handle a chat generation request.
 def chat_api(request):
     """Handle chat generation requests and stream assistant output."""
 
@@ -1333,7 +1374,7 @@ def chat_api(request):
         if not user_message and not attachments:
             return JsonResponse({"error": "Missing message or attachments"}, status=400)
 
-        if engine in {"lms", "openai"}:
+        if engine in {"lms", "openai", "google-genai"}:
             model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
         else:
             model_info_payload = _build_fallback_model_info_payload(engine, model_name)
@@ -1426,7 +1467,9 @@ def chat_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Abort active generation
+# Message and chat management APIs.
+
+# Abort active generation.
 def abort_generation_api(request):
     """Immediately signal the active LLM generation to stop."""
 
@@ -1441,7 +1484,7 @@ def abort_generation_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Delete a specific message by ID
+# Delete a specific message by ID.
 def delete_message_api(request, message_id):
     """Delete a single message by its primary key."""
 
@@ -1459,7 +1502,7 @@ def delete_message_api(request, message_id):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Load saved chat
+# Delete the last assistant reply for regeneration.
 def delete_last_assistant_api(request, chat_id):
     """Delete the last assistant message and return the preceding user message for regeneration."""
 
@@ -1499,6 +1542,7 @@ def delete_last_assistant_api(request, chat_id):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Rename a chat thread.
 def rename_chat_api(request, chat_id):
     """Rename a chat thread."""
 
@@ -1522,6 +1566,7 @@ def rename_chat_api(request, chat_id):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Delete a chat thread and all its messages.
 def delete_chat_api(request, chat_id):
     """Delete a chat thread and all its messages."""
 
@@ -1539,6 +1584,7 @@ def delete_chat_api(request, chat_id):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Load persisted messages for a chat thread.
 def load_chat_api(request, chat_id):
     """Load persisted messages for a chat thread."""
 
@@ -1564,7 +1610,9 @@ def load_chat_api(request, chat_id):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Load model info
+# Model and tool discovery APIs.
+
+# Return model metadata for the selected engine.
 def get_model_info_api(request):
     """Return model capabilities and default parameters for the selected engine."""
 
@@ -1603,7 +1651,7 @@ def get_model_info_api(request):
         return JsonResponse({"error": formatted_error}, status=500)
 
 
-# Load model list
+# Return the model list for the selected engine.
 def get_models_api(request):
     """Return model names for the requested engine."""
 
@@ -1619,7 +1667,7 @@ def get_models_api(request):
     return JsonResponse({"engine": engine, "models": models})
 
 
-# Load tool servers
+# Return discovered tool servers.
 def get_tools_api(request):
     """Return locally discovered MCP-style tool servers for the requested engine/model."""
 
@@ -1632,7 +1680,9 @@ def get_tools_api(request):
     return JsonResponse({"tool_servers": servers, "servers": servers, "tools": servers})
 
 
-# Load Ollama presets
+# Preset APIs.
+
+# Return Ollama preset metadata.
 def get_ollama_presets_api(request):
     """Return preset metadata for the selected Ollama model."""
 
@@ -1650,6 +1700,7 @@ def get_ollama_presets_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Return preset metadata for the selected LM Studio model.
 def get_lms_presets_api(request):
     """Return preset metadata for the selected LM Studio model."""
 
@@ -1667,7 +1718,7 @@ def get_lms_presets_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Sync active preset
+# Sync the active Ollama preset.
 def sync_ollama_preset_api(request):
     """Persist UI changes to the active Ollama preset."""
 
@@ -1688,6 +1739,7 @@ def sync_ollama_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Persist UI changes to the active LM Studio preset.
 def sync_lms_preset_api(request):
     """Persist UI changes to the active LM Studio preset."""
 
@@ -1708,7 +1760,7 @@ def sync_lms_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Select active preset
+# Activate an Ollama preset.
 def select_ollama_preset_api(request):
     """Set the active preset for an Ollama model."""
 
@@ -1731,6 +1783,7 @@ def select_ollama_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Set the active preset for an LM Studio model.
 def select_lms_preset_api(request):
     """Set the active preset for an LM Studio model."""
 
@@ -1753,7 +1806,7 @@ def select_lms_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Create preset
+# Create an Ollama preset.
 def create_ollama_preset_api(request):
     """Create a new Ollama preset for the selected model."""
 
@@ -1782,6 +1835,7 @@ def create_ollama_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Create a new LM Studio preset for the selected model.
 def create_lms_preset_api(request):
     """Create a new LM Studio preset for the selected model."""
 
@@ -1810,7 +1864,7 @@ def create_lms_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Rename preset
+# Rename an Ollama preset.
 def rename_ollama_preset_api(request):
     """Rename an existing custom Ollama preset."""
 
@@ -1834,6 +1888,7 @@ def rename_ollama_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Rename an existing custom LM Studio preset.
 def rename_lms_preset_api(request):
     """Rename an existing custom LM Studio preset."""
 
@@ -1857,7 +1912,7 @@ def rename_lms_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Delete preset
+# Delete an Ollama preset.
 def delete_ollama_preset_api(request):
     """Delete an existing custom preset and fall back to the default one."""
 
@@ -1880,6 +1935,7 @@ def delete_ollama_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Delete an existing custom preset and fall back to the default one.
 def delete_lms_preset_api(request):
     """Delete an existing custom preset and fall back to the default one."""
 
@@ -1902,7 +1958,9 @@ def delete_lms_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Read or update runtime settings
+# Runtime settings API.
+
+# Read or update runtime settings.
 def runtime_settings_api(request):
     """Read or update runtime engine settings used by the chat UI."""
 
@@ -1917,7 +1975,14 @@ def runtime_settings_api(request):
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
 
-    allowed_keys = {"llm-engine", "lms_url", "openai_url", "openai_api_key"}
+    allowed_keys = {
+        "llm-engine",
+        "lms_url",
+        "openai_url",
+        "openai_api_key",
+        "google_genai_url",
+        "google_genai_api_key",
+    }
 
     previous_engine = settings.get_llm_engine()
     next_engine = previous_engine
@@ -1941,11 +2006,13 @@ def runtime_settings_api(request):
     return JsonResponse(_build_runtime_settings_payload())
 
 
-# Render profile page
+# Additional page views.
+
+# Render the profile page.
 class ProfileView(TemplateView):
     template_name = "main/profile.html"
 
-    # Build profile page context
+    # Build the profile page context.
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
         """Return template context for the profile page."""
 
@@ -1954,11 +2021,11 @@ class ProfileView(TemplateView):
         return context
 
 
-# Render preloaded chat page
+# Render the preloaded chat page.
 class ChatView(TemplateView):
     template_name = "main/main.html"
 
-    # Build chat page context
+    # Build the preloaded chat page context.
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
         """Return template context for a preloaded chat page."""
 

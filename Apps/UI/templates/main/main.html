@@ -136,7 +136,7 @@
                         <label class="setting-switch-row" for="engineApiKeyEnabled">
                             <span class="setting-switch-text">Use saved key</span>
                             <span class="setting-switch-control">
-                                <input class="setting-switch-input" id="engineApiKeyEnabled" type="checkbox" {% if runtime_settings.has_openai_api_key %}checked{% endif %}>
+                                <input class="setting-switch-input" id="engineApiKeyEnabled" type="checkbox" {% if runtime_settings.active_has_api_key %}checked{% endif %}>
                                 <span class="setting-switch-slider" aria-hidden="true"></span>
                             </span>
                         </label>
@@ -275,6 +275,6 @@
 {{ runtime_settings|json_script:"runtimeSettingsData" }}
 {{ engine_options|json_script:"engineOptionsData" }}
 {{ available_tool_servers|json_script:"availableToolServersData" }}
-<script src="{% static 'js/main/main.js' %}?v=20260410a"></script>
+<script src="{% static 'js/main/main.js' %}?v=20260410b"></script>
 {% endblock %}
 

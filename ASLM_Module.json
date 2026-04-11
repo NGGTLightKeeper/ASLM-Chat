@@ -3,7 +3,7 @@
     "id": "aslm-chat",
     "name": "ASLM Chat",
     "description": "ASLM Chat Module",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "author": "NGGT-ASLM",
     "type": "ui",
     "hasPage": true,
@@ -49,6 +49,7 @@
                     "nltk==3.9.2",
                     "nodriver==0.35",
                     "numpy==2.0.0",
+                    "google-genai==1.72.0",
                     "openai==2.16.0",
                     "ollama==0.6.1",
                     "pillow==10.4.0",
@@ -150,7 +151,8 @@
             "allowedValues": [
                 "ollama-service",
                 "lms",
-                "openai"
+                "openai",
+                "google-genai"
             ],
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key llm-engine",
@@ -258,6 +260,36 @@
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key openai_api_key",
             "setExec": "main.py set_setting --key openai_api_key --value {value}"
+        },
+        {
+            "key": "google-genai",
+            "name": "Google GenAI",
+            "description": "Whether Google GenAI integration is available",
+            "type": "engine",
+            "default": false,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key google-genai",
+            "setExec": "main.py set_setting --key google-genai --value {value}"
+        },
+        {
+            "key": "google_genai_url",
+            "name": "Google GenAI Address",
+            "description": "Base URL of the Google GenAI Gemini API endpoint",
+            "type": "string",
+            "default": "generativelanguage.googleapis.com",
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key google_genai_url",
+            "setExec": "main.py set_setting --key google_genai_url --value {value}"
+        },
+        {
+            "key": "google_genai_api_key",
+            "name": "Google GenAI API Key",
+            "description": "API key for Google GenAI Gemini API requests",
+            "type": "password",
+            "default": "",
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key google_genai_api_key",
+            "setExec": "main.py set_setting --key google_genai_api_key --value {value}"
         },
         {
             "key": "yacy",
