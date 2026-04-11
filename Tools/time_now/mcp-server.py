@@ -47,7 +47,7 @@ TOOLS = [
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
     """Expose this tool server for every ASLM chat engine with tool calling."""
 
-    return engine in ("ollama-service", "lms", "openai")
+    return engine in ("ollama-service", "lms", "openai", "google-genai")
 
 
 # Read optional label
