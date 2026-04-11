@@ -334,5 +334,5 @@ async def download_file(
         "file": rel_path,
         "size_bytes": bytes_written,
         "content_type": content_type,
-        "message": f"File saved to task/{rel_path}",
+        "message": f"File saved to _sandbox/{rel_path}",
     }

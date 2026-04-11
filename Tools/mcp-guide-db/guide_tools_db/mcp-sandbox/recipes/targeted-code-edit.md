@@ -95,8 +95,8 @@ Summarize: what was changed, why, and verification result.
 ## Example trace
 
 ```text
-bash("cat task/utils.py")
+bash("cat utils.py")
 edit("utils.py", "def old_name(x):", "def new_name(x):")
-bash("python task/utils.py")
+bash("python utils.py")
 -- "Renamed function, verified import still works."
 ```

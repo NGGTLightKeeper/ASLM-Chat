@@ -355,7 +355,8 @@ def register_tools(server) -> None:
                 name="get_recipe",
                 description=(
                     "Retrieve a specific workflow recipe by name or search query. "
-                    "Returns the full recipe with goal, workflow steps, stop conditions, and anti-patterns."
+                    "Returns the full recipe with goal, workflow steps, stop conditions, and anti-patterns. "
+                    "For matching tasks, treat the returned recipe as a binding procedure, not a suggestion."
                 ),
                 inputSchema={
                     "type": "object",

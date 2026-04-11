@@ -1,4 +1,6 @@
-/* Markdown and reasoning styles */
+/* Copyright NGGT.LightKeeper. All Rights Reserved. */
+
+/* Markdown content */
 .markdown-body {
   font-size: var(--font-size-body-2);
   line-height: 1.6;
@@ -121,6 +123,7 @@
   background: var(--surface-row-alt);
 }
 
+/* Thought timeline */
 .msg-thoughts-wrapper {
   margin-bottom: 12px;
 }

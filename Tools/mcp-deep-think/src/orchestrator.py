@@ -80,19 +80,21 @@ class DeepThinkEngine:
 
 
     # Agent lifecycle
-    def _get_agent(self, agent_id: str) -> ResearchAgent:
+    def _get_agent(self, agent_id: str, blackboard=None) -> ResearchAgent:
         """Return a cached agent instance for the requested definition."""
 
-        if agent_id not in self._agents_cache:
+        cache_key = (agent_id, id(blackboard) if blackboard else None)
+        if cache_key not in self._agents_cache:
             definition = AGENTS[agent_id]
-            self._agents_cache[agent_id] = ResearchAgent(
+            self._agents_cache[cache_key] = ResearchAgent(
                 definition=definition,
                 llm=self.llm,
                 search=self.search,
                 sandbox=self.sandbox,
                 max_reflect_without_tool=settings.limits.max_reflect_without_tool,
+                blackboard=blackboard,
             )
-        return self._agents_cache[agent_id]
+        return self._agents_cache[cache_key]
 
     async def _run_one_agent(
         self,
@@ -100,6 +102,7 @@ class DeepThinkEngine:
         query: str,
         profile_name: str,
         task_id: str,
+        blackboard=None,
     ) -> AgentReport:
         """Run one agent with profile-specific runtime limits."""
 
@@ -131,7 +134,7 @@ class DeepThinkEngine:
             "per_agent_timeout_seconds",
             settings.limits.per_agent_timeout_seconds,
         )
-        agent = self._get_agent(agent_id)
+        agent = self._get_agent(agent_id, blackboard=blackboard)
         try:
             return await asyncio.wait_for(agent.run(context), timeout=timeout_seconds)
         except asyncio.TimeoutError:
@@ -163,8 +166,18 @@ class DeepThinkEngine:
     ) -> list[AgentReport]:
         """Run all selected agents concurrently and append a trace event."""
 
+        # Create a shared blackboard if enabled in settings.
+        blackboard = None
+        if settings.blackboard.enabled:
+            from .blackboard import SharedBlackboard
+
+            blackboard = SharedBlackboard(
+                max_signals_per_read=settings.blackboard.max_signals_per_read,
+                signal_max_chars=settings.blackboard.signal_max_chars,
+            )
+
         tasks = [
-            self._run_one_agent(agent_id, query, profile_name, task_id)
+            self._run_one_agent(agent_id, query, profile_name, task_id, blackboard=blackboard)
             for agent_id in selection.selected_agent_ids
         ]
         reports = await asyncio.gather(*tasks)

@@ -5,6 +5,7 @@ import difflib
 import fnmatch
 import mimetypes
 import os
+import posixpath
 import re
 import shutil
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 
 from sandbox.config import (
     ALLOWED_IMPORT_ROOTS,
+    CONTAINER_WORKSPACE,
     DEFAULT_TASK_DIR,
     HOST_WORKSPACE,
     IGNORED_DIR_NAMES,
@@ -27,6 +29,22 @@ CONTEXT_LINES = 3
 TEXT_SAMPLE_BYTES = 8192
 IMAGE_MIME_PREFIX = "image/"
 TEXT_MIME_PREFIX = "text/"
+LEGACY_MODEL_ROOT_ALIASES = ("task",)
+
+
+def model_root_aliases() -> tuple[str, ...]:
+    """Return accepted model-facing workspace root aliases."""
+
+    aliases = [DEFAULT_TASK_DIR, *LEGACY_MODEL_ROOT_ALIASES]
+    seen: set[str] = set()
+    result: list[str] = []
+    for alias in aliases:
+        cleaned = alias.strip().strip("/")
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return tuple(result)
 
 
 def smart_decode(bytes_data: bytes) -> tuple[str, str | None]:
@@ -72,7 +90,7 @@ def workspace_root() -> Path:
 
 
 def task_root() -> Path:
-    """Return the task directory exposed to the model."""
+    """Return the sandbox workspace root exposed to the model."""
 
     return (workspace_root() / DEFAULT_TASK_DIR).resolve()
 
@@ -89,21 +107,30 @@ def normalize_relative_path(path: str) -> str:
 
 
 def normalize_model_relative_path(path: str) -> str:
-    """Normalize model-facing paths and tolerate an optional leading task/."""
+    """Normalize model-facing paths and tolerate workspace-root aliases."""
 
     normalized = normalize_relative_path(path)
-    if normalized == DEFAULT_TASK_DIR:
-        return "."
+    for alias in model_root_aliases():
+        if normalized == alias:
+            return "."
 
-    prefix = f"{DEFAULT_TASK_DIR}/"
-    if normalized.startswith(prefix):
-        return normalized[len(prefix) :] or "."
+        prefix = f"{alias}/"
+        if normalized.startswith(prefix):
+            return normalized[len(prefix) :] or "."
+
+        container_task_prefix = f"{CONTAINER_WORKSPACE.strip('/')}/{alias}"
+        if normalized == container_task_prefix:
+            return "."
+
+        container_task_prefix_with_slash = f"{container_task_prefix}/"
+        if normalized.startswith(container_task_prefix_with_slash):
+            return normalized[len(container_task_prefix_with_slash) :] or "."
 
     return normalized
 
 
 def validate_model_path(rel_path: str, kind: str = "path") -> None:
-    """Reject absolute model paths while tolerating an optional task/ prefix."""
+    """Reject absolute model paths while tolerating workspace-root aliases."""
 
     raw = str(rel_path or ".").replace("\\", "/").strip()
     if not raw or raw == ".":
@@ -113,12 +140,42 @@ def validate_model_path(rel_path: str, kind: str = "path") -> None:
         raise ValueError(f"{kind} must not contain null bytes.")
 
     drive, _tail = os.path.splitdrive(raw)
+    if raw.startswith("/"):
+        for alias in model_root_aliases():
+            container_task_root = f"{CONTAINER_WORKSPACE.rstrip('/')}/{alias}"
+            if raw == container_task_root or raw.startswith(f"{container_task_root}/"):
+                return
+
     if drive or raw.startswith("/"):
         raise ValueError(
-            f"{kind} must be relative to the model workspace root "
-            f"'{DEFAULT_TASK_DIR}/'. Use '.' or a relative path like "
-            f"'script.py', never '{raw}'."
+            f"{kind} must be relative to the model workspace root. "
+            f"Use '.' or a relative path like 'script.py'. "
+            f"Optional prefixes like '{DEFAULT_TASK_DIR}/' are tolerated, never '{raw}'."
         )
+
+
+def resolve_model_path(path: str, cwd: str = ".") -> str:
+    """Resolve a model-facing path relative to the provided cwd."""
+
+    raw = str(path or ".").replace("\\", "/").strip()
+    normalized_cwd = normalize_model_relative_path(cwd)
+    if not raw or raw == ".":
+        return normalized_cwd
+
+    if raw.startswith("/"):
+        return raw
+
+    for alias in model_root_aliases():
+        if raw == alias or raw.startswith(f"{alias}/"):
+            return raw
+        container_prefix = f"{CONTAINER_WORKSPACE.rstrip('/')}/{alias}"
+        if raw == container_prefix or raw.startswith(f"{container_prefix}/"):
+            return raw
+
+    if normalized_cwd in ("", "."):
+        return posixpath.normpath(raw)
+
+    return posixpath.normpath(f"{normalized_cwd}/{raw}")
 
 
 def to_workspace_posix(path: Path) -> str:
@@ -141,7 +198,7 @@ def get_secure_path(rel_path: str) -> Path:
 
 
 def get_secure_task_path(rel_path: str, kind: str = "path") -> Path:
-    """Resolve a path confined to the task directory."""
+    """Resolve a path confined to the sandbox workspace root."""
 
     validate_model_path(rel_path, kind=kind)
     normalized = normalize_model_relative_path(rel_path)
@@ -151,7 +208,7 @@ def get_secure_task_path(rel_path: str, kind: str = "path") -> Path:
 
     full_path = (task_root() / normalized).resolve()
     if not full_path.is_relative_to(task_root()):
-        raise ValueError(f"Access denied: {rel_path} is outside task directory.")
+        raise ValueError(f"Access denied: {rel_path} is outside sandbox workspace.")
 
     return full_path
 
@@ -164,6 +221,19 @@ def is_within(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _reject_symlink_escape(path: Path, original: str) -> None:
+    """Raise if path is a symlink whose target escapes the task root."""
+
+    if not path.is_symlink():
+        return
+
+    resolved = path.resolve()
+    if not resolved.is_relative_to(task_root()):
+        raise ValueError(
+            f"Access denied: {original!r} is a symlink pointing outside the sandbox workspace."
+        )
 
 
 def is_allowed_host_import(source: Path) -> bool:
@@ -350,6 +420,7 @@ def read(
     """Read a file from the task workspace."""
 
     target = get_secure_task_path(path)
+    _reject_symlink_escape(target, path)
     if not target.is_file():
         raise FileNotFoundError(f"File not found: {normalize_model_relative_path(path)}")
 
@@ -429,10 +500,49 @@ def read(
     }
 
 
+def describe(path: str) -> dict[str, Any]:
+    """Return file metadata without loading the full file into memory."""
+
+    target = get_secure_task_path(path)
+    _reject_symlink_escape(target, path)
+    if not target.is_file():
+        raise FileNotFoundError(f"File not found: {normalize_model_relative_path(path)}")
+
+    size_bytes = target.stat().st_size
+    mime_type = _guess_mime(target)
+    normalized_path = normalize_model_relative_path(path)
+
+    with target.open("rb") as handle:
+        sample = handle.read(TEXT_SAMPLE_BYTES)
+
+    if mime_type.startswith(IMAGE_MIME_PREFIX):
+        kind = "image"
+        encoding = None
+    elif _is_probably_binary(sample, mime_type):
+        kind = "binary"
+        encoding = None
+    else:
+        _text, encoding = smart_decode(sample)
+        kind = "text"
+
+    return {
+        "result": {
+            "path": normalized_path,
+            "kind": kind,
+            "mime": mime_type,
+            "size_bytes": size_bytes,
+            "encoding": encoding,
+        },
+        "warnings": [],
+        "truncated": False,
+    }
+
+
 def write(path: str, content: str) -> dict[str, Any]:
     """Write a UTF-8 text file inside the task workspace."""
 
     target = get_secure_task_path(path)
+    _reject_symlink_escape(target, path)
     existed = target.exists()
     if target.exists() and target.is_dir():
         raise IsADirectoryError(f"Cannot overwrite directory: {normalize_model_relative_path(path)}")
@@ -456,6 +566,7 @@ def edit(path: str, old_str: str, new_str: str, replace_all: bool = False) -> di
     """Replace exact text matches inside a text file."""
 
     target = get_secure_task_path(path)
+    _reject_symlink_escape(target, path)
     if not target.is_file():
         raise FileNotFoundError(f"File not found: {normalize_model_relative_path(path)}")
     if old_str == "":
@@ -541,7 +652,7 @@ def edit(path: str, old_str: str, new_str: str, replace_all: bool = False) -> di
 def find(
     path: str = ".",
     name_pattern: str | None = None,
-    type: str | None = None,
+    type_filter: str | None = None,
     max_depth: int = 8,
     max_results: int = MAX_FIND_RESULTS,
 ) -> dict[str, Any]:
@@ -553,7 +664,7 @@ def find(
     if not target.is_dir():
         raise NotADirectoryError(f"Not a directory: {normalize_model_relative_path(path)}")
 
-    normalized_type = str(type or "any").strip().lower()
+    normalized_type = str(type_filter or "any").strip().lower()
     if normalized_type not in {"any", "file", "directory"}:
         raise ValueError("type must be one of: any, file, directory.")
 
@@ -866,9 +977,9 @@ def copy_into_workspace(host_path: str, dest_path: str | None = None) -> dict[st
 
 
 def clear_workspace() -> dict[str, Any]:
-    """Clear the dedicated workspace without deleting its root."""
+    """Clear the dedicated sandbox workspace without deleting its root."""
 
-    root = workspace_root()
+    root = task_root()
     cleared: list[str] = []
 
     for child in root.iterdir():

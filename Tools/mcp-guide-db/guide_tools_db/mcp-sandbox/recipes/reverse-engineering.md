@@ -34,40 +34,40 @@ Perform safe static analysis of a binary or compiled program to understand its p
 ### Step 1 -- Classify the file
 
 ```text
-bash("file task/binary")
-bash("ls -la task/binary")
+bash("file binary")
+bash("ls -la binary")
 ```
 
 ### Step 2 -- Extract metadata
 
 ```text
-bash("strings task/binary | head -100")
+bash("strings binary | head -100")
 ```
 
 For ELF binaries:
 
 ```text
-bash("readelf -h task/binary")
-bash("readelf -d task/binary")
+bash("readelf -h binary")
+bash("readelf -d binary")
 ```
 
 For PE (Windows) binaries:
 
 ```text
-bash("objdump -p task/binary | head -60")
+bash("objdump -p binary | head -60")
 ```
 
 ### Step 3 -- Inspect symbols and imports
 
 ```text
-bash("nm -D task/binary | head -50")
-bash("objdump -T task/binary | head -50")
+bash("nm -D binary | head -50")
+bash("objdump -T binary | head -50")
 ```
 
 ### Step 4 -- Look for embedded resources
 
 ```text
-bash("strings task/binary | grep -i 'http\|https\|api\|key\|password\|config' | head -30")
+bash("strings binary | grep -i 'http\|https\|api\|key\|password\|config' | head -30")
 ```
 
 ### Step 5 -- Synthesis

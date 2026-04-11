@@ -278,6 +278,7 @@ async def _bfs_discover_urls(
     http_cache: Optional["HTTPCache"] = None,
     metrics: Optional["CrawlMetrics"] = None,
     query: Optional[str] = None,
+    deadline: float = 0.0,
 ) -> List[str]:
     """
     Frontier-driven BFS with URL normalization, deduplication, robots checks,
@@ -357,6 +358,12 @@ async def _bfs_discover_urls(
 
     # Main BFS loop.
     while frontier.has_next():
+        if deadline > 0.0 and time.time() >= deadline:
+            logger.info(
+                f"BFS deadline reached: {frontier.seen_count} URLs discovered, "
+                f"stopping early to preserve crawl budget"
+            )
+            break
         entry = frontier.pop()
         if entry is None:
             break
@@ -1029,6 +1036,7 @@ class ResearchTask:
         chunk_overlap: int = 80,
         chunk_max_chars: int = 12000,
         min_chunk_relevance: float = 0.30,
+        max_total_chunks: int = 0,
         progress_callback=None,
         # Extended architecture parameters.
         respect_robots: bool = True,
@@ -1036,6 +1044,11 @@ class ResearchTask:
         http_cache_db: Optional[str] = None,
         crawl_queue_db: Optional[str] = None,
         http_cache_max_age: int = 3600,
+        # Adaptive time-budget: total wall-clock budget for the whole task.
+        # When > 0, BFS is limited to task_timeout_sec * bfs_budget_fraction,
+        # leaving the rest for actual crawling.
+        task_timeout_sec: float = 0.0,
+        bfs_budget_fraction: float = 0.40,
     ):
         self.task_id = task_id
         self.query = query
@@ -1052,6 +1065,9 @@ class ResearchTask:
         self.chunk_overlap = chunk_overlap
         self.chunk_max_chars = chunk_max_chars
         self.min_chunk_relevance = max(0.0, float(min_chunk_relevance))
+        self.max_total_chunks = max(0, int(max_total_chunks))
+        self.task_timeout_sec = max(0.0, float(task_timeout_sec))
+        self.bfs_budget_fraction = max(0.05, min(0.90, float(bfs_budget_fraction)))
         self._progress = progress_callback or (lambda msg: logger.info(f"[{task_id}] {msg}"))
 
         # Extended architecture components.
@@ -1083,10 +1099,19 @@ class ResearchTask:
     async def run(self) -> ResearchSummary:
         """Run the full pipeline and return the final metrics."""
         t0 = time.time()
-        self._progress(f"Starting research: {self.query[:60]}")
+        self._progress(f"Starting subquery: {self.query[:80]}")
         self._progress(f"Domains: {', '.join(self.domains)}")
 
         # Step 1: BFS frontier URL discovery.
+        # Compute deadline so BFS yields to the crawl phase with enough budget left.
+        bfs_deadline = 0.0
+        if self.task_timeout_sec > 0:
+            bfs_deadline = t0 + self.task_timeout_sec * self.bfs_budget_fraction
+            self._progress(
+                f"Adaptive budget: total={self.task_timeout_sec:.0f}s "
+                f"bfs≤{self.task_timeout_sec * self.bfs_budget_fraction:.0f}s "
+                f"crawl≥{self.task_timeout_sec * (1 - self.bfs_budget_fraction):.0f}s"
+            )
         try:
             urls = await _bfs_discover_urls(
                 self.domains,
@@ -1098,6 +1123,7 @@ class ResearchTask:
                 http_cache=self._http_cache,
                 metrics=self._metrics,
                 query=self.query,
+                deadline=bfs_deadline,
             )
         except Exception as e:
             logger.warning(f"BFS discovery failed ({e}), falling back to static URLs")
@@ -1224,41 +1250,159 @@ class ResearchTask:
     # Crawl helpers.
     async def _crawl_all(self, urls: List[str]) -> List[CrawlResult]:
         """Run parallel crawling through the persistent queue when configured."""
-        sem = asyncio.Semaphore(self.max_concurrency)
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        for url in urls:
+            queue.put_nowait(url)
 
-        # Crawl one URL under the shared semaphore.
+        results: List[CrawlResult] = []
+        estimated_chunks = 0
+        stop_requested = False
+        skipped_due_chunk_limit = 0
+
         async def _one(url: str) -> CrawlResult:
-            async with sem:
-                return await _crawl_url(
-                    url,
-                    use_stealth=self.use_stealth,
-                    use_playwright=self.use_playwright,
-                    timeout=self.crawl_timeout,
-                    # Extended architecture parameters.
-                    robots_checker=self._robots,
-                    rate_limiter=self._rate_limiter,
-                    http_cache=self._http_cache,
-                    metrics=self._metrics,
-                    queue=self._crawl_queue,
-                )
+            return await _crawl_url(
+                url,
+                use_stealth=self.use_stealth,
+                use_playwright=self.use_playwright,
+                timeout=self.crawl_timeout,
+                robots_checker=self._robots,
+                rate_limiter=self._rate_limiter,
+                http_cache=self._http_cache,
+                metrics=self._metrics,
+                queue=self._crawl_queue,
+            )
 
-        tasks = [_one(u) for u in urls]
-        # Cap total wait time so the process cannot hang forever.
-        pending_tasks = [asyncio.create_task(t) if asyncio.iscoroutine(t) else t for t in tasks]
-        if pending_tasks:
-            done, pending = await asyncio.wait(pending_tasks, timeout=70.0)
-            for p in pending:
-                p.cancel()
-            results = []
-            for t in done:
+        async def _worker() -> None:
+            nonlocal estimated_chunks, stop_requested, skipped_due_chunk_limit
+            while True:
                 try:
-                    res = t.result()
-                    if res is not None:
-                        results.append(res)
+                    url = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+                if stop_requested:
+                    skipped_due_chunk_limit += 1
+                    queue.task_done()
+                    continue
+
+                try:
+                    result = await _one(url)
+                    if result is not None:
+                        results.append(result)
+                        if (
+                            self.max_total_chunks > 0
+                            and result.success
+                            and result.text
+                            and not stop_requested
+                        ):
+                            estimated_chunks += self._estimate_result_chunk_count(result)
+                            if estimated_chunks >= self.max_total_chunks:
+                                stop_requested = True
+                                self._progress(
+                                    f"Chunk limit reached ({estimated_chunks}/{self.max_total_chunks}), "
+                                    "stopping crawl intake early"
+                                )
                 except Exception as e:
                     logger.debug(f"Crawl error in _crawl_all: {e}")
-            return results
-        return []
+                finally:
+                    queue.task_done()
+
+        worker_count = max(1, min(self.max_concurrency, len(urls)))
+        workers = [asyncio.create_task(_worker()) for _ in range(worker_count)]
+        try:
+            await asyncio.wait_for(queue.join(), timeout=70.0)
+        except asyncio.TimeoutError:
+            self._progress("WARN Crawl timeout reached, returning partial swarm results")
+        finally:
+            for worker in workers:
+                worker.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+
+        if skipped_due_chunk_limit > 0:
+            self._progress(
+                f"Chunk-limit stop skipped {skipped_due_chunk_limit} queued URLs"
+            )
+        return results
+
+    # Chunking helpers.
+    def _get_chunk_text_fn(self):
+        try:
+            from semantic import chunk_text
+            return chunk_text
+        except ImportError:
+            def chunk_text(text, chunk_size=500, overlap=50):
+                chunks = []
+                step = max(1, chunk_size - overlap)
+                for i in range(0, len(text), step):
+                    chunks.append(text[i:i + chunk_size])
+                return chunks
+            return chunk_text
+
+    # Chunk one crawl result and return chunk/meta pairs.
+    def _build_chunks_for_result(
+        self,
+        result: CrawlResult,
+    ) -> Tuple[List[str], List[Dict]]:
+        chunk_text = self._get_chunk_text_fn()
+        all_chunks: List[str] = []
+        all_meta: List[Dict] = []
+
+        if not result.text:
+            return all_chunks, all_meta
+
+        used_chars = 0
+        source_blocks = result.blocks or []
+        for block in source_blocks:
+            block_text = str(block.get("text") or "").strip()
+            if not block_text:
+                continue
+            remaining = self.chunk_max_chars - used_chars
+            if remaining <= 0:
+                break
+            block_text = block_text[:remaining]
+            block_chunks = chunk_text(block_text, self.chunk_size, self.chunk_overlap)
+            for chunk_index, chunk in enumerate(block_chunks):
+                chunk = chunk.strip()
+                if len(chunk) < 50:
+                    continue
+                all_chunks.append(chunk)
+                all_meta.append({
+                    "url": result.url,
+                    "title": result.title or "",
+                    "method": result.method,
+                    "block_id": block.get("id", ""),
+                    "block_type": block.get("type", "unknown"),
+                    "block_chars": block.get("chars", len(block_text)),
+                    "page_type": result.page_evidence.get("page_type", "unknown"),
+                    "chunk_index": chunk_index,
+                })
+            used_chars += len(block_text)
+        if source_blocks:
+            return all_chunks, all_meta
+
+        text = result.text[:self.chunk_max_chars]
+        chunks = chunk_text(text, self.chunk_size, self.chunk_overlap)
+        for chunk_index, chunk in enumerate(chunks):
+            if len(chunk) < 50:
+                continue
+            all_chunks.append(chunk)
+            all_meta.append({
+                "url": result.url,
+                "title": result.title or "",
+                "method": result.method,
+                "block_id": "",
+                "block_type": "fallback_text",
+                "block_chars": len(chunk),
+                "page_type": result.page_evidence.get("page_type", "unknown"),
+                "chunk_index": chunk_index,
+            })
+
+        return all_chunks, all_meta
+
+    # Estimate how many chunks one successful page will contribute.
+    def _estimate_result_chunk_count(self, result: CrawlResult) -> int:
+        chunks, _ = self._build_chunks_for_result(result)
+        return len(chunks)
 
     # Chunking helpers.
     def _build_chunks(
@@ -1268,66 +1412,8 @@ class ResearchTask:
         """Chunk text through semantic.chunk_text() and build metadata."""
         all_chunks = []
         all_meta = []
-
-        try:
-            from semantic import chunk_text
-        except ImportError:
-            # Fallback: simple character-based splitting.
-            def chunk_text(text, chunk_size=500, overlap=50):
-                chunks = []
-                step = max(1, chunk_size - overlap)
-                for i in range(0, len(text), step):
-                    chunks.append(text[i:i + chunk_size])
-                return chunks
-
         for result in results:
-            if not result.text:
-                continue
-            # Limit each source to at most chunk_max_chars.
-            used_chars = 0
-            source_blocks = result.blocks or []
-            for block in source_blocks:
-                block_text = str(block.get("text") or "").strip()
-                if not block_text:
-                    continue
-                remaining = self.chunk_max_chars - used_chars
-                if remaining <= 0:
-                    break
-                block_text = block_text[:remaining]
-                block_chunks = chunk_text(block_text, self.chunk_size, self.chunk_overlap)
-                for chunk_index, chunk in enumerate(block_chunks):
-                    chunk = chunk.strip()
-                    if len(chunk) < 50:
-                        continue
-                    all_chunks.append(chunk)
-                    all_meta.append({
-                        "url": result.url,
-                        "title": result.title or "",
-                        "method": result.method,
-                        "block_id": block.get("id", ""),
-                        "block_type": block.get("type", "unknown"),
-                        "block_chars": block.get("chars", len(block_text)),
-                        "page_type": result.page_evidence.get("page_type", "unknown"),
-                        "chunk_index": chunk_index,
-                    })
-                used_chars += len(block_text)
-            if source_blocks:
-                continue
-            text = result.text[:self.chunk_max_chars]
-            chunks = chunk_text(text, self.chunk_size, self.chunk_overlap)
-            for chunk_index, chunk in enumerate(chunks):
-                if len(chunk) < 50:
-                    continue
-                all_chunks.append(chunk)
-                all_meta.append({
-                    "url": result.url,
-                    "title": result.title or "",
-                    "method": result.method,
-                    "block_id": "",
-                    "block_type": "fallback_text",
-                    "block_chars": len(chunk),
-                    "page_type": result.page_evidence.get("page_type", "unknown"),
-                    "chunk_index": chunk_index,
-                })
-
+            chunks, meta = self._build_chunks_for_result(result)
+            all_chunks.extend(chunks)
+            all_meta.extend(meta)
         return all_chunks, all_meta

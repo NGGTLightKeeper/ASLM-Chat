@@ -128,6 +128,20 @@ def maybe_start_local_engine_service(log: bool) -> None:
             print(f"[ASLM-Chat] Warning: Services.ollama-service could not be loaded. {exc}")
 
 
+def cmd_ollama_runtime(log: bool) -> None:
+    """Run the dedicated managed Ollama runtime as its own tracked process."""
+
+    try:
+        ollama_service = importlib.import_module("Services.ollama-service")
+    except ImportError as exc:
+        print(f"[ASLM-Chat] Error: Services.ollama-service could not be loaded. {exc}")
+        sys.exit(1)
+
+    exit_code = ollama_service.run_ollama_runtime(log=log)
+    if exit_code:
+        sys.exit(exit_code)
+
+
 # Build CLI parser
 def _build_parser() -> argparse.ArgumentParser:
     """Return the command-line parser for the project entry point."""
@@ -177,13 +191,10 @@ def main() -> None:
     match args.command:
         case "runserver":
             port = _resolve_runserver_port(args.port)
-
-            # Start the managed local engine once before Django's reloader spins
-            # up the child process that serves requests.
-            if not os.environ.get("RUN_MAIN"):
-                maybe_start_local_engine_service(args.log)
-
             cmd_runserver(port, log=args.log)
+
+        case "ollama_runtime":
+            cmd_ollama_runtime(args.log)
 
         case "migrate":
             cmd_migrate(args.log)

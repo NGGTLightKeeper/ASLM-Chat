@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import io
 import json
 import logging
+import mimetypes
 import os
 import re
 import subprocess
+import time
+from pathlib import Path
 from typing import Any
 
 from django.http import JsonResponse, StreamingHttpResponse
@@ -22,7 +28,23 @@ from Apps.Data.ollama_presets import (
     rename_ollama_preset,
     sync_active_ollama_preset,
 )
-from Apps.Data.models import Chat, Message, MessageImage, OllamaPreset
+from Apps.Data.lms_presets import (
+    activate_lms_preset,
+    create_lms_preset,
+    delete_lms_preset,
+    get_lms_preset_payload,
+    rename_lms_preset,
+    sync_active_lms_preset,
+)
+from Apps.Data.models import (
+    Chat,
+    LmsPreset,
+    Message,
+    MessageAttachment,
+    MessageAttachmentKind,
+    MessageImage,
+    OllamaPreset,
+)
 from Settings import settings
 
 logger = logging.getLogger(__name__)
@@ -30,6 +52,483 @@ logger = logging.getLogger(__name__)
 THINK_PARAM_NAMES = {"think", "thinking", "reasoning"}
 THINK_LEVEL_PARAM_NAMES = {"think_level", "thinking_level", "reasoning_effort"}
 TOOL_CAPABILITY_NAMES = {"tools", "tool", "tool-calling", "tool_calling"}
+TEXT_ATTACHMENT_EXTENSIONS = {
+    ".adoc", ".ahk", ".asm", ".asciidoc", ".bash", ".bat", ".bib", ".c", ".cc", ".cfg",
+    ".clj", ".cljc", ".cljs", ".cmd", ".cmake", ".conf", ".config", ".cpp", ".cs",
+    ".cshtml", ".csproj", ".css", ".csv", ".cts", ".cue", ".cxx", ".dart", ".diff",
+    ".dockerfile", ".edn", ".ejs", ".env", ".erb", ".erl", ".ex", ".exs", ".fish",
+    ".fs", ".fsi", ".fsx", ".geojson", ".go", ".gql", ".gradle", ".graphql", ".groovy",
+    ".gvy", ".h", ".handlebars", ".haml", ".hbs", ".hpp", ".hrl", ".hs", ".htm", ".html",
+    ".http", ".hxx", ".ini", ".java", ".jinja", ".jinja2", ".jl", ".js", ".json",
+    ".json5", ".jsonc", ".jsonl", ".jsx", ".kt", ".kts", ".ksh", ".latex", ".less",
+    ".liquid", ".log", ".lua", ".m", ".mako", ".markdown", ".md", ".mdown", ".mdx",
+    ".mjml", ".mkd", ".mm", ".mod", ".mts", ".mustache", ".nix", ".njk", ".patch",
+    ".php", ".pl", ".pm", ".pod", ".properties", ".proto", ".ps1", ".ps1xml", ".psd1",
+    ".psm1", ".pug", ".py", ".pyi", ".r", ".rb", ".rego", ".rest", ".rst", ".rs",
+    ".sass", ".scala", ".scss", ".service", ".sh", ".shtml", ".sol", ".sql", ".srt",
+    ".styl", ".svelte", ".sum", ".svg", ".swift", ".tcl", ".templ", ".tex", ".tf",
+    ".tfvars", ".toml", ".ts", ".tsv", ".tsx", ".twig", ".txt", ".vb", ".vbs", ".vue",
+    ".vtt", ".xhtml", ".xml", ".xsd", ".xsl", ".yaml", ".yml", ".zsh",
+}
+TEXT_ATTACHMENT_FILENAMES = {
+    ".bash_profile",
+    ".bashrc",
+    ".dockerignore",
+    ".editorconfig",
+    ".env",
+    ".env.example",
+    ".eslintignore",
+    ".eslintrc",
+    ".gitattributes",
+    ".gitconfig",
+    ".gitignore",
+    ".gitkeep",
+    ".gitmodules",
+    ".npmrc",
+    ".nvmrc",
+    ".prettierignore",
+    ".prettierrc",
+    ".python-version",
+    ".stylelintrc",
+    ".tool-versions",
+    ".yamllint",
+    ".zshenv",
+    ".zshrc",
+    "brewfile",
+    "cmakelists.txt",
+    "containerfile",
+    "dockerfile",
+    "gemfile",
+    "jenkinsfile",
+    "justfile",
+    "makefile",
+    "procfile",
+    "rakefile",
+    "tiltfile",
+    "vagrantfile",
+}
+ATTACHMENT_TEXT_CHAR_LIMIT = 24000
+LLM_CONTROL_TOKEN_PATTERNS = (
+    re.compile(
+        r"<\|start\|>\s*(?:assistant|user|system)?\s*(?:<\|channel\|>\s*(?:final|analysis|commentary))?\s*(?:<\|message\|>)?",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(r"<\|start\|>", flags=re.IGNORECASE),
+    re.compile(r"<\|channel\|>\s*(?:final|analysis|commentary)", flags=re.IGNORECASE),
+    re.compile(r"<\|message\|>", flags=re.IGNORECASE),
+    re.compile(r"<\|return\|>", flags=re.IGNORECASE),
+    re.compile(r"<\|startoftext\|>", flags=re.IGNORECASE),
+    re.compile(r"<\|im_(?:start|end)\|>", flags=re.IGNORECASE),
+    re.compile(r"<\|(?:assistant|user|system|endoftext)\|>", flags=re.IGNORECASE),
+)
+
+
+# Emit one concise runtime event for the ASLM console.
+def _print_runtime_event(message: str) -> None:
+    """Emit one concise runtime event for the ASLM console."""
+
+    print(f"[ASLM-Chat] {message}", flush=True)
+
+
+# Return whether the exception is an expected runtime/connectivity failure.
+def _is_expected_runtime_error(exc: Exception) -> bool:
+    """Return whether the exception is an expected runtime/connectivity failure."""
+
+    exc_name = type(exc).__name__
+    if exc_name in {"ConnectError", "ConnectionError", "ReadTimeout", "TimeoutException"}:
+        return True
+
+    message = str(exc).lower()
+    expected_markers = (
+        "failed to connect to ollama",
+        "connection refused",
+        "connection error",
+        "connecterror",
+        "timed out",
+        "timeout",
+        "winerror 10061",
+    )
+    return any(marker in message for marker in expected_markers)
+
+
+# Return a user-facing runtime error string without noisy transport details.
+def _format_runtime_error(engine: str, exc: Exception) -> str:
+    """Return a user-facing runtime error string without noisy transport details."""
+
+    message = str(exc).strip()
+    normalized_message = message.lower()
+
+    if settings.is_ollama_engine(engine) and _is_expected_runtime_error(exc):
+        return (
+            "Failed to connect to Ollama. Please check that Ollama is downloaded, "
+            "running and accessible. https://ollama.com/download"
+        )
+
+    if engine == "openai" and _is_expected_runtime_error(exc):
+        return "Failed to connect to the configured OpenAI-compatible endpoint."
+
+    if engine == "google-genai" and _is_expected_runtime_error(exc):
+        return "Failed to connect to the configured Google GenAI endpoint."
+
+    if engine == "lms" and _is_expected_runtime_error(exc):
+        return "Failed to connect to LM Studio."
+
+    if engine == "google-genai":
+        if any(marker in normalized_message for marker in ("api key", "permission denied", "unauthenticated", "unauthorized")):
+            return "Google GenAI authentication failed. Check the configured API key."
+
+    if engine == "lms":
+        if "v cache quantization requires flash attention" in normalized_message:
+            return (
+                "The current LM Studio load settings are incompatible. "
+                "Enable Flash Attention or set V Cache Quantization Type to f16."
+            )
+        if "model get/load error" in normalized_message or "failed to load model" in normalized_message:
+            return "LM Studio could not load the selected model with the current load settings."
+
+    return message
+
+
+# Remove assistant-control tokens that should never be shown to the user.
+def _strip_llm_control_tokens(content: str) -> str:
+    """Remove assistant-control tokens that should never be shown to the user."""
+
+    cleaned = str(content or "")
+    for pattern in LLM_CONTROL_TOKEN_PATTERNS:
+        cleaned = pattern.sub("", cleaned)
+    return cleaned
+
+
+# Return a short, readable summary of option keys.
+def _summarize_option_keys(options: dict[str, Any] | None, max_keys: int = 6) -> str:
+    """Return a short, readable summary of option keys."""
+
+    if not isinstance(options, dict) or not options:
+        return "none"
+
+    option_keys = sorted({str(key).strip() for key in options if str(key).strip()}, key=str.casefold)
+    if len(option_keys) <= max_keys:
+        return ", ".join(option_keys)
+    return f"{', '.join(option_keys[:max_keys])}, +{len(option_keys) - max_keys} more"
+
+
+# Count image attachments present in the current outbound request.
+def _count_request_images(messages: list[dict[str, Any]]) -> int:
+    """Count image attachments present in the current outbound request."""
+
+    image_count = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        raw_images = message.get("images")
+        if isinstance(raw_images, list):
+            image_count += len(raw_images)
+    return image_count
+
+
+# Return decoded bytes for one base64 payload or data URL.
+def _decode_base64_payload(raw_value: Any) -> bytes:
+    """Return decoded bytes for one base64 payload or data URL."""
+
+    if raw_value is None:
+        return b""
+
+    payload = str(raw_value).strip()
+    if not payload:
+        return b""
+
+    if payload.startswith("data:") and "," in payload:
+        payload = payload.split(",", 1)[1]
+
+    try:
+        return base64.b64decode(payload, validate=True)
+    except (ValueError, binascii.Error):
+        return base64.b64decode(payload)
+
+
+# Split a data URL into MIME type and base64 payload.
+def _parse_data_url(raw_value: Any) -> tuple[str, str]:
+    """Split a data URL into MIME type and base64 payload."""
+
+    payload = str(raw_value or "").strip()
+    if not payload.startswith("data:") or "," not in payload:
+        return "", payload
+
+    header, encoded = payload.split(",", 1)
+    mime_type = "application/octet-stream"
+    if ";" in header:
+        mime_type = header[5:].split(";", 1)[0].strip() or mime_type
+    return mime_type, encoded
+
+
+# Return the normalized attachment kind for the payload.
+def _guess_attachment_kind(mime_type: str, name: str = "") -> str:
+    """Return the normalized attachment kind for the payload."""
+
+    normalized_mime = str(mime_type or "").strip().lower()
+    if normalized_mime.startswith("image/"):
+        return MessageAttachmentKind.IMAGE
+
+    guessed_mime, _encoding = mimetypes.guess_type(name or "")
+    if guessed_mime and guessed_mime.startswith("image/"):
+        return MessageAttachmentKind.IMAGE
+
+    return MessageAttachmentKind.FILE
+
+
+# Normalize one incoming attachment payload into the storage shape.
+def _normalize_attachment_payload(raw_attachment: Any, order: int) -> dict[str, Any] | None:
+    """Normalize one incoming attachment payload into the storage shape."""
+
+    if isinstance(raw_attachment, str):
+        mime_type = _detect_image_mime(raw_attachment)
+        raw_data = raw_attachment
+        name = f"image-{order + 1}"
+    elif isinstance(raw_attachment, dict):
+        name = str(
+            raw_attachment.get("name")
+            or raw_attachment.get("filename")
+            or raw_attachment.get("title")
+            or ""
+        ).strip()
+        mime_type = str(raw_attachment.get("mime_type") or raw_attachment.get("mimeType") or "").strip()
+        raw_data = raw_attachment.get("data")
+        if raw_data is None:
+            raw_data = raw_attachment.get("base64")
+        data_url = raw_attachment.get("data_url") or raw_attachment.get("dataUrl")
+        if data_url:
+            parsed_mime, parsed_data = _parse_data_url(data_url)
+            if parsed_mime and not mime_type:
+                mime_type = parsed_mime
+            raw_data = parsed_data
+        if not mime_type and name:
+            mime_type = mimetypes.guess_type(name)[0] or ""
+        if not mime_type:
+            mime_type = "application/octet-stream"
+    else:
+        return None
+
+    encoded = str(raw_data or "").strip()
+    if not encoded:
+        return None
+
+    file_bytes = _decode_base64_payload(encoded)
+    if not file_bytes:
+        return None
+
+    if encoded.startswith("data:"):
+        parsed_mime, parsed_data = _parse_data_url(encoded)
+        if parsed_mime:
+            mime_type = parsed_mime
+        encoded = parsed_data
+
+    kind = _guess_attachment_kind(mime_type, name)
+    if not name:
+        extension = mimetypes.guess_extension(mime_type or "") or ""
+        base_name = "image" if kind == MessageAttachmentKind.IMAGE else "file"
+        name = f"{base_name}-{order + 1}{extension}"
+
+    return {
+        "kind": kind,
+        "name": name,
+        "mime_type": mime_type,
+        "data": encoded,
+        "size_bytes": len(file_bytes),
+        "order": order,
+    }
+
+
+# Return a normalized list of request attachments.
+def _normalize_request_attachments(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return a normalized list of request attachments."""
+
+    normalized: list[dict[str, Any]] = []
+    raw_attachments = data.get("attachments", []) or []
+    raw_images = data.get("images", []) or []
+    for raw_attachment in list(raw_attachments) + list(raw_images):
+        attachment = _normalize_attachment_payload(raw_attachment, len(normalized))
+        if attachment is not None:
+            normalized.append(attachment)
+    return normalized
+
+
+# Convert a persisted attachment-like object into the frontend payload.
+def _serialize_attachment_record(attachment: Any) -> dict[str, Any]:
+    """Convert a persisted attachment-like object into the frontend payload."""
+
+    if isinstance(attachment, MessageAttachment):
+        return {
+            "kind": attachment.kind,
+            "name": attachment.name,
+            "mime_type": attachment.mime_type,
+            "size_bytes": attachment.size_bytes,
+            "order": attachment.order,
+            "data_url": attachment.data_url(),
+        }
+
+    if isinstance(attachment, MessageImage):
+        payload = {
+            "kind": MessageAttachmentKind.IMAGE,
+            "name": f"image-{attachment.order + 1}",
+            "mime_type": attachment.mime_type,
+            "size_bytes": len(_decode_base64_payload(attachment.data)),
+            "order": attachment.order,
+            "data_url": attachment.data_url(),
+        }
+        return payload
+
+    return {}
+
+
+# Return all persisted attachments for a message in a shared shape.
+def _get_message_attachments(message: Message) -> list[dict[str, Any]]:
+    """Return all persisted attachments for a message in a shared shape."""
+
+    attachments = [_serialize_attachment_record(item) for item in message.attachments.all()]
+    legacy_images = [_serialize_attachment_record(item) for item in message.images.all()]
+    combined = [item for item in attachments + legacy_images if item]
+    combined.sort(key=lambda item: (int(item.get("order") or 0), item.get("name", "")))
+    return combined
+
+
+# Decode one serialized attachment payload into bytes.
+def _attachment_data_to_bytes(attachment: dict[str, Any]) -> bytes:
+    """Decode one serialized attachment payload into bytes."""
+
+    return _decode_base64_payload(attachment.get("data_url") or attachment.get("data"))
+
+
+# Return whether the attachment should be decoded as text.
+def _is_text_attachment(mime_type: str, name: str) -> bool:
+    """Return whether the attachment should be decoded as text."""
+
+    normalized_mime = str(mime_type or "").strip().lower()
+    normalized_name = Path(name or "").name.lower()
+    attachment_path = Path(name or "")
+    if normalized_mime.startswith("text/"):
+        return True
+    if normalized_mime in {
+        "application/ecmascript",
+        "application/json",
+        "application/ld+json",
+        "application/javascript",
+        "application/sql",
+        "application/toml",
+        "application/vnd.api+json",
+        "application/xml",
+        "application/x-httpd-php",
+        "application/x-javascript",
+        "application/x-ndjson",
+        "application/x-sh",
+        "application/x-shellscript",
+        "application/x-toml",
+        "application/x-yaml",
+        "application/yaml",
+        "image/svg+xml",
+    }:
+        return True
+
+    if normalized_name in TEXT_ATTACHMENT_FILENAMES:
+        return True
+
+    return any(suffix.lower() in TEXT_ATTACHMENT_EXTENSIONS for suffix in attachment_path.suffixes)
+
+
+# Trim attachment text so prompts stay bounded.
+def _truncate_attachment_text(text: str, limit: int = ATTACHMENT_TEXT_CHAR_LIMIT) -> str:
+    """Trim attachment text so prompts stay bounded."""
+
+    normalized = str(text or "").strip()
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit].rstrip()}\n...[truncated]"
+
+
+# Extract prompt-friendly text from a file attachment when possible.
+def _extract_attachment_text(attachment: dict[str, Any]) -> str:
+    """Extract prompt-friendly text from a file attachment when possible."""
+
+    attachment_name = str(attachment.get("name") or "file").strip() or "file"
+    mime_type = str(attachment.get("mime_type") or "application/octet-stream").strip()
+    file_bytes = _attachment_data_to_bytes(attachment)
+    if not file_bytes:
+        return ""
+
+    suffix = Path(attachment_name).suffix.lower()
+    if mime_type == "application/pdf" or suffix == ".pdf":
+        try:
+            import fitz
+
+            with fitz.open(stream=file_bytes, filetype="pdf") as document:
+                pages = [page.get_text("text") for page in document]
+            return _truncate_attachment_text("\n".join(pages))
+        except Exception:
+            return ""
+
+    if _is_text_attachment(mime_type, attachment_name):
+        for encoding in ("utf-8", "utf-8-sig", "cp1251", "latin-1"):
+            try:
+                return _truncate_attachment_text(file_bytes.decode(encoding))
+            except UnicodeDecodeError:
+                continue
+
+    return ""
+
+
+# Serialize one non-image attachment into universal text context.
+def _build_file_attachment_prompt_block(attachment: dict[str, Any]) -> str:
+    """Serialize one non-image attachment into universal text context."""
+
+    attachment_name = str(attachment.get("name") or "file").strip() or "file"
+    mime_type = str(attachment.get("mime_type") or "application/octet-stream").strip()
+    size_bytes = int(attachment.get("size_bytes") or 0)
+    extracted_text = _extract_attachment_text(attachment)
+
+    if extracted_text:
+        return (
+            f"[Attached file: {attachment_name}]\n"
+            f"MIME: {mime_type}\n"
+            f"Size: {size_bytes} bytes\n"
+            f"Content:\n{extracted_text}\n"
+            f"[/Attached file]"
+        )
+
+    return (
+        f"[Attached file: {attachment_name}]\n"
+        f"MIME: {mime_type}\n"
+        f"Size: {size_bytes} bytes\n"
+        "Content could not be extracted automatically.\n"
+        "[/Attached file]"
+    )
+
+
+# Attach images and file context to one outbound LLM message.
+def _apply_attachments_to_llm_entry(entry: dict[str, Any], attachments: list[dict[str, Any]]) -> dict[str, Any]:
+    """Attach images and file context to one outbound LLM message."""
+
+    image_payloads = []
+    image_mime_types = []
+    file_blocks = []
+
+    for attachment in attachments:
+        if attachment.get("kind") == MessageAttachmentKind.IMAGE:
+            raw_payload = str(attachment.get("data_url") or attachment.get("data") or "")
+            mime_type, encoded = _parse_data_url(raw_payload)
+            image_payloads.append(encoded or raw_payload)
+            image_mime_types.append(str(attachment.get("mime_type") or mime_type or "image/jpeg"))
+        else:
+            file_blocks.append(_build_file_attachment_prompt_block(attachment))
+
+    if image_payloads:
+        entry["images"] = image_payloads
+        entry["image_mime_types"] = image_mime_types
+
+    if file_blocks:
+        content = str(entry.get("content") or "").strip()
+        blocks = "\n\n".join(block for block in file_blocks if block)
+        entry["content"] = f"{content}\n\n{blocks}".strip() if content else blocks
+
+    return entry
 
 
 # Read local GPU devices
@@ -98,9 +597,11 @@ def _load_models_for_engine(engine: str) -> list[str]:
         raw_models = llm_api.get_models(engine)
     except NotImplementedError:
         logger.info("Model listing is not implemented for engine %s", engine)
+        _print_runtime_event(f"Models not supported for engine={engine}.")
         return []
     except Exception as exc:
         logger.warning("Failed to load models for engine %s: %s", engine, exc)
+        _print_runtime_event(f"Model list failed: engine={engine}, error={exc}")
         return []
 
     model_names = []
@@ -136,18 +637,22 @@ def _build_runtime_settings_payload() -> dict[str, Any]:
     active_engine = _get_active_engine(runtime_settings.get("llm-engine"))
     runtime_settings["llm-engine"] = active_engine
     runtime_settings["active_url"] = runtime_settings["engine_urls"].get(active_engine, "")
+    engine_api_keys = runtime_settings.get("engine_api_keys", {})
+    runtime_settings["active_has_api_key"] = bool(
+        engine_api_keys.get(active_engine, runtime_settings.get("active_has_api_key", False))
+    )
     runtime_settings["engine_options"] = settings.get_supported_engines()
     return runtime_settings
 
 
 # Build chat title
-def _build_chat_title(message: str, has_images: bool) -> str:
+def _build_chat_title(message: str, has_attachments: bool) -> str:
     """Generate a stable title for a new chat thread."""
 
     if message:
         return message[:30] + ("..." if len(message) > 30 else "")
-    if has_images:
-        return "Image chat"
+    if has_attachments:
+        return "Attachment chat"
     return "New Chat"
 
 
@@ -170,7 +675,7 @@ def _detect_image_mime(base64_data: str) -> str:
 def _strip_llm_markup(content: str) -> str:
     """Remove stored think/tool markers from legacy assistant content."""
 
-    source = str(content or "")
+    source = _strip_llm_control_tokens(str(content or ""))
     source = re.sub(r"<think>.*?</think>", "", source, flags=re.DOTALL)
     source = re.sub(r"<tool_call>.*?</tool_call>", "", source, flags=re.DOTALL)
     return source.strip()
@@ -199,11 +704,14 @@ def _normalize_transcript_entries(raw_entries: Any) -> list[dict[str, Any]]:
             thinking = str(raw_entry.get("thinking", "") or "")
             if thinking:
                 entry["thinking"] = thinking
+            google_parts = raw_entry.get("google_parts")
+            if isinstance(google_parts, list):
+                entry["google_parts"] = google_parts
             tool_calls = raw_entry.get("tool_calls")
             if isinstance(tool_calls, list):
                 entry["tool_calls"] = tool_calls
         else:
-            for key in ("name", "tool_name", "server_id", "server_name", "tool_id", "tool_display_name"):
+            for key in ("alias", "name", "tool_name", "tool_call_id", "server_id", "server_name", "tool_id", "tool_display_name"):
                 value = raw_entry.get(key)
                 if value is not None:
                     entry[key] = value
@@ -220,7 +728,8 @@ def _build_llm_history_entries(message: Message) -> list[dict[str, Any]]:
     """Convert one stored message into the message list expected by the LLM backend."""
 
     if message.role != "assistant":
-        return [{"role": message.role, "content": message.content}]
+        payload = {"role": message.role, "content": message.content}
+        return [_apply_attachments_to_llm_entry(payload, _get_message_attachments(message))]
 
     transcript_entries = _normalize_transcript_entries(message.llm_transcript)
     if transcript_entries:
@@ -233,9 +742,13 @@ def _build_llm_history_entries(message: Message) -> list[dict[str, Any]]:
             if entry["role"] == "assistant":
                 if entry.get("thinking"):
                     payload["thinking"] = entry["thinking"]
+                if isinstance(entry.get("google_parts"), list):
+                    payload["google_parts"] = entry["google_parts"]
                 if isinstance(entry.get("tool_calls"), list):
                     payload["tool_calls"] = entry["tool_calls"]
             else:
+                if entry.get("tool_call_id"):
+                    payload["tool_call_id"] = entry["tool_call_id"]
                 if entry.get("name"):
                     payload["name"] = entry["name"]
                 if entry.get("tool_name"):
@@ -277,9 +790,6 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
                 segments.append({"type": "text", "content": content})
             continue
 
-        if entry["role"] == "tool":
-            continue
-
         seg_alias = str(entry.get("alias") or entry.get("tool_id", entry.get("name", "")) or "")
         segments.append(
             {
@@ -302,6 +812,7 @@ def _serialize_message(message: Message) -> dict[str, Any]:
     """Convert a database message to the JSON shape expected by the frontend."""
 
     payload = {
+        "id": message.id,
         "role": message.role,
         "content": message.content,
         "created_at": message.created_at.isoformat(),
@@ -309,9 +820,10 @@ def _serialize_message(message: Message) -> dict[str, Any]:
     activity_segments = _build_activity_segments(message)
     if activity_segments:
         payload["activity_segments"] = activity_segments
-    images = list(message.images.all())
-    if images:
-        payload["images"] = [image.data_url() for image in images]
+    attachments = _get_message_attachments(message)
+    if attachments:
+        payload["attachments"] = attachments
+        payload["images"] = [item["data_url"] for item in attachments if item.get("kind") == MessageAttachmentKind.IMAGE]
     return payload
 
 
@@ -326,7 +838,7 @@ def _extract_stream_message_parts(chunk: Any) -> tuple[str, str]:
     else:
         thinking_part = getattr(raw_message, "thinking", "") or ""
         text_part = getattr(raw_message, "content", "") or ""
-    return str(thinking_part), str(text_part)
+    return _strip_llm_control_tokens(str(thinking_part)), _strip_llm_control_tokens(str(text_part))
 
 
 # Serialize tool marker
@@ -391,8 +903,16 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
             parts = line.strip().split()
             if len(parts) < 2:
                 continue
-            key = parts[0].strip().lower()
-            value = " ".join(parts[1:]).strip()
+            if parts[0].strip().lower() == "parameter":
+                if len(parts) < 3:
+                    continue
+                key = parts[1].strip().lower()
+                value = " ".join(parts[2:]).strip()
+            else:
+                key = parts[0].strip().lower()
+                value = " ".join(parts[1:]).strip()
+            if not ollama_api.is_supported_runtime_option_key(key):
+                continue
             normalized = settings.normalize_setting_value(value)
             if key == "stop":
                 existing = defaults.get("stop")
@@ -449,6 +969,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
         "think_level_param_name": think_level_param_name,
         "supports_vision": supports_vision,
         "supports_tool_calling": supports_tool_calling,
+        "supports_files": False,
         "runtime_limits": {
             "cpu_threads": cpu_threads,
             "gpu_count": gpu_count,
@@ -468,11 +989,16 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
             "context_length": 8192,
             "defaults": {},
             "supports_thinking": False,
+            "supports_think_toggle": False,
             "supports_think_level": False,
             "think_param_name": "think",
             "think_level_param_name": "think_level",
+            "think_level_options": [],
             "supports_vision": False,
             "supports_tool_calling": False,
+            "supports_files": False,
+            "runtime_limits": {},
+            "custom_fields": [],
         }
 
     capabilities = settings_data.get("capabilities", []) or []
@@ -492,24 +1018,61 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
         "context_length": int(context_length),
         "defaults": defaults,
         "supports_thinking": bool(settings_data.get("supports_thinking", False)),
+        "supports_think_toggle": bool(settings_data.get("supports_think_toggle", settings_data.get("supports_thinking", False))),
         "supports_think_level": bool(settings_data.get("supports_think_level", False)),
         "think_param_name": settings_data.get("think_param_name", "think"),
         "think_level_param_name": settings_data.get("think_level_param_name", "think_level"),
+        "think_level_options": settings_data.get("think_level_options", []) if isinstance(settings_data.get("think_level_options", []), list) else [],
+        "supported_parameters": settings_data.get("supported_parameters", []) if isinstance(settings_data.get("supported_parameters", []), list) else [],
         "supports_vision": "vision" in normalized_capabilities or bool(settings_data.get("supports_vision", False)),
         "supports_tool_calling": bool(settings_data.get("supports_tool_calling", False)),
+        "supports_files": bool(settings_data.get("supports_files", False)),
+        "runtime_limits": settings_data.get("runtime_limits", {}) if isinstance(settings_data.get("runtime_limits", {}), dict) else {},
+        "custom_fields": settings_data.get("custom_fields", []) if isinstance(settings_data.get("custom_fields", []), list) else [],
     }
 
 
 # Build model info payload
-def _build_model_info_payload(engine: str, model_name: str) -> dict[str, Any]:
+def _build_fallback_model_info_payload(engine: str, model_name: str) -> dict[str, Any]:
+    """Return a safe payload when runtime metadata cannot be loaded."""
+
+    payload = _extract_generic_model_info({})
+    payload["available_tool_servers"] = []
+    payload["model"] = model_name
+    payload["engine"] = engine
+    return payload
+
+
+# Load adapter metadata and normalize it for the frontend.
+def _build_model_info_payload(
+    engine: str,
+    model_name: str,
+    *,
+    allow_fallback: bool = False,
+) -> dict[str, Any]:
     """Load adapter metadata and normalize it for the frontend."""
 
-    settings_data = llm_api.get_model_settings(engine, model_name)
+    try:
+        settings_data = llm_api.get_model_settings(engine, model_name)
+    except Exception:
+        if not allow_fallback:
+            raise
+        return _build_fallback_model_info_payload(engine, model_name)
     if settings.is_ollama_engine(engine):
         payload = _extract_ollama_model_info(settings_data)
         preset_payload = get_ollama_preset_payload(model_name)
         payload["defaults"] = {**payload.get("defaults", {}), **preset_payload["active_config"]}
         payload["ollama_presets"] = preset_payload
+    elif engine == "lms":
+        payload = _extract_generic_model_info(settings_data)
+        preset_payload = get_lms_preset_payload(model_name)
+        active_config = preset_payload.get("active_config", {}) if isinstance(preset_payload, dict) else {}
+        if isinstance(active_config, dict):
+            payload["defaults"] = {
+                **payload.get("defaults", {}),
+                **(active_config.get("operation", {}) if isinstance(active_config.get("operation", {}), dict) else {}),
+            }
+        payload["lms_presets"] = preset_payload
     else:
         payload = _extract_generic_model_info(settings_data)
 
@@ -550,6 +1113,25 @@ def _resolve_tool_servers(engine: str, model_name: str, tool_server_ids: list[st
         resolved.append(server)
     return resolved
 
+
+# Raise when tools are requested for a model that should not call tools.
+def _validate_tool_server_support(
+    engine: str,
+    model_name: str,
+    tool_server_ids: list[str],
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Raise when tools are requested for a model that should not call tools."""
+
+    if not tool_server_ids or engine not in {"lms", "openai", "google-genai"}:
+        return
+
+    payload = payload or _build_model_info_payload(engine, model_name, allow_fallback=True)
+    if payload.get("supports_tool_calling"):
+        return
+
+    raise ValueError(f"Model does not support tool calling: {model_name}")
+
 # Parse stored tool slugs
 def _parse_active_tool_slugs(slug: str) -> list[str]:
     """Return a list of active tool server ids from the stored slug field."""
@@ -567,11 +1149,11 @@ def _parse_active_tool_slugs(slug: str) -> list[str]:
     return [slug] if slug.strip() else []
 
 # Resolve chat instance
-def _resolve_chat(chat_id: str, user_message: str, images: list[str]) -> Chat:
+def _resolve_chat(chat_id: str, user_message: str, attachments: list[dict[str, Any]]) -> Chat:
     """Return an existing chat or create a new one for the request."""
 
     if not chat_id:
-        return Chat.objects.create(title=_build_chat_title(user_message, bool(images)))
+        return Chat.objects.create(title=_build_chat_title(user_message, bool(attachments)))
 
     try:
         return Chat.objects.get(id=chat_id)
@@ -579,15 +1161,18 @@ def _resolve_chat(chat_id: str, user_message: str, images: list[str]) -> Chat:
         raise LookupError("Chat not found") from exc
 
 # Save message images
-def _store_message_images(user_message_record: Message, images: list[str]) -> None:
-    """Persist uploaded images for the current user message."""
+def _store_message_attachments(message_record: Message, attachments: list[dict[str, Any]]) -> None:
+    """Persist uploaded message attachments for the current user message."""
 
-    for order, base64_data in enumerate(images):
-        MessageImage.objects.create(
-            message=user_message_record,
-            data=base64_data,
-            mime_type=_detect_image_mime(base64_data),
-            order=order,
+    for attachment in attachments:
+        MessageAttachment.objects.create(
+            message=message_record,
+            kind=attachment["kind"],
+            name=attachment["name"],
+            mime_type=attachment["mime_type"],
+            data=attachment["data"],
+            size_bytes=int(attachment.get("size_bytes") or 0),
+            order=int(attachment.get("order") or 0),
         )
 
 # Build LLM message history
@@ -596,7 +1181,7 @@ def _build_chat_history(
     user_message_record: Message,
     user_message: str,
     system_prompt: str,
-    images: list[str],
+    attachments: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Build the message history sent to the selected backend."""
 
@@ -604,29 +1189,37 @@ def _build_chat_history(
     if system_prompt:
         llm_messages.append({"role": "system", "content": system_prompt})
 
-    history_qs = chat.messages.exclude(id=user_message_record.id)
+    history_qs = chat.messages.exclude(id=user_message_record.id).prefetch_related("attachments", "images")
     for historical_message in history_qs:
         llm_messages.extend(_build_llm_history_entries(historical_message))
 
     current_entry: dict[str, Any] = {"role": "user", "content": user_message}
-    if images:
-        current_entry["images"] = images
-    llm_messages.append(current_entry)
+    llm_messages.append(_apply_attachments_to_llm_entry(current_entry, attachments))
 
     return llm_messages
 
 # Split generation options
-def _split_generation_options(options: dict[str, Any]) -> tuple[Any, Any, dict[str, Any]]:
+def _split_generation_options(
+    options: dict[str, Any],
+    think_param_name: str = "think",
+    think_level_param_name: str = "think_level",
+) -> tuple[Any, Any, dict[str, Any]]:
     """Split thinking controls from generic model options."""
 
     think_value = None
     think_level_value = None
     clean_options: dict[str, Any] = {}
+    think_param_names = set(THINK_PARAM_NAMES)
+    think_level_param_names = set(THINK_LEVEL_PARAM_NAMES)
+    if think_param_name:
+        think_param_names.add(str(think_param_name))
+    if think_level_param_name:
+        think_level_param_names.add(str(think_level_param_name))
 
     for key, value in options.items():
-        if key in THINK_PARAM_NAMES:
+        if key in think_param_names:
             think_value = value
-        elif key in THINK_LEVEL_PARAM_NAMES:
+        elif key in think_level_param_names:
             think_level_value = value
         else:
             clean_options[key] = value
@@ -643,6 +1236,9 @@ def _build_generate_kwargs(
     clean_options: dict[str, Any],
     chat: Chat,
     selected_tool_servers: list[dict[str, Any]],
+    think_param_name: str = "think",
+    think_level_param_name: str = "think_level",
+    sync_operation_defaults: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build keyword arguments for ``llm_api.generate``."""
 
@@ -657,8 +1253,14 @@ def _build_generate_kwargs(
         generate_kwargs["think"] = think_value
     if think_level_value is not None:
         generate_kwargs["think_level"] = think_level_value
+    if engine in {"lms", "openai", "google-genai"} and think_param_name:
+        generate_kwargs["think_param_name"] = think_param_name
+    if engine in {"lms", "openai", "google-genai"} and think_level_param_name:
+        generate_kwargs["think_level_param_name"] = think_level_param_name
     if clean_options:
         generate_kwargs["options"] = clean_options
+    if engine == "lms" and isinstance(sync_operation_defaults, dict) and sync_operation_defaults:
+        generate_kwargs["sync_operation_defaults"] = sync_operation_defaults
 
     if selected_tool_servers:
         generate_kwargs["tool_server_ids"] = [s["id"] for s in selected_tool_servers]
@@ -677,8 +1279,34 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
     """Stream visible content and persist the machine transcript."""
 
     visible_parts: list[str] = []
+    thinking_parts: list[str] = []
     transcript_entries: list[dict[str, Any]] = []
     is_thinking = False
+    failed = False
+    started_at = time.perf_counter()
+    model_name = str(generate_kwargs.get("model_name", "") or "")
+    llm_messages = generate_kwargs.get("messages", [])
+    image_count = _count_request_images(llm_messages if isinstance(llm_messages, list) else [])
+    selected_tool_server_ids = generate_kwargs.get("tool_server_ids", []) or []
+    raw_options = generate_kwargs.get("options", {})
+    raw_think_value = generate_kwargs.get("think")
+    emit_thinking = raw_think_value is not False and str(raw_think_value).strip().lower() not in {"false", "0", "off", "no"}
+
+    _print_runtime_event(
+        "Chat started: "
+        f"engine={engine}, "
+        f"model={model_name}, "
+        f"messages={len(llm_messages) if isinstance(llm_messages, list) else 0}, "
+        f"images={image_count}, "
+        f"tools={len(selected_tool_server_ids) if isinstance(selected_tool_server_ids, list) else 0}, "
+        f"options={_summarize_option_keys(raw_options)}"
+    )
+    if settings.is_console_trace_enabled():
+        _print_runtime_event(
+            "Chat trace: "
+            f"tool_servers={selected_tool_server_ids if isinstance(selected_tool_server_ids, list) else []}, "
+            f"options_payload={json.dumps(raw_options, ensure_ascii=False, sort_keys=True) if isinstance(raw_options, dict) else raw_options}"
+        )
 
     try:
         llm_api.prepare_runtime(engine)
@@ -713,10 +1341,12 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
 
             # Thinking fragments are wrapped in custom tags.
             if thinking_part:
-                if not is_thinking:
-                    is_thinking = True
-                    yield "<think>\n"
-                yield thinking_part
+                if emit_thinking:
+                    thinking_parts.append(thinking_part)
+                    if not is_thinking:
+                        is_thinking = True
+                        yield "<think>\n"
+                    yield thinking_part
 
             # Visible text is streamed and stored separately.
             if text_part:
@@ -726,15 +1356,26 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
                 visible_parts.append(text_part)
                 yield text_part
     except Exception as exc:
-        logger.exception("Error during streaming generation")
+        failed = True
+        formatted_error = _format_runtime_error(engine, exc)
+        if _is_expected_runtime_error(exc):
+            logger.warning("Error during streaming generation: %s", formatted_error)
+        else:
+            logger.exception("Error during streaming generation")
         if is_thinking:
             yield "\n</think>\n"
-        yield f"\n[Error during generation: {exc}]"
+        yield f"\n[Error during generation: {formatted_error}]"
     finally:
         if is_thinking:
             yield "\n</think>\n"
 
-        visible_content = "".join(visible_parts).strip()
+        visible_content = _strip_llm_control_tokens("".join(visible_parts)).strip()
+        thinking_content = _strip_llm_control_tokens("".join(thinking_parts)).strip()
+        if not transcript_entries and (visible_content or thinking_content):
+            synthesized_entry: dict[str, Any] = {"role": "assistant", "content": visible_content}
+            if thinking_content:
+                synthesized_entry["thinking"] = thinking_content
+            transcript_entries.append(synthesized_entry)
         if visible_content or transcript_entries:
             Message.objects.create(
                 chat=chat,
@@ -743,12 +1384,25 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
                 llm_transcript=transcript_entries,
             )
 
+        duration_seconds = time.perf_counter() - started_at
+        _print_runtime_event(
+            "Chat completed: "
+            f"engine={engine}, "
+            f"model={model_name}, "
+            f"status={'failed' if failed else 'ok'}, "
+            f"took={duration_seconds:.2f}s, "
+            f"visible_chars={len(visible_content)}, "
+            f"transcript_entries={len(transcript_entries)}"
+        )
 
-# Render main page
+
+# Chat page views.
+
+# Render the main chat page.
 class MainView(TemplateView):
     template_name = "main/main.html"
 
-    # Build main page context
+    # Build the main page context.
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
         """Return template context for the main chat page."""
 
@@ -757,7 +1411,9 @@ class MainView(TemplateView):
         return context
 
 
-# Handle chat request
+# Chat session APIs.
+
+# Handle a chat generation request.
 def chat_api(request):
     """Handle chat generation requests and stream assistant output."""
 
@@ -773,7 +1429,7 @@ def chat_api(request):
         system_prompt = data.get("system_prompt", "")
         options = data.get("options", {}) or {}
         chat_id = data.get("chat_id", "")
-        images = data.get("images", []) or []
+        attachments = _normalize_request_attachments(data)
         engine = _get_active_engine(data.get("engine"))
         raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
         if isinstance(raw_tool_ids, str):
@@ -782,15 +1438,19 @@ def chat_api(request):
 
         if not model_name:
             return JsonResponse({"error": "Missing model parameter"}, status=400)
-        if not user_message and not images:
-            return JsonResponse({"error": "Missing message or images"}, status=400)
+        if not user_message and not attachments:
+            return JsonResponse({"error": "Missing message or attachments"}, status=400)
 
-        # Resolve the tool servers before persisting the message.
+        if engine in {"lms", "openai", "google-genai"}:
+            model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
+        else:
+            model_info_payload = _build_fallback_model_info_payload(engine, model_name)
+        _validate_tool_server_support(engine, model_name, tool_server_ids, payload=model_info_payload)
         selected_tool_servers = _resolve_tool_servers(engine, model_name, tool_server_ids)
 
         # Reuse the existing chat when provided, otherwise create a new one.
         try:
-            chat = _resolve_chat(chat_id, user_message, images)
+            chat = _resolve_chat(chat_id, user_message, attachments)
         except LookupError as exc:
             return JsonResponse({"error": str(exc)}, status=404)
 
@@ -806,7 +1466,7 @@ def chat_api(request):
             role="user",
             content=user_message,
         )
-        _store_message_images(user_message_record, images)
+        _store_message_attachments(user_message_record, attachments)
 
         # Rebuild the message history expected by the selected backend.
         llm_messages = _build_chat_history(
@@ -814,11 +1474,15 @@ def chat_api(request):
             user_message_record,
             user_message,
             system_prompt,
-            images,
+            attachments,
         )
 
         # Split generic options from thinking-specific controls.
-        think_value, think_level_value, clean_options = _split_generation_options(options)
+        think_value, think_level_value, clean_options = _split_generation_options(
+            options,
+            think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
+            think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
+        )
 
         # Build the final generation payload for the adapter layer.
         generate_kwargs = _build_generate_kwargs(
@@ -830,6 +1494,29 @@ def chat_api(request):
             clean_options,
             chat,
             selected_tool_servers,
+            think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
+            think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
+            sync_operation_defaults=(
+                {
+                    **(
+                        model_info_payload.get("defaults", {})
+                        if isinstance(model_info_payload.get("defaults"), dict)
+                        else {}
+                    ),
+                    **(
+                        {str(model_info_payload.get("think_param_name")): think_value}
+                        if engine == "lms" and think_value is not None and str(model_info_payload.get("think_param_name", "")).startswith("ext.")
+                        else {}
+                    ),
+                    **(
+                        {str(model_info_payload.get("think_level_param_name")): think_level_value}
+                        if engine == "lms" and think_level_value is not None and str(model_info_payload.get("think_level_param_name", "")).startswith("ext.")
+                        else {}
+                    ),
+                }
+                if engine == "lms"
+                else {}
+            ),
         )
 
         response = StreamingHttpResponse(
@@ -847,7 +1534,9 @@ def chat_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Abort active generation
+# Message and chat management APIs.
+
+# Abort active generation.
 def abort_generation_api(request):
     """Immediately signal the active LLM generation to stop."""
 
@@ -855,14 +1544,14 @@ def abort_generation_api(request):
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
     try:
-        ollama_api.abort_generation()
+        llm_api.abort_generation(_get_active_engine())
         return JsonResponse({"ok": True})
     except Exception as exc:
         logger.exception("Failed to abort generation")
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Delete a specific message by ID
+# Delete a specific message by ID.
 def delete_message_api(request, message_id):
     """Delete a single message by its primary key."""
 
@@ -880,7 +1569,7 @@ def delete_message_api(request, message_id):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Load saved chat
+# Delete the last assistant reply for regeneration.
 def delete_last_assistant_api(request, chat_id):
     """Delete the last assistant message and return the preceding user message for regeneration."""
 
@@ -904,12 +1593,13 @@ def delete_last_assistant_api(request, chat_id):
         if not user_message:
             return JsonResponse({"ok": True, "user_message": None})
 
-        images = [img.data_url() for img in user_message.images.all()]
+        attachments = _get_message_attachments(user_message)
         return JsonResponse({
             "ok": True,
             "user_message": {
                 "content": user_message.content,
-                "images": images,
+                "attachments": attachments,
+                "images": [item["data_url"] for item in attachments if item.get("kind") == MessageAttachmentKind.IMAGE],
             }
         })
     except Chat.DoesNotExist:
@@ -919,6 +1609,7 @@ def delete_last_assistant_api(request, chat_id):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Rename a chat thread.
 def rename_chat_api(request, chat_id):
     """Rename a chat thread."""
 
@@ -942,6 +1633,7 @@ def rename_chat_api(request, chat_id):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Delete a chat thread and all its messages.
 def delete_chat_api(request, chat_id):
     """Delete a chat thread and all its messages."""
 
@@ -959,6 +1651,7 @@ def delete_chat_api(request, chat_id):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Load persisted messages for a chat thread.
 def load_chat_api(request, chat_id):
     """Load persisted messages for a chat thread."""
 
@@ -967,13 +1660,15 @@ def load_chat_api(request, chat_id):
 
     try:
         chat = Chat.objects.get(id=chat_id)
-        messages = chat.messages.all().prefetch_related("images")
+        messages = chat.messages.all().prefetch_related("attachments", "images")
         payload = [_serialize_message(message) for message in messages]
+        active_tool_server_ids = _parse_active_tool_slugs(chat.active_tool_slug)
         return JsonResponse({
             "chat_id": str(chat.id),
             "title": chat.title,
             "messages": payload,
-            "active_tool_server_ids": _parse_active_tool_slugs(chat.active_tool_slug),
+            "active_tool_server_ids": active_tool_server_ids,
+            "active_tool_server_id": active_tool_server_ids[0] if active_tool_server_ids else "",
         })
     except Chat.DoesNotExist:
         return JsonResponse({"error": "Chat not found"}, status=404)
@@ -982,7 +1677,9 @@ def load_chat_api(request, chat_id):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Load model info
+# Model and tool discovery APIs.
+
+# Return model metadata for the selected engine.
 def get_model_info_api(request):
     """Return model capabilities and default parameters for the selected engine."""
 
@@ -994,18 +1691,34 @@ def get_model_info_api(request):
         return JsonResponse({"error": "Model parameter is required"}, status=400)
 
     engine = _get_active_engine(request.GET.get("engine"))
+    started_at = time.perf_counter()
 
     try:
-        return JsonResponse(_build_model_info_payload(engine, model_name))
+        payload = _build_model_info_payload(engine, model_name)
+        _print_runtime_event(
+            "Model info loaded: "
+            f"engine={engine}, "
+            f"model={model_name}, "
+            f"tools={len(payload.get('available_tool_servers', []) or [])}, "
+            f"options={_summarize_option_keys(payload.get('defaults', {}))}, "
+            f"took={(time.perf_counter() - started_at):.2f}s"
+        )
+        return JsonResponse(payload)
     except NotImplementedError as exc:
         logger.info("Model info is not implemented for engine %s: %s", engine, exc)
+        _print_runtime_event(f"Model info not supported: engine={engine}, model={model_name}")
         return JsonResponse({"error": str(exc)}, status=501)
     except Exception as exc:
-        logger.exception("Error getting model info for %s on engine %s", model_name, engine)
-        return JsonResponse({"error": str(exc)}, status=500)
+        formatted_error = _format_runtime_error(engine, exc)
+        if _is_expected_runtime_error(exc):
+            logger.warning("Error getting model info for %s on engine %s: %s", model_name, engine, formatted_error)
+        else:
+            logger.exception("Error getting model info for %s on engine %s", model_name, engine)
+        _print_runtime_event(f"Model info failed: engine={engine}, model={model_name}, error={formatted_error}")
+        return JsonResponse({"error": formatted_error}, status=500)
 
 
-# Load model list
+# Return the model list for the selected engine.
 def get_models_api(request):
     """Return model names for the requested engine."""
 
@@ -1013,10 +1726,15 @@ def get_models_api(request):
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
     engine = _get_active_engine(request.GET.get("engine"))
-    return JsonResponse({"engine": engine, "models": _load_models_for_engine(engine)})
+    started_at = time.perf_counter()
+    models = _load_models_for_engine(engine)
+    _print_runtime_event(
+        f"Models loaded: engine={engine}, count={len(models)}, took={(time.perf_counter() - started_at):.2f}s"
+    )
+    return JsonResponse({"engine": engine, "models": models})
 
 
-# Load tool servers
+# Return discovered tool servers.
 def get_tools_api(request):
     """Return locally discovered MCP-style tool servers for the requested engine/model."""
 
@@ -1029,7 +1747,9 @@ def get_tools_api(request):
     return JsonResponse({"tool_servers": servers, "servers": servers, "tools": servers})
 
 
-# Load Ollama presets
+# Preset APIs.
+
+# Return Ollama preset metadata.
 def get_ollama_presets_api(request):
     """Return preset metadata for the selected Ollama model."""
 
@@ -1047,7 +1767,25 @@ def get_ollama_presets_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Sync active preset
+# Return preset metadata for the selected LM Studio model.
+def get_lms_presets_api(request):
+    """Return preset metadata for the selected LM Studio model."""
+
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    model_name = str(request.GET.get("model", "") or "").strip()
+    if not model_name:
+        return JsonResponse({"error": "Model parameter is required"}, status=400)
+
+    try:
+        return JsonResponse(get_lms_preset_payload(model_name))
+    except Exception as exc:
+        logger.exception("Error getting LM Studio presets for %s", model_name)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Sync the active Ollama preset.
 def sync_ollama_preset_api(request):
     """Persist UI changes to the active Ollama preset."""
 
@@ -1068,7 +1806,28 @@ def sync_ollama_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Select active preset
+# Persist UI changes to the active LM Studio preset.
+def sync_lms_preset_api(request):
+    """Persist UI changes to the active LM Studio preset."""
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return JsonResponse(sync_active_lms_preset(model_name, config))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error syncing LM Studio preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Activate an Ollama preset.
 def select_ollama_preset_api(request):
     """Set the active preset for an Ollama model."""
 
@@ -1091,7 +1850,30 @@ def select_ollama_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Create preset
+# Set the active preset for an LM Studio model.
+def select_lms_preset_api(request):
+    """Set the active preset for an LM Studio model."""
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return JsonResponse(activate_lms_preset(model_name, preset_id))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except LmsPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error selecting LM Studio preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Create an Ollama preset.
 def create_ollama_preset_api(request):
     """Create a new Ollama preset for the selected model."""
 
@@ -1120,7 +1902,36 @@ def create_ollama_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Rename preset
+# Create a new LM Studio preset for the selected model.
+def create_lms_preset_api(request):
+    """Create a new LM Studio preset for the selected model."""
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return JsonResponse(
+            create_lms_preset(
+                model_name,
+                name=preset_name or None,
+                config=config if isinstance(config, dict) else {},
+                activate=True,
+            )
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error creating LM Studio preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Rename an Ollama preset.
 def rename_ollama_preset_api(request):
     """Rename an existing custom Ollama preset."""
 
@@ -1144,7 +1955,31 @@ def rename_ollama_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Delete preset
+# Rename an existing custom LM Studio preset.
+def rename_lms_preset_api(request):
+    """Rename an existing custom LM Studio preset."""
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        if not model_name or not preset_id or not preset_name:
+            return JsonResponse({"error": "Model, preset_id and name are required"}, status=400)
+        return JsonResponse(rename_lms_preset(model_name, preset_id, preset_name))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except LmsPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error renaming LM Studio preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Delete an Ollama preset.
 def delete_ollama_preset_api(request):
     """Delete an existing custom preset and fall back to the default one."""
 
@@ -1167,36 +2002,32 @@ def delete_ollama_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
-# Reload selected model
-def reload_model_api(request):
-    """Reload the selected model when the active engine supports explicit reload."""
+# Delete an existing custom preset and fall back to the default one.
+def delete_lms_preset_api(request):
+    """Delete an existing custom preset and fall back to the default one."""
 
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
     try:
         data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return JsonResponse(delete_lms_preset(model_name, preset_id))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
-
-    model_name = str(data.get("model", "") or "").strip()
-    engine = _get_active_engine(data.get("engine"))
-    if not model_name:
-        return JsonResponse({"error": "Model parameter is required"}, status=400)
-
-    try:
-        llm_api.reload_model(engine, model_name)
-    except NotImplementedError as exc:
-        logger.info("Model reload is not implemented for engine %s: %s", engine, exc)
-        return JsonResponse({"error": str(exc)}, status=501)
+    except LmsPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
     except Exception as exc:
-        logger.exception("Error reloading model %s on engine %s", model_name, engine)
+        logger.exception("Error deleting LM Studio preset")
         return JsonResponse({"error": str(exc)}, status=500)
 
-    return JsonResponse({"engine": engine, "model": model_name, "reloaded": True})
 
+# Runtime settings API.
 
-# Read or update runtime settings
+# Read or update runtime settings.
 def runtime_settings_api(request):
     """Read or update runtime engine settings used by the chat UI."""
 
@@ -1211,7 +2042,14 @@ def runtime_settings_api(request):
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
 
-    allowed_keys = {"llm-engine", "lms_url", "lms_load_config", "openai_url", "openai_api_key"}
+    allowed_keys = {
+        "llm-engine",
+        "lms_url",
+        "openai_url",
+        "openai_api_key",
+        "google_genai_url",
+        "google_genai_api_key",
+    }
 
     previous_engine = settings.get_llm_engine()
     next_engine = previous_engine
@@ -1224,8 +2062,6 @@ def runtime_settings_api(request):
         if raw_key == "llm-engine":
             value = settings.normalize_engine_name(raw_value)
             next_engine = value
-        elif raw_key == "lms_load_config":
-            value = raw_value if isinstance(raw_value, dict) else {}
         else:
             value = str(raw_value or "").strip()
 
@@ -1237,11 +2073,13 @@ def runtime_settings_api(request):
     return JsonResponse(_build_runtime_settings_payload())
 
 
-# Render profile page
+# Additional page views.
+
+# Render the profile page.
 class ProfileView(TemplateView):
     template_name = "main/profile.html"
 
-    # Build profile page context
+    # Build the profile page context.
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
         """Return template context for the profile page."""
 
@@ -1250,11 +2088,11 @@ class ProfileView(TemplateView):
         return context
 
 
-# Render preloaded chat page
+# Render the preloaded chat page.
 class ChatView(TemplateView):
     template_name = "main/main.html"
 
-    # Build chat page context
+    # Build the preloaded chat page context.
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
         """Return template context for a preloaded chat page."""
 
