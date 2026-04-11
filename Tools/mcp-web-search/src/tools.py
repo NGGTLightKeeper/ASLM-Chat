@@ -28,7 +28,10 @@ def register_tools(mcp) -> None:
             _fetch_reddit_json,
             _fetch_with_camoufox,
             _fetch_with_curl_cffi,
+            _fetch_curl_cffi_raw,
+            _strip_html_to_text,
             _fetch_json_api,
+            _fetch_via_wayback,
             _url_to_slug,
             _youtube_transcript,
             _domain_registry,
@@ -62,7 +65,10 @@ def register_tools(mcp) -> None:
             _fetch_reddit_json,
             _fetch_with_camoufox,
             _fetch_with_curl_cffi,
+            _fetch_curl_cffi_raw,
+            _strip_html_to_text,
             _fetch_json_api,
+            _fetch_via_wayback,
             _url_to_slug,
             _youtube_transcript,
             _domain_registry,
@@ -96,6 +102,31 @@ def register_tools(mcp) -> None:
             import config as _ws_config
         except ImportError:
             _ws_config = None
+
+    # Source cache setup.
+    _source_cache = None
+    _page_fetcher = None
+    try:
+        if _ws_config and getattr(_ws_config, "SOURCE_CACHE_LOCAL_FIRST", False):
+            try:
+                from .source_cache import SourceCache
+                from .page_fetcher import PageFetcher
+            except ImportError:
+                from source_cache import SourceCache
+                from page_fetcher import PageFetcher
+            _source_cache = SourceCache(
+                db_path=getattr(_ws_config, "SOURCE_CACHE_DB", ""),
+                default_ttl=getattr(_ws_config, "SOURCE_CACHE_TTL", 86400),
+            )
+            _page_fetcher = PageFetcher(
+                cache=_source_cache,
+                max_concurrent=getattr(_ws_config, "SOURCE_CACHE_FETCH_CONCURRENCY", 6),
+                per_domain_rps=getattr(_ws_config, "SOURCE_CACHE_PER_DOMAIN_RPS", 1.0),
+                timeout=getattr(_ws_config, "SOURCE_CACHE_FETCH_TIMEOUT", 10.0),
+                store_raw_html=getattr(_ws_config, "SOURCE_CACHE_STORE_RAW_HTML", False),
+            )
+    except Exception as _sc_err:
+        _debug_log(f"source cache init failed: {_sc_err}")
 
     # Search tools.
     # Register the combined web search tool.
@@ -223,6 +254,31 @@ def register_tools(mcp) -> None:
         # --- single query mode ---
         t0 = time.time()
 
+        # Local-first: check source cache before hitting external search.
+        _sc_min = int(getattr(_ws_config, "SOURCE_CACHE_MIN_LOCAL_RESULTS", 3) or 3)
+        if _source_cache is not None:
+            try:
+                local_hits = _source_cache.search_local(query, limit=limit)
+                if len(local_hits) >= _sc_min:
+                    ms = int((time.time() - t0) * 1000)
+                    hdr = "\n".join([
+                        f"Web Search - {ms}ms  (from local cache)",
+                        f"Query   : {query}",
+                        f"Found   : {len(local_hits)}  (cached)",
+                    ])
+                    blocks = [hdr]
+                    for i, hit in enumerate(local_hits, 1):
+                        lines = [
+                            f"[{i}] [CACHED]",
+                            f"Title   : {hit.title or '-'}",
+                            f"URL     : {hit.url}",
+                            f"Preview : {hit.clean_text[:2400]}",
+                        ]
+                        blocks.append("\n".join(lines))
+                    return blocks
+            except Exception as e:
+                _debug_log(f"source cache local search failed: {e}")
+
         yacy_task = asyncio.wait_for(async_yacy_search(query, limit), timeout=_YACY_SEARCH_TIMEOUT)
         ddgs_task  = asyncio.wait_for(async_ddgs_search(query, limit), timeout=_DDGS_SEARCH_TIMEOUT)
 
@@ -319,6 +375,59 @@ def register_tools(mcp) -> None:
         if downloadable:
             hint = "Downloadable files found - use import_web_file(url) to save to task workspace."
             blocks.append(hint)
+
+        # Background: cache fetched pages and record query provenance.
+        if _source_cache is not None and _page_fetcher is not None and results:
+            try:
+                _fetch_budget = int(getattr(_ws_config, "SOURCE_CACHE_FETCH_BUDGET", 10) or 10)
+                urls_to_cache = [r.url for r in results if r.url and not _source_cache.is_fresh(r.url)]
+
+                # Record query -> URL mappings.
+                for rank, r in enumerate(results):
+                    if r.url:
+                        try:
+                            _source_cache.record_query_source(query, r.url, rank)
+                        except Exception:
+                            pass
+
+                # Background fetch + cache (non-blocking).
+                if urls_to_cache:
+                    asyncio.create_task(
+                        _page_fetcher.fetch_and_cache(urls_to_cache, budget=_fetch_budget)
+                    )
+
+                # Background depth crawl on top domains.
+                _depth_enabled = bool(getattr(_ws_config, "SOURCE_CACHE_DEPTH_ENABLED", False))
+                if _depth_enabled:
+                    try:
+                        try:
+                            from .depth_crawler import schedule_crawl as _schedule_crawl
+                        except ImportError:
+                            from depth_crawler import schedule_crawl as _schedule_crawl
+                        _max_domains = int(getattr(_ws_config, "SOURCE_CACHE_DEPTH_MAX_DOMAINS", 3) or 3)
+                        # Pick top domains from results.
+                        _seen_domains = set()
+                        _seed_urls = []
+                        for r in results:
+                            d = urlparse(r.url).netloc.lower()
+                            if d and d not in _seen_domains and len(_seen_domains) < _max_domains:
+                                _seen_domains.add(d)
+                                _seed_urls.append(r.url)
+                        if _seed_urls:
+                            asyncio.create_task(_schedule_crawl(
+                                cache=_source_cache,
+                                seed_urls=_seed_urls,
+                                allowed_domains=list(_seen_domains),
+                                depth_limit=int(getattr(_ws_config, "SOURCE_CACHE_DEPTH_LIMIT", 1) or 1),
+                                max_pages=int(getattr(_ws_config, "SOURCE_CACHE_DEPTH_MAX_PAGES", 20) or 20),
+                                autothrottle_target=float(getattr(_ws_config, "SOURCE_CACHE_DEPTH_AUTOTHROTTLE", 2.0) or 2.0),
+                                store_raw_html=bool(getattr(_ws_config, "SOURCE_CACHE_STORE_RAW_HTML", False)),
+                            ))
+                    except Exception as e:
+                        _debug_log(f"depth crawl schedule failed: {e}")
+            except Exception as e:
+                _debug_log(f"source cache background tasks failed: {e}")
+
         return blocks
 
     # Register the page-reading tool.
@@ -333,7 +442,7 @@ def register_tools(mcp) -> None:
           - fortress/skip domains -> skipped
         Falls back to httpx for unknown domains.
 
-        save=True: save each page as JSON to task/pages/<slug>.json in the sandbox workspace.
+        save=True: save each page as JSON to _sandbox/pages/<slug>.json in the sandbox workspace.
           Returns only "Saved: <path>" on success or an error message - no page content.
           Nothing is written if the page fails to load.
         """
@@ -348,26 +457,27 @@ def register_tools(mcp) -> None:
             pages_dir = workspace_root / "task" / "pages"
             pages_dir.mkdir(parents=True, exist_ok=True)
 
-        # Read one URL and normalize the extracted text.
-        async def _process_single(u: str) -> str:
+        # Fetch one URL and return (processed_text, raw_html_or_none).
+        async def _fetch_and_process(u: str) -> tuple[str, str | None]:
             if _is_youtube(u):
                 loop = asyncio.get_running_loop()
-                return await loop.run_in_executor(None, _youtube_transcript, u)
+                text = await loop.run_in_executor(None, _youtube_transcript, u)
+                return text, None
             if _is_skippable(u):
                 if _is_downloadable_ext(u):
                     return (
                         f"Source: {u}\n"
                         f"This URL points to a downloadable file, not a web page.\n"
                         f"Use import_web_file(\"{u}\") to save it to the task workspace."
-                    )
-                return f"Source: {u}\nSkipped: domain is blocked or unsupported."
+                    ), None
+                return f"Source: {u}\nSkipped: domain is blocked or unsupported.", None
 
             _host = urlparse(u).netloc.lower().removeprefix("www.")
             if _host in ("reddit.com", "old.reddit.com") or _host.endswith(".reddit.com"):
                 try:
                     text = await _fetch_reddit_json(u)
                     if text.strip():
-                        return f"Source: {u}\n\n{text}"
+                        return f"Source: {u}\n\n{text}", None
                 except Exception as e:
                     _debug_log(f"reddit_json failed for {u}: {e}")
                 # .json API blocked — try overdrive (Camoufox/Patchright can handle Reddit)
@@ -389,10 +499,10 @@ def register_tools(mcp) -> None:
                             browser_idle_timeout=getattr(_ws_config, "OVERDRIVE_BROWSER_IDLE_TIMEOUT", 30.0),
                         )
                         if text.strip():
-                            return f"Source: {u}\n[OVERDRIVE]\n\n{text[:12000]}"
+                            return f"Source: {u}\n[OVERDRIVE]\n\n{text[:12000]}", None
                     except Exception as e:
                         _debug_log(f"overdrive reddit failed for {u}: {e}")
-                return f"Source: {u}\nError: Reddit fetch failed."
+                return f"Source: {u}\nError: Reddit fetch failed.", None
 
             reg = _domain_registry
             method = "http"
@@ -415,7 +525,7 @@ def register_tools(mcp) -> None:
                         from .preview_bot_fetcher import probe_with_preview_bots as _probe_with_preview_bots  # type: ignore
                     text = await _probe_with_preview_bots(u, timeout=12)
                     if text.strip() and not _is_antibot(text):
-                        return f"Source: {u}\n[PREVIEW_BOT]\n\n{text[:12000]}"
+                        return f"Source: {u}\n[PREVIEW_BOT]\n\n{text[:12000]}", None
                 except Exception as e:
                     _debug_log(f"preview_bot failed for {u}: {e}")
 
@@ -427,14 +537,14 @@ def register_tools(mcp) -> None:
                     api_url = api_url.replace("<query>", path).replace("<q>", path)
                 try:
                     text = await _fetch_json_api(api_url)
-                    return f"Source: {u}\nAPI: {api_url}\n\n{text}"
+                    return f"Source: {u}\nAPI: {api_url}\n\n{text}", None
                 except Exception as e:
-                    return f"Source: {u}\nError: JSON API fetch failed: {e}"
+                    return f"Source: {u}\nError: JSON API fetch failed: {e}", None
 
             try:
                 from ingest.router import ingest_router
                 b = await ingest_router.ingest(u)
-                return f"Source: {u}\n\n{b.markdown_content}"
+                return f"Source: {u}\n\n{b.markdown_content}", None
             except ImportError:
                 pass
             except Exception as e:
@@ -459,69 +569,154 @@ def register_tools(mcp) -> None:
                         browser_idle_timeout=getattr(_ws_config, "OVERDRIVE_BROWSER_IDLE_TIMEOUT", 30.0),
                     )
                     if text.strip():
-                        return f"Source: {u}\n[OVERDRIVE]\n\n{text[:12000]}"
-                    return f"Source: {u}\nError: All overdrive methods failed."
+                        return f"Source: {u}\n[OVERDRIVE]\n\n{text[:12000]}", None
+                    return f"Source: {u}\nError: All overdrive methods failed.", None
                 except Exception as e:
                     _debug_log(f"overdrive failed for {u}: {e}")
-                    return f"Source: {u}\nError: Overdrive fetch failed: {e}"
+                    return f"Source: {u}\nError: Overdrive fetch failed: {e}", None
 
             if method == "camoufox" or tier == "fortress":
                 try:
                     text = await _fetch_with_camoufox(u)
                     if text.strip():
-                        return f"Source: {u}\n\n{text}"
+                        return f"Source: {u}\n\n{text}", None
                 except Exception as e:
                     _debug_log(f"camoufox failed for {u}: {e}")
-                    return f"Source: {u}\nError: Failed to load (camoufox): {e}"
+                    return f"Source: {u}\nError: Failed to load (camoufox): {e}", None
 
             if tier == "hardened":
                 try:
-                    text = await _fetch_with_curl_cffi(u)
-                    return f"Source: {u}\n\n{text[:12000]}"
+                    raw_html = await _fetch_curl_cffi_raw(u)
+                    text = _strip_html_to_text(raw_html)
+                    return f"Source: {u}\n\n{text[:12000]}", raw_html
                 except Exception as e:
-                    return f"Source: {u}\nError: curl_cffi fetch failed: {e}"
+                    return f"Source: {u}\nError: curl_cffi fetch failed: {e}", None
 
             try:
                 import httpx, re
+                raw_html = None
                 async with httpx.AsyncClient(follow_redirects=True, timeout=15) as c:
                     r = await c.get(u, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
                     r.raise_for_status()
-                    raw = r.text
-                    raw = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', raw, flags=re.IGNORECASE | re.DOTALL)
-                    text = re.sub(r"\s{2,}", "\n", re.sub(r"<[^>]+>", " ", raw)).strip()
+                    raw_html = r.text
+                    stripped = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', raw_html, flags=re.IGNORECASE | re.DOTALL)
+                    text = re.sub(r"\s{2,}", "\n", re.sub(r"<[^>]+>", " ", stripped)).strip()
                 if _is_antibot(text):
                     try:
-                        text = await _fetch_with_curl_cffi(u)
+                        ab_raw = await _fetch_curl_cffi_raw(u)
+                        text = _strip_html_to_text(ab_raw)
+                        raw_html = ab_raw
                     except Exception:
-                        return f"Source: {u}\nError: Blocked by anti-bot."
-                return f"Source: {u}\n\n{text[:12000]}"
+                        pass
+                    # Wayback Machine fallback when live site is blocked — only in overdrive mode.
+                    if not text or _is_antibot(text):
+                        _overdrive_on = bool(getattr(_ws_config, "OVERDRIVE", False))
+                        if _overdrive_on:
+                            _wb_timeout = int(getattr(_ws_config, "WAYBACK_TIMEOUT", 30))
+                            try:
+                                wb_text = await _fetch_via_wayback(u, timeout=_wb_timeout)
+                                if wb_text and not _is_antibot(wb_text):
+                                    return f"Source: {u}\n[WAYBACK]\n\n{wb_text[:12000]}", None
+                            except Exception:
+                                pass
+                        return f"Source: {u}\nError: Blocked by anti-bot.", None
+                return f"Source: {u}\n\n{text[:12000]}", raw_html
             except Exception as e:
                 try:
-                    text = await _fetch_with_curl_cffi(u)
-                    return f"Source: {u}\n\n{text[:12000]}"
-                except Exception as e2:
-                    return f"Source: {u}\nError: Failed to load: {e2}"
+                    fb_raw = await _fetch_curl_cffi_raw(u)
+                    text = _strip_html_to_text(fb_raw)
+                    if not _is_antibot(text):
+                        return f"Source: {u}\n\n{text[:12000]}", fb_raw
+                except Exception:
+                    pass
+                # Wayback Machine as last resort — only in overdrive mode.
+                _overdrive_on = bool(getattr(_ws_config, "OVERDRIVE", False))
+                if _overdrive_on:
+                    _wb_timeout = int(getattr(_ws_config, "WAYBACK_TIMEOUT", 30))
+                    try:
+                        wb_text = await _fetch_via_wayback(u, timeout=_wb_timeout)
+                        if wb_text and not _is_antibot(wb_text):
+                            return f"Source: {u}\n[WAYBACK]\n\n{wb_text[:12000]}", None
+                    except Exception:
+                        pass
+                return f"Source: {u}\nError: Failed to load: {e}", None
+
+        # Normalize and return page content for non-save callers.
+        async def _process_single(u: str) -> str:
+            text, raw_html = await _fetch_and_process(u)
+            if "Error:" in text or not text.strip():
+                return text
+            try:
+                try:
+                    from page_normalizer import normalize_page
+                except ImportError:
+                    from .page_normalizer import normalize_page  # type: ignore
+                loop = asyncio.get_running_loop()
+                capped_text = text[:20000] if text else text
+                clean = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None, lambda: normalize_page(url=u, raw_html=raw_html, fallback_text=capped_text)
+                    ),
+                    timeout=8.0,
+                )
+                if clean:
+                    body = clean.split("---", 1)[-1].strip()
+                    if len(body) > 80:
+                        return clean
+            except asyncio.TimeoutError:
+                _debug_log(f"page_normalizer timeout for {u}")
+            except Exception as e:
+                _debug_log(f"page_normalizer failed for {u}: {e}")
+            return text
 
         if save:
-            # Read and persist one URL as JSON.
+            # Read and persist one URL as JSON + clean markdown.
             async def _save_single(u: str) -> str:
-                content = await _process_single(u)
+                content, raw_html = await _fetch_and_process(u)
                 if "Error:" in content:
                     return content
                 slug = _url_to_slug(u)
-                dest = pages_dir / f"{slug}.json"
+
+                # 1. Raw JSON (unchanged format)
+                dest_raw = pages_dir / f"{slug}.json"
                 payload = _json.dumps(
                     {"url": u, "content": content.splitlines()},
                     ensure_ascii=False, indent=2
                 )
-                dest.write_text(payload, encoding="utf-8")
-                return f"Saved: task/pages/{dest.name}"
+                dest_raw.write_text(payload, encoding="utf-8")
+
+                # 2. Clean markdown
+                dest_clean = pages_dir / f"{slug}.clean.md"
+                try:
+                    try:
+                        from page_normalizer import normalize_page
+                    except ImportError:
+                        from .page_normalizer import normalize_page  # type: ignore
+                    clean_md = normalize_page(url=u, raw_html=raw_html, fallback_text=content)
+                    dest_clean.write_text(clean_md, encoding="utf-8")
+                except Exception as e:
+                    import traceback as _tb
+                    _debug_log(f"page_normalizer failed for {u}: {e}\n{_tb.format_exc()}")
+
+                saved = f"Saved: _sandbox/pages/{dest_raw.name}"
+                if dest_clean.exists():
+                    saved += f" + {dest_clean.name}"
+                return saved
 
             tasks = [_save_single(u) for u in urls]
         else:
             tasks = [_process_single(u) for u in urls]
 
         results = await asyncio.gather(*tasks)
+        if save:
+            saved_json = [r for r in results if r and ".json" in r and "Error:" not in r]
+            saved_md = [r for r in results if r and ".clean.md" in r]
+            summary = f"Done: {len(saved_json)} page(s) saved."
+            if saved_md:
+                summary += f" Clean markdown created for {len(saved_md)} page(s)."
+            elif saved_json:
+                summary += " (normalizer unavailable — raw JSON only)"
+            return list(results) + [summary]
         return list(results)
 
     # Research tools.
@@ -695,7 +890,7 @@ def register_tools(mcp) -> None:
            without a direct file extension (.zip, .pdf, etc.).
         4. One call per file. Do not retry the same URL more than once.
 
-        save_to: subdirectory inside task/ to save the file (default: "downloads/")
+        save_to: subdirectory inside _sandbox/ to save the file (default: "downloads/")
         allowed_types: restrict by category - ["text", "media", "archive", "data"]
             text:    .pdf .docx .xlsx .csv .txt .md .json .xml .html
             media:   .mp3 .mp4 .wav .webm .mkv .jpg .jpeg .png .gif .webp

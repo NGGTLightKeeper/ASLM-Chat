@@ -1,0 +1,429 @@
+"""Intent-based controller.
+
+Replaces the command-syntax router in api.py with intent-based dispatch.
+
+Flow:
+  command (str)
+    → intent.classify()       — what is the model trying to do?
+    → session_state.check()   — should we break the loop?
+    → backend handler         — run the actual operation
+    → presenter               — choose the right representation
+    → session_state.record()  — update exploration memory
+    → response
+
+The model cannot pick the backend mechanism.
+It picks the *goal*; the controller picks the *how*.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Callable
+
+from sandbox.config import (
+    MAX_CAT_FILE_BYTES,
+    MAX_CAT_LINE_THRESHOLD,
+    MAX_FIND_RESULTS,
+    MAX_GREP_RESULTS,
+    MAX_LS_ENTRIES,
+    MAX_READ_BYTES,
+)
+from sandbox.intent import Intent, NormalizedCommand, classify
+from sandbox.presenters import (
+    present_auto_preview,
+    present_grep_results,
+    present_read_slice,
+)
+from sandbox.session_state import ExplorationState
+from sandbox.workspace import (
+    delete,
+    describe,
+    find,
+    grep,
+    ls,
+    mkdir,
+    move,
+    normalize_model_relative_path,
+    read,
+    resolve_model_path,
+    write,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ── Backend handlers ──────────────────────────────────────────────────
+
+
+def _handle_open(
+    nc: NormalizedCommand,
+    state: ExplorationState,
+    cwd: str = ".",
+) -> dict[str, Any]:
+    """Handle OPEN intent: read file content."""
+
+    path = resolve_model_path(nc.target, cwd)
+    norm_path = normalize_model_relative_path(path)
+
+    # Check if we should serve an alternative representation due to loops
+    loop_broken = False
+    if state.should_break_loop(norm_path, "open"):
+        loop_broken = True
+
+    # Get file metadata
+    try:
+        meta = describe(path)
+    except Exception as exc:
+        return _not_found(str(exc))
+
+    meta_inner = meta.get("result", {})
+    size = int(meta_inner.get("size_bytes", 0))
+    kind = meta_inner.get("kind", "text")
+
+    # Binary / image — quick exit
+    if kind in ("binary", "image"):
+        from sandbox.presenters import _human_size
+        mime = meta_inner.get("mime", "?")
+        return _ok(f"[{kind} file: {mime}, {_human_size(size)}]", norm_path)
+
+    # Large file OR loop broken → auto-preview (never a dead-end refusal)
+    if size > MAX_CAT_FILE_BYTES or loop_broken:
+        preview = _build_preview(path, meta_inner, size)
+        warnings = []
+        if loop_broken:
+            warnings.append(
+                "Loop detected: switching to structured preview instead of raw text."
+            )
+        else:
+            warnings.append(
+                "Large file: showing structured preview with navigation aids."
+            )
+        record = state.record_touch
+        record(norm_path, "open",
+               representation="map" if loop_broken else "map")
+        return _ok(preview, norm_path, warnings=warnings)
+
+    # Normal read — with optional line range
+    start = nc.start_line
+    end = nc.end_line
+
+    # Tail support from compound pipeline normalization
+    tail_n = getattr(nc, "_tail_n", None)
+    if tail_n is not None and start is None:
+        full = read(path=path, max_bytes=MAX_READ_BYTES)
+        total = full.get("result", {}).get("total_lines", 0)
+        start = max(1, total - tail_n + 1)
+        end = total
+
+    result = read(
+        path=path,
+        start_line=start,
+        end_line=end,
+        max_bytes=MAX_READ_BYTES,
+    )
+    inner = result.get("result", {})
+    content = inner.get("content", "")
+    s_line = inner.get("start_line", 1)
+    e_line = inner.get("end_line", 1)
+    total_lines = inner.get("total_lines", 0)
+
+    # Long file (small bytes, many lines) — switch to file_map preview.
+    # Skip when the model explicitly requested a line range.
+    if (
+        start is None
+        and end is None
+        and total_lines > MAX_CAT_LINE_THRESHOLD
+    ):
+        preview = _build_preview(path, meta_inner, size)
+        state.record_touch(norm_path, "open", representation="map")
+        return _ok(
+            preview, norm_path,
+            warnings=[
+                f"Long file ({total_lines} lines): showing structured preview with navigation aids."
+            ],
+        )
+
+    # Check overlap — if already read this range, switch to adjacent
+    if not loop_broken and start is None:
+        overlap = state.get_read_overlap(norm_path, s_line, e_line)
+        if overlap > 0.7:
+            unread = state.get_unread_windows(norm_path, total_lines)
+            if unread:
+                ns, ne = unread[0]
+                result = read(path=path, start_line=ns, end_line=ne,
+                              max_bytes=MAX_READ_BYTES)
+                inner = result.get("result", {})
+                content = inner.get("content", "")
+                s_line, e_line = ns, ne
+                warnings_list = [
+                    f"Already read [{s_line}:{e_line}] — serving adjacent unread region."
+                ]
+            else:
+                warnings_list = ["All regions of this file have been read."]
+        else:
+            warnings_list = list(result.get("warnings", []))
+    else:
+        warnings_list = list(result.get("warnings", []))
+
+    presented = present_read_slice(
+        path=norm_path,
+        content=content,
+        start_line=s_line,
+        end_line=e_line,
+        total_lines=total_lines,
+        size_bytes=size,
+    )
+
+    state.record_touch(norm_path, "open",
+                       window=(s_line, e_line), representation="raw")
+    return _ok(presented, norm_path, warnings=warnings_list)
+
+
+def _handle_locate(
+    nc: NormalizedCommand,
+    state: ExplorationState,
+    cwd: str = ".",
+) -> dict[str, Any]:
+    """Handle LOCATE intent: search text in files."""
+
+    if not nc.pattern:
+        return _err("No search pattern provided.")
+
+    path = resolve_model_path(nc.target, cwd)
+    norm_path = normalize_model_relative_path(path)
+
+    result = grep(
+        pattern=nc.pattern,
+        path=path,
+        glob=nc.glob_pattern,
+        case_sensitive=nc.case_sensitive,
+        context_before=0,
+        context_after=0,
+        max_results=MAX_GREP_RESULTS,
+    )
+
+    matches = result.get("result", {}).get("matches", [])
+    presented = present_grep_results(
+        matches=matches,
+        pattern=nc.pattern,
+        path=norm_path,
+    )
+
+    state.record_search(nc.pattern, norm_path, len(matches))
+    state.record_touch(norm_path, "locate")
+    return _ok(presented, norm_path, warnings=result.get("warnings", []))
+
+
+def _handle_survey(
+    nc: NormalizedCommand,
+    state: ExplorationState,
+    cwd: str = ".",
+) -> dict[str, Any]:
+    """Handle SURVEY intent: explore directory structure."""
+
+    path = resolve_model_path(nc.target, cwd)
+    norm_path = normalize_model_relative_path(path)
+
+    # Return cached survey for repeated root surveys
+    if norm_path in (".", "") and state.has_survey_cache():
+        cached = state.repo_survey_cache
+        return _ok(cached["output"], norm_path,
+                   warnings=["Survey from cache — run `ls -a .` to force refresh."])
+
+    result = ls(
+        path=path,
+        depth=nc.depth or 1,
+        max_entries=MAX_LS_ENTRIES,
+        include_hidden=nc.include_hidden,
+    )
+
+    entries = result.get("result", {}).get("entries", [])
+    lines = []
+    dirs_count = 0
+    files_count = 0
+    for e in entries:
+        indent = "  " * e.get("depth", 1)
+        name = e["name"]
+        if e.get("type") == "directory":
+            lines.append(f"{indent}{name}/")
+            dirs_count += 1
+        else:
+            size = e.get("size_bytes")
+            if size is not None:
+                from sandbox.presenters import _human_size
+                lines.append(f"{indent}{name}  ({_human_size(size)})")
+            else:
+                lines.append(f"{indent}{name}")
+            files_count += 1
+
+    output = "\n".join(lines) or "(empty)"
+    output = f"{norm_path}/\n{output}\n\n{dirs_count} directories, {files_count} files"
+
+    if norm_path in (".", ""):
+        state.record_survey({"output": output})
+
+    state.record_touch(norm_path, "survey")
+    return _ok(output, norm_path, warnings=result.get("warnings", []))
+
+
+def _handle_find(
+    nc: NormalizedCommand,
+    state: ExplorationState,
+    cwd: str = ".",
+) -> dict[str, Any]:
+    """Handle SURVEY/find intent: find files by name/type."""
+
+    path = resolve_model_path(nc.target, cwd)
+    norm_path = normalize_model_relative_path(path)
+
+    result = find(
+        path=path,
+        name_pattern=getattr(nc, "name_pattern", None),
+        type=getattr(nc, "find_type", None),
+        max_depth=nc.depth or 8,
+        max_results=MAX_FIND_RESULTS,
+    )
+
+    matches = result.get("result", {}).get("matches", [])
+    output = "\n".join(m["path"] for m in matches) if matches else "(no matches)"
+
+    state.record_touch(norm_path, "survey")
+    return _ok(output, norm_path, warnings=result.get("warnings", []))
+
+
+# ── Helpers ───────────────────────────────────────────────────────────
+
+
+def _build_preview(path: str, meta: dict[str, Any], size: int) -> str:
+    """Build structured preview for large files (no refusal)."""
+
+    head_result = read(path=path, max_bytes=MAX_READ_BYTES)
+    head_inner = head_result.get("result", {})
+    content = head_inner.get("content", "")
+    total_lines = head_inner.get("total_lines", 0)
+    mime = head_inner.get("mime", meta.get("mime", "text/plain"))
+    head_lines = content.split("\n") if content else []
+
+    tail_lines: list[str] = []
+    tail_start_line = 0
+    if total_lines > 45:
+        tail_start = max(1, total_lines - 15)
+        tail_result = read(
+            path=path,
+            start_line=tail_start,
+            end_line=total_lines,
+            max_bytes=MAX_READ_BYTES,
+        )
+        tail_content = tail_result.get("result", {}).get("content", "")
+        tail_lines = tail_content.split("\n") if tail_content else []
+        tail_start_line = tail_start
+
+    norm = normalize_model_relative_path(path)
+    return present_auto_preview(
+        path=norm,
+        head_lines=head_lines,
+        total_lines=total_lines,
+        size_bytes=size,
+        mime=mime,
+        kind="text",
+        tail_lines=tail_lines or None,
+        tail_start_line=tail_start_line,
+    )
+
+
+def _ok(
+    stdout: str,
+    path: str = ".",
+    warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "intent_routed": True,
+        "stdout": stdout,
+        "stderr": "",
+        "warnings": warnings or [],
+    }
+
+
+def _err(message: str) -> dict[str, Any]:
+    return {
+        "intent_routed": True,
+        "stdout": "",
+        "stderr": message,
+        "error": message,
+        "warnings": [],
+    }
+
+
+def _not_found(message: str) -> None:
+    """Re-raise as FileNotFoundError so _try_supervise falls back to real bash."""
+    raise FileNotFoundError(message)
+
+
+# ── Main dispatch ─────────────────────────────────────────────────────
+
+_FIND_COMMANDS = frozenset({"find", "fd"})
+
+
+def dispatch(
+    command: str,
+    cwd: str,
+    state: ExplorationState,
+    make_bash_success: Callable,
+    make_bash_error: Callable,
+) -> dict[str, Any] | None:
+    """Classify command and dispatch to the appropriate handler.
+
+    Returns a bash-shaped response dict if handled,
+    or None to fall through to real bash.
+    """
+
+    nc = classify(command, cwd)
+    if nc is None:
+        return None
+
+    if nc.intent == Intent.RUN:
+        return None  # real bash handles execution
+
+    if nc.intent == Intent.MUTATE:
+        return None  # existing _ROUTE_MAP handlers cover mutations
+
+    try:
+        if nc.intent == Intent.OPEN:
+            result = _handle_open(nc, state, cwd=cwd)
+
+        elif nc.intent == Intent.LOCATE:
+            result = _handle_locate(nc, state, cwd=cwd)
+
+        elif nc.intent == Intent.SURVEY:
+            # find/fd → _handle_find; ls/tree → _handle_survey
+            raw_cmd = nc.raw_command.split()[0] if nc.raw_command else ""
+            if raw_cmd in _FIND_COMMANDS:
+                result = _handle_find(nc, state, cwd=cwd)
+            else:
+                result = _handle_survey(nc, state, cwd=cwd)
+
+        else:
+            return None
+
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        # Path resolution / not-found errors → fall through so _try_supervise
+        # can apply _is_path_resolution_error and fall back to real bash.
+        raise
+    except Exception as exc:
+        logger.debug("Controller dispatch failed for %r: %s", command, exc)
+        return None  # unknown errors fall through to real bash
+
+    # Convert internal result to bash-shaped response
+    error = result.get("error")
+    if error:
+        return make_bash_error(
+            error,
+            stderr=result.get("stderr", ""),
+            cwd=cwd,
+        )
+
+    return make_bash_success(
+        result.get("stdout", ""),
+        warnings=result.get("warnings"),
+        cwd=cwd,
+    )

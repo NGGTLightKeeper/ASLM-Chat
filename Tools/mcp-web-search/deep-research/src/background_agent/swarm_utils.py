@@ -4,9 +4,18 @@ from __future__ import annotations
 
 import hashlib
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.endpoint_overlay import normalize_domain
+from src.llm_client import call_llm_json
+
+try:
+    from src.config import DEEP_RESEARCH_ROOT as _DR_ROOT
+except Exception:
+    _DR_ROOT = Path(__file__).resolve().parents[3]  # type: ignore
+
+_SWARM_HTTP_CACHE_DB: str = str(Path(_DR_ROOT) / "_cache" / "swarm_http_cache.db")
 
 try:
     from src.background_agent import EphemeralStore, ResearchTask, TaskOrchestrator
@@ -24,6 +33,39 @@ _BACKGROUND_SWARM_DOMAIN_BLOCKLIST = {
     "wikipedia.org",
     "quora.com",
 }
+
+
+def _preview_text(text: str, limit: int = 140) -> str:
+    """Compress one text fragment for swarm debug logging."""
+
+    compact = " ".join((text or "").split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _background_swarm_tasks_schema(task_count: int) -> Dict[str, Any]:
+    return {
+        "type": "array",
+        "minItems": max(1, int(task_count)),
+        "maxItems": max(1, int(task_count)),
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["label", "query", "target_domains", "goal"],
+            "properties": {
+                "label": {"type": "string", "minLength": 2, "maxLength": 64},
+                "query": {"type": "string", "minLength": 2, "maxLength": 96},
+                "target_domains": {
+                    "type": "array",
+                    "minItems": 0,
+                    "maxItems": 4,
+                    "items": {"type": "string", "minLength": 3, "maxLength": 100},
+                },
+                "goal": {"type": "string", "minLength": 0, "maxLength": 180},
+            },
+        },
+    }
 
 
 # Validate a normalized domain name.
@@ -105,6 +147,184 @@ def _collect_background_domains(state: Any, cfg: Any) -> List[str]:
     return combined
 
 
+def _normalize_swarm_query(raw: Any) -> str:
+    if not isinstance(raw, str):
+        return ""
+    query = " ".join(raw.strip().split())
+    if len(query) > 96:
+        query = query[:96].strip()
+    return query
+
+
+def _normalize_swarm_task(
+    raw: Any,
+    fallback_label: str,
+    query_type: str,
+) -> Optional[Dict[str, Any]]:
+    if isinstance(raw, str):
+        query = _normalize_swarm_query(raw)
+        if not query:
+            return None
+        return {
+            "label": fallback_label,
+            "query": query,
+            "target_domains": [],
+            "goal": "",
+        }
+
+    if not isinstance(raw, dict):
+        return None
+
+    query = _normalize_swarm_query(raw.get("query"))
+    if not query:
+        return None
+
+    label = " ".join(str(raw.get("label") or fallback_label).strip().split())[:64].strip()
+    if not label:
+        label = fallback_label
+    goal = " ".join(str(raw.get("goal") or "").strip().split())[:180].strip()
+
+    target_domains: List[str] = []
+    for item in raw.get("target_domains") or []:
+        domain = normalize_domain(str(item))
+        if not _is_background_seed_allowed(query_type, domain):
+            continue
+        if domain and domain not in target_domains:
+            target_domains.append(domain)
+        if len(target_domains) >= 4:
+            break
+
+    return {
+        "label": label,
+        "query": query,
+        "target_domains": target_domains,
+        "goal": goal,
+    }
+
+
+def _validate_swarm_tasks(
+    tasks: List[Any],
+    *,
+    limit: int,
+    query_type: str,
+) -> List[Dict[str, Any]]:
+    cleaned: List[Dict[str, Any]] = []
+    seen_queries: set[str] = set()
+    for index, raw in enumerate(tasks, 1):
+        task = _normalize_swarm_task(raw, fallback_label=f"Task {index}", query_type=query_type)
+        if not task:
+            continue
+        key = str(task["query"]).lower()
+        if key in seen_queries:
+            continue
+        seen_queries.add(key)
+        cleaned.append(task)
+        if len(cleaned) >= limit:
+            break
+    return cleaned
+
+
+async def _generate_background_swarm_tasks(
+    state: Any,
+    cfg: Any,
+    seed_domains: List[str],
+) -> List[Dict[str, Any]]:
+    query_limit = max(1, int(getattr(cfg, "background_swarm_query_count", 4)))
+    domain_preview = ", ".join(
+        normalize_domain(item) for item in seed_domains[:8] if normalize_domain(item)
+    )
+    prompt = (
+        f"Generate EXACTLY {query_limit} focused crawler tasks for a background deep-research agent.\n\n"
+        f"Main question:\n\"{state.question}\"\n\n"
+        f"Seed domains:\n{domain_preview or '-'}\n\n"
+        "Return ONLY valid JSON array. Each item must be an object:\n"
+        "{\n"
+        '  "label": "short task label",\n'
+        '  "query": "focused crawler subquery",\n'
+        '  "target_domains": ["example.com", "docs.example.com"],\n'
+        '  "goal": "what evidence this crawler task should look for"\n'
+        "}\n\n"
+        "Rules:\n"
+        "- Each task must target a distinct angle that is useful for crawling and evidence gathering\n"
+        "- query: 2-8 words, concrete and crawl-friendly\n"
+        "- label: 2-6 words\n"
+        "- goal: one short sentence\n"
+        "- target_domains: 0-3 real domains relevant to that specific task\n"
+        "- Use English unless the topic is clearly local-language specific\n"
+        "- No site operators, no quotes, no punctuation-heavy text\n"
+        "- No duplicate or near-duplicate tasks\n"
+    )
+    raw = await call_llm_json(
+        prompt=prompt,
+        model=cfg.query_model,
+        temperature=0.3,
+        json_schema=_background_swarm_tasks_schema(query_limit),
+        schema_name="background_swarm_tasks",
+        structured_output=bool(getattr(cfg, "structured_output_enabled", True)),
+        strict=bool(getattr(cfg, "structured_output_strict", True)),
+        reasoning_effort=str(getattr(cfg, "reasoning_effort", "low")),
+        reasoning_tokens=int(getattr(cfg, "reasoning_tokens", 2048)),
+        concise_reasoning_prompt=str(getattr(cfg, "concise_reasoning_prompt", "")),
+    )
+    if isinstance(raw, list):
+        validated = _validate_swarm_tasks(raw, limit=query_limit, query_type=state.query_type)
+        if validated:
+            return validated
+
+    fallback_candidates: List[Any] = []
+    for plan in getattr(state, "query_plans", []) or []:
+        if getattr(plan, "query", None):
+            fallback_candidates.append(
+                {
+                    "label": plan.query[:40],
+                    "query": plan.query,
+                    "target_domains": list(getattr(plan, "target_domains", []) or []),
+                    "goal": "",
+                }
+            )
+    fallback_candidates.extend(getattr(state, "search_queries", []) or [])
+    fallback_candidates.append(
+        {
+            "label": "Background overview",
+            "query": state.question,
+            "target_domains": [],
+            "goal": "Collect broad background evidence.",
+        }
+    )
+    validated = _validate_swarm_tasks(
+        fallback_candidates,
+        limit=query_limit,
+        query_type=state.query_type,
+    )
+    return validated or [
+        {
+            "label": "Background overview",
+            "query": "background research overview",
+            "target_domains": [],
+            "goal": "Collect broad background evidence.",
+        }
+    ]
+
+
+def _compose_swarm_task_domains(
+    base_domains: List[str],
+    task_spec: Dict[str, Any],
+) -> List[str]:
+    preferred = []
+    seen = set()
+    for domain in task_spec.get("target_domains") or []:
+        normalized = normalize_domain(str(domain))
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            preferred.append(f"https://{normalized}")
+    merged: List[str] = []
+    for item in preferred + list(base_domains):
+        if not item or item in merged:
+            continue
+        merged.append(item)
+    return merged
+
+
 # Swarm lifecycle helpers.
 async def start_background_swarm(
     state: Any, task_id: str
@@ -125,6 +345,10 @@ async def start_background_swarm(
     if not domains:
         state.log("  WARN Background swarm skipped: no domains")
         return None
+    swarm_tasks = await _generate_background_swarm_tasks(state, cfg, domains)
+    current_task = swarm_tasks[0]
+    current_query = str(current_task["query"]).strip()
+    current_domains = _compose_swarm_task_domains(domains, current_task)
 
     swarm_id = f"{task_id}_swarm"
     try:
@@ -133,10 +357,12 @@ async def start_background_swarm(
         )
         store.start_cleanup_loop(interval_sec=90.0)
         orchestrator = TaskOrchestrator(max_concurrent=1)
+        swarm_task_timeout = max(0.0, float(getattr(cfg, "background_swarm_task_timeout_sec", 0.0)))
+        swarm_bfs_fraction = max(0.10, min(0.70, float(getattr(cfg, "background_swarm_bfs_fraction", 0.40))))
         task = ResearchTask(
             task_id=swarm_id,
-            query=state.question,
-            domains=domains,
+            query=current_query,
+            domains=current_domains,
             store=store,
             ttl_sec=float(getattr(cfg, "background_swarm_ttl_sec", 1200.0)),
             max_urls_per_domain=max(
@@ -154,9 +380,15 @@ async def start_background_swarm(
             min_chunk_relevance=max(
                 0.0, float(getattr(cfg, "background_swarm_min_chunk_relevance", 0.30))
             ),
+            max_total_chunks=max(
+                0, int(getattr(cfg, "background_swarm_max_total_chunks", 1000))
+            ),
             use_stealth=bool(getattr(cfg, "enable_stealth", True)),
             use_playwright=bool(getattr(cfg, "enable_playwright", False)),
             progress_callback=lambda m: state.log(f"  [swarm] {m}"),
+            http_cache_db=_SWARM_HTTP_CACHE_DB,
+            task_timeout_sec=swarm_task_timeout,
+            bfs_budget_fraction=swarm_bfs_fraction,
         )
         await orchestrator.submit(
             task.run, task_id=swarm_id, max_retries=1, retry_base_delay=5.0
@@ -170,17 +402,21 @@ async def start_background_swarm(
         state.log(
             f"Background swarm started: seeds={len(domains)} "
             f"(roots={root_seed_count}, specific={specific_seed_count}) "
-            f"task_id={swarm_id}"
+            f"task_id={swarm_id} task='{current_task['label']}' query='{current_query}'"
         )
         return {
             "task_id": swarm_id,
             "store": store,
             "orchestrator": orchestrator,
             "task": task,
+            "base_domains": domains,
+            "tasks": swarm_tasks,
+            "task_index": 0,
             "seen_hashes": set(),
             "query_embedding": None,
             "poll_count": 0,
             "run_count": 1,
+            "global_chunk_cap_reached": False,
         }
     except Exception as exc:
         state.log(f"  WARN Background swarm start failed: {exc}")
@@ -232,23 +468,51 @@ async def drain_background_swarm(
             f"  [swarm] status={status.get('status')} progress={status.get('progress')}"
         )
 
+    result = orchestrator.get_result(task_id)
+    task_obj = swarm_ctx.get("task")
+    max_total_chunks = int(getattr(task_obj, "max_total_chunks", 0) or 0)
+    if (
+        result is not None
+        and max_total_chunks > 0
+        and int(getattr(result, "chunks_stored", 0) or 0) >= max_total_chunks
+    ):
+        swarm_ctx["global_chunk_cap_reached"] = True
+
     # Restart the swarm as soon as it finishes so it keeps collecting
     if allow_restart and status.get("status") in ("done", "failed"):
-        task_obj = swarm_ctx.get("task")
-        if task_obj is not None:
-            run_num = swarm_ctx.get("run_count", 1) + 1
-            swarm_ctx["run_count"] = run_num
-            try:
+        if swarm_ctx.get("global_chunk_cap_reached"):
+            state.log("  [swarm] auto-restart skipped: global chunk cap reached")
+        else:
+            task_specs = swarm_ctx.get("tasks") or []
+            next_task_index = int(swarm_ctx.get("task_index", 0)) + 1
+            if next_task_index >= len(task_specs):
+                state.log("  [swarm] auto-restart skipped: no pending swarm tasks")
+            elif task_obj is not None:
+                next_task = dict(task_specs[next_task_index])
+                next_query = str(next_task["query"]).strip()
+                swarm_ctx["task_index"] = next_task_index
+                task_obj.query = next_query
+                base_domains = list(swarm_ctx.get("base_domains") or [])
                 refreshed_domains = _collect_background_domains(state, cfg)
                 if refreshed_domains:
-                    task_obj.domains = refreshed_domains
+                    base_domains = refreshed_domains
+                    swarm_ctx["base_domains"] = list(refreshed_domains)
                     state.log(f"  [swarm] refreshed seeds: {len(refreshed_domains)}")
-                await orchestrator.submit(
-                    task_obj.run, task_id=task_id, max_retries=1, retry_base_delay=5.0
-                )
-                state.log(f"  [swarm] restarted (run #{run_num})")
-            except Exception as exc:
-                state.log(f"  [swarm] restart failed: {exc}")
+                task_obj.domains = _compose_swarm_task_domains(base_domains, next_task)
+                swarm_ctx["query_embedding"] = None
+                swarm_ctx["seen_hashes"] = set()
+                run_num = swarm_ctx.get("run_count", 1) + 1
+                swarm_ctx["run_count"] = run_num
+                try:
+                    await orchestrator.submit(
+                        task_obj.run, task_id=task_id, max_retries=1, retry_base_delay=5.0
+                    )
+                    state.log(
+                        f"  [swarm] restarted (run #{run_num}) "
+                        f"task='{next_task['label']}' query='{next_query}'"
+                    )
+                except Exception as exc:
+                    state.log(f"  [swarm] restart failed: {exc}")
 
     query_embedding = swarm_ctx.get("query_embedding")
     if query_embedding is None:
@@ -270,6 +534,21 @@ async def drain_background_swarm(
         return []
     if not swarm_hits:
         return []
+
+    state.log(f"  [swarm] search returned {len(swarm_hits)} hits (top_k={top_k})")
+    for index, hit in enumerate(swarm_hits[: min(8, len(swarm_hits))], 1):
+        meta = hit.metadata or {}
+        url = str(meta.get("url") or "").strip() or "-"
+        title = _preview_text(str(meta.get("title") or url), 90)
+        method = str(meta.get("method") or "background_swarm")
+        score = float(getattr(hit, "score", 0.0) or 0.0)
+        chunk_preview = _preview_text(hit.chunk or "", 160)
+        state.log(
+            f"  [swarm] hit {index}: score={score:.3f} method={method} "
+            f"title='{title}' url={url}"
+        )
+        if chunk_preview:
+            state.log(f"  [swarm] hit {index} chunk: {chunk_preview}")
 
     grouped: Dict[str, list] = defaultdict(list)
     for hit in swarm_hits:
@@ -332,6 +611,13 @@ async def drain_background_swarm(
         source._relevance = max(0.0, min(1.0, avg_score))  # type: ignore[attr-defined]
         merged_sources.append(source)
         seen_hashes.add(content_hash)
+        state.log(
+            f"  [swarm] attach candidate: score={avg_score:.3f} chunks={len(chunks)} "
+            f"chars={len(merged_text)} title='{_preview_text(title, 90)}' url={url}"
+        )
+        state.log(
+            f"  [swarm] attach preview: {_preview_text(merged_text, 220)}"
+        )
         if len(merged_sources) >= attach_cap:
             break
 

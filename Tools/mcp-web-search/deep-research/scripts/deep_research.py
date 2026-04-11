@@ -53,6 +53,9 @@ if sys.platform.startswith("win"):
         pass
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+# Also insert src/ so that flat `from config import` in src modules resolves
+# to deep-research/src/config.py before any namespace-package stub can be created.
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from src.config import (
     DDGS_CACHE_DB,
@@ -211,6 +214,116 @@ _NO_HEURISTIC_DOMAINS = {
 }
 
 
+# URLs that are almost certainly navigation/infrastructure pages and carry no
+# research value: sitemaps, feeds, navigation-only pages, special wiki pages, etc.
+_JUNK_URL_RE = re.compile(
+    r"(sitemap[^/]*\.xml|/sitemaps?/|/feed\.xml|/rss\.xml|/atom\.xml|/robots\.txt"
+    r"|Special:[A-Za-z]|/stats/?$|/credentials/?$|/ask$|/jobs$|/newest$|/shownew$"
+    r"|/news/?$|/tag/|/category/|/topics?/|/front/?$)",
+    re.IGNORECASE,
+)
+
+
+def _is_junk_url(url: str) -> bool:
+    return bool(_JUNK_URL_RE.search(url or ""))
+
+
+# Structured output helpers.
+def _json_string_array_schema(
+    *,
+    min_items: int,
+    max_items: int,
+    item_min_length: int = 1,
+    item_max_length: int = 120,
+) -> Dict[str, Any]:
+    return {
+        "type": "array",
+        "minItems": min_items,
+        "maxItems": max_items,
+        "items": {
+            "type": "string",
+            "minLength": item_min_length,
+            "maxLength": item_max_length,
+        },
+    }
+
+
+def _query_plan_json_schema(query_count: int) -> Dict[str, Any]:
+    return {
+        "type": "array",
+        "minItems": max(1, int(query_count)),
+        "maxItems": max(1, int(query_count)),
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["query", "target_domains"],
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 80,
+                },
+                "target_domains": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 3,
+                    "items": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 100,
+                    },
+                },
+            },
+        },
+    }
+
+
+def _reflection_json_schema(target_queries: int) -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["gaps", "followup_queries", "coverage_assessment"],
+        "properties": {
+            "gaps": _json_string_array_schema(
+                min_items=0,
+                max_items=max(2, int(target_queries) + 2),
+                item_min_length=2,
+                item_max_length=240,
+            ),
+            "followup_queries": _json_string_array_schema(
+                min_items=0,
+                max_items=max(1, int(target_queries)),
+                item_min_length=1,
+                item_max_length=80,
+            ),
+            "coverage_assessment": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 400,
+            },
+        },
+    }
+
+
+def _final_source_rank_json_schema(batch_size: int) -> Dict[str, Any]:
+    return {
+        "type": "array",
+        "minItems": batch_size,
+        "maxItems": batch_size,
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["source_index", "quality_score", "keep", "reason"],
+            "properties": {
+                "source_index": {"type": "integer", "minimum": 1, "maximum": batch_size},
+                "quality_score": {"type": "number", "minimum": 0, "maximum": 100},
+                "keep": {"type": "boolean"},
+                "reason": {"type": "string", "minLength": 0, "maxLength": 240},
+            },
+        },
+    }
+
+
 # Query planning helpers.
 def _normalize_method_hint(value: Optional[str]) -> str:
     hint = (value or "auto").strip().lower()
@@ -349,7 +462,20 @@ async def generate_query_plans(state: ResearchState) -> List[QueryPlan]:
         "  * Do NOT use full URLs, only bare domain names (e.g. 'github.com', not 'github.com/user/repo')\n"
         "- no markdown, no explanations, only JSON array\n"
     )
-    raw = await call_llm_json(prompt=prompt, model=cfg.query_model, temperature=0.4)
+    raw = await call_llm_json(
+        prompt=prompt,
+        model=cfg.query_model,
+        temperature=0.4,
+        json_schema=_query_plan_json_schema(cfg.num_queries),
+        schema_name="research_query_plans",
+        structured_output=bool(getattr(cfg, "structured_output_enabled", True)),
+        strict=bool(getattr(cfg, "structured_output_strict", True)),
+        reasoning_effort=str(getattr(cfg, "reasoning_effort", "low")),
+        reasoning_tokens=int(getattr(cfg, "reasoning_tokens", 2048)),
+        concise_reasoning_prompt=str(getattr(cfg, "concise_reasoning_prompt", "")),
+        debug_label="query-planning",
+        debug_log=state.log,
+    )
 
     fallback_queries = _validate_queries([state.question], max_words=6, max_chars=70)
     plans = _parse_query_plans_payload(
@@ -477,7 +603,25 @@ EXAMPLE: if the question was "How does PostgreSQL replication work?", correct ou
 Return ONLY a valid JSON array with exactly {cfg.num_queries} string elements, no other text:
 ["query1", "query2", "query3", ...]"""
 
-    result = await call_llm_json(prompt=prompt, model=cfg.query_model, temperature=0.5)
+    result = await call_llm_json(
+        prompt=prompt,
+        model=cfg.query_model,
+        temperature=0.5,
+        json_schema=_json_string_array_schema(
+            min_items=max(1, int(cfg.num_queries)),
+            max_items=max(1, int(cfg.num_queries)),
+            item_min_length=2,
+            item_max_length=100,
+        ),
+        schema_name="research_search_queries",
+        structured_output=bool(getattr(cfg, "structured_output_enabled", True)),
+        strict=bool(getattr(cfg, "structured_output_strict", True)),
+        reasoning_effort=str(getattr(cfg, "reasoning_effort", "low")),
+        reasoning_tokens=int(getattr(cfg, "reasoning_tokens", 2048)),
+        concise_reasoning_prompt=str(getattr(cfg, "concise_reasoning_prompt", "")),
+        debug_label="query-generation",
+        debug_log=state.log,
+    )
 
     if isinstance(result, list) and all(isinstance(q, str) for q in result):
         seen = set()
@@ -1648,6 +1792,27 @@ async def filter_and_rank(
         except ImportError:
             state.log("  GLiNER unavailable")
 
+    # 5a½. Semantic dedup (MinHash + optional embedding).
+    if getattr(cfg, "semantic_dedup_enabled", True) and len(sources) > 1:
+        try:
+            from src.semantic_dedup import hybrid_dedup
+            before = len(sources)
+            sources = hybrid_dedup(
+                sources,
+                text_fn=lambda s: s.text[:2000],
+                minhash_threshold=getattr(cfg, "semantic_dedup_minhash_threshold", 0.7),
+                embedding_threshold=getattr(cfg, "semantic_dedup_embedding_threshold", 0.85),
+                use_embeddings=cfg.enable_gliner,
+                batch_size=getattr(cfg, "semantic_dedup_batch_size", 4),
+            )
+            removed = before - len(sources)
+            if removed:
+                state.log(f"  Semantic dedup: removed {removed} near-duplicates")
+        except ImportError:
+            state.log("  Semantic dedup unavailable (datasketch missing?)")
+        except Exception as exc:
+            state.log(f"  Semantic dedup error: {exc}")
+
     # 5b. Source-level + chunk-level
     state.log("Semantic filter...")
 
@@ -1794,6 +1959,137 @@ def _populate_deterministic_briefs(
         source.summary = _source_evidence_brief(source, max_chars=max_chars)
     return sources
 
+
+def _merge_unique_sources(
+    sources: List[ExtractedSource],
+    additions: List[ExtractedSource],
+) -> List[ExtractedSource]:
+    merged = list(sources)
+    seen_keys = {
+        (
+            source.url,
+            source.content_hash or hashlib.md5((source.text or "").encode("utf-8", "ignore")).hexdigest(),
+        )
+        for source in merged
+    }
+    for source in additions:
+        source_key = (
+            source.url,
+            source.content_hash or hashlib.md5((source.text or "").encode("utf-8", "ignore")).hexdigest(),
+        )
+        if source_key in seen_keys:
+            continue
+        seen_keys.add(source_key)
+        merged.append(source)
+    return merged
+
+
+def _build_reflection_context(
+    state: ResearchState,
+    *,
+    prompt_char_budget: int,
+    snippet_char_limit: int = 220,
+) -> tuple[str, dict[str, int]]:
+    budget = max(4000, int(prompt_char_budget))
+    blocks: list[str] = []
+    used_chars = 0
+    extracted_added = 0
+    snippet_added = 0
+    budget_reached = 0
+
+    def _try_add(block: str) -> bool:
+        nonlocal used_chars, budget_reached
+        if not block:
+            return False
+        remaining = budget - used_chars
+        if remaining <= 0:
+            budget_reached = 1
+            return False
+        if len(block) <= remaining:
+            blocks.append(block)
+            used_chars += len(block)
+            return True
+        if not blocks:
+            truncated = block[:remaining].rstrip() + "\n"
+            blocks.append(truncated)
+            used_chars += len(truncated)
+        budget_reached = 1
+        return False
+
+    extracted_blocks: list[str] = []
+    snippet_blocks: list[str] = []
+    previous_iteration_sources = list(state.last_iteration_sources)
+
+    for i, source in enumerate(previous_iteration_sources, 1):
+        content = sanitize_content(source.text or source.relevant_chunks or source.summary or "")
+        if not content.strip():
+            continue
+        extracted_blocks.append(
+            f"\n[EXTRACTED {i}]\n"
+            f"Title: {source.title}\n"
+            f"URL: {source.url}\n"
+            f"Content:\n{content}\n"
+        )
+
+    seen_snippet_urls: set[str] = set()
+    snippet_index = 1
+    for result in state.raw_results:
+        if result.url in seen_snippet_urls:
+            continue
+        seen_snippet_urls.add(result.url)
+        snippet = _compact_text(result.snippet or "")[:max(120, snippet_char_limit)]
+        if not snippet:
+            continue
+        snippet_blocks.append(
+            f"\n[SEARCH {snippet_index}]\n"
+            f"Title: {result.title}\n"
+            f"URL: {result.url}\n"
+            f"Snippet: {snippet}\n"
+        )
+        snippet_index += 1
+
+    for source in state.extracted_sources:
+        if source.url in seen_snippet_urls:
+            continue
+        seen_snippet_urls.add(source.url)
+        snippet = _compact_text(
+            source.summary or source.relevant_chunks or source.text or ""
+        )[:max(120, snippet_char_limit)]
+        if not snippet:
+            continue
+        snippet_blocks.append(
+            f"\n[SEARCH {snippet_index}]\n"
+            f"Title: {source.title}\n"
+            f"URL: {source.url}\n"
+            f"Snippet: {snippet}\n"
+        )
+        snippet_index += 1
+
+    if extracted_blocks:
+        if _try_add("\n=== PREVIOUS ITERATION FULL CONTENT ===\n"):
+            pass
+        for block in extracted_blocks:
+            if _try_add(block):
+                extracted_added += 1
+            else:
+                break
+
+    if snippet_blocks and used_chars < budget:
+        _try_add("\n=== DISCOVERED SOURCES (SNIPPETS ONLY) ===\n")
+        for block in snippet_blocks:
+            if _try_add(block):
+                snippet_added += 1
+            else:
+                break
+
+    return "".join(blocks), {
+        "extracted_added": extracted_added,
+        "snippet_added": snippet_added,
+        "used_chars": used_chars,
+        "budget_chars": budget,
+        "budget_reached": budget_reached,
+    }
+
 # Summary stage.
 async def summarize_sources(
     state: ResearchState,
@@ -1872,12 +2168,17 @@ Write in the same language as the research question. Do not start your summary w
             source.summary = "Failed to summarize"
             completed.append(source)
 
-    before = len(completed)
-    relevant = [s for s in completed if s.summary and not s.summary.strip().upper().startswith("REJECT")]
-    dropped = before - len(relevant)
-    if dropped > 0:
-        state.log(f"  LLM rejected: -{dropped}")
-    return relevant
+    rejected = 0
+    for source in completed:
+        summary_text = str(source.summary or "").strip()
+        is_rejected = bool(summary_text) and summary_text.upper().startswith("REJECT")
+        source._summary_rejected = is_rejected  # type: ignore[attr-defined]
+        if is_rejected:
+            rejected += 1
+
+    if rejected > 0:
+        state.log(f"  LLM marked {rejected} sources as low-value for final cleanup")
+    return completed
 
 
 # Stage 7: Reflection.
@@ -1886,16 +2187,24 @@ Write in the same language as the research question. Do not start your summary w
 async def reflect_and_generate_followup(
     state: ResearchState,
     failed_queries: List[str] = None,
+    attempted_queries: List[str] = None,
 ) -> List[str]:
     cfg = state.config
     state.log("Reflection...")
     reflection_timeout = max(15.0, float(getattr(cfg, "reflection_timeout_sec", min(cfg.llm_timeout, 120.0))))
     state.log(f"  [llm] reflection timeout={reflection_timeout:.0f}s")
-
-    found_summary = ""
-    for i, source in enumerate(state.extracted_sources, 1):
-        brief = _source_evidence_brief(source, max_chars=300)
-        found_summary += f"\n[{i}] {source.title}\n{brief}\n"
+    reflection_context, reflection_meta = _build_reflection_context(
+        state,
+        prompt_char_budget=int(getattr(cfg, "reflection_prompt_char_budget", 60000)),
+    )
+    state.log(
+        "  Reflection context: "
+        f"extracted={reflection_meta['extracted_added']} "
+        f"snippets={reflection_meta['snippet_added']} "
+        f"chars={reflection_meta['used_chars']}/{reflection_meta['budget_chars']}"
+    )
+    if reflection_meta.get("budget_reached"):
+        state.log("  Reflection context budget reached")
 
     lang = _detect_language(state.question)
     lang_instruction = """
@@ -1908,13 +2217,20 @@ async def reflect_and_generate_followup(
         for q in failed_queries:
             failed_block += f"  - {q}\n"
 
+    attempted_block = ""
+    if attempted_queries:
+        attempted_block = "\nAlready attempted follow-up queries - avoid repeating unless absolutely necessary:\n"
+        for q in attempted_queries[-12:]:
+            attempted_block += f"  - {q}\n"
+
     prompt = f"""You are a research quality reviewer.
 
 Original question: "{state.question}"
 
-Found so far:
-{found_summary}
+Extracted source contents and unextracted search snippets:
+{reflection_context}
 {failed_block}
+{attempted_block}
 If findings are comprehensive, return empty followup_queries.
 Otherwise generate 3-6 follow-up queries.
 
@@ -1935,12 +2251,27 @@ Return JSON:
         prompt=prompt,
         model=cfg.query_model,
         temperature=0.4,
+        json_schema=_reflection_json_schema(
+            int(getattr(cfg, "followup_queries_per_iteration", 4))
+        ),
+        schema_name="research_reflection_followup",
+        structured_output=bool(getattr(cfg, "structured_output_enabled", True)),
+        strict=bool(getattr(cfg, "structured_output_strict", True)),
+        reasoning_effort=str(getattr(cfg, "reasoning_effort", "low")),
+        reasoning_tokens=int(getattr(cfg, "reasoning_tokens", 2048)),
+        concise_reasoning_prompt=str(getattr(cfg, "concise_reasoning_prompt", "")),
         timeout=reflection_timeout,
+        debug_label="reflection",
+        debug_log=state.log,
     )
 
     if not isinstance(result, dict):
         state.log("  WARN Failed to parse reflection output, generating fallback follow-up")
-        failed_set = {q.strip().lower() for q in (failed_queries or []) if q and q.strip()}
+        blocked_set = {
+            q.strip().lower()
+            for q in ((failed_queries or []) + (attempted_queries or []))
+            if q and q.strip()
+        }
         target_n = max(1, int(getattr(cfg, "followup_queries_per_iteration", 4)))
         subject = ""
         for candidate in (state.search_queries or []):
@@ -1966,7 +2297,7 @@ Return JSON:
         candidates = []
         for aspect in aspects:
             q = f"{subject} {aspect}".strip()
-            if q.lower() in failed_set:
+            if q.lower() in blocked_set:
                 continue
             candidates.append(q)
             if len(candidates) >= target_n:
@@ -1976,6 +2307,7 @@ Return JSON:
             for q in fallback:
                 state.log(f"  fallback: {q}")
             return fallback[:target_n]
+        state.log("  No fresh fallback queries remain")
         return []
 
     gaps = result.get("gaps", [])
@@ -1998,10 +2330,666 @@ Return JSON:
 
 # Stage 9: Final synthesis.
 
+
+def _final_rank_source_brief(source: ExtractedSource, cfg: ResearchConfig) -> str:
+    content = _compact_text(
+        source.summary
+        or source.relevant_chunks
+        or source.text[: cfg.max_chars_per_source]
+        or ""
+    )
+    return content[:900]
+
+
+def _heuristic_final_quality(source: ExtractedSource) -> tuple[float, bool, str]:
+    relevance = max(0.0, min(1.0, float(getattr(source, "_relevance", 0.0) or 0.0)))
+    score = relevance * 0.55
+
+    content_type_bonus = {
+        "documentation": 0.16,
+        "research": 0.14,
+        "benchmark": 0.12,
+        "tutorial": 0.09,
+        "news": 0.05,
+        "opinion": -0.02,
+        "forum": -0.03,
+        "other": 0.0,
+    }
+    score += content_type_bonus.get(str(getattr(source, "content_type", "other")).lower(), 0.0)
+
+    evidence_bonus = {
+        "strong": 0.18,
+        "moderate": 0.09,
+        "weak": -0.02,
+        "anecdotal": -0.08,
+    }
+    score += evidence_bonus.get(str(getattr(source, "evidence_strength", "moderate")).lower(), 0.0)
+
+    character_bonus = {
+        "primary": 0.12,
+        "secondary": 0.05,
+        "aggregator": -0.04,
+        "commentary": -0.06,
+    }
+    score += character_bonus.get(str(getattr(source, "source_character", "secondary")).lower(), 0.0)
+
+    if bool(getattr(source, "_summary_rejected", False)):
+        score -= 0.18
+    if len(_compact_text(source.summary or "")) >= 120:
+        score += 0.05
+    if len(_compact_text(source.relevant_chunks or "")) >= 300:
+        score += 0.05
+
+    score = max(0.0, min(1.0, score))
+    keep = score >= 0.42
+    reason = "heuristic relevance/evidence estimate"
+    return score, keep, reason
+
+
+def _normalize_final_rank_batch(
+    result: object,
+    batch_size: int,
+) -> list[dict[str, Any]]:
+    if not isinstance(result, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    seen_indices: set[int] = set()
+    for item in result:
+        if not isinstance(item, dict):
+            continue
+        try:
+            source_index = int(item.get("source_index"))
+        except Exception:
+            continue
+        if source_index < 1 or source_index > batch_size or source_index in seen_indices:
+            continue
+        seen_indices.add(source_index)
+        try:
+            quality_score = float(item.get("quality_score", 0.0))
+        except Exception:
+            quality_score = 0.0
+        normalized.append(
+            {
+                "source_index": source_index,
+                "quality_score": max(0.0, min(100.0, quality_score)),
+                "keep": bool(item.get("keep", False)),
+                "reason": str(item.get("reason", "")).strip()[:240],
+            }
+        )
+
+    return normalized
+
+
+async def _rank_final_sources_with_llm(
+    state: ResearchState,
+    sources: List[ExtractedSource],
+) -> List[ExtractedSource]:
+    cfg = state.config
+    if not sources:
+        return []
+
+    batch_size = max(2, int(getattr(cfg, "final_source_rank_batch_size", 8)))
+    timeout = max(30.0, float(getattr(cfg, "final_source_rank_timeout_sec", 90.0)))
+    model = str(
+        getattr(cfg, "final_source_rank_model", "")
+        or getattr(cfg, "summarize_model", "")
+        or getattr(cfg, "query_model", "")
+    ).strip()
+
+    state.log(
+        f"  Final LLM quality rank: {len(sources)} sources "
+        f"(batch={batch_size}, timeout={timeout:.0f}s)"
+    )
+
+    for start in range(0, len(sources), batch_size):
+        batch = sources[start : start + batch_size]
+        source_blocks: list[str] = []
+        for local_index, source in enumerate(batch, 1):
+            source_blocks.append(
+                "\n".join(
+                    [
+                        f"[SOURCE {local_index}]",
+                        f"Title: {source.title}",
+                        f"URL: {source.url}",
+                        f"Semantic relevance: {float(getattr(source, '_relevance', 0.0) or 0.0):.3f}",
+                        f"Sub-topic: {getattr(source, 'sub_topic', '') or '-'}",
+                        f"Content type: {getattr(source, 'content_type', '') or 'other'}",
+                        f"Evidence strength: {getattr(source, 'evidence_strength', '') or 'moderate'}",
+                        f"Source character: {getattr(source, 'source_character', '') or 'secondary'}",
+                        f"Perspective: {getattr(source, 'perspective', '') or '-'}",
+                        f"Summary rejected earlier: {'yes' if getattr(source, '_summary_rejected', False) else 'no'}",
+                        "Content:",
+                        _final_rank_source_brief(source, cfg) or "(empty)",
+                    ]
+                )
+            )
+
+        prompt = f"""{SAFETY_PREFIX}
+
+You are the final source-cleanup ranker for a deep research pipeline.
+
+Research question: "{state.question}"
+
+Your job is to score each source for FINAL REPORT QUALITY.
+Judge whether the source should survive into synthesis after semantic filtering.
+
+Score based on:
+- direct usefulness for answering the question
+- factual density and specificity
+- evidence quality / authority
+- uniqueness versus likely duplicates or low-signal commentary
+- technical depth when relevant
+
+Return JSON array in the same batch size. For each source:
+- source_index: source number from this batch
+- quality_score: 0-100 absolute quality score
+- keep: true only if this source deserves to stay in the final synthesis pool
+- reason: very short reason
+
+Sources:
+{"\n\n".join(source_blocks)}
+"""
+        result = None
+        try:
+            result = await call_llm_json(
+                prompt=prompt,
+                model=model,
+                temperature=0.1,
+                timeout=timeout,
+                json_schema=_final_source_rank_json_schema(len(batch)),
+                schema_name="research_final_source_rank",
+                structured_output=bool(getattr(cfg, "structured_output_enabled", True)),
+                strict=bool(getattr(cfg, "structured_output_strict", True)),
+                reasoning_effort=str(getattr(cfg, "reasoning_effort", "low")),
+                reasoning_tokens=int(getattr(cfg, "reasoning_tokens", 2048)),
+                concise_reasoning_prompt=str(getattr(cfg, "concise_reasoning_prompt", "")),
+            )
+        except Exception as exc:
+            state.log(f"  WARN Final source rank batch error: {exc}")
+
+        normalized = _normalize_final_rank_batch(result, len(batch))
+        by_index = {item["source_index"]: item for item in normalized}
+        for local_index, source in enumerate(batch, 1):
+            item = by_index.get(local_index)
+            if item is None:
+                heuristic_score, heuristic_keep, heuristic_reason = _heuristic_final_quality(source)
+                source._final_quality_score = heuristic_score  # type: ignore[attr-defined]
+                source._final_quality_keep = heuristic_keep  # type: ignore[attr-defined]
+                source._final_quality_reason = heuristic_reason  # type: ignore[attr-defined]
+            else:
+                quality_norm = float(item["quality_score"]) / 100.0
+                source._final_quality_score = max(0.0, min(1.0, quality_norm))  # type: ignore[attr-defined]
+                source._final_quality_keep = bool(item["keep"])  # type: ignore[attr-defined]
+                source._final_quality_reason = item["reason"]  # type: ignore[attr-defined]
+
+            relevance = max(0.0, min(1.0, float(getattr(source, "_relevance", 0.0) or 0.0)))
+            quality = max(0.0, min(1.0, float(getattr(source, "_final_quality_score", 0.0) or 0.0)))
+            source._final_score = (quality * 0.7) + (relevance * 0.3)  # type: ignore[attr-defined]
+            state.log(
+                "  Final rank "
+                f"[{start + local_index}/{len(sources)}]: "
+                f"keep={getattr(source, '_final_quality_keep', False)} "
+                f"quality={quality:.3f} semantic={relevance:.3f} "
+                f"title={source.title[:70]}"
+            )
+
+    return sources
+
+
+async def _apply_final_source_cleanup(state: ResearchState) -> None:
+    cfg = state.config
+    if not bool(getattr(cfg, "final_source_cleanup_enabled", True)):
+        state.log("Final source cleanup disabled")
+        return
+    if not state.extracted_sources:
+        return
+
+    state.log(f"Final source cleanup: start with {len(state.extracted_sources)} sources")
+
+    from src.source_pool import SourcePool
+
+    pool = SourcePool()
+    deduped: List[ExtractedSource] = []
+    for source in state.extracted_sources:
+        if pool.add(source):
+            deduped.append(source)
+    removed_duplicates = len(state.extracted_sources) - len(deduped)
+    if removed_duplicates > 0:
+        state.log(f"  Final exact dedup: removed {removed_duplicates}")
+
+    # Pre-filter obvious junk URLs (sitemaps, navigation pages, feeds) before
+    # spending LLM ranking budget on them.
+    before_junk = len(deduped)
+    deduped = [s for s in deduped if not _is_junk_url(s.url or "")]
+    removed_junk = before_junk - len(deduped)
+    if removed_junk > 0:
+        state.log(f"  Final junk-URL pre-filter: removed {removed_junk}")
+
+    semantically_cleaned = await filter_and_rank(state, deduped)
+    if not semantically_cleaned:
+        state.log("  Final semantic cleanup produced no sources")
+        state.extracted_sources = []
+        return
+
+    ranked = await _rank_final_sources_with_llm(state, semantically_cleaned)
+    ranked.sort(
+        key=lambda source: (
+            1 if bool(getattr(source, "_final_quality_keep", False)) else 0,
+            float(getattr(source, "_final_score", 0.0) or 0.0),
+            float(getattr(source, "_final_quality_score", 0.0) or 0.0),
+            float(getattr(source, "_relevance", 0.0) or 0.0),
+            int(getattr(source, "char_count", 0) or 0),
+        ),
+        reverse=True,
+    )
+
+    keep_cap = max(1, int(getattr(cfg, "synthesis_source_cap", len(ranked))))
+    min_quality = max(0.0, float(getattr(cfg, "synthesis_min_source_quality", 0.55)))
+    preferred = [source for source in ranked if bool(getattr(source, "_final_quality_keep", False))]
+    if len(preferred) >= keep_cap:
+        final_sources = preferred[:keep_cap]
+    else:
+        # Fill remaining cap slots with rejected sources that meet the minimum
+        # quality bar — this prevents sitemaps/nav-pages from sneaking in when
+        # the cap exceeds the number of preferred sources.
+        rejected = [
+            source for source in ranked
+            if not bool(getattr(source, "_final_quality_keep", False))
+            and float(getattr(source, "_final_quality_score", 0.0) or 0.0) >= min_quality
+        ]
+        final_sources = preferred + rejected[: max(0, keep_cap - len(preferred))]
+
+    state.log(
+        f"  Final cleanup result: keep {len(final_sources)}/{len(ranked)} "
+        f"(cap={keep_cap}, preferred={len(preferred)})"
+    )
+    state.extracted_sources = final_sources
+
+def _source_synthesis_content(source: ExtractedSource, cfg: ResearchConfig) -> str:
+    return sanitize_content(source.relevant_chunks or source.text[:cfg.max_chars_per_source] or "")
+
+
+def _content_type_priority(content_type: str, priority_list: list) -> int:
+    """Return sort order for a content_type (lower = higher priority)."""
+    ct = (content_type or "other").lower().strip()
+    try:
+        return priority_list.index(ct)
+    except ValueError:
+        return len(priority_list)
+
+
+def _build_source_block(
+    source, index: int, cfg, budget: int,
+) -> Optional[Dict[str, Any]]:
+    """Build one source block dict for synthesis batching."""
+    content = _source_synthesis_content(source, cfg)
+    if not content.strip():
+        return None
+    header = (
+        f"\n[SOURCE {index}]\n"
+        f"Title: {source.title}\n"
+        f"URL: {source.url}\n"
+    )
+    # Include triage metadata when available.
+    if getattr(source, "sub_topic", ""):
+        header += f"Sub-topic: {source.sub_topic}\n"
+    if getattr(source, "content_type", ""):
+        header += f"Type: {source.content_type}\n"
+    header += "Content:\n"
+
+    max_content_chars = max(1000, budget - len(header) - 10)
+    if len(content) > max_content_chars:
+        content = content[:max_content_chars].rstrip()
+    block = f"{header}{content}\n"
+    return {
+        "index": index,
+        "title": source.title,
+        "url": source.url,
+        "block": block,
+        "sub_topic": getattr(source, "sub_topic", ""),
+        "content_type": getattr(source, "content_type", ""),
+    }
+
+
+def _build_synthesis_source_batches(
+    state: ResearchState,
+    *,
+    batch_char_budget: int,
+) -> List[List[Dict[str, Any]]]:
+    cfg = state.config
+    budget = max(12000, int(batch_char_budget))
+    smart = getattr(cfg, "smart_batching_enabled", True)
+    priority_list = getattr(cfg, "smart_batching_content_type_priority", [
+        "documentation", "research", "benchmark", "tutorial",
+        "news", "opinion", "forum", "other",
+    ])
+
+    # Build all source blocks.
+    all_blocks: list[Dict[str, Any]] = []
+    skipped_empty = 0
+    for index, source in enumerate(state.extracted_sources, 1):
+        block = _build_source_block(source, index, cfg, budget)
+        if block:
+            all_blocks.append(block)
+        else:
+            skipped_empty += 1
+
+    state.log(
+        f"  Synthesis-ready sources: {len(all_blocks)}/{len(state.extracted_sources)} "
+        f"(empty={skipped_empty})"
+    )
+
+    # Check if triage metadata is present for smart batching.
+    has_triage = smart and any(b.get("sub_topic") for b in all_blocks)
+
+    if not has_triage:
+        state.log("  Synthesis batching: char-budget fallback (no triage grouping)")
+        # Fallback: char-budget batching (original behavior).
+        return _char_budget_batches(all_blocks, budget)
+
+    # Smart batching: group by sub_topic, sort within group, split by budget.
+    groups: Dict[str, list] = defaultdict(list)
+    for block in all_blocks:
+        topic = (block.get("sub_topic") or "other").lower().strip()
+        groups[topic].append(block)
+
+    # Merge tiny groups (< 2 sources) into "other".
+    merged: Dict[str, list] = {}
+    other_group = list(groups.pop("other", []))
+    for topic, items in groups.items():
+        if len(items) < 2:
+            other_group.extend(items)
+        else:
+            merged[topic] = items
+    if other_group:
+        merged["other"] = other_group
+
+    # Sort within each group by content_type priority.
+    for topic in merged:
+        merged[topic].sort(
+            key=lambda b: _content_type_priority(b.get("content_type", "other"), priority_list)
+        )
+
+    # Split each group into sub-batches by char budget.
+    group_batches: Dict[str, List[List[Dict[str, Any]]]] = {}
+    for topic, items in merged.items():
+        group_batches[topic] = _char_budget_batches(items, budget)
+
+    # Round-robin across topic groups.
+    batches: List[List[Dict[str, Any]]] = []
+    topic_keys = sorted(group_batches.keys())
+    max_depth = max((len(v) for v in group_batches.values()), default=0)
+    for depth in range(max_depth):
+        for topic in topic_keys:
+            if depth < len(group_batches[topic]):
+                batches.append(group_batches[topic][depth])
+
+    state.log(
+        f"  Synthesis batching: smart groups={len(merged)} batches={len(batches)} "
+        f"budget={budget}"
+    )
+    return batches
+
+
+def _char_budget_batches(
+    blocks: list[Dict[str, Any]], budget: int,
+) -> List[List[Dict[str, Any]]]:
+    """Split blocks into batches respecting a character budget."""
+    batches: List[List[Dict[str, Any]]] = []
+    current_batch: List[Dict[str, Any]] = []
+    current_chars = 0
+    for block in blocks:
+        block_len = len(block["block"])
+        if current_batch and current_chars + block_len > budget:
+            batches.append(current_batch)
+            current_batch = []
+            current_chars = 0
+        current_batch.append(block)
+        current_chars += block_len
+    if current_batch:
+        batches.append(current_batch)
+    return batches
+
+
+def _format_source_range(items: List[Dict[str, Any]]) -> str:
+    indices = [int(item["index"]) for item in items]
+    if not indices:
+        return "none"
+    if len(indices) == 1:
+        return str(indices[0])
+    return f"{indices[0]}-{indices[-1]}"
+
+
+def _fallback_batch_report(
+    state: ResearchState,
+    batch: List[Dict[str, Any]],
+    batch_index: int,
+    total_batches: int,
+) -> str:
+    findings = []
+    for item in batch[:12]:
+        source = state.extracted_sources[int(item["index"]) - 1]
+        findings.append(
+            f"- [{item['index']}] **{item['title']}**: {_source_evidence_brief(source, max_chars=420)}"
+        )
+    return (
+        f"# Batch Report {batch_index}/{total_batches}\n\n"
+        f"## Scope\nSources: {_format_source_range(batch)}\n\n"
+        "## Key Findings\n"
+        + ("\n".join(findings) if findings else "- No findings extracted.")
+        + "\n\n## Notes\nGenerated from deterministic fallback because batch synthesis failed.\n"
+    )
+
+
+async def _synthesize_batch_report(
+    state: ResearchState,
+    batch: List[Dict[str, Any]],
+    *,
+    batch_index: int,
+    total_batches: int,
+) -> str:
+    cfg = state.config
+    sources_block = "".join(item["block"] for item in batch)
+    prompt = f"""{SAFETY_PREFIX}
+
+You are an expert research analyst preparing one partial report for a larger hierarchical deep-research run.
+
+Research question: "{state.question}"
+Batch: {batch_index}/{total_batches}
+Source coverage: {_format_source_range(batch)}
+
+Use ONLY the sources below. Each source is labeled as [SOURCE N].
+When citing facts, preserve the original source ids as [N].
+Do not write a final polished conclusion for the whole research topic. Focus on dense extraction and organization of this batch's evidence.
+
+Sources:
+{sources_block}
+
+=== REQUIRED OUTPUT ===
+
+# Batch Report {batch_index}/{total_batches}
+
+## Batch Scope
+Briefly explain what this batch covers.
+
+## Detailed Findings
+Capture all concrete facts, dates, numbers, benchmarks, product names, policy details, and technical claims from this batch.
+
+## Contradictions and Open Questions
+List uncertainties, disagreements, and missing pieces visible inside this batch.
+
+## Fact Inventory
+Use a flat bullet list of compact fact statements with citations.
+
+=== RULES ===
+1. Preserve source citations as [N].
+2. Prefer high information density over elegance.
+3. Use the same language as the research question.
+4. Do not invent cross-batch facts.
+5. Keep as much useful detail as possible from this batch.
+
+=== BEGIN BATCH REPORT ==="""
+
+    report = await call_llm(
+        prompt=prompt,
+        model=cfg.synthesis_model,
+        temperature=0.2,
+        max_tokens=cfg.synthesis_max_tokens,
+        timeout=cfg.llm_timeout,
+    )
+    if report:
+        return report
+    state.error(f"Synthesis batch {batch_index}/{total_batches} failed, using fallback")
+    return _fallback_batch_report(state, batch, batch_index, total_batches)
+
+
+def _build_merge_groups(
+    reports: List[Dict[str, Any]],
+    *,
+    prompt_char_budget: int,
+) -> List[List[Dict[str, Any]]]:
+    budget = max(20000, int(prompt_char_budget))
+    groups: List[List[Dict[str, Any]]] = []
+    current_group: List[Dict[str, Any]] = []
+    current_chars = 0
+
+    for report in reports:
+        text = sanitize_content(report["text"] or "")
+        if not text.strip():
+            continue
+        header = (
+            f"\n[BATCH REPORT {report['batch_index']}]\n"
+            f"Coverage: {report['coverage']}\n"
+            "Report:\n"
+        )
+        max_report_chars = max(3000, budget - len(header) - 10)
+        if len(text) > max_report_chars:
+            text = text[:max_report_chars].rstrip()
+        block = f"{header}{text}\n"
+        wrapped = dict(report)
+        wrapped["block"] = block
+        if current_group and current_chars + len(block) > budget:
+            groups.append(current_group)
+            current_group = []
+            current_chars = 0
+        current_group.append(wrapped)
+        current_chars += len(block)
+
+    if current_group:
+        groups.append(current_group)
+    return groups
+
+
+def _fallback_merged_report(
+    state: ResearchState,
+    reports: List[Dict[str, Any]],
+    *,
+    level: int,
+    group_index: int,
+) -> str:
+    excerpts = []
+    for report in reports:
+        text = _compact_text(report["text"] or "")[:1200]
+        excerpts.append(f"### Batch {report['batch_index']} ({report['coverage']})\n{text}")
+    return (
+        f"# Merged Report Level {level} Group {group_index}\n\n"
+        "## Combined Batch Notes\n\n"
+        + "\n\n".join(excerpts)
+    )
+
+
+async def _merge_batch_reports_hierarchically(
+    state: ResearchState,
+    leaf_reports: List[Dict[str, Any]],
+) -> str:
+    cfg = state.config
+    prompt_char_budget = max(20000, int(getattr(cfg, "synthesis_prompt_char_budget", 120000)))
+    current_reports = list(leaf_reports)
+    level = 1
+
+    while len(current_reports) > 1:
+        groups = _build_merge_groups(current_reports, prompt_char_budget=prompt_char_budget)
+        state.log(
+            f"  Synthesis merge level {level}: {len(current_reports)} reports -> {len(groups)} groups"
+        )
+        next_reports: List[Dict[str, Any]] = []
+        for group_index, group in enumerate(groups, 1):
+            reports_block = "".join(item["block"] for item in group)
+            prompt = f"""{SAFETY_PREFIX}
+
+You are an expert research analyst merging multiple partial reports into a unified research report.
+
+Research question: "{state.question}"
+Merge level: {level}
+Group: {group_index}/{len(groups)}
+
+The batch reports below already contain citations like [N] that refer to original sources.
+Preserve and reuse those source citations.
+Deduplicate repeated facts across batches, reconcile contradictions, and keep the report detailed.
+
+Batch reports:
+{reports_block}
+
+=== REQUIRED OUTPUT ===
+
+# [Descriptive Title]
+
+## Executive Summary
+2-4 paragraphs with concrete facts.
+
+## Main Findings
+Organize the strongest themes and evidence.
+
+## Technical and Factual Details
+Keep important numbers, dates, and comparisons.
+
+## Contradictions and Information Gaps
+
+## Conclusions
+
+=== RULES ===
+1. Preserve original citations [N].
+2. Use ONLY information present in the batch reports.
+3. Deduplicate aggressively, but do not collapse useful detail.
+4. Use the same language as the research question.
+
+=== BEGIN MERGED REPORT ==="""
+            merged = await call_llm(
+                prompt=prompt,
+                model=cfg.synthesis_model,
+                temperature=0.2,
+                max_tokens=cfg.synthesis_max_tokens,
+                timeout=cfg.llm_timeout,
+            )
+            if not merged:
+                state.error(
+                    f"Synthesis merge level {level} group {group_index} failed, using fallback"
+                )
+                merged = _fallback_merged_report(
+                    state,
+                    group,
+                    level=level,
+                    group_index=group_index,
+                )
+            next_reports.append(
+                {
+                    "batch_index": group_index,
+                    "coverage": f"{group[0]['coverage']} -> {group[-1]['coverage']}",
+                    "text": merged,
+                }
+            )
+        current_reports = next_reports
+        level += 1
+
+    return current_reports[0]["text"] if current_reports else ""
+
+
 # Synthesis stage.
 async def synthesize_final_report(state: ResearchState):
     cfg = state.config
     state.log(f"Synthesizing from {len(state.extracted_sources)} sources...")
+    state.synthesis_batch_reports = []
 
     if not state.extracted_sources:
         state.final_report = (
@@ -2010,101 +2998,55 @@ async def synthesize_final_report(state: ResearchState):
         )
         return
 
-    prompt_char_budget = max(20000, int(getattr(cfg, "synthesis_prompt_char_budget", 120000)))
-    # No hard count cap - the char-budget loop below controls how many fit in the prompt
-    source_subset = state.extracted_sources
-
-    sources_block_parts: List[str] = []
-    used_sources = 0
-    for i, source in enumerate(source_subset, 1):
-        summary = _source_evidence_brief(source, max_chars=500)
-        part = (
-            f"\n[{i}] {source.url}\n"
-            f"Title: {source.title}\n"
-            f"Evidence: {summary}\n"
-        )
-        trial = "".join(sources_block_parts) + part
-        if len(trial) > prompt_char_budget:
-            break
-        sources_block_parts.append(part)
-        used_sources = i
-    sources_block = "".join(sources_block_parts)
-    if used_sources < len(source_subset):
-        state.log(
-            f"  Synthesis prompt budget reached: {used_sources}/{len(source_subset)} sources"
-        )
-
-    prompt = f"""{SAFETY_PREFIX}
-
-You are an expert research analyst. Write a thorough, publication-quality research report.
-
-Research question: "{state.question}"
-
-Sources:
-{sources_block}
-
-=== REPORT STRUCTURE ===
-
-# [Descriptive Title]
-
-## Executive Summary
-2-4 paragraphs with specific facts, numbers, and dates.
-
-## [Core topic: definition, overview, how it works]
-Deep explanation with numbered lists for key properties or steps.
-
-## [Technical details: specs, architecture, benchmarks, comparison]
-Technical deep-dive with specific numbers, versions, performance figures.
-Use Markdown TABLE when comparing versions, products, or metrics.
-
-## [Practical: use cases, availability, pricing, access]
-Concrete, actionable details with inline citations.
-
-## Contradictions and Information Gaps
-
-## Conclusions
-
-=== FORMATTING RULES ===
-
-1. CITATIONS: After EVERY fact add [N].
-2. TABLES: Use when comparing.
-3. CODE BLOCKS: For commands, configs, API syntax.
-4. BOLD key terms on first use.
-5. Each section: 3-6 paragraphs. This is a DEEP report, NOT a summary.
-6. LANGUAGE: Same as the research question.
-7. Use ONLY facts from sources. No outside knowledge.
-8. DEDUPLICATION: Never repeat the same information.
-
-=== BEGIN REPORT ==="""
-
-    report = await call_llm(
-        prompt=prompt, model=cfg.synthesis_model,
-        temperature=0.3, max_tokens=cfg.synthesis_max_tokens,
-        timeout=cfg.llm_timeout,
+    source_batches = _build_synthesis_source_batches(
+        state,
+        batch_char_budget=int(getattr(cfg, "synthesis_batch_char_budget", 60000)),
     )
+    if not source_batches:
+        state.final_report = (
+            f"# Research: {state.question}\n\n"
+            "No synthesis-ready source content was available after filtering."
+        )
+        return
+
+    state.log(
+        f"  Hierarchical synthesis: {len(source_batches)} source batches "
+        f"(target {int(getattr(cfg, 'synthesis_batch_char_budget', 60000))} chars each)"
+    )
+
+    leaf_reports: List[Dict[str, Any]] = []
+    for batch_index, batch in enumerate(source_batches, 1):
+        state.log(
+            f"  Synthesis batch {batch_index}/{len(source_batches)}: "
+            f"{len(batch)} sources ({_format_source_range(batch)})"
+        )
+        report = await _synthesize_batch_report(
+            state,
+            batch,
+            batch_index=batch_index,
+            total_batches=len(source_batches),
+        )
+        state.synthesis_batch_reports.append(report)
+        leaf_reports.append(
+            {
+                "batch_index": batch_index,
+                "coverage": _format_source_range(batch),
+                "text": report,
+            }
+        )
+
+    if len(leaf_reports) == 1:
+        state.final_report = leaf_reports[0]["text"]
+        return
+
+    report = await _merge_batch_reports_hierarchically(state, leaf_reports)
     if report:
         state.final_report = report
         return
 
-    state.error("Synthesis LLM failed (timeout/unavailable), using fallback report template")
-
-    top_sources = state.extracted_sources[: min(25, len(state.extracted_sources))]
-    findings = []
-    for i, src in enumerate(top_sources, 1):
-        summary = _source_evidence_brief(src, max_chars=320)
-        findings.append(
-            f"{i}. **{src.title or 'Source'}** - {summary[:320]} [{i}]"
-        )
-
-    state.final_report = (
-        f"# Research: {state.question}\n\n"
-        "## Executive Summary\n"
-        "Final LLM synthesis was not produced because of a timeout or unavailable model. "
-        "Below is an automatically assembled report based on the extracted sources.\n\n"
-        "## Key Findings\n"
-        + ("\n".join(findings) if findings else "Failed to generate a findings list.")
-        + "\n\n## Notes\n"
-        "It is recommended to rerun only the synthesis stage once an LLM is available.\n"
+    state.error("Hierarchical synthesis failed, using concatenated batch fallback")
+    state.final_report = "\n\n".join(
+        f"## Batch {i}\n\n{report}" for i, report in enumerate(state.synthesis_batch_reports, 1)
     )
 
 
@@ -2199,9 +3141,12 @@ async def run_research(
     question: str,
     depth: str = "medium",
     task_id: str = "",
+    overdrive_multiplier: float = 1.0,
 ) -> str:
     """Top-level entry point.  Delegates to _first_pass / _iterate / _finalize."""
     config = ResearchConfig.for_depth(depth)
+    config.overdrive_multiplier = overdrive_multiplier
+    config.apply_multiplier()
     state = ResearchState(question=question, config=config)
 
     if not task_id:
@@ -2239,15 +3184,116 @@ async def run_research(
 
     probe_scheduler = EndpointProbeScheduler(state)
 
-    all_processed_urls, all_content_hashes = await _first_pass(
-        state, probe_scheduler, extract_batch_limit
-    )
+    from src.source_pool import SourcePool
+    pool = SourcePool()
+
+    await _first_pass(state, probe_scheduler, extract_batch_limit, pool)
     swarm_ctx = await start_background_swarm(state, task_id)
     await _iterate(
-        state, probe_scheduler, swarm_ctx,
-        all_processed_urls, all_content_hashes, extract_batch_limit,
+        state, probe_scheduler, swarm_ctx, pool, extract_batch_limit,
     )
-    return await _finalize(state, probe_scheduler, swarm_ctx, all_content_hashes, task_id)
+    return await _finalize(state, probe_scheduler, swarm_ctx, pool, task_id)
+
+
+async def run_background_swarm_probe(
+    question: str,
+    depth: str = "high",
+    task_id: str = "",
+    timeout_sec: float = 300.0,
+    overdrive_multiplier: float = 1.0,
+) -> str:
+    """Run only the background swarm for a bounded amount of time and save artifacts."""
+
+    config = ResearchConfig.for_depth(depth)
+    config.overdrive_multiplier = overdrive_multiplier
+    config.apply_multiplier()
+    config.enable_background_swarm = True
+    # Expose the total timeout so the swarm task can split its budget adaptively.
+    # BFS gets 40%, crawling gets 60%.
+    config.background_swarm_task_timeout_sec = float(timeout_sec)
+    config.background_swarm_bfs_fraction = 0.40
+    state = ResearchState(question=question, config=config)
+
+    if not task_id:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        short_q = "".join(
+            c if c.isalnum() or c in " _-" else "" for c in question[:40]
+        ).strip().replace(" ", "_")
+        task_id = f"{ts}_{short_q}_swarm"
+
+    output_dir = OUTPUT_DIR / task_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    state.log_file = str(output_dir / "execution.log")
+
+    state.log(f"Background Swarm Probe: '{question}'")
+    state.log(f"   depth={depth} | timeout={timeout_sec:.0f}s | ID={task_id}")
+
+    state.query_type = classify_query(question)
+    state.log(f"Type: {state.query_type}")
+
+    state.query_plans = await generate_query_plans(state)
+    state.search_queries = [p.query for p in state.query_plans]
+    if not state.search_queries:
+        state.search_queries = await generate_search_queries(state)
+        state.query_plans = [
+            QueryPlan(query=q, target_domains=[], method_hint="auto")
+            for q in state.search_queries
+        ]
+
+    state.raw_results = await search_all(state, state.query_plans)
+    state.log(f"Seed search produced {len(state.raw_results)} raw results")
+
+    swarm_ctx = await start_background_swarm(state, task_id)
+    if not swarm_ctx:
+        state.final_report = (
+            f"# Background Swarm Probe\n\n"
+            f"Question: {question}\n\n"
+            "Background swarm could not be started."
+        )
+        save_artifacts(state, task_id)
+        return state.final_report
+
+    orchestrator = swarm_ctx.get("orchestrator")
+    swarm_task_id = str(swarm_ctx.get("task_id", ""))
+    timeout_sec = max(
+        1.0,
+        float(timeout_sec or getattr(config, "background_swarm_standalone_timeout_sec", 300.0)),
+    )
+    if orchestrator and swarm_task_id:
+        state.log(f"  [swarm] standalone wait up to {timeout_sec:.1f}s")
+        try:
+            await orchestrator.wait_ready(swarm_task_id, timeout=timeout_sec)
+        except Exception as exc:
+            state.log(f"  [swarm] standalone wait error: {exc}")
+        finally:
+            status = orchestrator.get_status(swarm_task_id) or {}
+            if status:
+                state.log(
+                    "  [swarm] standalone status after wait: "
+                    f"{status.get('status')} progress={status.get('progress')}"
+                )
+            if status.get("status") in {"running", "pending"}:
+                state.log("  [swarm] standalone timeout reached, cancelling task")
+                orchestrator.cancel(swarm_task_id)
+                await asyncio.sleep(0.2)
+
+    state.extracted_sources = await drain_background_swarm(
+        state=state,
+        swarm_ctx=swarm_ctx,
+        iteration=0,
+        existing_hashes=set(),
+        force=True,
+        allow_restart=False,
+    )
+    await cleanup_background_swarm(state, swarm_ctx)
+
+    state.final_report = (
+        f"# Background Swarm Probe\n\n"
+        f"Question: {question}\n\n"
+        f"Collected {len(state.extracted_sources)} synthesis-ready sources from the standalone swarm run.\n"
+    )
+    save_artifacts(state, task_id)
+    return state.final_report
 
 
 # Phase helpers.
@@ -2257,10 +3303,11 @@ async def _first_pass(
     state: ResearchState,
     probe_scheduler: EndpointProbeScheduler,
     extract_batch_limit: int,
-) -> tuple[set, set]:
-    """Search -> extract -> DDGS month fallback -> filter -> summarize.
+    pool=None,
+) -> None:
+    """Search -> extract -> DDGS month fallback -> filter -> triage -> summarize.
 
-    Returns (all_processed_urls, all_content_hashes) for use by _iterate.
+    Populates the SourcePool with first-pass results.
     """
     config = state.config
 
@@ -2299,6 +3346,17 @@ async def _first_pass(
                 state.log("  INFO Fresh fallback returned no additional URLs")
 
     sources = await filter_and_rank(state, sources)
+
+    # LLM triage: annotate sources with sub_topic, content_type, etc.
+    if getattr(config, "enable_triage", False) and sources:
+        from src.triage import triage_sources
+        registry = get_registry()
+        state.log(f"  Triage: annotating {len(sources)} sources (batch={config.triage_batch_size})")
+        sources = await triage_sources(
+            sources, state.question, state.query_type, registry, config,
+        )
+        state.log(f"  Triage complete")
+
     summaries_enabled = bool(getattr(config, "enable_source_summaries", False))
     max_before_summarize = max(1, int(getattr(config, "max_sources_before_summarize", 35)))
     if summaries_enabled and len(sources) > max_before_summarize:
@@ -2316,12 +3374,12 @@ async def _first_pass(
 
     sources = await summarize_sources(state, sources)
     state.extracted_sources = sources
+    state.last_iteration_sources = list(sources)
     state.log(f"First pass complete: {len(state.extracted_sources)} sources")
 
-    all_processed_urls: set = {s.url for s in state.extracted_sources}
-    all_processed_urls.update(r.url for r in state.raw_results)
-    all_content_hashes: set = {s.content_hash for s in state.extracted_sources}
-    return all_processed_urls, all_content_hashes
+    if pool is not None:
+        pool.merge_raw_results(state.raw_results)
+        pool.add_many(state.extracted_sources)
 
 
 # Pipeline helpers.
@@ -2329,8 +3387,7 @@ async def _iterate(
     state: ResearchState,
     probe_scheduler: EndpointProbeScheduler,
     swarm_ctx,
-    all_processed_urls: set,
-    all_content_hashes: set,
+    pool,
     extract_batch_limit: int,
 ) -> None:
     """Iterative refinement: reflection -> follow-up search -> extract -> filter -> summarize."""
@@ -2339,6 +3396,9 @@ async def _iterate(
     max_before_summarize = max(1, int(getattr(config, "max_sources_before_summarize", 35)))
     consecutive_failures = 0
     failed_queries: List[str] = []
+    attempted_followups: List[str] = []
+    last_followup_signature: tuple[str, ...] = ()
+    repeated_followup_sets = 0
 
     for iteration in range(config.max_iterations):
         if len(state.extracted_sources) >= config.max_sources:
@@ -2354,20 +3414,45 @@ async def _iterate(
 
         swarm_sources = await drain_background_swarm(
             state=state, swarm_ctx=swarm_ctx,
-            iteration=iteration, existing_hashes=all_content_hashes,
+            iteration=iteration, existing_hashes=pool.content_hashes if pool else set(),
         )
         if swarm_sources:
             state.extracted_sources.extend(swarm_sources)
-            all_content_hashes.update(s.content_hash for s in swarm_sources)
+            if pool:
+                pool.add_many(swarm_sources)
+            state.last_iteration_sources = _merge_unique_sources(
+                state.last_iteration_sources,
+                swarm_sources,
+            )
             state.log(f"  +{len(swarm_sources)} sources from background swarm")
             if len(state.extracted_sources) >= config.max_sources:
                 state.log(f"Source limit reached via swarm ({config.max_sources})")
                 break
 
-        followup = await reflect_and_generate_followup(state, failed_queries=failed_queries)
+        followup = await reflect_and_generate_followup(
+            state,
+            failed_queries=failed_queries,
+            attempted_queries=attempted_followups,
+        )
         if not followup:
             state.log("Coverage sufficient")
             break
+
+        followup_signature = tuple(sorted({q.strip().lower() for q in followup if q and q.strip()}))
+        if followup_signature == last_followup_signature:
+            repeated_followup_sets += 1
+            state.log(f"  Repeated follow-up set detected ({repeated_followup_sets})")
+            if repeated_followup_sets >= 2:
+                state.log("  Same follow-up queries keep repeating, stopping iterations")
+                break
+        else:
+            repeated_followup_sets = 0
+            last_followup_signature = followup_signature
+
+        for query in followup:
+            cleaned = query.strip()
+            if cleaned:
+                attempted_followups.append(cleaned)
 
         iteration_search_timeout = max(
             30.0, float(getattr(config, "iteration_search_timeout_sec", 240.0))
@@ -2378,12 +3463,13 @@ async def _iterate(
         )
         try:
             new_results = await asyncio.wait_for(
-                search_all(state, followup, exclude_urls=all_processed_urls),
+                search_all(state, followup, exclude_urls=pool.urls if pool else set()),
                 timeout=iteration_search_timeout,
             )
         except asyncio.TimeoutError:
             state.log(f"  Follow-up search timeout after {iteration_search_timeout:.0f}s")
             failed_queries.extend(followup)
+            state.last_iteration_sources = []
             consecutive_failures += 1
             if consecutive_failures >= 3:
                 state.log("  3 consecutive timeouts, stopping")
@@ -2392,11 +3478,13 @@ async def _iterate(
 
         state.log(f"  Follow-up search done: +{len(new_results)} URLs")
         probe_scheduler.enqueue_results(new_results)
-        all_processed_urls.update(r.url for r in new_results)
+        if pool:
+            pool.merge_raw_results(new_results)
 
         if not new_results:
             state.log("  No new results")
             failed_queries.extend(followup)
+            state.last_iteration_sources = []
             consecutive_failures += 1
             if consecutive_failures >= 3:
                 state.log("  3 empty iterations, stopping")
@@ -2405,17 +3493,27 @@ async def _iterate(
 
         new_sources = await extract_all(
             state, new_results[:extract_batch_limit],
-            existing_hashes=all_content_hashes,
+            existing_hashes=pool.content_hashes if pool else set(),
         )
         probe_scheduler.enqueue_sources(new_sources)
         if not new_sources:
             failed_queries.extend(followup)
+            state.last_iteration_sources = []
             consecutive_failures += 1
             if consecutive_failures >= 3:
                 break
             continue
 
         new_sources = await filter_and_rank(state, new_sources)
+
+        # LLM triage for iteration sources.
+        if getattr(config, "enable_triage", False) and new_sources:
+            from src.triage import triage_sources
+            registry = get_registry()
+            new_sources = await triage_sources(
+                new_sources, state.question, state.query_type, registry, config,
+            )
+
         if summaries_enabled and len(new_sources) > max_before_summarize:
             new_sources.sort(key=lambda s: getattr(s, "_relevance", 0), reverse=True)
             dropped = len(new_sources) - max_before_summarize
@@ -2436,9 +3534,12 @@ async def _iterate(
             consecutive_failures = 0
             state.log(f"  +{len(new_sources)} sources")
             state.extracted_sources.extend(new_sources)
-            all_content_hashes.update(s.content_hash for s in new_sources)
+            state.last_iteration_sources = list(new_sources)
+            if pool:
+                pool.add_many(new_sources)
         else:
             failed_queries.extend(followup)
+            state.last_iteration_sources = []
             consecutive_failures += 1
             if consecutive_failures >= 3:
                 break
@@ -2449,7 +3550,7 @@ async def _finalize(
     state: ResearchState,
     probe_scheduler: EndpointProbeScheduler,
     swarm_ctx,
-    all_content_hashes: set,
+    pool,
     task_id: str,
 ) -> str:
     """Drain final swarm chunks, synthesize report, save artifacts."""
@@ -2457,7 +3558,7 @@ async def _finalize(
 
     if swarm_ctx:
         final_wait_timeout = max(
-            0.0, float(getattr(config, "background_swarm_final_wait_timeout_sec", 15.0))
+            0.0, float(getattr(config, "background_swarm_final_wait_timeout_sec", 500.0))
         )
         orchestrator = swarm_ctx.get("orchestrator")
         swarm_task_id = str(swarm_ctx.get("task_id", ""))
@@ -2471,26 +3572,30 @@ async def _finalize(
                     await orchestrator.wait_ready(swarm_task_id, timeout=final_wait_timeout)
                 except Exception as exc:
                     state.log(f"  [swarm] final wait error: {exc}")
+                finally:
+                    final_status = orchestrator.get_status(swarm_task_id) or {}
+                    if final_status:
+                        state.log(
+                            "  [swarm] status after final wait: "
+                            f"{final_status.get('status')} "
+                            f"progress={final_status.get('progress')}"
+                        )
 
     final_swarm_sources = await drain_background_swarm(
         state=state, swarm_ctx=swarm_ctx,
         iteration=max(0, config.max_iterations),
-        existing_hashes=all_content_hashes,
+        existing_hashes=pool.content_hashes if pool else set(),
         force=True, allow_restart=False,
     )
     if final_swarm_sources:
         state.extracted_sources.extend(final_swarm_sources)
-        all_content_hashes.update(s.content_hash for s in final_swarm_sources)
+        if pool:
+            pool.add_many(final_swarm_sources)
         state.log(f"  Final swarm import: +{len(final_swarm_sources)}")
 
     await cleanup_background_swarm(state, swarm_ctx)
 
-    max_for_synthesis = config.max_sources
-    if len(state.extracted_sources) > max_for_synthesis:
-        state.extracted_sources.sort(key=lambda s: getattr(s, "_relevance", 0), reverse=True)
-        dropped = len(state.extracted_sources) - max_for_synthesis
-        state.log(f"Trimming to {max_for_synthesis} sources (-{dropped} least relevant)")
-        state.extracted_sources = state.extracted_sources[:max_for_synthesis]
+    await _apply_final_source_cleanup(state)
 
     await synthesize_final_report(state)
     await probe_scheduler.finalize()
@@ -2499,8 +3604,6 @@ async def _finalize(
     save_artifacts(state, task_id)
     return state.final_report
 
-
-# CLI entry points.
 
 # CLI entry points.
 def main():

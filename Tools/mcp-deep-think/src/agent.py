@@ -44,6 +44,7 @@ class ToolDrivenResearchAgent:
         search=None,
         sandbox=None,
         max_reflect_without_tool: int = 2,
+        blackboard=None,
     ):
         """Initialize the runtime with shared service dependencies."""
 
@@ -55,6 +56,7 @@ class ToolDrivenResearchAgent:
         self.search = search or search_client
         self.sandbox = sandbox or sandbox_adapter
         self.max_reflect_without_tool = max_reflect_without_tool
+        self.blackboard = blackboard
 
 
     # Main loop
@@ -65,8 +67,29 @@ class ToolDrivenResearchAgent:
 
         # Let the model drive the main tool loop within the configured budget.
         for iteration in range(1, task.max_iterations + 1):
+            # Read blackboard signals from other agents (skip iteration 1).
+            if self.blackboard is not None and iteration > 1:
+                signals = await self.blackboard.read_since(
+                    self.id, state.last_blackboard_read,
+                )
+                state.last_blackboard_read = __import__("time").time()
+                if signals:
+                    state.blackboard_signals_seen += len(signals)
+                    bb_context = self.blackboard.summary_for_prompt(signals)
+                    self._append_scratchpad(
+                        state,
+                        f"[Blackboard signals from other agents]\n{bb_context}",
+                    )
+
             decision = await self._decide(state, iteration)
             report = await self._apply_decision(state, iteration, decision)
+
+            # Publish a signal after each productive iteration.
+            if self.blackboard is not None and state.evidence:
+                signal = self._extract_signal_from_iteration(state, iteration)
+                if signal is not None:
+                    await self.blackboard.publish(signal)
+
             if report is not None:
                 return report
 
@@ -414,6 +437,32 @@ class ToolDrivenResearchAgent:
             critical_verification=draft.critical_verification,
         )
 
+
+    # Blackboard helpers
+    def _extract_signal_from_iteration(self, state: AgentState, iteration: int):
+        """Create a Signal from the most recent evidence item, if any."""
+
+        from .blackboard import Signal
+
+        if not state.evidence:
+            return None
+        latest = state.evidence[-1]
+        # Determine signal type from the latest evidence.
+        content = latest.note or latest.excerpt or ""
+        if not content:
+            return None
+        signal_type = "finding"
+        content_lower = content.lower()
+        if any(w in content_lower for w in ("contradict", "conflict", "disagree", "incorrect")):
+            signal_type = "contradiction"
+        return Signal(
+            agent_id=self.id,
+            iteration=iteration,
+            signal_type=signal_type,
+            content=content[:300],
+            confidence=0.5,
+            references=[latest.ref] if latest.ref else [],
+        )
 
     # Evidence helpers
     def _search_result_to_evidence(self, result: SearchResult, iteration: int) -> EvidenceItem:

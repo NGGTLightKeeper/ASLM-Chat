@@ -95,6 +95,13 @@ class ProfileConfig(BaseModel):
     per_agent_timeout_seconds: float | None = None
 
 
+# Blackboard settings
+class BlackboardConfig(BaseModel):
+    enabled: bool = True
+    max_signals_per_read: int = 20
+    signal_max_chars: int = 300
+
+
 # Per-agent runtime overrides
 class AgentRuntimeConfig(BaseModel):
     enabled: bool = True
@@ -114,6 +121,7 @@ class Settings(BaseModel):
     agents: dict[str, AgentRuntimeConfig] = Field(default_factory=dict)
     output: OutputConfig = Field(default_factory=OutputConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
+    blackboard: BlackboardConfig = Field(default_factory=BlackboardConfig)
     config_path: Path = DEFAULT_CONFIG_PATH
 
     @property
@@ -127,7 +135,7 @@ class Settings(BaseModel):
 
         # Keep the default output under the shared task workspace.
         if root_dir == "_out":
-            return WORKSPACE_ROOT / "task" / "deep-think"
+            return WORKSPACE_ROOT / "_sandbox" / "deep-think"
 
         return PROJECT_ROOT / root_dir
 
@@ -141,7 +149,10 @@ class Settings(BaseModel):
     def agent_runtime(self, agent_id: str) -> AgentRuntimeConfig:
         """Return runtime overrides for a specific agent id."""
 
-        return self.agents.get(agent_id, AgentRuntimeConfig())
+        runtime = self.agents.get(agent_id, AgentRuntimeConfig())
+        if self.search.overdrive:
+            return runtime.model_copy(update={"has_search": True, "has_python": True})
+        return runtime
 
 
     # Compatibility aliases

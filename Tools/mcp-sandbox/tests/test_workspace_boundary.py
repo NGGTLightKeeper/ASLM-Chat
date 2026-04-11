@@ -1,0 +1,218 @@
+"""Workspace boundary enforcement tests.
+
+Verifies that read/write/edit/describe block path traversal and symlink
+escapes at the API level, without requiring a running Docker container.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT.parent.parent))
+
+from sandbox import workspace  # noqa: E402
+from sandbox.session_state import reset_session_state  # noqa: E402
+from sandbox.workspace import (  # noqa: E402
+    read,
+    write,
+    edit,
+    describe,
+    get_secure_task_path,
+    validate_model_path,
+)
+
+
+class WorkspaceBoundaryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        reset_session_state()
+        self.task_root = workspace.task_root()
+        self.task_root.mkdir(parents=True, exist_ok=True)
+        for child in list(self.task_root.iterdir()):
+            try:
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+            except PermissionError:
+                pass
+
+    # ── Path traversal ────────────────────────────────────────────────
+
+    def test_read_traversal_blocked(self) -> None:
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            read("../../etc/passwd")
+
+    def test_read_deep_traversal_blocked(self) -> None:
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            read("../../../Windows/System32/cmd.exe")
+
+    def test_read_nested_traversal_blocked(self) -> None:
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            read("sub/../../etc/passwd")
+
+    def test_write_absolute_unix_path_blocked(self) -> None:
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            write("/etc/passwd", "pwned")
+
+    def test_write_absolute_windows_path_blocked(self) -> None:
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            write("C:/Windows/System32/evil.txt", "pwned")
+
+    def test_write_traversal_blocked(self) -> None:
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            write("../escape.txt", "pwned")
+
+    def test_write_deep_traversal_blocked(self) -> None:
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            write("../../escape.txt", "pwned")
+
+    def test_edit_traversal_blocked(self) -> None:
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            edit("../escape.txt", "old", "new")
+
+    def test_describe_traversal_blocked(self) -> None:
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            describe("../../etc/passwd")
+
+    def test_null_byte_in_path_blocked(self) -> None:
+        with self.assertRaises((ValueError, OSError)):
+            get_secure_task_path("file\x00../etc/passwd")
+
+    # ── Absolute path rejection ───────────────────────────────────────
+
+    def test_validate_rejects_unix_absolute(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_model_path("/etc/passwd")
+
+    def test_validate_rejects_windows_absolute(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_model_path("C:/Users/dimap")
+
+    def test_validate_rejects_workspace_root(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_model_path("/workspace")
+
+    # ── Symlink escape ────────────────────────────────────────────────
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Symlink creation requires elevated privileges on Windows",
+    )
+    def test_read_symlink_escape_blocked(self) -> None:
+        """read() must reject a symlink inside workspace pointing outside."""
+        sym = self.task_root / "__sym_escape"
+        target = Path("/etc/passwd")
+        if not target.exists():
+            self.skipTest("/etc/passwd not available on this platform")
+        sym.symlink_to(target)
+        try:
+            with self.assertRaises(ValueError, msg="Symlink escape via read() should raise ValueError"):
+                read("__sym_escape")
+        finally:
+            sym.unlink(missing_ok=True)
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Symlink creation requires elevated privileges on Windows",
+    )
+    def test_write_symlink_escape_blocked(self) -> None:
+        """write() must reject writing through a symlink pointing outside."""
+        sym = self.task_root / "__sym_write"
+        target = Path("/tmp/sym_write_test")
+        sym.symlink_to(target)
+        try:
+            with self.assertRaises(ValueError, msg="Symlink escape via write() should raise ValueError"):
+                write("__sym_write", "pwned")
+        finally:
+            sym.unlink(missing_ok=True)
+            target.unlink(missing_ok=True)
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Symlink creation requires elevated privileges on Windows",
+    )
+    def test_describe_symlink_escape_blocked(self) -> None:
+        """describe() must reject a symlink pointing outside."""
+        sym = self.task_root / "__sym_describe"
+        target = Path("/etc/passwd")
+        if not target.exists():
+            self.skipTest("/etc/passwd not available on this platform")
+        sym.symlink_to(target)
+        try:
+            with self.assertRaises(ValueError, msg="Symlink escape via describe() should raise ValueError"):
+                describe("__sym_describe")
+        finally:
+            sym.unlink(missing_ok=True)
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Symlink creation requires elevated privileges on Windows",
+    )
+    def test_symlink_within_workspace_is_allowed(self) -> None:
+        """Symlinks pointing inside task_root should be allowed."""
+        real = self.task_root / "real.txt"
+        real.write_text("content", encoding="utf-8")
+        sym = self.task_root / "__sym_internal"
+        sym.symlink_to(real)
+        try:
+            result = read("__sym_internal")
+            self.assertEqual(result["result"]["content"], "content")
+        finally:
+            sym.unlink(missing_ok=True)
+            real.unlink(missing_ok=True)
+
+    # ── clear_workspace targets task_root ─────────────────────────────
+
+    def test_clear_workspace_does_not_touch_project_root(self) -> None:
+        """clear_workspace() must only clear task_root(), not workspace_root()."""
+        from sandbox.workspace import clear_workspace, workspace_root, task_root
+
+        # Write a sentinel into project root (workspace_root parent level)
+        sentinel = workspace_root() / "__sentinel_clear_test.txt"
+        sentinel.write_text("do not delete", encoding="utf-8")
+
+        # Write something into task_root
+        (task_root() / "task_file.txt").write_text("task content", encoding="utf-8")
+
+        try:
+            result = clear_workspace()
+            self.assertTrue(result["ok"])
+            self.assertIn("task_file.txt", result["cleared"])
+            # Sentinel in project root must survive
+            self.assertTrue(
+                sentinel.exists(),
+                "clear_workspace() deleted files outside task_root — BUG",
+            )
+        finally:
+            sentinel.unlink(missing_ok=True)
+
+    # ── Legitimate paths still work ───────────────────────────────────
+
+    def test_write_and_read_normal_path(self) -> None:
+        write("hello.txt", "world")
+        result = read("hello.txt")
+        self.assertEqual(result["result"]["content"], "world")
+
+    def test_write_and_read_nested_path(self) -> None:
+        write("sub/dir/file.txt", "nested")
+        result = read("sub/dir/file.txt")
+        self.assertEqual(result["result"]["content"], "nested")
+
+    def test_handle_tool_read_traversal_via_workspace_api_blocked(self) -> None:
+        """workspace read() with traversal path raises before reaching FS."""
+        from sandbox.workspace import read as ws_read
+        with self.assertRaises((ValueError, FileNotFoundError)):
+            ws_read("../../etc/passwd")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -41,14 +41,14 @@ import_web_file(url, save_to="downloads/", allowed_types=["text"])
 For files over 50 MB:
 
 ```text
-bash("curl -L -o task/downloads/filename.csv https://example.com/large.csv")
+bash("curl -L -o downloads/filename.csv https://example.com/large.csv")
 ```
 
 ### Step 3 -- Verify
 
 ```text
-bash("ls -la task/downloads/")
-bash("file task/downloads/filename.pdf")
+bash("ls -la downloads/")
+bash("file downloads/filename.pdf")
 ```
 
 ### Step 4 -- Hand off
@@ -61,7 +61,7 @@ Route to the appropriate sandbox recipe based on file type:
 
 ## Stop conditions
 
-- File downloaded and verified in task/
+- File downloaded and verified in the sandbox workspace
 - Or: download failed -- report error and stop
 
 ## Anti-patterns

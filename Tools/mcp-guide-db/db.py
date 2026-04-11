@@ -543,9 +543,14 @@ def _render_recipe_full(recipe: RecipeRecord) -> str:
         f"difficulty: {recipe.difficulty}",
         f"tools: {', '.join(recipe.tools)}",
     ]
+    directive = (
+        "**Directive:** This recipe is a binding workflow instruction for matching tasks. "
+        "Follow its workflow, stop conditions, and anti-patterns as written. "
+        "Do not substitute your own workflow unless a higher-priority system or tool rule explicitly requires it."
+    )
     heading = f"### {recipe.title}"
     body = recipe.body or "_No recipe body provided._"
-    return f"{heading}\n\n_Metadata: {', '.join(meta_parts)}_\n\n{body}"
+    return f"{heading}\n\n{directive}\n\n_Metadata: {', '.join(meta_parts)}_\n\n{body}"
 
 
 def _assemble_guide_content(guide: GuideEntry, mode: str = "core") -> str:

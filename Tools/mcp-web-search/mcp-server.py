@@ -65,7 +65,7 @@ TOOLS = [
             "Fetch and extract text content from one or more URLs (HTML, PDF, GitHub, YouTube). "
             "Automatically routes by domain registry: json_api domains use REST endpoints, hardened domains use Chrome TLS fingerprint, fortress domains are skipped. "
             "YouTube URLs return a transcript. PDF URLs return extracted text. Reddit URLs use the JSON API. "
-            "save=True writes each page to task/pages/<slug>.json in the workspace instead of returning content. "
+            "save=True writes each page to _sandbox/pages/<slug>.json in the workspace instead of returning content. "
             "Returns 'Source: <url>' header followed by extracted text for each URL."
         ),
         "parameters": {
@@ -80,7 +80,7 @@ TOOLS = [
                 },
                 "save": {
                     "type": "boolean",
-                    "description": "Save extracted content to task/pages/ instead of returning it.",
+                    "description": "Save extracted content to _sandbox/pages/ instead of returning it.",
                     "default": False,
                 },
             },
@@ -122,7 +122,7 @@ TOOLS = [
             "Download a file from a URL and save it to the task workspace. "
             "Only call this when you have confirmed the URL points to a real downloadable file — either from a search result FILE/PDF badge or a read_page hint. "
             "Do NOT call speculatively or for web pages, documentation sites, or GitHub repo root URLs. "
-            "save_to sets the subdirectory inside task/ (default: downloads/). "
+            "save_to sets the subdirectory inside _sandbox/ (default: downloads/). "
             "allowed_types filters by category: text (.pdf .docx .csv .json .xml), media (.mp3 .mp4 .jpg .png), archive (.zip .tar .gz .7z), data (.sqlite .db). "
             "max_size_mb aborts download if file exceeds the limit (hard cap: 50 MB). "
             "Returns status, saved file path, size_bytes, and content_type."
@@ -133,7 +133,7 @@ TOOLS = [
                 "url": {"type": "string"},
                 "save_to": {
                     "type": "string",
-                    "description": "Subdirectory inside task/ to save the file.",
+                    "description": "Subdirectory inside _sandbox/ to save the file.",
                     "default": "downloads/",
                 },
                 "allowed_types": {
@@ -304,6 +304,8 @@ def register_tools(mcp) -> None:
         _fetch_reddit_json,
         _fetch_with_camoufox,
         _fetch_with_curl_cffi,
+        _fetch_curl_cffi_raw,
+        _strip_html_to_text,
         _fetch_json_api,
         _url_to_slug,
         _youtube_transcript,
@@ -318,6 +320,19 @@ def register_tools(mcp) -> None:
     )
     from file_importer import download_file
     from urllib.parse import urlparse
+
+    try:
+        from overdrive import read_url_overdrive as _read_url_overdrive
+    except ImportError:
+        try:
+            from src.overdrive import read_url_overdrive as _read_url_overdrive  # type: ignore
+        except ImportError:
+            _read_url_overdrive = None
+
+    try:
+        import config as _ws_config
+    except ImportError:
+        _ws_config = None
 
     # Search tools.
     # Register the combined web search tool.
@@ -767,7 +782,7 @@ def register_tools(mcp) -> None:
           - fortress/skip domains -> skipped
         Falls back to httpx for unknown domains.
 
-        save=True: save each page as JSON to task/pages/<slug>.json in the sandbox workspace.
+        save=True: save each page as JSON to _sandbox/pages/<slug>.json in the sandbox workspace.
           Returns only "Saved: <path>" on success or an error message - no page content.
           Nothing is written if the page fails to load.
         """
@@ -799,29 +814,37 @@ def register_tools(mcp) -> None:
             pages_dir = workspace_root / "task" / "pages"
             pages_dir.mkdir(parents=True, exist_ok=True)
 
-        # Read one URL and normalize the extracted text.
-        async def _process_single(u: str) -> str:
+        # Fetch one URL, return (processed_text, raw_html_or_none).
+        async def _fetch_and_process(u: str) -> tuple[str, str | None]:
             if _is_youtube(u):
                 loop = asyncio.get_running_loop()
-                return await loop.run_in_executor(None, _youtube_transcript, u)
+                text = await loop.run_in_executor(None, _youtube_transcript, u)
+                return text, None
             if _is_skippable(u):
                 if _is_downloadable_ext(u):
                     return (
                         f"Source: {u}\n"
                         f"This URL points to a downloadable file, not a web page.\n"
                         f"Use import_web_file(\"{u}\") to save it to the task workspace."
-                    )
-                return f"Source: {u}\nSkipped: domain is blocked or unsupported."
+                    ), None
+                # If overdrive is enabled, let fortress domains through — overdrive may succeed.
+                _overdrive_enabled = (
+                    _read_url_overdrive is not None
+                    and _ws_config is not None
+                    and getattr(_ws_config, "OVERDRIVE", False)
+                )
+                if not _overdrive_enabled:
+                    return f"Source: {u}\nSkipped: domain is blocked or unsupported.", None
 
             _host = urlparse(u).netloc.lower().removeprefix("www.")
             if _host in ("reddit.com", "old.reddit.com") or _host.endswith(".reddit.com"):
                 try:
                     text = await _fetch_reddit_json(u)
                     if text.strip():
-                        return f"Source: {u}\n\n{text}"
+                        return f"Source: {u}\n\n{text}", None
                 except Exception as e:
                     _debug_log(f"reddit_json failed for {u}: {e}")
-                return f"Source: {u}\nError: Reddit fetch failed."
+                return f"Source: {u}\nError: Reddit fetch failed.", None
 
             reg = _domain_registry
             method = "http"
@@ -841,70 +864,155 @@ def register_tools(mcp) -> None:
                     api_url = api_url.replace("<query>", path).replace("<q>", path)
                 try:
                     text = await _fetch_json_api(api_url)
-                    return f"Source: {u}\nAPI: {api_url}\n\n{text}"
+                    return f"Source: {u}\nAPI: {api_url}\n\n{text}", None
                 except Exception as e:
-                    return f"Source: {u}\nError: JSON API fetch failed: {e}"
+                    return f"Source: {u}\nError: JSON API fetch failed: {e}", None
 
             try:
                 from ingest.router import ingest_router
                 b = await ingest_router.ingest(u)
-                return f"Source: {u}\n\n{b.markdown_content}"
+                return f"Source: {u}\n\n{b.markdown_content}", None
             except ImportError:
                 pass
             except Exception as e:
                 _debug_log(f"read_page ingest_router error for {u}: {e}")
 
+            # Overdrive mode: multi-method staggered race (optional, config-gated).
+            # Only for fortress/camoufox domains — hardened domains go through curl_cffi first.
+            if (
+                _read_url_overdrive is not None
+                and _ws_config is not None
+                and getattr(_ws_config, "OVERDRIVE", False)
+                and (method == "camoufox" or tier == "fortress")
+            ):
+                try:
+                    text = await _read_url_overdrive(
+                        u,
+                        human_behavior=getattr(_ws_config, "OVERDRIVE_HUMAN_BEHAVIOR", True),
+                        ocr_fallback=getattr(_ws_config, "OVERDRIVE_OCR_FALLBACK", True),
+                        parallel_timeout=getattr(_ws_config, "OVERDRIVE_PARALLEL_TIMEOUT", 20.0),
+                        ocr_timeout=getattr(_ws_config, "OVERDRIVE_OCR_TIMEOUT", 30.0),
+                        browser_start_delay=getattr(_ws_config, "OVERDRIVE_BROWSER_START_DELAY", 0.75),
+                        browser_concurrency=getattr(_ws_config, "OVERDRIVE_BROWSER_CONCURRENCY", 2),
+                        browser_fanout=getattr(_ws_config, "OVERDRIVE_BROWSER_FANOUT", 4),
+                        browser_idle_timeout=getattr(_ws_config, "OVERDRIVE_BROWSER_IDLE_TIMEOUT", 30.0),
+                    )
+                    if text and text.strip():
+                        # If overdrive returned raw HTML (httpx/curl_cffi winner), pass it as raw_html
+                        # so normalize_page can use trafilatura instead of fallback segmentation.
+                        _od_raw = text if "<html" in text[:500].lower() or "<!doctype" in text[:200].lower() else None
+                        return f"Source: {u}\n[OVERDRIVE]\n\n{text[:12000]}", _od_raw
+                except Exception as e:
+                    _debug_log(f"overdrive failed for {u}: {e}")
+                # Overdrive finished (success returned above, or failed) — skip fallback for skip-method domains.
+                if method == "skip":
+                    return f"Source: {u}\nSkipped: domain is blocked or unsupported.", None
+
             if method == "camoufox" or tier == "fortress":
                 try:
                     text = await _fetch_with_camoufox(u)
                     if text.strip():
-                        return f"Source: {u}\n\n{text}"
+                        return f"Source: {u}\n\n{text}", None
                 except Exception as e:
                     _debug_log(f"camoufox failed for {u}: {e}")
-                    return f"Source: {u}\nError: Failed to load (camoufox): {e}"
+                    return f"Source: {u}\nError: Failed to load (camoufox): {e}", None
 
             if tier == "hardened":
                 try:
-                    text = await _fetch_with_curl_cffi(u)
-                    return f"Source: {u}\n\n{text[:12000]}"
+                    raw_html = await _fetch_curl_cffi_raw(u)
+                    text = _strip_html_to_text(raw_html)
+                    return f"Source: {u}\n\n{text[:12000]}", raw_html
                 except Exception as e:
-                    return f"Source: {u}\nError: curl_cffi fetch failed: {e}"
+                    return f"Source: {u}\nError: curl_cffi fetch failed: {e}", None
 
             try:
                 import httpx, re
+                raw_html = None
                 async with httpx.AsyncClient(follow_redirects=True, timeout=15) as c:
                     r = await c.get(u, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
                     r.raise_for_status()
-                    raw = r.text
-                    raw = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', raw, flags=re.IGNORECASE | re.DOTALL)
-                    text = re.sub(r"\s{2,}", "\n", re.sub(r"<[^>]+>", " ", raw)).strip()
+                    raw_html = r.text
+                    stripped = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', raw_html, flags=re.IGNORECASE | re.DOTALL)
+                    text = re.sub(r"\s{2,}", "\n", re.sub(r"<[^>]+>", " ", stripped)).strip()
                 if _is_antibot(text):
                     try:
-                        text = await _fetch_with_curl_cffi(u)
+                        ab_raw = await _fetch_curl_cffi_raw(u)
+                        text = _strip_html_to_text(ab_raw)
+                        raw_html = ab_raw
                     except Exception:
-                        return f"Source: {u}\nError: Blocked by anti-bot."
-                return f"Source: {u}\n\n{text[:12000]}"
+                        return f"Source: {u}\nError: Blocked by anti-bot.", None
+                return f"Source: {u}\n\n{text[:12000]}", raw_html
             except Exception as e:
                 try:
-                    text = await _fetch_with_curl_cffi(u)
-                    return f"Source: {u}\n\n{text[:12000]}"
+                    fb_raw = await _fetch_curl_cffi_raw(u)
+                    text = _strip_html_to_text(fb_raw)
+                    return f"Source: {u}\n\n{text[:12000]}", fb_raw
                 except Exception as e2:
-                    return f"Source: {u}\nError: Failed to load: {e2}"
+                    return f"Source: {u}\nError: Failed to load: {e2}", None
+
+        # Normalize and return page content for non-save callers.
+        async def _process_single(u: str) -> str:
+            text, raw_html = await _fetch_and_process(u)
+            if "Error:" in text or not text.strip():
+                return text
+            try:
+                try:
+                    from page_normalizer import normalize_page
+                except ImportError:
+                    from src.page_normalizer import normalize_page  # type: ignore
+                loop = asyncio.get_running_loop()
+                # Cap fallback_text to avoid trafilatura/bs4 hanging on huge blobs.
+                capped_text = text[:20000] if text else text
+                clean = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None, lambda: normalize_page(url=u, raw_html=raw_html, fallback_text=capped_text)
+                    ),
+                    timeout=8.0,
+                )
+                if clean:
+                    # Require actual content after the meta header (after "---").
+                    body = clean.split("---", 1)[-1].strip()
+                    if len(body) > 80:
+                        return clean
+            except asyncio.TimeoutError:
+                _debug_log(f"page_normalizer timeout for {u}")
+            except Exception as e:
+                _debug_log(f"page_normalizer failed for {u}: {e}")
+            return text
 
         if save:
-            # Read and persist one URL as JSON.
+            # Read and persist one URL as JSON + clean markdown.
             async def _save_single(u: str) -> str:
-                content = await _process_single(u)
+                content, raw_html = await _fetch_and_process(u)
                 if "Error:" in content:
                     return content
                 slug = _url_to_slug(u)
-                dest = pages_dir / f"{slug}.json"
+
+                # 1. Raw JSON (unchanged format)
+                dest_raw = pages_dir / f"{slug}.json"
                 payload = _json.dumps(
                     {"url": u, "content": content.splitlines()},
                     ensure_ascii=False, indent=2
                 )
-                dest.write_text(payload, encoding="utf-8")
-                return f"Saved: task/pages/{dest.name}"
+                dest_raw.write_text(payload, encoding="utf-8")
+
+                # 2. Clean markdown
+                dest_clean = pages_dir / f"{slug}.clean.md"
+                try:
+                    try:
+                        from page_normalizer import normalize_page
+                    except ImportError:
+                        from src.page_normalizer import normalize_page  # type: ignore
+                    clean_md = normalize_page(url=u, raw_html=raw_html, fallback_text=content)
+                    dest_clean.write_text(clean_md, encoding="utf-8")
+                except Exception as e:
+                    import traceback as _tb
+                    _debug_log(f"page_normalizer failed for {u}: {e}\n{_tb.format_exc()}")
+
+                saved = f"Saved: _sandbox/pages/{dest_raw.name}"
+                if dest_clean.exists():
+                    saved += f" + {dest_clean.name}"
+                return saved
 
             tasks = [_save_single(u) for u in urls]
         else:
@@ -912,7 +1020,17 @@ def register_tools(mcp) -> None:
 
         try:
             results = await asyncio.gather(*tasks)
-            final_results = list(results)
+            if save:
+                saved_json = [r for r in results if r and ".json" in r and "Error:" not in r]
+                saved_md = [r for r in results if r and ".clean.md" in r]
+                summary = f"Done: {len(saved_json)} page(s) saved."
+                if saved_md:
+                    summary += f" Clean markdown created for {len(saved_md)} page(s)."
+                elif saved_json:
+                    summary += " (normalizer unavailable — raw JSON only)"
+                final_results = list(results) + [summary]
+            else:
+                final_results = list(results)
             _tool_log(
                 "finish",
                 "read_page",
@@ -1139,7 +1257,7 @@ def register_tools(mcp) -> None:
            without a direct file extension (.zip, .pdf, etc.).
         4. One call per file. Do not retry the same URL more than once.
 
-        save_to: subdirectory inside task/ to save the file (default: "downloads/")
+        save_to: subdirectory inside _sandbox/ to save the file (default: "downloads/")
         allowed_types: restrict by category - ["text", "media", "archive", "data"]
             text:    .pdf .docx .xlsx .csv .txt .md .json .xml .html
             media:   .mp3 .mp4 .wav .webm .mkv .jpg .jpeg .png .gif .webp

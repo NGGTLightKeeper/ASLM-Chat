@@ -206,6 +206,7 @@ Tools/mcp-web-search/deep-research/latest_logs/
 Tools/mcp-web-search/services/yacy/*
 !Tools/mcp-web-search/services/yacy/*.bat
 Tools/mcp-web-search/tests/
+Tools/mcp-web-search/latest_logs
 
 # UI
 staticfiles

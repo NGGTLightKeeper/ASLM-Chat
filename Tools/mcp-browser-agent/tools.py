@@ -203,8 +203,8 @@ def register_tools(server) -> None:
             Tool(
                 name="browser_screenshot",
                 description=(
-                    "Take a screenshot of the current page and save it to task/ folder. "
-                    "Returns the file path. Call sandbox read('task/<filename>') to inspect it visually."
+                    "Take a screenshot of the current page and save it to _sandbox/ folder. "
+                    "Returns the file path. Call sandbox read('<filename>') to inspect it visually."
                 ),
                 inputSchema={
                     "type": "object",
@@ -419,7 +419,7 @@ def register_tools(server) -> None:
                 await state.page.screenshot(path=str(file_path), full_page=bool(full_page))
                 log.info(f"Screenshot saved: {file_path}")
 
-                relative_path = f"task/{file_name}"
+                relative_path = f"_sandbox/{file_name}"
                 content = [
                     TextContent(
                         type="text",

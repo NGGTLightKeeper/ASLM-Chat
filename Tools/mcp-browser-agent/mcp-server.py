@@ -14,6 +14,8 @@ SERVER_ROOT = Path(__file__).resolve().parent
 if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
+from browser import log
+
 MCP_SERVER = {
     "id": "browser_agent",
     "name": "Browser Agent",
@@ -430,10 +432,10 @@ async def _execute_browser_tool(name: str, arguments: dict[str, Any] | None, con
                 await state.page.screenshot(path=str(file_path), full_page=full_page)
                 log.info("Screenshot saved: %s", file_path)
 
-                relative_path = f"task/{file_name}"
+                relative_path = f"_sandbox/{file_name}"
                 return (
                     f"Screenshot saved: {file_path}\n"
-                    f"Call read('{relative_path}') to inspect visually."
+                    f"Call read('{file_name}') to inspect visually."
                 )
 
             return f"Unknown tool: {name}"

@@ -32,12 +32,32 @@ YACY_PASS = os.getenv("ASLM_YACY_PASS", "admin123")
 # DDGS settings.
 DDGS_PROXIES: list[str] = []
 DDGS_CACHE_DB: Optional[str] = str(ROOT_DIR / "_cache" / "ddgs_cache.db")
-DDGS_REQUEST_DELAY = (1.0, 2.5)
+DDGS_REQUEST_DELAY = (0.15, 0.6)
+DDGS_TIMEOUT: int = 5
+DDGS_MAX_RETRIES: int = 1
 
 
 # Domain learning databases.
 DOMAIN_PERF_DB: str = str(ROOT_DIR / "_cache" / "domain_performance.db")
 DISCOVERED_ENDPOINTS_DB: str = str(ROOT_DIR / "_cache" / "discovered_endpoints.db")
+
+
+# Source cache settings.
+SOURCE_CACHE_DB: str = str(ROOT_DIR / "_cache" / "source_cache.db")
+SOURCE_CACHE_TTL: int = 86400                         # 24h freshness for cached pages
+SOURCE_CACHE_HARD_EVICT: int = 604800                 # 7-day hard eviction
+SOURCE_CACHE_LOCAL_FIRST: bool = True                 # enable local-first FTS5 search
+SOURCE_CACHE_MIN_LOCAL_RESULTS: int = 3               # min FTS5 hits to skip external search
+SOURCE_CACHE_FETCH_BUDGET: int = 10                   # max new fetches per query
+SOURCE_CACHE_FETCH_CONCURRENCY: int = 6               # max concurrent page fetches
+SOURCE_CACHE_FETCH_TIMEOUT: float = 10.0              # per-page fetch timeout (seconds)
+SOURCE_CACHE_PER_DOMAIN_RPS: float = 1.0              # per-domain rate limit (req/s)
+SOURCE_CACHE_DEPTH_ENABLED: bool = True               # enable background Scrapy depth crawl
+SOURCE_CACHE_DEPTH_LIMIT: int = 1                     # Scrapy DEPTH_LIMIT
+SOURCE_CACHE_DEPTH_MAX_PAGES: int = 20                # CLOSESPIDER_PAGECOUNT per crawl
+SOURCE_CACHE_DEPTH_MAX_DOMAINS: int = 3               # max domains to depth-crawl per query
+SOURCE_CACHE_DEPTH_AUTOTHROTTLE: float = 2.0          # Scrapy AutoThrottle target concurrency
+SOURCE_CACHE_STORE_RAW_HTML: bool = False             # store raw HTML in cache (heavy, ~10x clean_text)
 
 
 # Direct routing settings.
@@ -84,12 +104,26 @@ STEALTH_ENABLE_CAMOUFOX: bool = True
 LLM_MODEL_QUERY_GEN = "local-model"
 LLM_MODEL_SUMMARIZE = "local-model"
 LLM_MODEL_SYNTHESIS = "local-model"
+LLM_STRUCTURED_OUTPUT_ENABLED = True
+LLM_STRUCTURED_OUTPUT_STRICT = True
+LLM_REASONING_EFFORT = ""
+LLM_REASONING_TOKENS = 0
+LLM_REASONING_PROMPT = ""
+# Reasoning style supported by the currently-loaded LMS model:
+#   "effort"  — thinking models (Qwen3-235B-A22B, DeepSeek-R1, …): accepts low/medium/high
+#   "on_off"  — non-thinking reasoning models (Qwen3.5, …): accepts only on/off
+#   "none"    — model has no reasoning support at all, don't send reasoning params
+LLM_REASONING_MODE = "effort"
 
 
 # ML model settings.
 EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
 EMBEDDING_FORCE_CPU = False
-GLINER_MODEL = "urchade/gliner_small-v2.1"
+# Good GLiNER-family candidates for quick testing:
+# GLINER_MODEL = "urchade/gliner_small-v2.1"
+# GLINER_MODEL = "urchade/gliner_multi-v2.1"
+# Current experiment: GLiNER2 multilingual model.
+GLINER_MODEL = "fastino/gliner2-multi-v1"
 GLINER_FORCE_CPU = False
 GLINER_THRESHOLD = 0.35
 GLINER_THRESHOLD_RU = 0.25
@@ -182,9 +216,15 @@ class ResearchConfig:
     max_sources_per_iteration: int = 15
     followup_queries_per_iteration: int = 4
     reflection_timeout_sec: float = 120.0
+    reflection_prompt_char_budget: int = 60000
     iteration_search_timeout_sec: float = 240.0
     search_fallback_stage_timeout_sec: float = 120.0
     query_model: str = LLM_MODEL_QUERY_GEN
+    structured_output_enabled: bool = LLM_STRUCTURED_OUTPUT_ENABLED
+    structured_output_strict: bool = LLM_STRUCTURED_OUTPUT_STRICT
+    reasoning_effort: str = LLM_REASONING_EFFORT
+    reasoning_tokens: int = LLM_REASONING_TOKENS
+    concise_reasoning_prompt: str = LLM_REASONING_PROMPT
     enable_source_summaries: bool = False
     summarize_model: str = LLM_MODEL_SUMMARIZE
     summarize_parallel_agents: int = 1
@@ -192,12 +232,23 @@ class ResearchConfig:
     llm_timeout: float = 900.0
     synthesis_max_tokens: int = 16384
     synthesis_source_cap: int = 48
+    # Minimum quality score (0..1) a "rejected" source must have to be used as
+    # cap-filler when preferred sources are fewer than synthesis_source_cap.
+    # Sources below this threshold are dropped even when cap is not reached.
+    # 0.0 = disabled (original behaviour).
+    synthesis_min_source_quality: float = 0.55
+    final_source_cleanup_enabled: bool = True
+    final_source_rank_model: str = LLM_MODEL_SUMMARIZE
+    final_source_rank_batch_size: int = 8
+    final_source_rank_timeout_sec: float = 90.0
+    synthesis_batch_char_budget: int = 60000
     synthesis_prompt_char_budget: int = 120000
     enable_background_swarm: bool = False
     background_swarm_min_iteration: int = 2
     background_swarm_poll_every: int = 2
     background_swarm_domains_cap: int = 32
     background_swarm_seed_urls_per_domain: int = 4
+    background_swarm_query_count: int = 4
     background_swarm_discovery_depth: int = 3
     background_swarm_top_k: int = 64
     background_swarm_attach_cap_per_poll: int = 16
@@ -206,9 +257,62 @@ class ResearchConfig:
     background_swarm_max_concurrency: int = 12
     background_swarm_chunk_merge_chars: int = 3200
     background_swarm_min_chunk_relevance: float = 0.30
-    background_swarm_final_wait_timeout_sec: float = 15.0
+    background_swarm_max_total_chunks: int = 1000
+    background_swarm_final_wait_timeout_sec: float = 500.0
+    background_swarm_standalone_timeout_sec: float = 300.0
+    # Adaptive time-budget: total wall-clock per swarm task (0 = unlimited).
+    # BFS gets bfs_fraction of that, crawling gets the rest.
+    background_swarm_task_timeout_sec: float = 0.0
+    background_swarm_bfs_fraction: float = 0.40
     domain_scoped_min_results: int = 3
     domain_scoped_max_domains: int = 4
+
+    # Semantic dedup settings.
+    semantic_dedup_enabled: bool = True
+    semantic_dedup_minhash_threshold: float = 0.7
+    semantic_dedup_embedding_threshold: float = 0.85
+    semantic_dedup_batch_size: int = 4
+
+    # LLM triage settings.
+    enable_triage: bool = False
+    triage_batch_size: int = 4
+    triage_model: str = LLM_MODEL_SUMMARIZE
+    triage_timeout: float = 60.0
+
+    # Smart batching settings.
+    smart_batching_enabled: bool = True
+    smart_batching_content_type_priority: list[str] = field(default_factory=lambda: [
+        "documentation", "research", "benchmark", "tutorial",
+        "news", "opinion", "forum", "other",
+    ])
+
+    # Overdrive multiplier — scales quantity-related fields.
+    overdrive_multiplier: float = 1.0
+
+    # Multiplier target fields (quantity knobs that scale with overdrive).
+    _MULTIPLIER_FIELDS: tuple = (
+        "num_queries",
+        "max_sources",
+        "max_urls_to_extract_per_pass",
+        "ddgs_results_per_query",
+        "max_sources_per_iteration",
+        "followup_queries_per_iteration",
+        "synthesis_source_cap",
+        "background_swarm_top_k",
+        "background_swarm_attach_cap_per_poll",
+    )
+
+    def apply_multiplier(self) -> "ResearchConfig":
+        """Scale quantity-related fields by *overdrive_multiplier* and return self."""
+
+        m = max(0.5, min(3.0, self.overdrive_multiplier))
+        if m == 1.0:
+            return self
+        for name in self._MULTIPLIER_FIELDS:
+            original = getattr(self, name, None)
+            if isinstance(original, int):
+                setattr(self, name, max(1, int(original * m)))
+        return self
 
     # Preset builders.
     # Build a preset from a named depth level.
@@ -255,15 +359,20 @@ class ResearchConfig:
                 max_sources_per_iteration=30,
                 followup_queries_per_iteration=5,
                 reflection_timeout_sec=120.0,
+                reflection_prompt_char_budget=90000,
                 iteration_search_timeout_sec=240.0,
                 search_fallback_stage_timeout_sec=120.0,
                 max_chars_per_source=5000,
+                enable_triage=True,
                 enable_playwright=True,
                 enable_seleniumbase=True,
                 synthesis_source_cap=56,
+                final_source_rank_batch_size=8,
+                synthesis_batch_char_budget=70000,
                 synthesis_prompt_char_budget=140000,
                 enable_background_swarm=True,
                 background_swarm_min_iteration=1,
+                background_swarm_query_count=4,
                 background_swarm_domains_cap=28,
                 background_swarm_seed_urls_per_domain=3,
                 background_swarm_discovery_depth=3,
@@ -274,7 +383,10 @@ class ResearchConfig:
                 background_swarm_max_concurrency=12,
                 background_swarm_chunk_merge_chars=3000,
                 background_swarm_min_chunk_relevance=0.28,
-                background_swarm_final_wait_timeout_sec=15.0,
+                background_swarm_final_wait_timeout_sec=500.0,
+                background_swarm_standalone_timeout_sec=300.0,
+                background_swarm_task_timeout_sec=500.0,
+                background_swarm_bfs_fraction=0.40,
             ),
             "extra": dict(
                 num_queries=14,
@@ -288,18 +400,23 @@ class ResearchConfig:
                 max_sources_per_iteration=40,
                 followup_queries_per_iteration=7,
                 reflection_timeout_sec=120.0,
+                reflection_prompt_char_budget=120000,
                 iteration_search_timeout_sec=300.0,
                 search_fallback_stage_timeout_sec=180.0,
                 max_chars_per_source=6000,
                 content_fetch_auto_cap=32,
+                enable_triage=True,
                 enable_playwright=True,
                 enable_seleniumbase=False,
                 enable_stealth=True,
                 synthesis_source_cap=64,
+                final_source_rank_batch_size=10,
+                synthesis_batch_char_budget=80000,
                 synthesis_prompt_char_budget=160000,
                 enable_background_swarm=True,
                 background_swarm_min_iteration=1,
                 background_swarm_poll_every=1,
+                background_swarm_query_count=5,
                 background_swarm_domains_cap=36,
                 background_swarm_seed_urls_per_domain=5,
                 background_swarm_discovery_depth=3,
@@ -310,7 +427,10 @@ class ResearchConfig:
                 background_swarm_max_concurrency=14,
                 background_swarm_chunk_merge_chars=3600,
                 background_swarm_min_chunk_relevance=0.28,
-                background_swarm_final_wait_timeout_sec=15.0,
+                background_swarm_final_wait_timeout_sec=500.0,
+                background_swarm_standalone_timeout_sec=300.0,
+                background_swarm_task_timeout_sec=500.0,
+                background_swarm_bfs_fraction=0.40,
                 domain_scoped_min_results=4,
                 domain_scoped_max_domains=5,
             ),
@@ -334,10 +454,7 @@ OVERDRIVE_BROWSER_FANOUT: int = int(os.getenv("SEARCH_OVERDRIVE_BROWSER_FANOUT",
 OVERDRIVE_BROWSER_IDLE_TIMEOUT: float = float(os.getenv("SEARCH_OVERDRIVE_BROWSER_IDLE_TIMEOUT", "30.0"))
 OVERDRIVE_TRACE_BROWSERS: bool = os.getenv("SEARCH_OVERDRIVE_TRACE_BROWSERS", "true").lower() == "true"
 MIMIC_USER_AGENT: bool = os.getenv("SEARCH_MIMIC_USER_AGENT", "false").lower() == "true"
-WARP_ENABLED: bool = os.getenv("SEARCH_WARP_ENABLED", "false").lower() == "true"
-WARP_ALL_FAILURES: bool = os.getenv("SEARCH_WARP_ALL_FAILURES", "false").lower() == "true"
-WARP_PROXY_URL: str = os.getenv("SEARCH_WARP_PROXY_URL", "").strip()
-WARP_CLI_PATH: str = os.getenv("SEARCH_WARP_CLI_PATH", "").strip()
-WARP_AUTO_INSTALL_PY_DEPS: bool = os.getenv("SEARCH_WARP_AUTO_INSTALL_PY_DEPS", "true").lower() == "true"
-WARP_ENSURE_PROXY_MODE: bool = os.getenv("SEARCH_WARP_ENSURE_PROXY_MODE", "true").lower() == "true"
-WARP_AUTO_DISCONNECT: bool = os.getenv("SEARCH_WARP_AUTO_DISCONNECT", "true").lower() == "true"
+
+# Wayback Machine fallback settings.
+WAYBACK_ENABLED: bool = os.getenv("SEARCH_WAYBACK_ENABLED", "true").lower() == "true"
+WAYBACK_TIMEOUT: int = int(os.getenv("SEARCH_WAYBACK_TIMEOUT", "30"))

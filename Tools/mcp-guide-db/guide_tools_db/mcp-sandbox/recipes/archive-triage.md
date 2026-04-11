@@ -14,7 +14,7 @@ Inspect archive contents, extract relevant files, and continue with the appropri
 ## When to use
 
 - User provides or downloads an archive file (ZIP, TAR, GZ, 7z, RAR)
-- `import_web_file` or `curl` delivered an archive to `task/`
+- `import_web_file` or `curl` delivered an archive into the sandbox workspace
 - User asks "what is inside this archive"
 
 ## When NOT to use
@@ -27,24 +27,24 @@ Inspect archive contents, extract relevant files, and continue with the appropri
 ### Step 1 -- Identify archive type
 
 ```text
-bash("file task/downloads/archive.zip")
+bash("file downloads/archive.zip")
 ```
 
 ### Step 2 -- List contents without extracting
 
 For ZIP:
 ```text
-bash("unzip -l task/downloads/archive.zip | head -40")
+bash("unzip -l downloads/archive.zip | head -40")
 ```
 
 For TAR/GZ:
 ```text
-bash("tar -tzf task/downloads/archive.tar.gz | head -40")
+bash("tar -tzf downloads/archive.tar.gz | head -40")
 ```
 
 For 7z:
 ```text
-bash("7z l task/downloads/archive.7z | head -40")
+bash("7z l downloads/archive.7z | head -40")
 ```
 
 ### Step 3 -- Assess and plan
@@ -59,13 +59,13 @@ Based on the listing:
 Extract only needed files when possible:
 
 ```text
-bash("unzip task/downloads/archive.zip 'path/to/specific/file.txt' -d task/extracted/")
+bash("unzip downloads/archive.zip 'path/to/specific/file.txt' -d extracted/")
 ```
 
 Or extract everything if the archive is small:
 
 ```text
-bash("unzip task/downloads/archive.zip -d task/extracted/")
+bash("unzip downloads/archive.zip -d extracted/")
 ```
 
 ### Step 5 -- Hand off
@@ -85,4 +85,4 @@ After extraction, continue with the appropriate recipe:
 - Extracting everything blindly from a large archive
 - Attempting to read binary files after extraction
 - Ignoring the file listing and extracting without assessment
-- Extracting into the root of `task/` without a subdirectory
+- Extracting into the root of the sandbox workspace without a subdirectory
