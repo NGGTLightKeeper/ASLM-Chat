@@ -1,4 +1,4 @@
-﻿{% extends "main/base.html" %}
+{% extends "main/base.html" %}
 {% load static %}
 
 {% block title %}ASLM Chat{% endblock %}
@@ -6,14 +6,19 @@
 {% block extra_css %}{% endblock %}
 
 {% block body %}
+{% comment %} Copyright NGGT.LightKeeper. All Rights Reserved. {% endcomment %}
+
+{# Main chat layout. #}
 <div class="chat-shell">
     {% csrf_token %}
 
+    {# Conversation area. #}
     <main class="main-area" id="mainArea">
         <header class="topbar">
             <h2 class="chat-title" id="chatTitle">New Chat</h2>
         </header>
 
+        {# Welcome state and message stream. #}
         <div class="messages-area" id="messagesArea">
             <div class="messages-inner" id="messagesInner">
                 <div class="welcome" id="welcomeScreen">
@@ -58,6 +63,7 @@
             </div>
         </div>
 
+        {# Sticky composer for active chats. #}
         <div class="input-area conversation-input" id="conversationInput" style="display:none;">
             <div class="input-wrapper" id="inputWrapperConv">
                 <input type="file" id="imageInputConv" multiple style="display:none;">
@@ -100,6 +106,7 @@
         </div>
     </main>
 
+    {# Runtime settings sidebar. #}
     <aside class="sidebar sidebar-right" id="sidebarRight">
         <div class="sidebar-header">
             <span class="logo-name">Model Settings</span>
@@ -255,6 +262,7 @@
 
 </div>
 
+{# Tool execution inspector. #}
 <div class="tool-inspector-overlay" id="toolInspectorModal">
     <div class="tool-inspector-panel">
         <div class="tool-inspector-header">
@@ -282,9 +290,9 @@
 {% endblock %}
 
 {% block extra_js %}
+{# Boot payloads for the main chat client. #}
 {{ runtime_settings|json_script:"runtimeSettingsData" }}
 {{ engine_options|json_script:"engineOptionsData" }}
 {{ available_tool_servers|json_script:"availableToolServersData" }}
 <script src="{% static 'js/main/main.js' %}?v=20260410b"></script>
 {% endblock %}
-

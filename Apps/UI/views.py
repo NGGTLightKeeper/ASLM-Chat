@@ -53,9 +53,59 @@ THINK_PARAM_NAMES = {"think", "thinking", "reasoning"}
 THINK_LEVEL_PARAM_NAMES = {"think_level", "thinking_level", "reasoning_effort"}
 TOOL_CAPABILITY_NAMES = {"tools", "tool", "tool-calling", "tool_calling"}
 TEXT_ATTACHMENT_EXTENSIONS = {
-    ".c", ".cc", ".cpp", ".cs", ".css", ".csv", ".go", ".h", ".hpp", ".html", ".ini",
-    ".java", ".js", ".json", ".jsx", ".md", ".php", ".py", ".rb", ".rs", ".sh", ".sql",
-    ".svg", ".toml", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml",
+    ".adoc", ".ahk", ".asm", ".asciidoc", ".bash", ".bat", ".bib", ".c", ".cc", ".cfg",
+    ".clj", ".cljc", ".cljs", ".cmd", ".cmake", ".conf", ".config", ".cpp", ".cs",
+    ".cshtml", ".csproj", ".css", ".csv", ".cts", ".cue", ".cxx", ".dart", ".diff",
+    ".dockerfile", ".edn", ".ejs", ".env", ".erb", ".erl", ".ex", ".exs", ".fish",
+    ".fs", ".fsi", ".fsx", ".geojson", ".go", ".gql", ".gradle", ".graphql", ".groovy",
+    ".gvy", ".h", ".handlebars", ".haml", ".hbs", ".hpp", ".hrl", ".hs", ".htm", ".html",
+    ".http", ".hxx", ".ini", ".java", ".jinja", ".jinja2", ".jl", ".js", ".json",
+    ".json5", ".jsonc", ".jsonl", ".jsx", ".kt", ".kts", ".ksh", ".latex", ".less",
+    ".liquid", ".log", ".lua", ".m", ".mako", ".markdown", ".md", ".mdown", ".mdx",
+    ".mjml", ".mkd", ".mm", ".mod", ".mts", ".mustache", ".nix", ".njk", ".patch",
+    ".php", ".pl", ".pm", ".pod", ".properties", ".proto", ".ps1", ".ps1xml", ".psd1",
+    ".psm1", ".pug", ".py", ".pyi", ".r", ".rb", ".rego", ".rest", ".rst", ".rs",
+    ".sass", ".scala", ".scss", ".service", ".sh", ".shtml", ".sol", ".sql", ".srt",
+    ".styl", ".svelte", ".sum", ".svg", ".swift", ".tcl", ".templ", ".tex", ".tf",
+    ".tfvars", ".toml", ".ts", ".tsv", ".tsx", ".twig", ".txt", ".vb", ".vbs", ".vue",
+    ".vtt", ".xhtml", ".xml", ".xsd", ".xsl", ".yaml", ".yml", ".zsh",
+}
+TEXT_ATTACHMENT_FILENAMES = {
+    ".bash_profile",
+    ".bashrc",
+    ".dockerignore",
+    ".editorconfig",
+    ".env",
+    ".env.example",
+    ".eslintignore",
+    ".eslintrc",
+    ".gitattributes",
+    ".gitconfig",
+    ".gitignore",
+    ".gitkeep",
+    ".gitmodules",
+    ".npmrc",
+    ".nvmrc",
+    ".prettierignore",
+    ".prettierrc",
+    ".python-version",
+    ".stylelintrc",
+    ".tool-versions",
+    ".yamllint",
+    ".zshenv",
+    ".zshrc",
+    "brewfile",
+    "cmakelists.txt",
+    "containerfile",
+    "dockerfile",
+    "gemfile",
+    "jenkinsfile",
+    "justfile",
+    "makefile",
+    "procfile",
+    "rakefile",
+    "tiltfile",
+    "vagrantfile",
 }
 ATTACHMENT_TEXT_CHAR_LIMIT = 24000
 LLM_CONTROL_TOKEN_PATTERNS = (
@@ -353,18 +403,35 @@ def _is_text_attachment(mime_type: str, name: str) -> bool:
     """Return whether the attachment should be decoded as text."""
 
     normalized_mime = str(mime_type or "").strip().lower()
+    normalized_name = Path(name or "").name.lower()
+    attachment_path = Path(name or "")
     if normalized_mime.startswith("text/"):
         return True
     if normalized_mime in {
+        "application/ecmascript",
         "application/json",
+        "application/ld+json",
         "application/javascript",
         "application/sql",
+        "application/toml",
+        "application/vnd.api+json",
         "application/xml",
+        "application/x-httpd-php",
+        "application/x-javascript",
+        "application/x-ndjson",
+        "application/x-sh",
+        "application/x-shellscript",
+        "application/x-toml",
+        "application/x-yaml",
+        "application/yaml",
         "image/svg+xml",
     }:
         return True
 
-    return Path(name or "").suffix.lower() in TEXT_ATTACHMENT_EXTENSIONS
+    if normalized_name in TEXT_ATTACHMENT_FILENAMES:
+        return True
+
+    return any(suffix.lower() in TEXT_ATTACHMENT_EXTENSIONS for suffix in attachment_path.suffixes)
 
 
 # Trim attachment text so prompts stay bounded.

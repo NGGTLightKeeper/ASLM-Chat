@@ -1,9 +1,12 @@
 {% extends "main/base.html" %}
 {% load static %}
 
-{% block title %}Profile - ASLM{% endblock %}
+{% block title %}Profile - ASLM Chat{% endblock %}
 
 {% block body %}
+{% comment %} Copyright NGGT.LightKeeper. All Rights Reserved. {% endcomment %}
+
+{# Profile layout. #}
 <div class="profile-shell">
     <header class="topbar">
         <a class="back-btn" href="/" aria-label="Back to chat">
@@ -14,6 +17,7 @@
         <h2 class="page-title">Account</h2>
     </header>
 
+    {# Static account summary. #}
     <div class="profile-content">
         <div class="profile-card">
             <div class="profile-avatar">
@@ -28,6 +32,7 @@
             </div>
         </div>
 
+        {# General account metadata. #}
         <div class="profile-section">
             <h2 class="section-title">General</h2>
             <div class="profile-row">
@@ -44,6 +49,7 @@
             </div>
         </div>
 
+        {# Reserved account actions. #}
         <div class="profile-section">
             <h2 class="section-title">Danger Zone</h2>
             <div class="profile-row">

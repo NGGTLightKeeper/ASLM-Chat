@@ -1,4 +1,5 @@
 {% load static %}
+{% comment %} Copyright NGGT.LightKeeper. All Rights Reserved. {% endcomment %}
 <!DOCTYPE html>
 <html lang="en">
 
@@ -21,7 +22,7 @@
 <body data-preload-chat="{{ preload_chat_id|default:'' }}" data-llm-engine="{{ llm_engine|default:'' }}">
 <div class="app-shell">
 
-    <!-- Left Sidebar (shared across all pages) -->
+    <!-- Shared chat sidebar -->
     <aside class="sidebar sidebar-left">
         <div class="sidebar-header">
             <span class="logo-name">Chats</span>
@@ -87,7 +88,7 @@
 <!-- Markdown parsing and sanitization -->
 <script src="{% static 'js/vendor/marked.min.js' %}"></script>
 <script src="{% static 'js/vendor/purify.min.js' %}"></script>
-<!-- Highlight.js for code blocks -->
+<!-- Syntax highlighting -->
 <link rel="stylesheet" href="{% static 'css/vendor/atom-one-dark.min.css' %}">
 <script src="{% static 'js/vendor/highlight.min.js' %}"></script>
 

@@ -16,6 +16,8 @@ DEFAULT_LMS_PRESET_CONFIG: dict[str, Any] = {
 }
 
 
+# Normalize preset payload values.
+# Remove empty nested values while preserving scalar types.
 def _normalize_config_value(value: Any) -> Any:
     """Remove empty values while preserving scalar types."""
 
@@ -25,6 +27,7 @@ def _normalize_config_value(value: Any) -> Any:
             normalized_child = _normalize_config_value(child)
             if normalized_child in ({}, [], "", None):
                 continue
+
             normalized[str(key)] = normalized_child
         return normalized
 
@@ -34,7 +37,7 @@ def _normalize_config_value(value: Any) -> Any:
 
     return value
 
-
+# Keep the stored payload compact and predictable.
 def normalize_lms_preset_config(config: dict[str, Any] | None) -> dict[str, Any]:
     """Return a compact LM Studio preset config ready for storage."""
 
@@ -55,6 +58,8 @@ def normalize_lms_preset_config(config: dict[str, Any] | None) -> dict[str, Any]
     return normalized
 
 
+# Resolve preset records.
+# Load the built-in defaults from the selected model.
 def _get_default_lms_preset_config(model_name: str) -> dict[str, Any]:
     """Read the default LM Studio config baked into the selected model."""
 
@@ -65,7 +70,7 @@ def _get_default_lms_preset_config(model_name: str) -> dict[str, Any]:
         }
     )
 
-
+# Pick the next available custom preset name.
 def _next_custom_preset_name(model_name: str) -> str:
     """Generate the next free custom preset name for a model."""
 
@@ -78,9 +83,10 @@ def _next_custom_preset_name(model_name: str) -> str:
         candidate = f"Custom {index}"
         if candidate not in existing_names:
             return candidate
+
         index += 1
 
-
+# Convert a preset model into API payload data.
 def _serialize_preset(preset: LmsPreset) -> dict[str, Any]:
     """Convert a preset model into the frontend JSON shape."""
 
@@ -93,16 +99,19 @@ def _serialize_preset(preset: LmsPreset) -> dict[str, Any]:
         "is_active": preset.is_active,
     }
 
-
+# Find one preset in a loaded collection.
 def _get_preset_by_id(presets: list[LmsPreset], preset_id: str) -> LmsPreset:
     """Return one preset from a loaded list or raise when it is missing."""
 
     preset = next((item for item in presets if str(item.id) == str(preset_id)), None)
     if preset is None:
         raise LmsPreset.DoesNotExist("Preset not found")
+
     return preset
 
 
+# Maintain preset state.
+# Ensure one default preset and one active preset exist for a model.
 @transaction.atomic
 def ensure_lms_preset_state(model_name: str) -> tuple[list[LmsPreset], LmsPreset]:
     """Ensure a model has one default preset and one active preset."""
@@ -117,6 +126,7 @@ def ensure_lms_preset_state(model_name: str) -> tuple[list[LmsPreset], LmsPreset
         .order_by("-is_active", "-is_default", "name")
     )
 
+    # Seed the first default preset when the model has no saved state yet.
     if not presets:
         default_preset = LmsPreset.objects.create(
             model_name=normalized_model,
@@ -127,16 +137,19 @@ def ensure_lms_preset_state(model_name: str) -> tuple[list[LmsPreset], LmsPreset
         )
         return [default_preset], default_preset
 
+    # Recover a missing active preset by promoting the default or first record.
     active_preset = next((preset for preset in presets if preset.is_active), None)
     if active_preset is None:
         active_preset = next((preset for preset in presets if preset.is_default), presets[0])
         active_preset.is_active = True
         active_preset.save(update_fields=["is_active"])
 
+    # Keep only one active preset to avoid UI and runtime drift.
     if sum(1 for preset in presets if preset.is_active) > 1:
         for preset in presets:
             if preset.pk == active_preset.pk or not preset.is_active:
                 continue
+
             preset.is_active = False
             preset.save(update_fields=["is_active"])
 
@@ -146,7 +159,7 @@ def ensure_lms_preset_state(model_name: str) -> tuple[list[LmsPreset], LmsPreset
     )
     return presets, active_preset
 
-
+# Return the preset payload for one model.
 def get_lms_preset_payload(model_name: str) -> dict[str, Any]:
     """Return presets and the active config for the selected model."""
 
@@ -158,7 +171,7 @@ def get_lms_preset_payload(model_name: str) -> dict[str, Any]:
         "active_config": normalize_lms_preset_config(active_preset.config or {}),
     }
 
-
+# Mark one preset as active.
 @transaction.atomic
 def activate_lms_preset(model_name: str, preset_id: str) -> dict[str, Any]:
     """Mark one preset as active for its model."""
@@ -169,13 +182,14 @@ def activate_lms_preset(model_name: str, preset_id: str) -> dict[str, Any]:
     LmsPreset.objects.filter(model_name=model_name, is_active=True).exclude(pk=preset.pk).update(
         is_active=False
     )
+
     if not preset.is_active:
         preset.is_active = True
         preset.save(update_fields=["is_active"])
 
     return get_lms_preset_payload(model_name)
 
-
+# Create a new custom preset.
 @transaction.atomic
 def create_lms_preset(
     model_name: str,
@@ -192,6 +206,7 @@ def create_lms_preset(
 
     base_name = str(name or "").strip() or _next_custom_preset_name(normalized_model)
 
+    # Start custom presets from normalized input or model defaults.
     try:
         preset = LmsPreset.objects.create(
             model_name=normalized_model,
@@ -208,7 +223,7 @@ def create_lms_preset(
 
     return get_lms_preset_payload(normalized_model)
 
-
+# Rename a custom preset.
 @transaction.atomic
 def rename_lms_preset(model_name: str, preset_id: str, new_name: str) -> dict[str, Any]:
     """Rename a custom preset without changing its config."""
@@ -230,7 +245,7 @@ def rename_lms_preset(model_name: str, preset_id: str, new_name: str) -> dict[st
 
     return get_lms_preset_payload(model_name)
 
-
+# Delete a custom preset.
 @transaction.atomic
 def delete_lms_preset(model_name: str, preset_id: str) -> dict[str, Any]:
     """Delete a custom preset and restore the default when needed."""
@@ -250,7 +265,7 @@ def delete_lms_preset(model_name: str, preset_id: str) -> dict[str, Any]:
     default_preset = next(item for item in payload["presets"] if item.get("is_default"))
     return activate_lms_preset(model_name, default_preset["id"])
 
-
+# Persist changes into the active preset.
 @transaction.atomic
 def sync_active_lms_preset(model_name: str, config: dict[str, Any]) -> dict[str, Any]:
     """Persist UI changes into the active preset."""
@@ -259,6 +274,7 @@ def sync_active_lms_preset(model_name: str, config: dict[str, Any]) -> dict[str,
     normalized_config = normalize_lms_preset_config(config)
     presets, active_preset = ensure_lms_preset_state(normalized_model)
 
+    # Editing the default preset should create a custom active copy.
     if active_preset.is_default:
         if normalize_lms_preset_config(active_preset.config) == normalized_config:
             return get_lms_preset_payload(normalized_model)
@@ -269,6 +285,7 @@ def sync_active_lms_preset(model_name: str, config: dict[str, Any]) -> dict[str,
             activate=True,
         )
 
+    # Custom active presets can be updated in place.
     active_preset.config = normalized_config
     active_preset.save(update_fields=["config", "updated_at"])
     return get_lms_preset_payload(normalized_model)

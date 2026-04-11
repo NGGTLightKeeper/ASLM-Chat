@@ -3,6 +3,7 @@
 'use strict';
 
 $(function () {
+  // Cache shared DOM nodes.
   const $newChatBtn = $('#newChatBtn');
   const $historyList = $('#historyList');
   const $chatTitle = $('#chatTitle');
@@ -33,6 +34,7 @@ $(function () {
   const $dividerTools = $('#divider-tools');
   const $toolInspectorModal = $('#toolInspectorModal');
 
+  // Wire the tool inspector modal.
   $('#toolInspectorClose').on('click', function () { $toolInspectorModal.removeClass('open'); });
   $toolInspectorModal.on('click', function (e) {
     if ($(e.target).is($toolInspectorModal)) { $toolInspectorModal.removeClass('open'); }
@@ -41,6 +43,7 @@ $(function () {
     if (e.key === 'Escape') { $toolInspectorModal.removeClass('open'); }
   });
 
+  // Track runtime and chat state.
   let runtimeSettings = parseJsonScript('runtimeSettingsData') || {};
   const defaultAvailableToolServers = parseJsonScript('availableToolServersData') || [];
   let availableToolServers = Array.isArray(defaultAvailableToolServers) ? defaultAvailableToolServers.slice() : [];
@@ -64,6 +67,7 @@ $(function () {
   let queuedMessageCounter = 0;
   const chatRequestQueue = [];
 
+  // Map engine-specific configuration.
   const ENGINE_ALIASES = {
     ollama: 'ollama-service',
     'ollama-service': 'ollama-service',
@@ -88,6 +92,7 @@ $(function () {
     'google-genai': 'google_genai_api_key'
   };
 
+  // Describe engine-specific UI hints and limits.
   const ENGINE_ADDRESS_HINTS = {
     'ollama-service': 'Ollama uses the local service managed by ASLM.',
     lms: 'Example: http://127.0.0.1:1234',
@@ -113,6 +118,7 @@ $(function () {
     runtimeSettings['llm-engine'] || $('body').data('llm-engine') || 'ollama-service'
   );
 
+  // Track model capabilities and request attachments.
   const visionState = {
     supported: false
   };
@@ -140,6 +146,8 @@ $(function () {
     supported: false
   };
   let currentModelInfo = null;
+
+  // Identify parameters related to visible reasoning controls.
   const THINK_PARAMETER_KEYS = new Set([
     'think',
     'think_level',
@@ -149,6 +157,7 @@ $(function () {
     'reasoning_effort'
   ]);
 
+  // Describe supported parameter controls.
   const PARAMETER_DEFINITIONS = {
     temperature: {
       label: 'Temperature',
@@ -891,6 +900,8 @@ $(function () {
       return true;
     }
 
+    // Detect the RFC1918 172.16.0.0/12 private range separately because only a
+    // subset of 172.x.x.x addresses should be considered local.
     const privateRangeMatch = normalizedHost.match(/^172\.(\d{1,3})(?:\.\d{1,3}){2}$/);
     if (privateRangeMatch) {
       const secondOctet = Number(privateRangeMatch[1]);
@@ -954,6 +965,8 @@ $(function () {
     const hasApiKeySupport = Boolean(apiKeyKey);
     const hasStoredApiKey = hasApiKeySupport && hasStoredEngineApiKey(engine);
 
+    // Address and API-key controls are engine-specific, so rebuild their
+    // visible state from the canonical runtime settings on every engine switch.
     $engineAddressGroup.toggle(hasEditableAddress);
     $engineAddressHint.text(ENGINE_ADDRESS_HINTS[engine] || 'Configure the selected engine endpoint.');
     $engineApiKeyGroup.toggle(hasApiKeySupport);
@@ -1031,6 +1044,8 @@ $(function () {
       const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
       const $name = $('<span class="tool-server-name">').text(label);
 
+      // Keep the Set as the single source of truth, then rebuild the checkbox
+      // list from that state whenever capabilities or selected model change.
       $checkbox.on('change', function () {
         if (this.checked) {
           selectedToolServerIds.add(serverId);
@@ -1163,12 +1178,15 @@ $(function () {
     try {
       const refreshedModels = normalizeModelNames(await fetchModelsForEngine('lms'));
 
+      // Ignore refresh results that race behind a later engine switch.
       if (refreshVersion !== engineSelectionVersion || getActiveEngine() !== 'lms') {
         return;
       }
 
       modelsCache.lms = refreshedModels;
 
+      // Re-render only when the visible selector would actually change or when
+      // the previously selected model disappeared from the refreshed list.
       const shouldRerender = !hadRenderedOptions
         || !areModelListsEqual(previousModels, refreshedModels)
         || (previousSelectedModel && !refreshedModels.includes(previousSelectedModel));
@@ -1197,6 +1215,9 @@ $(function () {
       if (!(definition.engines || []).includes(canonicalEngine)) {
         return false;
       }
+
+      // Thinking controls are rendered separately so they can stay synchronized
+      // with dedicated toggle and level widgets instead of generic fields.
       if (isThinkingParameterKey(key)) {
         return false;
       }
@@ -1261,6 +1282,8 @@ $(function () {
       presets: Array.isArray(payload.presets) ? payload.presets : []
     };
 
+    // Rebuild the selector from backend state every time so rename/delete/sync
+    // operations never depend on stale client-side preset labels.
     $ollamaPresetSelector.empty();
     ollamaPresetState.presets.forEach(function (preset) {
       const label = preset.is_default ? `${preset.name} (Default)` : preset.name;
@@ -1401,6 +1424,8 @@ $(function () {
       return models;
     }
 
+    // Ollama can briefly report no models while the managed service is still
+    // warming up, so retry once before surfacing an empty selector.
     await new Promise(function (resolve) {
       window.setTimeout(resolve, 1200);
     });
@@ -1414,6 +1439,8 @@ $(function () {
     const preferredModel = loadOptions.preferredModel || $modelSelector.val() || '';
     let selectedModel = '';
 
+    // Reuse cached model lists when possible so repeated engine visits do not
+    // trigger avoidable discovery requests.
     if (Array.isArray(modelsCache[engine]) && modelsCache[engine].length > 0) {
       selectedModel = renderModelOptions(modelsCache[engine], preferredModel);
       await loadModelInfo(selectedModel);
@@ -1441,6 +1468,8 @@ $(function () {
 
     clearModelCache(engine);
 
+    // Refresh requests can outlive the engine that triggered them, so bail out
+    // before mutating the selector if a newer engine selection already won.
     if (selectionVersion !== engineSelectionVersion || engine !== getActiveEngine()) {
       return '';
     }
@@ -1491,6 +1520,8 @@ $(function () {
     resetModelUiState('Models load on demand');
 
     if (settingsOptions.persist === false) {
+      // During bootstrap we can switch engines locally without round-tripping
+      // through the settings API, but we still reuse the same UI reset flow.
       runtimeSettings['llm-engine'] = normalizedEngine;
       clearModelCache(normalizedEngine);
       if (autoLoadModels) {
@@ -1508,6 +1539,8 @@ $(function () {
     }
 
     try {
+      // Persist the engine first so the backend runtime and the UI stay aligned
+      // before any model discovery requests are issued.
       setEngineAddressStatus('Switching...', 'pending');
       runtimeSettings = await saveRuntimeSettings({ 'llm-engine': normalizedEngine });
       runtimeSettings['llm-engine'] = normalizedEngine;
@@ -1533,6 +1566,8 @@ $(function () {
 
       syncLmsModelsRefresh();
     } catch (error) {
+      // Roll back the visible engine selection when persistence fails so the
+      // controls still describe the runtime state the backend is using.
       activeEngine = previousEngine;
       runtimeSettings['llm-engine'] = previousEngine;
       $('body').data('llm-engine', previousEngine);
@@ -1563,6 +1598,8 @@ $(function () {
       $sendBtn.prop('disabled', false).addClass('stop-btn').html(STOP_ICON).attr('aria-label', 'Stop generation');
       $sendBtnConv.prop('disabled', false).addClass('stop-btn').html(STOP_ICON).attr('aria-label', 'Stop generation');
     } else {
+      // Both composers share the same pending attachment state, so either send
+      // button stays enabled when attachments are queued without text.
       const hasPendingAttachments = attachmentState.pending.length > 0;
       $sendBtn.removeClass('stop-btn').html(SEND_ICON).attr('aria-label', 'Send Message').prop('disabled', !$chatInput.val().trim() && !hasPendingAttachments);
       $sendBtnConv.removeClass('stop-btn').html(SEND_ICON).attr('aria-label', 'Send Message').prop('disabled', !$chatInputConv.val().trim() && !hasPendingAttachments);
@@ -1591,6 +1628,8 @@ $(function () {
 
   // Start new chat.
   function startNewChat() {
+    // Reset only the conversation surface; model and runtime selections stay
+    // intact so starting over does not wipe the current environment.
     $chatTitle.text('New Chat');
     document.title = 'ASLM Chat';
     $messagesInner.find('.msg').remove();
@@ -1630,6 +1669,8 @@ $(function () {
       return null;
     }
 
+    // Accept both legacy image strings and normalized attachment objects so
+    // old chat payloads and new API responses share one client-side shape.
     if (typeof attachment === 'string') {
       return {
         kind: 'image',
@@ -1664,6 +1705,8 @@ $(function () {
       return;
     }
 
+    // The welcome and conversation composers mirror the same attachment state,
+    // so render both preview strips from one normalized pending list.
     attachmentState.pending.forEach(function (attachment, idx) {
       let html = '';
       if (attachment.kind === 'image') {
@@ -1720,6 +1763,8 @@ $(function () {
 
       const reader = new FileReader();
       reader.onload = function (loadEvent) {
+        // Re-check limits inside onload because multiple FileReader callbacks
+        // can complete out of order after the initial synchronous loop.
         if (attachmentState.pending.length >= maxAttachments) {
           return;
         }
@@ -1746,6 +1791,8 @@ $(function () {
 
   // Get parameter group.
   function getParameterGroup(paramKey) {
+    // Prefer explicit group metadata, then fall back to a heuristic grouping so
+    // unrecognized parameters still land in a predictable sidebar section.
     if (PARAMETER_DEFINITIONS[paramKey] && PARAMETER_DEFINITIONS[paramKey].group) {
       return `#group-${PARAMETER_DEFINITIONS[paramKey].group}`;
     }
@@ -1847,6 +1894,8 @@ $(function () {
 
     delete cursor[parts[parts.length - 1]];
 
+    // Prune empty parent objects on the way back up so optional nested fields
+    // disappear cleanly from the final payload instead of leaving `{}` shells.
     for (let index = trail.length - 1; index >= 0; index -= 1) {
       const entry = trail[index];
       const child = entry.parent[entry.key];
@@ -1864,6 +1913,8 @@ $(function () {
       return prefix ? [{ path: prefix, value: source }] : [];
     }
 
+    // Flatten nested objects into dot-path leaves so preset state can be
+    // compared and rendered through the generic parameter helpers.
     return Object.entries(source).flatMap(function ([key, value]) {
       const nextPath = prefix ? `${prefix}.${key}` : key;
       if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -1891,6 +1942,8 @@ $(function () {
       return '';
     }
 
+    // Prefer backend-provided notes, then synthesize a compact hint from the
+    // parameter shape so controls remain self-describing even without docs.
     if (config.note) {
       return config.note;
     }
@@ -2003,6 +2056,8 @@ $(function () {
     const normalizedMin = Math.max(128, Number(minValue) || 128);
     const normalizedMax = Math.max(normalizedMin, Number(maxValue) || normalizedMin);
 
+    // Use finer granularity for smaller contexts, then switch to coarser steps
+    // so very large token windows remain usable on a slider.
     for (let value = normalizedMin; value <= Math.min(normalizedMax, 1024); value += 128) {
       values.push(value);
     }
@@ -2054,6 +2109,9 @@ $(function () {
     const metaHtml = renderParameterMeta(config);
     let html = '';
 
+    // Build one control shape per known parameter type, but keep the resulting
+    // markup normalized so collection can read everything through shared
+    // `data-*` attributes later.
     if (config.type === 'select') {
       const valueType = config.valueType || 'string';
       const normalizedValue = value === undefined || value === null ? config.fallback : value;
@@ -2263,6 +2321,8 @@ $(function () {
       `;
     }
 
+    // Rendering stays append-only because panels are reset before each model
+    // refresh, which keeps the branch logic here simple.
     $content.append(html);
     $group.show();
   }
@@ -2276,6 +2336,8 @@ $(function () {
     const label = formatExperimentalParameterLabel(key);
     let controlHtml = '';
 
+    // Unknown backend fields fall back to a generic control palette instead of
+    // disappearing from the UI, which keeps newly exposed parameters editable.
     if (valueType === 'boolean') {
       controlHtml = `
         <select
@@ -2341,6 +2403,8 @@ $(function () {
       return $(`#group-${groupName}`).is(':visible');
     });
 
+    // Dividers are computed after all groups are rendered so spacing stays
+    // coherent even when engines expose very different panel combinations.
     if (visibleGroups.length > 0) {
       $('#divider-system').show();
     }
@@ -2369,6 +2433,8 @@ $(function () {
       ? thinkState.levelOptions
       : ['low', 'medium', 'high'];
 
+    // Rebuild both selectors from the same normalized option set to keep the
+    // welcome composer and conversation composer visually identical.
     ['#thinkLevelSelector', '#thinkLevelSelectorConv'].forEach(function (selectorId) {
       const $selector = $(selectorId);
       $selector.empty();
@@ -2426,6 +2492,8 @@ $(function () {
     const requestVersion = ++modelInfoRequestVersion;
 
     if (!model) {
+      // Reset every model-dependent UI fragment when the selection becomes
+      // empty so stale capabilities do not leak into the next request.
       currentModelInfo = null;
       resetOllamaPresetUi();
       resetDynamicPanels();
@@ -2451,6 +2519,8 @@ $(function () {
         throw new Error(`Failed to load model info: ${response.status}`);
       }
 
+      // Drop late responses from older requests after fast engine/model
+      // switches so the sidebar never renders mismatched capabilities.
       if (requestVersion !== modelInfoRequestVersion || requestedEngine !== getActiveEngine() || model !== getSelectedModelName()) {
         return;
       }
@@ -2496,6 +2566,9 @@ $(function () {
         return;
       }
 
+      // Remove UI-owned thinking flags from the generic defaults payload. They
+      // are rendered through dedicated controls and re-injected when options
+      // are collected for a request.
       const defaults = { ...data.defaults };
       delete defaults[thinkState.paramName];
       delete defaults[thinkState.levelParamName];
@@ -2505,6 +2578,9 @@ $(function () {
         });
       }
 
+      // Known parameters get runtime-aware limits and metadata before
+      // rendering; everything left over falls back to the experimental panel
+      // so model-specific fields are still editable without hardcoding them.
       getSupportedParameterDefinitions(getActiveEngine()).forEach(function ([key, config]) {
         const renderedConfig = { ...config };
         const runtimeLimits = data.runtime_limits || {};
@@ -2557,6 +2633,8 @@ $(function () {
 
       updateVisibleDividers();
     } catch (error) {
+      // On failure we deliberately fall back to a clean UI state instead of
+      // leaving partial controls from the previous successful model load.
       if (requestVersion !== modelInfoRequestVersion) {
         return;
       }
@@ -2590,6 +2668,8 @@ $(function () {
       const scale = $(this).data('scale');
       let rawValue = $(this).is(':checkbox') ? ($(this).is(':checked') ? 'true' : 'false') : $(this).val();
 
+      // Token ranges render as compact slider indices in the DOM, so convert
+      // them back into the actual token values before typing the payload.
       if (scale === 'token-range') {
         const allowedValues = JSON.parse($(this).attr('data-allowed-values') || '[]');
         const resolvedValue = allowedValues[parseInt(rawValue, 10)] || allowedValues[0] || 0;
@@ -2632,6 +2712,8 @@ $(function () {
           return;
         }
 
+        // Optional numeric fields are omitted entirely when disabled so the
+        // backend can keep its own defaults instead of receiving sentinel data.
         const integerValue = parseInt(rawValue, 10);
         if (!Number.isNaN(integerValue)) {
           setNestedValue(payload, paramPath, integerValue);
@@ -2672,11 +2754,15 @@ $(function () {
   function collectOptionsPayload() {
     const payload = collectParameterPayload('#dynamicParameters .dyn-param');
     if (getActiveEngine() === 'ollama-service') {
+      // The UI can display legacy or model-reported fields that newer Ollama
+      // builds no longer accept, so strip them before sending runtime options.
       OLLAMA_UNSUPPORTED_RUNTIME_PARAMS.forEach(function (key) {
         delete payload[key];
       });
     }
 
+    // Thinking controls live outside the generic parameter panel, so merge
+    // them into the final request only after the generic payload is built.
     if (thinkState.supported && thinkState.toggleSupported && !thinkState.levelSupported) {
       payload[thinkState.paramName] = thinkState.enabled;
     }
@@ -2769,6 +2855,9 @@ $(function () {
       segments.push({ type: 'text', content: sanitizedValue });
     }
 
+    // Walk the raw assistant transcript as a lightweight state machine so
+    // visible text, thought blocks, tool calls, and tool results can be
+    // reconstructed from one streamed string.
     while (cursor < source.length) {
       const thinkStart = source.indexOf('<think>', cursor);
       const toolCallStart = source.indexOf('<tool_call>', cursor);
@@ -2827,6 +2916,9 @@ $(function () {
             result: null,
           };
           segments.push(seg);
+
+          // Tool results arrive later as separate markers, so keep a lookup by
+          // alias and patch the same segment when the result marker appears.
           if (alias) { toolSegmentByAlias[alias] = seg; }
         } catch (_error) {
           // Ignore malformed markers.
@@ -2920,6 +3012,9 @@ $(function () {
     let thoughtIndex = -1;
     let toolSegmentIndex = 0;
     const toolSegments = segments.filter(function (s) { return s.type === 'tool'; });
+
+    // Thought expansion state is persisted on the row itself so re-renders
+    // during streaming do not collapse sections the user already opened.
     const html = segments.map(function (segment) {
       if (segment.type === 'thought') {
         thoughtIndex += 1;
@@ -2962,6 +3057,8 @@ $(function () {
     $stream.html(html).show();
     setExpandedThoughtIndices($msgRow, expandedThoughts);
 
+    // Tool cards are rendered from plain HTML, so bind inspector handlers only
+    // after the final DOM for this render pass exists.
     $stream.find('.msg-tool-call-card[data-tool-segment-index]').each(function () {
       const idx = parseInt($(this).attr('data-tool-segment-index'), 10);
       const seg = toolSegments[idx];
@@ -2992,6 +3089,8 @@ $(function () {
 
     let attachmentsHtml = '';
     if (isUser && attachments && attachments.length > 0) {
+      // Persist enough attachment metadata in the DOM for copy/regenerate flows
+      // without having to hit the backend to rebuild the original request.
       const imageHtml = attachments
         .filter(function (attachment) {
           return typeof attachment === 'string' || attachment.kind === 'image';
@@ -3055,6 +3154,8 @@ $(function () {
         .attr('data-attachments', JSON.stringify(attachments || []))
         .append($('<span>').text(text));
     } else if (Array.isArray(viewOptions.activitySegments) && viewOptions.activitySegments.length > 0) {
+      // Server-loaded messages can arrive with pre-parsed activity segments, so
+      // skip transcript parsing and render the structured timeline directly.
       $row.find('.msg-bubble').attr('data-raw', text);
       renderActivityTimeline($row, viewOptions.activitySegments);
     } else {
@@ -3184,6 +3285,8 @@ $(function () {
       }
 
       if (request.attachments.length > 0) {
+        // Normalize attachments to the backend contract here so queue entries
+        // can keep the richer client-side shape needed by the UI.
         payload.attachments = request.attachments.map(function (attachment) {
           return {
             kind: attachment.kind,
@@ -3222,6 +3325,10 @@ $(function () {
       if (returnedChatId && currentChatId !== returnedChatId) {
         currentChatId = returnedChatId;
         request.chatId = returnedChatId;
+
+        // When the first streamed response creates a brand-new chat, patch that
+        // id into every queued follow-up request so the whole batch stays in
+        // the same conversation.
         chatRequestQueue.forEach(function (queuedRequest) {
           if (!queuedRequest.chatId) {
             queuedRequest.chatId = returnedChatId;
@@ -3271,6 +3378,9 @@ $(function () {
           const chunk = decoder.decode(value, { stream: true });
           fullText += chunk;
 
+          // Re-render from the accumulated transcript on every chunk because
+          // tool markers and thought blocks can change earlier portions of the
+          // visible timeline, not just append plain text.
           const area = $messagesArea[0];
           const isNearBottom = area.scrollHeight - area.clientHeight <= area.scrollTop + 50;
           renderMessageHtml($msgRow, fullText);
@@ -3332,6 +3442,8 @@ $(function () {
       isChatGenerating = false;
       updateSendButtons();
       if (chatRequestQueue.length > 0) {
+        // Process follow-up requests serially so chat order and shared runtime
+        // state stay deterministic even when users send messages quickly.
         processChatQueue();
       }
     }
@@ -3341,6 +3453,8 @@ $(function () {
 
   // Build queued request.
   function buildQueuedRequest(text, attachmentsToSend) {
+    // Snapshot all mutable UI state now so queued follow-up requests are not
+    // affected by later control changes while another message is streaming.
     return {
       id: `queued-${++queuedMessageCounter}`,
       text,
@@ -3369,6 +3483,8 @@ $(function () {
       $chatInputConv.val('').css('height', 'auto').focus();
     }
 
+    // Render the user bubble immediately, then let the request queue serialize
+    // backend work behind the scenes.
     const request = buildQueuedRequest(text, attachmentsToSend);
     request.$userRow = appendMessage('user', text, attachmentsToSend, null, {
       queued,
@@ -3419,6 +3535,9 @@ $(function () {
 
     $activeMenuTarget = $item;
     const rect = $item[0].getBoundingClientRect();
+
+    // Anchor the dropdown to the chat item bounds so it stays aligned even
+    // when the history list scrolls inside its own sidebar.
     $dropdown.css({
       top: rect.bottom + window.scrollY + 2,
       left: rect.left + window.scrollX,
@@ -3505,6 +3624,9 @@ $(function () {
     if (currentAbortController) {
       currentAbortController.abort();
     }
+
+    // Flip local generation state first so the UI reacts immediately even if
+    // the backend abort request resolves a little later.
     isChatGenerating = false;
     updateSendButtons();
     // Tell the backend to stop Ollama immediately.
@@ -3538,8 +3660,10 @@ $(function () {
           .map(normalizeAttachment)
           .filter(Boolean);
 
+        // The user turn already exists in the DOM and database, so only the
+        // assistant response is removed and then queued again.
         const request = buildQueuedRequest(text, attachments);
-        request.$userRow = { length: 0 }; // No new user bubble — message already in DOM.
+        request.$userRow = { length: 0 }; // User bubble already exists in the DOM.
         request.chatId = currentChatId;
 
         chatRequestQueue.push(request);
@@ -3596,6 +3720,8 @@ $(function () {
       request.$userRow = { length: 0 }; // User message already in DOM.
       request.chatId = currentChatId;
 
+      // Delete only the paired assistant reply; the original user bubble stays
+      // visible and becomes the anchor for the regenerated answer.
       chatRequestQueue.push(request);
       processChatQueue();
     }
@@ -3628,6 +3754,8 @@ $(function () {
       updateSendButtons();
     });
 
+    // Enter sends, Shift+Enter inserts a newline, and the same button becomes
+    // a stop control while generation is active.
     $input.on('keydown', function (event) {
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
@@ -3680,6 +3808,8 @@ $(function () {
         $messagesArea.show();
         $conversationInput.show();
 
+        // Rehydrate the timeline exactly as the server stored it, including
+        // attachments and structured activity segments for assistant messages.
         data.messages.forEach(function (message) {
           appendMessage(
             message.role,

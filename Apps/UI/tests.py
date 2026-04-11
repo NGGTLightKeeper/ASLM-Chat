@@ -1158,6 +1158,14 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
 class RuntimeSettingsApiTests(TestCase):
     """Verify runtime settings and dynamic model selection endpoints."""
 
+    RUNTIME_SETTINGS_WITH_API_KEY = {
+        "llm-engine": "openai",
+        "lms_url": "127.0.0.1:1234",
+        "openai_url": "openrouter.ai/api/v1",
+        "has_openai_api_key": True,
+        "engine_urls": {"openai": "https://openrouter.ai/api/v1"},
+    }
+
     # Test get runtime settings payload.
     def test_get_runtime_settings_payload(self):
         response = self.client.get(reverse("runtime_settings_api"))
@@ -1194,16 +1202,7 @@ class RuntimeSettingsApiTests(TestCase):
 
     # Test runtime settings payload does not expose API key.
     @patch("Apps.UI.views.settings.get_supported_engines", return_value=[])
-    @patch(
-        "Apps.UI.views.settings.get_runtime_engine_settings",
-        return_value={
-            "llm-engine": "openai",
-            "lms_url": "127.0.0.1:1234",
-            "openai_url": "openrouter.ai/api/v1",
-            "has_openai_api_key": True,
-            "engine_urls": {"openai": "https://openrouter.ai/api/v1"},
-        },
-    )
+    @patch("Apps.UI.views.settings.get_runtime_engine_settings", return_value=RUNTIME_SETTINGS_WITH_API_KEY)
     def test_runtime_settings_payload_does_not_expose_api_key(
         self,
         _mock_runtime_settings,

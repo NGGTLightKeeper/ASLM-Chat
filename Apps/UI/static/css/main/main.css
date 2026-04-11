@@ -1,3 +1,5 @@
+/* Copyright NGGT.LightKeeper. All Rights Reserved. */
+
 /* App shell */
 .app-shell {
   display: flex;
@@ -37,6 +39,7 @@
   border-left: 1px solid var(--c-border);
 }
 
+/* Sidebar chrome */
 .sidebar-header {
   height: var(--header-h);
   display: flex;
@@ -53,6 +56,7 @@
   white-space: nowrap;
 }
 
+/* Chat history */
 .history-list {
   flex: 1;
   overflow-y: auto;
@@ -207,6 +211,7 @@
   background: transparent;
 }
 
+/* Sidebar actions */
 .sidebar-footer {
   padding: 10px 8px;
   border-top: 1px solid var(--c-border);
