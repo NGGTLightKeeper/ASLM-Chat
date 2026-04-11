@@ -46,6 +46,7 @@ $(function () {
   // Track runtime and chat state.
   let runtimeSettings = parseJsonScript('runtimeSettingsData') || {};
   const defaultAvailableToolServers = parseJsonScript('availableToolServersData') || [];
+  const uiIconPaths = parseJsonScript('uiIconPathsData') || {};
   let availableToolServers = Array.isArray(defaultAvailableToolServers) ? defaultAvailableToolServers.slice() : [];
   let selectedToolServerIds = new Set();
   let currentChatId = null;
@@ -117,6 +118,27 @@ $(function () {
   activeEngine = normalizeEngineValue(
     runtimeSettings['llm-engine'] || $('body').data('llm-engine') || 'ollama-service'
   );
+  function svgIcon(iconPath, attrs) {
+    return `<svg ${attrs}><use href="${iconPath}#icon"></use></svg>`;
+  }
+
+  const STOP_ICON = svgIcon(uiIconPaths.stopSquare, 'width="18" height="18" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"');
+  const SEND_ICON = svgIcon(uiIconPaths.send, 'width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"');
+  const REMOVE_ATTACHMENT_ICON = svgIcon(uiIconPaths.removeAttachment, 'width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"');
+  const COPY_MESSAGE_ICON = svgIcon(uiIconPaths.copy, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"');
+  const REGENERATE_ICON = svgIcon(uiIconPaths.refresh, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"');
+  const DELETE_MESSAGE_ICON = svgIcon(uiIconPaths.trash, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"');
+  const COPIED_ICON = svgIcon(uiIconPaths.check, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"');
+  const CHAT_ITEM_ICON = svgIcon(uiIconPaths.chatBubble, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"');
+  const CHAT_ITEM_MENU_ICON = svgIcon(uiIconPaths.ellipsisVertical, 'width="14" height="14" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"');
+
+  function buildMessageActionsHtml() {
+    return `<div class="msg-actions">
+      <button class="msg-action-btn msg-copy-btn" title="Copy" aria-label="Copy message">${COPY_MESSAGE_ICON}</button>
+      <button class="msg-action-btn msg-regen-btn" title="Regenerate" aria-label="Regenerate response">${REGENERATE_ICON}</button>
+      <button class="msg-action-btn msg-delete-btn" title="Delete" aria-label="Delete message">${DELETE_MESSAGE_ICON}</button>
+    </div>`;
+  }
 
   // Track model capabilities and request attachments.
   const visionState = {
@@ -1589,9 +1611,6 @@ $(function () {
     return hasAttachments ? 'Attachment chat' : 'New Chat';
   }
 
-  const STOP_ICON = '<svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
-  const SEND_ICON = '<svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"></path></svg>';
-
   // Update send buttons.
   function updateSendButtons() {
     if (isChatGenerating) {
@@ -1714,9 +1733,7 @@ $(function () {
           <div class="img-preview-thumb" data-idx="${idx}">
             <img src="${attachment.dataUrl}" alt="Attached image">
             <button class="img-preview-remove" aria-label="Remove attachment">
-              <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path d="M18 6L6 18M6 6l12 12"/>
-              </svg>
+              ${REMOVE_ATTACHMENT_ICON}
             </button>
           </div>
         `;
@@ -1726,9 +1743,7 @@ $(function () {
             <div class="file-preview-name">${escHtml(attachment.name || 'File')}</div>
             <div class="file-preview-meta">${escHtml(attachment.mimeType || 'application/octet-stream')}</div>
             <button class="img-preview-remove" aria-label="Remove attachment">
-              <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path d="M18 6L6 18M6 6l12 12"/>
-              </svg>
+              ${REMOVE_ATTACHMENT_ICON}
             </button>
           </div>
         `;
@@ -3119,18 +3134,7 @@ $(function () {
     }
 
     const messageId = viewOptions.messageId || '';
-    const copyBtn = `<button class="msg-action-btn msg-copy-btn" title="Copy" aria-label="Copy message">
-          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-        </button>`;
-    const regenBtn = `<button class="msg-action-btn msg-regen-btn" title="Regenerate" aria-label="Regenerate response">
-          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg>
-        </button>`;
-    const deleteBtn = `<button class="msg-action-btn msg-delete-btn" title="Delete" aria-label="Delete message">
-          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-        </button>`;
-    const msgActionsHtml = isUser
-      ? `<div class="msg-actions">${copyBtn}${regenBtn}${deleteBtn}</div>`
-      : `<div class="msg-actions">${copyBtn}${regenBtn}${deleteBtn}</div>`;
+    const msgActionsHtml = buildMessageActionsHtml();
 
     const $row = $(`
       <div class="msg ${role}${viewOptions.queued ? ' is-queued' : ''}" data-message-key="${escapeAttributeValue(messageKey)}"${messageId ? ` data-message-id="${messageId}"` : ''}>
@@ -3425,18 +3429,7 @@ $(function () {
     } finally {
       // Inject action panel if not already present (streaming msg didn't have it)
       if ($assistantRow.find('.msg-actions').length === 0) {
-        $assistantRow.find('.msg-body').append(`
-          <div class="msg-actions">
-            <button class="msg-action-btn msg-copy-btn" title="Copy" aria-label="Copy message">
-              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-            </button>
-            <button class="msg-action-btn msg-regen-btn" title="Regenerate" aria-label="Regenerate response">
-              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg>
-            </button>
-            <button class="msg-action-btn msg-delete-btn" title="Delete" aria-label="Delete message">
-              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-            </button>
-          </div>`);
+        $assistantRow.find('.msg-body').append(buildMessageActionsHtml());
       }
       updateRegenButtons();
       isChatGenerating = false;
@@ -3507,18 +3500,14 @@ $(function () {
     return `
       <a${activeAttr} href="/chat/${chatId}/" data-chat-id="${escapeAttributeValue(chatId)}">
         <div class="chat-item-icon">
-          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-          </svg>
+          ${CHAT_ITEM_ICON}
         </div>
         <div class="chat-item-body">
           <span class="chat-item-title">${escHtml(title)}</span>
           <span class="chat-item-date">${escHtml(dateStr)}</span>
         </div>
         <button class="chat-item-menu-btn" aria-label="Chat options">
-          <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24">
-            <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
-          </svg>
+          ${CHAT_ITEM_MENU_ICON}
         </button>
       </a>
     `;
@@ -3870,7 +3859,7 @@ $(function () {
     // Restore the copy button after feedback.
     function onCopied() {
       const orig = $btn.html();
-      $btn.html('<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 12 4 10"/></svg>');
+      $btn.html(COPIED_ICON);
       setTimeout(function () { $btn.html(orig); }, 1200);
     }
 
