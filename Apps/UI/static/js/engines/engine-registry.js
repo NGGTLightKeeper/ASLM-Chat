@@ -1,0 +1,40 @@
+// Copyright NGGT.LightKeeper. All Rights Reserved.
+
+import { googleGenAiAdapter } from './google-genai.js';
+import { lmsAdapter } from './lms.js';
+import { ollamaServiceAdapter } from './ollama-service.js';
+import { openAiAdapter } from './openai.js';
+
+const ENGINE_ADAPTERS = [
+  ollamaServiceAdapter,
+  lmsAdapter,
+  openAiAdapter,
+  googleGenAiAdapter
+];
+
+const adaptersById = new Map(
+  ENGINE_ADAPTERS.map(function mapAdapter(adapter) {
+    return [adapter.id, adapter];
+  })
+);
+
+const aliasMap = new Map();
+ENGINE_ADAPTERS.forEach(function registerAdapter(adapter) {
+  aliasMap.set(adapter.id, adapter.id);
+  (adapter.aliases || []).forEach(function registerAlias(alias) {
+    aliasMap.set(String(alias || '').trim().toLowerCase(), adapter.id);
+  });
+});
+
+export function normalizeEngineValue(engine) {
+  const normalized = String(engine || '').trim().toLowerCase();
+  return aliasMap.get(normalized) || normalized || ollamaServiceAdapter.id;
+}
+
+export function getEngineAdapter(engine) {
+  return adaptersById.get(normalizeEngineValue(engine)) || ollamaServiceAdapter;
+}
+
+export function isPresetCapableEngine(engine) {
+  return !!getEngineAdapter(engine).supportsPresets;
+}

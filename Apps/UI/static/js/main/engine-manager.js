@@ -1,0 +1,805 @@
+// Copyright NGGT.LightKeeper. All Rights Reserved.
+
+import { getJson, postJson } from './api.js';
+import { DEFAULT_THINK_LEVEL_OPTIONS } from './constants.js';
+import { getEngineAdapter, normalizeEngineValue } from '../engines/engine-registry.js';
+import { isLocalHostname, normalizeAddressForParsing } from './utils.js';
+
+export function createEngineManager(context, dependencies) {
+  const { attachmentsUi, parametersUi } = dependencies;
+  const { dom, state } = context;
+
+  function getActiveEngine() {
+    return normalizeEngineValue(state.activeEngine);
+  }
+
+  function getSelectedModelName() {
+    return String(dom.$modelSelector.val() || '').trim();
+  }
+
+  function getActivePreset() {
+    return (state.presetState.presets || []).find(function findPreset(preset) {
+      return preset.id === state.presetState.activePresetId;
+    }) || null;
+  }
+
+  function resetThinkState() {
+    state.thinkState.supported = false;
+    state.thinkState.paramName = 'think';
+    state.thinkState.toggleSupported = false;
+    state.thinkState.enabled = true;
+    state.thinkState.levelSupported = false;
+    state.thinkState.levelParamName = 'think_level';
+    state.thinkState.levelOptions = DEFAULT_THINK_LEVEL_OPTIONS.slice();
+    state.thinkState.level = 'medium';
+  }
+
+  function resetPresetUi() {
+    state.presetState = {
+      engine: '',
+      model: '',
+      activePresetId: '',
+      presets: []
+    };
+    dom.$presetSelector.empty().append('<option value="">Default</option>');
+    dom.$presetGroup.hide();
+    dom.$presetRenameBtn.prop('disabled', true);
+    dom.$presetDeleteBtn.prop('disabled', true);
+  }
+
+  function applyPresetState(payload) {
+    const activeEngine = getActiveEngine();
+    if (!payload || !getEngineAdapter(activeEngine).supportsPresets || !getSelectedModelName()) {
+      resetPresetUi();
+      return;
+    }
+
+    state.presetState = {
+      engine: activeEngine,
+      model: payload.model || getSelectedModelName(),
+      activePresetId: payload.active_preset_id || '',
+      presets: Array.isArray(payload.presets) ? payload.presets : []
+    };
+
+    dom.$presetSelector.empty();
+    state.presetState.presets.forEach(function appendPreset(preset) {
+      const label = preset.is_default ? `${preset.name} (Default)` : preset.name;
+      const $option = $('<option>').val(preset.id).text(label);
+      if (preset.id === state.presetState.activePresetId) {
+        $option.prop('selected', true);
+      }
+      dom.$presetSelector.append($option);
+    });
+
+    const activePreset = getActivePreset();
+    const isDefaultPreset = !activePreset || !!activePreset.is_default;
+    dom.$presetRenameBtn.prop('disabled', isDefaultPreset);
+    dom.$presetDeleteBtn.prop('disabled', isDefaultPreset);
+    dom.$presetGroup.show();
+  }
+
+  function getEngineAddressKey(engine) {
+    return getEngineAdapter(engine).addressKey || null;
+  }
+
+  function getEngineAddress(engine) {
+    const key = getEngineAddressKey(engine);
+    return key ? (state.runtimeSettings[key] || '') : '';
+  }
+
+  function getEngineApiKeyKey(engine) {
+    const canonicalEngine = normalizeEngineValue(engine);
+    const runtimeKeys = state.runtimeSettings.engine_api_key_keys || {};
+    return runtimeKeys[canonicalEngine] || getEngineAdapter(canonicalEngine).apiKeyKey || null;
+  }
+
+  function hasStoredEngineApiKey(engine) {
+    const canonicalEngine = normalizeEngineValue(engine);
+    const engineApiKeys = state.runtimeSettings.engine_api_keys || {};
+    if (typeof engineApiKeys[canonicalEngine] === 'boolean') {
+      return engineApiKeys[canonicalEngine];
+    }
+
+    const legacyFlag = `has_${canonicalEngine.replace(/-/g, '_')}_api_key`;
+    return !!state.runtimeSettings[legacyFlag];
+  }
+
+  function isLocalLmsAddress() {
+    const address = normalizeAddressForParsing(getEngineAddress('lms'));
+    if (!address) {
+      return true;
+    }
+
+    try {
+      return isLocalHostname(new URL(address).hostname);
+    } catch (_error) {
+      return true;
+    }
+  }
+
+  function setEngineAddressStatus(text, status) {
+    dom.$engineAddressStatus.text(text || '');
+    dom.$engineAddressStatus.removeClass('is-pending is-error');
+
+    if (status) {
+      dom.$engineAddressStatus.addClass(`is-${status}`);
+    }
+  }
+
+  function setEngineApiKeyStatus(text, status) {
+    dom.$engineApiKeyStatus.text(text || '');
+    dom.$engineApiKeyStatus.removeClass('is-pending is-error');
+
+    if (status) {
+      dom.$engineApiKeyStatus.addClass(`is-${status}`);
+    }
+  }
+
+  function updateEngineAddressUi() {
+    const adapter = getEngineAdapter(getActiveEngine());
+    const addressKey = adapter.addressKey || null;
+    const hasEditableAddress = Boolean(addressKey);
+    const apiKeyKey = getEngineApiKeyKey(adapter.id);
+    const hasApiKeySupport = Boolean(apiKeyKey);
+    const hasStoredApiKey = hasApiKeySupport && hasStoredEngineApiKey(adapter.id);
+
+    dom.$engineAddressGroup.toggle(hasEditableAddress);
+    dom.$engineAddressHint.text(adapter.addressHint || 'Configure the selected engine endpoint.');
+    dom.$engineApiKeyGroup.toggle(hasApiKeySupport);
+
+    if (!hasEditableAddress) {
+      setEngineAddressStatus('Managed', null);
+    } else {
+      dom.$engineAddressInput.val(getEngineAddress(adapter.id));
+      setEngineAddressStatus('Saved', null);
+    }
+
+    if (!hasApiKeySupport) {
+      dom.$engineApiKeyEnabled.prop('checked', false);
+      dom.$engineApiKeyInput.val('').hide();
+      setEngineApiKeyStatus('Off', null);
+      return;
+    }
+
+    dom.$engineApiKeyEnabled.prop('checked', hasStoredApiKey);
+    dom.$engineApiKeyInput.val('');
+    dom.$engineApiKeyInput.toggle(hasStoredApiKey);
+    dom.$engineApiKeyInput.attr(
+      'placeholder',
+      hasStoredApiKey ? 'Stored API key. Enter a new one to replace it' : 'Enter a new API key'
+    );
+    setEngineApiKeyStatus(hasStoredApiKey ? 'On' : 'Off', null);
+  }
+
+  function resetModelUiState(message) {
+    parametersUi.showModelPlaceholder(message || 'Models load on demand');
+    state.currentModelInfo = null;
+    resetPresetUi();
+    parametersUi.resetDynamicPanels();
+    parametersUi.updateVisibleDividers();
+    state.visionState.supported = false;
+    state.fileState.supported = false;
+    resetThinkState();
+    state.toolState.supported = false;
+    parametersUi.updateAvailableToolServers(state.defaultAvailableToolServers);
+    attachmentsUi.updateAttachmentControls();
+    parametersUi.updateThinkControls();
+    parametersUi.renderToolControls();
+  }
+
+  function clearModelCache(engine) {
+    delete state.modelsCache[normalizeEngineValue(engine)];
+  }
+
+  function normalizeModelNames(models) {
+    return Array.from(new Set(
+      (Array.isArray(models) ? models : []).map(function normalizeName(modelName) {
+        return String(modelName || '').trim();
+      }).filter(Boolean)
+    ));
+  }
+
+  function areModelListsEqual(left, right) {
+    const first = normalizeModelNames(left);
+    const second = normalizeModelNames(right);
+    if (first.length !== second.length) {
+      return false;
+    }
+
+    return first.every(function compare(modelName, index) {
+      return modelName === second[index];
+    });
+  }
+
+  function getAvailableModelsForEngine(engine) {
+    const canonicalEngine = normalizeEngineValue(engine);
+    if (Array.isArray(state.modelsCache[canonicalEngine]) && state.modelsCache[canonicalEngine].length > 0) {
+      return state.modelsCache[canonicalEngine].slice();
+    }
+
+    return dom.$modelSelector.find('option').map(function readOption() {
+      return $(this).val();
+    }).get().filter(Boolean);
+  }
+
+  function clearLmsModelsRefreshTimer() {
+    if (state.lmsModelsRefreshTimer !== null) {
+      window.clearTimeout(state.lmsModelsRefreshTimer);
+      state.lmsModelsRefreshTimer = null;
+    }
+  }
+
+  function getLmsModelsRefreshInterval() {
+    const adapter = getEngineAdapter('lms');
+    if (typeof adapter.getModelRefreshInterval === 'function') {
+      return adapter.getModelRefreshInterval(isLocalLmsAddress());
+    }
+    return isLocalLmsAddress() ? 3000 : 15000;
+  }
+
+  function scheduleLmsModelsRefresh(delayMs) {
+    clearLmsModelsRefreshTimer();
+
+    if (getActiveEngine() !== 'lms') {
+      return;
+    }
+
+    const intervalMs = typeof delayMs === 'number' ? delayMs : getLmsModelsRefreshInterval();
+    state.lmsModelsRefreshTimer = window.setTimeout(function triggerRefresh() {
+      refreshLmsModels().catch(function onRefreshError(error) {
+        console.error('Failed to refresh LM Studio models:', error);
+      });
+    }, intervalMs);
+  }
+
+  function syncLmsModelsRefresh() {
+    if (getActiveEngine() !== 'lms') {
+      clearLmsModelsRefreshTimer();
+      return;
+    }
+
+    scheduleLmsModelsRefresh();
+  }
+
+  function renderModelOptions(models, preferredModel) {
+    const uniqueModels = normalizeModelNames(models);
+    const fallbackModel = uniqueModels[0] || '';
+    const selectedModel = uniqueModels.includes(preferredModel) ? preferredModel : fallbackModel;
+
+    dom.$modelSelector.empty();
+
+    if (!uniqueModels.length) {
+      dom.$modelSelector.append('<option value="">No models available</option>');
+      return '';
+    }
+
+    uniqueModels.forEach(function appendModel(modelName) {
+      const $option = $('<option>').val(modelName).text(modelName);
+      if (modelName === selectedModel) {
+        $option.prop('selected', true);
+      }
+      dom.$modelSelector.append($option);
+    });
+
+    return selectedModel;
+  }
+
+  async function fetchModelsForEngine(engine) {
+    async function runFetch() {
+      const data = await getJson(`/api/models/?engine=${encodeURIComponent(engine)}`);
+      return data.models || [];
+    }
+
+    const models = await runFetch();
+    if (models.length > 0 || normalizeEngineValue(engine) !== 'ollama-service') {
+      return models;
+    }
+
+    await new Promise(function waitForWarmup(resolve) {
+      window.setTimeout(resolve, 1200);
+    });
+    return runFetch();
+  }
+
+  async function ensureModelsLoadedForActiveEngine(options) {
+    const loadOptions = options || {};
+    const engine = getActiveEngine();
+    const preferredModel = loadOptions.preferredModel || dom.$modelSelector.val() || '';
+
+    if (Array.isArray(state.modelsCache[engine]) && state.modelsCache[engine].length > 0) {
+      const selectedModel = renderModelOptions(state.modelsCache[engine], preferredModel);
+      await loadModelInfo(selectedModel);
+      return selectedModel;
+    }
+
+    resetModelUiState('Loading models...');
+    const models = await fetchModelsForEngine(engine);
+    state.modelsCache[engine] = models;
+    const selectedModel = renderModelOptions(models, preferredModel);
+    await loadModelInfo(selectedModel);
+    return selectedModel;
+  }
+
+  async function refreshActiveEngineModels(options) {
+    const refreshOptions = options || {};
+    const engine = normalizeEngineValue(refreshOptions.engine || getActiveEngine());
+    const preferredModel = Object.prototype.hasOwnProperty.call(refreshOptions, 'preferredModel')
+      ? (refreshOptions.preferredModel || '')
+      : (dom.$modelSelector.val() || '');
+    const selectionVersion = typeof refreshOptions.selectionVersion === 'number'
+      ? refreshOptions.selectionVersion
+      : state.engineSelectionVersion;
+
+    clearModelCache(engine);
+
+    if (selectionVersion !== state.engineSelectionVersion || engine !== getActiveEngine()) {
+      return '';
+    }
+
+    updateEngineAddressUi();
+    resetModelUiState(refreshOptions.loadingMessage || 'Loading models...');
+    return ensureModelsLoadedForActiveEngine({
+      preferredModel
+    });
+  }
+
+  async function saveRuntimeSettings(patch) {
+    state.runtimeSettings = await postJson('/api/runtime_settings/', patch);
+    return state.runtimeSettings;
+  }
+
+  async function applyEngineSelection(engine, options) {
+    const settingsOptions = options || {};
+    const normalizedEngine = normalizeEngineValue(engine);
+    const selectionVersion = ++state.engineSelectionVersion;
+    state.modelInfoRequestVersion += 1;
+    const previousEngine = state.activeEngine;
+    const autoLoadModels = settingsOptions.autoLoadModels !== false;
+
+    state.activeEngine = normalizedEngine;
+    clearLmsModelsRefreshTimer();
+    dom.$body.data('llm-engine', normalizedEngine);
+    dom.$engineSelector.val(normalizedEngine);
+    updateEngineAddressUi();
+    resetModelUiState('Models load on demand');
+
+    if (settingsOptions.persist === false) {
+      state.runtimeSettings['llm-engine'] = normalizedEngine;
+      clearModelCache(normalizedEngine);
+      if (autoLoadModels) {
+        try {
+          await ensureModelsLoadedForActiveEngine({
+            preferredModel: settingsOptions.preferredModel || ''
+          });
+        } catch (error) {
+          console.error('Failed to load models after engine initialization:', error);
+          resetModelUiState('No models available');
+        }
+      }
+      syncLmsModelsRefresh();
+      return;
+    }
+
+    try {
+      setEngineAddressStatus('Switching...', 'pending');
+      state.runtimeSettings = await saveRuntimeSettings({ 'llm-engine': normalizedEngine });
+      state.runtimeSettings['llm-engine'] = normalizedEngine;
+      clearModelCache(normalizedEngine);
+
+      if (selectionVersion !== state.engineSelectionVersion) {
+        return;
+      }
+
+      updateEngineAddressUi();
+      setEngineAddressStatus(getEngineAddressKey(normalizedEngine) ? 'Saved' : 'Managed', null);
+
+      if (autoLoadModels) {
+        try {
+          await ensureModelsLoadedForActiveEngine({
+            preferredModel: settingsOptions.preferredModel || ''
+          });
+        } catch (error) {
+          console.error('Failed to load models after engine switch:', error);
+          resetModelUiState('No models available');
+        }
+      }
+
+      syncLmsModelsRefresh();
+    } catch (error) {
+      state.activeEngine = previousEngine;
+      state.runtimeSettings['llm-engine'] = previousEngine;
+      dom.$body.data('llm-engine', previousEngine);
+      dom.$engineSelector.val(previousEngine);
+      updateEngineAddressUi();
+      resetModelUiState('Models load on demand');
+      syncLmsModelsRefresh();
+      throw error;
+    }
+  }
+
+  async function refreshLmsModels() {
+    clearLmsModelsRefreshTimer();
+
+    if (getActiveEngine() !== 'lms') {
+      return;
+    }
+
+    if (state.lmsModelsRefreshInFlight) {
+      scheduleLmsModelsRefresh();
+      return;
+    }
+
+    const refreshVersion = state.engineSelectionVersion;
+    const previousModels = normalizeModelNames(state.modelsCache.lms || getAvailableModelsForEngine('lms'));
+    const previousSelectedModel = getSelectedModelName();
+    const hadRenderedOptions = dom.$modelSelector.children().length > 0;
+
+    state.lmsModelsRefreshInFlight = true;
+
+    try {
+      const refreshedModels = normalizeModelNames(await fetchModelsForEngine('lms'));
+
+      if (refreshVersion !== state.engineSelectionVersion || getActiveEngine() !== 'lms') {
+        return;
+      }
+
+      state.modelsCache.lms = refreshedModels;
+
+      const shouldRerender = !hadRenderedOptions
+        || !areModelListsEqual(previousModels, refreshedModels)
+        || (previousSelectedModel && !refreshedModels.includes(previousSelectedModel));
+
+      if (!shouldRerender) {
+        return;
+      }
+
+      const selectedModel = renderModelOptions(refreshedModels, previousSelectedModel);
+      if (selectedModel !== previousSelectedModel) {
+        await loadModelInfo(selectedModel);
+      }
+    } finally {
+      state.lmsModelsRefreshInFlight = false;
+
+      if (refreshVersion === state.engineSelectionVersion && getActiveEngine() === 'lms') {
+        scheduleLmsModelsRefresh();
+      }
+    }
+  }
+
+  function buildActivePresetConfigPayload() {
+    const adapter = getEngineAdapter(getActiveEngine());
+    const optionsPayload = parametersUi.collectOptionsPayload();
+    if (typeof adapter.buildPresetConfig === 'function') {
+      return adapter.buildPresetConfig(optionsPayload);
+    }
+    return optionsPayload;
+  }
+
+  async function syncActivePreset() {
+    const adapter = getEngineAdapter(getActiveEngine());
+    if (!adapter.presetApiBase) {
+      return;
+    }
+
+    const modelName = getSelectedModelName();
+    if (!modelName) {
+      return;
+    }
+
+    const payload = await postJson(`${adapter.presetApiBase}/sync/`, {
+      model: modelName,
+      config: buildActivePresetConfigPayload()
+    });
+    applyPresetState(payload);
+  }
+
+  function schedulePresetSync() {
+    const adapter = getEngineAdapter(getActiveEngine());
+    if (!adapter.supportsPresets) {
+      return;
+    }
+
+    window.clearTimeout(state.presetSyncTimer);
+    state.presetSyncTimer = window.setTimeout(function syncLater() {
+      syncActivePreset().catch(function onSyncError(error) {
+        console.error('Failed to sync preset:', error);
+      });
+    }, 220);
+  }
+
+  async function loadModelInfo(model) {
+    const requestedEngine = getActiveEngine();
+    const requestVersion = ++state.modelInfoRequestVersion;
+
+    if (!model) {
+      state.currentModelInfo = null;
+      resetPresetUi();
+      parametersUi.resetDynamicPanels();
+      parametersUi.updateVisibleDividers();
+      state.visionState.supported = false;
+      state.fileState.supported = false;
+      resetThinkState();
+      state.toolState.supported = false;
+      state.selectedToolServerIds = new Set();
+      parametersUi.updateAvailableToolServers(state.defaultAvailableToolServers);
+      attachmentsUi.updateAttachmentControls();
+      parametersUi.updateThinkControls();
+      parametersUi.renderToolControls();
+      return;
+    }
+
+    try {
+      const data = await getJson(`/api/model_info/?engine=${encodeURIComponent(requestedEngine)}&model=${encodeURIComponent(model)}`);
+
+      if (requestVersion !== state.modelInfoRequestVersion || requestedEngine !== getActiveEngine() || model !== getSelectedModelName()) {
+        return;
+      }
+
+      state.currentModelInfo = data;
+      parametersUi.resetDynamicPanels();
+      applyPresetState(data.ollama_presets || data.lms_presets || null);
+
+      state.toolState.supported = !!data.supports_tool_calling;
+      parametersUi.updateAvailableToolServers(data.available_tool_servers || state.defaultAvailableToolServers);
+      if (!state.toolState.supported) {
+        state.selectedToolServerIds = new Set();
+        parametersUi.renderToolControls();
+      }
+
+      state.visionState.supported = !!data.supports_vision;
+      state.fileState.supported = !!data.supports_files;
+      attachmentsUi.updateAttachmentControls();
+      attachmentsUi.clearPendingAttachments();
+
+      state.thinkState.supported = !!data.supports_thinking;
+      state.thinkState.paramName = data.think_param_name || 'think';
+      state.thinkState.toggleSupported = data.supports_think_toggle === undefined
+        ? !!data.supports_thinking
+        : !!data.supports_think_toggle;
+      state.thinkState.levelSupported = !!data.supports_think_level;
+      state.thinkState.levelParamName = data.think_level_param_name || 'think_level';
+      state.thinkState.levelOptions = Array.isArray(data.think_level_options) && data.think_level_options.length > 0
+        ? data.think_level_options.map(function mapOption(value) { return String(value); })
+        : DEFAULT_THINK_LEVEL_OPTIONS.slice();
+      state.thinkState.enabled = data.defaults && data.defaults[state.thinkState.paramName] !== undefined
+        ? String(data.defaults[state.thinkState.paramName]).toLowerCase() === 'true' || data.defaults[state.thinkState.paramName] === true
+        : true;
+      state.thinkState.level = data.defaults && data.defaults[state.thinkState.levelParamName] !== undefined
+        ? String(data.defaults[state.thinkState.levelParamName])
+        : (state.thinkState.levelOptions[0] || 'medium');
+
+      parametersUi.renderThinkLevelControls();
+      parametersUi.updateThinkControls();
+
+      if (!data.defaults) {
+        parametersUi.updateVisibleDividers();
+        return;
+      }
+
+      const adapter = getEngineAdapter(getActiveEngine());
+      let defaults = { ...data.defaults };
+      delete defaults[state.thinkState.paramName];
+      delete defaults[state.thinkState.levelParamName];
+      if (typeof adapter.sanitizeModelDefaults === 'function') {
+        defaults = adapter.sanitizeModelDefaults(defaults);
+      }
+
+      parametersUi.renderModelParameters(data, defaults);
+    } catch (error) {
+      if (requestVersion !== state.modelInfoRequestVersion) {
+        return;
+      }
+
+      state.currentModelInfo = null;
+      resetPresetUi();
+      parametersUi.resetDynamicPanels();
+      parametersUi.updateVisibleDividers();
+      parametersUi.updateAvailableToolServers(state.defaultAvailableToolServers);
+      state.visionState.supported = false;
+      state.fileState.supported = false;
+      resetThinkState();
+      state.toolState.supported = false;
+      parametersUi.renderThinkLevelControls();
+      attachmentsUi.updateAttachmentControls();
+      parametersUi.updateThinkControls();
+      parametersUi.renderToolControls();
+      console.error('Failed to load model parameters', error);
+    }
+  }
+
+  async function selectPreset(presetId) {
+    const adapter = getEngineAdapter(getActiveEngine());
+    const modelName = getSelectedModelName();
+    if (!adapter.presetApiBase || !presetId || !modelName) {
+      return;
+    }
+
+    const payload = await postJson(`${adapter.presetApiBase}/select/`, {
+      model: modelName,
+      preset_id: presetId
+    });
+    applyPresetState(payload);
+    await loadModelInfo(modelName);
+  }
+
+  async function createPreset() {
+    const adapter = getEngineAdapter(getActiveEngine());
+    const modelName = getSelectedModelName();
+    if (!adapter.presetApiBase || !modelName) {
+      return;
+    }
+
+    const requestedName = window.prompt('Preset name', '');
+    if (requestedName === null) {
+      return;
+    }
+
+    const payload = await postJson(`${adapter.presetApiBase}/create/`, {
+      model: modelName,
+      name: requestedName.trim(),
+      config: buildActivePresetConfigPayload()
+    });
+    applyPresetState(payload);
+    await loadModelInfo(modelName);
+  }
+
+  async function renamePreset() {
+    const adapter = getEngineAdapter(getActiveEngine());
+    const activePreset = getActivePreset();
+    const modelName = getSelectedModelName();
+    if (!adapter.presetApiBase || !modelName || !activePreset || activePreset.is_default) {
+      return;
+    }
+
+    const requestedName = window.prompt('Preset name', activePreset.name || '');
+    if (requestedName === null) {
+      return;
+    }
+
+    const payload = await postJson(`${adapter.presetApiBase}/rename/`, {
+      model: modelName,
+      preset_id: activePreset.id,
+      name: requestedName.trim()
+    });
+    applyPresetState(payload);
+  }
+
+  async function deletePreset() {
+    const adapter = getEngineAdapter(getActiveEngine());
+    const activePreset = getActivePreset();
+    const modelName = getSelectedModelName();
+    if (!adapter.presetApiBase || !modelName || !activePreset || activePreset.is_default) {
+      return;
+    }
+
+    if (!window.confirm(`Delete preset "${activePreset.name}"?`)) {
+      return;
+    }
+
+    const payload = await postJson(`${adapter.presetApiBase}/delete/`, {
+      model: modelName,
+      preset_id: activePreset.id
+    });
+    applyPresetState(payload);
+    await loadModelInfo(modelName);
+  }
+
+  async function persistEngineAddress() {
+    const engine = getActiveEngine();
+    const addressKey = getEngineAddressKey(engine);
+    const addressValue = dom.$engineAddressInput.val().trim();
+    const selectionVersion = ++state.engineSelectionVersion;
+
+    if (!addressKey) {
+      return;
+    }
+
+    clearLmsModelsRefreshTimer();
+
+    if ((state.runtimeSettings[addressKey] || '') === addressValue) {
+      setEngineAddressStatus('Saved', null);
+      syncLmsModelsRefresh();
+      return;
+    }
+
+    try {
+      setEngineAddressStatus('Saving...', 'pending');
+      state.runtimeSettings = await saveRuntimeSettings({ [addressKey]: addressValue });
+      await refreshActiveEngineModels({
+        engine,
+        selectionVersion,
+        preferredModel: ''
+      });
+      syncLmsModelsRefresh();
+    } catch (error) {
+      console.error('Failed to save engine address:', error);
+      resetModelUiState('No models available');
+      setEngineAddressStatus('Error', 'error');
+      syncLmsModelsRefresh();
+    }
+  }
+
+  async function handleApiKeyToggle() {
+    const engine = getActiveEngine();
+    const apiKeyKey = getEngineApiKeyKey(engine);
+    if (!apiKeyKey) {
+      return;
+    }
+
+    const isEnabled = dom.$engineApiKeyEnabled.is(':checked');
+    dom.$engineApiKeyInput.toggle(isEnabled);
+    if (isEnabled) {
+      setEngineApiKeyStatus('On', null);
+      dom.$engineApiKeyInput.trigger('focus');
+      return;
+    }
+
+    try {
+      const selectionVersion = ++state.engineSelectionVersion;
+      setEngineApiKeyStatus('Saving...', 'pending');
+      state.runtimeSettings = await saveRuntimeSettings({ [apiKeyKey]: '' });
+      await refreshActiveEngineModels({
+        engine,
+        selectionVersion
+      });
+    } catch (error) {
+      console.error('Failed to update API key state:', error);
+      resetModelUiState('No models available');
+      setEngineApiKeyStatus('Error', 'error');
+    }
+  }
+
+  async function persistApiKey() {
+    const engine = getActiveEngine();
+    const apiKeyKey = getEngineApiKeyKey(engine);
+    if (!apiKeyKey || !dom.$engineApiKeyEnabled.is(':checked')) {
+      return;
+    }
+
+    const apiKeyValue = dom.$engineApiKeyInput.val().trim();
+    if (!apiKeyValue) {
+      setEngineApiKeyStatus(hasStoredEngineApiKey(engine) ? 'On' : 'Off', null);
+      return;
+    }
+
+    try {
+      const selectionVersion = ++state.engineSelectionVersion;
+      setEngineApiKeyStatus('Saving...', 'pending');
+      state.runtimeSettings = await saveRuntimeSettings({ [apiKeyKey]: apiKeyValue });
+      dom.$engineApiKeyInput.val('');
+      await refreshActiveEngineModels({
+        engine,
+        selectionVersion
+      });
+    } catch (error) {
+      console.error('Failed to save API key:', error);
+      resetModelUiState('No models available');
+      setEngineApiKeyStatus('Error', 'error');
+    }
+  }
+
+  return {
+    applyEngineSelection,
+    createPreset,
+    deletePreset,
+    fetchModelsForEngine,
+    getActiveEngine,
+    getActivePreset,
+    getEngineAddressKey,
+    getEngineApiKeyKey,
+    getSelectedModelName,
+    hasStoredEngineApiKey,
+    handleApiKeyToggle,
+    loadModelInfo,
+    persistApiKey,
+    persistEngineAddress,
+    refreshActiveEngineModels,
+    renamePreset,
+    resetModelUiState,
+    schedulePresetSync,
+    selectPreset,
+    setEngineAddressStatus,
+    syncLmsModelsRefresh,
+    updateEngineAddressUi
+  };
+}
