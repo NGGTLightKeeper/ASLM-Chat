@@ -3,7 +3,7 @@
     "id": "aslm-chat",
     "name": "ASLM Chat",
     "description": "ASLM Chat Module",
-    "version": "0.1.1",
+    "version": "0.4.0.22",
     "author": "NGGT-ASLM",
     "type": "ui",
     "hasPage": true,
@@ -50,6 +50,7 @@
                     "nltk==3.9.2",
                     "nodriver==0.35",
                     "numpy==2.0.0",
+                    "google-genai==1.72.0",
                     "openai==2.16.0",
                     "ollama==0.6.1",
                     "pillow==10.4.0",
@@ -93,10 +94,16 @@
         ],
         "run": [
             {
-                "name": "Start UI Server",
+                "name": "UI Server",
                 "description": "Launches the Django development server",
                 "engine": "python-runtime",
                 "exec": "main.py runserver"
+            },
+            {
+                "name": "Ollama Runtime",
+                "description": "Launches the managed Ollama service in a dedicated console session",
+                "engine": "python-runtime",
+                "exec": "main.py ollama_runtime --log"
             }
         ]
     },
@@ -122,6 +129,21 @@
             "setExec": "main.py set_setting --key api-port --value {value}"
         },
         {
+            "key": "console_log_level",
+            "name": "Console Log Level",
+            "description": "How much runtime detail ASLM-Chat prints into the ASLM console.",
+            "type": "select",
+            "default": "debug",
+            "allowedValues": [
+                "basic",
+                "debug",
+                "trace"
+            ],
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key console_log_level",
+            "setExec": "main.py set_setting --key console_log_level --value {value}"
+        },
+        {
             "key": "llm-engine",
             "name": "Active LLM Engine",
             "description": "Engine used for chat generation in the UI",
@@ -130,12 +152,13 @@
             "allowedValues": [
                 "ollama-service",
                 "lms",
-                "openai"
+                "openai",
+                "google-genai"
             ],
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key llm-engine",
             "setExec": "main.py set_setting --key llm-engine --value {value}",
-            "value": "openai"
+            "value": "ollama-service"
         },
         {
             "key": "ollama-service",
@@ -233,14 +256,44 @@
             "key": "openai_api_key",
             "name": "OpenAI-Compatible API Key",
             "description": "Optional API key for secured OpenAI-compatible endpoints",
-            "type": "string",
+            "type": "password",
             "default": "",
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key openai_api_key",
             "setExec": "main.py set_setting --key openai_api_key --value {value}"
         },
         {
-            "key": "use-yacy",
+            "key": "google-genai",
+            "name": "Google GenAI",
+            "description": "Whether Google GenAI integration is available",
+            "type": "engine",
+            "default": false,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key google-genai",
+            "setExec": "main.py set_setting --key google-genai --value {value}"
+        },
+        {
+            "key": "google_genai_url",
+            "name": "Google GenAI Address",
+            "description": "Base URL of the Google GenAI Gemini API endpoint",
+            "type": "string",
+            "default": "generativelanguage.googleapis.com",
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key google_genai_url",
+            "setExec": "main.py set_setting --key google_genai_url --value {value}"
+        },
+        {
+            "key": "google_genai_api_key",
+            "name": "Google GenAI API Key",
+            "description": "API key for Google GenAI Gemini API requests",
+            "type": "password",
+            "default": "",
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key google_genai_api_key",
+            "setExec": "main.py set_setting --key google_genai_api_key --value {value}"
+        },
+        {
+            "key": "yacy",
             "name": "Use YaCy",
             "description": "Whether web-search tools should use and auto-start the local YaCy service.",
             "type": "bool",
@@ -275,9 +328,9 @@
             "key": "yacy_pass",
             "name": "YaCy Password",
             "description": "Password for YaCy admin authentication.",
-            "type": "string",
-            "default": "admin123",
-            "value": "admin123",
+            "type": "password",
+            "default": "admin",
+            "value": "admin",
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key yacy_pass",
             "setExec": "main.py set_setting --key yacy_pass --value {value}"

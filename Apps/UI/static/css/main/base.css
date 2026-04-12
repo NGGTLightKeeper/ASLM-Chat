@@ -1,4 +1,6 @@
-/* Inter - local */
+/* Copyright NGGT.LightKeeper. All Rights Reserved. */
+
+/* Font faces */
 @font-face {
   font-family: "Inter";
   src: url("../fonts/inter/inter-latin-300-normal.woff2") format("woff2");
@@ -34,6 +36,7 @@
   font-display: swap;
 }
 
+/* Theme tokens */
 :root {
   /* HIG-aligned palette */
   --c-system-blue: #0a84ff;
@@ -152,6 +155,7 @@
   --t-slow: 360ms ease;
 }
 
+/* Global reset */
 *,
 *::before,
 *::after {
@@ -160,6 +164,7 @@
   padding: 0;
 }
 
+/* Base elements */
 html,
 body {
   height: 100%;
@@ -209,6 +214,7 @@ select {
   outline: none;
 }
 
+/* Scrollbars */
 ::-webkit-scrollbar {
   width: 4px;
   height: 4px;
@@ -227,6 +233,7 @@ select {
   background: var(--c-gray-2);
 }
 
+/* Shared helpers */
 .truncate {
   overflow: hidden;
   white-space: nowrap;

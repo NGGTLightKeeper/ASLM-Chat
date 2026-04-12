@@ -18,6 +18,7 @@ ENGINE_LABELS = {
     "ollama-service": "Ollama",
     "lms": "LM Studio",
     "openai": "OpenAI-Compatible",
+    "google-genai": "Google GenAI",
 }
 
 ENGINE_ALIASES = {
@@ -27,18 +28,29 @@ ENGINE_ALIASES = {
     "lm-studio": "lms",
     "openai": "openai",
     "openai-api": "openai",
+    "google-genai": "google-genai",
+    "google_genai": "google-genai",
+    "google": "google-genai",
+    "gemini": "google-genai",
 }
 
 ENGINE_URL_KEYS = {
     "ollama-service": None,
     "lms": "lms_url",
     "openai": "openai_url",
+    "google-genai": "google_genai_url",
+}
+
+ENGINE_API_KEY_KEYS = {
+    "openai": "openai_api_key",
+    "google-genai": "google_genai_api_key",
 }
 
 DEFAULTS: dict[str, Any] = {
     "ui-port": 30000,
     "api-port": 30001,
     "debug": True,
+    "console_log_level": "debug",
     "secret_key": "",
     "allowed_hosts": ["127.0.0.1", "localhost"],
     "llm-engine": "ollama-service",
@@ -49,18 +61,21 @@ DEFAULTS: dict[str, Any] = {
     "ollama-service_models": None,
     "lms": False,
     "lms_url": "127.0.0.1:1234",
-    "lms_load_config": {},
     "use-yacy": False,
     "openai": False,
     "openai_url": "127.0.0.1:8000/v1",
     "openai_api_key": "",
+    "google-genai": False,
+    "google_genai_url": "generativelanguage.googleapis.com",
+    "google_genai_api_key": "",
 }
 
-NORMALIZED_ADDRESS_KEYS = {"lms_url", "openai_url"}
+CONSOLE_LOG_LEVELS = {"basic", "debug", "trace"}
+NORMALIZED_ADDRESS_KEYS = {"lms_url", "openai_url", "google_genai_url"}
 IGNORED_ENV_KEYS = {"ASLM_MODULE_ID", "ASLM_MODULE_DIR"}
 
 
-# Normalize raw setting values
+# Normalize one raw settings value.
 def normalize_setting_value(value: Any) -> Any:
     """Convert serialized or environment-provided values to Python scalars."""
 
@@ -93,7 +108,7 @@ def normalize_setting_value(value: Any) -> Any:
 
     return value
 
-# Normalize raw setting keys
+# Normalize one raw settings key.
 def normalize_setting_key(raw_key: str) -> str:
     """Map environment-style keys to the internal settings schema."""
 
@@ -111,7 +126,7 @@ def normalize_setting_key(raw_key: str) -> str:
 
     return key
 
-# Normalize engine address
+# Normalize one engine address for storage.
 def normalize_engine_address(value: Any) -> str:
     """Normalize engine endpoint values to a scheme-free storage format."""
 
@@ -128,7 +143,7 @@ def normalize_engine_address(value: Any) -> str:
 
     return raw_value.rstrip("/")
 
-# Normalize engine name
+# Normalize one engine identifier.
 def normalize_engine_name(engine: str | None) -> str:
     """Return the canonical engine identifier used by the project."""
 
@@ -138,17 +153,17 @@ def normalize_engine_name(engine: str | None) -> str:
     normalized = str(engine).strip().lower()
     return ENGINE_ALIASES.get(normalized, normalized)
 
-# List supported engines
+# List engines supported by the UI.
 def get_supported_engines() -> list[dict[str, str]]:
     """Return the engines that ASLM-Chat can expose in the UI."""
 
     return [
         {"id": engine_id, "label": ENGINE_LABELS[engine_id]}
-        for engine_id in ("ollama-service", "lms", "openai")
+        for engine_id in ("ollama-service", "lms", "openai", "google-genai")
     ]
 
 
-# Read settings file
+# Read the settings payload from disk.
 def _load_settings_from_disk() -> dict[str, Any]:
     """Return the JSON settings payload stored on disk."""
 
@@ -164,7 +179,7 @@ def _load_settings_from_disk() -> dict[str, Any]:
 
     return data if isinstance(data, dict) else {}
 
-# Apply environment overrides
+# Apply environment overrides to one settings snapshot.
 def _apply_environment_overrides(data: dict[str, Any]) -> dict[str, Any]:
     """Apply ``ASLM_`` environment overrides to a settings dictionary."""
 
@@ -179,11 +194,12 @@ def _apply_environment_overrides(data: dict[str, Any]) -> dict[str, Any]:
 
     return updated
 
-# Normalize loaded settings
+# Normalize the loaded settings snapshot.
 def _normalize_loaded_settings(data: dict[str, Any]) -> dict[str, Any]:
     """Return a normalized settings snapshot ready for use."""
 
     normalized = dict(data)
+    normalized.pop("lms_load_config", None)
 
     for key in NORMALIZED_ADDRESS_KEYS:
         normalized[key] = normalize_engine_address(normalized.get(key, DEFAULTS.get(key, "")))
@@ -192,7 +208,7 @@ def _normalize_loaded_settings(data: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-# Load settings snapshot
+# Load the effective settings snapshot.
 def load_settings() -> dict[str, Any]:
     """Load settings from disk and apply runtime environment overrides."""
 
@@ -201,7 +217,7 @@ def load_settings() -> dict[str, Any]:
     settings_data = _apply_environment_overrides(settings_data)
     return _normalize_loaded_settings(settings_data)
 
-# Save settings snapshot
+# Save the settings snapshot to disk.
 def save_settings(data: dict[str, Any]) -> None:
     """Persist the given settings dictionary to ``settings.json``."""
 
@@ -210,13 +226,13 @@ def save_settings(data: dict[str, Any]) -> None:
         json.dump(data, file, indent=4, ensure_ascii=False)
 
 
-# Build runtime environment key
+# Build one runtime environment variable name.
 def _to_env_var_name(key: str) -> str:
     """Map an internal settings key to the ASLM runtime environment format."""
 
     return f"ASLM_{key.replace('-', '_').upper()}"
 
-# Serialize runtime environment value
+# Serialize one value for environment storage.
 def _serialize_env_value(value: Any) -> str:
     """Serialize Python values into environment-friendly strings."""
 
@@ -229,8 +245,7 @@ def _serialize_env_value(value: Any) -> str:
 
     return str(value)
 
-
-# Locate module manifest
+# Locate the ASLM module manifest when available.
 def _get_module_manifest_path() -> Path | None:
     """Return the module manifest path when ASLM module metadata is available."""
 
@@ -243,7 +258,7 @@ def _get_module_manifest_path() -> Path | None:
     manifest_path = BASE_DIR / "ASLM_Module.json"
     return manifest_path if manifest_path.exists() else None
 
-# Sync module manifest setting
+# Mirror one runtime setting into the module manifest.
 def _sync_module_manifest_setting(key: str, value: Any) -> None:
     """Persist updated runtime settings back into the module manifest."""
 
@@ -284,13 +299,13 @@ def _sync_module_manifest_setting(key: str, value: Any) -> None:
         logger.warning("Could not write %s: %s", manifest_path, exc)
 
 
-# Read one setting
+# Read one setting value.
 def get(key: str, default: Any = None) -> Any:
     """Return a single setting value by key."""
 
     return load_settings().get(key, default)
 
-# Save one setting
+# Persist one setting value.
 def set(key: str, value: Any) -> None:
     """Update one setting value and persist the full settings file."""
 
@@ -314,23 +329,23 @@ def set(key: str, value: Any) -> None:
     _sync_module_manifest_setting(key, value)
 
 
-# Read engine configuration
+# Read the active LLM engine name.
 def get_llm_engine(default: str = "ollama-service") -> str:
     """Return the configured active LLM engine."""
 
     configured = get("llm-engine", default)
     return normalize_engine_name(configured)
 
-# Read engine URL key
+# Resolve the settings key for one engine URL.
 def get_engine_url_key(engine: str | None) -> str | None:
     """Return the settings key that stores the engine endpoint address."""
 
     canonical = normalize_engine_name(engine)
     return ENGINE_URL_KEYS.get(canonical)
 
-# Infer OpenAI endpoint scheme
-def _infer_openai_scheme(value: str) -> str:
-    """Choose a default scheme for OpenAI-compatible endpoints without one."""
+# Infer a scheme for remote endpoints without one.
+def _infer_remote_scheme(value: str) -> str:
+    """Choose a sensible scheme for remote API endpoints without one."""
 
     endpoint = str(value or "").strip()
     if not endpoint:
@@ -343,7 +358,7 @@ def _infer_openai_scheme(value: str) -> str:
 
     return "https"
 
-# Read engine URL
+# Build the effective engine URL.
 def get_engine_url(engine: str | None) -> str:
     """Return the configured endpoint address for the selected engine."""
 
@@ -358,46 +373,109 @@ def get_engine_url(engine: str | None) -> str:
         return ""
 
     value = normalize_engine_address(get(url_key, DEFAULTS.get(url_key, "")) or "")
-    if canonical == "openai" and value and "://" not in value:
-        return f"{_infer_openai_scheme(value)}://{value}"
+    if canonical in {"openai", "google-genai"} and value and "://" not in value:
+        return f"{_infer_remote_scheme(value)}://{value}"
 
     return value
 
-# Read OpenAI API key
+# Read the OpenAI-compatible API key.
 def get_openai_api_key() -> str:
     """Return the configured API key for OpenAI-compatible clients."""
 
     configured = get("openai_api_key", "") or os.environ.get("OPENAI_API_KEY", "")
     return str(configured).strip()
 
-# Read runtime settings payload
+# Read the Google GenAI API key.
+def get_google_genai_api_key() -> str:
+    """Return the configured API key for Google GenAI clients."""
+
+    configured = (
+        get("google_genai_api_key", "")
+        or os.environ.get("GOOGLE_API_KEY", "")
+        or os.environ.get("GEMINI_API_KEY", "")
+    )
+    return str(configured).strip()
+
+# Resolve the settings key for one engine API key.
+def get_engine_api_key_key(engine: str | None) -> str | None:
+    """Return the settings key that stores the engine API key."""
+
+    canonical = normalize_engine_name(engine)
+    return ENGINE_API_KEY_KEYS.get(canonical)
+
+# Read the configured API key for one engine.
+def get_engine_api_key(engine: str | None) -> str:
+    """Return the configured API key for one engine when supported."""
+
+    canonical = normalize_engine_name(engine)
+    if canonical == "openai":
+        return get_openai_api_key()
+    if canonical == "google-genai":
+        return get_google_genai_api_key()
+    return ""
+
+# Build the runtime settings payload for the UI.
 def get_runtime_engine_settings() -> dict[str, Any]:
     """Return the UI-facing runtime engine settings snapshot without secrets."""
 
     openai_api_key = get_openai_api_key()
+    google_genai_api_key = get_google_genai_api_key()
     active_engine = get_llm_engine()
+    engine_api_keys = {
+        "ollama-service": False,
+        "lms": False,
+        "openai": bool(openai_api_key),
+        "google-genai": bool(google_genai_api_key),
+    }
 
     return {
         "llm-engine": active_engine,
+        "console_log_level": get_console_log_level(),
         "lms_url": normalize_engine_address(get("lms_url", DEFAULTS["lms_url"])),
-        "lms_load_config": dict(get("lms_load_config", DEFAULTS["lms_load_config"]) or {}),
         "openai_url": normalize_engine_address(get("openai_url", DEFAULTS["openai_url"])),
+        "google_genai_url": normalize_engine_address(get("google_genai_url", DEFAULTS["google_genai_url"])),
         "has_openai_api_key": bool(openai_api_key),
+        "has_google_genai_api_key": bool(google_genai_api_key),
+        "active_has_api_key": bool(engine_api_keys.get(active_engine, False)),
+        "engine_api_keys": engine_api_keys,
+        "engine_api_key_keys": dict(ENGINE_API_KEY_KEYS),
         "engine_urls": {
             "ollama-service": get_engine_url("ollama-service"),
             "lms": get_engine_url("lms"),
             "openai": get_engine_url("openai"),
+            "google-genai": get_engine_url("google-genai"),
         },
     }
 
-# Check engine enabled flag
+
+# Read the console log level.
+def get_console_log_level(default: str = "debug") -> str:
+    """Return the normalized console log detail level."""
+
+    configured = str(get("console_log_level", default) or default).strip().lower()
+    return configured if configured in CONSOLE_LOG_LEVELS else default
+
+# Check whether debug console output is enabled.
+def is_console_debug_enabled() -> bool:
+    """Return whether debug-or-higher console events should be emitted."""
+
+    return get_console_log_level() in {"debug", "trace"}
+
+# Check whether trace console output is enabled.
+def is_console_trace_enabled() -> bool:
+    """Return whether the highest-detail console tracing is enabled."""
+
+    return get_console_log_level() == "trace"
+
+
+# Check whether one engine is enabled.
 def is_engine_enabled(engine: str | None) -> bool:
     """Return whether the canonical engine is currently enabled."""
 
     canonical = normalize_engine_name(engine)
     return bool(get(canonical, False))
 
-# Check Ollama engine type
+# Check whether the engine uses the Ollama adapter path.
 def is_ollama_engine(engine: str | None) -> bool:
     """Return whether the engine should use the Ollama adapter path."""
 

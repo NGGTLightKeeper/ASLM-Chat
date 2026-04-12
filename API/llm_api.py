@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 from types import ModuleType
 from typing import Any
@@ -18,10 +19,14 @@ ENGINE_MODULES = {
     "lm-studio": "API.lms",
     "openai": "API.openai",
     "openai-api": "API.openai",
+    "google-genai": "API.google_genai",
+    "google_genai": "API.google_genai",
+    "google": "API.google_genai",
+    "gemini": "API.google_genai",
 }
 
 
-# Load adapter module
+# Resolve the engine adapter module.
 def _get_engine_module(engine: str | None) -> ModuleType:
     """Load the adapter module for the selected LLM engine."""
 
@@ -38,27 +43,29 @@ def _get_engine_module(engine: str | None) -> ModuleType:
         raise ImportError(f"Failed to load engine module {module_name}: {exc}") from exc
 
 
-# List engine models
+# List models exposed by one engine.
 def get_models(engine: str | None) -> Any:
     """Return the list of models exposed by the selected engine."""
 
+    prepare_runtime(engine)
     module = _get_engine_module(engine)
     if hasattr(module, "get_models"):
         return module.get_models()
 
     raise NotImplementedError(f"Engine {engine} does not implement get_models")
 
-# Download engine model
+# Download a model through one engine.
 def download_model(engine: str | None, model_name: str, **kwargs: Any) -> Any:
     """Download or pull a model through the selected engine adapter."""
 
+    prepare_runtime(engine)
     module = _get_engine_module(engine)
     if hasattr(module, "download_model"):
         return module.download_model(model_name, **kwargs)
 
     raise NotImplementedError(f"Engine {engine} does not implement download_model")
 
-# Generate engine response
+# Generate a response through one engine.
 def generate(engine: str | None, model_name: str, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
     """Generate a chat response through the selected engine adapter."""
 
@@ -68,17 +75,41 @@ def generate(engine: str | None, model_name: str, messages: list[dict[str, Any]]
 
     raise NotImplementedError(f"Engine {engine} does not implement generate")
 
-# Read model settings
+
+# Abort active generation for one engine or all loaded engines.
+def abort_generation(engine: str | None = None) -> None:
+    """Signal the active generation for one engine or every loaded adapter."""
+
+    if engine is None:
+        module_names = {module_name for module_name in ENGINE_MODULES.values()}
+        for module_name in module_names:
+            try:
+                module = importlib.import_module(module_name)
+            except ImportError:
+                continue
+
+            abort = getattr(module, "abort_generation", None)
+            if callable(abort):
+                abort()
+        return
+
+    module = _get_engine_module(engine)
+    abort = getattr(module, "abort_generation", None)
+    if callable(abort):
+        abort()
+
+# Read model metadata from one engine.
 def get_model_settings(engine: str | None, model_name: str) -> Any:
     """Return model metadata exposed by the selected engine."""
 
+    prepare_runtime(engine)
     module = _get_engine_module(engine)
     if hasattr(module, "get_model_settings"):
         return module.get_model_settings(model_name)
 
     raise NotImplementedError(f"Engine {engine} does not implement get_model_settings")
 
-# Reload selected model
+# Reload one model when the adapter supports it.
 def reload_model(engine: str | None, model_name: str) -> None:
     """Reload the selected model when the engine supports explicit reloads."""
 
@@ -91,16 +122,27 @@ def reload_model(engine: str | None, model_name: str) -> None:
     raise NotImplementedError(f"Engine {engine} does not implement reload_model")
 
 
-# Start engine runtime
+# Prepare one engine runtime before use.
 def prepare_runtime(engine: str | None) -> None:
     """Prepare the selected engine runtime before it is used."""
 
     module = _get_engine_module(engine)
     prepare = getattr(module, "prepare_runtime", None)
-    if callable(prepare):
-        prepare()
+    if not callable(prepare):
+        return
 
-# Stop engine runtime
+    try:
+        parameter_count = len(inspect.signature(prepare).parameters)
+    except (TypeError, ValueError):
+        parameter_count = 0
+
+    if parameter_count >= 1:
+        prepare(engine)
+        return
+
+    prepare()
+
+# Clean up one engine runtime.
 def cleanup_runtime(engine: str | None) -> None:
     """Release runtime resources for the selected engine."""
 
@@ -109,7 +151,7 @@ def cleanup_runtime(engine: str | None) -> None:
     if callable(cleanup):
         cleanup()
 
-# Switch active runtime
+# Switch runtime ownership between engines.
 def handle_engine_transition(previous_engine: str | None, next_engine: str | None) -> None:
     """Switch runtime resources when the active engine changes."""
 
