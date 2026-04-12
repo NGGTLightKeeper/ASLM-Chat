@@ -1,0 +1,2031 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+"""
+Web Search service.
+
+This module is the single orchestration point for fast web search.
+It replaces the scattered search logic from legacy src/engine.py.
+
+Architecture
+------------
+  1. Run DDGS search (with YaCy as optional parallel provider)
+  2. Deduplicate results by normalized URL, domain+title, snippet similarity
+  3. Fetch previews for top candidates (httpx → curl_cffi, cache-first)
+  4. Soft-rerank by semantic + lexical + trust signal
+  5. Format and return a clean text response
+
+All parameters default to values from core.config.SearchConfig.
+
+Public API
+----------
+WebSearchService            -- async service class
+run_web_search(query, ...)  -- top-level convenience coroutine
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+import secrets
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+from urllib.parse import urlparse, urlunparse, urlencode, parse_qsl
+
+from core.models.search import SearchResult
+from core.config import load_search_config
+from core.fetch.ddgs_client import async_ddgs_search
+from core.fetch.yacy_client import async_yacy_search, is_yacy_available
+from core.fetch.hosted_clients import async_hosted_search, available_hosted_engines
+from core.extract.content_processor import (
+    build_preview_payload, get_preview_settings, warm_preview_models, PreviewPayload,
+)
+from core.registry.trust_registry import get_trust_registry
+from core.registry.domain_reputation import get_reputation_store, domain_from_url
+from core.fetch.antibot import is_antibot
+from core.fetch.url_utils import normalize_url
+from core.cache.source_cache import SourceCache
+from core.cache.query_normalizer import QUERY_STOPWORDS as _QUERY_STOPWORDS
+
+_CACHE_PATH = Path(__file__).resolve().parent.parent / "_cache" / "source_cache.db"
+_cache = SourceCache(str(_CACHE_PATH))
+
+# Persistent HTTP connector — reused across preview-fetch batches to avoid
+# rebuilding connection pools on every search call.
+_http_connector: Optional["aiohttp.TCPConnector"] = None  # type: ignore[name-defined]
+
+
+async def _get_http_connector(concurrency: int) -> "aiohttp.TCPConnector":  # type: ignore[name-defined]
+    """Return (or lazily create) the shared TCPConnector for preview fetches."""
+    global _http_connector
+    import aiohttp as _aiohttp
+    if _http_connector is None or _http_connector.closed:
+        _http_connector = _aiohttp.TCPConnector(
+            limit=concurrency * 4, limit_per_host=2, ttl_dns_cache=120
+        )
+    return _http_connector
+
+
+async def shutdown_web_search() -> None:
+    """Close shared HTTP connector on MCP server shutdown.
+
+    Call this from the server lifespan handler to ensure open sockets are
+    released cleanly instead of leaking on process exit.
+    """
+    global _http_connector
+    if _http_connector is not None and not _http_connector.closed:
+        await _http_connector.close()
+        _http_connector = None
+
+
+logger = logging.getLogger("services.web_search")
+trace_logger = logging.getLogger("trace.web_search")
+
+_DEFAULT_PREVIEW_FETCH_TIMEOUT = 6.0
+_DEFAULT_PREVIEW_TOTAL_TIMEOUT = 12.0
+
+
+# ---------------------------------------------------------------------------
+# URL utilities (inlined from legacy engine.py, no external deps)
+# ---------------------------------------------------------------------------
+
+def _make_request_id() -> str:
+    return secrets.token_hex(4)
+
+def _trace(req_id: str, stage: str, **fields: object) -> None:
+    extras = " ".join(f"{key}={value!r}" for key, value in fields.items())
+    message = f"req={req_id} stage={stage}"
+    if extras:
+        message = f"{message} {extras}"
+    trace_logger.info(message)
+
+
+# ---------------------------------------------------------------------------
+# Query classification helpers
+# ---------------------------------------------------------------------------
+
+# _QUERY_STOPWORDS imported from core.cache.query_normalizer above
+
+# ---------------------------------------------------------------------------
+# Time range helpers
+# ---------------------------------------------------------------------------
+
+# Maps human-readable aliases to DDGS timelimit values (d/w/m/y).
+_TIME_RANGE_MAP: dict[str, str] = {
+    # DDGS native (pass-through)
+    "d": "d", "w": "w", "m": "m", "y": "y",
+    # English aliases
+    "day": "d", "today": "d",
+    "week": "w", "last_week": "w",
+    "month": "m", "last_month": "m",
+    "year": "y", "last_year": "y",
+    # Short shorthands
+    "1d": "d", "7d": "w", "30d": "m", "365d": "y",
+}
+
+
+def _normalize_time_range(time_range: Optional[str]) -> Optional[str]:
+    """Map a human-readable time range alias to a DDGS timelimit value.
+
+    Returns None for unrecognised/empty input so the caller can decide
+    whether to fall back to no filter or raise.
+
+    >>> _normalize_time_range("today")  # "d"
+    >>> _normalize_time_range("week")   # "w"
+    >>> _normalize_time_range("y")      # "y"
+    >>> _normalize_time_range(None)     # None
+    """
+    if not time_range:
+        return None
+    return _TIME_RANGE_MAP.get(time_range.strip().lower().replace("-", "_"))
+
+
+# ---------------------------------------------------------------------------
+# Smart timelimit inference
+# ---------------------------------------------------------------------------
+
+# Maps primary query type → DDGS timelimit.
+# Rationale:
+#   journalistic / finance  — events and prices go stale in weeks; cap at month
+#   shopping / troubleshoot / forum / technical — relevant within the last year
+#   academic / medical / general — timeless or unknown; no restriction
+_AUTO_TIMELIMIT: dict[str, Optional[str]] = {
+    "journalistic":   "m",   # news articles — last month
+    "finance":        "m",   # market / pricing — last month
+    "shopping":       "y",   # products change within a year
+    "troubleshooting":"y",   # fixes are usually still valid within a year
+    "forum":          "y",   # discussions — within a year
+    "technical":      "y",   # docs — within a year (version-specific)
+    "academic":       None,  # research papers — no cutoff
+    "medical":        None,  # clinical studies — no cutoff
+    "general":        None,  # unknown intent — don't restrict
+}
+
+
+def _auto_timelimit(query_types: list[str]) -> Optional[str]:
+    """Infer the appropriate DDGS timelimit from the classified query types.
+
+    Uses the primary type.  Falls back to None (no restriction) for unknown types.
+    """
+    primary = query_types[0] if query_types else "general"
+    return _AUTO_TIMELIMIT.get(primary, None)
+
+
+# Ordering for timelimit values — smaller index = tighter (more restrictive) window.
+_TIMELIMIT_ORDER: dict[str, int] = {"d": 0, "w": 1, "m": 2, "y": 3}
+
+
+def _stricter_timelimit(a: Optional[str], b: Optional[str]) -> Optional[str]:
+    """Return the more restrictive (shorter window) of two timelimits.
+
+    None means "no restriction" — the least restrictive option.
+    """
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if _TIMELIMIT_ORDER.get(a, 99) <= _TIMELIMIT_ORDER.get(b, 99) else b
+
+
+def _year_hint_timelimit(
+    query: str,
+    mode: str,
+    current: Optional[str],
+    prev: Optional[str],
+    older: Optional[str],
+) -> Optional[str]:
+    """Extract a year from the query and return a corresponding timelimit.
+
+    Only fires when:
+      - mode is "timelimit"
+      - the query contains freshness hints OR a comma-preceded trailing year
+
+    The most recent year found is used.  Maps:
+      year >= this year  → *current*  (default "m")
+      year == last year  → *prev*     (default "y")
+      year <  last year  → *older*    (default None)
+    """
+    if (mode or "").strip().lower() != "timelimit":
+        return None
+
+    lower = query.lower()
+    has_freshness = any(hint in lower for hint in _TRAILING_YEAR_FRESHNESS_HINTS)
+    has_comma_year = bool(_TRAILING_YEAR_COMMA_RE.search(query))
+    if not has_freshness and not has_comma_year:
+        return None
+
+    raw_years = re.findall(r'\b((?:19|20)\d{2})\b', query)
+    if not raw_years:
+        return None
+
+    import datetime as _dt
+    this_year = _dt.date.today().year
+    year = max(int(y) for y in raw_years)
+
+    if year >= this_year:
+        return current
+    elif year == this_year - 1:
+        return prev
+    else:
+        return older
+
+
+def _apply_year_hint_policy(query: str, qcfg: object) -> tuple[str, Optional[str]]:
+    mode = str(getattr(qcfg, "year_hint_mode", "timelimit") or "timelimit").strip().lower()
+    if mode not in {"timelimit", "strip", "none"}:
+        mode = "timelimit"
+
+    year_tl = _year_hint_timelimit(
+        query,
+        mode=mode,
+        current=getattr(qcfg, "year_hint_current", "m"),
+        prev=getattr(qcfg, "year_hint_prev", "y"),
+        older=getattr(qcfg, "year_hint_older", None),
+    )
+    if mode == "none":
+        return query, None
+    return _strip_trailing_year(query), year_tl
+
+
+# Comma-preceded trailing year: always a time-tag, never a topic anchor.
+# Examples: "AI developments, 2023-2024" or "AI developments, 2023 2024".
+# Standalone year or year-range anywhere in the query.
+# Matches "2025", "2024-2025", "2024 2025", or "2024-2025" with an en dash.
+# Does NOT match version numbers like "3.12", "2.0", "GPT-4" - those are
+# either decimal (contain a dot) or single-digit, not 4-digit year-shaped.
+_YEAR_RANGE_SEPARATOR = r"(?:\s*(?:-|\u2013)\s*|\s+)"
+_TRAILING_YEAR_COMMA_RE = re.compile(
+    rf",\s+(?:(?:19|20)\d{{2}})(?:{_YEAR_RANGE_SEPARATOR}(?:19|20)\d{{2}})?\s*$"
+)
+_YEAR_ANYWHERE_RE = re.compile(
+    rf"\b(?:19|20)\d{{2}}(?:{_YEAR_RANGE_SEPARATOR}(?:19|20)\d{{2}})?\b"
+)
+# Words that signal any year in the query is a freshness hint, not a topic anchor.
+_TRAILING_YEAR_FRESHNESS_HINTS: frozenset[str] = frozenset({
+    "latest", "recent", "current", "now", "today", "yesterday",
+    "update", "updates", "news", "breaking", "headline",
+    # Russian / Ukrainian
+    "новости", "последние", "сейчас", "сегодня", "новини", "зараз", "сьогодні",
+    # German / French / Dutch
+    "aktuell", "neueste", "récent", "actuels", "laatste",
+})
+
+
+def _strip_trailing_year(query: str) -> str:
+    """Remove year/year-range tokens that a model appended as time hints.
+
+    Three cases, in priority order:
+
+    1. Comma-preceded trailing year ("AI developments, 2023-2024")
+       → always stripped; comma signals it is a metadata tag.
+
+    2. Freshness hint present ("latest AI news 2026", "GPT-5.4 2026 benchmarks latest")
+       → ALL standalone year tokens stripped, anywhere in the query.
+       Rationale: timelimit is already set automatically from the query type, so the
+       year is redundant noise that can confuse the search engine.
+
+    3. No freshness hint ("SOTA LLM benchmarks 2024")
+       → left intact; the year is a genuine temporal anchor.
+    """
+    # Case 1: comma-separated trailing year → unconditional strip
+    if _TRAILING_YEAR_COMMA_RE.search(query):
+        cleaned = _TRAILING_YEAR_COMMA_RE.sub("", query).strip()
+        return cleaned if cleaned else query
+
+    # Case 2: freshness hint → strip all standalone years anywhere
+    lower = query.lower()
+    if any(hint in lower for hint in _TRAILING_YEAR_FRESHNESS_HINTS):
+        cleaned = _YEAR_ANYWHERE_RE.sub("", query)
+        cleaned = " ".join(cleaned.split())   # collapse extra spaces
+        return cleaned if cleaned.strip() else query
+
+    return query
+
+_JOURNALISTIC_HINTS = frozenset({
+    # English
+    "latest", "news", "today", "yesterday", "breaking", "headline", "current",
+    "update", "updates", "right now", "now",
+    # Russian / Ukrainian
+    "новости", "последние", "срочно", "сейчас", "сегодня", "прямо сейчас",
+    "новини", "зараз", "сьогодні", "останні", "терміново",
+    # German / Dutch
+    "nachrichten", "aktuell", "heute", "neueste", "meldung",
+    "nieuws", "vandaag", "laatste", "nu",
+    # French
+    "actualité", "aujourd'hui", "nouvelles", "dernières",
+    # Spanish / Portuguese
+    "noticias", "hoy", "últimas", "ahora",
+    "notícias", "hoje", "agora",
+    # Italian
+    "notizie", "oggi", "ultime", "adesso",
+    # Polish
+    "wiadomości", "dziś", "dzisiaj", "ostatnie", "pilne",
+    # Turkish
+    "haberler", "bugün", "son dakika", "şimdi",
+    # Arabic / Hebrew / Persian
+    "أخبار", "اليوم", "عاجل", "آخر",
+    "חדשות", "היום", "עכשיו", "אחרון",
+    "اخبار", "امروز", "الان", "آخرین",
+    # Japanese / Chinese / Korean
+    "ニュース", "速報", "今日",
+    "新闻", "今天", "快讯",
+    "뉴스", "오늘", "속보",
+    # Hindi / Greek / Thai
+    "समाचार", "आज", "अभी", "ताज़ा",
+    "νέα", "σήμερα", "τώρα", "τελευταία",
+    "ข่าว", "วันนี้", "ล่าสุด", "ด่วน",
+})
+
+_TECHNICAL_HINTS = frozenset({
+    # Languages / runtimes (language-agnostic proper nouns)
+    "python", "javascript", "typescript", "java", "golang", "rust", "cpp",
+    "c++", "ruby", "php", "swift", "kotlin", "scala", "bash", "shell",
+    # Infra / tooling (proper nouns)
+    "docker", "kubernetes", "k8s", "linux", "ubuntu", "git", "github",
+    "gitlab", "sql", "postgresql", "mysql", "mongodb", "redis",
+    "pytorch", "torch", "tensorflow", "jax", "numpy", "pandas", "scipy",
+    # Universal technical acronyms
+    "api", "sdk", "cli", "gui", "ide",
+    # English — concepts
+    "library", "package", "module", "framework", "function", "method",
+    "class", "syntax", "interface", "type",
+    # English — actions / doc keywords
+    "install", "configure", "setup", "deploy", "build", "compile",
+    "tutorial", "docs", "documentation", "reference", "guide", "howto",
+    "example", "snippet", "changelog", "readme",
+    # Russian / Ukrainian
+    "установка", "настройка", "конфигурация", "документация",
+    "руководство", "пример", "библиотека",
+    "встановлення", "налаштування", "документація", "бібліотека",
+    # German / Dutch
+    "installieren", "konfigurieren", "dokumentation", "anleitung", "beispiel",
+    "bibliothek", "entwicklung", "einrichten", "kompilieren",
+    "installeren", "configureren", "handleiding", "voorbeeld",
+    # French
+    "installer", "configurer", "tutoriel", "exemple", "bibliothèque", "développement",
+    # Spanish / Portuguese / Italian
+    "instalar", "configurar", "documentación", "guía", "ejemplo", "biblioteca",
+    "instalação", "documentação", "tutorial",
+    "installare", "configurare", "documentazione", "guida", "libreria",
+    # Polish / Turkish
+    "instalacja", "konfiguracja", "dokumentacja", "poradnik", "przykład",
+    "kurulum", "yapılandırma", "belge", "rehber", "kütüphane",
+    # Arabic / Hebrew / Persian
+    "تثبيت", "إعداد", "توثيق", "مكتبة",
+    "התקנה", "תיעוד", "מדריך", "ספרייה",
+    "نصب", "پیکربندی", "مستندات", "کتابخانه",
+    # Chinese / Japanese / Korean
+    "安装", "配置", "文档", "教程", "示例", "开发", "框架",
+    "インストール", "設定", "ドキュメント", "チュートリアル", "ライブラリ",
+    "설치", "설정", "문서", "튜토리얼", "라이브러리",
+    # Hindi / Greek / Thai
+    "स्थापना", "दस्तावेज़", "उदाहरण",
+    "εγκατάσταση", "τεκμηρίωση", "παράδειγμα",
+    "ติดตั้ง", "เอกสาร", "คู่มือ",
+})
+
+_TROUBLESHOOTING_HINTS = frozenset({
+    # English
+    "fix", "fixing", "fixed", "broken", "not working", "doesn't work",
+    "won't", "can't", "cannot", "failed", "failure", "crash", "crashes",
+    "issue", "bug", "bugs", "solve", "solution", "debug", "debugging",
+    "troubleshoot", "workaround", "patch",
+    # Russian / Ukrainian
+    "не работает", "сломан", "проблема", "исправить", "решение",
+    "не працює", "зламаний", "виправити", "рішення",
+    # German / Dutch
+    "fehler", "funktioniert nicht", "problem", "lösung", "beheben", "absturz",
+    "fout", "werkt niet", "oplossing", "repareren",
+    # French
+    "erreur", "ne fonctionne pas", "problème", "solution", "corriger", "débogage",
+    # Spanish / Portuguese / Italian
+    "error", "no funciona", "problema", "solución", "arreglar", "depurar",
+    "não funciona", "solução", "corrigir",
+    "non funziona", "problema", "soluzione", "correggere",
+    # Polish / Turkish
+    "błąd", "nie działa", "rozwiązanie", "naprawić",
+    "hata", "çalışmıyor", "sorun", "çözüm", "düzeltme",
+    # Arabic / Hebrew / Persian
+    "خطأ", "لا يعمل", "مشكلة", "حل", "إصلاح",
+    "שגיאה", "לא עובד", "בעיה", "פתרון",
+    "خطا", "کار نمی‌کند", "مشکل", "راه‌حل",
+    # Chinese / Japanese / Korean
+    "错误", "不工作", "故障", "问题", "修复", "调试",
+    "エラー", "動かない", "バグ", "修正", "デバッグ",
+    "오류", "작동 안 함", "버그", "수정", "디버그",
+    # Hindi / Greek / Thai
+    "त्रुटि", "काम नहीं", "समस्या", "समाधान",
+    "σφάλμα", "δεν λειτουργεί", "πρόβλημα", "λύση",
+    "ข้อผิดพลาด", "ไม่ทำงาน", "ปัญหา", "แก้ไข",
+})
+
+_ACADEMIC_HINTS = frozenset({
+    # English
+    "research", "study", "studies", "paper", "papers", "journal",
+    "citation", "abstract", "hypothesis", "methodology", "dataset",
+    "arxiv", "pubmed", "doi", "proceedings", "conference",
+    "dissertation", "thesis", "peer-reviewed", "meta-analysis",
+    # Russian / Ukrainian
+    "исследование", "статья", "диссертация", "научный", "публикация",
+    "дослідження", "наукова", "дисертація",
+    # German / Dutch
+    "forschung", "studie", "artikel", "zeitschrift", "dissertation", "wissenschaft",
+    "onderzoek", "tijdschrift", "scriptie", "wetenschappelijk",
+    # French
+    "recherche", "étude", "revue", "thèse", "scientifique", "publication",
+    # Spanish / Portuguese / Italian
+    "investigación", "revista", "tesis", "científico",
+    "pesquisa", "dissertação",
+    "ricerca", "rivista", "scientifico",
+    # Polish / Turkish
+    "badania", "czasopismo", "naukowy",
+    "araştırma", "makale", "dergi", "bilimsel",
+    # Arabic / Hebrew / Persian
+    "بحث", "دراسة", "مجلة", "أطروحة", "علمي",
+    "מחקר", "מאמר", "עיתון", "עיוני",
+    "پژوهش", "مطالعه", "مقاله", "رساله", "علمی",
+    # Chinese / Japanese / Korean
+    "研究", "论文", "期刊", "学术", "发表", "科学",
+    "論文", "学術", "ジャーナル", "科学",
+    "연구", "논문", "학술", "저널", "과학",
+    # Hindi / Greek / Thai
+    "शोध", "अध्ययन", "लेख", "वैज्ञानिक",
+    "έρευνα", "μελέτη", "άρθρο", "επιστημονικός",
+    "การวิจัย", "การศึกษา", "บทความ", "วิทยานิพนธ์",
+})
+
+_FORUM_HINTS = frozenset({
+    # English
+    "reddit", "stackoverflow", "forum", "discussion", "community",
+    "opinion", "opinions", "thoughts", "experience", "experiences",
+    "recommend", "recommendation", "advice", "suggest",
+    "vs", "versus", "comparison", "compare", "anyone", "someone",
+    # Russian / Ukrainian
+    "форум", "обсуждение", "мнение", "советую", "рекомендую", "сравнение",
+    "обговорення", "думка", "порада", "порівняння",
+    # German / Dutch
+    "forum", "diskussion", "meinung", "erfahrung", "empfehlung", "vergleich",
+    "discussie", "mening", "ervaring", "aanbeveling", "vergelijking",
+    # French
+    "discussion", "opinion", "avis", "expérience", "recommandation", "comparaison",
+    # Spanish / Portuguese / Italian
+    "foro", "discusión", "opinión", "experiencia", "recomendación", "comparación",
+    "fórum", "opinião", "experiência", "comparação",
+    "discussione", "opinione", "esperienza", "confronto",
+    # Polish / Turkish
+    "dyskusja", "opinia", "doświadczenie", "rekomendacja", "porównanie",
+    "tartışma", "görüş", "deneyim", "öneri", "karşılaştırma",
+    # Arabic / Hebrew / Persian
+    "منتدى", "نقاش", "رأي", "تجربة", "مقارنة",
+    "פורום", "דיון", "דעה", "המלצה", "השוואה",
+    "انجمن", "بحث", "نظر", "تجربه", "مقایسه",
+    # Chinese / Japanese / Korean
+    "论坛", "讨论", "意见", "经验", "推荐", "比较",
+    "フォーラム", "意見", "経験", "おすすめ", "比較",
+    "포럼", "토론", "의견", "경험", "추천", "비교",
+    # Hindi / Greek / Thai
+    "मंच", "चर्चा", "राय", "अनुभव", "सिफारिश", "तुलना",
+    "φόρουμ", "συζήτηση", "γνώμη", "εμπειρία", "σύγκριση",
+    "ฟอรั่ม", "การสนทนา", "ความคิดเห็น", "ประสบการณ์", "เปรียบเทียบ",
+})
+
+_SHOPPING_HINTS = frozenset({
+    # English
+    "buy", "purchase", "order", "price", "prices", "cheap", "cheapest",
+    "affordable", "deal", "deals", "discount", "coupon", "sale",
+    "amazon", "ebay", "shop", "store", "shipping", "delivery",
+    # Russian / Ukrainian
+    "купить", "цена", "стоимость", "заказать", "магазин", "скидка",
+    "купити", "ціна", "вартість", "замовити", "знижка",
+    # German / Dutch
+    "kaufen", "preis", "günstig", "billig", "angebot", "rabatt", "bestellen",
+    "kopen", "goedkoop", "aanbieding", "korting", "bestelling", "levering",
+    # French
+    "acheter", "prix", "pas cher", "offre", "réduction", "commander", "livraison",
+    # Spanish / Portuguese / Italian
+    "comprar", "precio", "barato", "oferta", "descuento", "tienda", "envío",
+    "preço", "entrega",
+    "comprare", "prezzo", "economico", "sconto", "negozio", "consegna",
+    # Polish / Turkish
+    "kupić", "cena", "tanie", "oferta", "rabat", "sklep", "zamówienie", "dostawa",
+    "satın al", "fiyat", "ucuz", "teklif", "indirim", "sipariş", "teslimat",
+    # Arabic / Hebrew / Persian
+    "شراء", "سعر", "رخيص", "عرض", "خصم", "متجر", "توصيل",
+    "לקנות", "מחיר", "זול", "הנחה", "חנות", "משלוח",
+    "خرید", "قیمت", "ارزان", "تخفیف", "فروشگاه", "تحویل",
+    # Chinese / Japanese / Korean
+    "购买", "价格", "便宜", "折扣", "商店", "配送",
+    "購入", "価格", "安い", "割引", "注文", "送料",
+    "구매", "가격", "저렴", "할인", "주문", "배송",
+    # Hindi / Greek / Thai
+    "खरीदना", "कीमत", "सस्ता", "छूट", "डिलीवरी",
+    "αγορά", "τιμή", "φθηνό", "έκπτωση", "παράδοση",
+    "ซื้อ", "ราคา", "ถูก", "ส่วนลด", "จัดส่ง",
+})
+
+_FINANCE_HINTS = frozenset({
+    # English
+    "stock", "stocks", "market", "markets", "crypto", "bitcoin", "ethereum",
+    "btc", "eth", "trading", "invest", "investment", "portfolio",
+    "nasdaq", "nyse", "s&p", "sp500", "dow", "forex", "currency",
+    "bond", "etf", "dividend", "earnings", "ipo",
+    # Russian / Ukrainian
+    "акции", "биржа", "курс", "рубль", "доллар", "инвестиции",
+    "акції", "ринок", "крипто", "інвестиції", "валюта",
+    # German / Dutch
+    "aktie", "aktien", "markt", "krypto", "investition", "börse", "währung",
+    "aandeel", "markt", "crypto", "investering", "beurs", "valuta",
+    # French
+    "action", "actions", "marché", "crypto", "investissement", "bourse", "devise",
+    # Spanish / Portuguese / Italian
+    "acción", "acciones", "mercado", "inversión", "bolsa", "divisa",
+    "ação", "ações", "investimento",
+    "azione", "azioni", "mercato", "investimento", "borsa",
+    # Polish / Turkish
+    "akcja", "rynek", "krypto", "inwestycja", "giełda", "waluta",
+    "hisse", "piyasa", "kripto", "yatırım", "borsa",
+    # Arabic / Hebrew / Persian
+    "أسهم", "سوق", "استثمار", "بورصة", "عملة",
+    "מניות", "שוק", "השקעה", "בורסה", "מטבע",
+    "سهام", "بازار", "سرمایه‌گذاری", "بورس",
+    # Chinese / Japanese / Korean
+    "股票", "市场", "加密货币", "投资", "交易所", "货币",
+    "株式", "仮想通貨", "投資", "取引所", "通貨",
+    "주식", "시장", "암호화폐", "투자", "거래소",
+    # Hindi / Greek / Thai
+    "शेयर", "बाजार", "निवेश", "क्रिप्टो",
+    "μετοχές", "αγορά", "επένδυση", "κρυπτό",
+    "หุ้น", "ตลาด", "ลงทุน", "คริปโต",
+})
+
+_MEDICAL_HINTS = frozenset({
+    # English
+    "symptom", "symptoms", "disease", "condition", "treatment",
+    "medicine", "medication", "drug", "dose", "dosage",
+    "diagnosis", "therapy", "syndrome", "cancer", "diabetes",
+    "infection", "vaccine", "surgery", "doctor", "physician", "health",
+    # Russian / Ukrainian
+    "симптом", "болезнь", "лечение", "препарат", "диагноз", "здоровье",
+    "симптом", "хвороба", "лікування", "препарат", "діагноз",
+    # German / Dutch
+    "symptom", "krankheit", "behandlung", "medikament", "diagnose", "therapie", "arzt",
+    "ziekte", "behandeling", "medicijn", "gezondheid", "dokter",
+    # French
+    "symptôme", "maladie", "traitement", "médicament", "diagnostic", "santé", "médecin",
+    # Spanish / Portuguese / Italian
+    "síntoma", "enfermedad", "tratamiento", "medicamento", "diagnóstico", "salud", "médico",
+    "sintoma", "doença", "tratamento", "saúde",
+    "sintomo", "malattia", "trattamento", "farmaco", "diagnosi", "salute",
+    # Polish / Turkish
+    "objaw", "choroba", "leczenie", "lek", "diagnoza", "zdrowie", "lekarz",
+    "belirti", "hastalık", "tedavi", "ilaç", "teşhis", "sağlık",
+    # Arabic / Hebrew / Persian
+    "مرض", "علاج", "دواء", "تشخيص", "صحة", "طبيب",
+    "מחלה", "טיפול", "תרופה", "אבחנה", "בריאות", "רופא",
+    "بیماری", "درمان", "دارو", "تشخیص", "سلامت",
+    # Chinese / Japanese / Korean
+    "症状", "疾病", "治疗", "药物", "诊断", "健康", "医生",
+    "症状", "病気", "治療", "薬", "診断", "健康", "医師",
+    "증상", "질병", "치료", "약물", "진단", "건강",
+    # Hindi / Greek / Thai
+    "लक्षण", "बीमारी", "उपचार", "स्वास्थ्य",
+    "σύμπτωμα", "ασθένεια", "θεραπεία", "υγεία",
+    "อาการ", "โรค", "การรักษา", "ยา", "สุขภาพ",
+})
+
+_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+_TEXT_SIG_RE = re.compile(r"[\W_]+", re.UNICODE)
+
+# Triage: title patterns that indicate a non-content page (skip fetch)
+_SKIP_TITLE_PATTERNS = frozenset({
+    "login", "log in", "sign up", "signup", "sign in", "register",
+    "create account", "subscribe", "404", "403", "not found",
+    "access denied", "page not found", "permission denied",
+})
+# Triage: date signal in snippet → slight score boost (content likely has context)
+_DATE_SIGNAL_RE = re.compile(
+    r"\b(20\d{2}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b",
+    re.IGNORECASE,
+)
+
+
+def _query_terms(query: str) -> list[str]:
+    raw = [t.strip().lower() for t in (query or "").split() if len(t.strip()) > 2]
+    filtered = [t for t in raw if t not in _QUERY_STOPWORDS]
+    return filtered or raw
+
+
+def infer_query_language(query: str) -> str:
+    """Detect the dominant script of a query using Unicode block counts.
+
+    Returns a 2-letter language code understood by DDGS region mapping,
+    or "en" as the default fallback for Latin/undetected scripts.
+
+    Detection is purely character-based (no external deps):
+      - Script-specific Unicode blocks give unambiguous signals for
+        Cyrillic, Arabic, Hebrew, CJK, Kana, Hangul, Thai, Devanagari, Greek.
+      - Latin-based languages (de, fr, es, …) are NOT distinguished here;
+        they route through the English engine-router path, which handles
+        them fine via the wt-wt region.
+    """
+    text = str(query or "")
+    if not text:
+        return "en"
+
+    total = len(text)
+    threshold = max(1, total) * 0.15  # ≥15% of chars must be in-script to qualify
+
+    counts: dict[str, int] = {
+        "ru": 0,  # Cyrillic
+        "ar": 0,  # Arabic
+        "he": 0,  # Hebrew
+        "ja": 0,  # Hiragana / Katakana (unambiguous Japanese marker)
+        "zh": 0,  # CJK Unified (could be zh or ja; refined below)
+        "ko": 0,  # Hangul
+        "th": 0,  # Thai
+        "hi": 0,  # Devanagari
+        "el": 0,  # Greek
+    }
+    for ch in text:
+        cp = ord(ch)
+        if 0x0400 <= cp <= 0x04FF:
+            counts["ru"] += 1
+        elif 0x0600 <= cp <= 0x06FF:
+            counts["ar"] += 1
+        elif 0x0590 <= cp <= 0x05FF:
+            counts["he"] += 1
+        elif 0x3040 <= cp <= 0x30FF:  # Hiragana + Katakana → unambiguous ja
+            counts["ja"] += 1
+        elif 0x4E00 <= cp <= 0x9FFF:  # CJK Unified (shared zh/ja)
+            counts["zh"] += 1
+        elif 0xAC00 <= cp <= 0xD7AF:
+            counts["ko"] += 1
+        elif 0x0E00 <= cp <= 0x0E7F:
+            counts["th"] += 1
+        elif 0x0900 <= cp <= 0x097F:
+            counts["hi"] += 1
+        elif 0x0370 <= cp <= 0x03FF:
+            counts["el"] += 1
+
+    # If Hiragana/Katakana is present, the CJK block is Japanese, not Chinese.
+    if counts["ja"] > 0:
+        counts["zh"] = 0  # don't double-count as Chinese
+
+    # Return the language whose script count exceeds the threshold.
+    # Priority order resolves ties for mixed-script edge cases.
+    for lang in ("ru", "ar", "he", "ja", "zh", "ko", "th", "hi", "el"):
+        if counts[lang] >= threshold:
+            return lang
+
+    return "en"
+
+
+_ORDERED_QUERY_TYPES: list[tuple[str, frozenset]] = [
+    ("finance",         _FINANCE_HINTS),
+    ("medical",         _MEDICAL_HINTS),
+    ("journalistic",    _JOURNALISTIC_HINTS),
+    ("academic",        _ACADEMIC_HINTS),
+    ("shopping",        _SHOPPING_HINTS),
+    ("troubleshooting", _TROUBLESHOOTING_HINTS),
+    ("forum",           _FORUM_HINTS),
+    ("technical",       _TECHNICAL_HINTS),
+]
+
+
+def infer_query_types(query: str) -> list[str]:
+    """Classify query into all matching routing-aware types (up to 3).
+
+    Returns types in priority order — the first entry is the primary type.
+    Having multiple types enables combinatorial backend/TTL selection:
+    "activated charcoal price" → ["shopping", "medical"] routes through
+    both backends and uses the shorter (shopping) TTL.
+
+    Priority order (most specific → least):
+        finance > medical > journalistic > academic > shopping
+        > troubleshooting > forum > technical > general
+    """
+    q = str(query or "").lower()
+    tokens = set(q.split())
+
+    def _matches(hints: frozenset) -> bool:
+        return bool(tokens & hints) or any(h in q for h in hints if " " in h)
+
+    matched = [qt for qt, hints in _ORDERED_QUERY_TYPES if _matches(hints)]
+    return matched[:3] if matched else ["general"]
+
+
+def infer_query_type(query: str) -> str:
+    """Return the primary query type. See infer_query_types() for full classification."""
+    return infer_query_types(query)[0]
+
+
+def _parse_query_profile(query: str) -> dict:
+    q = (query or "").lower()
+    years = _YEAR_RE.findall(query)
+    tokens = set(q.split())
+    has_intent = bool(tokens & _JOURNALISTIC_HINTS)
+    return {"years": years, "has_intent": has_intent, "terms": _query_terms(query)}
+
+
+# ---------------------------------------------------------------------------
+# Deduplication
+# ---------------------------------------------------------------------------
+
+_HUB_URL_SEGMENTS = frozenset({
+    "category", "categories", "tag", "tags", "topic", "topics",
+    "theme", "themes", "rubric", "rubrics", "section", "sections",
+    "label", "labels", "archive", "archives", "feed", "rss",
+    "search", "results", "page", "index", "catalog",
+})
+_HUB_TITLE_PHRASES = (
+    "все новости", "последние новости", "все статьи",
+    "all news", "all articles", "all posts", "news feed", "tag page",
+    "category page", "topic page", "browse", "archive",
+)
+
+
+def _hub_penalty(url: str, title: str, snippet: str) -> float:
+    penalty = 0.0
+    path_parts = set((urlparse(url).path or "").lower().strip("/").split("/"))
+    if path_parts & _HUB_URL_SEGMENTS:
+        penalty += 0.5
+    path = (urlparse(url).path or "").strip("/")
+    if not path or path in ("", "index", "index.html", "index.php"):
+        penalty += 0.3
+    if any(phrase in (title or "").lower() for phrase in _HUB_TITLE_PHRASES):
+        penalty += 0.4
+    snip = snippet or ""
+    if snip.count(" · ") >= 3 or snip.count(" • ") >= 3 or snip.count(" | ") >= 4:
+        penalty += 0.25
+    return min(penalty, 1.0)
+
+
+@dataclass
+class TriageResult:
+    """Decision produced by _triage_results for one search result."""
+    skip: bool          # True → don't fetch, use snippet only
+    fetch_policy: str   # "cheap" (httpx only) | "race" (httpx + curl_cffi parallel)
+    score: float        # triage relevance score [0, 1]
+
+
+def _triage_results(results: list[SearchResult], query: str) -> list[TriageResult]:
+    """Cheap per-result triage (< 1ms each, no network).
+
+    Returns a TriageResult per result:
+      - skip: whether to skip preview fetch entirely
+      - fetch_policy: "cheap" or "race" (determines parallelism in fetch)
+      - score: relevance signal
+
+    Side effect: populates result.trust_tier when it's still "?".
+    """
+    try:
+        trust_reg = get_trust_registry()
+    except Exception:
+        trust_reg = None
+
+    try:
+        rep_store = get_reputation_store()
+    except Exception:
+        rep_store = None
+
+    total = len(results)
+    out: list[TriageResult] = []
+
+    for idx, result in enumerate(results):
+        url = result.url
+        title = (result.title or "").strip()
+        snippet = (result.snippet or "").strip()
+        title_lower = title.lower()
+
+        # Populate trust tier as a side effect so _result_score can use it
+        if result.trust_tier == "?" and trust_reg is not None:
+            tier = trust_reg.get_tier(url)
+            if tier:
+                result.trust_tier = tier
+
+        # --- Hard skip rules (instant) ---
+
+        # Too short to contain useful content
+        if len(snippet) < 30 or (len(snippet) < 60 and len(title) < 20):
+            out.append(TriageResult(skip=True, fetch_policy="cheap", score=0.0))
+            continue
+
+        # Login / error pages
+        if any(p in title_lower for p in _SKIP_TITLE_PATTERNS):
+            out.append(TriageResult(skip=True, fetch_policy="cheap", score=0.0))
+            continue
+
+        # Blacklisted domain (static registry)
+        if trust_reg is not None:
+            try:
+                if trust_reg.is_blacklisted(url):
+                    out.append(TriageResult(skip=True, fetch_policy="cheap", score=0.0))
+                    continue
+            except Exception:
+                pass
+
+        # Dynamically blacklisted domain (reputation tracker)
+        if rep_store is not None:
+            try:
+                if rep_store.is_auto_blacklisted(domain_from_url(url)):
+                    out.append(TriageResult(skip=True, fetch_policy="cheap", score=0.0))
+                    continue
+            except Exception:
+                pass
+
+        # --- Soft score (0–1) ---
+        pos_score = 1.0 - (idx / max(total - 1, 1))
+        snip_score = min(1.0, len(snippet) / 300)
+        lex = _lexical_score(query, title, snippet, url)
+        tier_trust = _TIER_TRUST_SCORES.get(result.trust_tier, 0.5)
+        date_boost = 0.08 if _DATE_SIGNAL_RE.search(snippet) else 0.0
+        hub_pen = _hub_penalty(url, title, snippet)
+
+        score = (
+            0.25 * pos_score
+            + 0.10 * snip_score
+            + 0.40 * lex
+            + 0.15 * tier_trust
+            + date_boost
+            - 0.20 * hub_pen
+        )
+        score = max(0.0, min(1.0, score))
+
+        if score < 0.10:
+            out.append(TriageResult(skip=True, fetch_policy="cheap", score=score))
+        elif score >= 0.50:
+            # High relevance → race: httpx + curl_cffi simultaneously
+            out.append(TriageResult(skip=False, fetch_policy="race", score=score))
+        else:
+            # Medium relevance → cheap: httpx only
+            out.append(TriageResult(skip=False, fetch_policy="cheap", score=score))
+
+    return out
+
+
+def _dedup_results(results: list[SearchResult]) -> list[SearchResult]:
+    """Dedup by normalized URL, domain+title, and snippet signature."""
+    seen_urls: set[str] = set()
+    seen_keys: set[str] = set()
+    out: list[SearchResult] = []
+    for r in results:
+        nu = normalize_url(r.url)
+        if nu in seen_urls:
+            continue
+        seen_urls.add(nu)
+        domain = urlparse(r.url).netloc.lower()
+        title_key = f"{domain}||{r.title.strip().lower()[:60]}"
+        snip_key = " ".join((r.snippet or "").lower().split()[:20])
+        if title_key in seen_keys or (snip_key and snip_key in seen_keys):
+            continue
+        seen_keys.add(title_key)
+        if snip_key:
+            seen_keys.add(snip_key)
+        out.append(r)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Scoring
+# ---------------------------------------------------------------------------
+
+_TIER_TRUST_SCORES = {
+    "friendly": 1.0,
+    "moderate": 0.75,
+    "hardened": 0.35,
+    "fortress": 0.05,
+    "unknown": 0.50,
+}
+
+
+def _lexical_score(query: str, title: str, snippet: str, url: str) -> float:
+    terms = _query_terms(query)
+    if not terms:
+        return 0.0
+    url_path = (urlparse(url).path or "").lower()
+    title_l = title.lower()
+    snippet_l = snippet.lower()
+    n = len(terms)
+    return min(1.0,
+               0.6 * sum(1 for t in terms if t in title_l) / n
+               + 0.3 * sum(1 for t in terms if t in snippet_l) / n
+               + 0.1 * sum(1 for t in terms if t in url_path) / n)
+
+
+def _year_match_score(text: str, years: list[str]) -> float:
+    if not years or not text:
+        return 0.0
+    text_l = text.lower()
+    found_years = set(_YEAR_RE.findall(text_l))
+    if not found_years:
+        return 0.0
+    hits = set(years) & found_years
+    return 1.0 if hits else -0.3
+
+
+def _result_score(
+    result: SearchResult,
+    payload: PreviewPayload,
+    *,
+    index: int,
+    total: int,
+    query: str,
+    profile: dict,
+    query_type: str = "general",
+    rep_store=None,
+) -> float:
+    original_rank = 1.0 if total <= 1 else 1.0 - (index / max(total - 1, 1))
+    lex = _lexical_score(query, result.title or "", result.snippet or "", result.url)
+    hub_pen = _hub_penalty(result.url, result.title or "", result.snippet or "")
+
+    # Trust component: blend static tier with dynamic reputation score.
+    # - Static tier (from trust_registry.json) provides curated ground truth.
+    # - Dynamic reputation (from DomainReputationStore) adjusts over time.
+    # Blend: 70% static + 30% dynamic when static exists; 100% dynamic otherwise.
+    tier = result.trust_tier or "unknown"
+    static_trust = _TIER_TRUST_SCORES.get(tier, None)  # None = not in static registry
+    if rep_store is not None:
+        domain = domain_from_url(result.url)
+        rep_score = rep_store.get_reputation_score(domain, query_type)
+    else:
+        rep_score = 0.50
+
+    if static_trust is not None:
+        trust = 0.70 * static_trust + 0.30 * rep_score
+    else:
+        trust = rep_score
+
+    full_text = " ".join(filter(None, [result.title, result.snippet, payload.text or ""]))
+    year_score = _year_match_score(full_text, profile["years"]) if profile["years"] else 0.0
+
+    score = (
+        0.20 * original_rank
+        + 0.20 * lex
+        + 0.35 * max(0.0, min(payload.semantic_score, 1.0))
+        + 0.12 * trust
+        + 0.08 * max(0.0, min(payload.quality_score, 1.0))
+    )
+    if profile["years"]:
+        score += 0.20 * year_score
+    score -= 0.30 * hub_pen
+    return max(0.0, score)
+
+
+def _content_quality_signal(payload: PreviewPayload, result: SearchResult, query: str) -> float:
+    """Raw content quality signal for reputation recording.
+
+    Deliberately excludes position/trust/rank so that the reputation system
+    tracks actual content quality, not search-engine ranking or existing tier.
+    Only called when payload.text is non-empty (fetch succeeded).
+    """
+    lex = _lexical_score(query, result.title or "", result.snippet or "", result.url)
+    return (
+        0.45 * max(0.0, min(float(payload.semantic_score or 0.0), 1.0))
+        + 0.35 * max(0.0, min(float(payload.quality_score or 0.0), 1.0))
+        + 0.20 * lex
+    )
+
+
+# ---------------------------------------------------------------------------
+# Preview fetching
+# ---------------------------------------------------------------------------
+
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+_PREFETCH_MAX_URLS: int = 5   # cap on background prefetch targets per search
+_PREFETCH_FETCH_TIMEOUT: float = 8.0
+# Limit concurrent background prefetch tasks to avoid socket exhaustion under burst load.
+_PREFETCH_SEMAPHORE: Optional[asyncio.Semaphore] = None
+
+
+def _get_prefetch_semaphore() -> asyncio.Semaphore:
+    global _PREFETCH_SEMAPHORE
+    if _PREFETCH_SEMAPHORE is None:
+        _PREFETCH_SEMAPHORE = asyncio.Semaphore(3)
+    return _PREFETCH_SEMAPHORE
+
+
+async def _prefetch_urls_background(urls: list[str], req_id: str = "-") -> None:
+    """Background task: fetch uncached URLs into SourceCache.
+
+    Fire-and-forget — called via ``asyncio.create_task()``.  Any exception is
+    silently swallowed so it never surfaces in the main search response.
+
+    Reuses the shared TCPConnector, so no new connection pools are created.
+    Only HTML/text content-types are stored; antibot pages are skipped.
+    URLs already fresh in cache are skipped immediately.
+    """
+    import aiohttp as _aiohttp
+
+    to_fetch = [u for u in urls if not _cache.is_fresh(u)]
+    if not to_fetch:
+        return
+
+    sem = _get_prefetch_semaphore()
+    if not sem._value:
+        # All prefetch slots are occupied — skip rather than queue more fetches.
+        _trace(req_id, "prefetch.skipped", reason="semaphore_full")
+        return
+
+    _trace(req_id, "prefetch.start", urls=len(to_fetch))
+    async with sem:
+        try:
+            connector = await _get_http_connector(concurrency=len(to_fetch) + 2)
+            timeout = _aiohttp.ClientTimeout(total=_PREFETCH_FETCH_TIMEOUT)
+            async with _aiohttp.ClientSession(
+                connector=connector, connector_owner=False,
+                timeout=timeout, headers={"User-Agent": _UA},
+            ) as session:
+                for url in to_fetch:
+                    try:
+                        async with session.get(url, allow_redirects=True) as resp:
+                            if resp.status >= 400:
+                                continue
+                            ct = (resp.headers.get("Content-Type") or "").lower()
+                            if ct and all(m not in ct for m in ("html", "text")):
+                                continue
+                            raw_html = await resp.text(errors="replace")
+                            if raw_html and not is_antibot(raw_html):
+                                _cache.cache_page(url, "", clean_text="", raw_html=raw_html)
+                                _trace(req_id, "prefetch.cached", url=url)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+
+async def _fetch_preview_one(
+    session,
+    result: SearchResult,
+    query: str,
+    settings: dict,
+    sem: asyncio.Semaphore,
+    loop,
+    policy: str = "cheap",
+    fetch_timeout: float = 8.0,
+    req_id: str = "-",
+) -> PreviewPayload:
+    """Fetch one page preview.
+
+    policy="cheap"  — aiohttp only (saves connections for lower-relevance results)
+    policy="race"   — aiohttp + curl_cffi launched simultaneously; first
+                      non-antibot response wins, loser is cancelled.
+    """
+    async with sem:
+        url = result.url
+        t0 = time.perf_counter()
+
+        async def _aiohttp() -> str | None:
+            try:
+                async with session.get(url, allow_redirects=True) as resp:
+                    if resp.status >= 400:
+                        return None
+                    ct = (resp.headers.get("Content-Type") or "").lower()
+                    if ct and all(m not in ct for m in ("html", "xml", "text")):
+                        return None
+                    text = await resp.text(errors="replace")
+                    return text if text and not is_antibot(text) else None
+            except Exception:
+                return None
+
+        async def _curl() -> str | None:
+            def _sync() -> str | None:
+                try:
+                    from curl_cffi import requests as cffi_req
+                    r = cffi_req.get(url, impersonate="chrome124", timeout=12, headers={"User-Agent": _UA})
+                    text = r.text
+                    return text if text and not is_antibot(text) else None
+                except Exception:
+                    return None
+            return await loop.run_in_executor(None, _sync)
+
+        raw_html: str | None = None
+        cached_page = _cache.get_cached(url)
+        if cached_page and _cache.is_fresh(url) and cached_page.raw_html:
+            raw_html = cached_page.raw_html
+        
+        if not raw_html:
+            if policy == "cheap":
+                raw_html = await _aiohttp()
+            else:
+                # Race: both launched immediately; first non-None result wins
+                t_aio = asyncio.create_task(_aiohttp())
+                t_curl = asyncio.create_task(_curl())
+                pending: set = {t_aio, t_curl}
+                while pending and raw_html is None:
+                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        try:
+                            candidate = task.result()
+                            if candidate:
+                                raw_html = candidate
+                                for p in pending:
+                                    p.cancel()
+                                pending = set()
+                                break
+                        except Exception:
+                            pass
+
+        if raw_html:
+            _cache.cache_page(url, result.title or "", clean_text="", raw_html=raw_html)
+
+        if not raw_html:
+            _trace(req_id, "preview_fetch.empty", url=url, policy=policy, elapsed=round(time.perf_counter() - t0, 3))
+            return PreviewPayload()
+
+        try:
+            payload = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: build_preview_payload(url, raw_html, query=query, settings=settings),
+                ),
+                timeout=fetch_timeout,
+            )
+        except Exception:
+            _trace(req_id, "preview_fetch.payload_error", url=url, policy=policy, elapsed=round(time.perf_counter() - t0, 3))
+            return PreviewPayload()
+        _trace(
+            req_id,
+            "preview_fetch.done",
+            url=url,
+            policy=policy,
+            elapsed=round(time.perf_counter() - t0, 3),
+            chars=len(payload.text or ""),
+            quality=round(float(payload.quality_score or 0.0), 3),
+            semantic=round(float(payload.semantic_score or 0.0), 3),
+            strategy=payload.strategy_used,
+        )
+        return payload
+
+
+async def _fetch_previews(
+    results: list[SearchResult],
+    query: str,
+    concurrency: int,
+    fetch_timeout: float,
+    total_timeout: float,
+    preview_settings: dict,
+    loop,
+    policies: list[str] | None = None,
+    early_return_threshold: int = 0,
+    req_id: str = "-",
+    deadline: float | None = None,
+) -> list[PreviewPayload]:
+    """Fetch previews for a list of results concurrently.
+
+    policies — parallel list of fetch policies per result ("cheap" | "race").
+               If None, defaults to "cheap" for all.
+    early_return_threshold — cancel remaining fetches after this many non-empty
+                             payloads are collected (0 = wait for all).
+    """
+    import aiohttp
+    import math as _math
+
+    if not results:
+        return []
+
+    if policies is None:
+        policies = ["cheap"] * len(results)
+
+    sem = asyncio.Semaphore(concurrency)
+    timeout = aiohttp.ClientTimeout(total=fetch_timeout)
+    connector = await _get_http_connector(concurrency)
+    t0 = time.perf_counter()
+    _trace(
+        req_id,
+        "preview_batch.start",
+        targets=len(results),
+        concurrency=concurrency,
+        fetch_timeout=fetch_timeout,
+        total_timeout=total_timeout,
+        early_return_threshold=early_return_threshold,
+    )
+
+    try:
+        warm_t0 = time.perf_counter()
+        await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: warm_preview_models(preview_settings)),
+            timeout=10.0,
+        )
+        _trace(req_id, "preview_batch.warm_done", elapsed=round(time.perf_counter() - warm_t0, 3))
+    except Exception:
+        _trace(req_id, "preview_batch.warm_failed", elapsed=round(time.perf_counter() - warm_t0, 3))
+        pass
+
+    try:
+        async with aiohttp.ClientSession(
+            timeout=timeout, connector=connector, connector_owner=False,
+            headers={"User-Agent": _UA}
+        ) as session:
+            tasks = [
+                asyncio.create_task(
+                    _fetch_preview_one(session, r, query, preview_settings, sem, loop, policy=p,
+                                       fetch_timeout=fetch_timeout, req_id=req_id)
+                )
+                for r, p in zip(results, policies)
+            ]
+            effective_timeout = max(
+                total_timeout,
+                (fetch_timeout * _math.ceil(len(results) / max(concurrency, 1))) + 2.0,
+            )
+            if deadline is not None:
+                # Leave 1s for formatting/ranking after previews finish
+                remaining = max(1.0, deadline - loop.time() - 1.0)
+                effective_timeout = min(effective_timeout, remaining)
+            _trace(req_id, "preview_batch.effective_timeout", effective_timeout=effective_timeout)
+
+            # Map task → original index so we can reconstruct ordering
+            task_to_idx = {t: i for i, t in enumerate(tasks)}
+            payloads: list[PreviewPayload] = [PreviewPayload()] * len(results)
+            pending: set = set(tasks)
+            good_count = 0
+            deadline = loop.time() + effective_timeout
+
+            while pending:
+                remaining = max(0.01, deadline - loop.time())
+                done_batch, pending = await asyncio.wait(
+                    pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+                )
+                if not done_batch:
+                    # Deadline reached
+                    break
+                for task in done_batch:
+                    idx = task_to_idx[task]
+                    try:
+                        payload = task.result()
+                    except Exception:
+                        payload = PreviewPayload()
+                    payloads[idx] = payload
+                    if payload.text:
+                        good_count += 1
+
+                if early_return_threshold and good_count >= early_return_threshold:
+                    for t in pending:
+                        t.cancel()
+                    logger.debug(
+                        "early_return: %d good preview(s) collected, cancelled %d remaining",
+                        good_count, len(pending),
+                    )
+                    _trace(
+                        req_id,
+                        "preview_batch.early_return",
+                        good_count=good_count,
+                        cancelled=len(pending),
+                    )
+                    break
+
+            # Cancel any tasks still pending (deadline exceeded without early-return)
+            for t in pending:
+                t.cancel()
+
+    except Exception:
+        _trace(req_id, "preview_batch.error", elapsed=round(time.perf_counter() - t0, 3))
+        return [PreviewPayload() for _ in results]
+    _trace(
+        req_id,
+        "preview_batch.done",
+        elapsed=round(time.perf_counter() - t0, 3),
+        nonempty=sum(1 for p in payloads if p.text),
+        total=len(payloads),
+    )
+    return payloads
+
+
+# ---------------------------------------------------------------------------
+# Merge providers
+# ---------------------------------------------------------------------------
+
+def _proportional_merge(yacy: list, ddgs: list, cap: int) -> list:
+    yn, dn = len(yacy), len(ddgs)
+    if yn == 0:
+        raw = ddgs[:cap * 2]
+    elif dn == 0:
+        raw = yacy[:cap * 2]
+    else:
+        yr_take = max(1, round(cap * yn / (yn + dn)))
+        dr_take = cap - yr_take
+        if yr_take > yn:
+            yr_take = yn
+            dr_take = min(cap - yr_take, dn)
+        elif dr_take > dn:
+            dr_take = dn
+            yr_take = min(cap - dr_take, yn)
+        # +4 overshoot buffer: zip() stops at the shorter side, so we grab
+        # extra items to ensure we have enough pairs even if one provider
+        # returns fewer results than yr_take/dr_take. The dedup loop trims to cap.
+        yr_s, dr_s = yacy[:yr_take + 4], ddgs[:dr_take + 4]
+        raw = [x for pair in zip(yr_s, dr_s) for x in pair]
+        raw += yr_s[len(dr_s):] + dr_s[len(yr_s):]
+
+    seen: set[str] = set()
+    out: list = []
+    for r in raw:
+        nu = normalize_url(getattr(r, "url", ""))
+        if nu and nu not in seen:
+            seen.add(nu)
+            out.append(r)
+        if len(out) >= cap:
+            break
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Result formatting
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Per-query-type output profiles
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _OutputProfile:
+    """Controls how many results are shown and how deeply they are parsed.
+
+    Two strategies:
+      depth-first  — fewer results, richer parsed content, optional bonus snippets
+      breadth-first — more results, shallow parsing, speed over depth
+    """
+    max_results: int           # final result count shown to the model
+    preview_fetch_limit: int   # max pages to actually scrape
+    unparsed_bonus: int        # unparsed results appended if score ≥ threshold
+    min_score_unparsed: float  # final-score floor for unparsed bonus results
+
+
+_OUTPUT_PROFILES: dict[str, _OutputProfile] = {
+    # depth-first: fewer sources, deep parse — quality beats volume
+    "technical":       _OutputProfile(6,  5, 2, 0.30),
+    "academic":        _OutputProfile(6,  5, 1, 0.35),
+    "troubleshooting": _OutputProfile(7,  5, 2, 0.28),
+    "medical":         _OutputProfile(7,  5, 2, 0.28),
+    # breadth-first: more sources, shallow parse — volume beats depth
+    "journalistic":    _OutputProfile(12, 3, 0, 0.00),
+    "forum":           _OutputProfile(10, 3, 0, 0.00),
+    "shopping":        _OutputProfile(10, 3, 0, 0.00),
+    # middle ground
+    "finance":         _OutputProfile(8,  3, 2, 0.30),
+    "general":         _OutputProfile(10, 4, 2, 0.30),
+}
+_DEFAULT_OUTPUT_PROFILE = _OUTPUT_PROFILES["general"]
+
+
+def _get_output_profile(query_types: list[str]) -> _OutputProfile:
+    """Return the output profile for the primary query type."""
+    return _OUTPUT_PROFILES.get(query_types[0] if query_types else "general",
+                                _DEFAULT_OUTPUT_PROFILE)
+
+
+_DOWNLOADABLE_EXTS = (".pdf", ".mp4", ".mp3", ".docx", ".xlsx", ".csv")
+
+
+def _badge_type(url: str) -> str:
+    u = url.lower()
+    if "youtube.com" in u or "youtu.be" in u:
+        return "VIDEO"
+    if ".pdf" in u or "/pdf/" in u:
+        return "PDF"
+    if "wikipedia.org" in u:
+        return "WIKI"
+    if "github.com" in u:
+        return "GITHUB"
+    if "arxiv.org" in u:
+        return "ARXIV"
+    if any(u.endswith(ext) for ext in _DOWNLOADABLE_EXTS):
+        return "FILE"
+    return "WEB"
+
+
+def _badge_engine(engine: str) -> str:
+    e = engine.lower()
+    if "yacy" in e:
+        return "YaCy"
+    if "yandex" in e:
+        return "Yandex"
+    # hosted:tavily / hosted:brave / hosted:bing / hosted:serpapi
+    if e.startswith("hosted:"):
+        provider = e[len("hosted:"):]
+        return provider.capitalize()
+    if "brave" in e:
+        return "Brave"
+    if "bing" in e:
+        return "Bing"
+    return "DDGS"
+
+
+def _display_text(text: str, limit: int) -> str:
+    compact = " ".join((text or "").split()).strip(" ,;:|-")
+    if not compact:
+        return ""
+    return compact[:limit].rstrip(" ,;:|-")
+
+
+def _format_results(
+    results: list[SearchResult],
+    payloads: list[PreviewPayload],
+    query: str,
+    query_profile: dict,
+    output_profile: _OutputProfile,
+    snippet_char_budget: int,
+    preview_char_budget: int,
+    total_char_budget: int = 0,
+    query_type: str = "general",
+    query_types: list[str] | None = None,
+    rep_store=None,
+) -> str:
+    """Build the final text output for the MCP tool.
+
+    output_profile — controls result count and depth-first vs breadth-first
+    selection. Depth-first types (technical, academic, …) prefer parsed
+    results and add unparsed bonus only if score meets the threshold.
+    Breadth-first types (journalistic, forum, …) just take top N by score.
+
+    total_char_budget — if > 0, stop adding result blocks once the cumulative
+    character count would exceed it (prevents flooding the model context).
+    """
+    max_results = output_profile.max_results
+    _qtypes = query_types if query_types else [query_type]
+    scored: list[tuple[float, int, SearchResult, PreviewPayload]] = []
+    for idx, (result, payload) in enumerate(zip(results, payloads)):
+        score = _result_score(
+            result, payload,
+            index=idx, total=len(results),
+            query=query, profile=query_profile,
+            query_type=_qtypes[0], rep_store=rep_store,
+        )
+        scored.append((score, idx, result, payload))
+
+        # Record content quality for domains that returned actual content.
+        # Only when fetch succeeded (payload.text non-empty) so that fetch
+        # failures (anti-bot, network) don't unfairly penalise a domain.
+        # Record for every matched query type so reputation is tracked per-type.
+        if rep_store is not None and payload.text:
+            domain = domain_from_url(result.url)
+            if domain:
+                signal = _content_quality_signal(payload, result, query)
+                for qt in _qtypes:
+                    try:
+                        rep_store.record(domain, qt, signal)
+                    except Exception:
+                        pass
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+
+    # -- Result selection: depth-first vs breadth-first ----------------------
+    #
+    # depth-first (unparsed_bonus > 0):
+    #   Take top (max_results − bonus) parsed results first, then append up to
+    #   `bonus` unparsed results that still score above the threshold.
+    #   This ensures the model sees rich content for technical/medical queries
+    #   without being padded with low-quality stubs.
+    #
+    # breadth-first (unparsed_bonus == 0):
+    #   Just take top max_results by score — volume beats depth for news/forum.
+    #
+    if output_profile.unparsed_bonus > 0:
+        parsed   = [(s, i, r, p) for s, i, r, p in scored if p.text]
+        unparsed = [(s, i, r, p) for s, i, r, p in scored if not p.text]
+        parsed_take = max(0, max_results - output_profile.unparsed_bonus)
+        selected = parsed[:parsed_take]
+        for item in unparsed:
+            if len(selected) - parsed_take >= output_profile.unparsed_bonus:
+                break
+            if item[0] >= output_profile.min_score_unparsed:
+                selected.append(item)
+        selected.sort(key=lambda x: (-x[0], x[1]))
+        final = selected[:max_results]
+    else:
+        final = scored[:max_results]
+
+    header = f"Search: {query}\n"
+    lines: list[str] = [header]
+    total_chars = len(header)
+
+    for rank, (score, _, result, payload) in enumerate(final, 1):
+        badge = _badge_type(result.url)
+        engine = _badge_engine(result.engine)
+        tier = result.trust_tier or "?"
+        snippet_text = _display_text(result.snippet or "", snippet_char_budget)
+        preview_text = _display_text(payload.text or "", preview_char_budget)
+
+        block_lines = [f"[{rank}] [{badge}] [{engine}] [{tier}]"]
+        block_lines.append("Title  :")
+        block_lines.append(result.title)
+        block_lines.append("URL    :")
+        block_lines.append(result.url)
+        if preview_text:
+            if snippet_text:
+                block_lines.append("Snippet:")
+                block_lines.append(snippet_text)
+            block_lines.append("Preview:")
+            block_lines.append(preview_text)
+        elif snippet_text:
+            block_lines.append("Preview:")
+            block_lines.append(snippet_text)
+        block_lines.append("")
+
+        block = "\n".join(block_lines)
+
+        if total_char_budget and total_chars + len(block) > total_char_budget:
+            lines.append(f"[...{max_results - rank + 1} result(s) omitted — context budget reached]")
+            break
+
+        lines.append(block)
+        total_chars += len(block)
+
+    if len(scored) == 0:
+        lines.append("No results found.")
+
+    return "\n".join(lines).strip()
+
+
+# ---------------------------------------------------------------------------
+# WebSearchService
+# ---------------------------------------------------------------------------
+
+@dataclass
+class WebSearchOptions:
+    max_results: int = 10
+    use_yacy: bool = True
+    fetch_previews: bool = True
+    concurrency: int = 4
+    fetch_timeout: float = 6.0
+    total_timeout: float = 12.0
+    timelimit: Optional[str] = None   # DDGS time filter: "d", "w", "m", "y"
+
+
+class WebSearchService:
+    """Orchestrate fast web search across DDGS and optionally YaCy."""
+
+    def __init__(self, options: Optional[WebSearchOptions] = None) -> None:
+        cfg = load_search_config()
+        self._cfg = cfg
+        self._opts = options or WebSearchOptions(
+            max_results=cfg.search.max_results,
+            fetch_timeout=cfg.search.preview_fetch_timeout,
+            total_timeout=cfg.search.preview_total_timeout,
+        )
+
+    async def search(self, query: str, deadline: float | None = None) -> str:
+        """Run web search and return formatted text result."""
+        opts = self._opts
+        req_id = _make_request_id()
+        overall_t0 = time.perf_counter()
+        pool_multiplier = max(1, int(self._cfg.search.candidate_pool_multiplier))
+        preview_fetch_limit = max(1, int(self._cfg.search.preview_fetch_limit))
+        snippet_char_budget = max(600, int(self._cfg.search.max_snippet_chars))
+        preview_char_budget = max(
+            int(self._cfg.search.preview_max_chars),
+            int(self._cfg.search.max_snippet_chars),
+        )
+        query, _ = _apply_year_hint_policy(query, self._cfg.query)
+        lang = infer_query_language(query)
+        query_types = infer_query_types(query)
+        query_type = query_types[0]
+        query_profile = _parse_query_profile(query)
+        out_profile = _get_output_profile(query_types)
+
+        # Per-type profile overrides config defaults for fetch depth and output count.
+        # preview_fetch_limit: how many pages to scrape (depth-first types scrape more)
+        # max_results: passed to _format_results — breadth-first types show more results
+        preview_fetch_limit = out_profile.preview_fetch_limit
+
+        logger.info(
+            "web_search query=%r lang=%s types=%s profile=max%d/fetch%d/bonus%d",
+            query, lang, query_types,
+            out_profile.max_results, out_profile.preview_fetch_limit, out_profile.unparsed_bonus,
+        )
+        _trace(
+            req_id,
+            "search.start",
+            query=query,
+            lang=lang,
+            query_type=query_type,
+            query_types=query_types,
+            out_max_results=out_profile.max_results,
+            out_preview_fetch_limit=out_profile.preview_fetch_limit,
+            out_unparsed_bonus=out_profile.unparsed_bonus,
+            fetch_previews=opts.fetch_previews,
+        )
+
+        # fetch_max = how many results to request from search engines.
+        # Based on the profile's output count so providers get a proportional ask.
+        buffer = max(0, int(self._cfg.search.result_buffer_size))
+        fetch_max = out_profile.max_results + buffer
+
+        # -- Load balancing across providers --
+        #
+        # When hosted API engines supplement DDGS, over-fetching from every
+        # provider wastes money and rate-limit quota.  Strategy:
+        #
+        #   n_hosted = 0  → DDGS gets full multiplier (×pool_multiplier), 2-engine hedge
+        #   n_hosted = 1  → DDGS multiplier drops by 1, hedge reduced to 1 engine
+        #   n_hosted ≥ 2  → DDGS gets bare fetch_max (×1), single engine, no tertiary
+        #
+        # Hosted engines each get fetch_max (×1) — they already provide
+        # good quality results without over-fetching.
+        hosted_engines = available_hosted_engines()
+        n_hosted = len(hosted_engines)
+
+        ddgs_multiplier = max(1, pool_multiplier - n_hosted)
+        ddgs_hedge      = max(1, 2 - n_hosted)          # 2→1→1 as hosted grows
+        hosted_max      = fetch_max                      # no multiplier for paid APIs
+
+        _trace(
+            req_id,
+            "providers.config",
+            n_hosted=n_hosted,
+            ddgs_multiplier=ddgs_multiplier,
+            ddgs_hedge=ddgs_hedge,
+            hosted_engines=hosted_engines,
+        )
+
+        # -- Provider calls --
+        ddgs_task = asyncio.create_task(
+            async_ddgs_search(
+                query,
+                max_results=fetch_max * ddgs_multiplier,
+                query_type=query_type,
+                query_types=query_types,
+                lang=lang,
+                timelimit=opts.timelimit,
+                hedge_count=ddgs_hedge,
+            )
+        )
+
+        yacy_task = None
+        if opts.use_yacy and is_yacy_available(timeout=1):
+            yacy_task = asyncio.create_task(
+                async_yacy_search(query, max_results=fetch_max * pool_multiplier)
+            )
+
+        # -- Hosted API providers (Tavily / Brave / Bing / SerpAPI) --
+        # Each gets fetch_max results — no multiplier needed since DDGS already
+        # covers the candidate pool and we don't want to burn API credits.
+        hosted_tasks: dict[str, asyncio.Task] = {
+            engine: asyncio.create_task(
+                async_hosted_search(
+                    engine,
+                    query,
+                    max_results=hosted_max,
+                    timelimit=opts.timelimit,
+                    query_type=query_type,
+                )
+            )
+            for engine in hosted_engines
+        }
+
+        provider_t0 = time.perf_counter()
+        ddgs_results: list[SearchResult] = await ddgs_task
+        yacy_results: list[SearchResult] = await yacy_task if yacy_task else []
+        hosted_results: dict[str, list[SearchResult]] = {}
+        for engine, task in hosted_tasks.items():
+            try:
+                hosted_results[engine] = await task
+            except Exception as exc:
+                logger.warning("[hosted:%s] task raised: %s", engine, exc)
+                hosted_results[engine] = []
+
+        _trace(
+            req_id,
+            "providers.done",
+            elapsed=round(time.perf_counter() - provider_t0, 3),
+            ddgs=len(ddgs_results),
+            yacy=len(yacy_results),
+            yacy_used=bool(yacy_task),
+            **{f"hosted_{k}": len(v) for k, v in hosted_results.items()},
+        )
+
+        # -- Merge + dedup --
+        # Start with YaCy + DDGS proportional merge, then append hosted results.
+        # Hosted results are appended after DDGS so DDGS rank signal is preserved;
+        # dedup will remove duplicates across all sources.
+        merge_t0 = time.perf_counter()
+        merged = _proportional_merge(
+            yacy_results,
+            ddgs_results,
+            cap=fetch_max * pool_multiplier,
+        )
+        for h_results in hosted_results.values():
+            merged = merged + h_results
+        merged = merged[: fetch_max * pool_multiplier * 2]  # hard cap before dedup
+        deduped = _dedup_results(merged)
+        _trace(
+            req_id,
+            "merge.done",
+            elapsed=round(time.perf_counter() - merge_t0, 3),
+            merged=len(merged),
+            deduped=len(deduped),
+        )
+
+        if not deduped:
+            _trace(req_id, "search.empty", elapsed=round(time.perf_counter() - overall_t0, 3))
+            return f"No results found for: {query}"
+
+        # -- Snippet triage --
+        # Fast per-result score (no network). Decides skip/policy per result
+        # and populates trust_tier as a side effect.
+        triage = _triage_results(deduped, query)
+        skipped_count = sum(1 for t in triage if t.skip)
+        race_count = sum(1 for t in triage if not t.skip and t.fetch_policy == "race")
+        _trace(
+            req_id,
+            "triage.done",
+            skipped=skipped_count,
+            race=race_count,
+            cheap=len(triage) - skipped_count - race_count,
+            total=len(triage),
+        )
+        if skipped_count or race_count:
+            logger.debug(
+                "triage: skipped=%d race=%d cheap=%d (total=%d)",
+                skipped_count, race_count, len(triage) - skipped_count - race_count, len(triage),
+            )
+
+        # Build ordered fetch candidate list: non-skipped, up to preview_fetch_limit
+        to_fetch: list[SearchResult] = []
+        to_fetch_indices: list[int] = []
+        to_fetch_policies: list[str] = []
+        for i, (result, tr) in enumerate(zip(deduped, triage)):
+            if not tr.skip and len(to_fetch) < preview_fetch_limit:
+                to_fetch.append(result)
+                to_fetch_indices.append(i)
+                to_fetch_policies.append(tr.fetch_policy)
+        _trace(
+            req_id,
+            "fetch_plan.done",
+            to_fetch=len(to_fetch),
+            policies=to_fetch_policies[:],
+        )
+
+        # -- Preview fetching --
+        loop = asyncio.get_running_loop()
+        payloads: list[PreviewPayload] = [PreviewPayload()] * len(deduped)
+
+        if to_fetch and opts.fetch_previews and self._cfg.search.auto_scrape_preview:
+            preview_settings = get_preview_settings(apply_hardware_profile=False)
+            fetched = await _fetch_previews(
+                to_fetch,
+                query=query,
+                concurrency=opts.concurrency,
+                fetch_timeout=opts.fetch_timeout,
+                total_timeout=opts.total_timeout,
+                preview_settings=preview_settings,
+                loop=loop,
+                policies=to_fetch_policies,
+                early_return_threshold=max(0, int(self._cfg.search.early_return_threshold)),
+                req_id=req_id,
+                deadline=deadline,
+            )
+            for i, payload in zip(to_fetch_indices, fetched):
+                payloads[i] = payload
+
+        # -- Background prefetch of non-displayed buffer results --
+        # Candidates: non-skipped results that didn't make the preview_fetch_limit
+        # cut, and whose URLs are not already fresh in the source cache.
+        # Runs as a fire-and-forget task — never blocks the response.
+        if opts.fetch_previews and self._cfg.search.auto_scrape_preview:
+            fetched_urls = {r.url for r in to_fetch}
+            prefetch_candidates = [
+                r.url
+                for r, tr in zip(deduped, triage)
+                if r.url not in fetched_urls and not tr.skip
+            ][:_PREFETCH_MAX_URLS]
+            if prefetch_candidates:
+                asyncio.create_task(
+                    _prefetch_urls_background(prefetch_candidates, req_id=req_id)
+                )
+                _trace(req_id, "prefetch.scheduled", urls=len(prefetch_candidates))
+
+        format_t0 = time.perf_counter()
+        try:
+            _rep_store = get_reputation_store()
+        except Exception:
+            _rep_store = None
+
+        result_text = _format_results(
+            deduped, payloads, query,
+            query_profile=query_profile,
+            output_profile=out_profile,
+            snippet_char_budget=snippet_char_budget,
+            preview_char_budget=preview_char_budget,
+            total_char_budget=self._cfg.search.total_context_budget,
+            query_type=query_type,
+            query_types=query_types,
+            rep_store=_rep_store,
+        )
+        _trace(
+            req_id,
+            "format.done",
+            elapsed=round(time.perf_counter() - format_t0, 3),
+            output_chars=len(result_text),
+            payload_nonempty=sum(1 for p in payloads if p.text),
+        )
+        _trace(req_id, "search.done", elapsed=round(time.perf_counter() - overall_t0, 3))
+        return result_text
+
+    async def search_structured(
+        self,
+        query: str,
+        deadline: float | None = None,
+    ) -> list[SearchResult]:
+        """Run the safe search pipeline and return ranked SearchResult items.
+
+        This is the deep-research entry point. It preserves the current isolated
+        provider lifecycle and cheap triage scoring, but skips preview formatting.
+        """
+        del deadline  # Search providers already have their own internal timeouts.
+        opts = self._opts
+        query, _ = _apply_year_hint_policy(query, self._cfg.query)
+        lang = infer_query_language(query)
+        query_types = infer_query_types(query)
+        query_type = query_types[0]
+        out_profile = _get_output_profile(query_types)
+        pool_multiplier = max(1, int(self._cfg.search.candidate_pool_multiplier))
+        buffer = max(0, int(self._cfg.search.result_buffer_size))
+        fetch_max = out_profile.max_results + buffer
+
+        hosted_engines = available_hosted_engines()
+        n_hosted = len(hosted_engines)
+        ddgs_multiplier = max(1, pool_multiplier - n_hosted)
+        ddgs_hedge = max(1, 2 - n_hosted)
+        hosted_max = fetch_max
+
+        ddgs_task = asyncio.create_task(
+            async_ddgs_search(
+                query,
+                max_results=fetch_max * ddgs_multiplier,
+                query_type=query_type,
+                query_types=query_types,
+                lang=lang,
+                timelimit=opts.timelimit,
+                hedge_count=ddgs_hedge,
+            )
+        )
+
+        yacy_task = None
+        if opts.use_yacy and is_yacy_available(timeout=1):
+            yacy_task = asyncio.create_task(
+                async_yacy_search(query, max_results=fetch_max * pool_multiplier)
+            )
+
+        hosted_tasks: dict[str, asyncio.Task] = {
+            engine: asyncio.create_task(
+                async_hosted_search(
+                    engine,
+                    query,
+                    max_results=hosted_max,
+                    timelimit=opts.timelimit,
+                    query_type=query_type,
+                )
+            )
+            for engine in hosted_engines
+        }
+
+        ddgs_results: list[SearchResult] = await ddgs_task
+        yacy_results: list[SearchResult] = await yacy_task if yacy_task else []
+        hosted_results: dict[str, list[SearchResult]] = {}
+        for engine, task in hosted_tasks.items():
+            try:
+                hosted_results[engine] = await task
+            except Exception as exc:
+                logger.warning("[hosted:%s] structured task raised: %s", engine, exc)
+                hosted_results[engine] = []
+
+        merged = _proportional_merge(
+            yacy_results,
+            ddgs_results,
+            cap=fetch_max * pool_multiplier,
+        )
+        for h_results in hosted_results.values():
+            merged = merged + h_results
+        merged = merged[: fetch_max * pool_multiplier * 2]
+        deduped = _dedup_results(merged)
+        if not deduped:
+            return []
+
+        triage = _triage_results(deduped, query)
+        ranked: list[SearchResult] = []
+        skipped: list[SearchResult] = []
+        for result, tr in zip(deduped, triage):
+            result.score = tr.score
+            result.method_hint = tr.fetch_policy
+            if tr.skip:
+                skipped.append(result)
+            else:
+                ranked.append(result)
+
+        ranked.sort(key=lambda r: (float(r.score or 0.0), len(r.snippet or "")), reverse=True)
+        skipped.sort(key=lambda r: (float(r.score or 0.0), len(r.snippet or "")), reverse=True)
+        combined = ranked + skipped
+        return combined[: max(1, int(opts.max_results))]
+
+
+# ---------------------------------------------------------------------------
+# Top-level convenience coroutine
+# ---------------------------------------------------------------------------
+
+# Hard wall-clock limit for the entire search lifecycle.
+# When exceeded, the coroutine is cancelled → subprocesses are killed via
+# their finally blocks in async_ddgs_search(), aiohttp sessions are closed
+# by their async context managers, and executor threads run to natural
+# completion (they have internal timeouts so they won't hang indefinitely).
+_SEARCH_HARD_TIMEOUT: float = 20.0
+
+
+async def run_web_search(
+    query: str,
+    max_results: int = 10,
+    use_yacy: bool = True,
+    fetch_previews: bool = True,
+    timelimit: Optional[str] = None,
+    time_range: Optional[str] = None,
+    hard_timeout: float = _SEARCH_HARD_TIMEOUT,
+) -> str:
+    """Convenience entry point for MCP adapter and CLI.
+
+    Enforces a hard_timeout (default 20s) over the entire search lifecycle.
+    If exceeded, kills spawned subprocesses and returns a clean timeout message
+    instead of raising — callers never see a hanging coroutine.
+
+    The time window is inferred automatically from the query type:
+      journalistic / finance  → last month
+      shopping / troubleshoot / forum / technical → last year
+      academic / medical / general → no restriction
+    """
+    init_t0 = time.perf_counter()
+    cfg = load_search_config()
+    query_for_search, year_tl = _apply_year_hint_policy(query, cfg.query)
+    # Type-based timelimit: inferred from query classification.
+    type_tl = _auto_timelimit(infer_query_types(query_for_search))
+    # Use the more restrictive of the two signals.
+    auto_timelimit = _stricter_timelimit(year_tl, type_tl)
+    explicit_timelimit = (
+        _normalize_time_range(time_range)
+        or _normalize_time_range(timelimit)
+        or timelimit
+    )
+    resolved_timelimit = explicit_timelimit or auto_timelimit
+    opts = WebSearchOptions(
+        max_results=max_results,
+        use_yacy=use_yacy,
+        fetch_previews=fetch_previews,
+        timelimit=resolved_timelimit,
+    )
+    service = WebSearchService(options=opts)
+    trace_logger.info(
+        "stage=service.init query=%r elapsed=%.3f",
+        query_for_search[:160],
+        time.perf_counter() - init_t0,
+    )
+    try:
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + hard_timeout
+        return await asyncio.wait_for(service.search(query_for_search, deadline=deadline), timeout=hard_timeout)
+    except asyncio.TimeoutError:
+        elapsed = round(time.perf_counter() - init_t0, 1)
+        logger.warning(
+            "web_search.hard_timeout query=%r elapsed=%.1fs limit=%.0fs",
+            query[:80], elapsed, hard_timeout,
+        )
+        return f"Search timed out after {elapsed}s (limit {hard_timeout:.0f}s) for: {query_for_search}"
+
+
+async def run_web_search_structured(
+    query: str,
+    max_results: int = 10,
+    use_yacy: bool = True,
+    timelimit: Optional[str] = None,
+    hard_timeout: float = _SEARCH_HARD_TIMEOUT,
+    time_range: Optional[str] = None,
+) -> list[SearchResult]:
+    """Structured counterpart to run_web_search for deep research."""
+    cfg = load_search_config()
+    query_for_search, year_tl = _apply_year_hint_policy(query, cfg.query)
+    type_tl = _auto_timelimit(infer_query_types(query_for_search))
+    auto_timelimit = _stricter_timelimit(year_tl, type_tl)
+    explicit_timelimit = (
+        _normalize_time_range(time_range)
+        or _normalize_time_range(timelimit)
+        or timelimit
+    )
+    resolved_timelimit = explicit_timelimit or auto_timelimit
+    opts = WebSearchOptions(
+        max_results=max_results,
+        use_yacy=use_yacy,
+        fetch_previews=False,
+        timelimit=resolved_timelimit,
+    )
+    service = WebSearchService(options=opts)
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + hard_timeout
+    try:
+        return await asyncio.wait_for(
+            service.search_structured(query_for_search, deadline=deadline),
+            timeout=hard_timeout,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "web_search_structured.hard_timeout query=%r limit=%.0fs",
+            query[:80], hard_timeout,
+        )
+        return []

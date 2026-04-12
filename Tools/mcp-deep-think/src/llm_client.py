@@ -4,8 +4,10 @@ import asyncio
 import ast
 import json
 import logging
+import os
 from contextlib import contextmanager
 from contextvars import ContextVar
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 
@@ -19,6 +21,86 @@ logger = logging.getLogger(__name__)
 
 CURRENT_LLM_ENGINE = ContextVar("deep_think_llm_engine", default=None)
 CURRENT_LLM_MODEL = ContextVar("deep_think_llm_model", default=None)
+_runtime_settings_json_cache: Optional[dict] = None
+_runtime_settings_json_path: Optional[str] = None
+
+
+def _normalize_engine_name(engine: str | None) -> str:
+    normalized = str(engine or "").strip().lower()
+    if normalized in {"ollama", "ollama-service"}:
+        return "ollama-service"
+    if normalized in {"lm-studio", "lms"}:
+        return "lms"
+    if normalized in {"openai", "openai-api"}:
+        return "openai"
+    return normalized or "lms"
+
+
+def _normalize_engine_address(value: object) -> str:
+    raw = str(value or "").strip().rstrip("/")
+    if not raw:
+        return ""
+    parts = urlsplit(raw)
+    if parts.scheme and parts.netloc:
+        return f"{parts.netloc}{parts.path}".rstrip("/")
+    if parts.scheme and parts.path:
+        return parts.path.rstrip("/")
+    return raw
+
+
+def _infer_openai_scheme(value: str) -> str:
+    host_part = str(value or "").split("/", 1)[0].strip()
+    host_name = host_part.split(":", 1)[0].strip().lower()
+    if host_name in {"localhost", "127.0.0.1", "::1"}:
+        return "http"
+    return "https"
+
+
+def _runtime_settings_json_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    module_dir = str(os.getenv("ASLM_MODULE_DIR", "")).strip()
+    if module_dir:
+        candidates.append(Path(module_dir) / "Settings" / "settings.json")
+    repo_root = Path(__file__).resolve().parents[3]
+    candidates.append(repo_root / "Settings" / "settings.json")
+    candidates.append(Path.cwd() / "Settings" / "settings.json")
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for path in candidates:
+        normalized = str(path.resolve(strict=False)).lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(path)
+    return unique
+
+
+def _get_runtime_settings_json() -> Optional[dict]:
+    global _runtime_settings_json_cache, _runtime_settings_json_path
+
+    for path in _runtime_settings_json_candidates():
+        if not path.exists():
+            continue
+        resolved = str(path.resolve())
+        if _runtime_settings_json_cache is not None and _runtime_settings_json_path == resolved:
+            return dict(_runtime_settings_json_cache)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            _runtime_settings_json_cache = dict(payload)
+            _runtime_settings_json_path = resolved
+            return dict(payload)
+    return None
+
+
+def _runtime_settings_value(key: str, default: object = None) -> object:
+    payload = _get_runtime_settings_json()
+    if isinstance(payload, dict) and key in payload:
+        return payload.get(key, default)
+    return default
 
 
 # JSON parsing helpers
@@ -131,6 +213,10 @@ class LLMClient:
         if contextual:
             return str(contextual)
 
+        json_engine = _runtime_settings_value("llm-engine")
+        if json_engine:
+            return _normalize_engine_name(str(json_engine))
+
         try:
             from Settings import settings as aslm_settings
 
@@ -147,25 +233,39 @@ class LLMClient:
     def _engine_base_url(self, engine: str) -> str:
         """Resolve the chat completions endpoint for OpenAI-compatible engines."""
 
-        normalized_engine = str(engine or "").strip().lower()
+        normalized_engine = _normalize_engine_name(engine)
+
+        endpoint = ""
+        if normalized_engine == "ollama-service":
+            json_port = _runtime_settings_value("ollama-service_port")
+            if json_port not in (None, ""):
+                endpoint = f"http://127.0.0.1:{json_port}"
+        elif normalized_engine == "openai":
+            json_url = _normalize_engine_address(_runtime_settings_value("openai_url", ""))
+            if json_url:
+                endpoint = (
+                    f"{_infer_openai_scheme(json_url)}://{json_url}"
+                    if "://" not in json_url
+                    else json_url
+                )
+        elif normalized_engine == "lms":
+            json_url = _normalize_engine_address(_runtime_settings_value("lms_url", ""))
+            if json_url:
+                endpoint = json_url
 
         try:
             from Settings import settings as aslm_settings
 
-            if normalized_engine == "ollama-service":
+            if normalized_engine == "ollama-service" and not endpoint:
                 port = aslm_settings.get("ollama-service_port", 30002)
                 endpoint = f"http://127.0.0.1:{port}"
-            elif normalized_engine == "openai":
+            elif normalized_engine == "openai" and not endpoint:
                 endpoint = aslm_settings.get_engine_url("openai")
-            elif normalized_engine == "lms":
+            elif normalized_engine == "lms" and not endpoint:
                 endpoint = aslm_settings.get_engine_url("lms")
-            else:
-                endpoint = ""
         except Exception:
-            if normalized_engine == "ollama-service":
+            if normalized_engine == "ollama-service" and not endpoint:
                 endpoint = "http://127.0.0.1:30002"
-            else:
-                endpoint = ""
 
         raw_base = str(endpoint or self.base_url).strip().rstrip("/")
         if not raw_base:

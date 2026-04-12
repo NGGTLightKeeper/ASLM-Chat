@@ -1,0 +1,11 @@
+core/config/api_keys.json
+majestic_million.csv
+core/registry/majestic_million.csv
+*.zip
+*.log
+/tests
+/_cache
+/tmp
+todo.md
+.claude
+/logs
