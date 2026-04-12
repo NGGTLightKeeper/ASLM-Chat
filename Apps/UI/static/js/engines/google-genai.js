@@ -1,5 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
+// Google GenAI adapter.
 export const googleGenAiAdapter = {
   id: 'google-genai',
   aliases: ['google-genai', 'google_genai', 'google', 'gemini'],

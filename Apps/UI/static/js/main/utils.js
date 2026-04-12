@@ -2,8 +2,11 @@
 
 import { THINK_PARAMETER_KEYS } from './constants.js';
 
+// JSON helpers.
+// Parse one JSON payload embedded in a script tag.
 export function parseJsonScript(id) {
   const element = document.getElementById(id);
+
   if (!element) {
     return null;
   }
@@ -15,6 +18,9 @@ export function parseJsonScript(id) {
   }
 }
 
+
+// Parameter helpers.
+// Normalize one parameter name into a canonical lookup key.
 export function normalizeParameterName(param) {
   return String(param || '')
     .trim()
@@ -23,12 +29,17 @@ export function normalizeParameterName(param) {
     .replace(/^_+|_+$/g, '');
 }
 
+// Report whether a parameter key belongs to thinking controls.
 export function isThinkingParameterKey(param) {
   return THINK_PARAMETER_KEYS.has(normalizeParameterName(param));
 }
 
+
+// Address helpers.
+// Normalize an address so it can be safely passed to URL().
 export function normalizeAddressForParsing(value) {
   const rawValue = String(value || '').trim();
+
   if (!rawValue) {
     return '';
   }
@@ -40,6 +51,7 @@ export function normalizeAddressForParsing(value) {
   return `http://${rawValue}`;
 }
 
+// Report whether a hostname resolves to a local or private network address.
 export function isLocalHostname(hostname) {
   const normalizedHost = String(hostname || '')
     .trim()
@@ -73,6 +85,7 @@ export function isLocalHostname(hostname) {
   const privateRangeMatch = normalizedHost.match(/^172\.(\d{1,3})(?:\.\d{1,3}){2}$/);
   if (privateRangeMatch) {
     const secondOctet = Number(privateRangeMatch[1]);
+
     if (secondOctet >= 16 && secondOctet <= 31) {
       return true;
     }
@@ -85,11 +98,15 @@ export function isLocalHostname(hostname) {
   return /^fe80:/i.test(normalizedHost);
 }
 
+
+// Formatting helpers.
+// Format one timestamp in chat-friendly HH:MM form.
 export function timeNow(dateInput) {
   const date = dateInput ? new Date(dateInput) : new Date();
   return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
+// Escape plain text for HTML content.
 export function escHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -98,6 +115,7 @@ export function escHtml(str) {
     .replace(/\n/g, '<br>');
 }
 
+// Escape text for HTML attributes.
 export function escapeAttributeValue(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -106,6 +124,7 @@ export function escapeAttributeValue(str) {
     .replace(/>/g, '&gt;');
 }
 
+// Escape text for textarea content.
 export function escapeTextareaValue(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -113,22 +132,29 @@ export function escapeTextareaValue(str) {
     .replace(/>/g, '&gt;');
 }
 
+
+// Nested object helpers.
+// Read one nested value by dot-separated path.
 export function getNestedValue(source, path) {
   return String(path || '').split('.').reduce(function reduceValue(current, key) {
     if (!current || typeof current !== 'object') {
       return undefined;
     }
+
     return current[key];
   }, source);
 }
 
+// Write one nested value by dot-separated path.
 export function setNestedValue(target, path, value) {
   const parts = String(path || '').split('.').filter(Boolean);
+
   if (!parts.length) {
     return;
   }
 
   let cursor = target;
+
   parts.forEach(function assignValue(part, index) {
     if (index === parts.length - 1) {
       cursor[part] = value;
@@ -138,12 +164,15 @@ export function setNestedValue(target, path, value) {
     if (!cursor[part] || typeof cursor[part] !== 'object') {
       cursor[part] = {};
     }
+
     cursor = cursor[part];
   });
 }
 
+// Delete one nested value and prune empty parent objects.
 export function deleteNestedValue(target, path) {
   const parts = String(path || '').split('.').filter(Boolean);
+
   if (!parts.length || !target || typeof target !== 'object') {
     return;
   }
@@ -153,9 +182,11 @@ export function deleteNestedValue(target, path) {
 
   for (let index = 0; index < parts.length - 1; index += 1) {
     const part = parts[index];
+
     if (!cursor || typeof cursor !== 'object' || !(part in cursor)) {
       return;
     }
+
     trail.push({ parent: cursor, key: part });
     cursor = cursor[part];
   }
@@ -169,6 +200,7 @@ export function deleteNestedValue(target, path) {
   for (let index = trail.length - 1; index >= 0; index -= 1) {
     const entry = trail[index];
     const child = entry.parent[entry.key];
+
     if (child && typeof child === 'object' && !Array.isArray(child) && Object.keys(child).length === 0) {
       delete entry.parent[entry.key];
     } else {
@@ -177,6 +209,7 @@ export function deleteNestedValue(target, path) {
   }
 }
 
+// Flatten one nested config object into leaf-path records.
 export function flattenConfigLeaves(source, prefix) {
   if (!source || typeof source !== 'object' || Array.isArray(source)) {
     return prefix ? [{ path: prefix, value: source }] : [];
@@ -184,9 +217,11 @@ export function flattenConfigLeaves(source, prefix) {
 
   return Object.entries(source).flatMap(function flattenEntry([key, value]) {
     const nextPath = prefix ? `${prefix}.${key}` : key;
+
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       return flattenConfigLeaves(value, nextPath);
     }
+
     return [{ path: nextPath, value }];
   });
 }

@@ -1,5 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
+// OpenAI-compatible adapter.
 export const openAiAdapter = {
   id: 'openai',
   aliases: ['openai', 'openai-api'],

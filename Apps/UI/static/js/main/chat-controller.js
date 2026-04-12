@@ -2,6 +2,8 @@
 
 import { deleteJson, getCsrfToken, getJson, patchJson } from './api.js';
 
+// Chat controller.
+// Create the chat workflow controller for sending, loading, and mutating chats.
 export function createChatController(context, dependencies) {
   const {
     attachmentUi,
@@ -12,13 +14,17 @@ export function createChatController(context, dependencies) {
   } = dependencies;
   const { dom, state } = context;
 
+  // Chat lifecycle helpers.
+  // Build a short title from the first user prompt.
   function buildChatTitle(text, hasAttachments) {
     if (text) {
       return text.substring(0, 40) + (text.length > 40 ? '...' : '');
     }
+
     return hasAttachments ? 'Attachment chat' : 'New Chat';
   }
 
+  // Reset the page into a fresh chat state.
   function startNewChat() {
     dom.$chatTitle.text('New Chat');
     document.title = 'ASLM Chat';
@@ -34,14 +40,19 @@ export function createChatController(context, dependencies) {
     messagesUi.updateSendButtons();
   }
 
+  // Normalize pending attachments into the request-safe shape.
   function clonePendingAttachments(attachments) {
     return (attachments || [])
       .map(attachmentUi.normalizeAttachment)
       .filter(Boolean);
   }
 
+
+  // Model resolution.
+  // Resolve the model that should be used for one queued request.
   async function resolveModelForRequest(request) {
     const preferredModel = String(request.model || request.preferredModel || '').trim();
+
     if (preferredModel) {
       return preferredModel;
     }
@@ -55,6 +66,9 @@ export function createChatController(context, dependencies) {
     return models[0] || '';
   }
 
+
+  // Streaming requests.
+  // Stream one chat request into the provided assistant row.
   async function streamChat(request, $msgRow) {
     const $bubbleContent = $msgRow.find('.msg-bubble');
 
@@ -111,9 +125,12 @@ export function createChatController(context, dependencies) {
         } catch (_error) {
           $bubbleContent.html(`[Error: ${response.status} ${response.statusText}]`);
         }
+
         return;
       }
 
+      // The backend can create a chat lazily. When that happens, patch the
+      // queued requests so every follow-up stays inside the same thread.
       const returnedChatId = response.headers.get('X-Chat-ID');
       if (returnedChatId && state.currentChatId !== returnedChatId) {
         state.currentChatId = returnedChatId;
@@ -138,18 +155,23 @@ export function createChatController(context, dependencies) {
         history.pushState({ chatId: state.currentChatId }, chatTitle, `/chat/${state.currentChatId}/`);
       }
 
+      // Read the response stream chunk by chunk. The custom read helper lets
+      // us stop promptly when the user aborts generation.
       const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let fullText = '';
       const signal = state.currentAbortController ? state.currentAbortController.signal : null;
 
+      // Read one chunk or fail immediately on abort.
       function readOrAbort() {
         if (!signal) {
           return reader.read();
         }
+
         if (signal.aborted) {
           return Promise.reject(new DOMException('Aborted', 'AbortError'));
         }
+
         return Promise.race([
           reader.read(),
           new Promise(function rejectOnAbort(_, reject) {
@@ -195,6 +217,7 @@ export function createChatController(context, dependencies) {
     }
   }
 
+  // Process the next queued request if generation is idle.
   async function processChatQueue() {
     if (state.isChatGenerating || state.chatRequestQueue.length === 0) {
       return;
@@ -218,15 +241,20 @@ export function createChatController(context, dependencies) {
       if ($assistantRow.find('.msg-actions').length === 0) {
         $assistantRow.find('.msg-body').append(context.icons.buildMessageActionsHtml());
       }
+
       messagesUi.updateRegenButtons();
       state.isChatGenerating = false;
       messagesUi.updateSendButtons();
+
       if (state.chatRequestQueue.length > 0) {
         processChatQueue();
       }
     }
   }
 
+
+  // Request building.
+  // Snapshot the current UI state into one queued chat request.
   function buildQueuedRequest(text, attachmentsToSend) {
     return {
       id: `queued-${++state.queuedMessageCounter}`,
@@ -241,6 +269,7 @@ export function createChatController(context, dependencies) {
     };
   }
 
+  // Queue one user message for generation.
   function sendMessage(text, $input) {
     if (!text && state.attachmentState.pending.length === 0) {
       return;
@@ -269,6 +298,7 @@ export function createChatController(context, dependencies) {
     processChatQueue();
   }
 
+  // Abort the active generation locally and on the backend.
   function abortGeneration() {
     if (state.currentAbortController) {
       state.currentAbortController.abort();
@@ -276,12 +306,14 @@ export function createChatController(context, dependencies) {
 
     state.isChatGenerating = false;
     messagesUi.updateSendButtons();
+
     fetch('/api/chat/abort/', {
       method: 'POST',
       headers: { 'X-CSRFToken': getCsrfToken() }
     }).catch(function ignoreAbortError() {});
   }
 
+  // Queue a follow-up regeneration request.
   function queueRegenerationRequest(text, attachments) {
     const request = buildQueuedRequest(text, attachments);
     request.$userRow = { length: 0 };
@@ -290,6 +322,9 @@ export function createChatController(context, dependencies) {
     processChatQueue();
   }
 
+
+  // Regeneration helpers.
+  // Delete the last assistant response and queue it again.
   async function doRegenerate() {
     if (!state.currentChatId) {
       return;
@@ -305,6 +340,7 @@ export function createChatController(context, dependencies) {
       if ($assistantMessages.length) {
         $assistantMessages.last().remove();
       }
+
       messagesUi.updateSendButtons();
 
       if (!data.user_message) {
@@ -322,6 +358,7 @@ export function createChatController(context, dependencies) {
     }
   }
 
+  // Regenerate the most recent assistant response.
   function regenerateLastResponse() {
     if (!state.currentChatId) {
       return;
@@ -338,6 +375,7 @@ export function createChatController(context, dependencies) {
     doRegenerate();
   }
 
+  // Regenerate the assistant response attached to one user row.
   async function regenerateFromUserMessage($userMsg) {
     if (!state.currentChatId || state.isChatGenerating) {
       return;
@@ -355,11 +393,14 @@ export function createChatController(context, dependencies) {
 
     const assistantMessageId = $nextAssistant.data('message-id');
 
+    // Remove the rendered assistant row and rebuild the request from the
+    // original user message stored in the DOM.
     function doUserRegen() {
       $nextAssistant.remove();
       messagesUi.updateRegenButtons();
 
       let userAttachments = [];
+
       try {
         userAttachments = JSON.parse($userMsg.find('.msg-bubble').attr('data-attachments') || '[]');
       } catch (_error) {
@@ -378,12 +419,16 @@ export function createChatController(context, dependencies) {
       } catch (error) {
         console.error('Failed to delete assistant message for regen', assistantMessageId, error);
       }
+
       return;
     }
 
     doUserRegen();
   }
 
+
+  // Composer wiring.
+  // Bind one textarea and send button pair to the chat workflow.
   function wireInput($input, $button) {
     $input.on('input', function onInput() {
       this.style.height = 'auto';
@@ -394,6 +439,7 @@ export function createChatController(context, dependencies) {
     $input.on('keydown', function onKeyDown(event) {
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
+
         if (!$button.prop('disabled')) {
           sendMessage($input.val().trim(), $input);
         }
@@ -405,12 +451,16 @@ export function createChatController(context, dependencies) {
         abortGeneration();
         return;
       }
+
       if (!$button.prop('disabled')) {
         sendMessage($input.val().trim(), $input);
       }
     });
   }
 
+
+  // Chat history loading.
+  // Load one stored chat into the current page.
   async function loadChat(chatId, pushState) {
     if (!chatId || state.currentChatId === chatId) {
       return;
@@ -458,6 +508,9 @@ export function createChatController(context, dependencies) {
     }
   }
 
+
+  // Chat mutations.
+  // Rename the chat currently targeted by the history menu.
   async function renameActiveMenuChat() {
     const $item = historyUi.getActiveMenuTarget();
     if (!$item) {
@@ -491,6 +544,7 @@ export function createChatController(context, dependencies) {
     }
   }
 
+  // Delete the chat currently targeted by the history menu.
   async function deleteActiveMenuChat() {
     const $item = historyUi.getActiveMenuTarget();
     if (!$item) {
@@ -520,6 +574,7 @@ export function createChatController(context, dependencies) {
     }
   }
 
+  // Delete one message row and keep the local UI in sync.
   async function deleteMessage($message) {
     const messageId = $message.data('message-id');
     if (!messageId) {

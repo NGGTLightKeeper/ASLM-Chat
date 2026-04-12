@@ -2,23 +2,30 @@
 
 import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
 
+// Message UI.
+// Create helpers for rendering messages, activity timelines, and message actions.
 export function createMessagesUi(context, dependencies) {
   const { attachmentUi, toolInspector } = dependencies;
   const { dom, icons, state } = context;
 
+  // Composer state.
+  // Sync both send buttons with the current generation and attachment state.
   function updateSendButtons() {
     if (state.isChatGenerating) {
       dom.$sendBtn.prop('disabled', false).addClass('stop-btn').html(icons.STOP_ICON).attr('aria-label', 'Stop generation');
       dom.$sendBtnConv.prop('disabled', false).addClass('stop-btn').html(icons.STOP_ICON).attr('aria-label', 'Stop generation');
+
       return;
     }
 
     const hasPendingAttachments = state.attachmentState.pending.length > 0;
+
     dom.$sendBtn
       .removeClass('stop-btn')
       .html(icons.SEND_ICON)
       .attr('aria-label', 'Send Message')
       .prop('disabled', !dom.$chatInput.val().trim() && !hasPendingAttachments);
+
     dom.$sendBtnConv
       .removeClass('stop-btn')
       .html(icons.SEND_ICON)
@@ -26,6 +33,7 @@ export function createMessagesUi(context, dependencies) {
       .prop('disabled', !dom.$chatInputConv.val().trim() && !hasPendingAttachments);
   }
 
+  // Show regen buttons only on the latest assistant exchange.
   function updateRegenButtons() {
     dom.$messagesInner.find('.msg-regen-btn').hide();
 
@@ -35,29 +43,39 @@ export function createMessagesUi(context, dependencies) {
     }
 
     $lastAssistant.find('.msg-regen-btn').show();
+
     const $prev = $lastAssistant.prev('.msg.user');
     if ($prev.length) {
       $prev.find('.msg-regen-btn').show();
     }
   }
 
+  // Scroll the message area to the bottom.
   function scrollBottom() {
     dom.$messagesArea.scrollTop(dom.$messagesArea[0].scrollHeight);
   }
 
+
+  // Markdown rendering.
+  // Render one visible text segment as sanitized HTML.
   function renderMarkdownSegment(content) {
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
       return escHtml(content);
     }
+
     return DOMPurify.sanitize(marked.parse(content));
   }
 
+
+  // Activity parsing.
+  // Parse model output into visible text, thoughts, and tool events.
   function parseMessageTimeline(rawText) {
     const source = String(rawText || '');
     const segments = [];
     const toolSegmentByAlias = {};
     let cursor = 0;
 
+    // Strip control tokens that should never reach the visible transcript.
     function sanitizeVisibleText(value) {
       return String(value || '')
         .replace(/<\|start\|>\s*(assistant|user|system)?\s*(<\|channel\|>\s*(final|analysis|commentary))?\s*(<\|message\|>)?/gi, '')
@@ -70,11 +88,13 @@ export function createMessagesUi(context, dependencies) {
         .replace(/<\|(assistant|user|system|endoftext)\|>/gi, '');
     }
 
+    // Append a visible text segment if anything readable remains.
     function pushTextSegment(value) {
       const sanitizedValue = sanitizeVisibleText(value);
       if (!sanitizedValue || !sanitizedValue.trim()) {
         return;
       }
+
       segments.push({ type: 'text', content: sanitizedValue });
     }
 
@@ -96,6 +116,7 @@ export function createMessagesUi(context, dependencies) {
       candidates.sort(function sortCandidates(left, right) {
         return left.pos - right.pos;
       });
+
       const next = candidates[0];
 
       if (next.pos > cursor) {
@@ -116,6 +137,7 @@ export function createMessagesUi(context, dependencies) {
         if (content) {
           segments.push({ type: 'thought', content });
         }
+
         cursor = thinkEnd + 8;
         continue;
       }
@@ -127,6 +149,7 @@ export function createMessagesUi(context, dependencies) {
         }
 
         const payload = source.substring(next.pos + 11, toolEnd);
+
         try {
           const parsed = JSON.parse(payload);
           const alias = String(parsed.alias || '').trim();
@@ -140,7 +163,9 @@ export function createMessagesUi(context, dependencies) {
             arguments: parsed.arguments && typeof parsed.arguments === 'object' ? parsed.arguments : {},
             result: null
           };
+
           segments.push(segment);
+
           if (alias) {
             toolSegmentByAlias[alias] = segment;
           }
@@ -158,16 +183,19 @@ export function createMessagesUi(context, dependencies) {
       }
 
       const payload = source.substring(next.pos + 13, resultEnd);
+
       try {
         const parsed = JSON.parse(payload);
         const alias = String(parsed.alias || '').trim();
         const target = toolSegmentByAlias[alias];
+
         if (target) {
           target.result = String(parsed.content || '');
         }
       } catch (_error) {
         // Ignore malformed tool results.
       }
+
       cursor = resultEnd + 14;
     }
 
@@ -180,6 +208,9 @@ export function createMessagesUi(context, dependencies) {
     return { segments, visibleText };
   }
 
+
+  // Thought state helpers.
+  // Read the set of expanded thought indices for one row.
   function getExpandedThoughtIndices($msgRow) {
     const rawValue = String($msgRow.attr('data-expanded-thoughts') || '').trim();
     if (!rawValue) {
@@ -194,6 +225,7 @@ export function createMessagesUi(context, dependencies) {
     );
   }
 
+  // Persist the expanded thought set back to the row element.
   function setExpandedThoughtIndices($msgRow, expandedIndices) {
     const normalized = Array.from(expandedIndices)
       .filter(function isValid(value) { return Number.isInteger(value) && value >= 0; })
@@ -207,9 +239,13 @@ export function createMessagesUi(context, dependencies) {
     $msgRow.attr('data-expanded-thoughts', normalized.join(','));
   }
 
+
+  // Activity timeline rendering.
+  // Render thoughts, tool calls, and visible text into the assistant timeline.
   function renderActivityTimeline($msgRow, segments) {
     const $stream = $msgRow.find('.msg-activity-stream');
     const $bubble = $msgRow.find('.msg-bubble');
+
     if (!$stream.length) {
       return;
     }
@@ -232,6 +268,7 @@ export function createMessagesUi(context, dependencies) {
       if (segment.type === 'thought') {
         thoughtIndex += 1;
         const isExpanded = expandedThoughts.has(thoughtIndex);
+
         return `
           <div class="msg-thoughts-wrapper${isExpanded ? ' expanded' : ''}" data-thought-index="${thoughtIndex}">
             <div class="msg-thoughts-toggle">Thought Process</div>
@@ -273,21 +310,27 @@ export function createMessagesUi(context, dependencies) {
     $stream.find('.msg-tool-call-card[data-tool-segment-index]').each(function bindToolInspector() {
       const index = parseInt($(this).attr('data-tool-segment-index'), 10);
       const segment = toolSegments[index];
+
       if (!segment) {
         return;
       }
+
       $(this).on('click', function openInspector() {
         toolInspector.open(segment);
       });
     });
   }
 
+  // Parse and render one assistant transcript string.
   function renderMessageHtml($msgRow, rawText) {
     const parsed = parseMessageTimeline(rawText);
     renderActivityTimeline($msgRow, parsed.segments);
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
 
+
+  // Message row rendering.
+  // Append one user or assistant message to the stream.
   function appendMessage(role, text, attachments, timestamp, options) {
     const viewOptions = options || {};
     const isUser = role === 'user';
@@ -300,6 +343,7 @@ export function createMessagesUi(context, dependencies) {
     const messageId = viewOptions.messageId || '';
 
     let attachmentsHtml = '';
+
     if (isUser && attachments && attachments.length > 0) {
       const imageHtml = attachments
         .filter(function onlyImages(attachment) {
@@ -310,6 +354,7 @@ export function createMessagesUi(context, dependencies) {
           const src = normalizedAttachment ? normalizedAttachment.dataUrl : '';
           return `<img src="${src}" alt="Attached image">`;
         }).join('');
+
       const fileHtml = attachments
         .filter(function onlyFiles(attachment) {
           return typeof attachment !== 'string' && attachment.kind === 'file';
@@ -322,6 +367,7 @@ export function createMessagesUi(context, dependencies) {
             </div>
           `;
         }).join('');
+
       attachmentsHtml = `
         ${imageHtml ? `<div class="msg-images">${imageHtml}</div>` : ''}
         ${fileHtml ? `<div class="msg-files">${fileHtml}</div>` : ''}
@@ -362,12 +408,14 @@ export function createMessagesUi(context, dependencies) {
     return $row;
   }
 
+  // Toggle the queued badge for one user row.
   function setQueuedMessageState($row, queued) {
     if (!$row || !$row.length) {
       return;
     }
 
     $row.toggleClass('is-queued', !!queued);
+
     const $meta = $row.find('.msg-meta');
     let $badge = $meta.find('.msg-status-pill');
 
@@ -381,6 +429,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Append a temporary assistant typing row.
   function appendTyping(timestamp) {
     const timeStr = timeNow(timestamp);
     const $row = $(`
@@ -407,6 +456,9 @@ export function createMessagesUi(context, dependencies) {
     return $row;
   }
 
+
+  // Clipboard helpers.
+  // Copy text using the legacy textarea fallback.
   function fallbackCopy(text, onSuccess) {
     const textarea = document.createElement('textarea');
     textarea.value = text;
@@ -414,6 +466,7 @@ export function createMessagesUi(context, dependencies) {
     document.body.appendChild(textarea);
     textarea.focus();
     textarea.select();
+
     try {
       if (document.execCommand('copy')) {
         onSuccess && onSuccess();
@@ -421,14 +474,17 @@ export function createMessagesUi(context, dependencies) {
     } catch (_error) {
       // Ignore legacy clipboard errors.
     }
+
     document.body.removeChild(textarea);
   }
 
+  // Copy the visible message content to the clipboard.
   function copyMessage($button) {
     const $btn = $button || $();
     const $bubble = $btn.closest('.msg-body').find('.msg-bubble');
     const text = $bubble.attr('data-copy') || $bubble.attr('data-raw') || $bubble.text();
 
+    // Swap the icon briefly to confirm the copy action.
     function onCopied() {
       const originalHtml = $btn.html();
       $btn.html(icons.COPIED_ICON);
@@ -447,6 +503,9 @@ export function createMessagesUi(context, dependencies) {
     fallbackCopy(text, onCopied);
   }
 
+
+  // Thought UI.
+  // Toggle one collapsible thought block.
   function toggleThoughtSection($toggle) {
     const $wrapper = $toggle.closest('.msg-thoughts-wrapper');
     const $row = $toggle.closest('.msg');
@@ -461,6 +520,7 @@ export function createMessagesUi(context, dependencies) {
       } else {
         expandedThoughts.delete(thoughtIndex);
       }
+
       setExpandedThoughtIndices($row, expandedThoughts);
     }
 
@@ -468,6 +528,9 @@ export function createMessagesUi(context, dependencies) {
     $content.stop(true, true)[willExpand ? 'slideDown' : 'slideUp'](160);
   }
 
+
+  // Markdown configuration.
+  // Configure marked + highlight.js when both libraries are available.
   function configureMarkdown() {
     if (typeof marked === 'undefined' || typeof hljs === 'undefined') {
       return;

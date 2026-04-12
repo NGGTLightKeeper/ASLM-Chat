@@ -1,13 +1,18 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { DEFAULT_THINK_LEVEL_OPTIONS } from './constants.js';
 import { normalizeEngineValue } from '../engines/engine-registry.js';
+import { DEFAULT_THINK_LEVEL_OPTIONS } from './constants.js';
 import { parseJsonScript } from './utils.js';
 
+// Icon helpers.
+// Build one SVG sprite reference string.
 function svgIcon(iconPath, attrs) {
   return `<svg ${attrs}><use href="${iconPath}#icon"></use></svg>`;
 }
 
+
+// Application context.
+// Create the shared DOM map, icon set, and runtime state.
 export function createAppContext() {
   const dom = {
     $body: $('body'),
@@ -72,6 +77,7 @@ export function createAppContext() {
     CHAT_ITEM_MENU_ICON: svgIcon(uiIconPaths.ellipsisVertical, 'width="14" height="14" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"')
   };
 
+  // Build the shared action buttons used by assistant and user rows.
   icons.buildMessageActionsHtml = function buildMessageActionsHtml() {
     return `<div class="msg-actions">
       <button class="msg-action-btn msg-copy-btn" title="Copy" aria-label="Copy message">${icons.COPY_MESSAGE_ICON}</button>

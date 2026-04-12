@@ -15,13 +15,18 @@ import {
   setNestedValue
 } from '../main/utils.js';
 
+// Parameters UI.
+// Create helpers for model controls, tool selection, and option payloads.
 export function createParametersUi(context) {
   const { dom, state } = context;
 
+  // Tool selection helpers.
+  // Normalize one tool server id for Set usage.
   function normalizeToolServerId(serverId) {
     return String(serverId || '').trim();
   }
 
+  // Replace the available tool server list and prune invalid selections.
   function updateAvailableToolServers(tools) {
     state.availableToolServers = Array.isArray(tools) ? tools.slice() : [];
     const validIds = new Set(
@@ -39,6 +44,7 @@ export function createParametersUi(context) {
     renderToolControls();
   }
 
+  // Apply selected tool ids, even if the live server list is not loaded yet.
   function applySelectedToolServerIds(ids) {
     // Chats can be restored before model capabilities arrive, so keep the raw
     // selection here and reconcile it against the live server list later.
@@ -53,6 +59,7 @@ export function createParametersUi(context) {
     renderToolControls();
   }
 
+  // Rebuild the tool server checkbox list from the current state.
   function renderToolControls() {
     const hasToolSupport = state.toolState.supported
       && Array.isArray(state.availableToolServers)
@@ -94,6 +101,9 @@ export function createParametersUi(context) {
     $content.append($list);
   }
 
+
+  // Dynamic panel helpers.
+  // Show a placeholder in the model selector while models are unavailable.
   function showModelPlaceholder(message) {
     const placeholderText = message || 'Models load on demand';
     dom.$modelSelector.empty().append(
@@ -101,6 +111,7 @@ export function createParametersUi(context) {
     );
   }
 
+  // Hide and clear all model-dependent settings panels.
   function resetDynamicPanels() {
     $('.settings-section').filter(function filterPanels() {
       return this.id.startsWith('group-')
@@ -112,6 +123,9 @@ export function createParametersUi(context) {
     $('.settings-divider[id^="divider-"]').not('#divider-connection').hide();
   }
 
+
+  // Parameter definition helpers.
+  // Return parameter definitions supported by the current engine.
   function getSupportedParameterDefinitions(engine) {
     const canonicalEngine = normalizeEngineValue(engine);
     return Object.entries(PARAMETER_DEFINITIONS).filter(function filterSupported([key, definition]) {
@@ -131,6 +145,7 @@ export function createParametersUi(context) {
     });
   }
 
+  // Map one parameter key to its target settings group.
   function getParameterGroup(paramKey) {
     if (PARAMETER_DEFINITIONS[paramKey] && PARAMETER_DEFINITIONS[paramKey].group) {
       return `#group-${PARAMETER_DEFINITIONS[paramKey].group}`;
@@ -147,6 +162,7 @@ export function createParametersUi(context) {
     return '#group-advanced';
   }
 
+  // Infer the editor type for an unknown runtime parameter.
   function inferExperimentalParameterType(key, value) {
     if (typeof value === 'boolean') {
       return 'boolean';
@@ -167,6 +183,7 @@ export function createParametersUi(context) {
     return 'string';
   }
 
+  // Convert a raw parameter key into a readable label.
   function formatExperimentalParameterLabel(key) {
     return key
       .replace(/[._-]+/g, ' ')
@@ -175,6 +192,7 @@ export function createParametersUi(context) {
       });
   }
 
+  // Build the help text shown under a parameter control.
   function getParameterNote(config) {
     if (!config) {
       return '';
@@ -210,6 +228,7 @@ export function createParametersUi(context) {
     return '';
   }
 
+  // Format one metadata value for the parameter chip row.
   function formatParameterMetaValue(value) {
     if (value === null || value === undefined || value === '') {
       return 'auto';
@@ -217,6 +236,7 @@ export function createParametersUi(context) {
     return String(value);
   }
 
+  // Build the metadata chips shown for a parameter.
   function getParameterMeta(config) {
     if (!config) {
       return [];
@@ -238,6 +258,7 @@ export function createParametersUi(context) {
     return meta;
   }
 
+  // Resolve the placeholder text for a parameter input.
   function getInputPlaceholder(config) {
     if (!config) {
       return '';
@@ -262,6 +283,7 @@ export function createParametersUi(context) {
     return '';
   }
 
+  // Render the metadata chip row for a parameter.
   function renderParameterMeta(config) {
     const metaItems = getParameterMeta(config);
     if (!metaItems.length) {
@@ -282,6 +304,7 @@ export function createParametersUi(context) {
     `;
   }
 
+  // Build sensible slider steps for token-based controls.
   function buildTokenStepValues(minValue, maxValue) {
     const values = [];
     const normalizedMin = Math.max(128, Number(minValue) || 128);
@@ -307,6 +330,7 @@ export function createParametersUi(context) {
     return values;
   }
 
+  // Snap a token-range value to the nearest allowed slider step.
   function resolveTokenRangeValue(rawValue, allowedValues) {
     const numericValue = Number(rawValue);
     if (!allowedValues.length) {
@@ -322,6 +346,9 @@ export function createParametersUi(context) {
     }, allowedValues[0]);
   }
 
+
+  // Parameter rendering.
+  // Render one supported parameter control into its target group.
   function renderKnownParameter(key, config, value, renderOptions) {
     const options = renderOptions || {};
     const groupId = options.groupId || getParameterGroup(key);
@@ -547,6 +574,7 @@ export function createParametersUi(context) {
     $group.show();
   }
 
+  // Render an unknown parameter using a best-effort generic editor.
   function renderExperimentalParameter(key, value) {
     const groupId = getParameterGroup(key);
     const $group = $(groupId);
@@ -614,6 +642,7 @@ export function createParametersUi(context) {
     $group.show();
   }
 
+  // Show only the dividers required by the visible settings groups.
   function updateVisibleDividers() {
     $('#divider-system').hide();
 
@@ -639,6 +668,9 @@ export function createParametersUi(context) {
     });
   }
 
+
+  // Thinking controls.
+  // Rebuild both think-level button strips from the model payload.
   function renderThinkLevelControls() {
     const normalizedOptions = Array.isArray(state.thinkState.levelOptions) && state.thinkState.levelOptions.length > 0
       ? state.thinkState.levelOptions
@@ -668,6 +700,7 @@ export function createParametersUi(context) {
     });
   }
 
+  // Update think toggles and think-level selectors for both composers.
   function updateThinkControls() {
     [
       { $toggle: dom.$thinkToggleBtn, $selector: dom.$thinkLevelSelector },
@@ -693,6 +726,9 @@ export function createParametersUi(context) {
     });
   }
 
+
+  // Model parameter rendering.
+  // Render all supported and experimental parameters for the active model.
   function renderModelParameters(modelInfo, defaults) {
     const data = modelInfo || {};
     const engine = normalizeEngineValue(state.activeEngine);
@@ -755,6 +791,9 @@ export function createParametersUi(context) {
     updateVisibleDividers();
   }
 
+
+  // Payload collection.
+  // Collect parameter values from a selector set into a nested payload object.
   function collectParameterPayload(selector) {
     const payload = {};
     $(selector).each(function collectValue() {
@@ -770,6 +809,8 @@ export function createParametersUi(context) {
         rawValue = String(resolvedValue);
       }
 
+      // Normalize each control according to the value type metadata stored on
+      // the rendered input.
       if (valueType === 'boolean') {
         setNestedValue(payload, paramPath, String(rawValue).toLowerCase() === 'true');
         return;
@@ -845,6 +886,7 @@ export function createParametersUi(context) {
     return payload;
   }
 
+  // Collect the final options payload sent to the backend.
   function collectOptionsPayload() {
     let payload = collectParameterPayload('#dynamicParameters .dyn-param');
     const adapter = getEngineAdapter(state.activeEngine);
@@ -863,6 +905,9 @@ export function createParametersUi(context) {
     return payload;
   }
 
+
+  // Control synchronization.
+  // Keep the numeric token range field in sync with its slider.
   function handleRangeInput($input) {
     const param = $input.data('param');
     const decimals = parseInt($input.data('decimals') || '0', 10);
@@ -879,6 +924,7 @@ export function createParametersUi(context) {
     $(`#val_${param}`).val(parseFloat($input.val()).toFixed(decimals));
   }
 
+  // Clamp and sync the numeric input back into its paired slider.
   function handleNumberInput($input) {
     const param = $input.data('param');
     const decimals = parseInt($input.data('decimals') || '0', 10);
@@ -908,6 +954,7 @@ export function createParametersUi(context) {
     $(`#dyn_${param}`).val(value);
   }
 
+  // Normalize optional numeric inputs while preserving empty disabled states.
   function normalizeOptionalNumericInput($input) {
     if ($input.prop('disabled')) {
       return;
@@ -937,6 +984,7 @@ export function createParametersUi(context) {
     $input.val(decimals === 0 ? String(Math.round(numericValue)) : numericValue.toFixed(decimals));
   }
 
+  // Show or hide one optional parameter input from its toggle state.
   function toggleOptionalParameter($toggle) {
     const targetId = $toggle.data('target');
     const $target = $(`#${targetId}`);
@@ -952,6 +1000,7 @@ export function createParametersUi(context) {
     }
   }
 
+  // Return only selected tool ids that still exist in the live server list.
   function getSelectedToolServerIds() {
     const validIds = new Set(
       state.availableToolServers.map(function mapId(server) {

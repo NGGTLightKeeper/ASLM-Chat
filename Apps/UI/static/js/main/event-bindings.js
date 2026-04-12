@@ -1,5 +1,7 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
+// Event bindings.
+// Wire all DOM events used by the chat page.
 export function bindEventHandlers(context, dependencies) {
   const {
     attachmentsUi,
@@ -11,6 +13,7 @@ export function bindEventHandlers(context, dependencies) {
   } = dependencies;
   const { dom, state } = context;
 
+  // Chat shell events.
   dom.$newChatBtn.on('click', function onNewChatClick(event) {
     if ($(this).attr('href') === '/') {
       event.preventDefault();
@@ -20,10 +23,12 @@ export function bindEventHandlers(context, dependencies) {
 
   dom.$messagesInner.on('click', '.msg-regen-btn', function onRegenClick() {
     const $msg = $(this).closest('.msg');
+
     if ($msg.hasClass('user')) {
       chatController.regenerateFromUserMessage($msg);
       return;
     }
+
     chatController.regenerateLastResponse();
   });
 
@@ -35,6 +40,14 @@ export function bindEventHandlers(context, dependencies) {
     chatController.deleteMessage($(this).closest('.msg'));
   });
 
+  dom.$messagesInner.on('mousedown', '.msg-thoughts-toggle', function onThoughtToggleMouseDown(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    messagesUi.toggleThoughtSection($(this));
+  });
+
+
+  // Attachment events.
   dom.$imageInput.add(dom.$imageInputConv).on('change', function onAttachmentChange(event) {
     attachmentsUi.handleFileInput(event);
   });
@@ -53,6 +66,8 @@ export function bindEventHandlers(context, dependencies) {
     attachmentsUi.removePendingAttachment(index);
   });
 
+
+  // Settings panel events.
   $(document).on('click', '.settings-section-header', function onSectionHeaderClick() {
     $(this).parent('.settings-section').toggleClass('collapsed');
   });
@@ -61,6 +76,7 @@ export function bindEventHandlers(context, dependencies) {
     if (!state.thinkState.supported || !state.thinkState.toggleSupported || state.thinkState.levelSupported) {
       return;
     }
+
     state.thinkState.enabled = !state.thinkState.enabled;
     parametersUi.updateThinkControls();
     engineManager.schedulePresetSync();
@@ -70,6 +86,7 @@ export function bindEventHandlers(context, dependencies) {
     if (!state.thinkState.supported || !state.thinkState.levelSupported) {
       return;
     }
+
     state.thinkState.level = $(this).data('value');
     parametersUi.updateThinkControls();
     engineManager.schedulePresetSync();
@@ -90,22 +107,34 @@ export function bindEventHandlers(context, dependencies) {
     }
   });
 
-  $(document).on('change blur', '.dyn-param[data-value-type="optional-number"], .dyn-param[data-value-type="optional-integer"]', function onOptionalNumberChange() {
-    parametersUi.normalizeOptionalNumericInput($(this));
-    engineManager.schedulePresetSync();
-  });
+  $(document).on(
+    'change blur',
+    '.dyn-param[data-value-type="optional-number"], .dyn-param[data-value-type="optional-integer"]',
+    function onOptionalNumberChange() {
+      parametersUi.normalizeOptionalNumericInput($(this));
+      engineManager.schedulePresetSync();
+    }
+  );
 
   $(document).on('change', '.optional-param-toggle', function onOptionalToggleChange() {
     parametersUi.toggleOptionalParameter($(this));
     engineManager.schedulePresetSync();
   });
 
-  dom.$messagesInner.on('mousedown', '.msg-thoughts-toggle', function onThoughtToggleMouseDown(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    messagesUi.toggleThoughtSection($(this));
+  $(document).on('change', '.dyn-param', function onDynamicParamChange() {
+    engineManager.schedulePresetSync();
   });
 
+  $(document).on('blur', '.dyn-param', function onDynamicParamBlur() {
+    if ($(this).is(':checkbox')) {
+      return;
+    }
+
+    engineManager.schedulePresetSync();
+  });
+
+
+  // Chat history events.
   $(document).on('click', function onDocumentClick(event) {
     if (!$(event.target).closest('#chatItemDropdown, .chat-item-menu-btn').length) {
       historyUi.closeChatMenu();
@@ -129,6 +158,8 @@ export function bindEventHandlers(context, dependencies) {
     chatController.deleteActiveMenuChat();
   });
 
+
+  // Engine settings events.
   dom.$engineSelector.on('change', async function onEngineChange() {
     try {
       await engineManager.applyEngineSelection($(this).val(), {
@@ -194,17 +225,8 @@ export function bindEventHandlers(context, dependencies) {
     });
   });
 
-  $(document).on('change', '.dyn-param', function onDynamicParamChange() {
-    engineManager.schedulePresetSync();
-  });
 
-  $(document).on('blur', '.dyn-param', function onDynamicParamBlur() {
-    if ($(this).is(':checkbox')) {
-      return;
-    }
-    engineManager.schedulePresetSync();
-  });
-
+  // Navigation events.
   window.addEventListener('popstate', function onPopState(event) {
     if (event.state && event.state.chatId) {
       chatController.loadChat(event.state.chatId, false);

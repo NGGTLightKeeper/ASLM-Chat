@@ -5,24 +5,33 @@ import { DEFAULT_THINK_LEVEL_OPTIONS } from './constants.js';
 import { getEngineAdapter, normalizeEngineValue } from '../engines/engine-registry.js';
 import { isLocalHostname, normalizeAddressForParsing } from './utils.js';
 
+// Engine manager.
+// Create the runtime controller for engine selection, model loading, and presets.
 export function createEngineManager(context, dependencies) {
   const { attachmentsUi, parametersUi } = dependencies;
   const { dom, state } = context;
 
+  // Active selection helpers.
+  // Read the active engine in canonical form.
   function getActiveEngine() {
     return normalizeEngineValue(state.activeEngine);
   }
 
+  // Read the currently selected model name.
   function getSelectedModelName() {
     return String(dom.$modelSelector.val() || '').trim();
   }
 
+  // Resolve the active preset record from the preset state.
   function getActivePreset() {
     return (state.presetState.presets || []).find(function findPreset(preset) {
       return preset.id === state.presetState.activePresetId;
     }) || null;
   }
 
+
+  // Capability state helpers.
+  // Reset the thinking state to the default unsupported values.
   function resetThinkState() {
     state.thinkState.supported = false;
     state.thinkState.paramName = 'think';
@@ -34,6 +43,7 @@ export function createEngineManager(context, dependencies) {
     state.thinkState.level = 'medium';
   }
 
+  // Reset the preset UI and in-memory preset metadata.
   function resetPresetUi() {
     state.presetState = {
       engine: '',
@@ -47,6 +57,7 @@ export function createEngineManager(context, dependencies) {
     dom.$presetDeleteBtn.prop('disabled', true);
   }
 
+  // Apply preset payload data to the preset selector controls.
   function applyPresetState(payload) {
     const activeEngine = getActiveEngine();
     if (!payload || !getEngineAdapter(activeEngine).supportsPresets || !getSelectedModelName()) {
@@ -78,21 +89,27 @@ export function createEngineManager(context, dependencies) {
     dom.$presetGroup.show();
   }
 
+
+  // Endpoint helpers.
+  // Resolve the runtime setting key used for an engine address.
   function getEngineAddressKey(engine) {
     return getEngineAdapter(engine).addressKey || null;
   }
 
+  // Read the saved engine address from runtime settings.
   function getEngineAddress(engine) {
     const key = getEngineAddressKey(engine);
     return key ? (state.runtimeSettings[key] || '') : '';
   }
 
+  // Resolve the runtime setting key used for an engine API key.
   function getEngineApiKeyKey(engine) {
     const canonicalEngine = normalizeEngineValue(engine);
     const runtimeKeys = state.runtimeSettings.engine_api_key_keys || {};
     return runtimeKeys[canonicalEngine] || getEngineAdapter(canonicalEngine).apiKeyKey || null;
   }
 
+  // Report whether the selected engine already has a stored API key.
   function hasStoredEngineApiKey(engine) {
     const canonicalEngine = normalizeEngineValue(engine);
     const engineApiKeys = state.runtimeSettings.engine_api_keys || {};
@@ -104,6 +121,7 @@ export function createEngineManager(context, dependencies) {
     return !!state.runtimeSettings[legacyFlag];
   }
 
+  // Report whether the configured LM Studio address points to a local host.
   function isLocalLmsAddress() {
     const address = normalizeAddressForParsing(getEngineAddress('lms'));
     if (!address) {
@@ -117,6 +135,7 @@ export function createEngineManager(context, dependencies) {
     }
   }
 
+  // Update the address status badge text and state.
   function setEngineAddressStatus(text, status) {
     dom.$engineAddressStatus.text(text || '');
     dom.$engineAddressStatus.removeClass('is-pending is-error');
@@ -126,6 +145,7 @@ export function createEngineManager(context, dependencies) {
     }
   }
 
+  // Update the API key status badge text and state.
   function setEngineApiKeyStatus(text, status) {
     dom.$engineApiKeyStatus.text(text || '');
     dom.$engineApiKeyStatus.removeClass('is-pending is-error');
@@ -135,6 +155,7 @@ export function createEngineManager(context, dependencies) {
     }
   }
 
+  // Rebuild the engine address and API key controls for the active engine.
   function updateEngineAddressUi() {
     const adapter = getEngineAdapter(getActiveEngine());
     const addressKey = adapter.addressKey || null;
@@ -171,6 +192,7 @@ export function createEngineManager(context, dependencies) {
     setEngineApiKeyStatus(hasStoredApiKey ? 'On' : 'Off', null);
   }
 
+  // Reset all model-dependent UI state to a neutral placeholder.
   function resetModelUiState(message) {
     parametersUi.showModelPlaceholder(message || 'Models load on demand');
     state.currentModelInfo = null;
@@ -187,10 +209,14 @@ export function createEngineManager(context, dependencies) {
     parametersUi.renderToolControls();
   }
 
+
+  // Model cache helpers.
+  // Drop the cached model list for one engine.
   function clearModelCache(engine) {
     delete state.modelsCache[normalizeEngineValue(engine)];
   }
 
+  // Normalize and de-duplicate a raw model list.
   function normalizeModelNames(models) {
     return Array.from(new Set(
       (Array.isArray(models) ? models : []).map(function normalizeName(modelName) {
@@ -199,6 +225,7 @@ export function createEngineManager(context, dependencies) {
     ));
   }
 
+  // Compare two model lists after normalization.
   function areModelListsEqual(left, right) {
     const first = normalizeModelNames(left);
     const second = normalizeModelNames(right);
@@ -211,6 +238,7 @@ export function createEngineManager(context, dependencies) {
     });
   }
 
+  // Read the best available model list for one engine.
   function getAvailableModelsForEngine(engine) {
     const canonicalEngine = normalizeEngineValue(engine);
     if (Array.isArray(state.modelsCache[canonicalEngine]) && state.modelsCache[canonicalEngine].length > 0) {
@@ -222,6 +250,9 @@ export function createEngineManager(context, dependencies) {
     }).get().filter(Boolean);
   }
 
+
+  // LM Studio refresh helpers.
+  // Clear the scheduled LM Studio model refresh timer.
   function clearLmsModelsRefreshTimer() {
     if (state.lmsModelsRefreshTimer !== null) {
       window.clearTimeout(state.lmsModelsRefreshTimer);
@@ -229,6 +260,7 @@ export function createEngineManager(context, dependencies) {
     }
   }
 
+  // Compute the next LM Studio model refresh interval.
   function getLmsModelsRefreshInterval() {
     const adapter = getEngineAdapter('lms');
     if (typeof adapter.getModelRefreshInterval === 'function') {
@@ -237,6 +269,7 @@ export function createEngineManager(context, dependencies) {
     return isLocalLmsAddress() ? 3000 : 15000;
   }
 
+  // Schedule the next LM Studio model refresh.
   function scheduleLmsModelsRefresh(delayMs) {
     clearLmsModelsRefreshTimer();
 
@@ -252,6 +285,7 @@ export function createEngineManager(context, dependencies) {
     }, intervalMs);
   }
 
+  // Start or stop LM Studio refresh polling based on the active engine.
   function syncLmsModelsRefresh() {
     if (getActiveEngine() !== 'lms') {
       clearLmsModelsRefreshTimer();
@@ -261,6 +295,9 @@ export function createEngineManager(context, dependencies) {
     scheduleLmsModelsRefresh();
   }
 
+
+  // Model list rendering.
+  // Rebuild the model selector and return the chosen model value.
   function renderModelOptions(models, preferredModel) {
     const uniqueModels = normalizeModelNames(models);
     const fallbackModel = uniqueModels[0] || '';
@@ -284,7 +321,9 @@ export function createEngineManager(context, dependencies) {
     return selectedModel;
   }
 
+  // Fetch the model list for one engine, including Ollama warm-up retry.
   async function fetchModelsForEngine(engine) {
+    // Perform one raw /api/models request.
     async function runFetch() {
       const data = await getJson(`/api/models/?engine=${encodeURIComponent(engine)}`);
       return data.models || [];
@@ -301,6 +340,7 @@ export function createEngineManager(context, dependencies) {
     return runFetch();
   }
 
+  // Ensure the active engine has a rendered model list and loaded model info.
   async function ensureModelsLoadedForActiveEngine(options) {
     const loadOptions = options || {};
     const engine = getActiveEngine();
@@ -320,6 +360,7 @@ export function createEngineManager(context, dependencies) {
     return selectedModel;
   }
 
+  // Reload models for the active engine after an address or key change.
   async function refreshActiveEngineModels(options) {
     const refreshOptions = options || {};
     const engine = normalizeEngineValue(refreshOptions.engine || getActiveEngine());
@@ -343,11 +384,15 @@ export function createEngineManager(context, dependencies) {
     });
   }
 
+
+  // Runtime settings.
+  // Persist one runtime settings patch and refresh local state.
   async function saveRuntimeSettings(patch) {
     state.runtimeSettings = await postJson('/api/runtime_settings/', patch);
     return state.runtimeSettings;
   }
 
+  // Switch the active engine and rebuild the model-related UI.
   async function applyEngineSelection(engine, options) {
     const settingsOptions = options || {};
     const normalizedEngine = normalizeEngineValue(engine);
@@ -366,6 +411,7 @@ export function createEngineManager(context, dependencies) {
     if (settingsOptions.persist === false) {
       state.runtimeSettings['llm-engine'] = normalizedEngine;
       clearModelCache(normalizedEngine);
+
       if (autoLoadModels) {
         try {
           await ensureModelsLoadedForActiveEngine({
@@ -417,6 +463,7 @@ export function createEngineManager(context, dependencies) {
     }
   }
 
+  // Refresh the LM Studio model list when polling is active.
   async function refreshLmsModels() {
     clearLmsModelsRefreshTimer();
 
@@ -466,6 +513,9 @@ export function createEngineManager(context, dependencies) {
     }
   }
 
+
+  // Preset helpers.
+  // Build the preset configuration payload for the active engine.
   function buildActivePresetConfigPayload() {
     const adapter = getEngineAdapter(getActiveEngine());
     const optionsPayload = parametersUi.collectOptionsPayload();
@@ -475,6 +525,7 @@ export function createEngineManager(context, dependencies) {
     return optionsPayload;
   }
 
+  // Sync the current option values into the active preset.
   async function syncActivePreset() {
     const adapter = getEngineAdapter(getActiveEngine());
     if (!adapter.presetApiBase) {
@@ -493,6 +544,7 @@ export function createEngineManager(context, dependencies) {
     applyPresetState(payload);
   }
 
+  // Debounce preset sync calls while the user edits controls.
   function schedulePresetSync() {
     const adapter = getEngineAdapter(getActiveEngine());
     if (!adapter.supportsPresets) {
@@ -507,6 +559,9 @@ export function createEngineManager(context, dependencies) {
     }, 220);
   }
 
+
+  // Model info loading.
+  // Load capabilities and defaults for the selected model.
   async function loadModelInfo(model) {
     const requestedEngine = getActiveEngine();
     const requestVersion = ++state.modelInfoRequestVersion;
@@ -535,6 +590,7 @@ export function createEngineManager(context, dependencies) {
         return;
       }
 
+      // Rebuild all capability-dependent panels from the latest payload.
       state.currentModelInfo = data;
       parametersUi.resetDynamicPanels();
       applyPresetState(data.ollama_presets || data.lms_presets || null);
@@ -576,6 +632,7 @@ export function createEngineManager(context, dependencies) {
         return;
       }
 
+      // Remove thinking keys because they are rendered by dedicated controls.
       const adapter = getEngineAdapter(getActiveEngine());
       let defaults = { ...data.defaults };
       delete defaults[state.thinkState.paramName];
@@ -607,6 +664,9 @@ export function createEngineManager(context, dependencies) {
     }
   }
 
+
+  // Preset actions.
+  // Activate one preset for the selected model.
   async function selectPreset(presetId) {
     const adapter = getEngineAdapter(getActiveEngine());
     const modelName = getSelectedModelName();
@@ -622,6 +682,7 @@ export function createEngineManager(context, dependencies) {
     await loadModelInfo(modelName);
   }
 
+  // Create a new preset from the current control values.
   async function createPreset() {
     const adapter = getEngineAdapter(getActiveEngine());
     const modelName = getSelectedModelName();
@@ -643,6 +704,7 @@ export function createEngineManager(context, dependencies) {
     await loadModelInfo(modelName);
   }
 
+  // Rename the active custom preset.
   async function renamePreset() {
     const adapter = getEngineAdapter(getActiveEngine());
     const activePreset = getActivePreset();
@@ -664,6 +726,7 @@ export function createEngineManager(context, dependencies) {
     applyPresetState(payload);
   }
 
+  // Delete the active custom preset and refresh model info.
   async function deletePreset() {
     const adapter = getEngineAdapter(getActiveEngine());
     const activePreset = getActivePreset();
@@ -684,6 +747,9 @@ export function createEngineManager(context, dependencies) {
     await loadModelInfo(modelName);
   }
 
+
+  // Persistence actions.
+  // Persist the active engine address and reload models when needed.
   async function persistEngineAddress() {
     const engine = getActiveEngine();
     const addressKey = getEngineAddressKey(engine);
@@ -719,6 +785,7 @@ export function createEngineManager(context, dependencies) {
     }
   }
 
+  // Toggle the active engine API key state.
   async function handleApiKeyToggle() {
     const engine = getActiveEngine();
     const apiKeyKey = getEngineApiKeyKey(engine);
@@ -749,6 +816,7 @@ export function createEngineManager(context, dependencies) {
     }
   }
 
+  // Persist a new API key for the active engine.
   async function persistApiKey() {
     const engine = getActiveEngine();
     const apiKeyKey = getEngineApiKeyKey(engine);

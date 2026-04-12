@@ -1,5 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
+// Ollama-only runtime keys hidden from the managed UI.
 export const OLLAMA_UNSUPPORTED_RUNTIME_PARAMS = new Set([
   'embedding_only',
   'f16_kv',
@@ -15,6 +16,7 @@ export const OLLAMA_UNSUPPORTED_RUNTIME_PARAMS = new Set([
   'vocab_only'
 ]);
 
+// Thinking-related keys handled by dedicated controls.
 export const THINK_PARAMETER_KEYS = new Set([
   'think',
   'think_level',
@@ -24,9 +26,12 @@ export const THINK_PARAMETER_KEYS = new Set([
   'reasoning_effort'
 ]);
 
+// Shared think-level fallback options.
 export const DEFAULT_THINK_LEVEL_OPTIONS = ['low', 'medium', 'high'];
 
+// Parameter definitions rendered into the dynamic settings UI.
 export const PARAMETER_DEFINITIONS = {
+  // Shared parameters.
   temperature: {
     label: 'Temperature',
     type: 'range',
@@ -388,6 +393,8 @@ export const PARAMETER_DEFINITIONS = {
     fallback: false,
     note: 'Penalize newline tokens too.'
   },
+
+  // LM Studio parameters.
   maxTokens: {
     label: 'Max Output Tokens',
     type: 'range',
@@ -514,6 +521,8 @@ export const PARAMETER_DEFINITIONS = {
     ],
     fallback: ''
   },
+
+  // Google GenAI parameters.
   max_output_tokens: {
     label: 'Max Output Tokens',
     type: 'range',
@@ -562,6 +571,8 @@ export const PARAMETER_DEFINITIONS = {
     ],
     fallback: 'text/plain'
   },
+
+  // OpenAI-compatible parameters.
   max_completion_tokens: {
     label: 'Max Completion Tokens',
     type: 'range',
@@ -628,6 +639,7 @@ export const PARAMETER_DEFINITIONS = {
   }
 };
 
+// Option sets reused by generic parameter editors.
 export const LLM_PARAMETER_OPTION_SETS = {
   reasoning_effort: ['minimal', 'low', 'medium', 'high', 'xhigh'],
   think_level: ['low', 'medium', 'high'],
