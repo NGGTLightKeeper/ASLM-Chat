@@ -142,6 +142,15 @@ def cmd_ollama_runtime(log: bool) -> None:
         sys.exit(exit_code)
 
 
+# Run the downloads bridge request dispatcher
+def cmd_downloads_bridge() -> None:
+    """Read one downloads bridge JSON request from stdin and print the JSON response."""
+
+    from Services.downloads_bridge import run_cli
+
+    raise SystemExit(run_cli())
+
+
 # Build CLI parser
 def _build_parser() -> argparse.ArgumentParser:
     """Return the command-line parser for the project entry point."""
@@ -163,7 +172,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _maybe_print_banner(command: str) -> None:
     """Print technical module data once for interactive commands."""
 
-    if not os.environ.get("RUN_MAIN") and command not in {"get_setting", "set_setting"}:
+    if not os.environ.get("RUN_MAIN") and command not in {"get_setting", "set_setting", "downloads_bridge"}:
         PrintTechData().PTD_Print()
 
 # Resolve runtime server port
@@ -222,6 +231,9 @@ def main() -> None:
 
         case "install_yacy_db":
             cmd_install_yacy_db(log=True)
+
+        case "downloads_bridge":
+            cmd_downloads_bridge()
 
         case "help":
             parser.print_help()
