@@ -3,7 +3,7 @@
     "id": "aslm-chat",
     "name": "ASLM Chat",
     "description": "ASLM Chat Module",
-    "version": "0.4.0.22",
+    "version": "0.4.1.4",
     "author": "NGGT-ASLM",
     "type": "ui",
     "hasPage": true,
@@ -336,6 +336,35 @@
             "setExec": "main.py set_setting --key yacy_pass --value {value}"
         }
     ],
+    "downloadsBridge": {
+        "protocolVersion": 1,
+        "engine": "python-runtime",
+        "entryPoint": "main.py downloads_bridge",
+        "operations": [
+            "list_categories",
+            "list_items",
+            "describe_item",
+            "resolve_install",
+            "resolve_uninstall"
+        ],
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Ollama Models",
+                "description": "Models published in the official Ollama library.",
+                "groupKey": "ollama-models",
+                "targetRef": "ollama_models",
+                "sortOrder": 10
+            }
+        ],
+        "targets": {
+            "ollama_models": {
+                "root": "Models",
+                "relative": "ollama-service",
+                "description": "Managed Ollama model storage inside ASLM."
+            }
+        }
+    },
     "status": {
         "installed": false,
         "enabled": false,
