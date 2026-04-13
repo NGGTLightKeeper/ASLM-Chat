@@ -255,26 +255,6 @@ def _node_to_text(node) -> str:  # noqa: ANN001
     return str(getattr(node, "chars", "") or "")
 
 
-def _transpile_span(span: str) -> str:
-    """Transpile a single LaTeX span to LLM-readable text."""
-    # Strip delimiters: $$, $, \[, \], \(, \)
-    inner = span
-    for delim in ("$$", "\\[", "\\]", "\\(", "\\)"):
-        inner = inner.replace(delim, " ")
-    inner = inner.strip()
-    if inner.startswith("$") and inner.endswith("$"):
-        inner = inner[1:-1]
-    try:
-        from pylatexenc.latexwalker import LatexWalker
-        ctx = _make_walker_context(_unknown_macros(inner))
-        walker = LatexWalker(inner, latex_context=ctx) if ctx else LatexWalker(inner)
-        nodes, _, _ = walker.get_latex_nodes()
-        return "".join(_node_to_text(n) for n in (nodes or [])).strip()
-    except Exception:
-        # Fallback: use LatexNodes2Text
-        return _clean_latex_for_index(span)
-
-
 def _render_latex_for_llm(text: str) -> str:
     """Transpile LaTeX markup to human-readable notation for the LLM.
 
@@ -811,6 +791,7 @@ def build_preview_payload(
     active_settings = dict(settings or get_preview_settings())
     cleaned_html = _preclean_html(raw_html)
 
+    _did_use_gliner = False
     strategy_parts: list[str] = []
     extracted = _extract_text_with_trafilatura(cleaned_html)
     if extracted:
@@ -868,6 +849,7 @@ def build_preview_payload(
             )
             if gliner_text.strip() and used_gliner:
                 cleaned_text = gliner_text
+                _did_use_gliner = True
                 strategy_parts.append(f"gliner_{gliner_device[:3]}")
 
     preview_text, semantic_score = _semantic_extract(cleaned_text, query, active_settings)
@@ -891,6 +873,6 @@ def build_preview_payload(
         semantic_score=max(0.0, min(float(semantic_score or 0.0), 1.0)),
         quality_score=max(0.0, min(float(quality_score or 0.0), 1.0)),
         clean_chars=len(_normalize_text(cleaned_text)),
-        used_gliner=False,
+        used_gliner=_did_use_gliner,
         strategy_used="+".join(strategy_parts) if strategy_parts else "empty",
     )

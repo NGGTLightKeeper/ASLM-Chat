@@ -10,7 +10,7 @@ via structured LLM output.  Falls back to keyword-based queries if LLM fails.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from services.deep_research.config import (
     PLAN_FALLBACK_MAX_CHARS,

@@ -88,18 +88,8 @@ def _triage_penalty(src: ExtractedSource) -> float:
 
 
 def _gliner_cuda_enabled(state: ResearchState) -> bool:
-    try:
-        from core.extract.gliner_wrapper import get_gliner_runtime
-        runtime = get_gliner_runtime("cuda")
-    except Exception as exc:
-        state.log(f"  GLiNER filter skipped: runtime probe failed: {exc}")
-        return False
-    if runtime is None:
-        state.log("  GLiNER filter skipped: insufficient CUDA VRAM for configured models")
-        return False
-    model_id, device = runtime
-    state.log(f"  GLiNER filter runtime: model={model_id} device={device}")
-    return True
+    from core.extract.gliner_wrapper import gliner_cuda_enabled
+    return gliner_cuda_enabled(state.log)
 
 
 async def run_dedup_filter(state: ResearchState) -> PhaseResult:

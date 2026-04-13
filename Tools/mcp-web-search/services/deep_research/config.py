@@ -10,7 +10,7 @@ nothing should be hardcoded in the phase files themselves.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 

@@ -17,6 +17,7 @@ from services.deep_research.config import (
     SYNTH_MAX_TOKENS_SINGLE,
 )
 from services.deep_research.models import ExtractedSource, PhaseResult, ResearchState
+from services.deep_research.text_utils import compact_text as _compact_text, sanitize_content as _sanitize_content
 
 # ---------------------------------------------------------------------------
 # Context window budget
@@ -28,43 +29,11 @@ MODEL_CONTEXT_TOKENS: int = 72_000
 CONTEXT_HEADROOM_RATIO: float = 0.02   # require ≥2% free before output starts
 
 
-def _compact_text(text: str) -> str:
-    return " ".join((text or "").split()).strip()
-
-
-def _sanitize_content(text: str) -> str:
-    return (text or "").replace("\x00", "").strip()
-
-
 def _source_evidence_brief(source: ExtractedSource, max_chars: int = 420) -> str:
     text = _compact_text(source.summary or source.relevant_chunks or source.text or "")
     if len(text) > max_chars:
         return text[:max_chars].rstrip() + "..."
     return text or "(no usable content)"
-
-
-def _final_source_rank_json_schema(batch_size: int) -> dict[str, Any]:
-    return {
-        "type": "array",
-        "minItems": batch_size,
-        "maxItems": batch_size,
-        "items": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["source_index", "quality_score", "keep", "reason"],
-            "properties": {
-                "source_index": {"type": "integer", "minimum": 1, "maximum": batch_size},
-                "quality_score": {"type": "number", "minimum": 0, "maximum": 100},
-                "keep": {"type": "boolean"},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 200},
-            },
-        },
-    }
-
-
-def _final_rank_source_brief(source: ExtractedSource) -> str:
-    content = _compact_text(source.summary or source.relevant_chunks or source.text or "")
-    return content[:900]
 
 
 def _heuristic_final_quality(source: ExtractedSource) -> tuple[float, bool, str]:
@@ -118,125 +87,6 @@ def _heuristic_final_quality(source: ExtractedSource) -> tuple[float, bool, str]
     return score, keep, "heuristic relevance/evidence estimate"
 
 
-def _normalize_final_rank_batch(result: object, batch_size: int) -> list[dict[str, Any]]:
-    if not isinstance(result, list):
-        return []
-    normalized: list[dict[str, Any]] = []
-    for item in result[:batch_size]:
-        if not isinstance(item, dict):
-            continue
-        try:
-            source_index = int(item.get("source_index", 0))
-            quality_score = float(item.get("quality_score", 0.0))
-            keep = bool(item.get("keep", False))
-            reason = str(item.get("reason", "")).strip() or "missing reason"
-        except Exception:
-            continue
-        normalized.append(
-            {
-                "source_index": source_index,
-                "quality_score": max(0.0, min(100.0, quality_score)),
-                "keep": keep,
-                "reason": reason[:200],
-            }
-        )
-    return normalized
-
-
-async def _rank_final_sources_with_llm(
-    state: ResearchState,
-    sources: list[ExtractedSource],
-) -> list[ExtractedSource]:
-    cfg = state.config
-    if not sources:
-        return []
-    model = cfg.final_source_rank_model or cfg.synthesis_model or cfg.query_model
-    timeout = max(15.0, float(cfg.final_source_rank_timeout_sec))
-    batch_size = max(1, int(cfg.final_source_rank_batch_size))
-
-    for start in range(0, len(sources), batch_size):
-        batch = sources[start:start + batch_size]
-        source_blocks: list[str] = []
-        for local_index, source in enumerate(batch, 1):
-            source_blocks.append(
-                "\n".join(
-                    [
-                        f"[SOURCE {local_index}]",
-                        f"Title: {source.title}",
-                        f"URL: {source.url}",
-                        f"Semantic relevance: {float(getattr(source, 'relevance_score', 0.0) or 0.0):.3f}",
-                        f"Sub-topic: {getattr(source, 'sub_topic', '') or '-'}",
-                        f"Content type: {getattr(source, 'content_type', '') or 'other'}",
-                        f"Evidence strength: {getattr(source, 'evidence_strength', '') or 'moderate'}",
-                        f"Source character: {getattr(source, 'source_character', '') or 'secondary'}",
-                        "Content:",
-                        _final_rank_source_brief(source) or "(empty)",
-                    ]
-                )
-            )
-
-        joined_blocks = "\n\n".join(source_blocks)
-        prompt = f"""You are the final source-cleanup ranker for a deep research pipeline.
-
-Research question: "{state.question}"
-
-Your job is to score each source for FINAL REPORT QUALITY.
-Judge whether the source should survive into synthesis after semantic filtering.
-
-Return JSON array in the same batch size. For each source:
-- source_index: source number from this batch
-- quality_score: 0-100 absolute quality score
-- keep: true only if this source deserves to stay in the final synthesis pool
-- reason: very short reason
-
-Sources:
-{joined_blocks}"""
-
-        result = None
-        try:
-            result = await call_llm_json(
-                prompt=prompt,
-                model=model,
-                temperature=0.1,
-                timeout=timeout,
-                json_schema=_final_source_rank_json_schema(len(batch)),
-                schema_name="research_final_source_rank",
-                structured_output=cfg.structured_output_enabled,
-                strict=cfg.structured_output_strict,
-                reasoning_effort=cfg.reasoning_effort,
-                reasoning_tokens=cfg.reasoning_tokens,
-                concise_reasoning_prompt=cfg.concise_reasoning_prompt,
-            )
-        except Exception as exc:
-            state.log(f"  WARN Final source rank batch error: {exc}")
-
-        normalized = _normalize_final_rank_batch(result, len(batch))
-        by_index = {item["source_index"]: item for item in normalized}
-        for local_index, source in enumerate(batch, 1):
-            item = by_index.get(local_index)
-            if item is None:
-                heuristic_score, heuristic_keep, heuristic_reason = _heuristic_final_quality(source)
-                source._final_quality_score = heuristic_score  # type: ignore[attr-defined]
-                source._final_quality_keep = heuristic_keep  # type: ignore[attr-defined]
-                source._final_quality_reason = heuristic_reason  # type: ignore[attr-defined]
-            else:
-                quality_norm = float(item["quality_score"]) / 100.0
-                source._final_quality_score = max(0.0, min(1.0, quality_norm))  # type: ignore[attr-defined]
-                source._final_quality_keep = bool(item["keep"])  # type: ignore[attr-defined]
-                source._final_quality_reason = item["reason"]  # type: ignore[attr-defined]
-
-            relevance = max(0.0, min(1.0, float(getattr(source, "relevance_score", 0.0) or 0.0)))
-            quality = max(0.0, min(1.0, float(getattr(source, "_final_quality_score", 0.0) or 0.0)))
-            source._final_score = (quality * 0.7) + (relevance * 0.3)  # type: ignore[attr-defined]
-            state.log(
-                "  Final rank "
-                f"[{start + local_index}/{len(sources)}]: "
-                f"keep={getattr(source, '_final_quality_keep', False)} "
-                f"quality={quality:.3f} semantic={relevance:.3f} "
-                f"title={source.title[:70]}"
-            )
-
-    return sources
 
 
 async def apply_final_source_cleanup(state: ResearchState) -> None:

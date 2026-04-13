@@ -34,7 +34,6 @@ import logging
 import sqlite3
 import threading
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
@@ -105,45 +104,49 @@ class HostedSearchCache:
         ttl      INTEGER            — TTL in seconds
 
     SQLite WAL mode is enabled for better read concurrency.
+    Each thread keeps a persistent connection (thread-local) to avoid the
+    open/PRAGMA/close overhead on every get()/set() call.
     A single write lock serialises INSERT/REPLACE to avoid WAL conflicts.
     """
 
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         self._write_lock = threading.Lock()
+        self._local = threading.local()
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     # ------------------------------------------------------------------ setup
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path, check_same_thread=False, timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.row_factory = sqlite3.Row
+    def _get_conn(self) -> sqlite3.Connection:
+        """Return a per-thread persistent SQLite connection."""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self._db_path, check_same_thread=False, timeout=10)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.row_factory = sqlite3.Row
+            self._local.conn = conn
         return conn
 
     def _init_db(self) -> None:
         with self._write_lock:
-            conn = self._connect()
-            try:
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS hosted_cache (
-                        key      TEXT    PRIMARY KEY,
-                        provider TEXT    NOT NULL,
-                        data     TEXT    NOT NULL,
-                        ts       REAL    NOT NULL,
-                        ttl      INTEGER NOT NULL
-                    )
-                    """
+            conn = self._get_conn()
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS hosted_cache (
+                    key      TEXT    PRIMARY KEY,
+                    provider TEXT    NOT NULL,
+                    data     TEXT    NOT NULL,
+                    ts       REAL    NOT NULL,
+                    ttl      INTEGER NOT NULL
                 )
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_hosted_cache_provider "
-                    "ON hosted_cache(provider)"
-                )
-                conn.commit()
-            finally:
-                conn.close()
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_hosted_cache_provider "
+                "ON hosted_cache(provider)"
+            )
+            conn.commit()
 
     # ------------------------------------------------------------------ key
 
@@ -164,14 +167,10 @@ class HostedSearchCache:
     ) -> Optional[list[SearchResult]]:
         """Return cached results or None if missing / expired."""
         key = self.make_key(provider, query, timelimit)
-        conn = self._connect()
-        try:
-            row = conn.execute(
-                "SELECT data, ts, ttl FROM hosted_cache WHERE key = ?",
-                (key,),
-            ).fetchone()
-        finally:
-            conn.close()
+        row = self._get_conn().execute(
+            "SELECT data, ts, ttl FROM hosted_cache WHERE key = ?",
+            (key,),
+        ).fetchone()
 
         if row is None:
             return None
@@ -203,8 +202,8 @@ class HostedSearchCache:
         data = json.dumps([_result_to_dict(r) for r in results], ensure_ascii=False)
 
         with self._write_lock:
-            conn = self._connect()
             try:
+                conn = self._get_conn()
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO hosted_cache (key, provider, data, ts, ttl)
@@ -215,55 +214,52 @@ class HostedSearchCache:
                 conn.commit()
             except Exception as exc:
                 logger.warning("[hosted_cache] write error: %s", exc)
-            finally:
-                conn.close()
 
     # ------------------------------------------------------------------ evict
 
     def evict_expired(self) -> int:
-        """Delete all expired rows.  Returns number of rows removed."""
+        """Delete expired entries. Returns number of deleted rows."""
         with self._write_lock:
-            conn = self._connect()
             try:
-                cur = conn.execute(
+                conn = self._get_conn()
+                result = conn.execute(
                     "DELETE FROM hosted_cache WHERE (? - ts) > ttl",
                     (time.time(),),
                 )
                 conn.commit()
-                return cur.rowcount
-            except Exception:
-                return 0
-            finally:
-                conn.close()
+                deleted = result.rowcount
+            except Exception as exc:
+                logger.warning("[hosted_cache] evict_expired error: %s", exc)
+                deleted = 0
+        if deleted:
+            logger.info("hosted_cache: evicted %d expired entries", deleted)
+        return deleted
 
     # ------------------------------------------------------------------ stats
 
     def stats(self, provider: Optional[str] = None) -> dict:
         """Return basic cache statistics, optionally filtered by provider."""
-        conn = self._connect()
-        try:
-            now = time.time()
-            if provider:
-                row = conn.execute(
-                    "SELECT COUNT(*) as total, "
-                    "SUM(CASE WHEN (? - ts) <= ttl THEN 1 ELSE 0 END) as fresh "
-                    "FROM hosted_cache WHERE provider = ?",
-                    (now, provider),
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    "SELECT COUNT(*) as total, "
-                    "SUM(CASE WHEN (? - ts) <= ttl THEN 1 ELSE 0 END) as fresh "
-                    "FROM hosted_cache",
-                    (now,),
-                ).fetchone()
-            return {
-                "total": row["total"] or 0,
-                "fresh": row["fresh"] or 0,
-                "expired": (row["total"] or 0) - (row["fresh"] or 0),
-            }
-        finally:
-            conn.close()
+        conn = self._get_conn()
+        now = time.time()
+        if provider:
+            row = conn.execute(
+                "SELECT COUNT(*) as total, "
+                "SUM(CASE WHEN (? - ts) <= ttl THEN 1 ELSE 0 END) as fresh "
+                "FROM hosted_cache WHERE provider = ?",
+                (now, provider),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) as total, "
+                "SUM(CASE WHEN (? - ts) <= ttl THEN 1 ELSE 0 END) as fresh "
+                "FROM hosted_cache",
+                (now,),
+            ).fetchone()
+        return {
+            "total": row["total"] or 0,
+            "fresh": row["fresh"] or 0,
+            "expired": (row["total"] or 0) - (row["fresh"] or 0),
+        }
 
 
 # ---------------------------------------------------------------------------

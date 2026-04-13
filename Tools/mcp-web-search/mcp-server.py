@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from core.fetch.thread_pool import io_pool as _io_pool
+
 SERVER_ROOT = Path(__file__).resolve().parent
 if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
@@ -233,8 +235,9 @@ async def call_tool(tool_id: str, arguments: dict[str, Any] | None, context: dic
                     parsed = _json.loads(stripped)
                     if isinstance(parsed, list):
                         call_args[key] = parsed
-                except Exception:
-                    pass
+                except Exception as exc:
+                    import logging as _logging
+                    _logging.getLogger("mcp-server").debug("arg '%s' array parse failed: %s", key, exc)
 
     t0 = time.time()
     _tool_log("start", tool_id, path="dispatcher", args=call_args)
@@ -255,7 +258,7 @@ def _is_yacy_enabled() -> bool:
 
         return bool(app_settings.get("use-yacy", False))
     except Exception:
-        return True
+        return False
 
 
 def _ensure_yacy_started() -> bool:
@@ -391,8 +394,8 @@ def register_tools(mcp) -> None:
             if m:
                 variants = _j.loads(m.group())
                 return [v.strip() for v in variants if isinstance(v, str) and v.strip()]
-        except Exception:
-            pass
+        except Exception as exc:
+            _debug_log(f"_llm_expand_query failed: {type(exc).__name__}: {exc}")
         return []
 
     @mcp.tool()
@@ -700,9 +703,15 @@ def register_tools(mcp) -> None:
                                     return True
                             return False
 
-                        for item in ddgs_res:
-                            if item.url and _is_trusted(item.url):
-                                asyncio.create_task(async_add_to_yacy_index(item.url))
+                        yacy_tasks = [
+                            asyncio.create_task(async_add_to_yacy_index(item.url))
+                            for item in ddgs_res
+                            if item.url and _is_trusted(item.url)
+                        ]
+                        if yacy_tasks:
+                            asyncio.create_task(
+                                asyncio.gather(*yacy_tasks, return_exceptions=True)
+                            )
                 except Exception as e:
                     _debug_log(f"YaCy auto-learn error: {e}")
 
@@ -818,7 +827,7 @@ def register_tools(mcp) -> None:
         async def _fetch_and_process(u: str) -> tuple[str, str | None]:
             if _is_youtube(u):
                 loop = asyncio.get_running_loop()
-                text = await loop.run_in_executor(None, _youtube_transcript, u)
+                text = await loop.run_in_executor(_io_pool, _youtube_transcript, u)
                 return text, None
             if _is_skippable(u):
                 if _is_downloadable_ext(u):
@@ -965,7 +974,7 @@ def register_tools(mcp) -> None:
                 capped_text = text[:20000] if text else text
                 clean = await asyncio.wait_for(
                     loop.run_in_executor(
-                        None, lambda: normalize_page(url=u, raw_html=raw_html, fallback_text=capped_text)
+                        _io_pool, lambda: normalize_page(url=u, raw_html=raw_html, fallback_text=capped_text)
                     ),
                     timeout=8.0,
                 )
@@ -1065,6 +1074,7 @@ def register_tools(mcp) -> None:
         import os
         import datetime
         _tool_t0 = time.time()
+        _DEEP_RESEARCH_MAX_WALL_SEC = 25 * 60  # 25 min hard ceiling
         _tool_log("start", "deep_research", path="fastmcp", query=query, depth=depth)
 
         _ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -1115,18 +1125,36 @@ def register_tools(mcp) -> None:
             drain_err = asyncio.create_task(_drain_stderr())
 
             _ping_tick = 0
+            _timed_out = False
             while proc.returncode is None:
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=2.0)
                 except asyncio.TimeoutError:
                     pass
+                if time.time() - _tool_t0 > _DEEP_RESEARCH_MAX_WALL_SEC:
+                    _debug_log(f"deep_research hard-timeout ({_DEEP_RESEARCH_MAX_WALL_SEC}s) — killing subprocess")
+                    try:
+                        proc.kill()
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    except Exception:
+                        pass
+                    drain_out.cancel()
+                    drain_err.cancel()
+                    _timed_out = True
+                    break
                 _ping_tick += 1
                 if _ping_tick % 5 == 0:  # ping every ~10 s
                     try:
                         session = mcp._mcp_server.request_context.session
                         await session.send_log_message(level="debug", data="researching...", logger="deep-research")
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        _debug_log(f"deep-research ping failed: {exc}")
+
+            if _timed_out:
+                _tool_log("error", "deep_research", path="fastmcp",
+                          elapsed_ms=int((time.time() - _tool_t0) * 1000),
+                          task_id=task_id, error="hard_timeout")
+                return f"Error: deep_research timed out after {_DEEP_RESEARCH_MAX_WALL_SEC // 60} minutes (task_id={task_id})"
 
             await drain_out
             await drain_err
@@ -1224,8 +1252,8 @@ def register_tools(mcp) -> None:
                 if not done.is_set():
                     try:
                         await session.send_log_message(level="debug", data="downloading...", logger="import-web-file")
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        _debug_log(f"import-web-file ping failed: {exc}")
 
         # Execute the wrapped coroutine and capture its result.
         async def _run():

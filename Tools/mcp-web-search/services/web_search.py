@@ -32,7 +32,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse, urlunparse, urlencode, parse_qsl
+from urllib.parse import urlparse
 
 from core.models.search import SearchResult
 from core.config import load_search_config
@@ -42,12 +42,20 @@ from core.fetch.hosted_clients import async_hosted_search, available_hosted_engi
 from core.extract.content_processor import (
     build_preview_payload, get_preview_settings, warm_preview_models, PreviewPayload,
 )
+from core.extract.page_normalizer import normalize_page
 from core.registry.trust_registry import get_trust_registry
 from core.registry.domain_reputation import get_reputation_store, domain_from_url
 from core.fetch.antibot import is_antibot
 from core.fetch.url_utils import normalize_url
+from core.fetch.thread_pool import io_pool as _io_pool
 from core.cache.source_cache import SourceCache
 from core.cache.query_normalizer import QUERY_STOPWORDS as _QUERY_STOPWORDS
+from core.extract.pdf_extractor import looks_like_pdf_url, looks_like_pdf_bytes, pdf_bytes_to_markdown
+
+# PDF preview limits — tighter than read_page (10 MB) since this is just a preview
+_PDF_PREVIEW_MAX_BYTES = 5 * 1024 * 1024   # 5 MB download cap
+_PDF_PREVIEW_MAX_CHARS = 40_000             # raw extract cap before GliNER
+_PDF_PREVIEW_OUTPUT_CHARS = 3_000          # densified output target
 
 _CACHE_PATH = Path(__file__).resolve().parent.parent / "_cache" / "source_cache.db"
 _cache = SourceCache(str(_CACHE_PATH))
@@ -716,11 +724,6 @@ def infer_query_types(query: str) -> list[str]:
     return matched[:3] if matched else ["general"]
 
 
-def infer_query_type(query: str) -> str:
-    """Return the primary query type. See infer_query_types() for full classification."""
-    return infer_query_types(query)[0]
-
-
 def _parse_query_profile(query: str) -> dict:
     q = (query or "").lower()
     years = _YEAR_RE.findall(query)
@@ -992,7 +995,7 @@ def _content_quality_signal(payload: PreviewPayload, result: SearchResult, query
 # Preview fetching
 # ---------------------------------------------------------------------------
 
-_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+from core.fetch.constants import DEFAULT_UA as _UA
 _PREFETCH_MAX_URLS: int = 5   # cap on background prefetch targets per search
 _PREFETCH_FETCH_TIMEOUT: float = 8.0
 # Limit concurrent background prefetch tasks to avoid socket exhaustion under burst load.
@@ -1047,12 +1050,145 @@ async def _prefetch_urls_background(urls: list[str], req_id: str = "-") -> None:
                                 continue
                             raw_html = await resp.text(errors="replace")
                             if raw_html and not is_antibot(raw_html):
-                                _cache.cache_page(url, "", clean_text="", raw_html=raw_html)
-                                _trace(req_id, "prefetch.cached", url=url)
+                                clean_text = normalize_page(url, raw_html, "")
+                                if clean_text:
+                                    _cache.cache_page(url, "", clean_text=clean_text)
+                                    _trace(req_id, "prefetch.cached", url=url)
                     except Exception:
                         pass
         except Exception:
             pass
+
+
+def _densify_text_gliner(text: str, output_chars: int = _PDF_PREVIEW_OUTPUT_CHARS) -> str:
+    """Filter PDF text to highest entity-density paragraphs via GliNER.
+
+    Splits *text* into paragraphs, scores each with GliNER entity density,
+    keeps the highest-scoring ones until *output_chars* is reached.
+    Falls back to plain head-truncation when GliNER is unavailable.
+    """
+    # Split on blank lines (page breaks from pdf_bytes_to_markdown also produce these)
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
+    if not paragraphs:
+        return text[:output_chars]
+
+    try:
+        from core.extract.gliner_wrapper import score_entity_density, is_gliner_available
+        if not is_gliner_available():
+            raise ImportError
+        scores = score_entity_density(paragraphs)
+        # Pair (score, original_index, text) so we can restore original order
+        ranked = sorted(
+            zip(scores, range(len(paragraphs)), paragraphs),
+            key=lambda t: t[0],
+            reverse=True,
+        )
+        kept: list[tuple[int, str]] = []
+        total = 0
+        for score, idx, para in ranked:
+            if total >= output_chars:
+                break
+            kept.append((idx, para))
+            total += len(para)
+        # Re-sort by original position to preserve document flow
+        kept.sort(key=lambda t: t[0])
+        result_text = "\n\n".join(p for _, p in kept)
+    except Exception:
+        # GliNER unavailable — return first output_chars of text
+        result_text = text[:output_chars].rsplit("\n", 1)[0]
+
+    if len(result_text) > output_chars:
+        result_text = result_text[:output_chars].rsplit("\n", 1)[0] + "\n[...densified]"
+    return result_text
+
+
+async def _fetch_pdf_preview(
+    url: str,
+    query: str,
+    loop,
+    req_id: str = "-",
+) -> PreviewPayload:
+    """Download a PDF URL, extract text, densify with GliNER, return PreviewPayload.
+
+    Uses a strict 5 MB download cap and a 3 K char output target —
+    much tighter than read_page's full-extraction path.
+    """
+    _UA_PDF = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
+
+    def _fetch_bytes() -> bytes:
+        # httpx streaming with size guard
+        try:
+            import httpx
+            with httpx.Client(
+                headers={"User-Agent": _UA_PDF, "Accept": "application/pdf,*/*;q=0.8"},
+                timeout=20.0,
+                follow_redirects=True,
+                verify=True,
+            ) as client:
+                with client.stream("GET", url) as r:
+                    try:
+                        content_length = int(r.headers.get("content-length", "0") or "0")
+                    except ValueError:
+                        content_length = 0
+                    if content_length > _PDF_PREVIEW_MAX_BYTES:
+                        return b""
+                    chunks: list[bytes] = []
+                    total = 0
+                    for chunk in r.iter_bytes():
+                        total += len(chunk)
+                        if total > _PDF_PREVIEW_MAX_BYTES:
+                            return b""
+                        chunks.append(chunk)
+                    data = b"".join(chunks)
+                    if 200 <= r.status_code < 400 and looks_like_pdf_bytes(data):
+                        return data
+        except Exception:
+            pass
+        # curl_cffi fallback
+        try:
+            from curl_cffi import requests as cffi_req
+            r = cffi_req.get(
+                url, impersonate="chrome124", timeout=20,
+                headers={"User-Agent": _UA_PDF, "Accept": "application/pdf,*/*;q=0.8"},
+            )
+            data = bytes(r.content or b"")
+            if 200 <= r.status_code < 400 and len(data) <= _PDF_PREVIEW_MAX_BYTES and looks_like_pdf_bytes(data):
+                return data
+        except Exception:
+            pass
+        return b""
+
+    t0 = time.perf_counter()
+    raw_bytes = await loop.run_in_executor(_io_pool,_fetch_bytes)
+    if not raw_bytes:
+        _trace(req_id, "pdf_preview.empty", url=url, elapsed=round(time.perf_counter() - t0, 3))
+        return PreviewPayload()
+
+    def _extract_and_densify() -> str:
+        markdown = pdf_bytes_to_markdown(url=url, data=raw_bytes, max_chars=_PDF_PREVIEW_MAX_CHARS)
+        if not markdown:
+            return ""
+        return _densify_text_gliner(markdown, output_chars=_PDF_PREVIEW_OUTPUT_CHARS)
+
+    try:
+        text = await asyncio.wait_for(
+            loop.run_in_executor(_io_pool,_extract_and_densify),
+            timeout=15.0,
+        )
+    except Exception:
+        text = ""
+
+    elapsed = round(time.perf_counter() - t0, 3)
+    if not text:
+        _trace(req_id, "pdf_preview.extract_failed", url=url, elapsed=elapsed)
+        return PreviewPayload()
+
+    _trace(req_id, "pdf_preview.done", url=url, elapsed=elapsed, chars=len(text))
+    return PreviewPayload(text=text, quality_score=0.75, strategy_used="pdf_gliner")
 
 
 async def _fetch_preview_one(
@@ -1076,6 +1212,10 @@ async def _fetch_preview_one(
         url = result.url
         t0 = time.perf_counter()
 
+        # PDF fast-path: skip HTML fetch entirely, download bytes and densify
+        if looks_like_pdf_url(url):
+            return await _fetch_pdf_preview(url, query, loop, req_id=req_id)
+
         async def _aiohttp() -> str | None:
             try:
                 async with session.get(url, allow_redirects=True) as resp:
@@ -1098,13 +1238,14 @@ async def _fetch_preview_one(
                     return text if text and not is_antibot(text) else None
                 except Exception:
                     return None
-            return await loop.run_in_executor(None, _sync)
+            return await loop.run_in_executor(_io_pool,_sync)
+
+        # Fast path: if clean_text is already cached, skip fetch + parse entirely.
+        cached_page = _cache.get_cached(url)
+        if cached_page and _cache.is_fresh(url) and cached_page.clean_text:
+            return PreviewPayload(text=cached_page.clean_text)
 
         raw_html: str | None = None
-        cached_page = _cache.get_cached(url)
-        if cached_page and _cache.is_fresh(url) and cached_page.raw_html:
-            raw_html = cached_page.raw_html
-        
         if not raw_html:
             if policy == "cheap":
                 raw_html = await _aiohttp()
@@ -1127,9 +1268,6 @@ async def _fetch_preview_one(
                         except Exception:
                             pass
 
-        if raw_html:
-            _cache.cache_page(url, result.title or "", clean_text="", raw_html=raw_html)
-
         if not raw_html:
             _trace(req_id, "preview_fetch.empty", url=url, policy=policy, elapsed=round(time.perf_counter() - t0, 3))
             return PreviewPayload()
@@ -1137,7 +1275,7 @@ async def _fetch_preview_one(
         try:
             payload = await asyncio.wait_for(
                 loop.run_in_executor(
-                    None,
+                    _io_pool,
                     lambda: build_preview_payload(url, raw_html, query=query, settings=settings),
                 ),
                 timeout=fetch_timeout,
@@ -1145,6 +1283,10 @@ async def _fetch_preview_one(
         except Exception:
             _trace(req_id, "preview_fetch.payload_error", url=url, policy=policy, elapsed=round(time.perf_counter() - t0, 3))
             return PreviewPayload()
+
+        # Cache the processed text so future hits skip fetch + parse.
+        if payload.text:
+            _cache.cache_page(url, result.title or "", clean_text=payload.text)
         _trace(
             req_id,
             "preview_fetch.done",
@@ -1205,7 +1347,7 @@ async def _fetch_previews(
     try:
         warm_t0 = time.perf_counter()
         await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: warm_preview_models(preview_settings)),
+            loop.run_in_executor(_io_pool,lambda: warm_preview_models(preview_settings)),
             timeout=10.0,
         )
         _trace(req_id, "preview_batch.warm_done", elapsed=round(time.perf_counter() - warm_t0, 3))

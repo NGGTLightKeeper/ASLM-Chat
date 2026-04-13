@@ -41,15 +41,6 @@ def _synth_timeout(state: ResearchState, depth: str) -> float:
     return max(static, remaining)
 
 
-def _triage_timeout_for(state: ResearchState, item_count: int) -> float:
-    cfg = state.config
-    n_batches = math.ceil(max(0, item_count) / max(1, cfg.triage_batch_size))
-    return max(
-        PHASE_TIMEOUTS["triage"],
-        math.ceil(n_batches / TRIAGE_MAX_CONCURRENT_BATCHES) * TRIAGE_BATCH_BUDGET_SEC * 1.3,
-    )
-
-
 def _semantic_backend_for_timeout(state: ResearchState) -> str:
     cached = getattr(state, "_semantic_backend_for_timeout", "")
     if cached:

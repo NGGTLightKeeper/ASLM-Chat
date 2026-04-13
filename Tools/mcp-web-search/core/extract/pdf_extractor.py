@@ -105,33 +105,52 @@ def pdf_file_to_markdown(
     title: str = "",
     max_chars: int = MAX_PDF_TEXT_CHARS,
 ) -> str:
-    """Extract a local PDF file into a bounded markdown document."""
-    import fitz  # PyMuPDF
+    """Extract a local PDF file into a bounded markdown document.
 
-    text_parts: list[str] = []
-    doc = fitz.open(str(path))
+    Uses pymupdf4llm when available (produces proper markdown with headers,
+    bold, italic, tables). Falls back to PyMuPDF get_text("text") otherwise.
+    """
     try:
-        meta = doc.metadata or {}
-        title = (title or str(meta.get("title") or "")).strip() or "PDF Document"
-        for index, page in enumerate(doc, 1):
-            page_text = (page.get_text("text") or "").strip()
-            if not page_text:
-                continue
-            text_parts.append(f"\n\n## Page {index}\n\n{page_text}")
-            if sum(len(part) for part in text_parts) >= max_chars:
-                break
-    finally:
-        doc.close()
+        import pymupdf4llm  # type: ignore
+        body = pymupdf4llm.to_markdown(str(path))
+        if not body or not body.strip():
+            raise ValueError("empty")
+        body = body.strip()
+        if len(body) > max_chars:
+            body = body[:max_chars].rsplit("\n", 1)[0].rstrip() + "\n\n[...truncated]"
+    except Exception:
+        # Fallback: plain text via PyMuPDF
+        import fitz  # PyMuPDF
+        text_parts: list[str] = []
+        doc = fitz.open(str(path))
+        try:
+            meta = doc.metadata or {}
+            title = (title or str(meta.get("title") or "")).strip() or "PDF Document"
+            for index, page in enumerate(doc, 1):
+                page_text = (page.get_text("text") or "").strip()
+                if not page_text:
+                    continue
+                text_parts.append(f"\n\n## Page {index}\n\n{page_text}")
+                if sum(len(part) for part in text_parts) >= max_chars:
+                    break
+        finally:
+            doc.close()
+        body = "\n".join(text_parts).strip()
 
-    body = "\n".join(text_parts).strip()
     if not body:
         return ""
-    if len(body) > max_chars:
-        body = body[:max_chars].rsplit("\n", 1)[0].rstrip() + "\n\n[...truncated]"
+    if not title:
+        try:
+            import fitz
+            doc = fitz.open(str(path))
+            meta = doc.metadata or {}
+            doc.close()
+            title = str(meta.get("title") or "").strip() or "PDF Document"
+        except Exception:
+            title = "PDF Document"
 
     site = urlparse(url).netloc.removeprefix("www.")
     markdown = (
-        f"# {title}\n\n"
         f"**Site:** {site}\n"
         f"**URL:** {url}\n"
         "**Source type:** PDF\n\n"

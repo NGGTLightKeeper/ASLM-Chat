@@ -27,6 +27,7 @@ import os
 from typing import Optional
 
 from core.models.search import SearchResult
+from core.fetch.thread_pool import io_pool as _io_pool
 
 logger = logging.getLogger("core.fetch.yacy_client")
 
@@ -186,7 +187,7 @@ async def async_yacy_search(
         )
 
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _sync)
+    return await loop.run_in_executor(_io_pool, _sync)
 
 
 async def async_add_to_yacy_index(url: str) -> bool:
@@ -197,7 +198,7 @@ async def async_add_to_yacy_index(url: str) -> bool:
         return YaCyClient().add_url_to_index(url)
 
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _sync)
+    return await loop.run_in_executor(_io_pool, _sync)
 
 
 def is_yacy_available(timeout: int = 2) -> bool:

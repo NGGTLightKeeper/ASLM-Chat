@@ -19,13 +19,41 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from core.fetch.thread_pool import io_pool as _io_pool
+
 logger = logging.getLogger("core.fetch.camoufox_fetcher")
+
+
+def _kill_process_tree(pid: int) -> None:
+    """Kill a process and all its children (including Firefox spawned by Camoufox).
+
+    On Windows uses taskkill /F /T which walks the whole process tree.
+    On Unix sends SIGKILL to the process group.
+    """
+    try:
+        if sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                timeout=5.0,
+            )
+        else:
+            import signal
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    except Exception as exc:
+        logger.debug("_kill_process_tree(%d) failed: %s", pid, exc)
+
 
 # Path to the worker script (same package directory).
 _WORKER_SCRIPT = Path(__file__).parent / "_camoufox_worker.py"
@@ -149,20 +177,14 @@ async def fetch_with_camoufox(
             timeout=process_timeout,
         )
     except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        _kill_process_tree(proc.pid)
         return FetchResult(
             url=url,
             error=f"worker timeout after {process_timeout:.0f}s",
             duration_sec=time.perf_counter() - t0,
         )
     except Exception as exc:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        _kill_process_tree(proc.pid)
         return FetchResult(url=url, error=f"worker communicate error: {exc}",
                            duration_sec=time.perf_counter() - t0)
 
@@ -204,7 +226,7 @@ async def fetch_with_camoufox(
             loop = asyncio.get_running_loop()
             from core.extract.page_normalizer import normalize_page
             clean_text = await loop.run_in_executor(
-                None, lambda: normalize_page(url, raw_html, "")
+                _io_pool, lambda: normalize_page(url, raw_html, "")
             )
         except Exception as exc:
             logger.debug("page_normalizer failed for %s: %s", url, exc)

@@ -14,10 +14,7 @@ from core.llm.tokenizer import (
 )
 from services.deep_research.models import ResearchState
 from services.deep_research.plan import _validate_queries
-
-
-def _compact_text(text: str) -> str:
-    return " ".join((text or "").split()).strip()
+from services.deep_research.text_utils import compact_text as _compact_text, sanitize_content as _sanitize_content
 
 
 def _query_jaccard(q1: str, q2: str) -> float:
@@ -96,10 +93,6 @@ def _generate_forced_queries(
                 continue
         forced.append(query)
     return forced
-
-
-def _sanitize_content(text: str) -> str:
-    return (text or "").replace("\x00", "").strip()
 
 
 def _reflection_json_schema(target_queries: int) -> dict[str, Any]:

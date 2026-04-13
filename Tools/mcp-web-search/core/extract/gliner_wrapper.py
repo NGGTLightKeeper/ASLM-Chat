@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger("core.extract.gliner_wrapper")
 
@@ -129,6 +129,25 @@ def get_gliner_runtime(device: str = "cuda") -> tuple[str, str] | None:
         f"GLiNER disabled: free CUDA VRAM {free_gb:.1f}GB < small-model threshold {_SMALL_MIN_VRAM_GB:.1f}GB",
     )
     return None
+
+
+def gliner_cuda_enabled(log_fn: Callable[[str], None]) -> bool:
+    """Return True when a safe CUDA GLiNER runtime is available.
+
+    Calls log_fn with diagnostic messages for skip/ready events.
+    The caller controls deduplication (pass a filtered wrapper if needed).
+    """
+    try:
+        runtime = get_gliner_runtime("cuda")
+    except Exception as exc:
+        log_fn(f"  GLiNER skipped: runtime probe failed: {exc}")
+        return False
+    if runtime is None:
+        log_fn("  GLiNER skipped: insufficient CUDA VRAM for configured models")
+        return False
+    model_id, device = runtime
+    log_fn(f"  GLiNER runtime: model={model_id} device={device}")
+    return True
 
 
 def is_gliner_available() -> bool:

@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import sqlite3
-import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -221,79 +220,6 @@ def build_probe_candidates(domain: str, sample_url: str = "") -> List[ProbeCandi
         deduped.append(candidate)
     return deduped
 
-# Probe validation helpers.
-def validate_candidate_payload(candidate: ProbeCandidate, status: int, content_type: str, body: str) -> Optional[Dict]:
-    if status != 200 or not body or len(body.strip()) < 20:
-        return None
-
-    lowered_type = (content_type or "").lower()
-    trimmed = body.strip()
-
-    if candidate.endpoint_type == "robots":
-        sitemaps = []
-        for line in trimmed.splitlines():
-            if line.lower().startswith("sitemap:"):
-                sitemap_url = line.split(":", 1)[1].strip()
-                if sitemap_url.startswith("http"):
-                    sitemaps.append(sitemap_url)
-        if not sitemaps:
-            return None
-        return {
-            "content_type": content_type,
-            "http_status": status,
-            "confidence": 0.65,
-            "sitemaps": sitemaps,
-        }
-
-    if candidate.endpoint_type == "json_endpoint":
-        if "json" not in lowered_type and not trimmed.startswith(("{", "[")):
-            return None
-        try:
-            payload = json.loads(trimmed)
-        except Exception:
-            return None
-        flattened = _flatten_json(payload)
-        if len(flattened.strip()) < 80:
-            return None
-        return {
-            "content_type": content_type,
-            "http_status": status,
-            "confidence": 0.90,
-            "char_count": len(flattened),
-        }
-
-    if candidate.endpoint_type == "prefix_transform":
-        try:
-            root = ET.fromstring(trimmed)
-        except Exception:
-            return None
-        tag = root.tag.rsplit("}", 1)[-1].lower()
-        if tag not in ("urlset", "sitemapindex", "rss", "feed"):
-            return None
-        return {
-            "content_type": content_type,
-            "http_status": status,
-            "confidence": 0.92,
-            "root_tag": tag,
-        }
-
-    if "xml" not in lowered_type and not trimmed.startswith("<"):
-        return None
-    try:
-        root = ET.fromstring(trimmed)
-    except Exception:
-        return None
-    tag = root.tag.rsplit("}", 1)[-1].lower()
-    expected = _XML_EXPECTED_TAGS.get(candidate.endpoint_type, ())
-    if expected and tag not in expected:
-        return None
-    return {
-        "content_type": content_type,
-        "http_status": status,
-        "confidence": 0.88 if candidate.endpoint_type == "sitemap" else 0.84,
-        "root_tag": tag,
-    }
-
 # Overlay storage.
 class EndpointOverlayStore:
     """Persist discovered endpoint strategies and their validation state."""
@@ -358,107 +284,6 @@ class EndpointOverlayStore:
             """,
             candidate.key(),
         ).fetchone()
-
-    # Lookup helpers.
-    def get_entry(self, candidate: ProbeCandidate) -> Optional[Dict]:
-        with self._connect() as conn:
-            row = self._fetch_existing(conn, candidate)
-        return dict(row) if row is not None else None
-
-    # Lookup helpers.
-    def get_due_candidates(self, domain: str, sample_url: str = "") -> List[ProbeCandidate]:
-        candidates = build_probe_candidates(domain, sample_url=sample_url)
-        if not candidates:
-            return []
-        now = time.time()
-        due: List[ProbeCandidate] = []
-        with self._connect() as conn:
-            for candidate in candidates:
-                row = self._fetch_existing(conn, candidate)
-                if row is None:
-                    due.append(candidate)
-                    continue
-                last_checked = float(row["last_checked_at"] or 0.0)
-                status = str(row["status"] or "candidate")
-                if status == "validated" and candidate.scope == "domain":
-                    continue
-                if now - last_checked >= self.recheck_ttl_sec:
-                    due.append(candidate)
-        return due
-
-    # Persistence helpers.
-    def record_probe_result(
-        self,
-        domain: str,
-        candidate: ProbeCandidate,
-        success: bool,
-        metadata: Optional[Dict] = None,
-    ) -> None:
-        metadata = metadata or {}
-        normalized_domain = normalize_domain(domain or candidate.domain)
-        now = time.time()
-        with self._connect() as conn:
-            row = self._fetch_existing(conn, candidate)
-            if not success and row is None:
-                return
-
-            existing_success = int(row["success_count"]) if row else 0
-            existing_failure = int(row["failure_count"]) if row else 0
-            new_success = existing_success + (1 if success else 0)
-            new_failure = existing_failure + (0 if success else 1)
-            consecutive_failures = 0 if success else int((row["consecutive_failures"] if row else 0) or 0) + 1
-
-            status = "candidate"
-            if success and new_success >= self.promotion_success_count:
-                status = "validated"
-            elif not success and consecutive_failures >= self.deactivate_failure_count:
-                status = "inactive"
-            elif row is not None:
-                status = str(row["status"] or "candidate")
-
-            conn.execute(
-                """
-                INSERT INTO endpoint_overlay (
-                    domain, endpoint_url, endpoint_type, scope, path_pattern, transform_kind,
-                    confidence, success_count, failure_count, consecutive_failures, status,
-                    discovered_from_url, content_type, http_status,
-                    last_checked_at, last_success_at, last_failure_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(domain, endpoint_url, scope, path_pattern, transform_kind)
-                DO UPDATE SET
-                    endpoint_type = excluded.endpoint_type,
-                    confidence = excluded.confidence,
-                    success_count = excluded.success_count,
-                    failure_count = excluded.failure_count,
-                    consecutive_failures = excluded.consecutive_failures,
-                    status = excluded.status,
-                    discovered_from_url = excluded.discovered_from_url,
-                    content_type = excluded.content_type,
-                    http_status = excluded.http_status,
-                    last_checked_at = excluded.last_checked_at,
-                    last_success_at = excluded.last_success_at,
-                    last_failure_at = excluded.last_failure_at
-                """,
-                (
-                    normalized_domain,
-                    candidate.endpoint_url,
-                    candidate.endpoint_type,
-                    candidate.scope,
-                    candidate.path_pattern,
-                    candidate.transform_kind,
-                    float(metadata.get("confidence", row["confidence"] if row else 0.0) or 0.0),
-                    new_success,
-                    new_failure,
-                    consecutive_failures,
-                    status,
-                    candidate.discovered_from_url or metadata.get("discovered_from_url", ""),
-                    str(metadata.get("content_type", row["content_type"] if row else "") or ""),
-                    int(metadata.get("http_status", 0) or 0),
-                    now,
-                    now if success else float(row["last_success_at"] if row else 0.0),
-                    now if not success else float(row["last_failure_at"] if row else 0.0),
-                ),
-            )
 
     # Lookup helpers.
     def lookup_validated(self, domain: str, url: Optional[str] = None) -> Optional[EndpointStrategy]:
@@ -536,54 +361,6 @@ class EndpointOverlayStore:
                 (normalized_domain,),
             ).fetchall()
         return [str(row["endpoint_url"]) for row in rows]
-
-    # Persistence helpers.
-    def mark_endpoint_failure(self, domain: str, endpoint_url: str) -> None:
-        normalized_domain = normalize_domain(domain)
-        if not normalized_domain or not endpoint_url:
-            return
-        now = time.time()
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT *
-                FROM endpoint_overlay
-                WHERE domain = ? AND endpoint_url = ? AND status IN ('candidate', 'validated')
-                ORDER BY success_count DESC
-                LIMIT 1
-                """,
-                (normalized_domain, endpoint_url),
-            ).fetchone()
-            if row is None:
-                return
-            failure_count = int(row["failure_count"] or 0) + 1
-            consecutive_failures = int(row["consecutive_failures"] or 0) + 1
-            status = "inactive" if consecutive_failures >= self.deactivate_failure_count else str(row["status"] or "candidate")
-            conn.execute(
-                """
-                UPDATE endpoint_overlay
-                SET failure_count = ?, consecutive_failures = ?, status = ?, last_failure_at = ?, last_checked_at = ?
-                WHERE domain = ? AND endpoint_url = ? AND scope = ? AND path_pattern = ? AND transform_kind = ?
-                """,
-                (
-                    failure_count,
-                    consecutive_failures,
-                    status,
-                    now,
-                    now,
-                    normalized_domain,
-                    endpoint_url,
-                    str(row["scope"]),
-                    str(row["path_pattern"] or ""),
-                    str(row["transform_kind"] or ""),
-                ),
-            )
-
-    # Reporting helpers.
-    def list_all(self) -> List[Dict]:
-        with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM endpoint_overlay ORDER BY domain, endpoint_url").fetchall()
-        return [dict(row) for row in rows]
 
 
 _overlay_store: Optional[EndpointOverlayStore] = None

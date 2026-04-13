@@ -24,10 +24,9 @@ import hashlib
 import logging
 import random
 import threading
-import time
 from typing import Optional
 
-from core.fetch.engine_stats import ALL_ENGINES, HOSTED_ENGINES, EngineStats, Observation, make_registry
+from core.fetch.engine_stats import EngineStats, Observation, make_registry
 
 logger = logging.getLogger("core.fetch.engine_router")
 

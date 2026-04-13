@@ -33,11 +33,8 @@ from core.fetch.antibot import is_antibot
 from core.fetch.url_utils import has_non_text_extension, is_non_text_content_type
 from services.web_search import _cache
 
-_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
-)
+from core.fetch.constants import DEFAULT_UA as _UA
+from core.fetch.thread_pool import io_pool as _io_pool
 
 logger = logging.getLogger("services.read_page")
 
@@ -75,10 +72,6 @@ def _is_skippable(url: str) -> bool:
     return any(_host(url) == s or _host(url).endswith("." + s) for s in _SKIP_HOSTS)
 
 
-def _is_downloadable(url: str) -> bool:
-    return has_non_text_extension(url)
-
-
 # ---------------------------------------------------------------------------
 # YouTube transcript
 # ---------------------------------------------------------------------------
@@ -97,27 +90,72 @@ async def _fetch_youtube_transcript(url: str) -> str:
     loop = asyncio.get_running_loop()
 
     # Attempt 1: youtube-transcript-api (no network overhead beyond one API call)
+    # Returns: transcript text, "ERR:<message>" on known errors, or None to continue to yt-dlp
     def _yta_try() -> str | None:
         try:
             from youtube_transcript_api import YouTubeTranscriptApi
-            api = YouTubeTranscriptApi()
-            for lang in ["ru", "en", "uk", "de", "fr"]:
+        except ImportError:
+            return None
+
+        api = YouTubeTranscriptApi()
+        PREFERRED = ["ru", "en", "uk", "de", "fr"]
+
+        try:
+            transcript_list = api.list(video_id)
+        except Exception as e:
+            err = str(e)
+            if "unavailable" in err.lower() or "no longer available" in err.lower():
+                return f"ERR:Video unavailable: {url}"
+            # Any other list error — fall through to yt-dlp
+            return None
+
+        # Try manual transcripts in preferred order
+        fetched = None
+        for lang in PREFERRED:
+            try:
+                fetched = transcript_list.find_manually_created_transcript([lang])
+                break
+            except Exception:
+                continue
+
+        # Fall back to generated transcripts in preferred order
+        if fetched is None:
+            for lang in PREFERRED:
                 try:
-                    transcript = api.fetch(video_id, languages=[lang])
-                    parts = [
-                        e.get("text", "") if isinstance(e, dict) else getattr(e, "text", "")
-                        for e in transcript
-                    ]
-                    text = " ".join(p for p in parts if p)
-                    if text:
-                        return f"YouTube transcript\nVideo: {url}\n\n{text}"
+                    fetched = transcript_list.find_generated_transcript([lang])
+                    break
                 except Exception:
                     continue
+
+        # Fall back to any available transcript, translate to English if needed
+        if fetched is None:
+            try:
+                fetched = next(iter(transcript_list))
+                if fetched.language_code not in PREFERRED:
+                    try:
+                        fetched = fetched.translate("en")
+                    except Exception:
+                        pass  # use original language
+            except StopIteration:
+                return None
+
+        try:
+            data = fetched.fetch()
+            parts = [
+                e.get("text", "") if isinstance(e, dict) else getattr(e, "text", "")
+                for e in data
+            ]
+            text = " ".join(p for p in parts if p)
+            if text:
+                lang_code = getattr(fetched, "language_code", "?")
+                return f"YouTube transcript [{lang_code}]\nVideo: {url}\n\n{text}"
         except Exception:
             pass
         return None
 
-    result = await loop.run_in_executor(None, _yta_try)
+    result = await loop.run_in_executor(_io_pool,_yta_try)
+    if result and result.startswith("ERR:"):
+        return f"Error: {result[4:]}"
     if result:
         return result
 
@@ -137,7 +175,7 @@ async def _fetch_youtube_transcript(url: str) -> str:
                     "skip_download": True,
                     "writesubtitles": True,
                     "writeautomaticsub": True,
-                    "subtitleslangs": ["ru", "en"],
+                    "subtitleslangs": ["ru", "en", "uk", "de", "fr", "all"],
                     "subtitlesformat": "vtt",
                     "outtmpl": os.path.join(tmpdir, "sub"),
                     "quiet": True,
@@ -152,7 +190,15 @@ async def _fetch_youtube_transcript(url: str) -> str:
                 vtt_files = _glob.glob(os.path.join(tmpdir, "*.vtt"))
                 if not vtt_files:
                     return None
-                raw = open(vtt_files[0], encoding="utf-8", errors="replace").read()
+                # Prefer ru/en subtitles; fall back to first available
+                PREFERRED_LANGS = ["ru", "en", "uk", "de", "fr"]
+                chosen = vtt_files[0]
+                for lang in PREFERRED_LANGS:
+                    candidates = [f for f in vtt_files if f".{lang}." in os.path.basename(f)]
+                    if candidates:
+                        chosen = candidates[0]
+                        break
+                raw = open(chosen, encoding="utf-8", errors="replace").read()
                 lines, seen = [], set()
                 for line in raw.splitlines():
                     line = line.strip()
@@ -167,7 +213,7 @@ async def _fetch_youtube_transcript(url: str) -> str:
         except Exception:
             return None
 
-    result = await loop.run_in_executor(None, _yt_dlp_try)
+    result = await loop.run_in_executor(_io_pool,_yt_dlp_try)
     return result or f"Error: No transcript available for: {url}"
 
 
@@ -196,7 +242,7 @@ async def _fetch_reddit_json(url: str) -> str:
         return resp.json()
 
     try:
-        data = await loop.run_in_executor(None, _do)
+        data = await loop.run_in_executor(_io_pool,_do)
     except Exception as exc:
         return f"Error: Reddit fetch failed: {exc}"
 
@@ -266,7 +312,7 @@ async def _fetch_curl_cffi(url: str, timeout: int) -> str | None:
             return text if text and not is_antibot(text) else None
         except Exception:
             return None
-    return await loop.run_in_executor(None, _sync)
+    return await loop.run_in_executor(_io_pool,_sync)
 
 
 async def _fetch_pdf_bytes(url: str, timeout: float, tls_verify: bool = True) -> bytes:
@@ -320,7 +366,7 @@ async def _fetch_pdf_bytes(url: str, timeout: float, tls_verify: bool = True) ->
             return b""
         return b""
 
-    return await loop.run_in_executor(None, _sync)
+    return await loop.run_in_executor(_io_pool,_sync)
 
 
 async def _read_pdf(url: str, timeout: float, tls_verify: bool, max_chars: int) -> str:
@@ -401,7 +447,7 @@ async def _fetch_wayback(url: str, timeout: int = 30) -> str | None:
         except Exception:
             return None
 
-    return await loop.run_in_executor(None, _do)
+    return await loop.run_in_executor(_io_pool,_do)
 
 
 # ---------------------------------------------------------------------------

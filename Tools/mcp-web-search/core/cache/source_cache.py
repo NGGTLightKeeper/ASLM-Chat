@@ -21,6 +21,7 @@ import hashlib
 import logging
 import os
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -139,27 +140,31 @@ class SourceCache:
     def __init__(self, db_path: str, default_ttl: int = 86_400) -> None:
         self._db_path = db_path
         self._default_ttl = default_ttl
+        self._local = threading.local()
+        self._write_lock = threading.Lock()
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._init_db()
 
     # -- Connection helpers --------------------------------------------------
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA busy_timeout=5000")
+    def _get_conn(self) -> sqlite3.Connection:
+        """Return a per-thread persistent SQLite connection."""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self._db_path, check_same_thread=False, timeout=10)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            self._local.conn = conn
         return conn
 
     def _init_db(self) -> None:
-        conn = self._connect()
-        try:
-            for stmt in _SCHEMA_SQL.strip().split(";"):
-                stmt = stmt.strip()
-                if stmt:
-                    conn.execute(stmt)
-            conn.commit()
-        finally:
-            conn.close()
+        conn = self._get_conn()
+        for stmt in _SCHEMA_SQL.strip().split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                conn.execute(stmt)
+        conn.commit()
 
     # -- Public API ----------------------------------------------------------
 
@@ -180,9 +185,8 @@ class SourceCache:
         max_age = min_freshness_sec or self._default_ttl
         cutoff = time.time() - max_age
 
-        conn = self._connect()
         try:
-            rows = conn.execute(
+            rows = self._get_conn().execute(
                 """
                 SELECT p.url, p.domain, p.title, p.clean_text, p.raw_html,
                        p.fetched_at, p.content_hash, p.status, p.char_count,
@@ -200,8 +204,6 @@ class SourceCache:
         except sqlite3.OperationalError as exc:
             logger.warning("FTS5 search failed for %r: %s", query, exc)
             return []
-        finally:
-            conn.close()
 
         return [
             CachedPage(
@@ -239,8 +241,8 @@ class SourceCache:
         chash = content_hash(clean_text) if clean_text else ""
         now = time.time()
 
-        conn = self._connect()
-        try:
+        with self._write_lock:
+            conn = self._get_conn()
             # Wrap pages + FTS5 update in a single transaction so they
             # can never desync if the process crashes mid-write.
             with conn:
@@ -267,19 +269,13 @@ class SourceCache:
                     "INSERT INTO pages_fts (url_hash, title, clean_text) VALUES (?, ?, ?)",
                     (uhash, title, clean_text),
                 )
-        finally:
-            conn.close()
 
     def get_cached(self, url: str) -> Optional[CachedPage]:
         """Return a cached page by URL, or None."""
         uhash = url_hash(url)
-        conn = self._connect()
-        try:
-            r = conn.execute(
-                "SELECT * FROM pages WHERE url_hash = ?", (uhash,)
-            ).fetchone()
-        finally:
-            conn.close()
+        r = self._get_conn().execute(
+            "SELECT * FROM pages WHERE url_hash = ?", (uhash,)
+        ).fetchone()
 
         if not r:
             return None
@@ -301,81 +297,58 @@ class SourceCache:
         ttl = max_age_sec or self._default_ttl
         cutoff = time.time() - ttl
 
-        conn = self._connect()
-        try:
-            r = conn.execute(
-                "SELECT fetched_at FROM pages WHERE url_hash = ? AND status = 'ok'",
-                (uhash,),
-            ).fetchone()
-        finally:
-            conn.close()
-
+        r = self._get_conn().execute(
+            "SELECT fetched_at FROM pages WHERE url_hash = ? AND status = 'ok'",
+            (uhash,),
+        ).fetchone()
         return r is not None and r["fetched_at"] > cutoff
 
-    def record_query_source(self, query: str, url: str, rank: int) -> None:
-        """Record which query discovered which URL.
-
-        The query is stored in its normalized form so that semantically
-        equivalent queries (different word order, stopwords removed) map to
-        the same record.
-        """
-        from core.cache.query_normalizer import normalize_query_key
+    def record_query_source(self, query: str, url: str, rank: int = 0) -> None:
+        """Associate a query with a source URL (for stats and future ranking)."""
         uhash = url_hash(url)
-        now = time.time()
-        normalized = normalize_query_key(query)
-
-        conn = self._connect()
-        try:
-            conn.execute(
-                "INSERT INTO query_sources (query, url_hash, rank, found_at) VALUES (?, ?, ?, ?)",
-                (normalized, uhash, rank, now),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-    def evict_stale(self, max_age_sec: int = 604_800) -> int:
-        """Delete pages older than max_age_sec. Returns number of deleted rows."""
-        cutoff = time.time() - max_age_sec
-
-        conn = self._connect()
-        try:
-            stale_hashes = [
-                r[0] for r in conn.execute(
-                    "SELECT url_hash FROM pages WHERE fetched_at < ?", (cutoff,)
-                ).fetchall()
-            ]
-            if stale_hashes:
-                placeholders = ",".join("?" * len(stale_hashes))
+        with self._write_lock:
+            conn = self._get_conn()
+            with conn:
                 conn.execute(
-                    f"DELETE FROM pages_fts WHERE url_hash IN ({placeholders})",
-                    stale_hashes,
+                    "INSERT INTO query_sources (query, url_hash, rank, found_at) VALUES (?, ?, ?, ?)",
+                    (query, uhash, rank, time.time()),
                 )
-            cur = conn.execute("DELETE FROM pages WHERE fetched_at < ?", (cutoff,))
-            conn.execute(
-                "DELETE FROM query_sources WHERE url_hash NOT IN (SELECT url_hash FROM pages)"
-            )
-            conn.commit()
-            return cur.rowcount
-        finally:
-            conn.close()
 
     def page_count(self) -> int:
         """Return total number of cached pages."""
-        conn = self._connect()
-        try:
-            r = conn.execute("SELECT COUNT(*) AS cnt FROM pages").fetchone()
-            return r["cnt"] if r else 0
-        finally:
-            conn.close()
+        r = self._get_conn().execute("SELECT COUNT(*) FROM pages").fetchone()
+        return int(r[0]) if r else 0
 
     def cache_stats(self) -> dict:
         """Return basic cache statistics."""
-        conn = self._connect()
-        try:
-            total = conn.execute("SELECT COUNT(*) AS c FROM pages").fetchone()["c"]
-            ok = conn.execute("SELECT COUNT(*) AS c FROM pages WHERE status='ok'").fetchone()["c"]
-            queries = conn.execute("SELECT COUNT(DISTINCT query) AS c FROM query_sources").fetchone()["c"]
-            return {"total_pages": total, "ok_pages": ok, "unique_queries": queries}
-        finally:
-            conn.close()
+        conn = self._get_conn()
+        total = conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0] or 0
+        ok = conn.execute("SELECT COUNT(*) FROM pages WHERE status = 'ok'").fetchone()[0] or 0
+        queries = conn.execute("SELECT COUNT(DISTINCT query) FROM query_sources").fetchone()[0] or 0
+        return {"total_pages": total, "ok_pages": ok, "unique_queries": queries}
+
+    # -- Eviction ------------------------------------------------------------
+
+    def evict_stale(self, max_age_sec: int | None = None) -> int:
+        """Delete pages older than max_age_sec (and their query_sources). Returns deleted count."""
+        ttl = max_age_sec or self._default_ttl
+        cutoff = time.time() - ttl
+        with self._write_lock:
+            conn = self._get_conn()
+            with conn:
+                stale_hashes = [
+                    r["url_hash"] for r in conn.execute(
+                        "SELECT url_hash FROM pages WHERE fetched_at < ?", (cutoff,)
+                    ).fetchall()
+                ]
+                for uhash in stale_hashes:
+                    conn.execute("DELETE FROM pages_fts WHERE url_hash = ?", (uhash,))
+                    conn.execute("DELETE FROM query_sources WHERE url_hash = ?", (uhash,))
+                result = conn.execute(
+                    "DELETE FROM pages WHERE fetched_at < ?", (cutoff,)
+                )
+                deleted = result.rowcount
+        if deleted:
+            logger.info("source_cache: evicted %d stale pages (ttl=%ds)", deleted, ttl)
+        return deleted
+

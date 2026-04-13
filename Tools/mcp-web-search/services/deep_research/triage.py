@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import List, Optional
 from urllib.parse import urlparse
 
 from services.deep_research.config import TRIAGE_MAX_CONCURRENT_BATCHES

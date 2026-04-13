@@ -91,13 +91,6 @@ def count_tokens(text: str) -> int:
     return heuristic_token_count(text)
 
 
-def token_counter_backend() -> str:
-    """Return a short label for observability."""
-    if _load_tokenizer() is not None:
-        return f"hf:{_TOKENIZER_NAME}"
-    return "heuristic"
-
-
 def derive_token_budget_from_chars(char_budget: int) -> int:
     """Convert old char budgets into safer token budgets.
 

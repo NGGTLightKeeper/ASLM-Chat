@@ -321,6 +321,15 @@ if __name__ == "__main__":
         except Exception:
             yacy_started = False
 
+        # Evict stale/expired cache entries at startup to reclaim disk space.
+        try:
+            from services.web_search import _cache as _ws_cache
+            from core.cache.hosted_cache import get_hosted_cache
+            _ws_cache.evict_stale()
+            get_hosted_cache().evict_expired()
+        except Exception as _e:
+            logger.debug("cache eviction at startup failed: %s", _e)
+
         mcp.run()
     finally:
         try:

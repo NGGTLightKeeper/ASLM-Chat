@@ -23,7 +23,7 @@ import statistics
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Deque, Optional
+from typing import Deque
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -100,12 +100,6 @@ class EngineStats:
         return 1.0 - self.success_rate
 
     @property
-    def empty_result_rate(self) -> float:
-        if not self.window:
-            return 0.5
-        return sum(1 for o in self.window if o.result_count == 0) / len(self.window)
-
-    @property
     def quality_pass_rate(self) -> float:
         passed = [o for o in self.window if o.success]
         if not passed:
@@ -173,10 +167,6 @@ class EngineStats:
             ):
                 self.cooldown_until = time.time() + COOLDOWN_SECONDS
                 self.consecutive_errors = 0
-
-    def reset_cooldown(self) -> None:
-        self.cooldown_until = 0.0
-        self.consecutive_errors = 0
 
     # --- Display -----------------------------------------------------------
 

@@ -36,6 +36,7 @@ from threading import Lock
 from typing import Optional
 
 from core.models.search import SearchResult
+from core.fetch.thread_pool import io_pool as _io_pool
 from core.fetch.engine_router import (
     ENGINE_REGION_OVERRIDE,
     _quality_pass,
@@ -135,10 +136,6 @@ _QUERY_TTL: dict[str, int] = {
     "academic":     86_400,      # 24 h   — papers are static once published
 }
 _NEGATIVE_CACHE_TTL = 300     # 5 min — cache empty results to avoid hammering
-
-
-def _query_cache_ttl(query_type: str) -> int:
-    return _QUERY_TTL.get(query_type, 1_800)
 
 
 def _effective_ttl(query_types: list[str], timelimit: str | None = None) -> int:
@@ -735,19 +732,6 @@ def _query_preview(query: str, limit: int = 96) -> str:
     return compact if len(compact) <= limit else compact[: max(0, limit - 3)].rstrip() + "..."
 
 
-def _serialize_results(results: list[SearchResult]) -> list[dict]:
-    return [
-        {
-            "url": r.url,
-            "title": r.title,
-            "snippet": r.snippet,
-            "engine": r.engine,
-            "trust_tier": r.trust_tier,
-            "score": float(r.score or 0.0),
-            "method_hint": r.method_hint,
-        }
-        for r in results
-    ]
 
 
 def _deserialize_results(payload: list[dict]) -> list[SearchResult]:
@@ -901,4 +885,4 @@ async def async_ddgs_search(
         )
 
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _sync)
+    return await loop.run_in_executor(_io_pool, _sync)

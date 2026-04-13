@@ -37,6 +37,8 @@ logger = logging.getLogger("core.fetch.page_fetcher")
 # ---------------------------------------------------------------------------
 
 from core.fetch.antibot import is_antibot
+from core.fetch.constants import DEFAULT_UA
+from core.fetch.thread_pool import io_pool as _io_pool
 from core.fetch.url_utils import has_non_text_extension, is_non_text_content_type
 
 
@@ -45,11 +47,7 @@ from core.fetch.url_utils import has_non_text_extension, is_non_text_content_typ
 # ---------------------------------------------------------------------------
 
 _HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
+    "User-Agent": DEFAULT_UA,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
@@ -183,7 +181,7 @@ class PageFetcher:
                 return "", r.status_code
             return r.text, r.status_code
 
-        return await loop.run_in_executor(None, _sync)
+        return await loop.run_in_executor(_io_pool, _sync)
 
     async def _fetch_pdf_curl_cffi(self, url: str, max_bytes: int) -> tuple[bytes, int]:
         """Fallback: fetch PDF bytes with curl_cffi."""
@@ -204,7 +202,7 @@ class PageFetcher:
                 return b"", r.status_code
             return data, r.status_code
 
-        return await loop.run_in_executor(None, _sync)
+        return await loop.run_in_executor(_io_pool, _sync)
 
     async def _fetch_single(self, url: str) -> tuple[str, int]:
         """Try httpx, then curl_cffi. Returns (raw_html, status_code)."""
@@ -372,23 +370,3 @@ class PageFetcher:
 
         return results
 
-    async def ensure_cached(
-        self,
-        urls: list[str],
-        ttl: int | None = None,
-    ) -> dict[str, CachedPage | None]:
-        """Return cached pages, fetching only those missing or stale."""
-        results: dict[str, CachedPage | None] = {}
-        to_fetch: list[str] = []
-
-        for u in urls:
-            if self._cache.is_fresh(u, max_age_sec=ttl):
-                results[u] = self._cache.get_cached(u)
-            else:
-                to_fetch.append(u)
-
-        if to_fetch:
-            fetched = await self.fetch_and_cache(to_fetch, budget=len(to_fetch))
-            results.update(fetched)
-
-        return results

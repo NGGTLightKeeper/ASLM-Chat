@@ -60,11 +60,6 @@ _embedder_self_check_done: bool = False
 # CUDA helpers
 # ---------------------------------------------------------------------------
 
-def _is_cuda_oom(exc: BaseException) -> bool:
-    text = str(exc).lower()
-    return "out of memory" in text or "cuda error" in text
-
-
 def _clear_cuda_cache() -> None:
     try:
         import torch
@@ -75,19 +70,9 @@ def _clear_cuda_cache() -> None:
                 torch.cuda.ipc_collect()
             except Exception:
                 pass
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("CUDA cache clear failed: %s", exc)
 
-
-def _gpu_has_min_free_gb(min_free_gb: float = 1.0) -> bool:
-    try:
-        import torch
-        if not torch.cuda.is_available():
-            return False
-        free_bytes, _ = torch.cuda.mem_get_info()
-        return free_bytes >= int(min_free_gb * (1024 ** 3))
-    except Exception:
-        return False
 
 # ---------------------------------------------------------------------------
 # Model loading
@@ -240,20 +225,6 @@ def get_embedder_backend() -> str:
     with _embed_lock:
         return _embed_backend
 
-
-def park_embedder_on_cpu() -> bool:
-    """Move embedder to CPU to free VRAM for LLM tasks. Returns True if parked."""
-    global _embed_backend
-    with _embed_lock:
-        if _embedder is None or _embed_backend.startswith("cpu"):
-            return False
-        try:
-            _embedder.to("cpu")
-            _embed_backend = "cpu-parked"
-            _clear_cuda_cache()
-            return True
-        except Exception:
-            return False
 
 # ---------------------------------------------------------------------------
 # Encode helper (used internally by semantic_dedup)

@@ -40,24 +40,13 @@ def _content_hash(text: str) -> str:
 
 
 def _gliner_cuda_enabled(state: ResearchState) -> bool:
-    try:
-        from core.extract.gliner_wrapper import get_gliner_runtime
-        runtime = get_gliner_runtime("cuda")
-    except Exception as exc:
-        if not getattr(state, "_gliner_hardware_skip_logged", False):
-            state.log(f"  GLiNER skipped: runtime probe failed: {exc}")
-            setattr(state, "_gliner_hardware_skip_logged", True)
-        return False
-    if runtime is None:
-        if not getattr(state, "_gliner_hardware_skip_logged", False):
-            state.log("  GLiNER skipped: insufficient CUDA VRAM for configured models")
-            setattr(state, "_gliner_hardware_skip_logged", True)
-        return False
-    model_id, device = runtime
-    if not getattr(state, "_gliner_runtime_logged", False):
-        state.log(f"  GLiNER runtime: model={model_id} device={device}")
-        setattr(state, "_gliner_runtime_logged", True)
-    return True
+    from core.extract.gliner_wrapper import gliner_cuda_enabled
+    def _log(msg: str) -> None:
+        attr = "_gliner_runtime_logged" if "runtime:" in msg else "_gliner_hardware_skip_logged"
+        if not getattr(state, attr, False):
+            state.log(msg)
+            setattr(state, attr, True)
+    return gliner_cuda_enabled(_log)
 
 
 def _clean_read_page_output(text: str) -> str:
@@ -362,76 +351,6 @@ async def _recover_with_read_page(
         if isinstance(item, ExtractedSource):
             sources.append(item)
     return sources
-
-
-def _parse_search_output(text: str) -> List[dict]:
-    """Extract structured results from run_web_search text output.
-
-    The output format from ``_format_results`` puts labels and values on
-    separate lines::
-
-        [1] [WEB] [DDGS] [B]
-        Title  :
-        Some Page Title
-        URL    :
-        https://example.com/page
-        Preview:
-        The preview text here
-
-    We detect label lines (``Title  :``, ``URL    :``, etc.) and grab the
-    next non-empty line as the value.  A new block starts at ``[N]``.
-    """
-    results: List[dict] = []
-    current: dict = {}
-    pending_field: str = ""
-    lines = text.splitlines()
-
-    _FIELD_MAP = {
-        "title": "title",
-        "url": "url",
-        "preview": "preview",
-        "snippet": "snippet",
-    }
-
-    for line in lines:
-        stripped = line.strip()
-
-        # Detect header like "[1] [WEB] [DDGS] [B]"
-        if stripped.startswith("[") and "]" in stripped:
-            # Check it looks like a rank header (contains multiple brackets)
-            if stripped.count("[") >= 2:
-                if current.get("url"):
-                    results.append(current)
-                current = {}
-                pending_field = ""
-                continue
-
-        # Detect label lines: "Title  :", "URL    :", "Preview:", "Snippet:"
-        label_match = False
-        for label_key, field_name in _FIELD_MAP.items():
-            # Two formats: "Title  :" (value on next line) or "Title  : value" (inline)
-            if stripped.lower().startswith(label_key) and ":" in stripped:
-                after_colon = stripped.split(":", 1)[1].strip()
-                if after_colon:
-                    current[field_name] = after_colon
-                    pending_field = ""
-                else:
-                    pending_field = field_name
-                label_match = True
-                break
-
-        if label_match:
-            continue
-
-        # If we're expecting a value on this line:
-        if pending_field and stripped:
-            current[pending_field] = stripped
-            pending_field = ""
-
-    # Don't forget the last block.
-    if current.get("url"):
-        results.append(current)
-    return results
 
 
 
