@@ -211,3 +211,4 @@ Tools/mcp-web-search/latest_logs
 # UI
 staticfiles
 Settings/settings.json
+Data/downloads_bridge_cache/
