@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import base64
 import binascii
-import io
+import copy
+import hashlib
 import json
 import logging
 import mimetypes
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
-from django.http import JsonResponse, StreamingHttpResponse
+from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.views.generic import TemplateView
 
 from API import llm_api, mcp as tool_registry
@@ -108,6 +110,12 @@ TEXT_ATTACHMENT_FILENAMES = {
     "vagrantfile",
 }
 ATTACHMENT_TEXT_CHAR_LIMIT = 24000
+LLM_HISTORY_MAX_MESSAGES = 40
+LLM_HISTORY_MIN_MESSAGES = 8
+LLM_HISTORY_DEFAULT_CHAR_BUDGET = 48000
+LLM_HISTORY_MAX_CHAR_BUDGET = 160000
+MODEL_INFO_CACHE_TTL_SECONDS = 300
+MODEL_LIST_CACHE_TTL_SECONDS = 45
 LLM_CONTROL_TOKEN_PATTERNS = (
     re.compile(
         r"<\|start\|>\s*(?:assistant|user|system)?\s*(?:<\|channel\|>\s*(?:final|analysis|commentary))?\s*(?:<\|message\|>)?",
@@ -121,6 +129,135 @@ LLM_CONTROL_TOKEN_PATTERNS = (
     re.compile(r"<\|im_(?:start|end)\|>", flags=re.IGNORECASE),
     re.compile(r"<\|(?:assistant|user|system|endoftext)\|>", flags=re.IGNORECASE),
 )
+
+_metadata_cache_lock = threading.RLock()
+_model_info_cache: dict[tuple[str, str, str, str], tuple[float, dict[str, Any]]] = {}
+_model_list_cache: dict[tuple[str, str, str], tuple[float, list[str]]] = {}
+_tool_server_cache: dict[tuple[str, str, str, str], tuple[float, list[dict[str, Any]]]] = {}
+
+
+# Return a stable runtime scope for model metadata caches.
+def _engine_metadata_scope(engine: str) -> tuple[str, str]:
+    """Return endpoint and API-key scope for runtime metadata caches."""
+
+    try:
+        endpoint = settings.get_engine_url(engine)
+    except Exception:
+        endpoint = ""
+
+    try:
+        api_key = settings.get_engine_api_key(engine)
+    except Exception:
+        api_key = ""
+
+    api_key_hash = hashlib.sha256(str(api_key or "").encode("utf-8")).hexdigest()[:16]
+    return endpoint, api_key_hash
+
+
+# Return a defensive deep copy of a cacheable payload.
+def _clone_metadata_payload(payload: Any) -> Any:
+    """Return a detached copy so callers cannot mutate cached metadata."""
+
+    return copy.deepcopy(payload)
+
+
+# Clear cached model metadata.
+def _clear_model_metadata_caches() -> None:
+    """Invalidate runtime metadata caches after settings or presets change."""
+
+    with _metadata_cache_lock:
+        _model_info_cache.clear()
+        _model_list_cache.clear()
+        _tool_server_cache.clear()
+
+
+# Return cached model info when it is still fresh.
+def _get_cached_model_info(engine: str, model_name: str) -> dict[str, Any] | None:
+    """Return a cached model-info payload if available."""
+
+    endpoint, api_key_hash = _engine_metadata_scope(engine)
+    cache_key = (engine, model_name, endpoint, api_key_hash)
+    now = time.monotonic()
+
+    with _metadata_cache_lock:
+        cached = _model_info_cache.get(cache_key)
+        if cached is None:
+            return None
+        cached_at, payload = cached
+        if now - cached_at > MODEL_INFO_CACHE_TTL_SECONDS:
+            _model_info_cache.pop(cache_key, None)
+            return None
+        return _clone_metadata_payload(payload)
+
+
+# Store model info in the runtime cache.
+def _set_cached_model_info(engine: str, model_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Cache and return a detached model-info payload."""
+
+    endpoint, api_key_hash = _engine_metadata_scope(engine)
+    cache_key = (engine, model_name, endpoint, api_key_hash)
+    cached_payload = _clone_metadata_payload(payload)
+
+    with _metadata_cache_lock:
+        _model_info_cache[cache_key] = (time.monotonic(), cached_payload)
+
+    return _clone_metadata_payload(cached_payload)
+
+
+# Return cached model names when still fresh.
+def _get_cached_model_list(engine: str) -> list[str] | None:
+    """Return a cached model list for one engine if available."""
+
+    endpoint, api_key_hash = _engine_metadata_scope(engine)
+    cache_key = (engine, endpoint, api_key_hash)
+    now = time.monotonic()
+
+    with _metadata_cache_lock:
+        cached = _model_list_cache.get(cache_key)
+        if cached is None:
+            return None
+        cached_at, models = cached
+        if now - cached_at > MODEL_LIST_CACHE_TTL_SECONDS:
+            _model_list_cache.pop(cache_key, None)
+            return None
+        return list(models)
+
+
+# Store model names in the runtime cache.
+def _set_cached_model_list(engine: str, models: list[str]) -> list[str]:
+    """Cache and return a detached model list."""
+
+    endpoint, api_key_hash = _engine_metadata_scope(engine)
+    cache_key = (engine, endpoint, api_key_hash)
+    cached_models = list(models)
+
+    with _metadata_cache_lock:
+        _model_list_cache[cache_key] = (time.monotonic(), cached_models)
+
+    return list(cached_models)
+
+
+# Return cached tool servers when still fresh.
+def _list_tool_servers_cached(engine: str, model_name: str | None = None) -> list[dict[str, Any]]:
+    """Return supported tool servers with a short runtime cache."""
+
+    endpoint, api_key_hash = _engine_metadata_scope(engine)
+    normalized_model = str(model_name or "")
+    cache_key = (engine, normalized_model, endpoint, api_key_hash)
+    now = time.monotonic()
+
+    with _metadata_cache_lock:
+        cached = _tool_server_cache.get(cache_key)
+        if cached is not None:
+            cached_at, servers = cached
+            if now - cached_at <= MODEL_LIST_CACHE_TTL_SECONDS:
+                return _clone_metadata_payload(servers)
+            _tool_server_cache.pop(cache_key, None)
+
+    servers = tool_registry.list_servers(engine, model_name)
+    with _metadata_cache_lock:
+        _tool_server_cache[cache_key] = (time.monotonic(), _clone_metadata_payload(servers))
+    return _clone_metadata_payload(servers)
 
 
 # Emit one concise runtime event for the ASLM console.
@@ -246,6 +383,43 @@ def _decode_base64_payload(raw_value: Any) -> bytes:
         return base64.b64decode(payload)
 
 
+# Estimate decoded byte size without materializing the full payload.
+def _estimate_base64_payload_size(raw_value: Any) -> int:
+    """Return the decoded byte size for one base64 payload or data URL."""
+
+    payload = str(raw_value or "").strip()
+    if not payload:
+        return 0
+
+    if payload.startswith("data:") and "," in payload:
+        payload = payload.split(",", 1)[1]
+
+    payload = "".join(payload.split())
+    if not payload:
+        return 0
+
+    padding = len(payload) - len(payload.rstrip("="))
+    return max((len(payload) * 3) // 4 - padding, 0)
+
+
+# Return whether one payload is structurally valid base64.
+def _is_valid_base64_payload(raw_value: Any) -> bool:
+    """Return whether one base64 payload has a valid lightweight shape."""
+
+    payload = str(raw_value or "").strip()
+    if not payload:
+        return False
+
+    if payload.startswith("data:") and "," in payload:
+        payload = payload.split(",", 1)[1]
+
+    payload = "".join(payload.split())
+    if not payload or len(payload) % 4 == 1:
+        return False
+
+    return re.fullmatch(r"[A-Za-z0-9+/]*={0,2}", payload) is not None
+
+
 # Split a data URL into MIME type and base64 payload.
 def _parse_data_url(raw_value: Any) -> tuple[str, str]:
     """Split a data URL into MIME type and base64 payload."""
@@ -312,15 +486,15 @@ def _normalize_attachment_payload(raw_attachment: Any, order: int) -> dict[str, 
     if not encoded:
         return None
 
-    file_bytes = _decode_base64_payload(encoded)
-    if not file_bytes:
-        return None
-
     if encoded.startswith("data:"):
         parsed_mime, parsed_data = _parse_data_url(encoded)
         if parsed_mime:
             mime_type = parsed_mime
         encoded = parsed_data
+
+    size_bytes = _estimate_base64_payload_size(encoded)
+    if size_bytes <= 0 or not _is_valid_base64_payload(encoded):
+        return None
 
     kind = _guess_attachment_kind(mime_type, name)
     if not name:
@@ -333,7 +507,7 @@ def _normalize_attachment_payload(raw_attachment: Any, order: int) -> dict[str, 
         "name": name,
         "mime_type": mime_type,
         "data": encoded,
-        "size_bytes": len(file_bytes),
+        "size_bytes": size_bytes,
         "order": order,
     }
 
@@ -352,40 +526,58 @@ def _normalize_request_attachments(data: dict[str, Any]) -> list[dict[str, Any]]
     return normalized
 
 
+# Build an attachment content endpoint path.
+def _attachment_content_url(record_type: str, record_id: int) -> str:
+    """Return the lazy content endpoint for one stored attachment."""
+
+    return f"/api/attachment/{record_type}/{record_id}/content/"
+
+
 # Convert a persisted attachment-like object into the frontend payload.
-def _serialize_attachment_record(attachment: Any) -> dict[str, Any]:
+def _serialize_attachment_record(attachment: Any, *, include_data: bool = True) -> dict[str, Any]:
     """Convert a persisted attachment-like object into the frontend payload."""
 
     if isinstance(attachment, MessageAttachment):
-        return {
+        payload = {
+            "id": attachment.id,
+            "record_type": "attachment",
             "kind": attachment.kind,
             "name": attachment.name,
             "mime_type": attachment.mime_type,
             "size_bytes": attachment.size_bytes,
             "order": attachment.order,
-            "data_url": attachment.data_url(),
+            "content_url": _attachment_content_url("attachment", attachment.id),
         }
+        if include_data:
+            payload["data_url"] = attachment.data_url()
+            payload["extracted_text"] = attachment.extracted_text
+            payload["extracted_text_ready"] = attachment.extracted_text_ready
+        return payload
 
     if isinstance(attachment, MessageImage):
         payload = {
+            "id": attachment.id,
+            "record_type": "image",
             "kind": MessageAttachmentKind.IMAGE,
             "name": f"image-{attachment.order + 1}",
             "mime_type": attachment.mime_type,
-            "size_bytes": len(_decode_base64_payload(attachment.data)),
+            "size_bytes": _estimate_base64_payload_size(attachment.data),
             "order": attachment.order,
-            "data_url": attachment.data_url(),
+            "content_url": _attachment_content_url("image", attachment.id),
         }
+        if include_data:
+            payload["data_url"] = attachment.data_url()
         return payload
 
     return {}
 
 
 # Return all persisted attachments for a message in a shared shape.
-def _get_message_attachments(message: Message) -> list[dict[str, Any]]:
+def _get_message_attachments(message: Message, *, include_data: bool = True) -> list[dict[str, Any]]:
     """Return all persisted attachments for a message in a shared shape."""
 
-    attachments = [_serialize_attachment_record(item) for item in message.attachments.all()]
-    legacy_images = [_serialize_attachment_record(item) for item in message.images.all()]
+    attachments = [_serialize_attachment_record(item, include_data=include_data) for item in message.attachments.all()]
+    legacy_images = [_serialize_attachment_record(item, include_data=include_data) for item in message.images.all()]
     combined = [item for item in attachments + legacy_images if item]
     combined.sort(key=lambda item: (int(item.get("order") or 0), item.get("name", "")))
     return combined
@@ -395,7 +587,10 @@ def _get_message_attachments(message: Message) -> list[dict[str, Any]]:
 def _attachment_data_to_bytes(attachment: dict[str, Any]) -> bytes:
     """Decode one serialized attachment payload into bytes."""
 
-    return _decode_base64_payload(attachment.get("data_url") or attachment.get("data"))
+    try:
+        return _decode_base64_payload(attachment.get("data_url") or attachment.get("data"))
+    except (ValueError, binascii.Error):
+        return b""
 
 
 # Return whether the attachment should be decoded as text.
@@ -444,15 +639,43 @@ def _truncate_attachment_text(text: str, limit: int = ATTACHMENT_TEXT_CHAR_LIMIT
     return f"{normalized[:limit].rstrip()}\n...[truncated]"
 
 
+# Persist extracted text for one stored file attachment.
+def _cache_attachment_text(attachment: dict[str, Any], extracted_text: str) -> str:
+    """Store extracted attachment text so future requests do not decode it again."""
+
+    attachment["extracted_text"] = extracted_text
+    attachment["extracted_text_ready"] = True
+
+    if attachment.get("record_type") != "attachment":
+        return extracted_text
+
+    try:
+        attachment_id = int(attachment.get("id") or 0)
+    except (TypeError, ValueError):
+        attachment_id = 0
+
+    if attachment_id <= 0:
+        return extracted_text
+
+    MessageAttachment.objects.filter(id=attachment_id).update(
+        extracted_text=extracted_text,
+        extracted_text_ready=True,
+    )
+    return extracted_text
+
+
 # Extract prompt-friendly text from a file attachment when possible.
 def _extract_attachment_text(attachment: dict[str, Any]) -> str:
     """Extract prompt-friendly text from a file attachment when possible."""
+
+    if attachment.get("extracted_text_ready"):
+        return _truncate_attachment_text(str(attachment.get("extracted_text") or ""))
 
     attachment_name = str(attachment.get("name") or "file").strip() or "file"
     mime_type = str(attachment.get("mime_type") or "application/octet-stream").strip()
     file_bytes = _attachment_data_to_bytes(attachment)
     if not file_bytes:
-        return ""
+        return _cache_attachment_text(attachment, "")
 
     suffix = Path(attachment_name).suffix.lower()
     if mime_type == "application/pdf" or suffix == ".pdf":
@@ -461,18 +684,18 @@ def _extract_attachment_text(attachment: dict[str, Any]) -> str:
 
             with fitz.open(stream=file_bytes, filetype="pdf") as document:
                 pages = [page.get_text("text") for page in document]
-            return _truncate_attachment_text("\n".join(pages))
+            return _cache_attachment_text(attachment, _truncate_attachment_text("\n".join(pages)))
         except Exception:
-            return ""
+            return _cache_attachment_text(attachment, "")
 
     if _is_text_attachment(mime_type, attachment_name):
         for encoding in ("utf-8", "utf-8-sig", "cp1251", "latin-1"):
             try:
-                return _truncate_attachment_text(file_bytes.decode(encoding))
+                return _cache_attachment_text(attachment, _truncate_attachment_text(file_bytes.decode(encoding)))
             except UnicodeDecodeError:
                 continue
 
-    return ""
+    return _cache_attachment_text(attachment, "")
 
 
 # Serialize one non-image attachment into universal text context.
@@ -593,6 +816,10 @@ def _extract_model_name(model_entry: Any) -> str:
 def _load_models_for_engine(engine: str) -> list[str]:
     """Return sorted model names for the selected engine."""
 
+    cached_models = _get_cached_model_list(engine)
+    if cached_models is not None:
+        return cached_models
+
     try:
         raw_models = llm_api.get_models(engine)
     except NotImplementedError:
@@ -610,7 +837,7 @@ def _load_models_for_engine(engine: str) -> list[str]:
         if model_name:
             model_names.append(model_name)
 
-    return sorted(set(model_names), key=str.casefold)
+    return _set_cached_model_list(engine, sorted(set(model_names), key=str.casefold))
 
 
 # Build shared template context
@@ -624,7 +851,7 @@ def _build_base_context() -> dict[str, Any]:
         "models": [],
         "engine_options": settings.get_supported_engines(),
         "runtime_settings": runtime_settings,
-        "available_tool_servers": tool_registry.list_servers(engine=engine),
+        "available_tool_servers": _list_tool_servers_cached(engine=engine),
         "chats": Chat.objects.all(),
     }
 
@@ -808,7 +1035,7 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
 
 
 # Serialize message
-def _serialize_message(message: Message) -> dict[str, Any]:
+def _serialize_message(message: Message, *, include_attachment_data: bool = True) -> dict[str, Any]:
     """Convert a database message to the JSON shape expected by the frontend."""
 
     payload = {
@@ -820,10 +1047,14 @@ def _serialize_message(message: Message) -> dict[str, Any]:
     activity_segments = _build_activity_segments(message)
     if activity_segments:
         payload["activity_segments"] = activity_segments
-    attachments = _get_message_attachments(message)
+    attachments = _get_message_attachments(message, include_data=include_attachment_data)
     if attachments:
         payload["attachments"] = attachments
-        payload["images"] = [item["data_url"] for item in attachments if item.get("kind") == MessageAttachmentKind.IMAGE]
+        payload["images"] = [
+            item.get("data_url") or item.get("content_url")
+            for item in attachments
+            if item.get("kind") == MessageAttachmentKind.IMAGE and (item.get("data_url") or item.get("content_url"))
+        ]
     return payload
 
 
@@ -1052,6 +1283,10 @@ def _build_model_info_payload(
 ) -> dict[str, Any]:
     """Load adapter metadata and normalize it for the frontend."""
 
+    cached_payload = _get_cached_model_info(engine, model_name)
+    if cached_payload is not None:
+        return cached_payload
+
     try:
         settings_data = llm_api.get_model_settings(engine, model_name)
     except Exception:
@@ -1077,11 +1312,11 @@ def _build_model_info_payload(
         payload = _extract_generic_model_info(settings_data)
 
     payload["available_tool_servers"] = (
-        tool_registry.list_servers(engine, model_name) if payload.get("supports_tool_calling") else []
+        _list_tool_servers_cached(engine, model_name) if payload.get("supports_tool_calling") else []
     )
     payload["model"] = model_name
     payload["engine"] = engine
-    return payload
+    return _set_cached_model_info(engine, model_name, payload)
 
 
 # Read JSON body
@@ -1175,13 +1410,52 @@ def _store_message_attachments(message_record: Message, attachments: list[dict[s
             order=int(attachment.get("order") or 0),
         )
 
+
+# Resolve a bounded history budget from model metadata.
+def _resolve_history_char_budget(model_info_payload: dict[str, Any] | None) -> int:
+    """Return an approximate character budget for replayed chat history."""
+
+    if not isinstance(model_info_payload, dict):
+        return LLM_HISTORY_DEFAULT_CHAR_BUDGET
+
+    try:
+        context_length = int(model_info_payload.get("context_length") or 0)
+    except (TypeError, ValueError):
+        context_length = 0
+
+    if context_length <= 0:
+        return LLM_HISTORY_DEFAULT_CHAR_BUDGET
+
+    # Approximate one token as a few characters and leave room for the answer.
+    return max(16000, min(context_length * 3, LLM_HISTORY_MAX_CHAR_BUDGET))
+
+
+# Estimate the prompt cost of one normalized LLM entry.
+def _estimate_llm_entry_chars(entry: dict[str, Any]) -> int:
+    """Return a lightweight size estimate for one outbound LLM entry."""
+
+    if not isinstance(entry, dict):
+        return 0
+
+    cost = len(str(entry.get("content") or ""))
+    cost += len(str(entry.get("thinking") or ""))
+    if isinstance(entry.get("tool_calls"), list):
+        cost += len(json.dumps(entry["tool_calls"], ensure_ascii=False))
+    if isinstance(entry.get("google_parts"), list):
+        cost += len(json.dumps(entry["google_parts"], ensure_ascii=False))
+
+    images = entry.get("images") if isinstance(entry.get("images"), list) else []
+    cost += len(images) * 4096
+    return cost
+
+
 # Build LLM message history
 def _build_chat_history(
     chat: Chat,
     user_message_record: Message,
     user_message: str,
     system_prompt: str,
-    attachments: list[dict[str, Any]],
+    model_info_payload: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build the message history sent to the selected backend."""
 
@@ -1189,12 +1463,37 @@ def _build_chat_history(
     if system_prompt:
         llm_messages.append({"role": "system", "content": system_prompt})
 
-    history_qs = chat.messages.exclude(id=user_message_record.id).prefetch_related("attachments", "images")
+    history_budget = _resolve_history_char_budget(model_info_payload)
+    used_history_chars = 0
+    selected_history: list[list[dict[str, Any]]] = []
+    history_qs = (
+        chat.messages
+        .exclude(id=user_message_record.id)
+        .prefetch_related("attachments", "images")
+        .order_by("-created_at")[:LLM_HISTORY_MAX_MESSAGES]
+    )
     for historical_message in history_qs:
-        llm_messages.extend(_build_llm_history_entries(historical_message))
+        entries = _build_llm_history_entries(historical_message)
+        if not entries:
+            continue
+
+        entry_cost = sum(_estimate_llm_entry_chars(entry) for entry in entries)
+        if (
+            selected_history
+            and len(selected_history) >= LLM_HISTORY_MIN_MESSAGES
+            and used_history_chars + entry_cost > history_budget
+        ):
+            break
+
+        selected_history.append(entries)
+        used_history_chars += entry_cost
+
+    for entries in reversed(selected_history):
+        llm_messages.extend(entries)
 
     current_entry: dict[str, Any] = {"role": "user", "content": user_message}
-    llm_messages.append(_apply_attachments_to_llm_entry(current_entry, attachments))
+    current_attachments = _get_message_attachments(user_message_record)
+    llm_messages.append(_apply_attachments_to_llm_entry(current_entry, current_attachments))
 
     return llm_messages
 
@@ -1474,7 +1773,7 @@ def chat_api(request):
             user_message_record,
             user_message,
             system_prompt,
-            attachments,
+            model_info_payload,
         )
 
         # Split generic options from thinking-specific controls.
@@ -1548,6 +1847,40 @@ def abort_generation_api(request):
         return JsonResponse({"ok": True})
     except Exception as exc:
         logger.exception("Failed to abort generation")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Return stored attachment bytes on demand.
+def attachment_content_api(request, record_type: str, attachment_id: int):
+    """Stream one persisted attachment without embedding it into chat JSON."""
+
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        normalized_type = str(record_type or "").strip().lower()
+        if normalized_type == "attachment":
+            attachment = MessageAttachment.objects.get(id=attachment_id)
+            mime_type = attachment.mime_type
+            name = attachment.name or f"attachment-{attachment.id}"
+            encoded = attachment.data
+        elif normalized_type == "image":
+            attachment = MessageImage.objects.get(id=attachment_id)
+            mime_type = attachment.mime_type
+            name = f"image-{attachment.order + 1}"
+            encoded = attachment.data
+        else:
+            return JsonResponse({"error": "Unknown attachment type"}, status=404)
+
+        safe_name = re.sub(r'["\\\r\n]', "_", Path(name).name or "attachment")
+        response = HttpResponse(_decode_base64_payload(encoded), content_type=mime_type)
+        response["Cache-Control"] = "private, max-age=3600"
+        response["Content-Disposition"] = f'inline; filename="{safe_name}"'
+        return response
+    except (MessageAttachment.DoesNotExist, MessageImage.DoesNotExist):
+        return JsonResponse({"error": "Attachment not found"}, status=404)
+    except Exception as exc:
+        logger.exception("Failed to load attachment %s/%s", record_type, attachment_id)
         return JsonResponse({"error": str(exc)}, status=500)
 
 
@@ -1661,7 +1994,7 @@ def load_chat_api(request, chat_id):
     try:
         chat = Chat.objects.get(id=chat_id)
         messages = chat.messages.all().prefetch_related("attachments", "images")
-        payload = [_serialize_message(message) for message in messages]
+        payload = [_serialize_message(message, include_attachment_data=False) for message in messages]
         active_tool_server_ids = _parse_active_tool_slugs(chat.active_tool_slug)
         return JsonResponse({
             "chat_id": str(chat.id),
@@ -1743,7 +2076,7 @@ def get_tools_api(request):
 
     engine = _get_active_engine(request.GET.get("engine"))
     model_name = str(request.GET.get("model", "") or "").strip() or None
-    servers = tool_registry.list_servers(engine, model_name)
+    servers = _list_tool_servers_cached(engine, model_name)
     return JsonResponse({"tool_servers": servers, "servers": servers, "tools": servers})
 
 
@@ -1785,6 +2118,14 @@ def get_lms_presets_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Return a JSON response after invalidating model metadata.
+def _preset_mutation_response(payload: dict[str, Any]) -> JsonResponse:
+    """Invalidate model-info caches after a preset mutation."""
+
+    _clear_model_metadata_caches()
+    return JsonResponse(payload)
+
+
 # Sync the active Ollama preset.
 def sync_ollama_preset_api(request):
     """Persist UI changes to the active Ollama preset."""
@@ -1798,7 +2139,7 @@ def sync_ollama_preset_api(request):
         config = data.get("config", {})
         if not model_name:
             return JsonResponse({"error": "Model parameter is required"}, status=400)
-        return JsonResponse(sync_active_ollama_preset(model_name, config))
+        return _preset_mutation_response(sync_active_ollama_preset(model_name, config))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except Exception as exc:
@@ -1819,7 +2160,7 @@ def sync_lms_preset_api(request):
         config = data.get("config", {})
         if not model_name:
             return JsonResponse({"error": "Model parameter is required"}, status=400)
-        return JsonResponse(sync_active_lms_preset(model_name, config))
+        return _preset_mutation_response(sync_active_lms_preset(model_name, config))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except Exception as exc:
@@ -1840,7 +2181,7 @@ def select_ollama_preset_api(request):
         preset_id = str(data.get("preset_id", "") or "").strip()
         if not model_name or not preset_id:
             return JsonResponse({"error": "Model and preset_id are required"}, status=400)
-        return JsonResponse(activate_ollama_preset(model_name, preset_id))
+        return _preset_mutation_response(activate_ollama_preset(model_name, preset_id))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except OllamaPreset.DoesNotExist as exc:
@@ -1863,7 +2204,7 @@ def select_lms_preset_api(request):
         preset_id = str(data.get("preset_id", "") or "").strip()
         if not model_name or not preset_id:
             return JsonResponse({"error": "Model and preset_id are required"}, status=400)
-        return JsonResponse(activate_lms_preset(model_name, preset_id))
+        return _preset_mutation_response(activate_lms_preset(model_name, preset_id))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except LmsPreset.DoesNotExist as exc:
@@ -1887,7 +2228,7 @@ def create_ollama_preset_api(request):
         config = data.get("config", {})
         if not model_name:
             return JsonResponse({"error": "Model parameter is required"}, status=400)
-        return JsonResponse(
+        return _preset_mutation_response(
             create_ollama_preset(
                 model_name,
                 name=preset_name or None,
@@ -1916,7 +2257,7 @@ def create_lms_preset_api(request):
         config = data.get("config", {})
         if not model_name:
             return JsonResponse({"error": "Model parameter is required"}, status=400)
-        return JsonResponse(
+        return _preset_mutation_response(
             create_lms_preset(
                 model_name,
                 name=preset_name or None,
@@ -1945,7 +2286,7 @@ def rename_ollama_preset_api(request):
         preset_name = str(data.get("name", "") or "").strip()
         if not model_name or not preset_id or not preset_name:
             return JsonResponse({"error": "Model, preset_id and name are required"}, status=400)
-        return JsonResponse(rename_ollama_preset(model_name, preset_id, preset_name))
+        return _preset_mutation_response(rename_ollama_preset(model_name, preset_id, preset_name))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except OllamaPreset.DoesNotExist as exc:
@@ -1969,7 +2310,7 @@ def rename_lms_preset_api(request):
         preset_name = str(data.get("name", "") or "").strip()
         if not model_name or not preset_id or not preset_name:
             return JsonResponse({"error": "Model, preset_id and name are required"}, status=400)
-        return JsonResponse(rename_lms_preset(model_name, preset_id, preset_name))
+        return _preset_mutation_response(rename_lms_preset(model_name, preset_id, preset_name))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except LmsPreset.DoesNotExist as exc:
@@ -1992,7 +2333,7 @@ def delete_ollama_preset_api(request):
         preset_id = str(data.get("preset_id", "") or "").strip()
         if not model_name or not preset_id:
             return JsonResponse({"error": "Model and preset_id are required"}, status=400)
-        return JsonResponse(delete_ollama_preset(model_name, preset_id))
+        return _preset_mutation_response(delete_ollama_preset(model_name, preset_id))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except OllamaPreset.DoesNotExist as exc:
@@ -2015,7 +2356,7 @@ def delete_lms_preset_api(request):
         preset_id = str(data.get("preset_id", "") or "").strip()
         if not model_name or not preset_id:
             return JsonResponse({"error": "Model and preset_id are required"}, status=400)
-        return JsonResponse(delete_lms_preset(model_name, preset_id))
+        return _preset_mutation_response(delete_lms_preset(model_name, preset_id))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except LmsPreset.DoesNotExist as exc:
@@ -2069,6 +2410,7 @@ def runtime_settings_api(request):
 
     # Apply runtime transitions after the new settings are saved.
     llm_api.handle_engine_transition(previous_engine, next_engine)
+    _clear_model_metadata_caches()
 
     return JsonResponse(_build_runtime_settings_payload())
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -73,6 +74,42 @@ DEFAULTS: dict[str, Any] = {
 CONSOLE_LOG_LEVELS = {"basic", "debug", "trace"}
 NORMALIZED_ADDRESS_KEYS = {"lms_url", "openai_url", "google_genai_url"}
 IGNORED_ENV_KEYS = {"ASLM_MODULE_ID", "ASLM_MODULE_DIR"}
+
+_settings_cache_lock = threading.RLock()
+_settings_cache: dict[str, Any] | None = None
+_settings_cache_mtime_ns: int | None = None
+
+
+# Return the current settings file mtime.
+def _get_settings_mtime_ns() -> int | None:
+    """Return the current settings file mtime used for cache invalidation."""
+
+    try:
+        return SETTINGS_FILE.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+# Store one effective settings snapshot in memory.
+def _store_settings_cache(data: dict[str, Any], mtime_ns: int | None) -> None:
+    """Replace the in-memory settings snapshot."""
+
+    global _settings_cache, _settings_cache_mtime_ns
+
+    with _settings_cache_lock:
+        _settings_cache = dict(data)
+        _settings_cache_mtime_ns = mtime_ns
+
+
+# Invalidate the in-memory settings snapshot.
+def _invalidate_settings_cache() -> None:
+    """Clear cached settings so the next read reloads from disk."""
+
+    global _settings_cache, _settings_cache_mtime_ns
+
+    with _settings_cache_lock:
+        _settings_cache = None
+        _settings_cache_mtime_ns = None
 
 
 # Normalize one raw settings value.
@@ -212,10 +249,17 @@ def _normalize_loaded_settings(data: dict[str, Any]) -> dict[str, Any]:
 def load_settings() -> dict[str, Any]:
     """Load settings from disk and apply runtime environment overrides."""
 
+    mtime_ns = _get_settings_mtime_ns()
+    with _settings_cache_lock:
+        if _settings_cache is not None and _settings_cache_mtime_ns == mtime_ns:
+            return dict(_settings_cache)
+
     settings_data = dict(DEFAULTS)
     settings_data.update(_load_settings_from_disk())
     settings_data = _apply_environment_overrides(settings_data)
-    return _normalize_loaded_settings(settings_data)
+    settings_data = _normalize_loaded_settings(settings_data)
+    _store_settings_cache(settings_data, mtime_ns)
+    return dict(settings_data)
 
 # Save the settings snapshot to disk.
 def save_settings(data: dict[str, Any]) -> None:
@@ -224,6 +268,10 @@ def save_settings(data: dict[str, Any]) -> None:
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with SETTINGS_FILE.open("w", encoding="utf-8") as file:
         json.dump(data, file, indent=4, ensure_ascii=False)
+    settings_data = dict(DEFAULTS)
+    settings_data.update(data)
+    settings_data = _apply_environment_overrides(settings_data)
+    _store_settings_cache(_normalize_loaded_settings(settings_data), _get_settings_mtime_ns())
 
 
 # Build one runtime environment variable name.
@@ -324,6 +372,7 @@ def set(key: str, value: Any) -> None:
         os.environ[env_key] = serialized
     elif env_key in os.environ:
         del os.environ[env_key]
+    _invalidate_settings_cache()
 
     # Mirror the updated setting into the ASLM module manifest when available.
     _sync_module_manifest_setting(key, value)

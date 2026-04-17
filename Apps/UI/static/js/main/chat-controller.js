@@ -47,6 +47,28 @@ export function createChatController(context, dependencies) {
       .filter(Boolean);
   }
 
+  // Resolve attachment metadata into the payload shape expected by the backend.
+  async function buildAttachmentPayloads(attachments) {
+    const payloads = [];
+
+    for (const attachment of attachments || []) {
+      const resolved = await attachmentUi.resolveAttachmentData(attachment);
+      if (!resolved || !resolved.base64) {
+        continue;
+      }
+
+      payloads.push({
+        kind: resolved.kind,
+        name: resolved.name,
+        mime_type: resolved.mimeType,
+        size_bytes: resolved.size,
+        data: resolved.base64
+      });
+    }
+
+    return payloads;
+  }
+
 
   // Model resolution.
   // Resolve the model that should be used for one queued request.
@@ -93,16 +115,9 @@ export function createChatController(context, dependencies) {
         payload.tool_server_ids = request.toolServerIds;
       }
 
-      if (request.attachments.length > 0) {
-        payload.attachments = request.attachments.map(function toPayload(attachment) {
-          return {
-            kind: attachment.kind,
-            name: attachment.name,
-            mime_type: attachment.mimeType,
-            size_bytes: attachment.size,
-            data: attachment.base64
-          };
-        });
+      const attachmentPayloads = await buildAttachmentPayloads(request.attachments);
+      if (attachmentPayloads.length > 0) {
+        payload.attachments = attachmentPayloads;
       }
 
       state.currentAbortController = new AbortController();
@@ -160,7 +175,56 @@ export function createChatController(context, dependencies) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let fullText = '';
+      let lastRenderedText = '';
+      let streamRenderTimer = null;
+      let streamRenderLastAt = 0;
+      const streamRenderIntervalMs = 80;
       const signal = state.currentAbortController ? state.currentAbortController.signal : null;
+
+      // Batch expensive timeline/markdown work while chunks are arriving.
+      function renderStreamFrame(finalRender) {
+        if (streamRenderTimer !== null) {
+          window.clearTimeout(streamRenderTimer);
+          streamRenderTimer = null;
+        }
+
+        if (lastRenderedText === fullText && !finalRender) {
+          return;
+        }
+
+        const area = dom.$messagesArea[0];
+        const isNearBottom = area.scrollHeight - area.clientHeight <= area.scrollTop + 50;
+
+        if (finalRender) {
+          messagesUi.renderMessageHtml($msgRow, fullText);
+        } else {
+          messagesUi.renderMessageStream($msgRow, fullText);
+        }
+
+        lastRenderedText = fullText;
+        streamRenderLastAt = performance.now();
+
+        if (isNearBottom) {
+          messagesUi.scrollBottom();
+        }
+      }
+
+      // Schedule a streaming paint within a small latency budget.
+      function scheduleStreamRender() {
+        if (streamRenderTimer !== null) {
+          return;
+        }
+
+        const now = performance.now();
+        const delay = Math.max(0, streamRenderIntervalMs - (now - streamRenderLastAt));
+
+        streamRenderTimer = window.setTimeout(function onStreamRenderTimer() {
+          window.requestAnimationFrame(function onStreamRenderFrame() {
+            streamRenderTimer = null;
+            renderStreamFrame(false);
+          });
+        }, delay);
+      }
 
       // Read one chunk or fail immediately on abort.
       function readOrAbort() {
@@ -191,21 +255,19 @@ export function createChatController(context, dependencies) {
 
           const chunk = decoder.decode(value, { stream: true });
           fullText += chunk;
-
-          const area = dom.$messagesArea[0];
-          const isNearBottom = area.scrollHeight - area.clientHeight <= area.scrollTop + 50;
-          messagesUi.renderMessageHtml($msgRow, fullText);
-
-          if (isNearBottom) {
-            messagesUi.scrollBottom();
-          }
+          scheduleStreamRender();
         }
       } catch (readError) {
         if (readError.name !== 'AbortError') {
           throw readError;
         }
       } finally {
-        reader.cancel();
+        renderStreamFrame(true);
+        try {
+          await reader.cancel();
+        } catch (_error) {
+          // Ignore cancellation races after the stream has already closed.
+        }
         reader.releaseLock();
       }
     } catch (error) {
@@ -402,7 +464,11 @@ export function createChatController(context, dependencies) {
       let userAttachments = [];
 
       try {
-        userAttachments = JSON.parse($userMsg.find('.msg-bubble').attr('data-attachments') || '[]');
+        const $bubble = $userMsg.find('.msg-bubble');
+        const storedAttachments = $bubble.data('attachments');
+        userAttachments = Array.isArray(storedAttachments)
+          ? storedAttachments
+          : JSON.parse($bubble.attr('data-attachments') || '[]');
       } catch (_error) {
         userAttachments = [];
       }
@@ -489,20 +555,20 @@ export function createChatController(context, dependencies) {
       dom.$messagesArea.show();
       dom.$conversationInput.show();
 
-      data.messages.forEach(function appendStoredMessage(message) {
-        messagesUi.appendMessage(
-          message.role,
-          message.content,
-          (message.attachments || message.images || []).map(attachmentUi.normalizeAttachment).filter(Boolean),
-          message.created_at,
-          {
+      const storedMessages = data.messages.map(function buildStoredMessage(message) {
+        return {
+          role: message.role,
+          text: message.content,
+          attachments: (message.attachments || message.images || []).map(attachmentUi.normalizeAttachment).filter(Boolean),
+          timestamp: message.created_at,
+          options: {
             activitySegments: Array.isArray(message.activity_segments) ? message.activity_segments : [],
             messageId: message.id
           }
-        );
+        };
       });
 
-      messagesUi.scrollBottom();
+      messagesUi.appendMessages(storedMessages);
     } catch (error) {
       console.error('Failed to load chat history:', error);
     }

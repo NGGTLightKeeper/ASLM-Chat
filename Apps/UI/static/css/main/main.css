@@ -1533,6 +1533,10 @@
   color: inherit;
 }
 
+.msg-stream-text .markdown-body.is-streaming {
+  white-space: pre-wrap;
+}
+
 .typing-indicator {
   display: flex;
   gap: 4px;

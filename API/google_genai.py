@@ -1347,6 +1347,7 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
 
     system_fragments: list[str] = []
     contents: list[dict[str, Any]] = []
+    image_bytes_cache: dict[str, bytes] = {}
 
     for message_index, message in enumerate(messages, start=1):
         role = str(message.get("role", "user")).lower()
@@ -1400,7 +1401,12 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
             mime_type = "image/jpeg"
             if image_index < len(image_mime_types):
                 mime_type = str(image_mime_types[image_index] or mime_type)
-            image_bytes = _decode_image_bytes(image_base64)
+            image_digest = hashlib.sha256(image_base64.encode("utf-8")).hexdigest()
+            image_bytes = image_bytes_cache.get(image_digest)
+            if image_bytes is None:
+                image_bytes = _decode_image_bytes(image_base64)
+                if image_bytes:
+                    image_bytes_cache[image_digest] = image_bytes
             if image_bytes:
                 parts.append(
                     {
@@ -2311,19 +2317,8 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
     else:
         tool_server_ids = []
 
-    # Build the shared Gemini request payload once before dispatch.
     tool_context = dict(kwargs.pop("tool_context", {}) or {})
     stream = bool(kwargs.get("stream", False))
-    system_instruction, conversation = _build_google_contents(messages)
-    request_config = _build_google_request_config(
-        dict(kwargs.get("options", {}) or {}),
-        system_instruction=system_instruction,
-        think=kwargs.get("think"),
-        think_level=kwargs.get("think_level"),
-        think_param_name=str(kwargs.get("think_param_name", "include_thoughts") or "include_thoughts"),
-        think_level_param_name=str(kwargs.get("think_level_param_name", "thinking_level") or "thinking_level"),
-    )
-    request_config = _apply_learned_request_preferences(model_name, request_config)
 
     client = _get_client()
     try:
@@ -2345,6 +2340,18 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
                 stream=stream,
             )
             return
+
+        # Build the shared Gemini request payload once for direct rounds.
+        system_instruction, conversation = _build_google_contents(messages)
+        request_config = _build_google_request_config(
+            dict(kwargs.get("options", {}) or {}),
+            system_instruction=system_instruction,
+            think=kwargs.get("think"),
+            think_level=kwargs.get("think_level"),
+            think_param_name=str(kwargs.get("think_param_name", "include_thoughts") or "include_thoughts"),
+            think_level_param_name=str(kwargs.get("think_level_param_name", "thinking_level") or "thinking_level"),
+        )
+        request_config = _apply_learned_request_preferences(model_name, request_config)
 
         # Tool transcripts already stored in the conversation must keep using
         # the Gemini round helper so follow-up turns preserve provider-specific

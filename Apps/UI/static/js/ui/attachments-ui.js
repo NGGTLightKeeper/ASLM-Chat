@@ -14,6 +14,34 @@ export function createAttachmentsUi(context) {
     updateSendButtons = typeof fn === 'function' ? fn : function noop() {};
   }
 
+  // Return whether a URL contains inline base64 data.
+  function isInlineDataUrl(value) {
+    return String(value || '').startsWith('data:');
+  }
+
+  // Extract a base64 payload only from inline data URLs.
+  function dataUrlToBase64(value) {
+    const dataUrl = String(value || '');
+    if (!isInlineDataUrl(dataUrl)) {
+      return '';
+    }
+    return dataUrl.replace(/^data:[^;]+;base64,/, '');
+  }
+
+  // Convert a fetched Blob into a data URL.
+  function readBlobAsDataUrl(blob) {
+    return new Promise(function resolveBlob(resolve, reject) {
+      const reader = new FileReader();
+      reader.onload = function onLoad() {
+        resolve(String(reader.result || ''));
+      };
+      reader.onerror = function onError() {
+        reject(reader.error || new Error('Failed to read attachment'));
+      };
+      reader.readAsDataURL(blob);
+    });
+  }
+
 
   // Attachment controls.
   // Toggle attachment buttons and badges from model capabilities.
@@ -45,27 +73,70 @@ export function createAttachmentsUi(context) {
     }
 
     if (typeof attachment === 'string') {
+      const source = String(attachment || '');
+      const isRemoteUrl = source.startsWith('/') || /^https?:\/\//i.test(source);
+      const base64 = isRemoteUrl ? '' : dataUrlToBase64(source) || source;
+
       return {
         kind: 'image',
         name: '',
         mimeType: 'image/jpeg',
         size: 0,
-        base64: attachment.replace(/^data:[^;]+;base64,/, ''),
-        dataUrl: attachment
+        base64,
+        dataUrl: source,
+        contentUrl: isRemoteUrl ? source : ''
       };
     }
 
-    const dataUrl = attachment.dataUrl || attachment.data_url || '';
+    const contentUrl = attachment.contentUrl || attachment.content_url || '';
+    const dataUrl = attachment.dataUrl || attachment.data_url || contentUrl || '';
     const mimeType = attachment.mimeType || attachment.mime_type || 'application/octet-stream';
-    const base64 = attachment.base64 || attachment.data || (dataUrl ? dataUrl.replace(/^data:[^;]+;base64,/, '') : '');
+    const base64 = attachment.base64 || attachment.data || dataUrlToBase64(dataUrl);
 
     return {
+      id: attachment.id || null,
       kind: attachment.kind || 'file',
       name: attachment.name || '',
       mimeType,
       size: attachment.size || attachment.size_bytes || 0,
       base64,
-      dataUrl: dataUrl || (base64 ? `data:${mimeType};base64,${base64}` : '')
+      dataUrl: dataUrl || (base64 ? `data:${mimeType};base64,${base64}` : ''),
+      contentUrl,
+      recordType: attachment.recordType || attachment.record_type || ''
+    };
+  }
+
+  // Ensure a stored attachment has inline data before it is sent again.
+  async function resolveAttachmentData(attachment) {
+    const normalized = normalizeAttachment(attachment);
+    if (!normalized) {
+      return null;
+    }
+
+    if (normalized.base64) {
+      return normalized;
+    }
+
+    const fetchUrl = normalized.contentUrl || (!isInlineDataUrl(normalized.dataUrl) ? normalized.dataUrl : '');
+    if (!fetchUrl || typeof fetch === 'undefined') {
+      return normalized;
+    }
+
+    const response = await fetch(fetchUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load attachment: ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const dataUrl = await readBlobAsDataUrl(blob);
+    const mimeType = blob.type || normalized.mimeType;
+
+    return {
+      ...normalized,
+      mimeType,
+      size: normalized.size || blob.size || 0,
+      base64: dataUrlToBase64(dataUrl),
+      dataUrl
     };
   }
 
@@ -184,6 +255,7 @@ export function createAttachmentsUi(context) {
     normalizeAttachment,
     rebuildPreviewStrips,
     removePendingAttachment,
+    resolveAttachmentData,
     setUpdateSendButtons,
     updateAttachmentControls
   };
