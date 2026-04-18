@@ -22,6 +22,7 @@ from typing import Any
 from sandbox.config import (
     GREP_CLUSTER_THRESHOLD,
     MAX_FILE_MAP_SYMBOLS,
+    RG_TYPE_TO_GLOB,
 )
 
 
@@ -42,19 +43,17 @@ _STRUCTURE_RE = re.compile(
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 
-_CODE_EXTENSIONS = frozenset({
-    ".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java",
-    ".kt", ".scala", ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp",
-    ".cs", ".rb", ".php", ".lua", ".swift", ".r", ".sh", ".bash",
-    ".zsh", ".pl", ".pm", ".ex", ".exs", ".zig", ".nim", ".v",
-    ".dart", ".vue", ".svelte",
-})
-
 _TEXT_EXTENSIONS = frozenset({
     ".md", ".markdown", ".rst", ".txt", ".log", ".csv", ".tsv",
     ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".xml",
     ".html", ".css", ".scss", ".less", ".sql", ".json",
 })
+
+_CODE_EXTENSIONS: frozenset[str] = frozenset(
+    "." + glob[2:]
+    for glob in set(RG_TYPE_TO_GLOB.values())
+    if glob.startswith("*.")
+) - _TEXT_EXTENSIONS
 
 
 def _extract_code_structure(

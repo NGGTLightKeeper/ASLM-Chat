@@ -34,4 +34,7 @@ apply_network_limit() {
 
 apply_network_limit
 
+mkdir -p /workspace/_sandbox
+chmod -R a+rwX /workspace/_sandbox >/dev/null 2>&1 || true
+
 exec tail -f /dev/null

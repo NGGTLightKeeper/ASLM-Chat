@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from sandbox.config import CONTAINER_WORKSPACE, DEFAULT_TASK_DIR
+from sandbox.config import CONTAINER_WORKSPACE, DEFAULT_TASK_DIR, RG_TYPE_TO_GLOB
 
 # Container task-root prefix (e.g. "/workspace/_sandbox")
 _CONTAINER_TASK_PREFIX = f"{CONTAINER_WORKSPACE}/{DEFAULT_TASK_DIR}"
@@ -265,16 +265,7 @@ def _parse_locate_args(cmd: str, args: list[str]) -> dict[str, Any]:
         "context_after": 0,
     }
 
-    _RG_TYPE_TO_GLOB: dict[str, str] = {
-        "py": "*.py", "python": "*.py",
-        "js": "*.js", "ts": "*.ts", "tsx": "*.tsx", "jsx": "*.jsx",
-        "rs": "*.rs", "go": "*.go", "java": "*.java",
-        "c": "*.c", "cpp": "*.cpp", "h": "*.h",
-        "cs": "*.cs", "rb": "*.rb", "php": "*.php",
-        "html": "*.html", "css": "*.css", "json": "*.json",
-        "yaml": "*.yaml", "yml": "*.yml", "toml": "*.toml",
-        "md": "*.md", "sh": "*.sh", "sql": "*.sql",
-    }
+    _RG_TYPE_TO_GLOB = RG_TYPE_TO_GLOB
 
     i = 0
     positional: list[str] = []

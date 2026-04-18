@@ -91,6 +91,11 @@ class ExplorationState:
         self.repo_survey_cache = data
         self.repo_survey_ts = time.time()
 
+    def invalidate_survey_cache(self) -> None:
+        """Invalidate the survey cache after a filesystem mutation."""
+
+        self.repo_survey_cache = None
+        self.repo_survey_ts = 0.0
     # ── Loop detection ───────────────────────────────────────────
 
     def should_break_loop(

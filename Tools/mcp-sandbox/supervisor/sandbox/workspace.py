@@ -16,6 +16,7 @@ from sandbox.config import (
     CONTAINER_WORKSPACE,
     DEFAULT_TASK_DIR,
     HOST_WORKSPACE,
+    IN_CONTAINER,
     IGNORED_DIR_NAMES,
     MAX_FIND_RESULTS,
     MAX_GREP_RESULTS,
@@ -52,6 +53,33 @@ def smart_decode(bytes_data: bytes) -> tuple[str, str | None]:
 
     if not bytes_data:
         return "", "utf-8"
+
+    # UTF-16 BOM detection — must happen before latin1, which never raises and
+    # would silently misread UTF-16 as garbage.
+    if bytes_data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        try:
+            return bytes_data.decode("utf-16"), "utf-16"
+        except UnicodeDecodeError:
+            pass
+
+    # UTF-16 without BOM: count null bytes at even vs odd byte positions in a
+    # sample window. ASCII-range UTF-16-LE has nulls at odd positions; UTF-16-BE
+    # at even. latin1 text almost never has this density of nulls.
+    sample = bytes_data[:512]
+    if len(sample) >= 4:
+        odd_nulls = sum(1 for i in range(1, len(sample), 2) if sample[i] == 0)
+        even_nulls = sum(1 for i in range(0, len(sample), 2) if sample[i] == 0)
+        threshold = len(sample) // 4
+        if odd_nulls > threshold:
+            try:
+                return bytes_data.decode("utf-16-le"), "utf-16-le"
+            except UnicodeDecodeError:
+                pass
+        if even_nulls > threshold:
+            try:
+                return bytes_data.decode("utf-16-be"), "utf-16-be"
+            except UnicodeDecodeError:
+                pass
 
     for encoding in ("utf-8", "cp866", "cp1251", "latin1"):
         try:
@@ -130,7 +158,7 @@ def normalize_model_relative_path(path: str) -> str:
 
 
 def validate_model_path(rel_path: str, kind: str = "path") -> None:
-    """Reject absolute model paths while tolerating workspace-root aliases."""
+    """Reject unsafe paths; allow absolute Linux paths inside the container."""
 
     raw = str(rel_path or ".").replace("\\", "/").strip()
     if not raw or raw == ".":
@@ -140,13 +168,23 @@ def validate_model_path(rel_path: str, kind: str = "path") -> None:
         raise ValueError(f"{kind} must not contain null bytes.")
 
     drive, _tail = os.path.splitdrive(raw)
+
+    # Windows-style drive paths are never valid regardless of context.
+    if drive:
+        raise ValueError(
+            f"{kind} must not be a Windows path. Got: '{raw}'."
+        )
+
     if raw.startswith("/"):
+        # Always allow workspace-root aliases (e.g. /workspace/_sandbox/...).
         for alias in model_root_aliases():
             container_task_root = f"{CONTAINER_WORKSPACE.rstrip('/')}/{alias}"
             if raw == container_task_root or raw.startswith(f"{container_task_root}/"):
                 return
-
-    if drive or raw.startswith("/"):
+        # Inside the container any absolute Linux path is legal — the container
+        # filesystem is the security boundary, not path restrictions.
+        if IN_CONTAINER:
+            return
         raise ValueError(
             f"{kind} must be relative to the model workspace root. "
             f"Use '.' or a relative path like 'script.py'. "
@@ -163,7 +201,13 @@ def resolve_model_path(path: str, cwd: str = ".") -> str:
         return normalized_cwd
 
     if raw.startswith("/"):
-        return raw
+        for alias in model_root_aliases():
+            container_task_root = f"{CONTAINER_WORKSPACE.rstrip('/')}/{alias}"
+            if raw == container_task_root or raw.startswith(f"{container_task_root}/"):
+                return raw
+        if IN_CONTAINER:
+            return posixpath.normpath(raw)
+        raise ValueError(f"Access denied: Absolute path '{raw}' is outside the task workspace.")
 
     for alias in model_root_aliases():
         if raw == alias or raw.startswith(f"{alias}/"):
@@ -198,9 +242,19 @@ def get_secure_path(rel_path: str) -> Path:
 
 
 def get_secure_task_path(rel_path: str, kind: str = "path") -> Path:
-    """Resolve a path confined to the sandbox workspace root."""
+    """Resolve a path to a sandbox-safe location.
+
+    Inside the container, absolute Linux paths are returned as-is — the Docker
+    isolation layer is the security boundary there.  On the host, only paths
+    under the workspace sandbox root are permitted.
+    """
 
     validate_model_path(rel_path, kind=kind)
+
+    raw = str(rel_path or ".").replace("\\", "/").strip()
+    if IN_CONTAINER and raw.startswith("/"):
+        return Path(posixpath.normpath(raw))
+
     normalized = normalize_model_relative_path(rel_path)
 
     if normalized == ".":
@@ -234,6 +288,9 @@ def _reject_symlink_escape(path: Path, original: str) -> None:
         raise ValueError(
             f"Access denied: {original!r} is a symlink pointing outside the sandbox workspace."
         )
+
+
+
 
 
 def is_allowed_host_import(source: Path) -> bool:
@@ -542,13 +599,18 @@ def write(path: str, content: str) -> dict[str, Any]:
     """Write a UTF-8 text file inside the task workspace."""
 
     target = get_secure_task_path(path)
-    _reject_symlink_escape(target, path)
+    # Note: _reject_symlink_escape is intentionally not called here.
+    # For a new (non-existent) file it would be a no-op (is_symlink() = False).
+    # For an existing file, get_secure_task_path already resolved and validated
+    # the final path via .resolve() + is_relative_to(task_root()), so a symlink
+    # pointing outside would have raised there.
     existed = target.exists()
     if target.exists() and target.is_dir():
         raise IsADirectoryError(f"Cannot overwrite directory: {normalize_model_relative_path(path)}")
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8", newline="")
+
 
     return {
         "result": {
@@ -615,13 +677,19 @@ def edit(path: str, old_str: str, new_str: str, replace_all: bool = False) -> di
         )
 
     replaced_count = match_count if replace_all else 1
-    updated_normalized = normalized_content.replace(normalized_old, normalized_new, replaced_count)
     match_index = normalized_content.find(normalized_old)
-    before_preview = build_match_preview(normalized_content, match_index, len(normalized_old))
-    after_preview = build_match_preview(updated_normalized, match_index, len(normalized_new))
+    updated_normalized = normalized_content.replace(normalized_old, normalized_new, replaced_count)
 
     final_text = updated_normalized if newline_style == "\n" else updated_normalized.replace("\n", newline_style)
     target.write_text(final_text, encoding="utf-8", newline="")
+
+
+    updated_lines = updated_normalized.splitlines()
+    change_start = normalized_content[:match_index].count("\n") + 1
+    change_end = change_start + normalized_new.count("\n")
+    context_text, context_start, context_end, context_truncated = _render_compact_line_edit_context(
+        updated_lines, change_start, change_end,
+    )
 
     diff_text = "\n".join(
         difflib.unified_diff(
@@ -636,13 +704,264 @@ def edit(path: str, old_str: str, new_str: str, replace_all: bool = False) -> di
 
     return {
         "result": {
-            "path": normalize_model_relative_path(path),
-            "match_count": match_count,
-            "replaced_count": replaced_count,
-            "replace_all": bool(replace_all),
-            "before_preview": before_preview,
-            "after_preview": after_preview,
-            "diff": diff_text,
+            "p": normalize_model_relative_path(path),
+            "m": match_count,
+            "rep": replaced_count,
+            "all": bool(replace_all),
+            "cx": context_text,
+            "cxr": f"{context_start}:{context_end}",
+            "cxt": context_truncated,
+            "ud": diff_text,
+        },
+        "warnings": [],
+        "truncated": False,
+    }
+
+
+def _split_edit_lines(text: str) -> tuple[list[str], bool]:
+    normalized = normalize_newlines(text)
+    has_trailing_newline = normalized.endswith("\n")
+    if normalized == "":
+        return [], False
+    lines = normalized.split("\n")
+    if has_trailing_newline:
+        lines = lines[:-1]
+    return lines, has_trailing_newline
+
+
+def _parse_line_range(range_str: Any, total_lines: int) -> tuple[int, int, bool]:
+    if isinstance(range_str, (list, tuple)):
+        if len(range_str) != 2:
+            raise ValueError("range list must contain exactly two line numbers.")
+        raw = f"{range_str[0]}:{range_str[1]}"
+    else:
+        raw = str(range_str or "").strip()
+    if not raw:
+        raise ValueError("range is required for mode='lines'.")
+
+    if ":" in raw:
+        left, right = raw.split(":", 1)
+    else:
+        left, right = raw, raw
+
+    try:
+        start = int(left)
+        end = int(right)
+    except ValueError as exc:
+        raise ValueError("range must be a 1-based line number or 'start:end'.") from exc
+
+    if start < 1 or end < 0:
+        raise ValueError("range must use positive 1-based line numbers.")
+
+    is_insert = end < start
+    if is_insert:
+        if start > total_lines + 1:
+            raise ValueError(f"insert start line {start} is beyond end of file.")
+        return start, end, True
+
+    if total_lines == 0:
+        raise ValueError("cannot replace lines in an empty file; use insert range '1:0' (or '1:1' with empty content).")
+    if start > total_lines or end > total_lines:
+        raise ValueError(f"range {start}:{end} is outside file with {total_lines} lines.")
+
+    return start, end, False
+
+
+def _new_edit_lines(content: str) -> list[str]:
+    normalized = normalize_newlines(content)
+    if normalized == "":
+        return []
+    lines = normalized.split("\n")
+    if normalized.endswith("\n"):
+        lines = lines[:-1]
+    return lines
+
+
+def _render_compact_line_edit_context(
+    lines: list[str],
+    highlight_start: int,
+    highlight_end: int,
+    max_chars: int = 900,
+    min_radius: int = 2,
+    max_radius: int = 6,
+) -> tuple[list[str], int, int, bool]:
+    if not lines:
+        return [], 1, 0, False
+
+    line_count = len(lines)
+    highlight_start = max(1, min(line_count, highlight_start))
+    highlight_end = max(highlight_start, min(line_count, highlight_end))
+
+    def shorten(text: str, limit: int) -> tuple[str, bool]:
+        if len(text) <= limit:
+            return text, False
+        if limit <= 1:
+            return "…", True
+        return text[: limit - 1].rstrip() + "…", True
+
+    def render(start_line: int, end_line: int) -> tuple[list[str], bool]:
+        visible_count = max(1, end_line - start_line + 1)
+        # Keep every visible line represented. Long individual lines are
+        # shortened before the whole context is shortened.
+        text_budget = max(48, (max_chars // visible_count) - 8)
+        rendered = []
+        truncated_any = False
+        for line_no in range(start_line, end_line + 1):
+            marker = "+" if highlight_start <= line_no <= highlight_end else " "
+            text, was_truncated = shorten(lines[line_no - 1], text_budget)
+            truncated_any = truncated_any or was_truncated
+            rendered.append(f"{marker}L{line_no} {text}")
+        return rendered, truncated_any
+
+    def bounds(radius: int) -> tuple[int, int]:
+        return (
+            max(1, highlight_start - radius),
+            min(line_count, highlight_end + radius),
+        )
+
+    chosen_start, chosen_end = bounds(max_radius)
+    chosen_text, chosen_truncated = render(chosen_start, chosen_end)
+    truncated = False
+
+    for radius in range(max_radius, min_radius - 1, -1):
+        start_line, end_line = bounds(radius)
+        text, line_truncated = render(start_line, end_line)
+        if sum(len(line) for line in text) + max(0, len(text) - 1) <= max_chars:
+            return text, start_line, end_line, line_truncated or radius < max_radius
+        chosen_start, chosen_end, chosen_text = start_line, end_line, text
+        chosen_truncated = line_truncated
+
+    chosen_len = sum(len(line) for line in chosen_text) + max(0, len(chosen_text) - 1)
+    if chosen_len > max_chars and chosen_text:
+        truncated = True
+        remaining = max_chars
+        clipped = []
+        for line in chosen_text:
+            if remaining <= 0:
+                break
+            line_budget = min(len(line), remaining)
+            if line_budget < len(line):
+                line, _ = shorten(line, line_budget)
+            clipped.append(line)
+            remaining -= len(line) + 1
+        chosen_text = clipped
+
+    return chosen_text, chosen_start, chosen_end, truncated or chosen_truncated
+
+
+def edit_lines(
+    path: str,
+    range_str: Any,
+    content: str,
+    anchor: str | None = None,
+    context_lines: int = 2,
+) -> dict[str, Any]:
+    """Replace or insert text by 1-based line range inside a text file."""
+
+    target = get_secure_task_path(path)
+    _reject_symlink_escape(target, path)
+    if not target.is_file():
+        raise FileNotFoundError(f"File not found: {normalize_model_relative_path(path)}")
+
+    original_bytes = target.read_bytes()
+    mime_type = _guess_mime(target)
+    if _is_probably_binary(original_bytes, mime_type):
+        raise SandboxToolError("binary_not_supported", "edit only supports text files.")
+
+    original_text, _encoding = smart_decode(original_bytes)
+    newline_style = detect_newline_style(original_text)
+    original_lines, had_trailing_newline = _split_edit_lines(original_text)
+    total_before = len(original_lines)
+    start, end, is_insert = _parse_line_range(range_str, total_before)
+
+    if anchor is not None:
+        if is_insert:
+            actual = original_lines[start - 1] if start <= total_before else ""
+        else:
+            actual = original_lines[start - 1]
+        expected = str(anchor)
+        if actual.strip() != expected.strip():
+            suggestion = None
+            radius_start = max(1, start - 20)
+            radius_end = min(total_before, start + 20)
+            for line_no in range(radius_start, radius_end + 1):
+                if original_lines[line_no - 1].strip() == expected.strip():
+                    old_len = 0 if is_insert else end - start + 1
+                    suggestion_end = line_no - 1 if is_insert else line_no + old_len - 1
+                    suggestion = f"{line_no}:{suggestion_end}"
+                    break
+
+            result: dict[str, Any] = {
+                "path": normalize_model_relative_path(path),
+                "range": f"{start}:{end}",
+                f"actual_line_{start}": actual,
+            }
+            if suggestion:
+                result["suggestion"] = f"Use range {suggestion}."
+
+            raise SandboxToolError(
+                "anchor_mismatch",
+                f"Line {start} is {actual!r}, expected {expected!r}.",
+                result=result,
+            )
+
+    replacement_lines = _new_edit_lines(content)
+    if is_insert:
+        updated_lines = (
+            original_lines[: start - 1]
+            + replacement_lines
+            + original_lines[start - 1 :]
+        )
+        lines_before = 0
+    else:
+        updated_lines = original_lines[: start - 1] + replacement_lines + original_lines[end:]
+        lines_before = end - start + 1
+
+    total_after = len(updated_lines)
+    lines_after = len(replacement_lines)
+    shift = total_after - total_before
+
+    final_text = "\n".join(updated_lines)
+    if had_trailing_newline:
+        final_text += "\n"
+    if newline_style != "\n":
+        final_text = final_text.replace("\n", newline_style)
+    target.write_text(final_text, encoding="utf-8", newline="")
+
+
+    highlight_start = start
+    highlight_end = start + max(lines_after, 1) - 1
+    context_text, context_start, context_end, context_truncated = _render_compact_line_edit_context(
+        updated_lines,
+        highlight_start,
+        highlight_end,
+        min_radius=max(1, min(2, context_lines)),
+        max_radius=max(3, context_lines + 2),
+    )
+
+    diff_text = "\n".join(
+        difflib.unified_diff(
+            original_lines,
+            updated_lines,
+            fromfile=f"{normalize_model_relative_path(path)} (before)",
+            tofile=f"{normalize_model_relative_path(path)} (after)",
+            lineterm="",
+            n=context_lines,
+        )
+    )
+
+    return {
+        "result": {
+            "p": normalize_model_relative_path(path),
+            "r": f"{start}:{end}",
+            "rm": lines_before,
+            "add": lines_after,
+            "n": total_after,
+            "d": shift,
+            "cx": context_text,
+            "cxr": f"{context_start}:{context_end}",
+            "cxt": context_truncated,
+            "ud": diff_text,
         },
         "warnings": [],
         "truncated": False,
@@ -857,6 +1176,7 @@ def mkdir(path: str, parents: bool = True) -> dict[str, Any]:
         )
 
     target.mkdir(parents=parents, exist_ok=True)
+
     return {
         "result": {
             "path": normalize_model_relative_path(path),

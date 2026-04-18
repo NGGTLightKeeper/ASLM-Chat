@@ -279,7 +279,7 @@ def _handle_find(
     result = find(
         path=path,
         name_pattern=getattr(nc, "name_pattern", None),
-        type=getattr(nc, "find_type", None),
+        type_filter=getattr(nc, "find_type", None),
         max_depth=nc.depth or 8,
         max_results=MAX_FIND_RESULTS,
     )

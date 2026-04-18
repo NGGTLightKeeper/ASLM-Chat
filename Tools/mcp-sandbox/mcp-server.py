@@ -4,9 +4,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-SRC_ROOT = Path(__file__).resolve().parent / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
+_ROOT = Path(__file__).resolve().parent
+for _p in (_ROOT / "supervisor", _ROOT / "src"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 from sandbox.api import MCP_SERVER, TOOL_HANDLERS, TOOLS, handle_tool
 

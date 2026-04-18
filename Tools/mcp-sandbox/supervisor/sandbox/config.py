@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re as _re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -18,10 +20,35 @@ SNAPSHOT_IMAGE_PREFIX = os.getenv(
 )
 CONTAINER_WORKSPACE = "/workspace"
 DEFAULT_TASK_DIR = os.getenv("SANDBOX_DEFAULT_TASK_DIR", "_sandbox")
+MODEL_WORKSPACE_CONTAINER = (
+    f"{CONTAINER_WORKSPACE.rstrip('/')}/{DEFAULT_TASK_DIR}"
+    if DEFAULT_TASK_DIR not in ("", ".")
+    else CONTAINER_WORKSPACE
+)
+IN_CONTAINER = os.getenv("SANDBOX_IN_CONTAINER", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+COMMAND_USER = os.getenv("SANDBOX_COMMAND_USER", "sandbox_user")
+SUPERVISOR_SRC = os.getenv("SANDBOX_SUPERVISOR_SRC", "/opt/sandbox-src")
+SUPERVISOR_VENV = os.getenv("SANDBOX_SUPERVISOR_VENV", "/opt/sandbox-venv")
+SUPERVISOR_VENV_HOST = os.getenv("SANDBOX_SUPERVISOR_VENV_HOST", "").strip()
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_SANDBOX_DIR = os.path.join(os.path.expanduser("~"), ".sandbox-workspace")
-HOST_WORKSPACE = os.getenv("SANDBOX_HOST_WORKSPACE", str(_PROJECT_ROOT))
+HOST_WORKSPACE = os.getenv(
+    "SANDBOX_HOST_WORKSPACE",
+    CONTAINER_WORKSPACE if IN_CONTAINER else str(_PROJECT_ROOT),
+)
+# In production the supervisor source is baked into the image (COPY src /opt/sandbox-src).
+# Bind-mounting the host source tree on top is a dev-only convenience; it must be
+# explicitly opted-in via SANDBOX_DEV_BIND=1 so production containers run baked code.
+DEV_BIND = os.getenv("SANDBOX_DEV_BIND", "").strip().lower() in {"1", "true", "yes"}
+SUPERVISOR_SRC_HOST = os.getenv(
+    "SANDBOX_SUPERVISOR_SRC_HOST",
+    str(_PROJECT_ROOT / "src") if DEV_BIND else "",
+).strip()
 
 
 # Import and sharing settings.
@@ -31,11 +58,6 @@ LM_STUDIO_USER_FILES = os.getenv(
     os.path.expanduser("~/.lmstudio/user-files"),
 )
 IMPORT_ROOTS_ENV = os.getenv("SANDBOX_IMPORT_ROOTS", "")
-
-HTTP_PORT = int(os.getenv("SANDBOX_HTTP_PORT", "8099"))
-HTTP_HOST = "127.0.0.1"
-TOKEN_TTL_SECONDS = int(os.getenv("SANDBOX_TOKEN_TTL_SECONDS", "1800"))
-
 
 # Execution limits.
 
@@ -65,6 +87,9 @@ STORAGE_LIMIT = os.getenv("SANDBOX_STORAGE_LIMIT", "12G")
 NETWORK_LIMIT_MBIT = int(os.getenv("SANDBOX_NETWORK_LIMIT_MBIT", "100"))
 DOCKER_START_TIMEOUT_SECONDS = int(
     os.getenv("SANDBOX_DOCKER_START_TIMEOUT_SECONDS", "60")
+)
+BACKGROUND_TIMEOUT_THRESHOLD = int(
+    os.getenv("SANDBOX_BACKGROUND_TIMEOUT_THRESHOLD", "10")
 )
 
 
@@ -127,7 +152,7 @@ def _validate_workspace_path(path: str) -> bool:
     return len(path_parts) >= 2
 
 
-if not _validate_workspace_path(HOST_WORKSPACE):
+if not IN_CONTAINER and not _validate_workspace_path(HOST_WORKSPACE):
     print(
         f"CRITICAL SECURITY ERROR: HOST_WORKSPACE '{HOST_WORKSPACE}' is not safe!",
         file=sys.stderr,
@@ -136,6 +161,10 @@ if not _validate_workspace_path(HOST_WORKSPACE):
     HOST_WORKSPACE = _DEFAULT_SANDBOX_DIR
 
 HOST_WORKSPACE = os.path.abspath(HOST_WORKSPACE)
+CONFIG_FILE_PATH = os.getenv(
+    "SANDBOX_CONFIG_FILE",
+    os.path.join(str(Path(__file__).resolve().parents[2]), "sandbox.env"),
+)
 
 
 # Import root normalization.
@@ -171,3 +200,70 @@ ALLOWED_IMPORT_ROOTS = get_allowed_import_roots()
 
 os.makedirs(HOST_WORKSPACE, exist_ok=True)
 os.makedirs(os.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR), exist_ok=True)
+
+
+# File-type → glob mapping (used by grep/rg routing and code-extension detection).
+
+_RG_TYPE_FALLBACK: dict[str, str] = {
+    "py": "*.py", "python": "*.py",
+    "js": "*.js", "javascript": "*.js",
+    "ts": "*.ts", "typescript": "*.ts",
+    "tsx": "*.tsx", "jsx": "*.jsx",
+    "rs": "*.rs", "rust": "*.rs",
+    "go": "*.go",
+    "java": "*.java",
+    "c": "*.c",
+    "cpp": "*.cpp", "cc": "*.cc", "cxx": "*.cxx",
+    "h": "*.h", "hpp": "*.hpp",
+    "cs": "*.cs", "csharp": "*.cs",
+    "rb": "*.rb", "ruby": "*.rb",
+    "php": "*.php",
+    "html": "*.html", "css": "*.css",
+    "json": "*.json",
+    "yaml": "*.yaml", "yml": "*.yml",
+    "toml": "*.toml", "xml": "*.xml",
+    "md": "*.md", "markdown": "*.md",
+    "sh": "*.sh", "bash": "*.sh",
+    "sql": "*.sql",
+    "lua": "*.lua",
+    "r": "*.r",
+    "swift": "*.swift",
+    "kt": "*.kt", "kotlin": "*.kt",
+    "scala": "*.scala",
+    "tex": "*.tex",
+    "txt": "*.txt",
+}
+
+
+def _load_rg_type_map() -> dict[str, str]:
+    """Return type→glob map built from `rg --type-list`; falls back to built-in table."""
+    try:
+        proc = subprocess.run(
+            ["rg", "--type-list"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return dict(_RG_TYPE_FALLBACK)
+
+        result: dict[str, str] = {}
+        for line in proc.stdout.splitlines():
+            m = _re.match(r'^([\w-]+):\s*(.+)$', line)
+            if not m:
+                continue
+            type_name = m.group(1).lower()
+            globs = [g.strip() for g in m.group(2).split(",")]
+            primary = next((g for g in globs if _re.match(r'^\*\.\w+$', g)), None)
+            if primary is None:
+                continue
+            result[type_name] = primary
+            # Short-ext alias: "python" → also register "py"
+            ext = primary[2:]  # "*.py" → "py"
+            if ext not in result:
+                result[ext] = primary
+
+        return result if result else dict(_RG_TYPE_FALLBACK)
+    except Exception:
+        return dict(_RG_TYPE_FALLBACK)
+
+
+RG_TYPE_TO_GLOB: dict[str, str] = _load_rg_type_map()

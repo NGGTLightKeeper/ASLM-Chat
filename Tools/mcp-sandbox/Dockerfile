@@ -1,13 +1,16 @@
 FROM python:3.11-slim-bookworm
 
-ENV DEBIAN_FRONTEND=noninteractive
+LABEL org.aslm.sandbox.supervisor-runtime="container-v2"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CUDA_VISIBLE_DEVICES= \
+    NVIDIA_VISIBLE_DEVICES=void
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     build-essential \
     coreutils \
     curl \
-    ffmpeg \
     file \
     findutils \
     gawk \
@@ -20,8 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     ripgrep \
     sed \
-    tesseract-ocr \
-    tesseract-ocr-rus \
+    sudo \
+    tini \
     unzip \
     wget \
     zip \
@@ -36,21 +39,31 @@ RUN pip install --no-cache-dir \
     opencv-python-headless \
     pandas \
     pillow \
-    pytesseract \
     requests \
     scikit-image
 
-RUN pip install --no-cache-dir \
-    faster-whisper \
-    yt-dlp \
-    youtube-transcript-api
+# Create isolated environment for Supervisor.
+RUN python3 -m venv /opt/sandbox-venv && \
+    /opt/sandbox-venv/bin/pip install --no-cache-dir --upgrade pip \
+        "fastmcp>=3.2.0,<4.0" \
+        "pydantic>=2.0,<3.0" \
+        setproctitle
 
-# Pre-download Whisper small model — CPU mode, int8
-RUN python3 -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
+COPY supervisor /opt/sandbox-src
+
+RUN useradd --create-home --shell /bin/bash sandbox_user && \
+    echo "sandbox_user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/sandbox_user && \
+    chmod 0440 /etc/sudoers.d/sandbox_user && \
+    mkdir -p /workspace/_sandbox && \
+    chown -R root:root /opt/sandbox-venv /opt/sandbox-src && \
+    chmod -R a-w /opt/sandbox-venv /opt/sandbox-src
 
 COPY docker/start-container.sh /usr/local/bin/start-container.sh
-RUN chmod +x /usr/local/bin/start-container.sh
 
-WORKDIR /workspace
+RUN sed -i 's/\r//' /usr/local/bin/start-container.sh && \
+    chmod +x /usr/local/bin/start-container.sh
 
+WORKDIR /workspace/_sandbox
+
+ENTRYPOINT ["tini", "--"]
 CMD ["/usr/local/bin/start-container.sh"]

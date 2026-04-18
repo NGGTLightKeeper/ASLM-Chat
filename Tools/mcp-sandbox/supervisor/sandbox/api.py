@@ -9,8 +9,10 @@ Execution, builds, git, and compound commands go to real bash.
 from __future__ import annotations
 
 import logging
+import json
 import re
 import shlex
+import time
 from typing import Any, Callable
 
 from sandbox.config import (
@@ -24,8 +26,15 @@ from sandbox.config import (
     MAX_LS_ENTRIES,
     MAX_OUTPUT_CHARS,
     MAX_READ_BYTES,
+    MODEL_WORKSPACE_CONTAINER,
+    RG_TYPE_TO_GLOB,
 )
 from sandbox.container import exec_bash
+from sandbox.container import (
+    foreground_background_job,
+    kill_background_job,
+    list_background_jobs,
+)
 from sandbox.presenters import (
     present_auto_preview,
     present_grep_results,
@@ -33,12 +42,19 @@ from sandbox.presenters import (
 )
 from sandbox.controller import dispatch as controller_dispatch
 from sandbox.session_state import get_session_state
-from sandbox.responses import error_response, exception_response, success_response
+from sandbox.responses import (
+    SandboxToolError,
+    error_response,
+    exception_response,
+    success_response,
+)
 from sandbox.workspace import (
     delete,
     describe,
     edit,
+    edit_lines,
     find,
+    get_secure_task_path,
     grep,
     ls,
     mkdir,
@@ -77,9 +93,14 @@ CORE_TOOLS = [
             "Returns exit_code, stdout, stderr, elapsed_ms, and cwd. "
             "SCOPE: bash has full access to the entire container filesystem — "
             "use absolute paths like /etc, /usr, /tmp freely when needed. "
-            "The default working directory '.' is the sandbox workspace root (_sandbox/). "
-            "write and edit are restricted to the workspace root only — "
-            "to place a file outside the workspace, create it with write first, then move it with bash('mv file /target/path'). "
+            "The default working directory '.' is the sandbox workspace root (/workspace/_sandbox/). "
+            "write and edit are restricted to the workspace root only. "
+            "PATHS: workspace files use plain relative paths ('script.py', 'subdir/file.py') — "
+            "never prefix with '_sandbox/', 'workspace/', '/workspace/', or '/workspace/_sandbox/'; "
+            "system/container files use absolute paths ('/etc/hosts', '/tmp/out.txt', '/opt/app/config.py'). "
+            "FILES OWNERSHIP: files created by write or edit are owned by root. "
+            "To modify them via bash use sudo (e.g. 'sudo sed -i ...' or 'echo text | sudo tee -a file'). "
+            "sudo is available without a password. "
             "IMPORTANT: For package managers (apt-get, pip, npm, cargo, etc.), container builds (docker build), "
             "compilation (make, cmake, gcc, rustc, go build), and any long-running install/build commands "
             "always set timeout_s to at least 300. Default timeout of 60s is only for quick commands. "
@@ -92,6 +113,7 @@ CORE_TOOLS = [
                 "cwd": {"type": "string", "default": "."},
                 "timeout_s": {"type": "integer", "default": DEFAULT_TIMEOUT},
                 "stdin": {"type": "string"},
+                "background": {"type": "string", "enum": ["auto", "always", "never"], "default": "auto"},
             },
             "required": ["command"],
         },
@@ -100,9 +122,16 @@ CORE_TOOLS = [
         "id": "write",
         "name": "Write File",
         "description": (
-            "Create a new UTF-8 text file or fully overwrite an existing one in the "
-            "workspace. Use this for new files and full rewrites. Returns bytes_written "
-            "plus created/overwrote flags. Do not use it for small surgical edits when edit fits better."
+            "Create a new UTF-8 text file or fully overwrite an existing one. "
+            "PATHS: use plain relative paths for workspace files ('script.py', 'subdir/file.py') — "
+            "never prefix with '_sandbox/' or '/workspace/_sandbox/'; "
+            "absolute Linux paths ('/opt/app/config.py', '/tmp/out.txt') resolve inside the container. "
+            "Windows-style paths are rejected. "
+            "Files are created as root — to modify them later via bash use sudo "
+            "(e.g. 'sudo sed -i ...' or 'echo text | sudo tee -a file'); "
+            "or use the edit tool which also runs as root. "
+            "Use write for new files and full rewrites. Returns bytes_written plus "
+            "created/overwrote flags. Do not use it for small surgical edits when edit fits better."
         ),
         "parameters": {
             "type": "object",
@@ -117,20 +146,44 @@ CORE_TOOLS = [
         "id": "edit",
         "name": "Edit File",
         "description": (
-            "Replace exact literal text inside a file. Use this for surgical edits after "
-            "reading the current file and copying exact context. By default it fails when "
-            "the match is missing or ambiguous; set replace_all=true only when every match "
-            "should be updated. Returns match statistics and previews/diff metadata."
+            "Edit a UTF-8 text file. "
+            "match mode (default): use old_str+new_str for exact literal replacement; fails on missing or ambiguous matches. "
+            "lines mode: use range+content to replace a line range; range is 1-based e.g. '12:18' or '12' for one line, '12:11' inserts before line 12. "
+            "Lines mode is inferred when range is provided. "
+            "Note: content is for lines mode, new_str is for match mode — do not mix them. "
+            "PATHS: same as write — plain relative for workspace, absolute for container system files. "
+            "Windows-style paths are rejected. "
+            "Result keys — both modes: p=file path, cx=context lines array (prefix +LN=changed line, "
+            " LN=unchanged neighbor), cxr=context range 'first:last', cxt=context was truncated, "
+            "ud=unified diff. "
+            "Match mode only: m=total matches found, rep=matches replaced, all=replace_all was set. "
+            "Lines mode only: r=applied range 'start:end', rm=lines removed, add=lines added, "
+            "n=total lines after edit, d=line count delta."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "path": {"type": "string"},
+                "mode": {"type": "string", "enum": ["match", "lines"], "default": "match"},
                 "old_str": {"type": "string"},
                 "new_str": {"type": "string"},
                 "replace_all": {"type": "boolean", "default": False},
+                "range": {
+                    "oneOf": [
+                        {"type": "string"},
+                        {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                            "minItems": 2,
+                            "maxItems": 2,
+                        },
+                    ],
+                    "description": "Line range as '3:4', '3', or [3, 4] when mode='lines'.",
+                },
+                "content": {"type": "string"},
+                "anchor": {"type": "string"},
             },
-            "required": ["path", "old_str", "new_str"],
+            "required": ["path"],
         },
     },
 ]
@@ -297,6 +350,9 @@ def _try_route_cat(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, 
             else:
                 chunks.append(_format_structured_as_shell("read", result))
     content = "\n".join(chunks)
+    if len(content.encode("utf-8", errors="replace")) > MAX_OUTPUT_CHARS:
+        content = content.encode("utf-8", errors="replace")[:MAX_OUTPUT_CHARS].decode("utf-8", errors="ignore")
+        all_warnings.append("Combined cat output truncated to MAX_OUTPUT_CHARS.")
     if show_numbers:
         content = "\n".join(
             f"{i:>6}\t{line}" for i, line in enumerate(content.split("\n"), 1)
@@ -496,7 +552,7 @@ def _try_route_find(match: re.Match, args_str: str, cwd: str = ".") -> dict[str,
     result = find(
         path=resolve_model_path(path, cwd),
         name_pattern=name_pattern,
-        type=find_type,
+        type_filter=find_type,
         max_depth=max_depth,
         max_results=MAX_FIND_RESULTS,
     )
@@ -504,39 +560,7 @@ def _try_route_find(match: re.Match, args_str: str, cwd: str = ".") -> dict[str,
     return _bash_success(content, warnings=result.get("warnings", []), cwd=cwd)
 
 
-_RG_TYPE_TO_GLOB: dict[str, str] = {
-    "py": "*.py", "python": "*.py",
-    "js": "*.js", "javascript": "*.js",
-    "ts": "*.ts", "typescript": "*.ts",
-    "tsx": "*.tsx",
-    "jsx": "*.jsx",
-    "rs": "*.rs", "rust": "*.rs",
-    "go": "*.go",
-    "java": "*.java",
-    "c": "*.c",
-    "cpp": "*.cpp", "cc": "*.cc", "cxx": "*.cxx",
-    "h": "*.h",
-    "hpp": "*.hpp",
-    "cs": "*.cs", "csharp": "*.cs",
-    "rb": "*.rb", "ruby": "*.rb",
-    "php": "*.php",
-    "html": "*.html",
-    "css": "*.css",
-    "json": "*.json",
-    "yaml": "*.yaml", "yml": "*.yml",
-    "toml": "*.toml",
-    "xml": "*.xml",
-    "md": "*.md", "markdown": "*.md",
-    "sh": "*.sh", "bash": "*.sh",
-    "sql": "*.sql",
-    "lua": "*.lua",
-    "r": "*.r",
-    "swift": "*.swift",
-    "kt": "*.kt", "kotlin": "*.kt",
-    "scala": "*.scala",
-    "tex": "*.tex",
-    "txt": "*.txt",
-}
+_RG_TYPE_TO_GLOB = RG_TYPE_TO_GLOB
 
 
 def _try_route_grep(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
@@ -597,6 +621,11 @@ def _try_route_grep(match: re.Match, args_str: str, cwd: str = ".") -> dict[str,
                 context_before = int(parts[i + 1])
             except ValueError:
                 return None
+            i += 2
+        elif p in ("-e", "--regexp") and i + 1 < len(parts):
+            # -e <pattern> is a standard grep flag; treat it as the pattern.
+            if pattern is None:
+                pattern = parts[i + 1]
             i += 2
         elif p.startswith("-"):
             # Unknown flags — skip rather than falling to real bash.
@@ -675,6 +704,9 @@ def _try_route_wc(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, A
     target = resolve_model_path(files[0], cwd)
     result = read(path=target, max_bytes=MAX_READ_BYTES)
     inner = result.get("result", {})
+    # If the file is binary or was truncated, let real bash give accurate counts.
+    if inner.get("kind") != "text" or result.get("truncated"):
+        return None
     total_lines = inner.get("total_lines", 0)
     size_bytes = inner.get("size_bytes", 0)
     content_text = inner.get("content", "")
@@ -702,6 +734,8 @@ def _try_route_mkdir(match: re.Match, args_str: str, cwd: str = ".") -> dict[str
     if len(dirs) != 1:
         return None
     result = mkdir(path=resolve_model_path(dirs[0], cwd), parents=parents)
+    get_session_state().invalidate_survey_cache()
+    # time.sleep(0.05)  # removed wsl2 workaround
     content = _format_structured_as_shell("mkdir", result)
     return _bash_success(content, warnings=result.get("warnings", []), cwd=cwd)
 
@@ -713,13 +747,17 @@ def _try_route_touch(match: re.Match, args_str: str, cwd: str = ".") -> dict[str
     if len(files) != 1:
         return None
     path = resolve_model_path(files[0], cwd)
-    # Check if file exists via read; if not, create it
     try:
-        read(path=path, max_bytes=1)
-        return _bash_success("", cwd=cwd)  # file exists, touch is no-op
-    except FileNotFoundError:
-        result = write(path=path, content="")
-        return _bash_success("", warnings=result.get("warnings", []), cwd=cwd)
+        target = get_secure_task_path(path)
+    except (SandboxToolError, ValueError):
+        return None
+    if target.is_dir():
+        return None  # touch on existing dir is a no-op; let real bash handle it
+    if target.exists():
+        return _bash_success("", cwd=cwd)  # file exists, touch is a no-op
+    result = write(path=path, content="")
+    get_session_state().invalidate_survey_cache()
+    return _bash_success("", warnings=result.get("warnings", []), cwd=cwd)
 
 
 def _try_route_mv(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
@@ -741,6 +779,8 @@ def _try_route_mv(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, A
         dst=resolve_model_path(paths[1], cwd),
         overwrite=overwrite,
     )
+    get_session_state().invalidate_survey_cache()
+    # time.sleep(0.05)  # removed wsl2 workaround
     content = _format_structured_as_shell("move", result)
     return _bash_success(content, warnings=result.get("warnings", []), cwd=cwd)
 
@@ -767,6 +807,8 @@ def _try_route_cp(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, A
             return None  # binary/image copy → real bash
         content = inner.get("content", "")
         result = write(path=resolve_model_path(paths[1], cwd), content=content)
+        get_session_state().invalidate_survey_cache()
+        # time.sleep(0.05)  # removed wsl2 workaround
         return _bash_success("", warnings=result.get("warnings", []), cwd=cwd)
     except Exception:
         return None
@@ -789,17 +831,19 @@ def _try_route_rm(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, A
     if len(paths) != 1:
         return None
     result = delete(path=resolve_model_path(paths[0], cwd), recursive=recursive)
+    get_session_state().invalidate_survey_cache()
+    # time.sleep(0.05)  # removed wsl2 workaround
     content = _format_structured_as_shell("delete", result)
     return _bash_success(content, warnings=result.get("warnings", []), cwd=cwd)
 
 
 def _try_route_pwd(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
-    """Route: pwd → return task root."""
+    """Route: pwd for simple commands without asking real bash."""
+
     normalized_cwd = normalize_model_relative_path(cwd)
-    container_root = f"{CONTAINER_WORKSPACE}/{DEFAULT_TASK_DIR}"
     if normalized_cwd in ("", "."):
-        return _bash_success(container_root, cwd=cwd)
-    return _bash_success(f"{container_root}/{normalized_cwd}", cwd=cwd)
+        return _bash_success(f"{MODEL_WORKSPACE_CONTAINER}\n", cwd=cwd)
+    return _bash_success(f"{MODEL_WORKSPACE_CONTAINER}/{normalized_cwd}\n", cwd=cwd)
 
 
 def _try_route_file(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
@@ -838,6 +882,44 @@ def _try_route_stat(match: re.Match, args_str: str, cwd: str = ".") -> dict[str,
     if inner.get("total_lines"):
         lines.append(f" Lines: {inner['total_lines']}")
     return _bash_success("\n".join(lines), cwd=cwd)
+
+
+_JOB_ID_RE = re.compile(r"^bg_[0-9a-f]{8}$")
+
+
+def _try_route_jobs(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
+    """Route: jobs → list sandbox background jobs."""
+
+    if args_str.strip():
+        return None
+    result = list_background_jobs()
+    return _bash_success(json.dumps(result, ensure_ascii=False, indent=2), cwd=cwd)
+
+
+def _try_route_fg(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
+    """Route: fg bg_<id> → poll a sandbox background job."""
+
+    parts = _safe_split(args_str)
+    if len(parts) != 1 or not _JOB_ID_RE.match(parts[0]):
+        return None
+    try:
+        result = foreground_background_job(parts[0])
+    except SandboxToolError as exc:
+        return _bash_routed_error(exc.error_type, exc.message, cwd=cwd)
+    return _bash_success(json.dumps(result, ensure_ascii=False, indent=2), cwd=cwd)
+
+
+def _try_route_kill_job(match: re.Match, args_str: str, cwd: str = ".") -> dict[str, Any] | None:
+    """Route: kill bg_<id> → kill a sandbox background job."""
+
+    parts = _safe_split(args_str)
+    if len(parts) != 1 or not _JOB_ID_RE.match(parts[0]):
+        return None
+    try:
+        result = kill_background_job(parts[0])
+    except SandboxToolError as exc:
+        return _bash_routed_error(exc.error_type, exc.message, cwd=cwd)
+    return _bash_success(json.dumps(result, ensure_ascii=False, indent=2), cwd=cwd)
 
 
 def _safe_split(s: str) -> list[str]:
@@ -922,6 +1004,22 @@ def _bash_error(
     )
 
 
+def _bash_routed_error(error_type: str, message: str, cwd: str = ".") -> dict[str, Any]:
+    return error_response(
+        "bash",
+        error_type,
+        message,
+        result={
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": message,
+            "elapsed_ms": 0,
+            "cwd": normalize_model_relative_path(cwd),
+            "routed": True,
+        },
+    )
+
+
 def _is_path_resolution_error(exc: Exception) -> bool:
     """Return True when a supervisor failure should fall back to real bash."""
 
@@ -944,7 +1042,7 @@ def _is_path_resolution_error(exc: Exception) -> bool:
 # Only simple single-command patterns are matched; pipes, chains, and
 # subshells are intentionally NOT intercepted and go to real bash.
 _SIMPLE_COMMAND_RE = re.compile(
-    r"^\s*(?:cd\s+\S+\s*[;&]\s*)?(?P<cmd>[a-z]+)\s*(?P<args>.*?)\s*$",
+    r"^\s*(?:cd\s+(?P<cd_target>\S+)\s*[;&]\s*)?(?P<cmd>[a-z]+)\s*(?P<args>.*?)\s*$",
     re.DOTALL,
 )
 
@@ -970,6 +1068,10 @@ _ROUTES: list[tuple[str, Callable[..., dict[str, Any] | None]]] = [
     ("wc", _try_route_wc),
     ("file", _try_route_file),
     ("stat", _try_route_stat),
+    # Background job pseudo-commands
+    ("jobs", _try_route_jobs),
+    ("fg", _try_route_fg),
+    ("kill", _try_route_kill_job),
     # Filesystem mutations
     ("mkdir", _try_route_mkdir),
     ("touch", _try_route_touch),
@@ -1055,6 +1157,14 @@ def _try_supervise(command: str, cwd: str = ".") -> dict[str, Any] | None:
     if not m:
         return None
 
+    cd_target = m.group("cd_target")
+    if cd_target:
+        try:
+            cwd = resolve_model_path(cd_target, cwd)
+            get_secure_task_path(cwd, kind="cwd")  # fail-fast on escape attempts
+        except (SandboxToolError, ValueError):
+            return None  # Let real bash handle invalid or out-of-sandbox paths in cd
+
     cmd = m.group("cmd")
     args_str = m.group("args")
 
@@ -1121,6 +1231,7 @@ def _handle_bash(
         timeout_s=int(arguments.get("timeout_s", DEFAULT_TIMEOUT)),
         stdin=arguments.get("stdin"),
         on_progress=progress_callback,
+        background=arguments.get("background", "auto"),
     )
 
     # Extra guard: for read-like commands that slipped past the router
@@ -1141,11 +1252,14 @@ def _handle_bash(
         "stderr": execution.get("stderr", ""),
         "elapsed_ms": execution.get("elapsed_ms", 0),
     }
+    if "job_id" in execution:
+        result["job_id"] = execution.get("job_id")
     warnings = []
     if execution.get("truncated") or read_like_truncated:
         warnings.append("Command output was truncated.")
 
     if execution.get("error") is None and execution.get("exit_code") == 0:
+        get_session_state().invalidate_survey_cache()
         return success_response(
             "bash",
             result,
@@ -1154,6 +1268,8 @@ def _handle_bash(
         )
 
     error_type = "process_error"
+    if execution.get("error_type"):
+        error_type = str(execution.get("error_type"))
     if execution.get("exit_code") is None and execution.get("error"):
         error_type = "execution_failed"
     if execution.get("error") and "timed out" in execution["error"].lower():
@@ -1170,17 +1286,88 @@ def _handle_bash(
 
 
 def _handle_write(arguments: dict[str, Any], _context: dict[str, Any] | None = None) -> dict[str, Any]:
-    return _wrap_workspace_payload(
+    result = _wrap_workspace_payload(
         "write",
         write(
             path=str(arguments.get("path", "")),
             content=str(arguments.get("content", "")),
         ),
     )
+    get_session_state().invalidate_survey_cache()
+    # time.sleep(0.05)  # removed wsl2 workaround
+    return result
+
+
+def _has_argument_value(arguments: dict[str, Any], key: str) -> bool:
+    if key not in arguments:
+        return False
+    value = arguments.get(key)
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def _is_lines_edit_arguments(arguments: dict[str, Any]) -> bool:
+    mode = str(arguments.get("mode", "") or "").strip().lower()
+    if mode == "lines":
+        return True
+    return _has_argument_value(arguments, "range")
+
+
+def _line_range_argument(arguments: dict[str, Any]) -> Any:
+    return arguments.get("range", "")
 
 
 def _handle_edit(arguments: dict[str, Any], _context: dict[str, Any] | None = None) -> dict[str, Any]:
-    return _wrap_workspace_payload(
+    mode = str(arguments.get("mode", "match") or "match").strip().lower()
+    if mode == "line":
+        mode = "lines"
+    if mode not in {"match", "lines"}:
+        return error_response("edit", "invalid_arguments", "mode must be 'match' or 'lines'.")
+    if mode == "match" and _is_lines_edit_arguments(arguments):
+        mode = "lines"
+
+    if mode == "lines":
+        range_arg = _line_range_argument(arguments)
+        if not str(range_arg or "").strip() and not isinstance(range_arg, (list, tuple)):
+            return error_response(
+                "edit",
+                "invalid_arguments",
+                "range is required for mode='lines'.",
+            )
+        content = arguments.get("content")
+        if content is None:
+            return error_response(
+                "edit",
+                "invalid_arguments",
+                "content or new_str is required for mode='lines'.",
+            )
+        result = _wrap_workspace_payload(
+            "edit",
+            edit_lines(
+                path=str(arguments.get("path", "")),
+                range_str=range_arg,
+                content=str(content),
+                anchor=(
+                    None
+                    if arguments.get("anchor") is None
+                    else str(arguments.get("anchor"))
+                ),
+            ),
+        )
+        get_session_state().invalidate_survey_cache()
+        return result
+
+    if "old_str" not in arguments or "new_str" not in arguments:
+        return error_response(
+            "edit",
+            "invalid_arguments",
+            "old_str and new_str are required for mode='match'.",
+        )
+
+    result = _wrap_workspace_payload(
         "edit",
         edit(
             path=str(arguments.get("path", "")),
@@ -1189,6 +1376,9 @@ def _handle_edit(arguments: dict[str, Any], _context: dict[str, Any] | None = No
             replace_all=bool(arguments.get("replace_all", False)),
         ),
     )
+    get_session_state().invalidate_survey_cache()
+    # time.sleep(0.05)  # removed wsl2 workaround
+    return result
 
 
 # ── Handler registry ─────────────────────────────────────────────────
