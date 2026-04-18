@@ -1,0 +1,76 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+"""Shared text-scoring utilities used by both the search pipeline and the site mapper.
+
+Extracted here so that core/mappers/ and services/ can import without
+creating a cross-layer dependency (services → core is fine; core → services is not).
+
+Public API
+----------
+query_terms(query)                         -- tokenise query into meaningful terms
+lexical_score(query, title, snippet, url)  -- BM25-lite relevance score [0, 1]
+densify_text_gliner(text, output_chars)    -- keep highest entity-density paragraphs
+"""
+
+from __future__ import annotations
+
+import re
+from urllib.parse import urlparse
+
+from core.cache.query_normalizer import QUERY_STOPWORDS as _QUERY_STOPWORDS
+
+
+def query_terms(query: str) -> list[str]:
+    raw = [t.strip().lower() for t in (query or "").split() if len(t.strip()) > 2]
+    filtered = [t for t in raw if t not in _QUERY_STOPWORDS]
+    return filtered or raw
+
+
+def lexical_score(query: str, title: str, snippet: str, url: str) -> float:
+    terms = query_terms(query)
+    if not terms:
+        return 0.0
+    url_path = (urlparse(url).path or "").lower()
+    title_l = title.lower()
+    snippet_l = snippet.lower()
+    n = len(terms)
+    return min(
+        1.0,
+        0.6 * sum(1 for t in terms if t in title_l) / n
+        + 0.3 * sum(1 for t in terms if t in snippet_l) / n
+        + 0.1 * sum(1 for t in terms if t in url_path) / n,
+    )
+
+
+def densify_text_gliner(text: str, output_chars: int = 3_000) -> str:
+    """Keep highest entity-density paragraphs via GliNER; falls back to head-truncation."""
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
+    if not paragraphs:
+        return text[:output_chars]
+
+    try:
+        from core.extract.gliner_wrapper import is_gliner_available, score_entity_density
+
+        if not is_gliner_available():
+            raise ImportError
+        scores = score_entity_density(paragraphs)
+        ranked = sorted(
+            zip(scores, range(len(paragraphs)), paragraphs),
+            key=lambda t: t[0],
+            reverse=True,
+        )
+        kept: list[tuple[int, str]] = []
+        total = 0
+        for _score, idx, para in ranked:
+            if total >= output_chars:
+                break
+            kept.append((idx, para))
+            total += len(para)
+        kept.sort(key=lambda t: t[0])
+        result_text = "\n\n".join(p for _, p in kept)
+    except Exception:
+        result_text = text[:output_chars].rsplit("\n", 1)[0]
+
+    if len(result_text) > output_chars:
+        result_text = result_text[:output_chars].rsplit("\n", 1)[0] + "\n[...densified]"
+    return result_text

@@ -1,0 +1,172 @@
+{
+  "_comment": "Academic and Scientific aggregators registry, based on recent experimental parsing tests. Outlines the specific anti-bot countermeasures detected and the required parsing methods.",
+  "domains": [
+    {
+      "pattern": "scholar.google.com",
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.25,
+      "burst": 2,
+      "response_time_ms": 1300,
+      "notes": "Tolerates automated HTTP/httpx requests well if constrained to ~4s delay between requests. Uses standard HTML structure perfectly parseable by Trafilatura.",
+      "topics": [
+        "academic"
+      ]
+    },
+    {
+      "pattern": "arxiv.org",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "response_time_ms": 400,
+      "json_api_hint": "http://export.arxiv.org/api/query",
+      "notes": "Extremely open and friendly. Trafilatura extracts preprint titles, authors, and abstracts perfectly from HTML. JSON/XML API is also available.",
+      "topics": [
+        "academic",
+        "tech",
+        "physics"
+      ]
+    },
+    {
+      "pattern": "pubmed.ncbi.nlm.nih.gov",
+      "aliases": [
+        "ncbi.nlm.nih.gov"
+      ],
+      "tier": "hardened",
+      "method": "camoufox",
+      "rps": 0.5,
+      "burst": 1,
+      "response_time_ms": 6000,
+      "json_api_hint": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=<q>&retmode=json",
+      "notes": "Raw HTTP via httpx gets 403. curl_cffi gets 200 but freezes on Cloudflare 'browser check' JS challenge. Web scraping strictly requires a JS-capable headless browser (camoufox/patchright). Alternatively, use official E-utilities API.",
+      "topics": [
+        "academic",
+        "medical"
+      ]
+    },
+    {
+      "pattern": "semanticscholar.org",
+      "tier": "hardened",
+      "method": "camoufox",
+      "rps": 0.3,
+      "burst": 1,
+      "response_time_ms": 7500,
+      "json_api_hint": "https://api.semanticscholar.org/graph/v1/paper/search",
+      "notes": "SPA/React heavy site. Simple HTTP fetch only yields a skeleton loading screen. Using camoufox (waiting for 'networkidle') successfully executes React, populates DOM, and allows Trafilatura to extract the paper titles and abstracts. Official API throws 429 without a key.",
+      "topics": [
+        "academic",
+        "tech"
+      ]
+    },
+    {
+      "pattern": "base-search.net",
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.5,
+      "burst": 1,
+      "response_time_ms": 1000,
+      "notes": "Protected by 'Anubis' JS Proof-of-Work challenge, but may selectively disable it for 'friendly' looking traffic with good delays. httpx can work. Fallback to camoufox if challenged.",
+      "topics": [
+        "academic"
+      ]
+    },
+    {
+      "pattern": "openalex.org",
+      "aliases": [
+        "api.openalex.org"
+      ],
+      "tier": "friendly",
+      "method": "json_api",
+      "rps": 5.0,
+      "burst": 10,
+      "response_time_ms": 350,
+      "json_api_hint": "https://api.openalex.org/works?search=<q>",
+      "notes": "Web UI is a heavy SPA and Trafilatura fails to extract content even with camoufox. However, the REST API is extremely friendly and high-quality, returning ~1MB of rich JSON instantly without auth. Strictly prefer API.",
+      "topics": [
+        "academic"
+      ]
+    },
+    {
+      "pattern": "crossref.org",
+      "aliases": [
+        "api.crossref.org"
+      ],
+      "tier": "friendly",
+      "method": "json_api",
+      "rps": 3.0,
+      "burst": 6,
+      "response_time_ms": 500,
+      "json_api_hint": "https://api.crossref.org/works?query=<q>",
+      "notes": "Web search page is mostly structural and Trafilatura fails to extract results. The REST API, however, is fully open and free, yielding excellent JSON responses. Strictly prefer API.",
+      "topics": [
+        "academic"
+      ]
+    },
+    {
+      "pattern": "unpaywall.org",
+      "aliases": [
+        "api.unpaywall.org"
+      ],
+      "tier": "friendly",
+      "method": "json_api",
+      "rps": 3.0,
+      "burst": 6,
+      "response_time_ms": 500,
+      "json_api_hint": "https://api.unpaywall.org/v2/<doi>?email=",
+      "notes": "Web interface SPA cannot be meaningfully parsed by Trafilatura even with JS execution. The API is excellent but strictly validates the email parameter. Keep to the API.",
+      "topics": [
+        "academic"
+      ]
+    },
+    {
+      "pattern": "core.ac.uk",
+      "aliases": [
+        "api.core.ac.uk"
+      ],
+      "tier": "friendly",
+      "method": "json_api",
+      "rps": 5.0,
+      "burst": 10,
+      "response_time_ms": 400,
+      "json_api_hint": "https://api.core.ac.uk/v3/search/works?q=<q>&limit=10",
+      "notes": "230M+ open access papers. REST API v3 is free (no key required for basic use, API key unlocks higher limits). Returns structured JSON with title, authors, abstract, full-text URL, and direct PDF download links. Strictly prefer API over web UI.",
+      "topics": [
+        "academic"
+      ]
+    },
+    {
+      "pattern": "europepmc.org",
+      "aliases": [
+        "www.europepmc.org"
+      ],
+      "tier": "friendly",
+      "method": "json_api",
+      "rps": 5.0,
+      "burst": 10,
+      "response_time_ms": 450,
+      "json_api_hint": "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=<q>&format=json&resultType=core",
+      "notes": "Europe PMC REST API is fully open and returns structured JSON with title, authors, abstract, and full-text availability flag. The `resultType=core` parameter includes MeSH terms, citations, and grant info. Biomedical focus but covers all life sciences. Prefer API, web UI is SPA.",
+      "topics": [
+        "academic",
+        "medical"
+      ]
+    },
+    {
+      "pattern": "doaj.org",
+      "aliases": [
+        "doaj.org"
+      ],
+      "tier": "friendly",
+      "method": "json_api",
+      "rps": 3.0,
+      "burst": 6,
+      "response_time_ms": 500,
+      "json_api_hint": "https://doaj.org/api/search/articles/<q>",
+      "notes": "Directory of Open Access Journals. REST API returns article-level metadata with direct full-text links. Good for finding peer-reviewed OA content across disciplines. No authentication required.",
+      "topics": [
+        "academic"
+      ]
+    }
+  ]
+}
