@@ -8,9 +8,11 @@ import os
 import sys
 import shutil
 from pathlib import Path
+from unittest.mock import patch
 
-sys.path.insert(0, str(Path("src")))
-os.environ["SANDBOX_HOST_WORKSPACE"] = str(Path(".").resolve().parent.parent)
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+os.environ["SANDBOX_HOST_WORKSPACE"] = str(ROOT)
 
 from sandbox import workspace
 from sandbox.api import handle_tool
@@ -85,11 +87,24 @@ def test_chains_still_go_to_real_bash():
         "cat data.txt || echo failed",
     ]
     for cmd in chain_cases:
-        result = handle_tool("bash", {"command": cmd})
+        with patch(
+            "sandbox.api.exec_bash",
+            return_value={
+                "exit_code": 0,
+                "stdout": "mocked real bash\n",
+                "stderr": "",
+                "error": None,
+                "elapsed_ms": 1,
+                "truncated": False,
+                "cwd": ".",
+            },
+        ) as exec_mock:
+            result = handle_tool("bash", {"command": cmd})
         # Key: should not be routed through our controllers
         assert not result.get("result", {}).get("routed", False), (
             f"Compound chain should not be routed: {cmd}"
         )
+        exec_mock.assert_called_once()
     print(f"PASS: {len(chain_cases)} chain commands not intercepted")
 
 

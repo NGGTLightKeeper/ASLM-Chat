@@ -4,11 +4,22 @@ import sys
 from pathlib import Path
 from typing import Any
 
-SRC_ROOT = Path(__file__).resolve().parent / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
+_ROOT = Path(__file__).resolve().parent
+for _p in (_ROOT / "supervisor", _ROOT / "src"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 from sandbox.api import MCP_SERVER, TOOL_HANDLERS, TOOLS, handle_tool
+from sandbox.config import IN_CONTAINER
+
+# When imported host-side (e.g. by ASLM's tool_worker), wire bash execution
+# through docker instead of trying to run /bin/bash natively on the host.
+if not IN_CONTAINER:
+    from sandbox.docker_host import _exec_bash_docker
+    import sandbox.container as _container
+    import sandbox.api as _api
+    _container.exec_bash = _exec_bash_docker
+    _api.exec_bash = _exec_bash_docker
 
 
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:

@@ -11,15 +11,17 @@ import shutil
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT.parent.parent))
+os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT))
 
 from sandbox import workspace  # noqa: E402
+import sandbox.workspace as workspace_mod  # noqa: E402
 from sandbox.session_state import reset_session_state  # noqa: E402
 from sandbox.workspace import (  # noqa: E402
     read,
@@ -169,6 +171,42 @@ class WorkspaceBoundaryTests(unittest.TestCase):
         finally:
             sym.unlink(missing_ok=True)
             real.unlink(missing_ok=True)
+
+    # ── In-container absolute path access ────────────────────────────
+
+    def test_validate_allows_absolute_in_container(self) -> None:
+        with patch.object(workspace_mod, "IN_CONTAINER", True):
+            validate_model_path("/opt/app/config.py")  # must not raise
+
+    def test_validate_allows_slash_tmp_in_container(self) -> None:
+        with patch.object(workspace_mod, "IN_CONTAINER", True):
+            validate_model_path("/tmp/work/file.txt")  # must not raise
+
+    def test_validate_still_rejects_windows_paths_in_container(self) -> None:
+        with patch.object(workspace_mod, "IN_CONTAINER", True):
+            with self.assertRaises(ValueError):
+                validate_model_path("C:/Users/dimap/evil.txt")
+
+    def test_get_secure_task_path_returns_absolute_in_container(self) -> None:
+        with patch.object(workspace_mod, "IN_CONTAINER", True):
+            p = get_secure_task_path("/opt/app/config.py")
+        self.assertEqual(p, Path("/opt/app/config.py"))
+
+    def test_get_secure_task_path_normalizes_absolute_in_container(self) -> None:
+        with patch.object(workspace_mod, "IN_CONTAINER", True):
+            p = get_secure_task_path("/opt/../opt/app/config.py")
+        self.assertEqual(p, Path("/opt/app/config.py"))
+
+    def test_get_secure_task_path_relative_unchanged_in_container(self) -> None:
+        """Relative paths still resolve under task_root even in-container."""
+        with patch.object(workspace_mod, "IN_CONTAINER", True):
+            p = get_secure_task_path("script.py")
+        self.assertEqual(p, workspace.task_root() / "script.py")
+
+    def test_validate_rejects_absolute_on_host(self) -> None:
+        with patch.object(workspace_mod, "IN_CONTAINER", False):
+            with self.assertRaises(ValueError):
+                validate_model_path("/opt/app/config.py")
 
     # ── clear_workspace targets task_root ─────────────────────────────
 

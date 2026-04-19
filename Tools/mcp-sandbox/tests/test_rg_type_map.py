@@ -1,0 +1,123 @@
+"""Tests for dynamic rg type map loading and derived code-extension detection."""
+
+import os
+import sys
+import subprocess
+from pathlib import Path
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tmp"))
+os.environ["SANDBOX_HOST_WORKSPACE"] = str(ROOT)
+
+from sandbox.config import RG_TYPE_TO_GLOB, _load_rg_type_map, _RG_TYPE_FALLBACK
+from sandbox.presenters import _CODE_EXTENSIONS, _TEXT_EXTENSIONS
+
+
+# ── _load_rg_type_map ────────────────────────────────────────────────
+
+def test_returns_nonempty_dict():
+    result = _load_rg_type_map()
+    assert isinstance(result, dict)
+    assert len(result) > 0, "Expected non-empty type map"
+    print(f"PASS: map has {len(result)} entries")
+
+
+def test_common_types_present():
+    result = _load_rg_type_map()
+    required = ["py", "js", "ts", "go", "rs", "java", "sh"]
+    missing = [t for t in required if t not in result]
+    assert not missing, f"Missing common types: {missing}"
+    print(f"PASS: all required types present: {required}")
+
+
+def test_glob_format():
+    result = _load_rg_type_map()
+    for key, glob in result.items():
+        assert glob.startswith("*."), f"Bad glob for '{key}': {glob!r}"
+    print(f"PASS: all {len(result)} glob values start with '*.'")
+
+
+def test_short_alias_derived():
+    """'py' alias must be derived even though rg uses 'python' as canonical name."""
+    result = _load_rg_type_map()
+    assert "py" in result, "'py' alias missing"
+    assert result["py"] == "*.py", f"Expected '*.py', got {result['py']!r}"
+    print(f"PASS: short alias 'py' maps to {result['py']}")
+
+
+def test_fallback_on_rg_unavailable():
+    """When rg is unavailable, must return fallback dict."""
+    with patch("subprocess.run", side_effect=FileNotFoundError("rg not found")):
+        result = _load_rg_type_map()
+    assert result == _RG_TYPE_FALLBACK
+    print("PASS: fallback returned when rg is unavailable")
+
+
+def test_fallback_on_rg_nonzero_exit():
+    """Non-zero rg exit code triggers fallback."""
+    import subprocess as sp
+    mock_proc = sp.CompletedProcess(args=[], returncode=1, stdout="", stderr="err")
+    with patch("subprocess.run", return_value=mock_proc):
+        result = _load_rg_type_map()
+    assert result == _RG_TYPE_FALLBACK
+    print("PASS: fallback returned on non-zero exit code")
+
+
+# ── Module-level RG_TYPE_TO_GLOB ─────────────────────────────────────
+
+def test_module_level_map_is_dict():
+    assert isinstance(RG_TYPE_TO_GLOB, dict)
+    assert len(RG_TYPE_TO_GLOB) > 0
+    print(f"PASS: module-level RG_TYPE_TO_GLOB has {len(RG_TYPE_TO_GLOB)} entries")
+
+
+# ── _CODE_EXTENSIONS derivation ──────────────────────────────────────
+
+def test_code_extensions_nonempty():
+    assert len(_CODE_EXTENSIONS) > 0
+    print(f"PASS: _CODE_EXTENSIONS has {len(_CODE_EXTENSIONS)} entries")
+
+
+def test_code_extensions_no_overlap_with_text():
+    overlap = _CODE_EXTENSIONS & _TEXT_EXTENSIONS
+    assert not overlap, f"Overlap between code and text extensions: {overlap}"
+    print("PASS: no overlap between _CODE_EXTENSIONS and _TEXT_EXTENSIONS")
+
+
+def test_code_extensions_contain_core_languages():
+    required = {".py", ".js", ".ts", ".go", ".rs", ".java"}
+    missing = required - _CODE_EXTENSIONS
+    assert not missing, f"Missing core language extensions: {missing}"
+    print(f"PASS: core language extensions present: {required}")
+
+
+def test_code_extensions_all_start_with_dot():
+    bad = [e for e in _CODE_EXTENSIONS if not e.startswith(".")]
+    assert not bad, f"Extensions without leading dot: {bad}"
+    print("PASS: all extensions start with '.'")
+
+
+if __name__ == "__main__":
+    tests = [
+        test_returns_nonempty_dict,
+        test_common_types_present,
+        test_glob_format,
+        test_short_alias_derived,
+        test_fallback_on_rg_unavailable,
+        test_fallback_on_rg_nonzero_exit,
+        test_module_level_map_is_dict,
+        test_code_extensions_nonempty,
+        test_code_extensions_no_overlap_with_text,
+        test_code_extensions_contain_core_languages,
+        test_code_extensions_all_start_with_dot,
+    ]
+    failed = 0
+    for t in tests:
+        try:
+            t()
+        except Exception as e:
+            print(f"FAIL: {t.__name__}: {e}")
+            failed += 1
+    print(f"\n{'All tests passed' if not failed else f'{failed} test(s) failed'} ({len(tests)} total)")

@@ -1,0 +1,14 @@
+core/config/api_keys.json
+majestic_million.csv
+core/registry/majestic_million.csv
+*.zip
+*.log
+/_cache
+/tmp
+todo.md
+.claude
+/logs
+__pycache__
+.bat
+tests/antigravity_exp
+deep_research_overdrive.toml
