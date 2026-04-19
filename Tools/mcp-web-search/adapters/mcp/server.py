@@ -14,6 +14,7 @@ from mcp.server.fastmcp import FastMCP
 
 from adapters.mcp.logging_setup import setup_logging
 from core.config import load_search_config
+from core.fetch.file_importer import download_file, ALLOWED_EXTENSIONS
 from services import run_read_page, run_web_search, run_deep_research
 from services.web_search import shutdown_web_search
 
@@ -37,6 +38,7 @@ if str(ASLM_ROOT) not in sys.path:
 setup_logging()
 
 mcp = FastMCP("mcp-web-search")
+_SANDBOX_ROOT = ASLM_ROOT / "_sandbox"
 logger = __import__("logging").getLogger("adapters.mcp.server")
 _CFG = load_search_config()
 _WEB_SEARCH_RESULT_LIMIT = max(1, int(_CFG.search.max_results))
@@ -232,21 +234,15 @@ async def read_page(
 
 
 # ---------------------------------------------------------------------------
-# Allowed depth values (validated before calling the pipeline)
+# Deep research runtime
 # ---------------------------------------------------------------------------
-_DEEP_RESEARCH_DEPTHS = {"low", "medium", "high", "extra"}
-_DEEP_RESEARCH_HARD_TIMEOUTS = {
-    "low":    300.0,
-    "medium": 600.0,
-    "high":   1800.0,
-    "extra": 2400.0,
-}
+_DEEP_RESEARCH_MAX_WALL_SEC = 30 * 60
 
 
 @mcp.tool()
 async def deep_research(
     question: str,
-    depth: str = "medium",
+    depth: str = "standard",
     context: FastMCPContext | dict[str, Any] | None = None,
 ) -> str:
     """
@@ -258,39 +254,31 @@ async def deep_research(
     - source triage and de-duplication before synthesis
     - a structured markdown report rather than a list of snippets
 
-    The tool runs a legacy-style deep-research flow:
-      1. Plan — generates diverse sub-queries for the question
-      2. Harvest — searches the web for each sub-query
-      3. Triage — annotates each source with type, evidence strength, sub-topic
-      4. Dedup/Filter — removes near-duplicates and low-information pages
-      5. Synthesize — produces a structured markdown report with citations
+    The tool runs an agentic research loop:
+      1. web_search - uses the ranked/trust-aware search backend
+      2. read_page - reads complete pages or compact windows/chunks
+      3. python - performs quick bounded calculations or parsing checks
+      4. synthesize - writes a structured markdown report with citations
 
-    depth controls scope and runtime:
-      "low"    — 4 queries, 15 sources max, ~5 min
-      "medium" — 7 queries, 40 sources max, ~10 min  (default)
-      "high"   — 10 queries, 80 sources max, ~15 min
-      "extra"  — 14 queries, 120 sources max, ~20 min
+    Runtime uses one autonomous research profile with a safety timeout.
+    The depth argument is accepted only for backwards compatibility.
 
     Returns a markdown-formatted research report. If any phase times out
     the tool returns a partial report rather than an error, so callers
     always get something useful.
     """
-    depth = (depth or "medium").strip().lower()
-    if depth not in _DEEP_RESEARCH_DEPTHS:
-        depth = "medium"
-
-    hard_timeout = _DEEP_RESEARCH_HARD_TIMEOUTS[depth]
+    depth = (depth or "standard").strip().lower()
 
     logger.info(
         "mcp.deep_research.start question_preview=%r depth=%s timeout=%.0fs",
-        str(question)[:160], depth, hard_timeout,
+        str(question)[:160], depth, _DEEP_RESEARCH_MAX_WALL_SEC,
     )
 
     try:
         report = await _keepalive(
             context,
-            f"deep research [{depth}]...",
-            run_deep_research(question=question.strip(), depth=depth),
+            "deep research...",
+            run_deep_research(question=question.strip(), depth=depth, hard_timeout=_DEEP_RESEARCH_MAX_WALL_SEC),
         )
         logger.info(
             "mcp.deep_research.done depth=%s report_chars=%d",
@@ -305,8 +293,52 @@ async def deep_research(
         return (
             f"# Research: {question}\n\n"
             "Deep research failed due to an unexpected error. "
-            "Try a lower depth or rephrase the question."
+            "Try rephrasing the question."
         )
+
+
+_IMPORT_FILE_MAX_MB = 50
+
+@mcp.tool()
+async def import_web_file(
+    url: str,
+    save_to: str = "downloads/",
+    context: FastMCPContext | dict[str, Any] | None = None,
+) -> dict:
+    """
+    Download a file from the web and save it to the sandbox workspace.
+
+    Use it when you need to save a document, dataset, archive, media file, or
+    source code file from a URL so you can work with it locally.
+
+    Supported types: documents (.pdf .docx .xlsx .csv .txt .md .json .xml .html),
+    media (.mp3 .mp4 .wav .webm .mkv .jpg .png .gif .webp),
+    archives (.zip .tar .gz .7z), databases (.sqlite .db),
+    source code (.py .js .ts .jsx .tsx .css .scss .rb .php .lua).
+    Blocked: executables and shell scripts (.exe .dll .sh .bat .ps1 …).
+
+    url: direct link to the file
+    save_to: subdirectory inside _sandbox/ where the file is saved (default: "downloads/")
+
+    Returns: {status, file, size_bytes, content_type, message}
+    """
+    logger.info("mcp.import_web_file.start url_preview=%r save_to=%r", url[:160], save_to)
+    result = await _keepalive(
+        context,
+        "downloading...",
+        download_file(
+            url=url,
+            sandbox_root=_SANDBOX_ROOT,
+            save_to=save_to,
+            allowed_types=None,
+            max_size_mb=_IMPORT_FILE_MAX_MB,
+        ),
+    )
+    logger.info(
+        "mcp.import_web_file.done status=%s file=%r",
+        result.get("status"), result.get("file"),
+    )
+    return result
 
 
 if __name__ == "__main__":

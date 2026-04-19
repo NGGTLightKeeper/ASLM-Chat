@@ -1,238 +1,165 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Central configuration for the deep research pipeline.
-
-All tuneable constants live here — timeouts, depth presets, synthesis
-limits, query validation bounds.  Phase modules import what they need;
-nothing should be hardcoded in the phase files themselves.
-"""
+"""Configuration for the agentic deep research runtime."""
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
-from typing import Any
+
+SYNTH_CHAR_BUDGET_PER_SOURCE: int = 2_000
 
 
-# ---------------------------------------------------------------------------
-# Phase timeouts  (seconds)
-# orchestrator._run_phase() uses these as the asyncio.wait_for ceiling.
-# Keep each value ~20s above the corresponding model-side timeout so that
-# the inner aiohttp timeout fires first (and logs the reason) before the
-# phase wrapper silently cancels the coroutine.
-# ---------------------------------------------------------------------------
-
-PHASE_TIMEOUTS: dict[str, float] = {
-    "plan":             30.0,
-    "harvest":         120.0,
-    "triage":           60.0,
-    "dedup_filter":     90.0,   # embedding is CPU-bound and can block the loop
-    # synthesis_timeout in ResearchConfig is the aiohttp/LLM ceiling;
-    # these are the outer asyncio.wait_for ceilings (20s larger).
-    "synthesize_low":  320.0,   # model timeout: 300s (medium/low default)
-    "synthesize_high": 320.0,   # model timeout: 300s (high/extra)
+# Per-content-type budget multipliers for max_search_calls and max_read_calls.
+# "general" is the baseline (no overrides applied).
+_CONTENT_PROFILES: dict[str, dict[str, int]] = {
+    # Deep technical questions need thorough source reading; moderate search breadth.
+    "technical": {"max_search_calls": 12, "max_read_calls": 22},
+    # Academic/research questions benefit from many sources and deep reads.
+    "academic":  {"max_search_calls": 14, "max_read_calls": 24},
+    # News/current events: breadth of sources over deep reading.
+    "news":      {"max_search_calls": 16, "max_read_calls": 10},
+    # How-to/tutorial questions need more reading for concrete steps.
+    "how_to":    {"max_search_calls": 11, "max_read_calls": 20},
+    # General: baseline defaults, no overrides.
+    "general":   {},
 }
 
-
-# ---------------------------------------------------------------------------
-# Synthesis output limits
-# ---------------------------------------------------------------------------
-
-SYNTH_MAX_TOKENS_SINGLE: int = 8192   # single-shot synthesis (low / medium)
-SYNTH_MAX_TOKENS_MERGE: int = 12288   # hierarchical merge pass (high / extra)
-SYNTH_CHAR_BUDGET_PER_SOURCE: int = 2000  # default chars per source block
-
-
-# ---------------------------------------------------------------------------
-# Triage concurrency
-# LMS (and most local inference servers) are single-threaded: parallel
-# requests queue up.  Cap concurrent triage batches so total wall-time
-# stays within triage_timeout and the server is not overwhelmed.
-# ---------------------------------------------------------------------------
-
-TRIAGE_MAX_CONCURRENT_BATCHES: int = 3
-# Conservative per-batch time budget used to compute dynamic phase timeout.
-# Should be slightly above the observed p90 per-batch latency on a typical local LLM.
-TRIAGE_BATCH_BUDGET_SEC: float = 35.0
-
-# Cluster synthesis concurrency (high/extra depth).
-# LMS is single-threaded, so requests queue server-side, but parallel dispatch
-# reduces Python-side scheduling overhead and lets faster clusters complete sooner.
-SYNTH_MAX_CONCURRENT_CLUSTERS: int = 3
+_TECHNICAL_KW = {"install", "configure", "setup", "deploy", "debug", "error", "fix", "api",
+                 "code", "library", "framework", "docker", "kubernetes", "server", "database",
+                 "dependency", "build", "compile", "integrate", "migration"}
+_ACADEMIC_KW  = {"research", "study", "paper", "review", "analysis", "literature", "journal",
+                 "experiment", "hypothesis", "methodology", "findings", "citation", "arxiv",
+                 "survey", "meta-analysis", "systematic"}
+_NEWS_KW      = {"news", "latest", "today", "current", "recent", "update", "announcement",
+                 "release", "2024", "2025", "2026", "breaking", "event", "happened"}
+_HOW_TO_KW    = {"how to", "how do", "step by step", "tutorial", "guide", "walkthrough",
+                 "instructions", "procedure", "example", "sample"}
 
 
-# ---------------------------------------------------------------------------
-# Query planning limits
-# ---------------------------------------------------------------------------
+def _detect_content_type(question: str) -> str:
+    """Classify the research question into a content type for budget tuning."""
+    import re as _re
+    q = question.lower()
+    words = set(_re.findall(r"[a-z0-9]+", q))
 
-# Validation applied to LLM-generated query strings.
-PLAN_QUERY_MAX_WORDS: int = 8
-PLAN_QUERY_MAX_CHARS: int = 80
+    def _matches(kw_set: set[str]) -> bool:
+        for kw in kw_set:
+            if " " in kw:  # phrase: substring match
+                if kw in q:
+                    return True
+            else:           # single word: whole-word match
+                if kw in words:
+                    return True
+        return False
 
-# Validation applied to the raw question used as a fallback query.
-PLAN_FALLBACK_MAX_WORDS: int = 6
-PLAN_FALLBACK_MAX_CHARS: int = 70
+    # how-to must be checked before technical (overlap on "install", "configure")
+    if _matches(_HOW_TO_KW):
+        return "how_to"
+    if _matches(_NEWS_KW):
+        return "news"
+    if _matches(_ACADEMIC_KW):
+        return "academic"
+    if _matches(_TECHNICAL_KW):
+        return "technical"
+    return "general"
 
-
-# ---------------------------------------------------------------------------
-# Research configuration (depth presets)
-# ---------------------------------------------------------------------------
 
 @dataclass
 class ResearchConfig:
-    """Tuning knobs per research depth level.
+    """Runtime budgets and model settings for agentic deep research."""
 
-    Instantiate via ``ResearchConfig.for_depth(depth)`` to get a fully
-    configured object for a given depth preset.
-    """
+    depth: str = "standard"
+    content_type: str = "general"
 
-    depth: str = "medium"
+    # Controller loop
+    max_steps: int = 30
+    max_search_calls: int = 10
+    max_read_calls: int = 16
+    max_python_calls: int = 5
+    max_site_map_calls: int = 4
+    max_reflect_without_tool: int = 2
+    min_search_calls_before_finish: int = 2
+    min_read_calls_before_finish: int = 4
 
-    # Phase 1 — plan
-    num_queries: int = 7
+    # Extra quota granted when model explicitly requests it (once per session).
+    extra_quota_search_calls: int = 7
+    extra_quota_read_calls: int = 7
+    total_timeout_sec: float = 1800.0
+    synthesis_reserve_sec: float = 360.0
+    controller_timeout_sec: float = 90.0
+
+    # Source and context budgets
+    max_sources: int = 90
+    search_results_per_call: int = 12
+    synthesis_context_budget: int = 120_000
+    synthesis_buffer_pct: float = 0.18  # reserve 18% of budget for synthesis pass
+    read_page_max_chars: int = 32_000
+    read_chunk_chars: int = 6_000
+    read_chunk_overlap: int = 300
+    tool_observation_max_chars: int = 6_000
+    read_wayback_fallback: bool = True
+
+    # Pre-synthesis artifact compression pass.
+    # Triggered when total read-artifact content exceeds the threshold.
+    # Batches artifacts into chunks, asks LLM to extract primary claims per batch,
+    # then passes the compressed essays to the final synthesis call instead of raw content.
+    artifact_compression_threshold_chars: int = 80_000
+    artifact_compression_batch_chars: int = 20_000
+    artifact_compression_output_chars: int = 8_000
+
+    # Tool timeouts
+    search_timeout_sec: float = 30.0
+    read_timeout_sec: float = 25.0
+    python_timeout_sec: int = 20
+
+    # Model settings
     query_model: str = "local-model"
-
-    # Phase 2 — harvest
-    max_results_per_query: int = 15
-    max_urls_to_extract_per_pass: int = 80
-    fetch_previews: bool = True
-    search_timeout: float = 120.0
-    content_fetch_concurrency: int = 6
-    content_request_timeout: float = 10.0
-    harvest_relevant_chunks_max_chars: int = 3000
-    harvest_full_text_tolerance_chars: int = 100
-    harvest_chunk_size_chars: int = 900
-    harvest_chunk_overlap_chars: int = 120
-    harvest_gliner_chunk_limit: int = 32
-
-    # Phase 3 — triage
-    enable_triage: bool = False       # legacy: initial + per-iteration triage (disabled)
-    triage_before_synth: bool = False  # run triage once on final pool, just before synthesis
-    triage_batch_size: int = 4
-    triage_model: str = ""        # empty → use query_model
-    triage_timeout: float = 60.0
-
-    # Phase 4 — dedup / filter
-    minhash_threshold: float = 0.70   # MinHash: removes near-exact text copies
-    embedding_threshold: float = 0.93  # Cosine sim: only remove near-identical docs
-    use_embeddings: bool = True
-    use_gliner: bool = True
-    min_entity_density: int = 2
-    dedup_min_sources: int = 3         # never drop below this after dedup (unless we started with fewer)
-    dedup_cooldown_ratio: float = 0.10 # only re-run iteration dedup when pool grew by ≥ this fraction
-    dedup_min_new_sources: int = 3     # absolute: always run dedup if ≥ this many new sources added
-
-    # Phase 5 — synthesize
-    # synthesis_timeout is the aiohttp / LLM-side ceiling passed to call_llm();
-    # the outer asyncio.wait_for ceiling is PHASE_TIMEOUTS["synthesize_*"].
-    synthesis_model: str = ""     # empty → use query_model
-    synthesis_batch_char_budget: int = 60_000
-    synthesis_prompt_char_budget: int = 120_000
-    synthesis_merge_grounding_source_fraction: float = 0.30
-    synthesis_merge_grounding_char_ratio: float = 0.30
-    synthesis_timeout: float = 300.0
-    synthesis_source_cap: int = 48
-    synthesis_min_source_quality: float = 0.55
-    final_source_cleanup_enabled: bool = True
-    final_source_rank_model: str = ""
-    final_source_rank_batch_size: int = 8
-    final_source_rank_timeout_sec: float = 90.0
-    enable_source_summaries: bool = False
-
-    # Orchestrator
-    max_sources: int = 40
-    max_iterations: int = 2
-    max_sources_per_iteration: int = 15
-    followup_queries_per_iteration: int = 4
-    reflection_timeout_sec: float = 90.0
-    reflection_prompt_char_budget: int = 15_000
-    iteration_search_timeout_sec: float = 180.0
-    inference_cpu_timeout_multiplier: float = 2.0
-    total_hard_timeout: float = 600.0
-
-    # LLM structured output / reasoning
+    synthesis_model: str = ""
+    controller_temperature: float = 0.35
+    synthesis_temperature: float = 0.25
     structured_output_enabled: bool = True
     structured_output_strict: bool = True
-    reasoning_effort: str = "low"
-    reasoning_tokens: int = 2048
-    concise_reasoning_prompt: str = "Be concise. Think briefly before answering."
 
-    # reflection_temperature: 0.0 means "not set" → uses 0.4 default in reflection.py
-    reflection_temperature: float = 0.0
+    # Python backend: "deep_think" | "mcp_sandbox" | "disabled"
+    python_backend: str = "deep_think"
+
+    # Local run artifacts. Pytest disables this automatically to avoid test churn.
+    write_logs: bool = os.getenv("MCP_WEB_SEARCH_DEEP_RESEARCH_LOGS", "1").strip().lower() not in {"0", "false", "no", "off"}
 
     @classmethod
     def for_depth(cls, depth: str) -> "ResearchConfig":
-        """Return a ResearchConfig pre-configured for *depth*."""
-        presets: dict[str, dict[str, Any]] = {
-            "low": dict(
-                num_queries=4,
-                max_results_per_query=10,
-                max_sources=25,
-                max_iterations=2,
-                max_sources_per_iteration=10,
-                max_urls_to_extract_per_pass=40,
-                use_embeddings=False,
-                use_gliner=False,
-                synthesis_timeout=240.0,
-                total_hard_timeout=360.0,
-            ),
-            "medium": dict(
-                num_queries=6,
-                max_results_per_query=15,
-                max_sources=45,
-                max_iterations=4,
-                max_sources_per_iteration=20,
-                followup_queries_per_iteration=4,
-                reflection_timeout_sec=90.0,
-                reflection_prompt_char_budget=18_000,
-                iteration_search_timeout_sec=180.0,
-            ),
-            "high": dict(
-                num_queries=10,
-                max_results_per_query=20,
-                max_sources=80,
-                max_iterations=10,
-                max_sources_per_iteration=40,
-                followup_queries_per_iteration=5,
-                reflection_timeout_sec=120.0,
-                reflection_prompt_char_budget=22_000,
-                reflection_temperature=0.65,
-                iteration_search_timeout_sec=360.0,
-                max_urls_to_extract_per_pass=80,
-                content_fetch_concurrency=12,
-                content_request_timeout=18.0,
-                triage_batch_size=6,
-                synthesis_timeout=300.0,
-                total_hard_timeout=1800.0,
-                synthesis_source_cap=56,
-                final_source_rank_batch_size=8,
-                synthesis_batch_char_budget=70_000,
-                synthesis_prompt_char_budget=140_000,
-            ),
-            "extra": dict(
-                num_queries=14,
-                max_results_per_query=25,
-                max_sources=100,
-                max_iterations=14,
-                max_sources_per_iteration=60,
-                followup_queries_per_iteration=7,
-                reflection_timeout_sec=120.0,
-                reflection_prompt_char_budget=28_000,
-                reflection_temperature=0.70,
-                iteration_search_timeout_sec=480.0,
-                max_urls_to_extract_per_pass=100,
-                content_fetch_concurrency=14,
-                content_request_timeout=22.0,
-                triage_batch_size=6,
-                synthesis_timeout=300.0,
-                total_hard_timeout=2400.0,
-                synthesis_source_cap=64,
-                final_source_rank_batch_size=10,
-                synthesis_batch_char_budget=80_000,
-                synthesis_prompt_char_budget=160_000,
-            ),
-        }
-        cfg = cls(depth=depth)
-        for key, value in presets.get(depth, {}).items():
+        """Return the baseline research config (depth accepted for API compatibility)."""
+        cfg = cls()
+        cfg.depth = "standard"
+        return cfg
+
+    @classmethod
+    def for_question(cls, question: str, depth: str = "standard") -> "ResearchConfig":
+        """Return a config with tool budgets tuned to the detected content type."""
+        cfg = cls.for_depth(depth)
+        cfg.content_type = _detect_content_type(question)
+        for key, value in _CONTENT_PROFILES.get(cfg.content_type, {}).items():
             setattr(cfg, key, value)
         return cfg
+
+    @property
+    def research_deadline_sec(self) -> float:
+        """Time budget for tool use before synthesis must start."""
+
+        total = max(1.0, float(self.total_timeout_sec))
+        reserve = min(total * 0.5, max(30.0, float(self.synthesis_reserve_sec)))
+        floor = 60.0 if total >= 120.0 else max(1.0, total * 0.5)
+        return max(floor, total - reserve)
+
+    @property
+    def effective_tool_context_budget(self) -> int:
+        """Context characters available for tool output (excludes synthesis reserve).
+
+        Reserves ``synthesis_buffer_pct`` of ``synthesis_context_budget`` so the
+        synthesis LLM pass always has headroom to run without being starved.
+
+        Example: budget=120_000, buffer=18% → tools can consume up to ~98_400 chars.
+        """
+        budget = max(1, int(self.synthesis_context_budget))
+        return int(budget * (1.0 - max(0.0, min(0.5, float(self.synthesis_buffer_pct)))))

@@ -19,6 +19,8 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from services.deep_research.text_utils import sanitize_content as _sanitize_content
+
 from services.deep_research.config import SYNTH_CHAR_BUDGET_PER_SOURCE
 
 
@@ -61,10 +63,6 @@ def _load_sources(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             elif record_type == "source":
                 sources.append(record)
     return sources, run_start
-
-
-def _sanitize_content(text: str) -> str:
-    return (text or "").replace("\x00", "").strip()
 
 
 def _pick_synthesis_content(source: dict[str, Any]) -> tuple[str, str]:

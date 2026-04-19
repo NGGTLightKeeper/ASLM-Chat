@@ -17,6 +17,36 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ASLM.settings")
 
 from Settings.console import PrintTechData
 
+SERVER_VENV_COMMANDS = {
+    "runserver",
+    "migrate",
+    "makemigrations",
+    "collectstatic",
+    "downloads_bridge",
+}
+
+
+# Re-execute commands that need Django/server dependencies inside the server venv.
+def _maybe_reexec_in_server_venv(command: str) -> None:
+    """Restart the current command inside ASLM-Chat's server venv when required."""
+
+    if command not in SERVER_VENV_COMMANDS:
+        return
+    if os.environ.get("ASLM_CHAT_ACTIVE_VENV") == "server":
+        return
+
+    from Services import venv_manager
+
+    quiet = command == "downloads_bridge"
+    if not venv_manager.ensure_venv("server", log=not quiet):
+        print("[ASLM-Chat] Error: server venv could not be prepared.")
+        sys.exit(1)
+
+    python_path = venv_manager.get_venv_python("server")
+    env = os.environ.copy()
+    env["ASLM_CHAT_ACTIVE_VENV"] = "server"
+    os.execve(str(python_path), [str(python_path), __file__, *sys.argv[1:]], env)
+
 
 # Run Django command
 def run_django_command(*args: str, log: bool = False) -> None:
@@ -76,7 +106,16 @@ def cmd_first_run(log: bool = True, ui_port: int = 30000, api_port: int = 30001)
 
     print("[ASLM-Chat] Running first-run setup...")
     first_run(log=log, ui_port=ui_port, api_port=api_port)
-    cmd_migrate(log=log)
+
+    from Services import venv_manager
+
+    migrate_args = [os.path.abspath(__file__), "migrate"]
+    if log:
+        migrate_args.append("--log")
+
+    if not venv_manager.run_venv_python("server", migrate_args, log=log):
+        print("[ASLM-Chat] Database migration failed inside server venv.")
+        sys.exit(1)
 
 # Read one runtime setting
 def cmd_get_setting(key: str) -> None:
@@ -195,6 +234,7 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
+    _maybe_reexec_in_server_venv(args.command)
     _maybe_print_banner(args.command)
 
     match args.command:

@@ -5,8 +5,9 @@ import sys
 import shutil
 from pathlib import Path
 
-sys.path.insert(0, str(Path("src")))
-os.environ["SANDBOX_HOST_WORKSPACE"] = str(Path(".").resolve().parent.parent)
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+os.environ["SANDBOX_HOST_WORKSPACE"] = str(ROOT)
 
 from sandbox import workspace
 from sandbox.api import handle_tool

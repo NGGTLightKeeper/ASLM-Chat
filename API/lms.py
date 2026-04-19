@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import logging
@@ -1159,11 +1160,23 @@ class _ReasoningTextParser:
 
 # Stream native and OpenAI-compatible LM Studio conversations.
 # Upload one image handle.
-def _prepare_image_handle(client: Any, image_base64: str, name: str) -> Any:
+def _prepare_image_handle(
+    client: Any,
+    image_base64: str,
+    name: str,
+    cache: dict[str, Any] | None = None,
+) -> Any:
     """Upload one image to LM Studio and return its file handle."""
 
+    digest = hashlib.sha256(str(image_base64 or "").encode("utf-8")).hexdigest()
+    if cache is not None and digest in cache:
+        return cache[digest]
+
     image_bytes = base64.b64decode(image_base64)
-    return client.prepare_image(io.BytesIO(image_bytes), name=name)
+    handle = client.prepare_image(io.BytesIO(image_bytes), name=name)
+    if cache is not None:
+        cache[digest] = handle
+    return handle
 
 
 # Build native chat history.
@@ -1172,6 +1185,7 @@ def _build_native_chat_history(client: Any, messages: list[dict[str, Any]]):
 
     lms = _get_sdk()
     chat = lms.Chat()
+    image_handle_cache: dict[str, Any] = {}
 
     for message_index, message in enumerate(messages, start=1):
         role = str(message.get("role", "user")).lower()
@@ -1200,7 +1214,12 @@ def _build_native_chat_history(client: Any, messages: list[dict[str, Any]]):
         prepared_images = []
         for image_index, image_base64 in enumerate(images, start=1):
             prepared_images.append(
-                _prepare_image_handle(client, image_base64, name=f"image-{message_index}-{image_index}.jpg")
+                _prepare_image_handle(
+                    client,
+                    image_base64,
+                    name=f"image-{message_index}-{image_index}.jpg",
+                    cache=image_handle_cache,
+                )
             )
 
         if content:
@@ -1376,6 +1395,8 @@ def _run_tool_loop(
     options: dict[str, Any],
     tool_server_ids: list[str],
     tool_context: dict[str, Any],
+    *,
+    conversation: list[dict[str, Any]] | None = None,
 ):
     """Resolve local tools through LM Studio's OpenAI-compatible tool-calling."""
 
@@ -1386,12 +1407,13 @@ def _run_tool_loop(
     )
 
     if not tools:
+        request_messages = conversation if conversation is not None else _build_openai_messages(messages)
         yield from _yield_stream_round(
-            _stream_openai_round(client, model_name, _build_openai_messages(messages), options)
+            _stream_openai_round(client, model_name, request_messages, options)
         )
         return
 
-    conversation = _build_openai_messages(messages)
+    conversation = conversation if conversation is not None else _build_openai_messages(messages)
 
     for round_index in range(MAX_TOOL_ROUNDS):
         # Each round either completes the answer or produces another batch of
@@ -1559,11 +1581,15 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
         )
         for key in INTERNAL_CHAT_KEYS:
             options.pop(key, None)
-        if tool_server_ids:
-            yield from _run_tool_loop(openai_client, model_name, messages, options, tool_server_ids, tool_context)
+        try:
+            if tool_server_ids:
+                yield from _run_tool_loop(openai_client, model_name, messages, options, tool_server_ids, tool_context)
+                return
+            conversation = _build_openai_messages(messages)
+            yield from _yield_stream_round(_stream_openai_round(openai_client, model_name, conversation, options))
             return
-        yield from _yield_stream_round(_stream_openai_round(openai_client, model_name, _build_openai_messages(messages), options))
-        return
+        finally:
+            _close_client(openai_client)
 
     _lms, client = _get_client()
     try:

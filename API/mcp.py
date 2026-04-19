@@ -8,6 +8,7 @@ import inspect
 import json
 import logging
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 TOOLS_DIR = Path(__file__).resolve().parent.parent / "Tools"
 SERVER_FILENAME = "mcp-server.py"
+WORKER_FILE = Path(__file__).resolve().parent.parent / "Services" / "tool_worker.py"
 SERVER_DISPATCHER_NAMES = ("call_tool", "run_tool", "execute_tool", "execute")
 SERVER_METADATA_NAMES = ("MCP_SERVER", "SERVER")
 TOOL_HANDLER_NAMES = ("TOOL_HANDLERS", "TOOL_EXECUTORS")
@@ -216,6 +218,86 @@ def _load_module(server_file: Path) -> ModuleType:
     return module
 
 
+# Return the configured worker Python for one tool server when available.
+def _get_worker_python(server_file: Path) -> Path | None:
+    """Return the isolated Python executable assigned to one tool server."""
+
+    try:
+        from Services import venv_manager
+
+        return venv_manager.get_tool_python(server_file.parent.name)
+    except Exception as exc:
+        logger.warning("Could not resolve tool venv for %s: %s", server_file, exc)
+        return None
+
+
+# Execute one isolated tool worker operation.
+def _run_worker(server_file: Path, operation: str, payload: dict[str, Any] | None = None) -> Any:
+    """Run a tool worker operation and return its result payload."""
+
+    python_path = _get_worker_python(server_file)
+    if python_path is None:
+        raise RuntimeError(f"No isolated Python environment is available for {server_file.parent.name}.")
+
+    request_payload = json.dumps(payload or {}, ensure_ascii=False)
+    result = subprocess.run(
+        [str(python_path), str(WORKER_FILE), operation, str(server_file)],
+        input=request_payload,
+        capture_output=True,
+        text=True,
+        cwd=str(server_file.parent),
+        check=False,
+    )
+
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    if not stdout:
+        raise RuntimeError(stderr or f"Tool worker returned no output for {server_file}.")
+
+    envelope = None
+    for line in reversed(stdout.splitlines()):
+        try:
+            envelope = json.loads(line)
+            break
+        except json.JSONDecodeError:
+            continue
+    if not isinstance(envelope, dict):
+        raise RuntimeError(f"Tool worker returned invalid JSON: {stdout[:500]}")
+
+    if not envelope.get("ok"):
+        error = str(envelope.get("error") or stderr or "Unknown tool worker error.")
+        raise RuntimeError(error)
+
+    return envelope.get("result")
+
+
+# Load one server definition through its isolated worker.
+def _load_external_server(server_file: Path) -> dict[str, Any]:
+    """Load one server definition without importing it into the Django process."""
+
+    description = _run_worker(server_file, "describe", {})
+    if not isinstance(description, dict):
+        raise ValueError("Tool worker describe response must be a dictionary.")
+
+    server_id = _slugify(str(description.get("id") or server_file.parent.name))
+    tools = description.get("tools")
+    if not isinstance(tools, list) or not tools:
+        raise ValueError("Tool worker did not return any tools.")
+
+    return {
+        "id": server_id,
+        "name": str(description.get("name") or server_file.parent.name).strip() or server_file.parent.name,
+        "description": str(description.get("description") or "").strip(),
+        "tools": tools,
+        "module": None,
+        "supports": None,
+        "server_callable": None,
+        "tool_handlers": {},
+        "server_file": server_file,
+        "external": True,
+    }
+
+
 # Normalize one tool schema.
 def _normalize_schema(schema: Any) -> dict[str, Any]:
     """Return a JSON-schema-like mapping suitable for tool payloads."""
@@ -367,8 +449,11 @@ def _ensure_registry_loaded() -> dict[str, dict[str, Any]]:
         folder_name = server_file.parent.name
 
         try:
-            module = _load_module(server_file)
-            server_definition = _extract_server_definition(module, folder_name, server_file)
+            if _get_worker_python(server_file) is not None:
+                server_definition = _load_external_server(server_file)
+            else:
+                module = _load_module(server_file)
+                server_definition = _extract_server_definition(module, folder_name, server_file)
             discovered[server_definition["id"]] = server_definition
         except Exception as exc:
             logger.warning("Skipping invalid MCP server module %s: %s", server_file, exc)
@@ -384,6 +469,17 @@ def _server_is_supported(
     model_name: str | None,
 ) -> bool:
     """Return whether a server supports the current engine and model."""
+
+    if server_definition.get("external"):
+        try:
+            return bool(_run_worker(
+                Path(server_definition["server_file"]),
+                "supports",
+                {"engine": engine, "model_name": model_name},
+            ))
+        except Exception as exc:
+            logger.warning("Server %s support check failed: %s", server_definition["id"], exc)
+            return False
 
     supports_fn = server_definition.get("supports")
     if not callable(supports_fn):
@@ -655,27 +751,39 @@ def call_ollama_tool(
         )
 
     try:
-        handler = server_definition["tool_handlers"].get(tool_definition["id"])
-        if handler is None:
-            handler = server_definition["tool_handlers"].get(tool_definition["alias"])
-
-        # Prefer a dedicated handler when present, then fall back to the
-        # generic dispatcher exported by the server module.
-        if handler is not None:
-            signature = inspect.signature(handler)
-            if len(signature.parameters) <= 1:
-                result = _execute_callable(handler, call_arguments)
-            else:
-                result = _execute_callable(handler, call_arguments, call_context)
-        elif server_definition["server_callable"] is not None:
-            result = _dispatch_server_callable(
-                server_definition["server_callable"],
-                tool_definition["id"],
-                call_arguments,
-                call_context,
+        if server_definition.get("external"):
+            worker_context = json.loads(json.dumps(call_context, ensure_ascii=False, default=str))
+            result = _run_worker(
+                Path(server_definition["server_file"]),
+                "call",
+                {
+                    "tool_id": tool_definition["id"],
+                    "arguments": call_arguments,
+                    "context": worker_context,
+                },
             )
         else:
-            return f"Tool execution failed: no handler registered for {tool_definition['id']}"
+            handler = server_definition["tool_handlers"].get(tool_definition["id"])
+            if handler is None:
+                handler = server_definition["tool_handlers"].get(tool_definition["alias"])
+
+            # Prefer a dedicated handler when present, then fall back to the
+            # generic dispatcher exported by the server module.
+            if handler is not None:
+                signature = inspect.signature(handler)
+                if len(signature.parameters) <= 1:
+                    result = _execute_callable(handler, call_arguments)
+                else:
+                    result = _execute_callable(handler, call_arguments, call_context)
+            elif server_definition["server_callable"] is not None:
+                result = _dispatch_server_callable(
+                    server_definition["server_callable"],
+                    tool_definition["id"],
+                    call_arguments,
+                    call_context,
+                )
+            else:
+                return f"Tool execution failed: no handler registered for {tool_definition['id']}"
 
         # Image payloads stay structured so multimodal adapters can feed them
         # back to the model without flattening them into plain text.
