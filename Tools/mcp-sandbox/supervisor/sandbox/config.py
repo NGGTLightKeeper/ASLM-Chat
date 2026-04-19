@@ -30,12 +30,43 @@ IN_CONTAINER = os.getenv("SANDBOX_IN_CONTAINER", "").strip().lower() in {
     "true",
     "yes",
 }
+
+# Determine config file path early so we can load it before any os.getenv calls.
+CONFIG_FILE_PATH = os.getenv(
+    "SANDBOX_CONFIG_FILE",
+    os.path.join(str(Path(__file__).resolve().parents[2]), "sandbox.env"),
+)
+
+
+def _load_sandbox_env(path: str) -> None:
+    """Load sandbox.env into os.environ (does not overwrite vars already set)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for raw_line in fh:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                if key and key not in os.environ:
+                    os.environ[key] = value.strip()
+    except OSError:
+        pass
+
+
+if not IN_CONTAINER:
+    _load_sandbox_env(CONFIG_FILE_PATH)
+
 COMMAND_USER = os.getenv("SANDBOX_COMMAND_USER", "sandbox_user")
 SUPERVISOR_SRC = os.getenv("SANDBOX_SUPERVISOR_SRC", "/opt/sandbox-src")
 SUPERVISOR_VENV = os.getenv("SANDBOX_SUPERVISOR_VENV", "/opt/sandbox-venv")
 SUPERVISOR_VENV_HOST = os.getenv("SANDBOX_SUPERVISOR_VENV_HOST", "").strip()
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_PROJECT_ROOT = (
+    Path(__file__).resolve().parents[4]
+    if not IN_CONTAINER
+    else Path(SUPERVISOR_SRC)
+)
 _DEFAULT_SANDBOX_DIR = os.path.join(os.path.expanduser("~"), ".sandbox-workspace")
 HOST_WORKSPACE = os.getenv(
     "SANDBOX_HOST_WORKSPACE",
@@ -84,7 +115,7 @@ MEMORY_LIMIT = os.getenv("SANDBOX_MEMORY_LIMIT", "3g")
 MEMORY_SWAP_LIMIT = os.getenv("SANDBOX_MEMORY_SWAP_LIMIT", "4g")
 PIDS_LIMIT = os.getenv("SANDBOX_PIDS_LIMIT", "256")
 STORAGE_LIMIT = os.getenv("SANDBOX_STORAGE_LIMIT", "12G")
-NETWORK_LIMIT_MBIT = int(os.getenv("SANDBOX_NETWORK_LIMIT_MBIT", "100"))
+NETWORK_LIMIT_MBIT = int(os.getenv("SANDBOX_NETWORK_LIMIT_MBIT", "0"))
 DOCKER_START_TIMEOUT_SECONDS = int(
     os.getenv("SANDBOX_DOCKER_START_TIMEOUT_SECONDS", "60")
 )
@@ -161,10 +192,6 @@ if not IN_CONTAINER and not _validate_workspace_path(HOST_WORKSPACE):
     HOST_WORKSPACE = _DEFAULT_SANDBOX_DIR
 
 HOST_WORKSPACE = os.path.abspath(HOST_WORKSPACE)
-CONFIG_FILE_PATH = os.getenv(
-    "SANDBOX_CONFIG_FILE",
-    os.path.join(str(Path(__file__).resolve().parents[2]), "sandbox.env"),
-)
 
 
 # Import root normalization.

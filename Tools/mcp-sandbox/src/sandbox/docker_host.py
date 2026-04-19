@@ -181,74 +181,25 @@ def _image_has_required_runtime(inspect_stdout: str) -> bool:
 
 
 def _ensure_image(force_rebuild: bool = False) -> tuple[bool, str]:
-    """Ensure the sandbox image exists locally."""
+    """Ensure the sandbox image exists locally by delegating to setup-sandbox.py."""
     inspect_result = _run_command(
         ["docker", "image", "inspect", SANDBOX_IMAGE], timeout=20
     )
     if inspect_result.returncode == 0 and not force_rebuild:
         if _image_has_required_runtime(inspect_result.stdout):
             return True, "Image already exists locally."
-        force_rebuild = True
 
-    dockerfile_dir = Path(__file__).resolve().parents[2]
-    dockerfile_path = dockerfile_dir / "Dockerfile"
-
-    def _build_local() -> tuple[bool, str]:
-        if not dockerfile_path.exists():
-            return False, f"Dockerfile not found at: {dockerfile_path}"
-        build_result = _run_command(
-            ["docker", "build", "-t", SANDBOX_IMAGE, str(dockerfile_dir)],
-            timeout=1800,
-        )
-        if build_result.returncode != 0:
-            return False, build_result.stderr.strip() or "Failed to build sandbox image."
-        return True, f"Image '{SANDBOX_IMAGE}' built locally from Dockerfile."
-
-    def _pull_registry() -> tuple[bool, str]:
-        pull_result = _run_command(["docker", "pull", SANDBOX_IMAGE], timeout=600)
-        if pull_result.returncode != 0:
-            return (
-                False,
-                pull_result.stderr.strip()
-                or "Failed to pull sandbox image from Docker Hub.",
-            )
-        return True, f"Image '{SANDBOX_IMAGE}' pulled from Docker Hub."
-
-    source = (
-        SANDBOX_IMAGE_SOURCE
-        if SANDBOX_IMAGE_SOURCE in {"local", "registry", "auto"}
-        else "registry"
+    setup_script = Path(__file__).resolve().parents[2] / "setup-sandbox.py"
+    cmd = [sys.executable, str(setup_script)]
+    if force_rebuild:
+        cmd.append("--force")
+    result = subprocess.run(cmd, timeout=1900)
+    if result.returncode == 0:
+        return True, f"Image '{SANDBOX_IMAGE}' is ready."
+    return False, (
+        f"Image setup failed (exit {result.returncode}). "
+        "Run setup-sandbox.py manually for details."
     )
-    if force_rebuild and source == "local":
-        pass  # already local — rebuild is the right response
-    elif force_rebuild:
-        pass  # registry/auto — re-pull is the right response; keep source as-is
-
-    if source == "local":
-        local_ok, local_message = _build_local()
-        if local_ok:
-            return True, local_message
-        registry_ok, registry_message = _pull_registry()
-        if registry_ok:
-            return True, f"{local_message} Falling back to registry succeeded: {registry_message}"
-        return False, f"{local_message} Registry fallback failed: {registry_message}"
-
-    if source == "registry":
-        registry_ok, registry_message = _pull_registry()
-        if registry_ok:
-            return True, registry_message
-        local_ok, local_message = _build_local()
-        if local_ok:
-            return True, f"{registry_message} Falling back to local build succeeded: {local_message}"
-        return False, f"{registry_message} Local build fallback failed: {local_message}"
-
-    registry_ok, registry_message = _pull_registry()
-    if registry_ok:
-        return True, registry_message
-    local_ok, local_message = _build_local()
-    if local_ok:
-        return True, f"{registry_message} Falling back to local build succeeded: {local_message}"
-    return False, f"{registry_message} Local build fallback failed: {local_message}"
 
 
 # ── Container run command ────────────────────────────────────────────
@@ -353,14 +304,12 @@ def _build_run_command(
     if include_storage_limit and STORAGE_LIMIT:
         command.extend(["--storage-opt", f"size={STORAGE_LIMIT}"])
 
-    if os.path.isfile(CONFIG_FILE_PATH):
-        command.extend(["--env-file", CONFIG_FILE_PATH])
-
     task_host_path = os.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR)
     os.makedirs(task_host_path, exist_ok=True)
     supervisor_src_host = SUPERVISOR_SRC_HOST
     supervisor_venv_host = _linux_venv_bind_source()
 
+    # Internal container constants — always set explicitly.
     command.extend([
         "-v", f"{task_host_path}:{MODEL_WORKSPACE_CONTAINER}",
         "-w", MODEL_WORKSPACE_CONTAINER,
@@ -378,6 +327,10 @@ def _build_run_command(
         "-e", f"NUMEXPR_NUM_THREADS={THREAD_LIMIT}",
         "-e", f"VECLIB_MAXIMUM_THREADS={THREAD_LIMIT}",
     ])
+
+    # sandbox.env is appended last so user overrides win over the defaults above.
+    if os.path.isfile(CONFIG_FILE_PATH):
+        command.extend(["--env-file", CONFIG_FILE_PATH])
 
     if DEV_BIND and supervisor_src_host and os.path.isdir(supervisor_src_host):
         command.extend(["-v", f"{supervisor_src_host}:{SUPERVISOR_SRC}:ro"])
@@ -1040,7 +993,6 @@ def _refresh_docker_job(job: BackgroundJob) -> BackgroundJob:
     result = _docker_exec_shell(
         (
             f"cat {job_dir}/status 2>/dev/null || echo running; "
-            "printf '\\n'; "
             f"cat {job_dir}/exit_code 2>/dev/null || true"
         ),
         timeout=10,
