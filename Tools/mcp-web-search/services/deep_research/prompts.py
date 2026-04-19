@@ -10,7 +10,10 @@ from services.deep_research.models import ResearchSession
 from services.deep_research.session import build_reflection_summary
 
 
-def decision_schema() -> dict[str, Any]:
+def decision_schema(overdrive: bool = False) -> dict[str, Any]:
+    actions = ["reflect", "web_search", "academic_search", "read_page", "site_map", "python", "finish"]
+    if overdrive:
+        actions = ["reflect", "web_search", "academic_search", "read_page", "site_map", "linux_sandbox", "import_web_file", "finish"]
     return {
         "type": "object",
         "additionalProperties": False,
@@ -20,7 +23,7 @@ def decision_schema() -> dict[str, Any]:
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "action": {
                 "type": "string",
-                "enum": ["reflect", "web_search", "academic_search", "read_page", "site_map", "python", "import_web_file", "finish"],
+                "enum": actions,
             },
             "action_input": {
                 "type": "object",
@@ -116,7 +119,7 @@ def _overdrive_action_doc(session: ResearchSession) -> str:
     return (
         f"- import_web_file: download a file from the web into the sandbox workspace (max {max_mb} MB).\n"
         "  Use when you need to analyze a PDF, dataset, or archive that cannot be read via read_page.\n"
-        "  After download, use `python` to read/parse the file at the returned path.\n"
+        "  After download, use `linux_sandbox` to read/parse the file at the returned path.\n"
         '  action_input: {"url": "https://...", "filename": "optional_name.pdf"}'
     )
 
@@ -124,10 +127,12 @@ def _overdrive_action_doc(session: ResearchSession) -> str:
 def build_controller_prompt(session: ResearchSession, step: int) -> str:
     cfg = session.config
     overdrive_mode = getattr(session, "sandbox", None) is not None
-    remaining = {
+    sandbox_key = "linux_sandbox" if overdrive_mode else "python"
+    remaining: dict = {
         "search": int(cfg.max_search_calls) + session.extra_search_quota - session.search_calls,
         "read_page": int(cfg.max_read_calls) + session.extra_read_quota - session.read_calls,
-        "python": int(cfg.max_python_calls) - session.python_calls,
+        "site_map": int(getattr(cfg, "max_site_map_calls", 4)) - session.site_map_calls,
+        sandbox_key: int(cfg.max_python_calls) - session.python_calls,
     }
     ctx_used = session.context_size_estimate()
     ctx_budget = cfg.effective_tool_context_budget
@@ -138,7 +143,24 @@ def build_controller_prompt(session: ResearchSession, step: int) -> str:
     }
     quota_notice = _quota_notice(session)
     overdrive_action = _overdrive_action_doc(session)
-    mode_line = "Mode: OVERDRIVE (ephemeral sandbox active)" if overdrive_mode else ""
+    if overdrive_mode:
+        mode_line = "Mode: OVERDRIVE (ephemeral Linux sandbox active — full internet access, httpx/pandas/numpy available)"
+        sandbox_tool_line = (
+            "- linux_sandbox: run arbitrary Python/shell code in an isolated Linux container with full internet access.\n"
+            "  Use for: fetching live data (GitHub API, PyPI stats, benchmarks), parsing files, building comparison tables,\n"
+            "  running benchmark snippets, computing stats. action_input: {\"code\": \"executable Python\"}"
+        )
+        python_rule = (
+            "- Actively use linux_sandbox to fetch live data, verify numbers, build tables, or run comparisons — "
+            "don't just search when you can compute or fetch directly.\n"
+            "- If linux_sandbox returns an HTTP error or wrong data, diagnose the cause (wrong URL, path, or API endpoint) "
+            "and retry with a corrected request — do NOT abandon the data source after a single failure.\n"
+            "- Before calling a GitHub/PyPI/docs API, verify the exact repo name or package name from search results first."
+        )
+    else:
+        mode_line = ""
+        sandbox_tool_line = "- python: run bounded Python for calculations or parsing. action_input: {\"code\": \"executable Python only\"}"
+        python_rule = "- Use python only for bounded checks, counting, parsing, or arithmetic."
     return f"""You are an autonomous research controller.
 
 Question:
@@ -162,7 +184,7 @@ Available actions:
 - site_map: BFS-crawl a specific domain to discover thematically relevant subpages.
   Use when a known domain (e.g. arxiv paper, docs site) likely has more relevant pages not yet indexed.
   action_input: {{"url": "https://...", "topic": "focus topic for pruning"}}
-- python: run bounded Python for calculations or parsing. action_input: {{"code": "executable Python only"}}
+{sandbox_tool_line}
 {overdrive_action}
 - finish: stop research. action_input must include summary, claims, gaps, used_source_ids, recommended_followups, synthesis_ready.
 
@@ -172,7 +194,7 @@ Rules:
 - Prefer primary/official sources: official docs, project repositories, standards, vendor docs, or maintainer-authored material.
 - Use read_page for important sources whose snippets are insufficient; do not finish after reading only one source.
 - Use site_map only when you have a specific URL whose broader context or related pages would be valuable.
-- Use python only for bounded checks, counting, parsing, or arithmetic.
+{python_rule}
 - Do not repeat equivalent searches or read the same page unless using a different useful mode/query.
 - Choose finish only after coverage is broad enough to support a useful report, or when runtime/budgets force synthesis.
 - Keep tool inputs compact.

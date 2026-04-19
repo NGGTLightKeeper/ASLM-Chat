@@ -98,6 +98,7 @@ class ResearchSession:
     search_calls: int = 0
     read_calls: int = 0
     python_calls: int = 0
+    site_map_calls: int = 0
     import_file_calls: int = 0
     reflect_streak: int = 0
 

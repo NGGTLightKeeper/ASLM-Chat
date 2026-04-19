@@ -173,8 +173,13 @@ async def synthesize_report(session: ResearchSession) -> str:
     # Triggered when total artifact content exceeds the threshold.
     compressed_artifacts: str | None = None
     total_artifact_chars = _artifact_total_chars(session)
+    print(f"[synthesis] artifact_chars={total_artifact_chars:,} threshold={cfg.artifact_compression_threshold_chars:,}", flush=True)
     if total_artifact_chars > int(cfg.artifact_compression_threshold_chars):
+        print(f"[synthesis] compression triggered — batching {len(session.read_artifacts)} artifacts", flush=True)
         compressed_artifacts = await _compress_artifacts(session)
+        print(f"[synthesis] compression done — compressed to {len(compressed_artifacts):,} chars", flush=True)
+    else:
+        print("[synthesis] compression skipped — within threshold", flush=True)
 
     clustered_reports: list[str] = []
     if session.synthesis_context_estimate() > int(session.config.synthesis_context_budget):

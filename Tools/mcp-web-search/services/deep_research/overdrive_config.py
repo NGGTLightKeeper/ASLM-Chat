@@ -84,6 +84,7 @@ def _apply_builtin_defaults(cfg: ResearchConfig) -> None:
     cfg.max_search_calls = 20
     cfg.max_read_calls = 35
     cfg.max_python_calls = 15
+    cfg.max_site_map_calls = 8
     cfg.extra_quota_search_calls = 12
     cfg.extra_quota_read_calls = 12
     cfg.total_timeout_sec = 3600.0
@@ -96,7 +97,7 @@ def _apply_builtin_defaults(cfg: ResearchConfig) -> None:
     cfg.read_chunk_chars = 10_000
     cfg.read_chunk_overlap = 400
     cfg.tool_observation_max_chars = 10_000
-    cfg.artifact_compression_threshold_chars = 50_000
+    cfg.artifact_compression_threshold_chars = 180_000
     cfg.artifact_compression_batch_chars = 30_000
     cfg.artifact_compression_output_chars = 12_000
     cfg.python_backend = "mcp_sandbox"
@@ -104,7 +105,7 @@ def _apply_builtin_defaults(cfg: ResearchConfig) -> None:
 
 _INT_LIMIT_KEYS = (
     "max_steps", "max_search_calls", "max_read_calls", "max_python_calls",
-    "extra_quota_search_calls", "extra_quota_read_calls",
+    "max_site_map_calls", "extra_quota_search_calls", "extra_quota_read_calls",
 )
 _FLOAT_LIMIT_KEYS = ("total_timeout_sec", "synthesis_reserve_sec", "controller_timeout_sec")
 

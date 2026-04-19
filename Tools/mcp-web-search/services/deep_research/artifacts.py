@@ -45,6 +45,8 @@ def persist_run_artifacts(session: ResearchSession, report: str) -> Path:
         "search_calls": session.search_calls,
         "read_calls": session.read_calls,
         "python_calls": session.python_calls,
+        "site_map_calls": session.site_map_calls,
+        "import_file_calls": session.import_file_calls,
         "errors": list(session.errors),
         "final_brief": asdict(session.final_brief) if session.final_brief else None,
         "config": asdict(session.config),

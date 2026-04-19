@@ -44,10 +44,11 @@ async def run_agent_import_web_file(
         "import_web_file ok: url=%s path=%s size=%d bytes elapsed_ms=%d",
         url, result.path, result.size_bytes, result.elapsed_ms,
     )
+    action_hint = "linux_sandbox" if getattr(session, "sandbox", None) is not None else "python"
     return (
         f"File downloaded to sandbox workspace.\n"
         f"Path: {result.path}\n"
         f"Size: {result.size_bytes:,} bytes\n"
         f"Elapsed: {result.elapsed_ms} ms\n"
-        f"Use `python` action to read, parse, or analyze this file at {result.path}"
+        f"Use `{action_hint}` action to read, parse, or analyze this file at {result.path}"
     )

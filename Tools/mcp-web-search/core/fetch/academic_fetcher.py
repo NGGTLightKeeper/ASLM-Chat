@@ -127,7 +127,11 @@ class AcademicFetcher:
         url_template = entry.get("json_api_hint")
         
         logger.debug("Academic fetch [%s] method=%s", name, method)
-        
+
+        if not entry.get("text_search_capable", True) and "<doi>" in (url_template or ""):
+            logger.debug("Skipping %s — not text-search capable (DOI-only API)", name)
+            return []
+
         try:
             if method == "json_api" and url_template:
                 return await self._fetch_json_api(entry, query, max_results)
@@ -297,12 +301,15 @@ class AcademicFetcher:
         try:
             if "openalex.org" in domain:
                 # OpenAlex format
-                items = data.get("results", [])
+                items = data.get("results") or []
                 for item in items[:max_results]:
+                    loc = item.get("primary_location") or {}
+                    source = loc.get("source") or {}
+                    journal = source.get("display_name") or "Unknown"
                     results.append(SearchResult(
-                        url=item.get("doi") or item.get("id", ""),
-                        title=item.get("display_name", ""),
-                        snippet=f"Paper in {item.get('primary_location', {}).get('source', {}).get('display_name', 'Unknown')}",
+                        url=item.get("doi") or item.get("id") or "",
+                        title=item.get("display_name") or "",
+                        snippet=f"Paper in {journal}",
                         engine="academic:openalex"
                     ))
             
@@ -331,12 +338,12 @@ class AcademicFetcher:
                     ))
 
             elif "core.ac.uk" in domain:
-                items = data.get("results", [])
+                items = data.get("results") or []
                 for item in items[:max_results]:
                     results.append(SearchResult(
                         url=item.get("downloadUrl") or item.get("fullTextUrl") or "",
-                        title=item.get("title", ""),
-                        snippet=item.get("abstract", "")[:500],
+                        title=item.get("title") or "",
+                        snippet=(item.get("abstract") or "")[:500],
                         engine="academic:core"
                     ))
 

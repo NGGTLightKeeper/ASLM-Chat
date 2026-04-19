@@ -77,6 +77,7 @@ class ResearchConfig:
     max_search_calls: int = 10
     max_read_calls: int = 16
     max_python_calls: int = 5
+    max_site_map_calls: int = 4
     max_reflect_without_tool: int = 2
     min_search_calls_before_finish: int = 2
     min_read_calls_before_finish: int = 4
@@ -103,7 +104,7 @@ class ResearchConfig:
     # Triggered when total read-artifact content exceeds the threshold.
     # Batches artifacts into chunks, asks LLM to extract primary claims per batch,
     # then passes the compressed essays to the final synthesis call instead of raw content.
-    artifact_compression_threshold_chars: int = 30_000
+    artifact_compression_threshold_chars: int = 80_000
     artifact_compression_batch_chars: int = 20_000
     artifact_compression_output_chars: int = 8_000
 

@@ -110,11 +110,12 @@
       ],
       "tier": "friendly",
       "method": "json_api",
+      "text_search_capable": false,
       "rps": 3.0,
       "burst": 6,
       "response_time_ms": 500,
       "json_api_hint": "https://api.unpaywall.org/v2/<doi>?email=",
-      "notes": "Web interface SPA cannot be meaningfully parsed by Trafilatura even with JS execution. The API is excellent but strictly validates the email parameter. Keep to the API.",
+      "notes": "DOI lookup only — not a text search API. Pass an explicit DOI. Also requires a valid email param. Skip for general text queries.",
       "topics": [
         "academic"
       ]

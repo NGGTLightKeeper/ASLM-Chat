@@ -19,11 +19,16 @@ from services.deep_research.tools import run_agent_python, run_agent_read_page, 
 from services.deep_research.tools.base import summarize_text
 
 
-def _coerce_decision(payload: object) -> AgentDecision | None:
+def _coerce_decision(payload: object, *, overdrive: bool = False) -> AgentDecision | None:
     if not isinstance(payload, dict):
         return None
     action = str(payload.get("action") or "").strip()
-    if action not in {"reflect", "web_search", "academic_search", "read_page", "site_map", "python", "import_web_file", "finish"}:
+    if action == "linux_sandbox":
+        action = "python"
+    allowed_actions = {"reflect", "web_search", "academic_search", "read_page", "site_map", "python", "finish"}
+    if overdrive:
+        allowed_actions.add("import_web_file")
+    if action not in allowed_actions:
         return None
     action_input = payload.get("action_input")
     if not isinstance(action_input, dict):
@@ -91,18 +96,19 @@ def _fallback_decision(session: ResearchSession, step: int) -> AgentDecision:
 async def _ask_controller(session: ResearchSession, step: int) -> AgentDecision:
     prompt = build_controller_prompt(session, step)
     try:
+        overdrive_mode = getattr(session, "sandbox", None) is not None
         payload = await call_llm_json(
             prompt=prompt,
             model=session.config.query_model,
             temperature=float(session.config.controller_temperature),
-            json_schema=decision_schema(),
+            json_schema=decision_schema(overdrive=overdrive_mode),
             schema_name="deep_research_controller_action",
             structured_output=bool(session.config.structured_output_enabled),
             strict=bool(session.config.structured_output_strict),
             timeout=float(session.config.controller_timeout_sec),
             debug_label="deep_research_controller",
         )
-        decision = _coerce_decision(payload)
+        decision = _coerce_decision(payload, overdrive=overdrive_mode)
         return decision or _fallback_decision(session, step)
     except Exception as exc:
         session.errors.append(f"Controller failed: {type(exc).__name__}: {exc}")
@@ -222,11 +228,13 @@ def _budget_allows(session: ResearchSession, action: str) -> bool:
             return False
         return True
     if action == "site_map":
+        if session.site_map_calls >= int(getattr(cfg, "max_site_map_calls", 4)):
+            return False
         ctx = session.context_size_estimate()
         if ctx >= int(cfg.effective_tool_context_budget * 0.85):
             return False
         return True
-    if action == "python":
+    if action in {"python", "linux_sandbox"}:
         return session.python_calls < int(cfg.max_python_calls) and str(cfg.python_backend).lower() not in {"disabled", "none", "off"}
     if action == "import_web_file":
         sandbox = getattr(session, "sandbox", None)
@@ -254,12 +262,11 @@ def _grant_extra_quota(session: ResearchSession) -> str:
 def _forced_evidence_decision(session: ResearchSession, confidence: float) -> AgentDecision | None:
     cfg = session.config
     if session.search_calls < int(getattr(cfg, "min_search_calls_before_finish", 0)) and _budget_allows(session, "web_search"):
+        gap_query = session.gaps[0] if session.gaps else session.question
         return AgentDecision(
             thought="Finish deferred: run another search to broaden coverage before synthesis.",
             action="web_search",
-            action_input={
-                "query": session.question
-            },
+            action_input={"query": gap_query},
             confidence=min(confidence, 0.5),
         )
 

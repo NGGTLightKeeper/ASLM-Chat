@@ -454,6 +454,10 @@ def _resolve_runtime_provider_uncached() -> RuntimeProvider:
     3. Return the first enabled+live provider.
     4. If nothing is live, return the configured primary engine anyway so callers
        receive a meaningful error rather than a silent None.
+
+    # TODO: rewrite — this function and all _runtime_*_base_url / _find_aslm_build_settings
+    # helpers above are tightly coupled to ASLM's specific directory layout and engine priority order.
+    # Replace with a clean, configurable provider registry that has no magic path-walking.
     """
     _ensure_aslm_repo_on_path()
 

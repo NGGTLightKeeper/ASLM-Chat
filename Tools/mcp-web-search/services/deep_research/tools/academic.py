@@ -36,12 +36,12 @@ async def run_agent_academic_search(
 ) -> str:
     """Execute academic search and update source pool."""
     
-    fetcher = AcademicFetcher()
+    fetcher = AcademicFetcher(timeout=float(session.config.search_timeout_sec))
     results = await fetcher.search(query, target_domains=target_domains)
-    
+
     if not results:
         return f"No academic results found for: {query}"
-    
+
     cards = [
         SourceCard(
             id="",
@@ -53,13 +53,15 @@ async def run_agent_academic_search(
         )
         for res in results
     ]
-    
+
     inserted = session.add_sources(cards)
     session.search_calls += 1
-    
+
     output = [f"Academic search found {len(results)} results ({len(inserted)} new):"]
-    for res in results[:5]:
-        output.append(f"- {res.title} [{res.engine}]")
-        output.append(f"  URL: {res.url}")
+    for src in inserted[:8]:
+        output.append(
+            f"{src.id}: {src.title} ({src.url}) "
+            f"trust={src.trust_tier} snippet={src.snippet[:240]}"
+        )
     
     return "\n".join(output)

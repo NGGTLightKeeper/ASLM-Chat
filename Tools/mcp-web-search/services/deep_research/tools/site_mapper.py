@@ -19,7 +19,6 @@ async def run_agent_site_map(
     session: ResearchSession,
     url: str,
     topic: str,
-    budget_sec: float = 30.0,
 ) -> str:
     """Execute site mapping and update source pool with relevant nodes."""
     cache = None
@@ -29,10 +28,12 @@ async def run_agent_site_map(
     except Exception:
         pass
 
+    budget_sec = float(getattr(session.config, "search_timeout_sec", 30.0))
     mapper = SiteMapper(time_budget_sec=budget_sec, max_nodes=10, cache=cache)
     result = await mapper.map_domain(url, topic)
     
     nodes = result.get("nodes", {})
+    session.site_map_calls += 1  # count regardless of result so hard cap fires on empty domains too
     if not nodes:
         return f"Smart mapper found no relevant nodes on {url} for topic: {topic}"
     
@@ -51,7 +52,7 @@ async def run_agent_site_map(
     ]
     
     inserted = session.add_sources(cards)
-    
+
     output = [f"Smart mapper explored {url} and found {len(nodes)} relevant nodes ({len(inserted)} new):"]
     for u, d in list(nodes.items())[:5]:
         output.append(f"- {d['title']} (Score: {d['score']})")
