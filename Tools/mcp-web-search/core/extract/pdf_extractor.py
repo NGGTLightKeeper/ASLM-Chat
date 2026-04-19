@@ -112,7 +112,11 @@ def pdf_file_to_markdown(
     """
     try:
         import pymupdf4llm  # type: ignore
-        body = pymupdf4llm.to_markdown(str(path))
+        import contextlib
+        import os
+        with open(os.devnull, "w") as devnull:
+            with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                body = pymupdf4llm.to_markdown(str(path))
         if not body or not body.strip():
             raise ValueError("empty")
         body = body.strip()

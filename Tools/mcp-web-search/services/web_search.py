@@ -51,6 +51,11 @@ from core.fetch.thread_pool import io_pool as _io_pool
 from core.cache.source_cache import SourceCache
 from core.cache.query_normalizer import QUERY_STOPWORDS as _QUERY_STOPWORDS
 from core.extract.pdf_extractor import looks_like_pdf_url, looks_like_pdf_bytes, pdf_bytes_to_markdown
+from core.extract.scoring import (
+    densify_text_gliner as _densify_text_gliner,
+    lexical_score as _lexical_score,
+    query_terms as _query_terms_from_scoring,
+)
 
 # PDF preview limits — tighter than read_page (10 MB) since this is just a preview
 _PDF_PREVIEW_MAX_BYTES = 5 * 1024 * 1024   # 5 MB download cap
@@ -619,10 +624,7 @@ _DATE_SIGNAL_RE = re.compile(
 )
 
 
-def _query_terms(query: str) -> list[str]:
-    raw = [t.strip().lower() for t in (query or "").split() if len(t.strip()) > 2]
-    filtered = [t for t in raw if t not in _QUERY_STOPWORDS]
-    return filtered or raw
+_query_terms = _query_terms_from_scoring
 
 
 def infer_query_language(query: str) -> str:
@@ -903,18 +905,6 @@ _TIER_TRUST_SCORES = {
 }
 
 
-def _lexical_score(query: str, title: str, snippet: str, url: str) -> float:
-    terms = _query_terms(query)
-    if not terms:
-        return 0.0
-    url_path = (urlparse(url).path or "").lower()
-    title_l = title.lower()
-    snippet_l = snippet.lower()
-    n = len(terms)
-    return min(1.0,
-               0.6 * sum(1 for t in terms if t in title_l) / n
-               + 0.3 * sum(1 for t in terms if t in snippet_l) / n
-               + 0.1 * sum(1 for t in terms if t in url_path) / n)
 
 
 def _year_match_score(text: str, years: list[str]) -> float:
@@ -1060,46 +1050,6 @@ async def _prefetch_urls_background(urls: list[str], req_id: str = "-") -> None:
             pass
 
 
-def _densify_text_gliner(text: str, output_chars: int = _PDF_PREVIEW_OUTPUT_CHARS) -> str:
-    """Filter PDF text to highest entity-density paragraphs via GliNER.
-
-    Splits *text* into paragraphs, scores each with GliNER entity density,
-    keeps the highest-scoring ones until *output_chars* is reached.
-    Falls back to plain head-truncation when GliNER is unavailable.
-    """
-    # Split on blank lines (page breaks from pdf_bytes_to_markdown also produce these)
-    paragraphs = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
-    if not paragraphs:
-        return text[:output_chars]
-
-    try:
-        from core.extract.gliner_wrapper import score_entity_density, is_gliner_available
-        if not is_gliner_available():
-            raise ImportError
-        scores = score_entity_density(paragraphs)
-        # Pair (score, original_index, text) so we can restore original order
-        ranked = sorted(
-            zip(scores, range(len(paragraphs)), paragraphs),
-            key=lambda t: t[0],
-            reverse=True,
-        )
-        kept: list[tuple[int, str]] = []
-        total = 0
-        for score, idx, para in ranked:
-            if total >= output_chars:
-                break
-            kept.append((idx, para))
-            total += len(para)
-        # Re-sort by original position to preserve document flow
-        kept.sort(key=lambda t: t[0])
-        result_text = "\n\n".join(p for _, p in kept)
-    except Exception:
-        # GliNER unavailable — return first output_chars of text
-        result_text = text[:output_chars].rsplit("\n", 1)[0]
-
-    if len(result_text) > output_chars:
-        result_text = result_text[:output_chars].rsplit("\n", 1)[0] + "\n[...densified]"
-    return result_text
 
 
 async def _fetch_pdf_preview(
@@ -1676,6 +1626,27 @@ def _format_results(
 
     if len(scored) == 0:
         lines.append("No results found.")
+
+    # Downloadable file hint — list every result that points to a file type
+    # supported by import_web_file so the model knows it can save them.
+    from core.fetch.file_importer import get_download_info
+    downloadable = [
+        (rank, result, get_download_info(result.url))
+        for rank, (_, _, result, _) in enumerate(final, 1)
+        if get_download_info(result.url) is not None
+    ]
+    if downloadable:
+        hint_lines = ["", "--- Downloadable files in results ---"]
+        for rank, result, info in downloadable:
+            ext, category = info
+            title = (result.title or result.url)[:80]
+            hint_lines.append(f"[{rank}] {title}")
+            hint_lines.append(f"    {result.url}")
+            hint_lines.append(f"    {ext}  ·  category: {category}")
+            hint_lines.append(
+                f"    → import_web_file(\"{result.url}\", allowed_types=[\"{category}\"])"
+            )
+        lines.append("\n".join(hint_lines))
 
     return "\n".join(lines).strip()
 

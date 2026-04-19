@@ -27,11 +27,15 @@ apply_network_limit() {
     tc qdisc del dev "${iface}" root >/dev/null 2>&1 || true
     tc qdisc del dev "${iface}" ingress >/dev/null 2>&1 || true
 
-    tc qdisc add dev "${iface}" root tbf rate "${NETWORK_LIMIT_MBIT}mbit" burst 256kbit latency 400ms >/dev/null 2>&1 || true
+    # burst must be >= rate/kernel_HZ; 1mbit (128 KB) is safe for rates up to ~250mbit
+    tc qdisc add dev "${iface}" root tbf rate "${NETWORK_LIMIT_MBIT}mbit" burst 1mbit latency 400ms >/dev/null 2>&1 || true
     tc qdisc add dev "${iface}" handle ffff: ingress >/dev/null 2>&1 || true
-    tc filter add dev "${iface}" parent ffff: protocol all u32 match u32 0 0 police rate "${NETWORK_LIMIT_MBIT}mbit" burst 256kbit drop flowid :1 >/dev/null 2>&1 || true
+    tc filter add dev "${iface}" parent ffff: protocol all u32 match u32 0 0 police rate "${NETWORK_LIMIT_MBIT}mbit" burst 1mbit drop flowid :1 >/dev/null 2>&1 || true
 }
 
 apply_network_limit
+
+mkdir -p /workspace/_sandbox
+chmod -R a+rwX /workspace/_sandbox >/dev/null 2>&1 || true
 
 exec tail -f /dev/null

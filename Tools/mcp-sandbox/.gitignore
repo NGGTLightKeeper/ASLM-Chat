@@ -1,0 +1,26 @@
+# Test runtime artifacts
+tests/__pycache__/
+tests/**/__pycache__/
+tests/.test_workspace/
+tests/.test_workspace_jobs/
+tests/_sandbox/
+
+# Runtime workspace (created automatically, not for version control)
+_sandbox/
+
+# Source artifacts
+src/**/__pycache__/
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
+
+# Dev scratch
+todo.md
+
+# Local dev overrides (per-machine, never commit)
+.env.local
+docker.dev.env
+sandbox.env

@@ -1539,6 +1539,7 @@ def _run_tool_loop(
     tool_context: dict[str, Any],
     *,
     stream: bool = True,
+    conversation: list[dict[str, Any]] | None = None,
 ):
     """Resolve local tools through OpenAI-compatible function calling."""
 
@@ -1549,18 +1550,19 @@ def _run_tool_loop(
     )
 
     if not tools:
+        request_messages = conversation if conversation is not None else _build_openai_messages(messages)
         yield from _yield_stream_round(
             _stream_openai_round(
                 client,
                 model_name,
-                _build_openai_messages(messages),
+                request_messages,
                 options,
                 stream=stream,
             )
         )
         return
 
-    conversation = _build_openai_messages(messages)
+    conversation = conversation if conversation is not None else _build_openai_messages(messages)
 
     for round_index in range(MAX_TOOL_ROUNDS):
         # Each round lets the model either finish or request another batch of
@@ -1814,8 +1816,6 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
         think_param_name=kwargs.get("think_param_name", "think"),
         think_level_param_name=kwargs.get("think_level_param_name", "reasoning_effort"),
     )
-    conversation = _build_openai_messages(messages)
-
     client = _get_client()
     try:
         _abort_event.clear()
@@ -1833,6 +1833,8 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
                 stream=stream,
             )
             return
+
+        conversation = _build_openai_messages(messages)
 
         # Conversations that already contain tool state must stay on the same
         # OpenAI-compatible message format even without new tool servers.

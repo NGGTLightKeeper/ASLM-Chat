@@ -70,6 +70,8 @@ class MessageAttachment(models.Model):
     mime_type = models.CharField(max_length=100, default="application/octet-stream")
     data = models.TextField()
     size_bytes = models.PositiveIntegerField(default=0)
+    extracted_text = models.TextField(blank=True, default="")
+    extracted_text_ready = models.BooleanField(default=False)
     order = models.PositiveSmallIntegerField(default=0)
 
     # Configure stable attachment ordering.

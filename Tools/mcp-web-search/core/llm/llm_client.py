@@ -28,10 +28,13 @@ import ast
 import json
 import os
 import re
+import socket
+import sys
 import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
+from urllib.parse import urlsplit
 
 try:
     import jsonschema as _jsonschema
@@ -45,6 +48,8 @@ except ImportError:
 _session: Optional[aiohttp.ClientSession] = None
 _session_lock = threading.Lock()
 _reconnect_lock: Optional[asyncio.Lock] = None
+_ollama_runtime_prepare_lock: Optional[asyncio.Lock] = None
+_ollama_runtime_prepared: bool = False
 
 
 def _get_reconnect_lock() -> asyncio.Lock:
@@ -53,6 +58,13 @@ def _get_reconnect_lock() -> asyncio.Lock:
     if _reconnect_lock is None:
         _reconnect_lock = asyncio.Lock()
     return _reconnect_lock
+
+
+def _get_ollama_prepare_lock() -> asyncio.Lock:
+    global _ollama_runtime_prepare_lock
+    if _ollama_runtime_prepare_lock is None:
+        _ollama_runtime_prepare_lock = asyncio.Lock()
+    return _ollama_runtime_prepare_lock
 
 
 async def get_session() -> aiohttp.ClientSession:
@@ -87,7 +99,14 @@ async def close_session() -> None:
 # ---------------------------------------------------------------------------
 
 _LMS_BASE_URL = "http://127.0.0.1:1234/v1"
+_LMS_MODELS_V0_PATH = "/api/v0/models"       # LM Studio extended model info endpoint
+_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 _LMS_MODEL_PLACEHOLDER = "local-model"
+
+# Provider resolution cache — avoids repeated socket probes within one process.
+_provider_cache: dict[str, Any] = {"provider": None, "ts": 0.0}
+_provider_cache_lock = threading.Lock()
+_PROVIDER_CACHE_TTL = 60.0  # seconds
 
 LLM_STRUCTURED_OUTPUT_ENABLED: bool = True
 LLM_STRUCTURED_OUTPUT_STRICT: bool = True
@@ -97,6 +116,7 @@ LLM_REASONING_MODE: str = "none"   # "effort" | "on_off" | "none"
 LLM_REASONING_PROMPT: str = (
     "Be concise. Think briefly before answering."
 )
+LLM_JSON_REASONING_EFFORT: str = "off"
 
 # JSON wrapper keys tried when unwrapping model responses.
 _JSON_WRAPPER_KEYS = ("corrected_response", "response", "data", "result", "output", "payload")
@@ -117,11 +137,13 @@ class RuntimeProvider:
 
     structured_mode:
         "response_format_json_schema"  — OpenAI-compat (current: lms)
+        "ollama_format"                — native Ollama /api/chat format
 
     reasoning_effort_style:
         ""        — do not send reasoning params
         "effort"  — send reasoning_effort as-is (low/medium/high)
         "on_off"  — map any non-empty effort → "on", absent → "off"
+        "ollama_think" — send native Ollama think false/true/low/medium/high
     """
 
     provider_id: str
@@ -132,6 +154,7 @@ class RuntimeProvider:
     structured_mode: str
     reasoning_effort_style: str = ""
     supports_reasoning_tokens: bool = False
+    models_endpoint: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +170,134 @@ def _openai_chat_url(base: str) -> str:
     if base.endswith("/v1"):
         return f"{base}/chat/completions"
     return f"{base}/v1/chat/completions"
+
+
+def _ollama_chat_url(base: str) -> str:
+    base = base.rstrip("/")
+    if "://" not in base:
+        base = f"http://{base}"
+    if base.endswith("/api/chat"):
+        return base
+    if base.endswith("/api"):
+        return f"{base}/chat"
+    return f"{base}/api/chat"
+
+
+def _ollama_tags_url(base: str) -> str:
+    chat_url = _ollama_chat_url(base)
+    return chat_url[: -len("/chat")] + "/tags" if chat_url.endswith("/api/chat") else f"{base.rstrip('/')}/api/tags"
+
+
+def _find_aslm_build_settings() -> list[str]:
+    """Search for the ASLM Build directory's module settings.json.
+
+    When running standalone (outside ASLM), the ASLM core maintains a
+    separate settings.json under Build/.../Modules/ASLM-Chat/Settings/ that
+    reflects the actual runtime values (e.g. the real ollama-service_port).
+    We discover it by walking the sibling ASLM project's Build tree.
+    """
+    here = os.path.abspath(__file__)
+    # ASLM-Chat root is 4 levels up from this file.
+    aslm_chat_root = os.path.abspath(os.path.join(os.path.dirname(here), "..", "..", "..", ".."))
+    aslm_root = os.path.join(os.path.dirname(aslm_chat_root), "ASLM")
+    build_root = os.path.join(aslm_root, "Build")
+    if not os.path.isdir(build_root):
+        return []
+    target_suffix = os.path.join("Modules", "ASLM-Chat", "Settings", "settings.json")
+    found: list[str] = []
+    try:
+        for dirpath, dirnames, filenames in os.walk(build_root):
+            if "settings.json" in filenames:
+                candidate = os.path.join(dirpath, "settings.json")
+                if candidate.endswith(target_suffix):
+                    found.append(candidate)
+    except OSError:
+        pass
+    return found
+
+
+def _runtime_settings_json_candidates() -> list[str]:
+    candidates: list[str] = []
+    module_dir = os.getenv("ASLM_MODULE_DIR", "").strip()
+    if module_dir:
+        candidates.append(os.path.join(module_dir, "Settings", "settings.json"))
+    here = os.path.abspath(__file__)
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(here), "..", "..", "..", ".."))
+    tools_root = os.path.abspath(os.path.join(os.path.dirname(here), "..", "..", ".."))
+    # When running outside ASLM and ASLM_MODULE_DIR is not set, prefer the
+    # Build-directory settings.json (maintained by ASLM core) over the dev
+    # project copy, because it carries the actual runtime values such as the
+    # real ollama-service_port assigned by ASLM's PortManager.
+    if not module_dir:
+        candidates.extend(_find_aslm_build_settings())
+    candidates.extend(
+        [
+            os.path.join(repo_root, "Settings", "settings.json"),
+            os.path.join(tools_root, "Settings", "settings.json"),
+            os.path.join(os.getcwd(), "Settings", "settings.json"),
+        ]
+    )
+    unique: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = os.path.abspath(candidate).lower()
+        if normalized not in seen:
+            seen.add(normalized)
+            unique.append(candidate)
+    return unique
+
+
+def _aslm_repo_root() -> str:
+    here = os.path.abspath(__file__)
+    return os.path.abspath(os.path.join(os.path.dirname(here), "..", "..", "..", ".."))
+
+
+def _ensure_aslm_repo_on_path() -> None:
+    root = _aslm_repo_root()
+    if root and root not in sys.path:
+        sys.path.insert(0, root)
+
+
+def _runtime_settings_json() -> dict[str, Any]:
+    for candidate in _runtime_settings_json_candidates():
+        try:
+            with open(candidate, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def _runtime_setting(key: str, default: Any = None) -> Any:
+    env_key = "ASLM_" + re.sub(r"[^A-Za-z0-9]+", "_", key).upper()
+    if env_key in os.environ:
+        return os.environ[env_key]
+    return _runtime_settings_json().get(key, default)
+
+
+def _normalize_engine_name(engine: str | None) -> str:
+    normalized = str(engine or "").strip().lower()
+    if normalized in {"ollama", "ollama-service"}:
+        return "ollama-service"
+    if normalized in {"lm-studio", "lms"}:
+        return "lms"
+    if normalized in {"openai", "openai-api"}:
+        return "openai"
+    return normalized or "lms"
+
+
+def _runtime_llm_engine() -> str:
+    env_engine = os.getenv("ASLM_LLM_ENGINE", "").strip()
+    if env_engine:
+        return _normalize_engine_name(env_engine)
+    try:
+        from Settings import settings as _s
+
+        return _normalize_engine_name(_s.get_llm_engine())
+    except Exception:
+        return _normalize_engine_name(str(_runtime_setting("llm-engine", "lms") or "lms"))
 
 
 def _runtime_lms_base_url() -> str:
@@ -165,17 +316,79 @@ def _runtime_lms_base_url() -> str:
     return _LMS_BASE_URL
 
 
-def _resolve_runtime_provider() -> RuntimeProvider:
-    """Return a RuntimeProvider for the currently active engine (LMS only).
+def _runtime_ollama_base_url() -> str:
+    env_url = os.getenv("ASLM_OLLAMA_URL", "").strip()
+    if env_url:
+        return env_url
+    # ASLM core injects ASLM_OLLAMA-SERVICE_PORT (with hyphen) via InjectSettingsIntoEnvironment.
+    # Check both hyphen and underscore variants.
+    for env_key in ("ASLM_OLLAMA-SERVICE_PORT", "ASLM_OLLAMA_SERVICE_PORT"):
+        env_port = os.getenv(env_key, "").strip()
+        if env_port:
+            try:
+                return f"http://127.0.0.1:{int(env_port)}"
+            except ValueError:
+                pass
+    # Prefer the ASLM Build-directory settings.json (maintained by ASLM core's PortManager)
+    # over the dev project copy, because it carries the real runtime port assignment.
+    raw = _runtime_settings_json()
+    if raw.get("ollama-service_port"):
+        try:
+            return f"http://127.0.0.1:{int(raw['ollama-service_port'])}"
+        except (ValueError, TypeError):
+            pass
+    # Fall back to the Settings module import (dev project settings.json).
+    try:
+        from Settings import settings as _s
 
-    Other providers (Ollama, Claude, Gemini, OpenRouter) are tracked in todo.md
-    and will be wired here when activated. Ollama requires the ASLM Ollama URL
-    from ASLM config (not a hardcoded port) and native /api/chat transport.
-    """
-    lms_url = _runtime_lms_base_url()
-    lms_reasoning_style = os.getenv("ASLM_LLM_REASONING_MODE", LLM_REASONING_MODE).strip().lower()
-    if lms_reasoning_style == "none":
-        lms_reasoning_style = ""
+        url = str(_s.get_engine_url("ollama-service") or "").strip()
+        if url:
+            return url
+    except Exception:
+        pass
+    return _OLLAMA_BASE_URL
+
+
+def _local_http_port_open(url: str) -> bool:
+    try:
+        parts = urlsplit(url if "://" in url else f"http://{url}")
+        host = parts.hostname or ""
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+    except Exception:
+        return False
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        return False
+    try:
+        with socket.create_connection((host, port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
+def _runtime_openai_base_url() -> str:
+    env_url = os.getenv("ASLM_OPENAI_URL", "").strip()
+    if env_url:
+        return env_url
+    try:
+        from Settings import settings as _s
+
+        url = str(_s.get_engine_url("openai") or "").strip()
+        if url:
+            return url
+    except Exception:
+        pass
+    return str(_runtime_setting("openai_url", "") or "").strip() or _LMS_BASE_URL
+
+
+def _build_lms_provider(base_url: str) -> RuntimeProvider:
+    lms_url = base_url.rstrip("/")
+    if not lms_url.endswith("/v1"):
+        lms_url = f"{lms_url}/v1"
+    reasoning_style = os.getenv("ASLM_LLM_REASONING_MODE", LLM_REASONING_MODE).strip().lower()
+    if reasoning_style == "none":
+        reasoning_style = ""
+    # Derive /api/v0/models URL from base (strip /v1 suffix if present)
+    lms_root = lms_url[:-3] if lms_url.endswith("/v1") else lms_url
     return RuntimeProvider(
         provider_id="lms",
         engine="lms",
@@ -183,9 +396,143 @@ def _resolve_runtime_provider() -> RuntimeProvider:
         transport="openai_compat",
         headers={"Content-Type": "application/json"},
         structured_mode="response_format_json_schema",
-        reasoning_effort_style=lms_reasoning_style,
-        supports_reasoning_tokens=(lms_reasoning_style == "effort"),
+        reasoning_effort_style=reasoning_style,
+        supports_reasoning_tokens=(reasoning_style == "effort"),
+        models_endpoint=f"{lms_root}{_LMS_MODELS_V0_PATH}",
     )
+
+
+def _ollama_ps_url(base: str) -> str:
+    """Return the /api/ps endpoint (currently loaded models) for an Ollama base URL."""
+    b = base.rstrip("/")
+    if "://" not in b:
+        b = f"http://{b}"
+    return f"{b}/api/ps"
+
+
+def _build_ollama_provider(base_url: str) -> RuntimeProvider:
+    return RuntimeProvider(
+        provider_id="ollama",
+        engine="ollama-service",
+        endpoint=_ollama_chat_url(base_url),
+        transport="ollama_native",
+        headers={"Content-Type": "application/json"},
+        structured_mode="ollama_format",
+        reasoning_effort_style="ollama_think",
+        models_endpoint=_ollama_ps_url(base_url),  # /api/ps = currently loaded models
+    )
+
+
+def _resolve_runtime_provider() -> RuntimeProvider:
+    """Return a RuntimeProvider for the currently active local engine.
+
+    Probes configured engine first; if its port is closed, falls through to
+    LMS on 1234 then Ollama on 11434. Result is cached for _PROVIDER_CACHE_TTL
+    seconds to avoid repeated socket checks on every LLM call.
+    """
+    global _provider_cache
+    now = time.time()
+    with _provider_cache_lock:
+        cached = _provider_cache
+        if cached["provider"] is not None and now - cached["ts"] < _PROVIDER_CACHE_TTL:
+            return cached["provider"]
+
+    provider = _resolve_runtime_provider_uncached()
+
+    with _provider_cache_lock:
+        _provider_cache = {"provider": provider, "ts": now}
+    return provider
+
+
+def _resolve_runtime_provider_uncached() -> RuntimeProvider:
+    """Pick the best available engine.
+
+    Strategy:
+    1. Ask ASLM Settings which engines are *enabled* and what their URLs are.
+    2. For each enabled engine (in priority order: ollama-service → lms → openai)
+       check whether the port is actually open right now.
+    3. Return the first enabled+live provider.
+    4. If nothing is live, return the configured primary engine anyway so callers
+       receive a meaningful error rather than a silent None.
+
+    # TODO: rewrite — this function and all _runtime_*_base_url / _find_aslm_build_settings
+    # helpers above are tightly coupled to ASLM's specific directory layout and engine priority order.
+    # Replace with a clean, configurable provider registry that has no magic path-walking.
+    """
+    _ensure_aslm_repo_on_path()
+
+    # --- collect enabled engines from ASLM Settings --------------------
+    # Use is_engine_enabled() from the Settings module to read which engines are
+    # turned on, but resolve the actual URL via _runtime_*_base_url() so that
+    # the Build-directory settings.json (with the real PortManager-assigned port)
+    # takes priority over the dev project copy.
+    try:
+        from Settings import settings as _s
+        enabled_engines: list[tuple[str, str]] = []  # (engine_id, url)
+        _url_resolvers = {
+            "ollama-service": _runtime_ollama_base_url,
+            "lms": _runtime_lms_base_url,
+            "openai": _runtime_openai_base_url,
+        }
+        for eng in ("ollama-service", "lms", "openai"):
+            if _s.is_engine_enabled(eng):
+                resolver = _url_resolvers.get(eng)
+                url = (resolver() if resolver else str(_s.get_engine_url(eng) or "")).strip()
+                if url:
+                    enabled_engines.append((eng, url))
+    except Exception:
+        enabled_engines = []
+
+    # --- fallback: build list from raw settings / env -------------------
+    if not enabled_engines:
+        engine = _runtime_llm_engine()
+        if engine == "ollama-service":
+            enabled_engines = [("ollama-service", _runtime_ollama_base_url())]
+        elif engine == "openai":
+            enabled_engines = [("openai", _runtime_openai_base_url())]
+        else:
+            enabled_engines = [("lms", _runtime_lms_base_url())]
+
+    # --- pick first live engine -----------------------------------------
+    for eng, url in enabled_engines:
+        if not _local_http_port_open(url):
+            continue
+        if eng == "ollama-service":
+            return _build_ollama_provider(url)
+        if eng == "openai":
+            return RuntimeProvider(
+                provider_id="openai",
+                engine="openai",
+                endpoint=_openai_chat_url(url),
+                transport="openai_compat",
+                headers={"Content-Type": "application/json"},
+                structured_mode="response_format_json_schema",
+            )
+        return _build_lms_provider(url)
+
+    # --- nothing live: return primary engine so errors are visible ------
+    if enabled_engines:
+        eng, url = enabled_engines[0]
+        if eng == "ollama-service":
+            return _build_ollama_provider(url)
+        if eng == "openai":
+            return RuntimeProvider(
+                provider_id="openai",
+                engine="openai",
+                endpoint=_openai_chat_url(url),
+                transport="openai_compat",
+                headers={"Content-Type": "application/json"},
+                structured_mode="response_format_json_schema",
+            )
+        return _build_lms_provider(url)
+    return _build_lms_provider(_runtime_lms_base_url())
+
+
+def invalidate_provider_cache() -> None:
+    """Force next call to _resolve_runtime_provider() to re-probe all endpoints."""
+    global _provider_cache
+    with _provider_cache_lock:
+        _provider_cache = {"provider": None, "ts": 0.0}
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +564,15 @@ def _build_response_format(
     return None
 
 
+def _ollama_think_value(reasoning_effort: Optional[str]) -> object:
+    value = str(reasoning_effort or "").strip().lower()
+    if value in {"", "off", "none", "false", "0", "disabled"}:
+        return False
+    if value in {"low", "medium", "high"}:
+        return value
+    return True
+
+
 def _build_payload(
     *,
     provider: RuntimeProvider,
@@ -237,7 +593,25 @@ def _build_payload(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    payload: dict[str, Any] = {
+    if provider.transport == "ollama_native":
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+            },
+        }
+        if structured_output and json_schema:
+            payload["format"] = json_schema
+        elif structured_output:
+            payload["format"] = "json"
+        if provider.reasoning_effort_style == "ollama_think" and reasoning_effort is not None:
+            payload["think"] = _ollama_think_value(reasoning_effort)
+        return payload
+
+    payload = {
         "model": model,
         "messages": messages,
         "temperature": temperature,
@@ -245,7 +619,7 @@ def _build_payload(
         "frequency_penalty": 0.5,
         "stream": False,
     }
-    if structured_output:
+    if structured_output and provider.structured_mode == "response_format_json_schema":
         fmt = _build_response_format(
             schema_name=schema_name,
             json_schema=json_schema,
@@ -253,14 +627,16 @@ def _build_payload(
         )
         if fmt is not None:
             payload["response_format"] = fmt
+    reasoning_value = str(reasoning_effort or "").strip().lower()
+    reasoning_enabled = reasoning_value not in {"", "off", "none"}
     if provider.reasoning_effort_style and reasoning_effort:
         if provider.reasoning_effort_style == "on_off":
             payload["reasoning_effort"] = (
-                "off" if reasoning_effort in ("off", "none", "") else "on"
+                "off" if not reasoning_enabled else "on"
             )
-        else:
+        elif reasoning_enabled:
             payload["reasoning_effort"] = reasoning_effort
-    if provider.supports_reasoning_tokens and reasoning_tokens and reasoning_tokens > 0:
+    if provider.supports_reasoning_tokens and reasoning_enabled and reasoning_tokens and reasoning_tokens > 0:
         payload["reasoning_tokens"] = int(reasoning_tokens)
     return payload
 
@@ -296,7 +672,10 @@ def _extract_thinking(data: dict[str, Any]) -> str:
     """
     choices = data.get("choices") or []
     if not choices:
-        return ""
+        message = data.get("message") or {}
+        if isinstance(message, dict):
+            return _coerce_response_text(message.get("thinking")) or _coerce_response_text(data.get("thinking"))
+        return _coerce_response_text(data.get("thinking"))
     message = (choices[0] or {}).get("message") or {}
     return (
         _coerce_response_text(message.get("reasoning_content"))
@@ -305,6 +684,18 @@ def _extract_thinking(data: dict[str, Any]) -> str:
 
 
 def _extract_response_text(provider: RuntimeProvider, data: dict[str, Any]) -> str:
+    if provider.transport == "ollama_native":
+        message = data.get("message") or {}
+        if isinstance(message, dict):
+            content = _coerce_response_text(message.get("content"))
+            thinking = _coerce_response_text(message.get("thinking")) or _coerce_response_text(data.get("thinking"))
+        else:
+            content = _coerce_response_text(data.get("response"))
+            thinking = _coerce_response_text(data.get("thinking"))
+        if not content.strip() and thinking:
+            return thinking
+        return content
+
     # OpenAI-compat (LMS)
     choices = data.get("choices") or []
     if not choices:
@@ -316,8 +707,13 @@ def _extract_response_text(provider: RuntimeProvider, data: dict[str, Any]) -> s
     # into "reasoning_content" instead of "content".  When content looks like a
     # truncated JSON (unbalanced brackets) and reasoning_content is non-empty,
     # append it so the parser gets the full text.
-    reasoning = _coerce_response_text(message.get("reasoning_content"))
+    reasoning = (
+        _coerce_response_text(message.get("reasoning_content"))
+        or _coerce_response_text(message.get("reasoning"))
+    )
     if reasoning:
+        if not content.strip():
+            return reasoning
         combined = content + reasoning
         # Only use the combined version when it is more balanced than content alone.
         def _balance(text: str) -> int:
@@ -566,6 +962,93 @@ def _compact_debug_text(text: Any, limit: int = 160) -> str:
     return raw if len(raw) <= limit else raw[:limit - 3] + "..."
 
 
+async def _resolve_request_model(provider: RuntimeProvider, model: str) -> str:
+    requested = str(model or "").strip()
+    if provider.transport == "ollama_native":
+        await _prepare_ollama_runtime(provider)
+    if requested and requested.lower() not in {"local-model", "auto"}:
+        return requested
+    if not provider.models_endpoint:
+        return requested or _LMS_MODEL_PLACEHOLDER
+    try:
+        session = await get_session()
+        async with session.get(
+            provider.models_endpoint,
+            headers=provider.headers,
+            timeout=aiohttp.ClientTimeout(total=10.0),
+        ) as response:
+            if response.status != 200:
+                return requested or _LMS_MODEL_PLACEHOLDER
+            data = await response.json()
+    except Exception:
+        return requested or _LMS_MODEL_PLACEHOLDER
+
+    # LMS /api/v0/models: {data: [{id, state, ...}]}  — pick first loaded model
+    if provider.transport == "openai_compat":
+        items = data.get("data") if isinstance(data, dict) else []
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and item.get("state") == "loaded":
+                    value = item.get("id")
+                    if value:
+                        return str(value)
+            # Fallback: first item regardless of state
+            for item in items:
+                if isinstance(item, dict):
+                    value = item.get("id")
+                    if value:
+                        return str(value)
+        return requested or _LMS_MODEL_PLACEHOLDER
+
+    # Ollama /api/ps (currently loaded) — pick first loaded model.
+    # Falls back to /api/tags when nothing is currently in memory.
+    models = data.get("models") if isinstance(data, dict) else []
+    if not isinstance(models, list):
+        models = []
+    for item in models:
+        if isinstance(item, dict):
+            value = item.get("model") or item.get("name") or item.get("id")
+        else:
+            value = getattr(item, "model", None) or getattr(item, "name", None) or getattr(item, "id", None)
+        if value:
+            return str(value)
+    # Nothing loaded in memory — fall back to /api/tags
+    try:
+        tags_url = provider.models_endpoint.replace("/api/ps", "/api/tags")
+        async with session.get(tags_url, headers=provider.headers,
+                               timeout=aiohttp.ClientTimeout(total=5.0)) as tr:
+            if tr.status == 200:
+                tags = await tr.json()
+                tag_models = tags.get("models") if isinstance(tags, dict) else []
+                if isinstance(tag_models, list):
+                    for item in tag_models:
+                        if isinstance(item, dict):
+                            value = item.get("model") or item.get("name")
+                            if value:
+                                return str(value)
+    except Exception:
+        pass
+    return requested or _LMS_MODEL_PLACEHOLDER
+
+
+async def _prepare_ollama_runtime(provider: RuntimeProvider) -> None:
+    global _ollama_runtime_prepared
+    if provider.transport != "ollama_native" or _ollama_runtime_prepared:
+        return
+    async with _get_ollama_prepare_lock():
+        if _ollama_runtime_prepared:
+            return
+        try:
+            _ensure_aslm_repo_on_path()
+            from API import ollama as ollama_api
+
+            await asyncio.to_thread(ollama_api.prepare_runtime, "ollama-service")
+        except Exception:
+            pass
+        finally:
+            _ollama_runtime_prepared = True
+
+
 # ---------------------------------------------------------------------------
 # Public API: call_llm / call_llm_json
 # ---------------------------------------------------------------------------
@@ -590,10 +1073,18 @@ async def call_llm(
     """Call the active LLM provider and return raw response text, or None on failure."""
     provider = _resolve_runtime_provider()
     start_ts = time.time()
+    resolved_model = await _resolve_request_model(provider, model)
+    effective_prompt = prompt
+    if provider.transport == "ollama_native" and structured_output and json_schema:
+        effective_prompt = (
+            f"{prompt}\n\n"
+            "JSON schema to satisfy exactly:\n"
+            f"{json.dumps(json_schema, ensure_ascii=False)}"
+        )
     payload = _build_payload(
         provider=provider,
-        prompt=prompt,
-        model=model,
+        prompt=effective_prompt,
+        model=resolved_model,
         system=system,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -608,7 +1099,7 @@ async def call_llm(
         label = debug_label or schema_name
         debug_log(
             f"  [llm] {label}: start provider={provider.engine} "
-            f"model={model} structured={structured_output} timeout={timeout:.1f}s"
+            f"model={resolved_model} structured={structured_output} timeout={timeout:.1f}s"
         )
 
     async def _do_request(session: aiohttp.ClientSession) -> Optional[str]:
@@ -742,6 +1233,12 @@ async def call_llm_json(
         effective_system = (
             f"{effective_system}\n\n{suffix}".strip() if effective_system else suffix
         )
+    effective_reasoning_effort = reasoning_effort
+    if json_schema is not None:
+        effective_reasoning_effort = os.getenv(
+            "ASLM_JSON_REASONING_EFFORT",
+            LLM_JSON_REASONING_EFFORT,
+        ).strip() or "off"
 
     response = await call_llm(
         prompt=prompt,
@@ -754,7 +1251,7 @@ async def call_llm_json(
         schema_name=schema_name,
         structured_output=structured_output,
         strict=strict,
-        reasoning_effort=reasoning_effort,
+        reasoning_effort=effective_reasoning_effort,
         reasoning_tokens=reasoning_tokens,
         cot_sink=cot_sink,
         debug_label=debug_label or schema_name,
@@ -794,7 +1291,7 @@ async def call_llm_json(
             schema_name=schema_name,
             structured_output=False,
             strict=strict,
-            reasoning_effort=reasoning_effort,
+            reasoning_effort=effective_reasoning_effort,
             reasoning_tokens=reasoning_tokens,
             cot_sink=cot_sink,
             debug_label=debug_label or schema_name,
@@ -815,3 +1312,87 @@ async def call_llm_json(
             )
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Active model introspection
+# ---------------------------------------------------------------------------
+
+async def get_active_model_info() -> dict[str, Any]:
+    """Return metadata for the currently loaded model.
+
+    For LMS (/api/v0/models): id, loaded_context_length, max_context_length, arch, quantization.
+    For Ollama (/api/tags):   id (max_context_length not exposed by that endpoint).
+    Always includes 'engine' and 'endpoint'.
+
+    Returns an empty dict if the endpoint is unreachable or returns no model.
+    """
+    provider = _resolve_runtime_provider()
+    if not provider.models_endpoint:
+        return {}
+    try:
+        session = await get_session()
+        async with session.get(
+            provider.models_endpoint,
+            headers=provider.headers,
+            timeout=aiohttp.ClientTimeout(total=8.0),
+        ) as response:
+            if response.status != 200:
+                return {}
+            data = await response.json()
+    except Exception:
+        return {}
+
+    base: dict[str, Any] = {"engine": provider.engine, "endpoint": provider.endpoint}
+
+    if provider.transport == "openai_compat":
+        items = data.get("data") if isinstance(data, dict) else []
+        if not isinstance(items, list) or not items:
+            return base
+        item = next((m for m in items if isinstance(m, dict) and m.get("state") == "loaded"), None)
+        if item is None:
+            item = items[0] if isinstance(items[0], dict) else {}
+        return {
+            **base,
+            "id": item.get("id", ""),
+            "arch": item.get("arch", ""),
+            "quantization": item.get("quantization", ""),
+            "state": item.get("state", ""),
+            "max_context_length": int(item.get("max_context_length") or 0),
+            "loaded_context_length": int(item.get("loaded_context_length") or 0),
+            "capabilities": item.get("capabilities") or [],
+        }
+
+    # Ollama: /api/ps lists models currently loaded in memory.
+    # Fall back to /api/tags (all available) if nothing is loaded.
+    models = data.get("models") if isinstance(data, dict) else []
+    if not isinstance(models, list):
+        models = []
+
+    model_name = ""
+    if models:
+        item = models[0] if isinstance(models[0], dict) else {}
+        model_name = item.get("model") or item.get("name") or ""
+
+    if not model_name:
+        # Nothing in /api/ps — try /api/tags for first available model
+        try:
+            tags_url = provider.models_endpoint.replace("/api/ps", "/api/tags")
+            async with session.get(tags_url, headers=provider.headers,
+                                   timeout=aiohttp.ClientTimeout(total=5.0)) as tr:
+                if tr.status == 200:
+                    tags = await tr.json()
+                    tag_models = tags.get("models") if isinstance(tags, dict) else []
+                    if isinstance(tag_models, list) and tag_models:
+                        first = tag_models[0] if isinstance(tag_models[0], dict) else {}
+                        model_name = first.get("model") or first.get("name") or ""
+        except Exception:
+            pass
+
+    _OLLAMA_FIXED_CTX = 92_000
+    return {
+        **base,
+        "id": model_name,
+        "max_context_length": _OLLAMA_FIXED_CTX,
+        "loaded_context_length": _OLLAMA_FIXED_CTX,
+    }

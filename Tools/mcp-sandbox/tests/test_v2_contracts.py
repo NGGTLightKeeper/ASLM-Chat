@@ -13,7 +13,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT.parent.parent))
+os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT))
 
 from sandbox import workspace  # noqa: E402
 from sandbox.api import handle_tool  # noqa: E402
@@ -83,9 +83,10 @@ class SandboxV2ContractsTests(unittest.TestCase):
         self.assertTrue(result["result"].get("routed", False))
 
     def test_pwd_reports_model_workspace_and_cwd(self) -> None:
+        handle_tool("write", {"path": "repo/file.txt", "content": "x"})
         result = handle_tool("bash", {"command": "pwd", "cwd": "repo"})
         self.assertTrue(result["ok"])
-        self.assertEqual(result["result"]["stdout"], f"/workspace/{DEFAULT_TASK_DIR}/repo")
+        self.assertEqual(result["result"]["stdout"], f"/workspace/{DEFAULT_TASK_DIR}/repo\n")
         self.assertEqual(result["result"]["cwd"], "repo")
 
     def test_null_cwd_defaults_to_root_for_real_bash(self) -> None:
@@ -211,11 +212,44 @@ class SandboxV2ContractsTests(unittest.TestCase):
             "cat notes.txt || echo failed",
         ]
         for cmd in chain_cases:
-            result = handle_tool("bash", {"command": cmd})
+            with patch(
+                "sandbox.api.exec_bash",
+                return_value={
+                    "exit_code": 0,
+                    "stdout": "mocked real bash\n",
+                    "stderr": "",
+                    "error": None,
+                    "elapsed_ms": 1,
+                    "truncated": False,
+                    "cwd": ".",
+                },
+            ) as exec_mock:
+                result = handle_tool("bash", {"command": cmd})
             self.assertFalse(
                 result.get("result", {}).get("routed", False),
                 f"Chain command should not be routed: {cmd}",
             )
+            exec_mock.assert_called_once()
+
+    def test_invalid_cd_target_falls_back_to_real_bash(self) -> None:
+        with patch(
+            "sandbox.api.exec_bash",
+            return_value={
+                "exit_code": 0,
+                "stdout": "fallback real bash\n",
+                "stderr": "",
+                "error": None,
+                "elapsed_ms": 1,
+                "truncated": False,
+                "cwd": ".",
+            },
+        ) as exec_mock:
+            result = handle_tool("bash", {"command": "cd /etc& cat passwd"})
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result.get("result", {}).get("routed", False))
+        self.assertEqual(result["result"]["stdout"], "fallback real bash\n")
+        exec_mock.assert_called_once()
 
     def test_read_image_returns_inline_preview_metadata(self) -> None:
         png_bytes = base64.b64decode(

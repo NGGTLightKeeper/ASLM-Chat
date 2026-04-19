@@ -31,7 +31,12 @@ from API.openai import (
     get_model_settings as get_openai_model_settings,
 )
 from Apps.Data.models import Chat, LmsPreset, Message, MessageAttachment, OllamaPreset
-from Apps.UI.views import _extract_model_name, _format_runtime_error, _strip_llm_control_tokens
+from Apps.UI.views import (
+    _extract_model_name,
+    _format_runtime_error,
+    _normalize_request_attachments,
+    _strip_llm_control_tokens,
+)
 
 
 # Small structured error helper for Google GenAI adapter tests.
@@ -114,6 +119,22 @@ class ModelNameExtractionTests(SimpleTestCase):
         self.assertEqual(
             _extract_model_name({"id": "openai/gpt-oss-20b", "name": "OpenAI: GPT OSS 20B"}),
             "openai/gpt-oss-20b",
+        )
+
+
+# Attachment normalization tests.
+
+# Cover fast attachment validation helpers.
+class AttachmentNormalizationTests(SimpleTestCase):
+    """Cover fast attachment validation helpers."""
+
+    # Test invalid base64 attachments are ignored before persistence.
+    def test_invalid_base64_attachments_are_ignored(self):
+        self.assertEqual(
+            _normalize_request_attachments({
+                "attachments": [{"name": "bad.txt", "mime_type": "text/plain", "data": "not valid !!!"}],
+            }),
+            [],
         )
 
 
@@ -1268,6 +1289,48 @@ class ToolApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(payload["messages"][0]["content"], "Visible answer")
         self.assertEqual(payload["messages"][0]["activity_segments"][0]["type"], "thought")
         self.assertEqual(payload["messages"][0]["activity_segments"][1]["type"], "tool")
+
+    # Test load chat API returns attachment metadata without inline data.
+    def test_load_chat_api_returns_attachment_metadata_without_inline_data(self):
+        chat = Chat.objects.create(title="Chat")
+        message = Message.objects.create(chat=chat, role="user", content="See file")
+        attachment = MessageAttachment.objects.create(
+            message=message,
+            kind="file",
+            name="note.txt",
+            mime_type="text/plain",
+            data="SGVsbG8=",
+            size_bytes=5,
+        )
+
+        response = self.client.get(reverse("load_chat_api", args=[chat.id]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        serialized = payload["messages"][0]["attachments"][0]
+        self.assertEqual(serialized["id"], attachment.id)
+        self.assertEqual(serialized["content_url"], f"/api/attachment/attachment/{attachment.id}/content/")
+        self.assertNotIn("data_url", serialized)
+        self.assertNotIn("extracted_text", serialized)
+
+    # Test attachment content API streams stored bytes on demand.
+    def test_attachment_content_api_streams_stored_bytes(self):
+        chat = Chat.objects.create(title="Chat")
+        message = Message.objects.create(chat=chat, role="user", content="See file")
+        attachment = MessageAttachment.objects.create(
+            message=message,
+            kind="file",
+            name="note.txt",
+            mime_type="text/plain",
+            data="SGVsbG8=",
+            size_bytes=5,
+        )
+
+        response = self.client.get(reverse("attachment_content_api", args=["attachment", attachment.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"Hello")
+        self.assertEqual(response["Content-Type"], "text/plain")
 
 
 # Cover Ollama preset API endpoints and model-info integration.

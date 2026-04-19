@@ -482,6 +482,19 @@ class ReadPageService:
         logger.info("read_page url=%r", url)
 
         if _is_skippable(url):
+            if has_non_text_extension(url):
+                from core.fetch.file_importer import get_download_info
+                info = get_download_info(url)
+                if info:
+                    ext, category = info
+                    return (
+                        f"This URL points to a downloadable file, not a web page.\n"
+                        f"  URL      : {url}\n"
+                        f"  Extension: {ext}\n"
+                        f"  Category : {category}\n\n"
+                        f"To save it to the sandbox workspace:\n"
+                        f"  import_web_file(\"{url}\", save_to=\"downloads/\", allowed_types=[\"{category}\"])"
+                    )
             return f"Error: URL type not supported for text extraction: {url}"
 
         if _is_youtube(url):

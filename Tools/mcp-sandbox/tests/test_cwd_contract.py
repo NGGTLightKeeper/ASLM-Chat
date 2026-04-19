@@ -21,7 +21,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT.parent.parent))
+os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT))
 
 from sandbox import workspace  # noqa: E402
 from sandbox.api import handle_tool  # noqa: E402
@@ -61,14 +61,14 @@ class CwdContractTests(unittest.TestCase):
     def test_pwd_at_root_reports_task_root(self) -> None:
         result = handle_tool("bash", {"command": "pwd"})
         self.assertTrue(result["ok"])
-        expected = f"/workspace/{DEFAULT_TASK_DIR}"
+        expected = f"/workspace/{DEFAULT_TASK_DIR}\n"
         self.assertEqual(result["result"]["stdout"], expected)
 
     def test_pwd_with_subdir_cwd_reports_subdir(self) -> None:
         handle_tool("write", {"path": "repo/file.txt", "content": "x"})
         result = handle_tool("bash", {"command": "pwd", "cwd": "repo"})
         self.assertTrue(result["ok"])
-        expected = f"/workspace/{DEFAULT_TASK_DIR}/repo"
+        expected = f"/workspace/{DEFAULT_TASK_DIR}/repo\n"
         self.assertEqual(result["result"]["stdout"], expected)
 
     # ── cwd argument is respected ─────────────────────────────────────

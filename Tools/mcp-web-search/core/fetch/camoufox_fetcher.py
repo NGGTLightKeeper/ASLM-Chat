@@ -166,6 +166,7 @@ async def fetch_with_camoufox(
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,  # isolates process group so killpg won't hit the MCP server
         )
     except Exception as exc:
         return FetchResult(url=url, error=f"failed to start worker: {exc}",
