@@ -283,10 +283,15 @@ def _load_rg_type_map() -> dict[str, str]:
             if primary is None:
                 continue
             result[type_name] = primary
-            # Short-ext alias: "python" → also register "py"
-            ext = primary[2:]  # "*.py" → "py"
-            if ext not in result:
-                result[ext] = primary
+            # Register a short-ext alias for every glob in the type.
+            # Allow overwrite when ext == type_name: if the type is "js" and
+            # primary was "*.cjs" (first in list), we still want result["js"]
+            # to point at "*.js", not "*.cjs".
+            for g in globs:
+                if _re.match(r'^\*\.\w+$', g):
+                    ext = g[2:]
+                    if ext not in result or ext == type_name:
+                        result[ext] = g
 
         return result if result else dict(_RG_TYPE_FALLBACK)
     except Exception:

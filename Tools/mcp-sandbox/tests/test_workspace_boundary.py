@@ -62,8 +62,9 @@ class WorkspaceBoundaryTests(unittest.TestCase):
             read("sub/../../etc/passwd")
 
     def test_write_absolute_unix_path_blocked(self) -> None:
-        with self.assertRaises((ValueError, FileNotFoundError)):
-            write("/etc/passwd", "pwned")
+        with patch.object(workspace_mod, "IN_CONTAINER", False):
+            with self.assertRaises((ValueError, FileNotFoundError)):
+                write("/etc/passwd", "pwned")
 
     def test_write_absolute_windows_path_blocked(self) -> None:
         with self.assertRaises((ValueError, FileNotFoundError)):
@@ -92,16 +93,18 @@ class WorkspaceBoundaryTests(unittest.TestCase):
     # ── Absolute path rejection ───────────────────────────────────────
 
     def test_validate_rejects_unix_absolute(self) -> None:
-        with self.assertRaises(ValueError):
-            validate_model_path("/etc/passwd")
+        with patch.object(workspace_mod, "IN_CONTAINER", False):
+            with self.assertRaises(ValueError):
+                validate_model_path("/etc/passwd")
 
     def test_validate_rejects_windows_absolute(self) -> None:
         with self.assertRaises(ValueError):
             validate_model_path("C:/Users/dimap")
 
     def test_validate_rejects_workspace_root(self) -> None:
-        with self.assertRaises(ValueError):
-            validate_model_path("/workspace")
+        with patch.object(workspace_mod, "IN_CONTAINER", False):
+            with self.assertRaises(ValueError):
+                validate_model_path("/workspace")
 
     # ── Symlink escape ────────────────────────────────────────────────
 
