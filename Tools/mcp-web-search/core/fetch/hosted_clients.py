@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
@@ -447,6 +448,21 @@ class SerpApiClient:
 # Dispatch table
 # ---------------------------------------------------------------------------
 
+_API_QUERY_STRIP_RE = re.compile(r'[\[\]*\\]')
+
+
+def _sanitize_query_for_api(query: str) -> str:
+    """Strip characters that break hosted API query parsers (Brave, Tavily, Bing).
+
+    Removes `[`, `]`, `*`, backslash and unbalanced double-quotes.
+    DDGS handles these itself, so this is only applied to hosted providers.
+    """
+    query = _API_QUERY_STRIP_RE.sub("", query)
+    if query.count('"') % 2 != 0:
+        query = query.replace('"', "")
+    return " ".join(query.split())
+
+
 _CLIENTS: dict[str, object] = {
     "tavily":  TavilyClient(),
     "brave":   BraveClient(),
@@ -489,7 +505,7 @@ def search_with_hosted(
             logger.debug("[%s] cache hit (%d results)", engine, len(cached))
             return cached
 
-    results = client.search(query, max_results, timelimit=timelimit)  # type: ignore[union-attr]
+    results = client.search(_sanitize_query_for_api(query), max_results, timelimit=timelimit)  # type: ignore[union-attr]
 
     ttl = NEGATIVE_TTL if not results else query_ttl(query_type)
     cache.set(engine, query, results, timelimit=timelimit, ttl=ttl)
