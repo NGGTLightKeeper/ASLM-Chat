@@ -74,7 +74,8 @@ def _get_pool() -> ThreadPoolExecutor:
 # ---------------------------------------------------------------------------
 
 # core/fetch/ → core/ → mcp-web-search/ → tmp/source_cache.db
-_PAGE_CACHE_PATH = Path(__file__).resolve().parents[2] / "tmp" / "source_cache.db"
+# Shared with services.web_search: persistent cache lives under _cache/.
+_PAGE_CACHE_PATH = Path(__file__).resolve().parents[2] / "_cache" / "source_cache.db"
 
 _page_cache = None
 _page_cache_lock = threading.Lock()

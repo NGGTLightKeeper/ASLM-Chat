@@ -45,6 +45,7 @@ from core.extract.page_normalizer import normalize_page
 from core.registry.trust_registry import get_trust_registry
 from core.registry.domain_reputation import get_reputation_store, domain_from_url
 from core.fetch.antibot import is_antibot
+from core.fetch.stackexchange_fetcher import fetch_stackexchange_question, is_stackexchange_question_url
 from core.fetch.url_utils import normalize_url
 from core.fetch.thread_pool import io_pool as _io_pool
 from core.cache.source_cache import SourceCache
@@ -1168,6 +1169,25 @@ async def _fetch_preview_one(
         if looks_like_pdf_url(url):
             return await _fetch_pdf_preview(url, query, loop, req_id=req_id)
 
+        if is_stackexchange_question_url(url):
+            text = await fetch_stackexchange_question(url, timeout=fetch_timeout)
+            if text and not text.startswith("Error:"):
+                _cache.cache_page(url, result.title or "", clean_text=text)
+                _trace(
+                    req_id,
+                    "preview_fetch.done",
+                    url=url,
+                    policy="stackexchange_api",
+                    elapsed=round(time.perf_counter() - t0, 3),
+                    chars=len(text),
+                    quality=0.85,
+                    semantic=0.0,
+                    strategy="stackexchange_api",
+                )
+                return PreviewPayload(text=text, quality_score=0.85, strategy_used="stackexchange_api")
+            _trace(req_id, "preview_fetch.empty", url=url, policy="stackexchange_api", elapsed=round(time.perf_counter() - t0, 3))
+            return PreviewPayload()
+
         async def _aiohttp() -> str | None:
             try:
                 async with session.get(url, allow_redirects=True) as resp:
@@ -1232,7 +1252,8 @@ async def _fetch_preview_one(
                 ),
                 timeout=fetch_timeout,
             )
-        except Exception:
+        except Exception as exc:
+            logger.debug("preview payload build failed for %s: %s", url, exc)
             _trace(req_id, "preview_fetch.payload_error", url=url, policy=policy, elapsed=round(time.perf_counter() - t0, 3))
             return PreviewPayload()
 
@@ -1374,7 +1395,8 @@ async def _fetch_previews(
             for t in pending:
                 t.cancel()
 
-    except Exception:
+    except Exception as exc:
+        logger.debug("preview batch failed: %s", exc, exc_info=True)
         _trace(req_id, "preview_batch.error", elapsed=round(time.perf_counter() - t0, 3))
         return [PreviewPayload() for _ in results]
     _trace(

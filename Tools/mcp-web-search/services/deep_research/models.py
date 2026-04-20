@@ -94,6 +94,7 @@ class ResearchSession:
     # Overdrive: ephemeral Docker sandbox attached on start, destroyed on stop.
     sandbox: Any = field(default=None, repr=False)
     overdrive_settings: Any = field(default=None, repr=False)
+    runtime_logger: Any = field(default=None, repr=False)
 
     search_calls: int = 0
     read_calls: int = 0
