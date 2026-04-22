@@ -618,12 +618,13 @@ def _wait_until_ready(timeout_seconds: float = 15.0) -> bool:
     version_url = f"{host.rstrip('/')}/api/version"
 
     while time.time() < deadline:
+        remaining = max(deadline - time.time(), 0.0)
         try:
-            with urlopen(version_url, timeout=1.5) as response:
+            with urlopen(version_url, timeout=max(0.1, min(1.5, remaining))) as response:
                 if response.status < 500:
                     return True
         except (OSError, URLError):
-            time.sleep(0.25)
+            time.sleep(min(0.25, max(deadline - time.time(), 0.0)))
 
     return False
 
@@ -634,11 +635,13 @@ def _wait_for_existing_runtime(timeout_seconds: float = 2.0) -> bool:
 
     deadline = time.time() + max(0.0, timeout_seconds)
     while time.time() < deadline:
-        tracked_pid = _read_pid()
-        if tracked_pid and _is_pid_running(tracked_pid):
-            return True
         if _wait_until_ready(timeout_seconds=0.25):
             return True
+
+        tracked_pid = _read_pid()
+        if tracked_pid and _is_pid_running(tracked_pid):
+            time.sleep(0.1)
+            continue
 
         time.sleep(0.1)
 

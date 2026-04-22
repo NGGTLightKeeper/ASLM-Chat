@@ -57,6 +57,8 @@ OLLAMA_UNSUPPORTED_OPTION_KEYS = {
     "vocab_only",
 }
 MAX_TOOL_ROUNDS = 100
+RUNTIME_REQUEST_ATTEMPTS = 4
+RUNTIME_RETRY_DELAY_SECONDS = 0.5
 _unsupported_options_lock = threading.Lock()
 _reported_unsupported_option_sets: set[tuple[str, ...]] = set()
 
@@ -156,13 +158,39 @@ def get_client() -> ollama.Client:
     host = f"http://127.0.0.1:{port}"
     return ollama.Client(host=host)
 
+# Run one Ollama SDK call with a short readiness retry.
+def _call_with_runtime_retry(operation: Any, description: str) -> Any:
+    """Run an Ollama operation after giving the managed runtime time to answer."""
+
+    last_error: Exception | None = None
+    for attempt in range(1, RUNTIME_REQUEST_ATTEMPTS + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            last_error = exc
+            if attempt >= RUNTIME_REQUEST_ATTEMPTS:
+                break
+
+            logger.debug(
+                "[Ollama API] %s failed while runtime is warming up (attempt %s/%s): %s",
+                description,
+                attempt,
+                RUNTIME_REQUEST_ATTEMPTS,
+                exc,
+            )
+            time.sleep(RUNTIME_RETRY_DELAY_SECONDS * attempt)
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"Ollama operation failed: {description}")
+
 # List local Ollama models.
 def get_models() -> list[dict[str, Any]]:
     """Return the locally available Ollama models."""
 
     client = get_client()
     try:
-        response = client.list()
+        response = _call_with_runtime_retry(client.list, "list models")
     except Exception as exc:
         logger.error("[Ollama API] Error listing models: %s", exc)
         return []
@@ -191,7 +219,7 @@ def get_model_settings(model_name: str) -> Any:
 
     client = get_client()
     try:
-        return client.show(model_name)
+        return _call_with_runtime_retry(lambda: client.show(model_name), f"show model {model_name}")
     except Exception as exc:
         logger.error("[Ollama API] Error fetching settings for %s: %s", model_name, exc)
         raise

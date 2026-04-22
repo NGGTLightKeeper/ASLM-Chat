@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import importlib.util
 import inspect
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from types import ModuleType
@@ -28,6 +31,114 @@ TOOL_HANDLER_NAMES = ("TOOL_HANDLERS", "TOOL_EXECUTORS")
 
 _SERVER_CACHE_SIGNATURE: tuple[tuple[str, int], ...] | None = None
 _SERVER_CACHE: dict[str, dict[str, Any]] = {}
+_WORKER_SESSION_LOCK = threading.Lock()
+_WORKER_SESSIONS: dict[str, "ExternalWorkerSession"] = {}
+
+
+# Build a clean environment for one isolated Python venv.
+def _venv_subprocess_env(python_path: Path) -> dict[str, str]:
+    """Return subprocess environment aligned with the selected venv."""
+
+    env = os.environ.copy()
+    venv_path = python_path.parent.parent
+    env["VIRTUAL_ENV"] = str(venv_path)
+    env["PATH"] = str(python_path.parent) + os.pathsep + env.get("PATH", "")
+    env.pop("PYTHONHOME", None)
+    return env
+
+
+# Persistent external tool worker.
+class ExternalWorkerSession:
+    """Keep one isolated tool worker process alive for stateful servers."""
+
+    def __init__(self, server_file: Path, python_path: Path) -> None:
+        self.server_file = server_file
+        self.python_path = python_path
+        self.process: subprocess.Popen[str] | None = None
+        self.lock = threading.Lock()
+
+    def _start(self) -> None:
+        if self.process is not None and self.process.poll() is None:
+            return
+
+        self.close()
+        self.process = subprocess.Popen(
+            [str(self.python_path), str(WORKER_FILE), "serve", str(self.server_file)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            cwd=str(self.server_file.parent),
+            env=_venv_subprocess_env(self.python_path),
+            bufsize=1,
+        )
+
+    def request(self, operation: str, payload: dict[str, Any] | None = None) -> Any:
+        """Send one request to the worker process and return its result."""
+
+        with self.lock:
+            self._start()
+            assert self.process is not None
+            assert self.process.stdin is not None
+            assert self.process.stdout is not None
+
+            request_payload = {
+                "operation": operation,
+                "payload": payload or {},
+            }
+            try:
+                self.process.stdin.write(json.dumps(request_payload, ensure_ascii=False) + "\n")
+                self.process.stdin.flush()
+                raw_response = self.process.stdout.readline()
+            except (BrokenPipeError, OSError):
+                self.close()
+                self._start()
+                assert self.process is not None
+                assert self.process.stdin is not None
+                assert self.process.stdout is not None
+                self.process.stdin.write(json.dumps(request_payload, ensure_ascii=False) + "\n")
+                self.process.stdin.flush()
+                raw_response = self.process.stdout.readline()
+
+            if not raw_response:
+                self.close()
+                raise RuntimeError(f"Tool worker stopped for {self.server_file}.")
+
+            try:
+                envelope = json.loads(raw_response)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"Tool worker returned invalid JSON: {raw_response[:500]}") from exc
+
+            if not isinstance(envelope, dict):
+                raise RuntimeError(f"Tool worker returned invalid envelope: {raw_response[:500]}")
+
+            if not envelope.get("ok"):
+                raise RuntimeError(str(envelope.get("error") or "Unknown tool worker error."))
+
+            return envelope.get("result")
+
+    def close(self) -> None:
+        """Stop the worker process if it is running."""
+
+        process = self.process
+        self.process = None
+        if process is None:
+            return
+
+        try:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        finally:
+            for stream in (process.stdin, process.stdout, process.stderr):
+                try:
+                    if stream is not None:
+                        stream.close()
+                except Exception:
+                    pass
 
 
 # Print one shared runtime event.
@@ -231,9 +342,52 @@ def _get_worker_python(server_file: Path) -> Path | None:
         return None
 
 
+# Close all persistent external workers.
+def close_external_workers() -> None:
+    """Stop persistent external tool workers owned by this process."""
+
+    with _WORKER_SESSION_LOCK:
+        sessions = list(_WORKER_SESSIONS.values())
+        _WORKER_SESSIONS.clear()
+
+    for session in sessions:
+        session.close()
+
+
+atexit.register(close_external_workers)
+
+
+# Return one persistent external worker for a server file.
+def _get_worker_session(server_file: Path) -> ExternalWorkerSession:
+    """Return a long-lived worker session for one external tool server."""
+
+    python_path = _get_worker_python(server_file)
+    if python_path is None:
+        raise RuntimeError(f"No isolated Python environment is available for {server_file.parent.name}.")
+
+    session_key = str(server_file.resolve())
+    with _WORKER_SESSION_LOCK:
+        session = _WORKER_SESSIONS.get(session_key)
+        if session is None or session.python_path != python_path:
+            if session is not None:
+                session.close()
+            session = ExternalWorkerSession(server_file, python_path)
+            _WORKER_SESSIONS[session_key] = session
+        return session
+
+
 # Execute one isolated tool worker operation.
-def _run_worker(server_file: Path, operation: str, payload: dict[str, Any] | None = None) -> Any:
+def _run_worker(
+    server_file: Path,
+    operation: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    persistent: bool = False,
+) -> Any:
     """Run a tool worker operation and return its result payload."""
+
+    if persistent:
+        return _get_worker_session(server_file).request(operation, payload)
 
     python_path = _get_worker_python(server_file)
     if python_path is None:
@@ -246,6 +400,7 @@ def _run_worker(server_file: Path, operation: str, payload: dict[str, Any] | Non
         capture_output=True,
         text=True,
         cwd=str(server_file.parent),
+        env=_venv_subprocess_env(python_path),
         check=False,
     )
 
@@ -761,6 +916,7 @@ def call_ollama_tool(
                     "arguments": call_arguments,
                     "context": worker_context,
                 },
+                persistent=True,
             )
         else:
             handler = server_definition["tool_handlers"].get(tool_definition["id"])

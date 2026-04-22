@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib.util
 import inspect
 import json
@@ -246,12 +247,60 @@ def call(server_file: Path, payload: dict[str, Any]) -> Any:
 
 
 # Print one JSON response.
-def _print_response(ok: bool, payload: Any) -> int:
+def _print_response(ok: bool, payload: Any, *, output=sys.stdout) -> int:
     """Print a JSON worker envelope."""
 
     key = "result" if ok else "error"
-    print(json.dumps({"ok": ok, key: _to_jsonable(payload)}, ensure_ascii=False))
+    print(json.dumps({"ok": ok, key: _to_jsonable(payload)}, ensure_ascii=False), file=output)
+    output.flush()
     return 0 if ok else 1
+
+
+# Execute one request for persistent worker mode.
+def _execute_request(operation: str, server_file: Path, payload: dict[str, Any]) -> tuple[bool, Any]:
+    """Return one worker envelope payload without printing it."""
+
+    try:
+        if operation == "describe":
+            return True, describe(server_file)
+        if operation == "supports":
+            return True, supports(server_file, payload)
+        if operation == "call":
+            return True, call(server_file, payload)
+        return False, f"Unknown worker operation: {operation}"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+# Serve newline-delimited worker requests until stdin closes.
+def serve(server_file: Path) -> int:
+    """Run a persistent worker process for stateful tool servers."""
+
+    output = sys.stdout
+    for raw_line in sys.stdin:
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+
+        try:
+            request = json.loads(raw_line)
+        except json.JSONDecodeError as exc:
+            ok, payload = False, f"JSONDecodeError: {exc}"
+        else:
+            if not isinstance(request, dict):
+                ok, payload = False, "Worker request must be a JSON object."
+            else:
+                operation = str(request.get("operation") or "").strip().lower()
+                request_payload = request.get("payload")
+                if not isinstance(request_payload, dict):
+                    request_payload = {}
+                with contextlib.redirect_stdout(sys.stderr):
+                    ok, payload = _execute_request(operation, server_file, request_payload)
+
+        key = "result" if ok else "error"
+        print(json.dumps({"ok": ok, key: _to_jsonable(payload)}, ensure_ascii=False), file=output, flush=True)
+
+    return 0
 
 
 # CLI entry point.
@@ -263,6 +312,9 @@ def main() -> int:
 
     operation = sys.argv[1].strip().lower()
     server_file = Path(sys.argv[2]).resolve()
+    if operation == "serve":
+        return serve(server_file)
+
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except json.JSONDecodeError:
@@ -271,13 +323,10 @@ def main() -> int:
         payload = {}
 
     try:
-        if operation == "describe":
-            return _print_response(True, describe(server_file))
-        if operation == "supports":
-            return _print_response(True, supports(server_file, payload))
-        if operation == "call":
-            return _print_response(True, call(server_file, payload))
-        return _print_response(False, f"Unknown worker operation: {operation}")
+        output = sys.stdout
+        with contextlib.redirect_stdout(sys.stderr):
+            ok, response_payload = _execute_request(operation, server_file, payload)
+        return _print_response(ok, response_payload, output=output)
     except Exception as exc:
         return _print_response(False, f"{type(exc).__name__}: {exc}")
 

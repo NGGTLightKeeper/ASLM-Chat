@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -192,7 +193,7 @@ def _create_venv(venv_id: str, log: bool) -> bool:
     if log:
         print(f"[ASLM-Chat] Creating venv '{venv_id}' at {venv_path}")
 
-    if _run([sys.executable, "-m", "venv", str(venv_path)], log=log):
+    if importlib.util.find_spec("venv") is not None and _run([sys.executable, "-m", "venv", str(venv_path)], log=log):
         return True
 
     # Some embeddable Python runtimes do not ship the stdlib venv module.

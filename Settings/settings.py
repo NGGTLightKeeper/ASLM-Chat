@@ -293,6 +293,25 @@ def _serialize_env_value(value: Any) -> str:
 
     return str(value)
 
+# Apply one runtime setting to the current process environment.
+def _apply_process_environment_value(key: str, value: Any) -> None:
+    """Keep the current process environment in sync with one setting."""
+
+    env_key = _to_env_var_name(key)
+    serialized = _serialize_env_value(value)
+    if serialized:
+        os.environ[env_key] = serialized
+    elif env_key in os.environ:
+        del os.environ[env_key]
+
+# Load stored settings without applying ASLM_ environment overrides.
+def _load_stored_settings_snapshot() -> dict[str, Any]:
+    """Return the persisted settings snapshot normalized with defaults."""
+
+    settings_data = dict(DEFAULTS)
+    settings_data.update(_load_settings_from_disk())
+    return _normalize_loaded_settings(settings_data)
+
 # Locate the ASLM module manifest when available.
 def _get_module_manifest_path() -> Path | None:
     """Return the module manifest path when ASLM module metadata is available."""
@@ -332,6 +351,9 @@ def _sync_module_manifest_setting(key: str, value: Any) -> None:
         if setting_item.get("key") != key:
             continue
 
+        if setting_item.get("value") == value:
+            return
+
         setting_item["value"] = value
         changed = True
         break
@@ -360,18 +382,19 @@ def set(key: str, value: Any) -> None:
     if key in NORMALIZED_ADDRESS_KEYS:
         value = normalize_engine_address(value)
 
+    stored_data = _load_stored_settings_snapshot()
+    if stored_data.get(key, DEFAULTS.get(key)) == value:
+        _apply_process_environment_value(key, value)
+        _store_settings_cache(_apply_environment_overrides(stored_data), _get_settings_mtime_ns())
+        return
+
     # Save the normalized value to disk first.
     data = load_settings()
     data[key] = value
     save_settings(data)
 
     # Keep the current process environment in sync with the saved value.
-    env_key = _to_env_var_name(key)
-    serialized = _serialize_env_value(value)
-    if serialized:
-        os.environ[env_key] = serialized
-    elif env_key in os.environ:
-        del os.environ[env_key]
+    _apply_process_environment_value(key, value)
     _invalidate_settings_cache()
 
     # Mirror the updated setting into the ASLM module manifest when available.

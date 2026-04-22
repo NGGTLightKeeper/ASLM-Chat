@@ -837,7 +837,11 @@ def _load_models_for_engine(engine: str) -> list[str]:
         if model_name:
             model_names.append(model_name)
 
-    return _set_cached_model_list(engine, sorted(set(model_names), key=str.casefold))
+    sorted_model_names = sorted(set(model_names), key=str.casefold)
+    if not sorted_model_names and settings.is_ollama_engine(engine):
+        return []
+
+    return _set_cached_model_list(engine, sorted_model_names)
 
 
 # Build shared template context
