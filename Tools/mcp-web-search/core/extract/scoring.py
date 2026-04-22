@@ -17,11 +17,24 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from core.cache.query_normalizer import QUERY_STOPWORDS as _QUERY_STOPWORDS
+from core.cache.query_normalizer import QUERY_STOPWORDS as _QUERY_STOPWORDS, COMPOSITE_TOKENS as _COMPOSITE_TOKENS
 
+
+_PUNCT_STRIP = "?!.,;:\"'()[]{}<>@#"
 
 def query_terms(query: str) -> list[str]:
-    raw = [t.strip().lower() for t in (query or "").split() if len(t.strip()) > 2]
+    raw = []
+    for t in (query or "").split():
+        tl = t.lower()
+        # Composite tokens (e.g. ".NET", "C#") must be substituted before
+        # punct-strip so ".NET".strip(…) → "net" false-match doesn't happen.
+        if tl in _COMPOSITE_TOKENS:
+            raw.append(_COMPOSITE_TOKENS[tl])
+        else:
+            stripped = tl.strip(_PUNCT_STRIP)
+            if stripped:
+                raw.append(stripped)
+    raw = [t for t in raw if len(t) > 2]
     filtered = [t for t in raw if t not in _QUERY_STOPWORDS]
     return filtered or raw
 

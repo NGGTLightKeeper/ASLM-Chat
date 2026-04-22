@@ -38,6 +38,7 @@ logger = logging.getLogger("core.fetch.page_fetcher")
 
 from core.fetch.antibot import is_antibot
 from core.fetch.constants import DEFAULT_UA
+from core.fetch.stackexchange_fetcher import fetch_stackexchange_question, is_stackexchange_question_url
 from core.fetch.thread_pool import io_pool as _io_pool
 from core.fetch.url_utils import has_non_text_extension, is_non_text_content_type
 
@@ -291,6 +292,20 @@ class PageFetcher:
             if looks_like_pdf_url(url):
                 return await self._fetch_pdf_normalize_cache(url)
 
+            if is_stackexchange_question_url(url):
+                try:
+                    clean_text = await fetch_stackexchange_question(url, timeout=self._timeout)
+                except Exception as exc:
+                    logger.warning("stackexchange fetch failed for %s: %s", url, exc)
+                    self._cache.cache_page(url, "", "", "", status="error")
+                    return None
+                if clean_text.startswith("Error:"):
+                    self._cache.cache_page(url, "", clean_text, "", status="error")
+                    return None
+                title = clean_text.splitlines()[0].lstrip("# ").strip()[:500]
+                self._cache.cache_page(url, title, clean_text, "", status="ok")
+                return self._cache.get_cached(url)
+
             try:
                 raw_html, _status_code = await self._fetch_single(url)
             except Exception as exc:
@@ -369,4 +384,3 @@ class PageFetcher:
                     results[u] = result
 
         return results
-

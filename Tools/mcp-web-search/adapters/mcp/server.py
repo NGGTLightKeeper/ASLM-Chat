@@ -164,7 +164,6 @@ async def web_search(
                 run_web_search(
                     q,
                     max_results=_WEB_SEARCH_RESULT_LIMIT,
-                    use_yacy=True,
                     fetch_previews=True,
                 )
                 for q in queries[:_BATCH_QUERY_LIMIT]
@@ -186,7 +185,6 @@ async def web_search(
             run_web_search(
                 query.strip(),
                 max_results=_WEB_SEARCH_RESULT_LIMIT,
-                use_yacy=True,
                 fetch_previews=True,
             ),
         )
@@ -344,15 +342,7 @@ async def import_web_file(
 if __name__ == "__main__":
     import os as _os
 
-    yacy_started = False
     try:
-        try:
-            from Services import yacy_service
-
-            yacy_started = yacy_service.start_yacy(log=True)
-        except Exception:
-            yacy_started = False
-
         # Evict stale/expired cache entries at startup to reclaim disk space.
         try:
             from services.web_search import _cache as _ws_cache
@@ -368,14 +358,6 @@ if __name__ == "__main__":
             asyncio.get_event_loop().run_until_complete(shutdown_web_search())
         except Exception:
             pass
-        if yacy_started:
-            try:
-                from Services import yacy_service
-
-                yacy_service.stop_yacy(log=True)
-            except Exception:
-                pass
-
     # PyTorch (GLiNER / SentenceTransformer) spawns non-daemon inter-op threads
     # that keep the process alive after Ctrl+C even when the main thread has
     # finished.  All meaningful cleanup ran in the finally block above, so a

@@ -21,10 +21,13 @@ Helper functions (used by page_normalizer and services):
 from __future__ import annotations
 
 import html as html_lib
+import logging
 import math
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
+
+logger = logging.getLogger("core.extract.content_processor")
 
 # ---------------------------------------------------------------------------
 # LaTeX processing: index_text (BM25) and llm_text (model)
@@ -121,7 +124,8 @@ def _make_walker_context(unknown: list[str]):
             macros=[MacroSpec(name, args_parser="{") for name in unknown],
         )
         return db
-    except Exception:
+    except Exception as exc:
+        logger.debug("Failed to build LatexWalker context: %s", exc)
         return None
 
 
@@ -143,7 +147,8 @@ def _make_l2t_context(unknown: list[str]):
             macros=[MacroTextSpec(name, simplify_repl="%s") for name in unknown],
         )
         return db
-    except Exception:
+    except Exception as exc:
+        logger.debug("Failed to build latex2text context: %s", exc)
         return None
 
 
@@ -175,7 +180,8 @@ def _clean_latex_for_index(text: str) -> str:
         ctx = _make_l2t_context(_unknown_macros(text))
         l2t = LatexNodes2Text(math_mode="text", latex_context=ctx) if ctx else LatexNodes2Text(math_mode="text")
         return l2t.latex_to_text(text)
-    except Exception:
+    except Exception as exc:
+        logger.debug("Latex-to-text conversion failed, using regex fallback: %s", exc)
         pass
     # Regex fallback: unwrap \cmd{content} → content, strip bare \cmd
     cleaned = re.sub(r"\\[a-zA-Z]+\{([^}]*)\}", r"\1", text)
@@ -492,7 +498,8 @@ def get_preview_settings(*, apply_hardware_profile: bool = True) -> dict[str, An
         settings["preview_limit"] = cfg.search.preview_fetch_limit
         settings["enable_gliner"] = cfg.search.enable_gliner
         settings["gliner_trigger_min_score"] = cfg.search.gliner_trigger_min_score
-    except Exception:
+    except Exception as exc:
+        logger.debug("Preview settings config load failed, using built-ins: %s", exc)
         pass
 
     # Apply hardware-based defaults: enable expensive layers only when GPU
@@ -515,7 +522,8 @@ def get_preview_settings(*, apply_hardware_profile: bool = True) -> dict[str, An
             # full_gpu — all layers available
                 settings["mode"] = "semantic"
             # GLiNER still opt-in via config; don't force-enable here
-        except Exception:
+        except Exception as exc:
+            logger.debug("Hardware profile detection failed, using default preview mode: %s", exc)
             pass
 
     return settings
@@ -594,7 +602,8 @@ def _preclean_html(raw_html: str) -> str:
         return ""
     try:
         from bs4 import BeautifulSoup
-    except Exception:
+    except Exception as exc:
+        logger.debug("BeautifulSoup unavailable during preclean, returning raw HTML: %s", exc)
         return raw_html
 
     soup = BeautifulSoup(raw_html, "html.parser")
@@ -627,7 +636,8 @@ def _extract_text_with_bs4(cleaned_html: str) -> str:
         return ""
     try:
         from bs4 import BeautifulSoup
-    except Exception:
+    except Exception as exc:
+        logger.debug("trafilatura unavailable, skipping extraction: %s", exc)
         return ""
 
     soup = BeautifulSoup(cleaned_html, "html.parser")
@@ -689,7 +699,8 @@ def _extract_text_with_trafilatura(cleaned_html: str) -> str:
         return ""
     try:
         import trafilatura
-    except Exception:
+    except Exception as exc:
+        logger.debug("trafilatura.extract failed: %s", exc)
         return ""
     html_value = cleaned_html.lstrip()
     if html_value[:6].lower().startswith("<?xml"):
@@ -757,7 +768,8 @@ def _semantic_extract(text: str, query: str, settings: dict[str, Any]) -> tuple[
             top_k=max(1, int(settings.get("top_k", 3))),
             min_score=float(settings.get("semantic_min_score", 0.20)),
         )
-    except Exception:
+    except Exception as exc:
+        logger.debug("Semantic extract failed, using lexical text only: %s", exc)
         return text, 0.0
 
     scores = [float(score) for _, score in (scored_chunks or []) if isinstance(score, (int, float))]
@@ -776,7 +788,8 @@ def warm_preview_models(settings: Optional[dict[str, Any]] = None) -> None:
         try:
             from core.extract.semantic import ensure_embedder_ready
             ensure_embedder_ready(require_cuda=bool(active.get("semantic_require_cuda")))
-        except Exception:
+        except Exception as exc:
+            logger.debug("Preview model warmup failed: %s", exc)
             pass
 
 

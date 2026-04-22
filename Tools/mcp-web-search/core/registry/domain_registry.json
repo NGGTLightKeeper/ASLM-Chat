@@ -195,7 +195,7 @@
       "burst": 3,
       "response_time_ms": 600,
       "json_api_hint": "https://api.stackexchange.com/2.3/search?site=stackoverflow&intitle=<query>&order=desc&sort=relevance",
-      "notes": "Web pages block all automated access with 403. Use Stack Exchange API instead — public, no key needed.",
+      "notes": "Direct web fetches usually hit Cloudflare 403. Question pages are handled via the public Stack Exchange API (question + answers) in read_page and web_search preview paths; browser fallback remains optional, not primary.",
       "topics": [
         "tech"
       ],
@@ -655,6 +655,22 @@
       "notes": "Skip direct crawling; anti-bot friction not worth it.",
       "topics": [
         "finance",
+        "tech"
+      ]
+    },
+    {
+      "pattern": "x.com",
+      "aliases": [
+        "twitter.com"
+      ],
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "notes": "Generic crawling is still low-value due to SPA rendering and anti-bot friction. However, direct status URLs are readable in services.read_page via public syndication/oEmbed-style endpoints; non-status pages still remain skipped unless a browser path is added later.",
+      "topics": [
+        "news",
+        "general",
         "tech"
       ]
     },
