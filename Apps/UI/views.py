@@ -2474,7 +2474,7 @@ def runtime_settings_api(request):
             continue
 
         if raw_key == "llm-engine":
-            value = settings.normalize_engine_name(raw_value)
+            value = settings.resolve_enabled_engine(raw_value)
             next_engine = value
         else:
             value = str(raw_value or "").strip()
