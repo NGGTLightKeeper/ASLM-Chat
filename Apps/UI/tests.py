@@ -30,13 +30,26 @@ from API.openai import (
     generate as generate_openai,
     get_model_settings as get_openai_model_settings,
 )
-from Apps.Data.models import Chat, LmsPreset, Message, MessageAttachment, OllamaPreset
+from Apps.Data.models import (
+    Chat,
+    LmsPreset,
+    Message,
+    MessageAttachment,
+    MessageAttachmentKind,
+    MessageImage,
+    OllamaPreset,
+)
 from Apps.UI.views import (
+    _build_chat_title,
+    _build_model_info_payload,
     _clear_model_metadata_caches,
+    _extract_attachment_text,
     _extract_ollama_model_info,
     _extract_model_name,
     _format_runtime_error,
     _normalize_request_attachments,
+    _parse_active_tool_slugs,
+    _serialize_attachment_record,
     _strip_llm_control_tokens,
 )
 
@@ -140,6 +153,94 @@ class AttachmentNormalizationTests(SimpleTestCase):
             }),
             [],
         )
+
+    # Test data URL attachments keep MIME, filename and decoded size.
+    def test_data_url_attachments_are_normalized_for_storage(self):
+        attachments = _normalize_request_attachments({
+            "attachments": [
+                {
+                    "name": "note.txt",
+                    "data_url": "data:text/plain;base64,SGVsbG8=",
+                },
+            ],
+        })
+
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0]["kind"], MessageAttachmentKind.FILE)
+        self.assertEqual(attachments[0]["name"], "note.txt")
+        self.assertEqual(attachments[0]["mime_type"], "text/plain")
+        self.assertEqual(attachments[0]["data"], "SGVsbG8=")
+        self.assertEqual(attachments[0]["size_bytes"], 5)
+        self.assertEqual(attachments[0]["order"], 0)
+
+    # Test legacy image payloads are detected and named.
+    def test_legacy_image_payloads_are_normalized_with_detected_mime(self):
+        attachments = _normalize_request_attachments({
+            "images": ["iVBORw0KGgo="],
+        })
+
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0]["kind"], MessageAttachmentKind.IMAGE)
+        self.assertEqual(attachments[0]["name"], "image-1")
+        self.assertEqual(attachments[0]["mime_type"], "image/png")
+        self.assertEqual(attachments[0]["order"], 0)
+
+    # Test empty entries are skipped without breaking later order values.
+    def test_attachment_order_uses_surviving_items_only(self):
+        attachments = _normalize_request_attachments({
+            "attachments": [
+                {"name": "bad.txt", "mime_type": "text/plain", "data": ""},
+                {"name": "ok.txt", "mime_type": "text/plain", "data": "T0s="},
+            ],
+        })
+
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0]["name"], "ok.txt")
+        self.assertEqual(attachments[0]["order"], 0)
+
+
+# Attachment extraction tests.
+# Cover prompt text extraction and database caching for stored files.
+class AttachmentExtractionTests(TestCase):
+    """Cover file extraction helpers used before model generation."""
+
+    # Cache extracted text back onto the attachment record.
+    def test_text_attachment_extraction_is_cached_on_record(self):
+        chat = Chat.objects.create(title="Chat")
+        message = Message.objects.create(chat=chat, role="user", content="See file")
+        attachment = MessageAttachment.objects.create(
+            message=message,
+            kind=MessageAttachmentKind.FILE,
+            name="note.txt",
+            mime_type="text/plain",
+            data="SGVsbG8gZnJvbSBmaWxl",
+            size_bytes=15,
+        )
+        payload = _serialize_attachment_record(attachment)
+
+        extracted_text = _extract_attachment_text(payload)
+
+        attachment.refresh_from_db()
+        self.assertEqual(extracted_text, "Hello from file")
+        self.assertTrue(attachment.extracted_text_ready)
+        self.assertEqual(attachment.extracted_text, "Hello from file")
+
+    # Reuse cached text without trying to decode a broken payload.
+    def test_cached_attachment_text_is_reused(self):
+        chat = Chat.objects.create(title="Chat")
+        message = Message.objects.create(chat=chat, role="user", content="See file")
+        attachment = MessageAttachment.objects.create(
+            message=message,
+            kind=MessageAttachmentKind.FILE,
+            name="note.txt",
+            mime_type="text/plain",
+            data="not valid !!!",
+            extracted_text="Cached text",
+            extracted_text_ready=True,
+        )
+        payload = _serialize_attachment_record(attachment)
+
+        self.assertEqual(_extract_attachment_text(payload), "Cached text")
 
 
 # View and runtime mapping tests.
@@ -870,6 +971,52 @@ class ViewFormattingTests(SimpleTestCase):
         self.assertIn("Flash Attention", message)
         self.assertNotIn("Model get/load error", message)
 
+    # Test chat titles are compact and useful for attachment-only threads.
+    def test_build_chat_title_handles_long_and_attachment_only_messages(self):
+        self.assertEqual(_build_chat_title("Short title", False), "Short title")
+        self.assertEqual(_build_chat_title("x" * 31, False), f"{'x' * 30}...")
+        self.assertEqual(_build_chat_title("", True), "Attachment chat")
+        self.assertEqual(_build_chat_title("", False), "New Chat")
+
+    # Test active tool slugs support both current JSON and legacy string shapes.
+    def test_parse_active_tool_slugs_supports_json_and_legacy_values(self):
+        self.assertEqual(_parse_active_tool_slugs('["time_suite", "", "browser"]'), ["time_suite", "browser"])
+        self.assertEqual(_parse_active_tool_slugs("time_suite"), ["time_suite"])
+        self.assertEqual(_parse_active_tool_slugs(""), [])
+
+
+# Model metadata cache tests.
+# Ensure cached payloads are safe to reuse between requests.
+class ModelInfoCacheTests(TestCase):
+    """Verify model-info caching behavior."""
+
+    # Clear metadata caches around each test.
+    def setUp(self):
+        super().setUp()
+        _clear_model_metadata_caches()
+
+    # Restore metadata cache state after the test.
+    def tearDown(self):
+        _clear_model_metadata_caches()
+        super().tearDown()
+
+    # Test cached model info is returned as a defensive copy.
+    @patch("Apps.UI.views.llm_api.get_model_settings")
+    def test_model_info_payload_cache_returns_detached_copies(self, mock_get_model_settings):
+        mock_get_model_settings.return_value = {
+            "context_length": 32768,
+            "defaults": {"temperature": 0.7},
+            "supports_tool_calling": False,
+        }
+
+        first_payload = _build_model_info_payload("openai", "gpt-test")
+        first_payload["defaults"]["temperature"] = 99
+        second_payload = _build_model_info_payload("openai", "gpt-test")
+
+        self.assertEqual(second_payload["defaults"]["temperature"], 0.7)
+        self.assertEqual(second_payload["context_length"], 32768)
+        mock_get_model_settings.assert_called_once_with("openai", "gpt-test")
+
 
 # Exercise chat API basics without calling a real model backend.
 class ChatApiTests(ToolRegistryTestMixin, TestCase):
@@ -879,6 +1026,28 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
     def setUp(self):
         super().setUp()
         self.client = Client()
+
+    # Test chat API rejects invalid JSON before touching runtime services.
+    def test_chat_api_rejects_invalid_json_body(self):
+        response = self.client.post(
+            reverse("chat_api"),
+            data="{",
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Invalid JSON format")
+
+    # Test chat API requires a model name.
+    def test_chat_api_rejects_missing_model(self):
+        response = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"Hello"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Missing model parameter")
 
     # Test chat API creates new chat and streams response.
     @patch("Apps.UI.views.llm_api.prepare_runtime")
@@ -904,6 +1073,41 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(Chat.objects.count(), 1)
         self.assertEqual(Chat.objects.first().messages.count(), 2)
         mock_prepare_runtime.assert_called_once_with("ollama-service")
+
+    # Test chat API supports an attachment-only prompt.
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="lms")
+    def test_chat_api_creates_attachment_only_thread(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+    ):
+        mock_generate.return_value = [{"message": {"content": "Done"}}]
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data=json.dumps(
+                {
+                    "model": "qwen",
+                    "attachments": [
+                        {
+                            "name": "note.txt",
+                            "mime_type": "text/plain",
+                            "data": "SGVsbG8=",
+                        },
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        b"".join(response.streaming_content)
+        chat = Chat.objects.get()
+        self.assertEqual(chat.title, "Attachment chat")
+        self.assertEqual(chat.messages.filter(role="user").get().content, "")
 
     # Test chat API passes selected tool server to Ollama.
     @patch(
@@ -1278,6 +1482,17 @@ class RuntimeSettingsApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("models", response.json())
 
+    # Test runtime settings rejects invalid JSON.
+    def test_runtime_settings_rejects_invalid_json(self):
+        response = self.client.post(
+            reverse("runtime_settings_api"),
+            data="{",
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Invalid JSON format")
+
     # Test post runtime settings updates engine.
     @patch("Apps.UI.views.llm_api.handle_engine_transition")
     def test_post_runtime_settings_updates_engine(self, mock_transition):
@@ -1304,6 +1519,22 @@ class RuntimeSettingsApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"engine": "lms", "models": ["llama3"]})
         mock_models.assert_called_once_with("lms")
+
+    # Test model info API requires a model query parameter.
+    def test_model_info_api_requires_model_parameter(self):
+        response = self.client.get(reverse("model_info_api"), {"engine": "lms"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Model parameter is required")
+
+    # Test model info API maps unsupported engines to 501.
+    @patch("Apps.UI.views._build_model_info_payload", side_effect=NotImplementedError("Not supported"))
+    def test_model_info_api_returns_501_for_unimplemented_engines(self, mock_build_payload):
+        response = self.client.get(reverse("model_info_api"), {"engine": "custom", "model": "model"})
+
+        self.assertEqual(response.status_code, 501)
+        self.assertEqual(response.json()["error"], "Not supported")
+        mock_build_payload.assert_called_once()
 
     # Test runtime settings payload does not expose API key.
     @patch("Apps.UI.views.settings.get_supported_engines", return_value=[])
@@ -1374,6 +1605,18 @@ class ToolApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(payload["messages"][0]["activity_segments"][0]["type"], "thought")
         self.assertEqual(payload["messages"][0]["activity_segments"][1]["type"], "tool")
 
+    # Test load chat API returns all active tool server ids.
+    def test_load_chat_api_returns_multiple_active_tool_server_ids(self):
+        chat = Chat.objects.create(title="Chat", active_tool_slug='["time_suite", "browser"]')
+        Message.objects.create(chat=chat, role="user", content="Hello")
+
+        response = self.client.get(reverse("load_chat_api", args=[chat.id]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["active_tool_server_ids"], ["time_suite", "browser"])
+        self.assertEqual(payload["active_tool_server_id"], "time_suite")
+
     # Test load chat API returns attachment metadata without inline data.
     def test_load_chat_api_returns_attachment_metadata_without_inline_data(self):
         chat = Chat.objects.create(title="Chat")
@@ -1415,6 +1658,103 @@ class ToolApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b"Hello")
         self.assertEqual(response["Content-Type"], "text/plain")
+
+    # Test attachment content API streams legacy image records.
+    def test_attachment_content_api_streams_legacy_image_bytes(self):
+        chat = Chat.objects.create(title="Chat")
+        message = Message.objects.create(chat=chat, role="user", content="See image")
+        image = MessageImage.objects.create(
+            message=message,
+            mime_type="image/png",
+            data="SGVsbG8=",
+            order=2,
+        )
+
+        response = self.client.get(reverse("attachment_content_api", args=["image", image.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"Hello")
+        self.assertEqual(response["Content-Type"], "image/png")
+        self.assertIn('filename="image-3"', response["Content-Disposition"])
+
+    # Test attachment content API rejects unknown record types.
+    def test_attachment_content_api_rejects_unknown_record_type(self):
+        response = self.client.get(reverse("attachment_content_api", args=["unknown", 1]))
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"], "Unknown attachment type")
+
+    # Test delete last assistant API returns the user message to regenerate.
+    def test_delete_last_assistant_api_returns_user_message_for_regeneration(self):
+        chat = Chat.objects.create(title="Chat")
+        user_message = Message.objects.create(chat=chat, role="user", content="See this")
+        MessageAttachment.objects.create(
+            message=user_message,
+            kind=MessageAttachmentKind.IMAGE,
+            name="photo.png",
+            mime_type="image/png",
+            data="iVBORw0KGgo=",
+            size_bytes=8,
+        )
+        assistant_message = Message.objects.create(chat=chat, role="assistant", content="Answer")
+
+        response = self.client.delete(reverse("delete_last_assistant_api", args=[chat.id]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["user_message"]["content"], "See this")
+        self.assertEqual(payload["user_message"]["attachments"][0]["name"], "photo.png")
+        self.assertEqual(payload["user_message"]["images"], ["data:image/png;base64,iVBORw0KGgo="])
+        self.assertFalse(Message.objects.filter(id=assistant_message.id).exists())
+
+    # Test delete last assistant API rejects chats ending with a user message.
+    def test_delete_last_assistant_api_rejects_when_last_message_is_user(self):
+        chat = Chat.objects.create(title="Chat")
+        Message.objects.create(chat=chat, role="user", content="Still pending")
+
+        response = self.client.delete(reverse("delete_last_assistant_api", args=[chat.id]))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Last message is not from assistant")
+
+    # Test delete message API removes only the selected message.
+    def test_delete_message_api_removes_selected_message(self):
+        chat = Chat.objects.create(title="Chat")
+        first = Message.objects.create(chat=chat, role="user", content="First")
+        second = Message.objects.create(chat=chat, role="assistant", content="Second")
+
+        response = self.client.delete(reverse("delete_message_api", args=[first.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Message.objects.filter(id=first.id).exists())
+        self.assertTrue(Message.objects.filter(id=second.id).exists())
+
+    # Test rename chat API trims and persists the title.
+    def test_rename_chat_api_updates_title(self):
+        chat = Chat.objects.create(title="Old")
+
+        response = self.client.patch(
+            reverse("rename_chat_api", args=[chat.id]),
+            data='{"title":"  New title  "}',
+            content_type="application/json",
+        )
+
+        chat.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["title"], "New title")
+        self.assertEqual(chat.title, "New title")
+
+    # Test delete chat API removes the whole thread.
+    def test_delete_chat_api_removes_thread_and_messages(self):
+        chat = Chat.objects.create(title="Chat")
+        Message.objects.create(chat=chat, role="user", content="Hello")
+
+        response = self.client.delete(reverse("delete_chat_api", args=[chat.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Chat.objects.filter(id=chat.id).exists())
+        self.assertEqual(Message.objects.count(), 0)
 
 
 # Cover Ollama preset API endpoints and model-info integration.
@@ -1532,6 +1872,62 @@ class OllamaPresetApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(duplicate.status_code, 400)
         self.assertIn("already exists", duplicate.json()["error"])
 
+    # Test select endpoint activates an existing custom preset.
+    def test_select_endpoint_activates_custom_preset(self):
+        default_preset = OllamaPreset.objects.create(
+            model_name="llama3",
+            name="Default",
+            config={"num_ctx": 32768},
+            is_default=True,
+            is_active=True,
+        )
+        custom_preset = OllamaPreset.objects.create(
+            model_name="llama3",
+            name="Research",
+            config={"num_ctx": 65536},
+            is_default=False,
+            is_active=False,
+        )
+
+        response = self.client.post(
+            reverse("select_ollama_preset_api"),
+            data=f'{{"model":"llama3","preset_id":"{custom_preset.id}"}}',
+            content_type="application/json",
+        )
+
+        default_preset.refresh_from_db()
+        custom_preset.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["active_preset_id"], str(custom_preset.id))
+        self.assertFalse(default_preset.is_active)
+        self.assertTrue(custom_preset.is_active)
+
+    # Test default preset mutation errors are returned as validation responses.
+    def test_default_preset_mutation_errors_return_400(self):
+        default_preset = OllamaPreset.objects.create(
+            model_name="llama3",
+            name="Default",
+            config={"num_ctx": 32768},
+            is_default=True,
+            is_active=True,
+        )
+
+        renamed = self.client.post(
+            reverse("rename_ollama_preset_api"),
+            data=f'{{"model":"llama3","preset_id":"{default_preset.id}","name":"Renamed"}}',
+            content_type="application/json",
+        )
+        deleted = self.client.post(
+            reverse("delete_ollama_preset_api"),
+            data=f'{{"model":"llama3","preset_id":"{default_preset.id}"}}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(renamed.status_code, 400)
+        self.assertEqual(deleted.status_code, 400)
+        self.assertIn("default preset", renamed.json()["error"])
+        self.assertIn("default preset", deleted.json()["error"])
+
 # Cover LM Studio preset API endpoints and model-info integration.
 class LmsPresetApiTests(TestCase):
     """Cover LM Studio preset API endpoints and model-info integration."""
@@ -1602,3 +1998,127 @@ class LmsPresetApiTests(TestCase):
         payload = response.json()
         self.assertEqual(len(payload["presets"]), 2)
         self.assertEqual(LmsPreset.objects.filter(model_name="qwen3").count(), 2)
+
+    # Test get LM Studio presets endpoint requires a model.
+    def test_get_lms_presets_requires_model(self):
+        response = self.client.get(reverse("lms_presets_api"))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Model parameter is required")
+
+    # Test create rename delete endpoints manage a custom LM Studio preset.
+    @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
+    def test_create_rename_delete_endpoints_manage_custom_lms_preset(self, mock_get_model_settings):
+        mock_get_model_settings.return_value = {
+            "defaults": {"temperature": 0.7},
+        }
+
+        created = self.client.post(
+            reverse("create_lms_preset_api"),
+            data='{"model":"qwen3","name":"Research","config":{"operation":{"temperature":0.2}}}',
+            content_type="application/json",
+        )
+        self.assertEqual(created.status_code, 200)
+        active_preset_id = created.json()["active_preset_id"]
+
+        renamed = self.client.post(
+            reverse("rename_lms_preset_api"),
+            data=f'{{"model":"qwen3","preset_id":"{active_preset_id}","name":"Research v2"}}',
+            content_type="application/json",
+        )
+        self.assertEqual(renamed.status_code, 200)
+        self.assertEqual(LmsPreset.objects.get(id=active_preset_id).name, "Research v2")
+
+        deleted = self.client.post(
+            reverse("delete_lms_preset_api"),
+            data=f'{{"model":"qwen3","preset_id":"{active_preset_id}"}}',
+            content_type="application/json",
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(LmsPreset.objects.filter(model_name="qwen3").count(), 1)
+        self.assertTrue(LmsPreset.objects.get(model_name="qwen3").is_default)
+
+    # Test duplicate LM Studio preset names return validation errors.
+    @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
+    def test_duplicate_lms_preset_name_returns_validation_error(self, mock_get_model_settings):
+        mock_get_model_settings.return_value = {
+            "defaults": {"temperature": 0.7},
+        }
+        self.client.post(
+            reverse("create_lms_preset_api"),
+            data='{"model":"qwen3","name":"Research","config":{"operation":{"temperature":0.2}}}',
+            content_type="application/json",
+        )
+
+        duplicate = self.client.post(
+            reverse("create_lms_preset_api"),
+            data='{"model":"qwen3","name":"Research","config":{"operation":{"temperature":0.4}}}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertIn("already exists", duplicate.json()["error"])
+
+    # Test select endpoint activates an existing custom LM Studio preset.
+    @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
+    def test_select_endpoint_activates_custom_lms_preset(self, mock_get_model_settings):
+        mock_get_model_settings.return_value = {
+            "defaults": {"temperature": 0.7},
+        }
+        default_preset = LmsPreset.objects.create(
+            model_name="qwen3",
+            name="Default",
+            config={"operation": {"temperature": 0.7}},
+            is_default=True,
+            is_active=True,
+        )
+        custom_preset = LmsPreset.objects.create(
+            model_name="qwen3",
+            name="Research",
+            config={"operation": {"temperature": 0.2}},
+            is_default=False,
+            is_active=False,
+        )
+
+        response = self.client.post(
+            reverse("select_lms_preset_api"),
+            data=f'{{"model":"qwen3","preset_id":"{custom_preset.id}"}}',
+            content_type="application/json",
+        )
+
+        default_preset.refresh_from_db()
+        custom_preset.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["active_preset_id"], str(custom_preset.id))
+        self.assertFalse(default_preset.is_active)
+        self.assertTrue(custom_preset.is_active)
+
+    # Test default LM Studio preset mutation errors are returned as validation responses.
+    @patch("Apps.Data.lms_presets.lms_api.get_model_settings")
+    def test_default_lms_preset_mutation_errors_return_400(self, mock_get_model_settings):
+        mock_get_model_settings.return_value = {
+            "defaults": {"temperature": 0.7},
+        }
+        default_preset = LmsPreset.objects.create(
+            model_name="qwen3",
+            name="Default",
+            config={"operation": {"temperature": 0.7}},
+            is_default=True,
+            is_active=True,
+        )
+
+        renamed = self.client.post(
+            reverse("rename_lms_preset_api"),
+            data=f'{{"model":"qwen3","preset_id":"{default_preset.id}","name":"Renamed"}}',
+            content_type="application/json",
+        )
+        deleted = self.client.post(
+            reverse("delete_lms_preset_api"),
+            data=f'{{"model":"qwen3","preset_id":"{default_preset.id}"}}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(renamed.status_code, 400)
+        self.assertEqual(deleted.status_code, 400)
+        self.assertIn("default preset", renamed.json()["error"])
+        self.assertIn("default preset", deleted.json()["error"])
