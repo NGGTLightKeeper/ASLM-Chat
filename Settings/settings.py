@@ -62,7 +62,6 @@ DEFAULTS: dict[str, Any] = {
     "ollama-service_models": None,
     "lms": False,
     "lms_url": "127.0.0.1:1234",
-    "use-yacy": False,
     "openai": False,
     "openai_url": "127.0.0.1:8000/v1",
     "openai_api_key": "",
