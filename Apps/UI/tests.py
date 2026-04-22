@@ -32,6 +32,8 @@ from API.openai import (
 )
 from Apps.Data.models import Chat, LmsPreset, Message, MessageAttachment, OllamaPreset
 from Apps.UI.views import (
+    _clear_model_metadata_caches,
+    _extract_ollama_model_info,
     _extract_model_name,
     _format_runtime_error,
     _normalize_request_attachments,
@@ -80,10 +82,12 @@ class ToolRegistryTestMixin:
         self.tools_patch = patch.object(tool_registry, "TOOLS_DIR", self.tools_dir)
         self.tools_patch.start()
         tool_registry.reset_cache()
+        _clear_model_metadata_caches()
 
     # Restore the original registry state.
     def tearDown(self):
         tool_registry.reset_cache()
+        _clear_model_metadata_caches()
         self.tools_patch.stop()
         self._tools_dir_context.cleanup()
         super().tearDown()
@@ -245,6 +249,43 @@ class OllamaOptionMappingTests(SimpleTestCase):
         prepare_ollama_runtime("ollama-service")
 
         mock_service.start_ollama.assert_called_once_with(engine="ollama-service")
+
+
+# Ensure Ollama tool support follows Ollama model metadata.
+class OllamaModelInfoTests(SimpleTestCase):
+    """Ensure Ollama model metadata maps tool support without model-name hardcoding."""
+
+    # Test an explicit Ollama capabilities list without tools disables tool support.
+    def test_ollama_capabilities_without_tools_disable_tool_support(self):
+        payload = _extract_ollama_model_info({
+            "capabilities": ["completion"],
+            "template": "{{ if .Tools }}tools{{ end }}{{ if .ToolCalls }}calls{{ end }}",
+        })
+
+        self.assertFalse(payload["supports_tool_calling"])
+
+    # Test Ollama's tools capability enables support without template markers.
+    def test_ollama_tools_capability_enables_tool_support(self):
+        payload = _extract_ollama_model_info({
+            "capabilities": ["completion", "tools"],
+            "template": "{{ if .Messages }}{{ end }}",
+        })
+
+        self.assertTrue(payload["supports_tool_calling"])
+
+    # Test old/custom Ollama responses can still infer tools from the template.
+    def test_ollama_tool_template_fallback_when_capabilities_are_missing(self):
+        payload = _extract_ollama_model_info({
+            "template": "{{ if .Messages }}{{ end }}",
+        })
+
+        self.assertFalse(payload["supports_tool_calling"])
+
+        payload = _extract_ollama_model_info({
+            "template": "{{ if .Tools }}tools{{ end }}{{ if .ToolCalls }}calls{{ end }}",
+        })
+
+        self.assertTrue(payload["supports_tool_calling"])
 
 
 # Ensure generic runtime options are safely mapped for OpenAI-compatible APIs.
@@ -865,6 +906,13 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         mock_prepare_runtime.assert_called_once_with("ollama-service")
 
     # Test chat API passes selected tool server to Ollama.
+    @patch(
+        "Apps.UI.views.llm_api.get_model_settings",
+        return_value={
+            "capabilities": ["tools"],
+            "template": "{{ if .Tools }}{{ end }}{{ if .ToolCalls }}{{ end }}",
+        },
+    )
     @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
@@ -873,6 +921,7 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         _mock_engine,
         mock_generate,
         _mock_prepare_runtime,
+        _mock_model_settings,
     ):
         self.write_server(
             'time_suite',
@@ -890,7 +939,7 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
 
         response = self.client.post(
             reverse("chat_api"),
-            data='{"message":"Hello","model":"llama3","tool_server_id":"time_suite"}',
+            data='{"message":"Hello","model":"llama3.1","tool_server_id":"time_suite"}',
             content_type="application/json",
         )
 
@@ -1012,6 +1061,41 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         response = self.client.post(
             reverse("chat_api"),
             data='{"message":"Hello","model":"qwen","tool_server_id":"time_suite"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("does not support tool calling", response.json()["error"])
+
+    # Test chat API rejects tool server when Ollama capabilities omit tools.
+    @patch(
+        "Apps.UI.views.llm_api.get_model_settings",
+        return_value={
+            "capabilities": ["completion"],
+            "template": "{{ if .Tools }}tools{{ end }}{{ if .ToolCalls }}calls{{ end }}",
+        },
+    )
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_api_rejects_tool_server_when_ollama_capabilities_omit_tools(
+        self,
+        _mock_engine,
+        _mock_model_settings,
+    ):
+        self.write_server(
+            'time_suite',
+            '''
+            MCP_SERVER = {"id": "time_suite", "name": "Time Suite"}
+            TOOLS = [{"id": "time_now", "name": "Current Time", "parameters": {"type": "object", "properties": {}}}]
+            def supports(engine=None, model_name=None):
+                return engine == "ollama-service"
+            def call_tool(tool_id, arguments, context=None):
+                return "ok"
+            ''',
+        )
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"Hello","model":"model-without-tools","tool_server_id":"time_suite"}',
             content_type="application/json",
         )
 
