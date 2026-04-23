@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Quick smoke test for all recipes across all guides."""
 
 import sys

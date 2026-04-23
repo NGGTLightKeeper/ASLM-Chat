@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Workspace boundary enforcement tests.
 
 Verifies that read/write/edit/describe block path traversal and symlink

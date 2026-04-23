@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """
 engine_router.py — Telemetry-driven dispatcher replacing backend="auto".
 

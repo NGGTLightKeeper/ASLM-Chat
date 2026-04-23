@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """External exploration state for the sandbox session.
 
 Tracks what the model has already looked at, detects loops, and

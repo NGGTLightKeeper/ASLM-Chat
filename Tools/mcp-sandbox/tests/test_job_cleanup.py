@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Tests for background job dir lifecycle and cleanup behavior.
 
 Covers:

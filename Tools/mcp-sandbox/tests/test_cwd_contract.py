@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """CWD contract tests.
 
 Verifies that task_cwd (the model-facing working directory) behaves correctly:

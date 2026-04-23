@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """
 Import Majestic Million domains into trust_registry.json.
 

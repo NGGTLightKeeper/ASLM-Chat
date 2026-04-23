@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Standalone sandbox image setup script.
 
 Run this once before first use, or whenever the image needs to be refreshed.

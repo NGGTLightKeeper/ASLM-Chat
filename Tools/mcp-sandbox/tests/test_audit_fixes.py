@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Tests for bugs fixed in the audit session.
 
 Covers:
