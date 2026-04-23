@@ -27,7 +27,7 @@ class QueryPlan:
 
     query: str
     target_domains: list[str] = field(default_factory=list)
-    # Hint for provider selection: "ddgs" | "yacy" | "auto"
+    # Hint for provider selection: "ddgs" | "auto"
     method_hint: str = "auto"
 
 
@@ -42,7 +42,7 @@ class SearchResult:
     url: str
     title: str
     snippet: str
-    # Originating engine identifier, e.g. "ddgs:google,brave", "yacy_global"
+    # Originating engine identifier, e.g. "ddgs:google,brave", "brave", "tavily"
     engine: str = ""
     # Trust tier from domain registry: "friendly" | "moderate" | "hardened" | "fortress" | "?"
     trust_tier: str = "?"

@@ -339,8 +339,8 @@ class DDGSClient:
                 ).fetchone()
                 if row and time.time() - row[1] < row[2]:
                     return json.loads(row[0])
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("ddgs cache_get failed: %s", _e)
         return None
 
     def _cache_set(self, key: str, data: list, ttl: Optional[int] = None) -> None:
@@ -352,8 +352,8 @@ class DDGSClient:
                     "INSERT OR REPLACE INTO ddgs_cache (key, data, ts, ttl) VALUES (?, ?, ?, ?)",
                     (key, json.dumps(data, ensure_ascii=False), time.time(), ttl or self.cache_ttl),
                 )
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("ddgs cache_set failed: %s", _e)
 
     # -- Search helpers ------------------------------------------------------
 
@@ -559,8 +559,8 @@ class DDGSClient:
                         if res:
                             result = res
                             break
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        logger.debug("multilingual future failed: %s", _e)
             except TimeoutError:
                 logger.debug("multilingual parallel search timed out after %ss", self.timeout)
                 # no pool.shutdown anymore
@@ -646,7 +646,8 @@ class DDGSClient:
                     timelimit=timelimit,
                     cache_ttl=ttl,
                 )
-            except Exception:
+            except Exception as _e:
+                logger.debug("hedged search engine=%s failed: %s", engine, _e)
                 res = []
             latency = time.perf_counter() - t0
 
@@ -672,7 +673,8 @@ class DDGSClient:
             for fut in as_completed(futs, timeout=overall_timeout):
                 try:
                     results = fut.result()
-                except Exception:
+                except Exception as _e:
+                    logger.debug("hedged future failed: %s", _e)
                     results = []
                 if results:
                     stop.set()  # cancel sleeping backup threads

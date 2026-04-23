@@ -5,7 +5,10 @@ from __future__ import annotations
 import argparse
 import importlib
 import os
+import subprocess
 import sys
+import threading
+from pathlib import Path
 
 
 # Prepare project imports
@@ -14,8 +17,6 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ASLM.settings")
-
-from Settings.console import PrintTechData
 
 SERVER_VENV_COMMANDS = {
     "runserver",
@@ -26,26 +27,52 @@ SERVER_VENV_COMMANDS = {
 }
 
 
-# Re-execute commands that need Django/server dependencies inside the server venv.
+# Run commands that need Django/server dependencies inside the server venv.
 def _maybe_reexec_in_server_venv(command: str) -> None:
-    """Restart the current command inside ASLM-Chat's server venv when required."""
+    """Delegate the current command to ASLM-Chat's server venv when required."""
 
     if command not in SERVER_VENV_COMMANDS:
         return
     if os.environ.get("ASLM_CHAT_ACTIVE_VENV") == "server":
         return
 
-    from Services import venv_manager
+    venv_path = Path(BASE_DIR) / "Data" / "venvs" / "server"
+    scripts_path = venv_path / ("Scripts" if os.name == "nt" else "bin")
+    python_path = scripts_path / ("python.exe" if os.name == "nt" else "python")
+    current_python = os.path.normcase(os.path.abspath(sys.executable))
+    target_python = os.path.normcase(os.path.abspath(str(python_path)))
+    if current_python == target_python:
+        os.environ["ASLM_CHAT_ACTIVE_VENV"] = "server"
+        return
 
-    quiet = command == "downloads_bridge"
-    if not venv_manager.ensure_venv("server", log=not quiet):
-        print("[ASLM-Chat] Error: server venv could not be prepared.")
-        sys.exit(1)
+    venv_ready = python_path.exists()
+    if not venv_ready:
+        from Services import venv_manager
 
-    python_path = venv_manager.get_venv_python("server")
+        quiet = command == "downloads_bridge"
+        if not venv_manager.ensure_venv("server", log=not quiet):
+            print("[ASLM-Chat] Error: server venv could not be prepared.")
+            sys.exit(1)
+        python_path = venv_manager.get_venv_python("server")
+        venv_path = venv_manager.get_venv_path("server")
+        scripts_path = python_path.parent
+
     env = os.environ.copy()
     env["ASLM_CHAT_ACTIVE_VENV"] = "server"
-    os.execve(str(python_path), [str(python_path), __file__, *sys.argv[1:]], env)
+    env["VIRTUAL_ENV"] = str(venv_path)
+    env["PATH"] = str(scripts_path) + os.pathsep + env.get("PATH", "")
+    env.pop("PYTHONHOME", None)
+    args = [str(python_path), "-u", __file__, *sys.argv[1:]]
+    process = subprocess.Popen(args, env=env)
+    try:
+        sys.exit(process.wait())
+    except KeyboardInterrupt:
+        if process.poll() is None:
+            process.terminate()
+        raise
+    finally:
+        if process.poll() is None:
+            process.terminate()
 
 
 # Run Django command
@@ -60,17 +87,99 @@ def run_django_command(*args: str, log: bool = False) -> None:
 
     execute_from_command_line(argv)
 
+
+class LazyDjangoApplication:
+    """Bind the UI port first, then hand requests to Django once it is ready."""
+
+    def __init__(self) -> None:
+        self._application = None
+        self._error: BaseException | None = None
+        self._ready = threading.Event()
+        self._lock = threading.Lock()
+
+    def load_in_background(self) -> None:
+        """Start loading Django without blocking the listening socket."""
+
+        thread = threading.Thread(target=self._load, name="aslm-chat-django-loader", daemon=True)
+        thread.start()
+
+    def _load(self) -> None:
+        with self._lock:
+            if self._application is not None or self._error is not None:
+                return
+            try:
+                from ASLM.wsgi import application
+
+                self._application = application
+            except BaseException as exc:
+                self._error = exc
+            finally:
+                self._ready.set()
+
+    def __call__(self, environ, start_response):
+        if self._application is not None:
+            return self._application(environ, start_response)
+
+        if self._error is not None:
+            body = f"ASLM-Chat failed to start: {self._error}".encode("utf-8", errors="replace")
+            start_response(
+                "500 Internal Server Error",
+                [("Content-Type", "text/plain; charset=utf-8"), ("Content-Length", str(len(body)))],
+            )
+            return [body]
+
+        body = (
+            "<!doctype html><html><head><meta charset=\"utf-8\">"
+            "<meta http-equiv=\"refresh\" content=\"1\">"
+            "<title>ASLM-Chat starting</title></head>"
+            "<body style=\"font-family:Segoe UI,sans-serif;background:#111;color:#eee;\">"
+            "ASLM-Chat is starting..."
+            "</body></html>"
+        ).encode("utf-8")
+        start_response(
+            "503 Service Unavailable",
+            [
+                ("Content-Type", "text/html; charset=utf-8"),
+                ("Content-Length", str(len(body))),
+                ("Retry-After", "1"),
+            ],
+        )
+        return [body]
+
+
 # Start Django development server
 def cmd_runserver(port: int, log: bool) -> None:
     """Start the Django development server on the requested port."""
 
     if log:
-        print(f"[ASLM-Chat] Starting server on port {port} (noreload)...")
+        print(f"[ASLM-Chat] Starting server on port {port}...")
 
-    # ASLM tracks the launched process directly. Django's autoreloader would
-    # spawn a child interpreter and can confuse the module runner into
-    # thinking the service stopped, so keep a single long-lived process here.
-    run_django_command("runserver", f"127.0.0.1:{port}", "--noreload", log=log)
+    from socketserver import ThreadingMixIn
+    from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
+
+    class ThreadedWSGIServer(ThreadingMixIn, WSGIServer):
+        """Serve local UI requests concurrently."""
+
+        daemon_threads = True
+
+    class QuietWSGIRequestHandler(WSGIRequestHandler):
+        """Keep routine HTTP access logs out of the ASLM console."""
+
+        def log_message(self, format: str, *args) -> None:
+            return
+
+    app = LazyDjangoApplication()
+    with make_server(
+        "127.0.0.1",
+        port,
+        app,
+        server_class=ThreadedWSGIServer,
+        handler_class=QuietWSGIRequestHandler,
+    ) as httpd:
+        app.load_in_background()
+        if log:
+            print(f"[ASLM-Chat] UI server listening at http://127.0.0.1:{port}/", flush=True)
+        httpd.serve_forever()
 
 # Apply database migrations
 def cmd_migrate(log: bool) -> None:
@@ -136,20 +245,6 @@ def cmd_set_setting(key: str, value: str) -> None:
     set(key, parsed_value)
     print(f"[ASLM-Chat] Setting '{key}' updated to {parsed_value}")
 
-# Install YaCy DB snapshot
-def cmd_install_yacy_db(log: bool = True) -> None:
-    """Download the optional YaCy database snapshot into the managed runtime."""
-
-    from Services import yacy_service
-
-    ok = yacy_service.ensure_database_snapshot(log=log)
-    if not ok:
-        print("[ASLM-Chat] YaCy database snapshot installation did not complete successfully.")
-        sys.exit(1)
-
-    print("[ASLM-Chat] YaCy database snapshot is ready.")
-
-
 # Start local engine service
 def maybe_start_local_engine_service(log: bool) -> None:
     """Start the active local engine service when the current adapter needs it."""
@@ -212,6 +307,8 @@ def _maybe_print_banner(command: str) -> None:
     """Print technical module data once for interactive commands."""
 
     if not os.environ.get("RUN_MAIN") and command not in {"get_setting", "set_setting", "downloads_bridge"}:
+        from Settings.console import PrintTechData
+
         PrintTechData().PTD_Print()
 
 # Resolve runtime server port
@@ -222,6 +319,13 @@ def _resolve_runserver_port(requested_port: int) -> int:
 
     if requested_port != 30000:
         return requested_port
+
+    env_port = os.environ.get("ASLM_UI_PORT")
+    if env_port:
+        try:
+            return int(env_port)
+        except ValueError:
+            pass
 
     runtime_settings = load_settings()
     return int(runtime_settings.get("ui-port", 30000))
@@ -268,9 +372,6 @@ def main() -> None:
                 print("Error: --key and --value arguments are required.")
                 sys.exit(1)
             cmd_set_setting(args.key, args.value)
-
-        case "install_yacy_db":
-            cmd_install_yacy_db(log=True)
 
         case "downloads_bridge":
             cmd_downloads_bridge()

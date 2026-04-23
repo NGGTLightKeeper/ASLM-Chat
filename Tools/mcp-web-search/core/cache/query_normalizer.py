@@ -24,8 +24,9 @@ map to the same key. This is acceptable because:
 
 Public API
 ----------
-QUERY_STOPWORDS         frozenset[str] — shared by services and core
-normalize_query_key(q)  str            — canonical form for hashing
+QUERY_STOPWORDS         frozenset[str]    — shared by services and core
+COMPOSITE_TOKENS        dict[str, str]    — tech token normalizations (e.g. ".net" → "dotnet")
+normalize_query_key(q)  str               — canonical form for hashing
 """
 
 from __future__ import annotations
@@ -75,6 +76,21 @@ QUERY_STOPWORDS: frozenset[str] = frozenset({
 
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 
+COMPOSITE_TOKENS: dict[str, str] = {
+    "c++": "cpp",
+    "c#": "csharp",
+    "f#": "fsharp",
+    "r&d": "rnd",
+    "at&t": "att",
+    "node.js": "nodejs",
+    "vue.js": "vuejs",
+    "next.js": "nextjs",
+    "nuxt.js": "nuxtjs",
+    ".net": "dotnet",
+    "asp.net": "aspnet",
+    ".env": "dotenv",
+}
+
 
 def normalize_query_key(query: str) -> str:
     """Return the canonical cache key for *query*.
@@ -87,6 +103,11 @@ def normalize_query_key(query: str) -> str:
         return ""
 
     lowered = query.lower()
+    # Replace known composite tokens before applying \w+ regex so that
+    # "C#" isn't reduced to empty and "C++" isn't reduced to "c".
+    for token, replacement in COMPOSITE_TOKENS.items():
+        lowered = lowered.replace(token, replacement)
+
     tokens = _WORD_RE.findall(lowered)
     content = sorted({t for t in tokens if len(t) >= 2 and t not in QUERY_STOPWORDS})
 

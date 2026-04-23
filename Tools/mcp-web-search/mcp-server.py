@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ _CFG = _load_cfg()
 _MAX_RESULTS = max(1, int(_CFG.search.max_results))
 _BATCH_LIMIT = max(1, int(_CFG.search.batch_query_limit))
 _SANDBOX_ROOT = ASLM_ROOT / "_sandbox"
+logger = logging.getLogger("mcp_server_bridge")
 
 MCP_SERVER = {
     "id": "web_search",
@@ -136,7 +138,7 @@ def _maybe_parse_list(val: Any) -> Any:
                 if isinstance(parsed, list):
                     return parsed
             except Exception:
-                pass
+                logger.debug("Failed to parse list-like tool argument: %r", val[:200])
     return val
 
 

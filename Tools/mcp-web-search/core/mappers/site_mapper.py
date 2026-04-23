@@ -121,6 +121,8 @@ class SiteMapper:
         parsed_base = urllib.parse.urlparse(start_url)
         base_domain = parsed_base.netloc
 
+        # TODO: Keep current behavior for now, but switch this to verify=True
+        # with a targeted TLS-failure fallback instead of disabling verification globally.
         async with httpx.AsyncClient(headers=HEADERS, verify=False, timeout=10.0) as client:
 
             async def process_url(url: str) -> None:

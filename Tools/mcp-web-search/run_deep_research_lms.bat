@@ -47,9 +47,11 @@ echo.
 if "%EXIT_CODE%"=="0" (
   echo [deep_research:lms] Done.
   echo [deep_research:lms] Report: %CD%\_out\%TASK_ID%\report.md
-  echo [deep_research:lms] Agentic logs: %CD%\logs\deep_research\agentic
+  echo [deep_research:lms] Realtime logs: %CD%\logs\deep_research\logs
+  echo [deep_research:lms] Agentic artifacts: %CD%\logs\deep_research\agentic
 ) else (
   echo [deep_research:lms] Failed with exit code %EXIT_CODE%.
+  echo [deep_research:lms] Realtime logs: %CD%\logs\deep_research\logs
 )
 
 if "%~1"=="" pause

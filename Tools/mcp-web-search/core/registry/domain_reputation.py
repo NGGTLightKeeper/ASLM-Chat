@@ -453,6 +453,133 @@ class DomainReputationStore:
         finally:
             conn.close()
 
+    def get_report(self, domain: str) -> Optional[DomainReport]:
+        """Return a structured report for one domain, or None if unseen."""
+        conn = self._connect()
+        try:
+            per_type_rows = conn.execute(
+                """
+                SELECT query_type, obs_count, ema_score
+                FROM domain_reputation
+                WHERE domain=?
+                """,
+                (domain,),
+            ).fetchall()
+            if not per_type_rows:
+                return None
+
+            per_type: dict[str, dict] = {}
+            global_ema = 0.50
+            global_obs = 0
+            for row in per_type_rows:
+                query_type = str(row["query_type"])
+                data = {
+                    "ema": float(row["ema_score"]),
+                    "obs": int(row["obs_count"]),
+                }
+                if query_type == _GLOBAL:
+                    global_ema = data["ema"]
+                    global_obs = data["obs"]
+                else:
+                    per_type[query_type] = data
+
+            dec = conn.execute(
+                """
+                SELECT protected, auto_blacklisted, blacklisted_at,
+                       promoted_tier, promoted_at, promoted_query_types
+                FROM domain_decisions
+                WHERE domain=?
+                """,
+                (domain,),
+            ).fetchone()
+
+            promoted_query_types: list[str] = []
+            if dec and dec["promoted_query_types"]:
+                try:
+                    promoted_query_types = list(json.loads(dec["promoted_query_types"]))
+                except Exception:
+                    promoted_query_types = []
+
+            return DomainReport(
+                domain=domain,
+                global_ema=global_ema,
+                global_obs=global_obs,
+                per_type=per_type,
+                auto_blacklisted=bool(dec["auto_blacklisted"]) if dec else False,
+                blacklisted_at=dec["blacklisted_at"] if dec else None,
+                promoted_tier=str(dec["promoted_tier"]) if dec and dec["promoted_tier"] else None,
+                promoted_at=dec["promoted_at"] if dec else None,
+                promoted_query_types=promoted_query_types,
+                protected=bool(dec["protected"]) if dec else False,
+            )
+        finally:
+            conn.close()
+
+    def get_promoted_tier(self, domain: str) -> Optional[str]:
+        """Return the promoted tier for a domain, if any."""
+        report = self.get_report(domain)
+        return report.promoted_tier if report else None
+
+    def top_blacklisted(self, limit: int = 20) -> list[dict]:
+        """Return recent auto-blacklisted domains ordered by blacklist time."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT domain, blacklist_ema, blacklist_obs, blacklisted_at
+                FROM domain_decisions
+                WHERE auto_blacklisted = 1
+                ORDER BY COALESCE(blacklisted_at, 0) DESC, domain ASC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+            return [
+                {
+                    "domain": str(row["domain"]),
+                    "blacklist_ema": float(row["blacklist_ema"]) if row["blacklist_ema"] is not None else None,
+                    "blacklist_obs": int(row["blacklist_obs"]) if row["blacklist_obs"] is not None else 0,
+                    "blacklisted_at": row["blacklisted_at"],
+                }
+                for row in rows
+            ]
+        finally:
+            conn.close()
+
+    def top_promoted(self, limit: int = 20) -> list[dict]:
+        """Return promoted domains ordered by strongest tier then recency."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT domain, promoted_tier, promoted_at, promoted_query_types
+                FROM domain_decisions
+                WHERE promoted_tier IS NOT NULL
+                ORDER BY CASE promoted_tier WHEN 'B' THEN 0 WHEN 'C' THEN 1 ELSE 2 END,
+                         COALESCE(promoted_at, 0) DESC,
+                         domain ASC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+            results: list[dict] = []
+            for row in rows:
+                try:
+                    promoted_query_types = list(json.loads(row["promoted_query_types"] or "[]"))
+                except Exception:
+                    promoted_query_types = []
+                results.append(
+                    {
+                        "domain": str(row["domain"]),
+                        "promoted_tier": str(row["promoted_tier"]),
+                        "promoted_at": row["promoted_at"],
+                        "promoted_query_types": promoted_query_types,
+                    }
+                )
+            return results
+        finally:
+            conn.close()
+
 
 # ---------------------------------------------------------------------------
 # Singleton

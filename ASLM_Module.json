@@ -108,7 +108,7 @@
             "name": "Ollama",
             "description": "Whether the Ollama inference service is installed",
             "type": "engine",
-            "default": false,
+            "default": true,
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key ollama-service",
             "setExec": "main.py set_setting --key ollama-service --value {value}"
@@ -158,7 +158,7 @@
             "name": "LM Studio",
             "description": "Whether LM Studio integration is available",
             "type": "engine",
-            "default": false,
+            "default": true,
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key lms",
             "setExec": "main.py set_setting --key lms --value {value}"
@@ -179,7 +179,7 @@
             "name": "OpenAI-Compatible API",
             "description": "Whether an OpenAI-compatible API endpoint is available",
             "type": "engine",
-            "default": false,
+            "default": true,
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key openai",
             "setExec": "main.py set_setting --key openai --value {value}"
@@ -189,11 +189,11 @@
             "name": "OpenAI-Compatible Address",
             "description": "Base URL of the OpenAI-compatible API endpoint",
             "type": "string",
-            "default": "127.0.0.1:8000/v1",
+            "default": "127.0.0.1:1234/v1",
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key openai_url",
             "setExec": "main.py set_setting --key openai_url --value {value}",
-            "value": "127.0.0.1:9000/v1"
+            "value": "127.0.0.1:1234/v1"
         },
         {
             "key": "openai_api_key",
@@ -210,7 +210,7 @@
             "name": "Google GenAI",
             "description": "Whether Google GenAI integration is available",
             "type": "engine",
-            "default": false,
+            "default": true,
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key google-genai",
             "setExec": "main.py set_setting --key google-genai --value {value}"
@@ -234,49 +234,6 @@
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key google_genai_api_key",
             "setExec": "main.py set_setting --key google_genai_api_key --value {value}"
-        },
-        {
-            "key": "yacy",
-            "name": "Use YaCy",
-            "description": "Whether web-search tools should use and auto-start the local YaCy service.",
-            "type": "bool",
-            "default": false,
-            "engine": "python-runtime",
-            "getExec": "main.py get_setting --key use-yacy",
-            "setExec": "main.py set_setting --key use-yacy --value {value}"
-        },
-        {
-            "key": "yacy_url",
-            "name": "YaCy URL",
-            "description": "Base URL of the local YaCy search service.",
-            "type": "string",
-            "default": "http://localhost:8090",
-            "value": "http://localhost:8090",
-            "engine": "python-runtime",
-            "getExec": "main.py get_setting --key yacy_url",
-            "setExec": "main.py set_setting --key yacy_url --value {value}"
-        },
-        {
-            "key": "yacy_user",
-            "name": "YaCy Username",
-            "description": "Username for YaCy admin authentication.",
-            "type": "string",
-            "default": "admin",
-            "value": "admin",
-            "engine": "python-runtime",
-            "getExec": "main.py get_setting --key yacy_user",
-            "setExec": "main.py set_setting --key yacy_user --value {value}"
-        },
-        {
-            "key": "yacy_pass",
-            "name": "YaCy Password",
-            "description": "Password for YaCy admin authentication.",
-            "type": "password",
-            "default": "admin",
-            "value": "admin",
-            "engine": "python-runtime",
-            "getExec": "main.py get_setting --key yacy_pass",
-            "setExec": "main.py set_setting --key yacy_pass --value {value}"
         }
     ],
     "downloadsBridge": {

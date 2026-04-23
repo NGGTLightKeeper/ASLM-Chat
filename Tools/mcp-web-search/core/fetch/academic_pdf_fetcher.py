@@ -154,6 +154,8 @@ async def _download_via_httpx(url: str, timeout: float) -> bytes:
     async with httpx.AsyncClient(
         headers=_DEFAULT_HEADERS,
         follow_redirects=True,
+        # TODO: Keep current behavior for now, but switch this to verify=True
+        # with a targeted TLS-failure fallback instead of disabling verification globally.
         verify=False,
         timeout=timeout,
     ) as client:

@@ -21,15 +21,18 @@ run_read_page(url, ...) -- top-level convenience coroutine
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
+import json as _json
 import re
 from dataclasses import dataclass
 from typing import Optional
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import quote as _quote, urlparse, urlunparse
 
 from core.config import load_search_config
 from core.extract.page_normalizer import normalize_page
 from core.fetch.antibot import is_antibot
+from core.fetch.stackexchange_fetcher import fetch_stackexchange_question, is_stackexchange_question_url
 from core.fetch.url_utils import has_non_text_extension, is_non_text_content_type
 from services.web_search import _cache
 
@@ -46,6 +49,7 @@ logger = logging.getLogger("services.read_page")
 _SKIP_HOSTS = ("twitter.com", "x.com", "vimeo.com", "tiktok.com")
 _YT_HOSTS = ("youtube.com", "youtu.be", "www.youtube.com", "m.youtube.com")
 _REDDIT_PATTERN = re.compile(r"reddit\.com/r/[^/]+/comments/")
+_X_POST_PATTERN = re.compile(r"/(?:(?:i|[^/]+)/web/)?status/(\d+)|/[^/]+/status/(\d+)")
 
 
 
@@ -62,6 +66,17 @@ def _is_reddit(url: str) -> bool:
     return bool(_REDDIT_PATTERN.search(url))
 
 
+def _is_x_post(url: str) -> bool:
+    return _host(url) in {"twitter.com", "x.com"} and _x_status_id(url) is not None
+
+
+def _x_status_id(url: str) -> str | None:
+    m = _X_POST_PATTERN.search(urlparse(url).path)
+    if not m:
+        return None
+    return m.group(1) or m.group(2)
+
+
 def _is_skippable(url: str) -> bool:
     from core.extract.pdf_extractor import looks_like_pdf_url
 
@@ -70,6 +85,130 @@ def _is_skippable(url: str) -> bool:
     if has_non_text_extension(url):
         return True
     return any(_host(url) == s or _host(url).endswith("." + s) for s in _SKIP_HOSTS)
+
+
+def _strip_html_fragment(text: str) -> str:
+    clean = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    clean = re.sub(r"</p\s*>", "\n\n", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"<[^>]+>", "", clean)
+    return html.unescape(clean).strip()
+
+
+def _parse_x_syndication_payload(data: dict, url: str) -> str:
+    text = str(data.get("text") or "").strip()
+    user = data.get("user") if isinstance(data.get("user"), dict) else {}
+    author_name = str(user.get("name") or "").strip()
+    author_handle = str(user.get("screen_name") or "").strip()
+    created_at = str(data.get("created_at") or "").strip()
+
+    lines: list[str] = ["# X Post"]
+    meta: list[str] = []
+    if author_name or author_handle:
+        if author_name and author_handle:
+            meta.append(f"Author: {author_name} (@{author_handle})")
+        elif author_handle:
+            meta.append(f"Author: @{author_handle}")
+        else:
+            meta.append(f"Author: {author_name}")
+    if created_at:
+        meta.append(f"Created: {created_at}")
+    if meta:
+        lines.extend(meta)
+    lines.append(f"URL: {url}")
+    lines.append("")
+    if text:
+        lines.append(text)
+
+    entities = data.get("entities") if isinstance(data.get("entities"), dict) else {}
+    urls = entities.get("urls") if isinstance(entities.get("urls"), list) else []
+    expanded = [str(item.get("expanded_url") or item.get("url") or "").strip() for item in urls if isinstance(item, dict)]
+    expanded = [item for item in expanded if item]
+    if expanded:
+        lines.append("")
+        lines.append("Links:")
+        lines.extend(f"- {item}" for item in expanded)
+
+    media = data.get("mediaDetails") if isinstance(data.get("mediaDetails"), list) else []
+    media_urls: list[str] = []
+    for item in media:
+        if not isinstance(item, dict):
+            continue
+        candidate = str(item.get("media_url_https") or item.get("media_url") or "").strip()
+        if candidate:
+            media_urls.append(candidate)
+    if media_urls:
+        lines.append("")
+        lines.append("Media:")
+        lines.extend(f"- {item}" for item in media_urls)
+
+    return "\n".join(lines).strip()
+
+
+def _parse_x_oembed_payload(data: dict, url: str) -> str:
+    author_name = str(data.get("author_name") or "").strip()
+    author_url = str(data.get("author_url") or "").strip()
+    html_block = str(data.get("html") or "")
+    text = _strip_html_fragment(html_block)
+
+    lines = ["# X Post"]
+    if author_name:
+        lines.append(f"Author: {author_name}")
+    if author_url:
+        lines.append(f"Author URL: {author_url}")
+    lines.append(f"URL: {url}")
+    lines.append("")
+    if text:
+        lines.append(text)
+    return "\n".join(lines).strip()
+
+
+def _x_fetch_json(endpoint: str, timeout: int) -> dict | None:
+    from curl_cffi import requests as _r
+
+    resp = _r.get(
+        endpoint,
+        impersonate="chrome124",
+        timeout=timeout,
+        headers={
+            "Accept": "application/json,text/plain,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "User-Agent": _UA,
+        },
+    )
+    resp.raise_for_status()
+    try:
+        return resp.json()
+    except Exception:
+        return _json.loads(resp.text)
+
+
+async def _fetch_x_post(url: str, timeout: float) -> str:
+    status_id = _x_status_id(url)
+    if not status_id:
+        return f"Error: Could not extract X/Twitter status ID from: {url}"
+
+    loop = asyncio.get_running_loop()
+
+    def _sync() -> str | None:
+        syndication_url = f"https://cdn.syndication.twimg.com/tweet-result?id={status_id}&token=x"
+        try:
+            data = _x_fetch_json(syndication_url, max(10, int(timeout)))
+            if isinstance(data, dict) and data.get("text"):
+                return _parse_x_syndication_payload(data, url)
+        except Exception:
+            logger.debug("X syndication fetch failed for %s", url, exc_info=True)
+
+        oembed_url = "https://publish.twitter.com/oembed?omit_script=1&url=" + _quote(url, safe="")
+        try:
+            data = _x_fetch_json(oembed_url, max(10, int(timeout)))
+            if isinstance(data, dict) and data.get("html"):
+                return _parse_x_oembed_payload(data, url)
+        except Exception:
+            logger.debug("X oEmbed fetch failed for %s", url, exc_info=True)
+        return None
+
+    result = await loop.run_in_executor(_io_pool, _sync)
+    return result or f"Error: Could not fetch X/Twitter post content from: {url}"
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +245,7 @@ async def _fetch_youtube_transcript(url: str) -> str:
             err = str(e)
             if "unavailable" in err.lower() or "no longer available" in err.lower():
                 return f"ERR:Video unavailable: {url}"
+            logger.debug("youtube_transcript_api list() failed for %s: %s", url, e)
             # Any other list error — fall through to yt-dlp
             return None
 
@@ -116,6 +256,7 @@ async def _fetch_youtube_transcript(url: str) -> str:
                 fetched = transcript_list.find_manually_created_transcript([lang])
                 break
             except Exception:
+                logger.debug("Manual transcript unavailable for %s lang=%s", url, lang)
                 continue
 
         # Fall back to generated transcripts in preferred order
@@ -125,6 +266,7 @@ async def _fetch_youtube_transcript(url: str) -> str:
                     fetched = transcript_list.find_generated_transcript([lang])
                     break
                 except Exception:
+                    logger.debug("Generated transcript unavailable for %s lang=%s", url, lang)
                     continue
 
         # Fall back to any available transcript, translate to English if needed
@@ -135,8 +277,10 @@ async def _fetch_youtube_transcript(url: str) -> str:
                     try:
                         fetched = fetched.translate("en")
                     except Exception:
+                        logger.debug("Transcript translation failed for %s from %s", url, fetched.language_code)
                         pass  # use original language
             except StopIteration:
+                logger.debug("No transcripts available via youtube_transcript_api for %s", url)
                 return None
 
         try:
@@ -150,7 +294,7 @@ async def _fetch_youtube_transcript(url: str) -> str:
                 lang_code = getattr(fetched, "language_code", "?")
                 return f"YouTube transcript [{lang_code}]\nVideo: {url}\n\n{text}"
         except Exception:
-            pass
+            logger.debug("youtube_transcript_api fetch() failed for %s", url, exc_info=True)
         return None
 
     result = await loop.run_in_executor(_io_pool,_yta_try)
@@ -186,6 +330,7 @@ async def _fetch_youtube_transcript(url: str) -> str:
                     with yt_dlp.YoutubeDL(opts) as ydl:
                         ydl.download([url])
                 except Exception:
+                    logger.debug("yt-dlp subtitle download failed for %s", url, exc_info=True)
                     return None
                 vtt_files = _glob.glob(os.path.join(tmpdir, "*.vtt"))
                 if not vtt_files:
@@ -211,6 +356,7 @@ async def _fetch_youtube_transcript(url: str) -> str:
                 text = " ".join(lines)
                 return f"YouTube transcript (yt-dlp)\nVideo: {url}\n\n{text}" if text else None
         except Exception:
+            logger.debug("yt-dlp transcript fallback crashed for %s", url, exc_info=True)
             return None
 
     result = await loop.run_in_executor(_io_pool,_yt_dlp_try)
@@ -295,7 +441,7 @@ async def _fetch_httpx(url: str, timeout: float, tls_verify: bool = True) -> str
                 text = r.text
                 return text if text and not is_antibot(text) else None
     except Exception:
-        pass
+        logger.debug("httpx fetch failed for %s", url, exc_info=True)
     return None
 
 
@@ -311,6 +457,7 @@ async def _fetch_curl_cffi(url: str, timeout: int) -> str | None:
             text = r.text
             return text if text and not is_antibot(text) else None
         except Exception:
+            logger.debug("curl_cffi fetch failed for %s", url, exc_info=True)
             return None
     return await loop.run_in_executor(_io_pool,_sync)
 
@@ -346,7 +493,7 @@ async def _fetch_pdf_bytes(url: str, timeout: float, tls_verify: bool = True) ->
                 if 200 <= r.status_code < 400 and looks_like_pdf_bytes(data):
                     return data
     except Exception:
-        pass
+        logger.debug("httpx PDF fetch failed for %s", url, exc_info=True)
 
     loop = asyncio.get_running_loop()
 
@@ -363,6 +510,7 @@ async def _fetch_pdf_bytes(url: str, timeout: float, tls_verify: bool = True) ->
             if 200 <= r.status_code < 400 and len(data) <= MAX_PDF_BYTES and looks_like_pdf_bytes(data):
                 return data
         except Exception:
+            logger.debug("curl_cffi PDF fetch failed for %s", url, exc_info=True)
             return b""
         return b""
 
@@ -405,7 +553,7 @@ async def _fetch_race(url: str, timeout: float, tls_verify: bool = True) -> str 
                     pending = set()
                     break
             except Exception:
-                pass
+                logger.debug("Fetch race task failed for %s", url, exc_info=True)
     return result
 
 
@@ -431,6 +579,7 @@ async def _fetch_wayback(url: str, timeout: int = 30) -> str | None:
             cdx.raise_for_status()
             rows = cdx.json()
         except Exception:
+            logger.debug("Wayback CDX lookup failed for %s", url, exc_info=True)
             return None
         if not rows or len(rows) < 2:
             return None
@@ -445,6 +594,7 @@ async def _fetch_wayback(url: str, timeout: int = 30) -> str | None:
                 return None
             return resp.text
         except Exception:
+            logger.debug("Wayback snapshot fetch failed for %s", url, exc_info=True)
             return None
 
     return await loop.run_in_executor(_io_pool,_do)
@@ -480,6 +630,12 @@ class ReadPageService:
         url = url.strip()
 
         logger.info("read_page url=%r", url)
+
+        if is_stackexchange_question_url(url):
+            return await fetch_stackexchange_question(url, timeout=opts.timeout)
+
+        if _is_x_post(url):
+            return await _fetch_x_post(url, opts.timeout)
 
         if _is_skippable(url):
             if has_non_text_extension(url):
