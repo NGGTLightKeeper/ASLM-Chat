@@ -1643,6 +1643,65 @@ class RuntimeSettingsApiTests(TestCase):
         self.assertEqual(response.json()["error"], "Not supported")
         mock_build_payload.assert_called_once()
 
+    # Test inference info API returns a compact engine-independent payload.
+    @patch("Apps.UI.views._build_model_info_payload")
+    def test_inference_info_api_returns_unified_payload(self, mock_build_payload):
+        mock_build_payload.return_value = {
+            "context_length": 131072,
+            "defaults": {"num_ctx": 65536, "num_predict": 8192, "temperature": 0.7},
+            "supports_thinking": True,
+            "supports_think_toggle": True,
+            "supports_think_level": True,
+            "supports_vision": False,
+            "supports_tool_calling": True,
+            "supports_files": False,
+            "capabilities": ["tools", "thinking"],
+            "runtime_limits": {"output_token_limit": 32768},
+            "available_tool_servers": [{"id": "time_suite", "name": "Time Suite"}],
+        }
+
+        response = self.client.get(
+            reverse("inference_info_api"),
+            {"engine": "ollama-service", "model": "llama3"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["engine"], "ollama-service")
+        self.assertEqual(payload["engine_label"], "Ollama")
+        self.assertEqual(payload["model"], "llama3")
+        self.assertEqual(payload["context_window"], 65536)
+        self.assertEqual(payload["model_context_limit"], 131072)
+        self.assertEqual(payload["max_output_tokens"], 8192)
+        self.assertEqual(payload["output_token_limit"], 32768)
+        self.assertTrue(payload["capabilities"]["supports_tool_calling"])
+        self.assertEqual(payload["tool_servers"][0]["id"], "time_suite")
+        self.assertEqual(payload["source"]["model"], "request")
+        mock_build_payload.assert_called_once_with("ollama-service", "llama3")
+
+    # Test inference info can use the latest model selected through model info.
+    @patch("Apps.UI.views._build_model_info_payload")
+    def test_inference_info_api_uses_runtime_selected_model(self, mock_build_payload):
+        mock_build_payload.return_value = {
+            "context_length": 32768,
+            "defaults": {"max_completion_tokens": 2048},
+            "supports_tool_calling": False,
+        }
+
+        selected = self.client.get(reverse("model_info_api"), {"engine": "openai", "model": "gpt-test"})
+        self.assertEqual(selected.status_code, 200)
+
+        response = self.client.get(reverse("inference_info_api"), {"engine": "openai"})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["engine"], "openai")
+        self.assertEqual(payload["model"], "gpt-test")
+        self.assertEqual(payload["context_window"], 32768)
+        self.assertEqual(payload["max_output_tokens"], 2048)
+        self.assertEqual(payload["source"]["model"], "runtime_selection")
+
     # Test runtime settings payload does not expose API key.
     @patch("Apps.UI.views.settings.get_supported_engines", return_value=[])
     @patch("Apps.UI.views.settings.get_runtime_engine_settings", return_value=RUNTIME_SETTINGS_WITH_API_KEY)

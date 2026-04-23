@@ -25,6 +25,7 @@ urlpatterns = [
     # Model discovery APIs.
     path("api/models/", views.get_models_api, name="models_api"),
     path("api/model_info/", views.get_model_info_api, name="model_info_api"),
+    path("api/inference_info/", views.get_inference_info_api, name="inference_info_api"),
 
     # Tool discovery APIs.
     path("api/tools/", views.get_tools_api, name="tools_api"),

@@ -144,6 +144,31 @@ _metadata_cache_lock = threading.RLock()
 _model_info_cache: dict[tuple[str, str, str, str], tuple[float, dict[str, Any]]] = {}
 _model_list_cache: dict[tuple[str, str, str], tuple[float, list[str]]] = {}
 _tool_server_cache: dict[tuple[str, str, str, str], tuple[float, list[dict[str, Any]]]] = {}
+_active_model_lock = threading.RLock()
+_active_model_by_engine: dict[str, str] = {}
+
+CONTEXT_WINDOW_KEYS = (
+    "num_ctx",
+    "context_length",
+    "contextLength",
+    "context_window",
+    "contextWindow",
+    "max_context_length",
+    "maxContextLength",
+    "max_context_window",
+    "maxContextWindow",
+    "input_token_limit",
+    "inputTokenLimit",
+)
+OUTPUT_TOKEN_KEYS = (
+    "num_predict",
+    "maxTokens",
+    "max_tokens",
+    "max_completion_tokens",
+    "max_output_tokens",
+    "output_token_limit",
+    "outputTokenLimit",
+)
 
 
 # Return a stable runtime scope for model metadata caches.
@@ -179,6 +204,77 @@ def _clear_model_metadata_caches() -> None:
         _model_info_cache.clear()
         _model_list_cache.clear()
         _tool_server_cache.clear()
+
+
+# Remember the latest selected model for one engine.
+def _remember_active_model(engine: str, model_name: str) -> None:
+    """Store the latest selected model for this server process."""
+
+    normalized_engine = settings.normalize_engine_name(engine)
+    normalized_model = str(model_name or "").strip()
+    if not normalized_model:
+        return
+
+    with _active_model_lock:
+        _active_model_by_engine[normalized_engine] = normalized_model
+
+
+# Read the latest selected model for one engine.
+def _get_remembered_active_model(engine: str) -> str:
+    """Return the latest selected model for this server process."""
+
+    normalized_engine = settings.normalize_engine_name(engine)
+    with _active_model_lock:
+        return _active_model_by_engine.get(normalized_engine, "")
+
+
+# Convert one value into a positive integer when possible.
+def _coerce_positive_int(value: Any) -> int | None:
+    """Return a positive integer or ``None`` when the value is not numeric."""
+
+    if isinstance(value, bool) or value is None:
+        return None
+
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    return number if number > 0 else None
+
+
+# Read the first positive integer from a mapping.
+def _first_positive_int(mapping: dict[str, Any], keys: tuple[str, ...]) -> int | None:
+    """Return the first positive integer found under one of the given keys."""
+
+    if not isinstance(mapping, dict):
+        return None
+
+    for key in keys:
+        number = _coerce_positive_int(mapping.get(key))
+        if number is not None:
+            return number
+
+    return None
+
+
+# Resolve the model name represented by an inference-info request.
+def _resolve_inference_model(engine: str, requested_model: str | None = None) -> tuple[str, str]:
+    """Return the model name and where that selection came from."""
+
+    model_name = str(requested_model or "").strip()
+    if model_name:
+        return model_name, "request"
+
+    model_name = _get_remembered_active_model(engine)
+    if model_name:
+        return model_name, "runtime_selection"
+
+    models = _load_models_for_engine(engine)
+    if models:
+        return models[0], "model_list"
+
+    return "", "none"
 
 
 # Return cached model info when it is still fresh.
@@ -1387,6 +1483,87 @@ def _build_model_info_payload(
     return _set_cached_model_info(engine, model_name, payload)
 
 
+# Build a stable engine label for API payloads.
+def _get_engine_label(engine: str) -> str:
+    """Return a human-readable engine label."""
+
+    return getattr(settings, "ENGINE_LABELS", {}).get(engine, engine)
+
+
+# Normalize model metadata into a compact runtime-inference payload.
+def _build_inference_info_payload(
+    engine: str,
+    model_name: str,
+    model_info_payload: dict[str, Any],
+    model_source: str,
+) -> dict[str, Any]:
+    """Return unified runtime inference metadata independent of engine."""
+
+    defaults = model_info_payload.get("defaults", {})
+    if not isinstance(defaults, dict):
+        defaults = {}
+
+    runtime_limits = model_info_payload.get("runtime_limits", {})
+    if not isinstance(runtime_limits, dict):
+        runtime_limits = {}
+
+    model_context_limit = _coerce_positive_int(model_info_payload.get("context_length"))
+    current_context_window = _first_positive_int(defaults, CONTEXT_WINDOW_KEYS) or model_context_limit
+    current_output_tokens = _first_positive_int(defaults, OUTPUT_TOKEN_KEYS)
+    output_token_limit = (
+        _first_positive_int(runtime_limits, OUTPUT_TOKEN_KEYS)
+        or _coerce_positive_int(model_info_payload.get("output_token_limit"))
+    )
+
+    available_tool_servers = model_info_payload.get("available_tool_servers", [])
+    if not isinstance(available_tool_servers, list):
+        available_tool_servers = []
+
+    capabilities = model_info_payload.get("capabilities", [])
+    if not isinstance(capabilities, list):
+        capabilities = []
+
+    supported_parameters = model_info_payload.get("supported_parameters", [])
+    if not isinstance(supported_parameters, list):
+        supported_parameters = []
+
+    return {
+        "ok": True,
+        "engine": engine,
+        "engine_label": _get_engine_label(engine),
+        "model": model_name,
+        "model_name": model_name,
+        "context_window": current_context_window,
+        "model_context_limit": model_context_limit,
+        "max_output_tokens": current_output_tokens,
+        "output_token_limit": output_token_limit,
+        "limits": {
+            "context_window": current_context_window,
+            "model_context_limit": model_context_limit,
+            "max_output_tokens": current_output_tokens,
+            "output_token_limit": output_token_limit,
+        },
+        "capabilities": {
+            "items": capabilities,
+            "supports_thinking": bool(model_info_payload.get("supports_thinking", False)),
+            "supports_think_toggle": bool(
+                model_info_payload.get("supports_think_toggle", model_info_payload.get("supports_thinking", False))
+            ),
+            "supports_think_level": bool(model_info_payload.get("supports_think_level", False)),
+            "supports_vision": bool(model_info_payload.get("supports_vision", False)),
+            "supports_tool_calling": bool(model_info_payload.get("supports_tool_calling", False)),
+            "supports_files": bool(model_info_payload.get("supports_files", False)),
+        },
+        "generation_defaults": defaults,
+        "supported_parameters": supported_parameters,
+        "runtime_limits": runtime_limits,
+        "tool_servers": available_tool_servers,
+        "source": {
+            "model": model_source,
+        },
+    }
+
+
 # Read JSON body
 def _read_json_request_body(request) -> dict[str, Any]:
     """Parse a JSON request body and return a dictionary."""
@@ -1808,6 +1985,7 @@ def chat_api(request):
         if not user_message and not attachments:
             return JsonResponse({"error": "Missing message or attachments"}, status=400)
 
+        _remember_active_model(engine, model_name)
         selected_tool_servers = _resolve_tool_servers(engine, model_name, tool_server_ids)
         if engine in {"lms", "openai", "google-genai"} or (settings.is_ollama_engine(engine) and selected_tool_servers):
             model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
@@ -2101,6 +2279,7 @@ def get_model_info_api(request):
 
     try:
         payload = _build_model_info_payload(engine, model_name)
+        _remember_active_model(engine, model_name)
         _print_runtime_event(
             "Model info loaded: "
             f"engine={engine}, "
@@ -2122,6 +2301,82 @@ def get_model_info_api(request):
             logger.exception("Error getting model info for %s on engine %s", model_name, engine)
         _print_runtime_event(f"Model info failed: engine={engine}, model={model_name}, error={formatted_error}")
         return JsonResponse({"error": formatted_error}, status=500)
+
+
+# Return unified runtime inference metadata for the active engine/model.
+def get_inference_info_api(request):
+    """Return active inference engine, model, context and output limits."""
+
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    engine = _get_active_engine(request.GET.get("engine"))
+    model_name, model_source = _resolve_inference_model(engine, request.GET.get("model"))
+    if not model_name:
+        return JsonResponse(
+            {
+                "ok": False,
+                "engine": engine,
+                "engine_label": _get_engine_label(engine),
+                "model": "",
+                "model_name": "",
+                "context_window": None,
+                "model_context_limit": None,
+                "max_output_tokens": None,
+                "output_token_limit": None,
+                "limits": {
+                    "context_window": None,
+                    "model_context_limit": None,
+                    "max_output_tokens": None,
+                    "output_token_limit": None,
+                },
+                "capabilities": {
+                    "items": [],
+                    "supports_thinking": False,
+                    "supports_think_toggle": False,
+                    "supports_think_level": False,
+                    "supports_vision": False,
+                    "supports_tool_calling": False,
+                    "supports_files": False,
+                },
+                "generation_defaults": {},
+                "supported_parameters": [],
+                "runtime_limits": {},
+                "tool_servers": [],
+                "source": {"model": model_source},
+                "error": "No active model is available for the selected engine.",
+            },
+            status=404,
+        )
+
+    started_at = time.perf_counter()
+
+    try:
+        model_info_payload = _build_model_info_payload(engine, model_name)
+        if model_source == "request":
+            _remember_active_model(engine, model_name)
+        payload = _build_inference_info_payload(engine, model_name, model_info_payload, model_source)
+        _print_runtime_event(
+            "Inference info loaded: "
+            f"engine={engine}, "
+            f"model={model_name}, "
+            f"context={payload.get('context_window')}, "
+            f"output={payload.get('max_output_tokens')}, "
+            f"took={(time.perf_counter() - started_at):.2f}s"
+        )
+        return JsonResponse(payload)
+    except NotImplementedError as exc:
+        logger.info("Inference info is not implemented for engine %s: %s", engine, exc)
+        _print_runtime_event(f"Inference info not supported: engine={engine}, model={model_name}")
+        return JsonResponse({"ok": False, "engine": engine, "model": model_name, "error": str(exc)}, status=501)
+    except Exception as exc:
+        formatted_error = _format_runtime_error(engine, exc)
+        if _is_expected_runtime_error(exc):
+            logger.warning("Error getting inference info for %s on engine %s: %s", model_name, engine, formatted_error)
+        else:
+            logger.exception("Error getting inference info for %s on engine %s", model_name, engine)
+        _print_runtime_event(f"Inference info failed: engine={engine}, model={model_name}, error={formatted_error}")
+        return JsonResponse({"ok": False, "engine": engine, "model": model_name, "error": formatted_error}, status=500)
 
 
 # Return the model list for the selected engine.
