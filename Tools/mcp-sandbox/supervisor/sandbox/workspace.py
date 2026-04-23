@@ -167,10 +167,9 @@ def validate_model_path(rel_path: str, kind: str = "path") -> None:
     if "\x00" in raw:
         raise ValueError(f"{kind} must not contain null bytes.")
 
-    drive, _tail = os.path.splitdrive(raw)
-
-    # Windows-style drive paths are never valid regardless of context.
-    if drive:
+    # os.path.splitdrive() only detects drive letters on Windows; inside the
+    # Linux container it always returns ("", ...).  Use a portable regex instead.
+    if re.match(r'^[a-zA-Z]:[/\\]', raw):
         raise ValueError(
             f"{kind} must not be a Windows path. Got: '{raw}'."
         )

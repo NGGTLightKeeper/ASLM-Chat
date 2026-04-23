@@ -54,6 +54,16 @@ logger = logging.getLogger(__name__)
 THINK_PARAM_NAMES = {"think", "thinking", "reasoning"}
 THINK_LEVEL_PARAM_NAMES = {"think_level", "thinking_level", "reasoning_effort"}
 TOOL_CAPABILITY_NAMES = {"tools", "tool", "tool-calling", "tool_calling"}
+OLLAMA_TOOL_TEMPLATE_MARKERS = (
+    ".Tools",
+    ".ToolCalls",
+    "tool_calls",
+    "tool_call_id",
+    "<tool_call",
+    "[TOOL_CALLS]",
+    "available_tools",
+    "function_call",
+)
 TEXT_ATTACHMENT_EXTENSIONS = {
     ".adoc", ".ahk", ".asm", ".asciidoc", ".bash", ".bat", ".bib", ".c", ".cc", ".cfg",
     ".clj", ".cljc", ".cljs", ".cmd", ".cmake", ".conf", ".config", ".cpp", ".cs",
@@ -837,7 +847,11 @@ def _load_models_for_engine(engine: str) -> list[str]:
         if model_name:
             model_names.append(model_name)
 
-    return _set_cached_model_list(engine, sorted(set(model_names), key=str.casefold))
+    sorted_model_names = sorted(set(model_names), key=str.casefold)
+    if not sorted_model_names and settings.is_ollama_engine(engine):
+        return []
+
+    return _set_cached_model_list(engine, sorted_model_names)
 
 
 # Build shared template context
@@ -1096,6 +1110,60 @@ def _serialize_tool_result_marker(alias: str, content: str) -> str:
 
 
 # Extract Ollama model info
+def _normalize_capability_tokens(capabilities: Any) -> set[str]:
+    """Return normalized capability names from loosely shaped runtime metadata."""
+
+    if capabilities is None:
+        return set()
+
+    raw_items: list[Any]
+    if isinstance(capabilities, dict):
+        raw_items = [key for key, value in capabilities.items() if bool(value)]
+    elif isinstance(capabilities, str):
+        raw_items = re.split(r"[\s,;|]+", capabilities)
+    elif isinstance(capabilities, (list, tuple, set)):
+        raw_items = list(capabilities)
+    else:
+        raw_items = [capabilities]
+
+    tokens: set[str] = set()
+    for item in raw_items:
+        value = str(item or "").strip().lower()
+        if not value:
+            continue
+        tokens.add(value)
+        if "." in value:
+            tokens.add(value.rsplit(".", 1)[-1])
+    return tokens
+
+
+# Return whether one Ollama chat template can serialize tools.
+def _ollama_template_supports_tool_calling(template: str) -> bool:
+    """Return whether an Ollama template contains tool-call placeholders."""
+
+    normalized_template = str(template or "")
+    if not normalized_template:
+        return False
+
+    folded_template = normalized_template.lower()
+    return any(marker.lower() in folded_template for marker in OLLAMA_TOOL_TEMPLATE_MARKERS)
+
+
+# Return whether Ollama metadata is strong enough to expose local tools.
+def _ollama_metadata_supports_tool_calling(
+    capabilities: Any,
+    template: str,
+) -> bool:
+    """Return whether Ollama model metadata indicates real tool-call support."""
+
+    if capabilities is not None:
+        return bool(_normalize_capability_tokens(capabilities) & TOOL_CAPABILITY_NAMES)
+
+    # Older/custom Ollama responses may not expose `capabilities`. In that
+    # case, fall back to whether the model template can serialize tool calls.
+    return _ollama_template_supports_tool_calling(template)
+
+
 def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
     """Parse Ollama-specific model metadata into a frontend-friendly payload."""
 
@@ -1105,15 +1173,15 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
 
     # Read raw metadata from dict-like or SDK responses.
     if isinstance(settings_data, dict):
-        modelinfo = settings_data.get("modelinfo", {}) or {}
+        modelinfo = settings_data.get("modelinfo", settings_data.get("model_info", {})) or {}
         parameters_str = settings_data.get("parameters", "") or ""
         template_str = settings_data.get("template", "") or ""
-        capabilities = settings_data.get("capabilities", []) or []
+        capabilities = settings_data.get("capabilities")
     else:
         modelinfo = getattr(settings_data, "modelinfo", {}) or {}
         parameters_str = getattr(settings_data, "parameters", "") or ""
         template_str = getattr(settings_data, "template", "") or ""
-        capabilities = getattr(settings_data, "capabilities", []) or []
+        capabilities = getattr(settings_data, "capabilities", None)
 
     # Extract numeric limits from Ollama's flat metadata keys.
     for key, value in modelinfo.items():
@@ -1156,7 +1224,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
 
     think_param_name = "think"
     think_level_param_name = "think_level"
-    normalized_capabilities = {str(item).strip().lower() for item in capabilities}
+    normalized_capabilities = _normalize_capability_tokens(capabilities)
 
     # Detect supported features from the template, defaults, and capabilities.
     supports_thinking = any(
@@ -1183,7 +1251,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
             break
 
     supports_vision = "vision" in normalized_capabilities
-    supports_tool_calling = bool(normalized_capabilities & TOOL_CAPABILITY_NAMES)
+    supports_tool_calling = _ollama_metadata_supports_tool_calling(capabilities, template_str)
 
     # Runtime limits are used by the frontend controls.
     cpu_threads = max(int(os.cpu_count() or 1), 1)
@@ -1358,7 +1426,7 @@ def _validate_tool_server_support(
 ) -> None:
     """Raise when tools are requested for a model that should not call tools."""
 
-    if not tool_server_ids or engine not in {"lms", "openai", "google-genai"}:
+    if not tool_server_ids:
         return
 
     payload = payload or _build_model_info_payload(engine, model_name, allow_fallback=True)
@@ -1470,7 +1538,7 @@ def _build_chat_history(
         chat.messages
         .exclude(id=user_message_record.id)
         .prefetch_related("attachments", "images")
-        .order_by("-created_at")[:LLM_HISTORY_MAX_MESSAGES]
+        .order_by("-created_at", "-id")[:LLM_HISTORY_MAX_MESSAGES]
     )
     for historical_message in history_qs:
         entries = _build_llm_history_entries(historical_message)
@@ -1740,12 +1808,17 @@ def chat_api(request):
         if not user_message and not attachments:
             return JsonResponse({"error": "Missing message or attachments"}, status=400)
 
-        if engine in {"lms", "openai", "google-genai"}:
+        selected_tool_servers = _resolve_tool_servers(engine, model_name, tool_server_ids)
+        if engine in {"lms", "openai", "google-genai"} or (settings.is_ollama_engine(engine) and selected_tool_servers):
             model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
         else:
             model_info_payload = _build_fallback_model_info_payload(engine, model_name)
-        _validate_tool_server_support(engine, model_name, tool_server_ids, payload=model_info_payload)
-        selected_tool_servers = _resolve_tool_servers(engine, model_name, tool_server_ids)
+        _validate_tool_server_support(
+            engine,
+            model_name,
+            [server["id"] for server in selected_tool_servers],
+            payload=model_info_payload,
+        )
 
         # Reuse the existing chat when provided, otherwise create a new one.
         try:
@@ -2401,7 +2474,7 @@ def runtime_settings_api(request):
             continue
 
         if raw_key == "llm-engine":
-            value = settings.normalize_engine_name(raw_value)
+            value = settings.resolve_enabled_engine(raw_value)
             next_engine = value
         else:
             value = str(raw_value or "").strip()

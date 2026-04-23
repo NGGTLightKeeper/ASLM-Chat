@@ -8,7 +8,7 @@ It replaces the scattered search logic from legacy src/engine.py.
 
 Architecture
 ------------
-  1. Run DDGS search (with YaCy as optional parallel provider)
+  1. Run DDGS search (optionally supplemented by hosted API engines)
   2. Deduplicate results by normalized URL, domain+title, snippet similarity
   3. Fetch previews for top candidates (httpx → curl_cffi, cache-first)
   4. Soft-rerank by semantic + lexical + trust signal
@@ -37,7 +37,6 @@ from urllib.parse import urlparse
 from core.models.search import SearchResult
 from core.config import load_search_config
 from core.fetch.ddgs_client import async_ddgs_search
-from core.fetch.yacy_client import async_yacy_search, is_yacy_available
 from core.fetch.hosted_clients import async_hosted_search, available_hosted_engines
 from core.extract.content_processor import (
     build_preview_payload, get_preview_settings, warm_preview_models, PreviewPayload,
@@ -46,6 +45,7 @@ from core.extract.page_normalizer import normalize_page
 from core.registry.trust_registry import get_trust_registry
 from core.registry.domain_reputation import get_reputation_store, domain_from_url
 from core.fetch.antibot import is_antibot
+from core.fetch.stackexchange_fetcher import fetch_stackexchange_question, is_stackexchange_question_url
 from core.fetch.url_utils import normalize_url
 from core.fetch.thread_pool import io_pool as _io_pool
 from core.cache.source_cache import SourceCache
@@ -608,7 +608,7 @@ _MEDICAL_HINTS = frozenset({
     "อาการ", "โรค", "การรักษา", "ยา", "สุขภาพ",
 })
 
-_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 _TEXT_SIG_RE = re.compile(r"[\W_]+", re.UNICODE)
 
 # Triage: title patterns that indicate a non-content page (skip fetch)
@@ -787,12 +787,14 @@ def _triage_results(results: list[SearchResult], query: str) -> list[TriageResul
     """
     try:
         trust_reg = get_trust_registry()
-    except Exception:
+    except Exception as _e:
+        logger.debug("trust_registry unavailable: %s", _e)
         trust_reg = None
 
     try:
         rep_store = get_reputation_store()
-    except Exception:
+    except Exception as _e:
+        logger.debug("reputation_store unavailable: %s", _e)
         rep_store = None
 
     total = len(results)
@@ -828,8 +830,8 @@ def _triage_results(results: list[SearchResult], query: str) -> list[TriageResul
                 if trust_reg.is_blacklisted(url):
                     out.append(TriageResult(skip=True, fetch_policy="cheap", score=0.0))
                     continue
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug("trust_reg.is_blacklisted failed for %s: %s", url, _e)
 
         # Dynamically blacklisted domain (reputation tracker)
         if rep_store is not None:
@@ -837,8 +839,8 @@ def _triage_results(results: list[SearchResult], query: str) -> list[TriageResul
                 if rep_store.is_auto_blacklisted(domain_from_url(url)):
                     out.append(TriageResult(skip=True, fetch_policy="cheap", score=0.0))
                     continue
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug("rep_store.is_auto_blacklisted failed for %s: %s", url, _e)
 
         # --- Soft score (0–1) ---
         pos_score = 1.0 - (idx / max(total - 1, 1))
@@ -1044,10 +1046,10 @@ async def _prefetch_urls_background(urls: list[str], req_id: str = "-") -> None:
                                 if clean_text:
                                     _cache.cache_page(url, "", clean_text=clean_text)
                                     _trace(req_id, "prefetch.cached", url=url)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    except Exception as _e:
+                        logger.debug("prefetch fetch failed for %s: %s", url, _e)
+        except Exception as _e:
+            logger.debug("prefetch batch error: %s", _e)
 
 
 
@@ -1096,8 +1098,8 @@ async def _fetch_pdf_preview(
                     data = b"".join(chunks)
                     if 200 <= r.status_code < 400 and looks_like_pdf_bytes(data):
                         return data
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("pdf httpx fetch failed for %s: %s", url, _e)
         # curl_cffi fallback
         try:
             from curl_cffi import requests as cffi_req
@@ -1108,8 +1110,8 @@ async def _fetch_pdf_preview(
             data = bytes(r.content or b"")
             if 200 <= r.status_code < 400 and len(data) <= _PDF_PREVIEW_MAX_BYTES and looks_like_pdf_bytes(data):
                 return data
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("pdf curl_cffi fetch failed for %s: %s", url, _e)
         return b""
 
     t0 = time.perf_counter()
@@ -1129,7 +1131,8 @@ async def _fetch_pdf_preview(
             loop.run_in_executor(_io_pool,_extract_and_densify),
             timeout=15.0,
         )
-    except Exception:
+    except Exception as _e:
+        logger.debug("pdf extract failed for %s: %s", url, _e)
         text = ""
 
     elapsed = round(time.perf_counter() - t0, 3)
@@ -1165,6 +1168,25 @@ async def _fetch_preview_one(
         # PDF fast-path: skip HTML fetch entirely, download bytes and densify
         if looks_like_pdf_url(url):
             return await _fetch_pdf_preview(url, query, loop, req_id=req_id)
+
+        if is_stackexchange_question_url(url):
+            text = await fetch_stackexchange_question(url, timeout=fetch_timeout)
+            if text and not text.startswith("Error:"):
+                _cache.cache_page(url, result.title or "", clean_text=text)
+                _trace(
+                    req_id,
+                    "preview_fetch.done",
+                    url=url,
+                    policy="stackexchange_api",
+                    elapsed=round(time.perf_counter() - t0, 3),
+                    chars=len(text),
+                    quality=0.85,
+                    semantic=0.0,
+                    strategy="stackexchange_api",
+                )
+                return PreviewPayload(text=text, quality_score=0.85, strategy_used="stackexchange_api")
+            _trace(req_id, "preview_fetch.empty", url=url, policy="stackexchange_api", elapsed=round(time.perf_counter() - t0, 3))
+            return PreviewPayload()
 
         async def _aiohttp() -> str | None:
             try:
@@ -1215,8 +1237,8 @@ async def _fetch_preview_one(
                                     p.cancel()
                                 pending = set()
                                 break
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            logger.debug("preview race task failed for %s: %s", url, _e)
 
         if not raw_html:
             _trace(req_id, "preview_fetch.empty", url=url, policy=policy, elapsed=round(time.perf_counter() - t0, 3))
@@ -1230,7 +1252,8 @@ async def _fetch_preview_one(
                 ),
                 timeout=fetch_timeout,
             )
-        except Exception:
+        except Exception as exc:
+            logger.debug("preview payload build failed for %s: %s", url, exc)
             _trace(req_id, "preview_fetch.payload_error", url=url, policy=policy, elapsed=round(time.perf_counter() - t0, 3))
             return PreviewPayload()
 
@@ -1346,7 +1369,8 @@ async def _fetch_previews(
                     idx = task_to_idx[task]
                     try:
                         payload = task.result()
-                    except Exception:
+                    except Exception as _e:
+                        logger.debug("preview task failed for idx=%d: %s", idx, _e)
                         payload = PreviewPayload()
                     payloads[idx] = payload
                     if payload.text:
@@ -1371,7 +1395,8 @@ async def _fetch_previews(
             for t in pending:
                 t.cancel()
 
-    except Exception:
+    except Exception as exc:
+        logger.debug("preview batch failed: %s", exc, exc_info=True)
         _trace(req_id, "preview_batch.error", elapsed=round(time.perf_counter() - t0, 3))
         return [PreviewPayload() for _ in results]
     _trace(
@@ -1388,38 +1413,6 @@ async def _fetch_previews(
 # Merge providers
 # ---------------------------------------------------------------------------
 
-def _proportional_merge(yacy: list, ddgs: list, cap: int) -> list:
-    yn, dn = len(yacy), len(ddgs)
-    if yn == 0:
-        raw = ddgs[:cap * 2]
-    elif dn == 0:
-        raw = yacy[:cap * 2]
-    else:
-        yr_take = max(1, round(cap * yn / (yn + dn)))
-        dr_take = cap - yr_take
-        if yr_take > yn:
-            yr_take = yn
-            dr_take = min(cap - yr_take, dn)
-        elif dr_take > dn:
-            dr_take = dn
-            yr_take = min(cap - dr_take, yn)
-        # +4 overshoot buffer: zip() stops at the shorter side, so we grab
-        # extra items to ensure we have enough pairs even if one provider
-        # returns fewer results than yr_take/dr_take. The dedup loop trims to cap.
-        yr_s, dr_s = yacy[:yr_take + 4], ddgs[:dr_take + 4]
-        raw = [x for pair in zip(yr_s, dr_s) for x in pair]
-        raw += yr_s[len(dr_s):] + dr_s[len(yr_s):]
-
-    seen: set[str] = set()
-    out: list = []
-    for r in raw:
-        nu = normalize_url(getattr(r, "url", ""))
-        if nu and nu not in seen:
-            seen.add(nu)
-            out.append(r)
-        if len(out) >= cap:
-            break
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1489,8 +1482,6 @@ def _badge_type(url: str) -> str:
 
 def _badge_engine(engine: str) -> str:
     e = engine.lower()
-    if "yacy" in e:
-        return "YaCy"
     if "yandex" in e:
         return "Yandex"
     # hosted:tavily / hosted:brave / hosted:bing / hosted:serpapi
@@ -1523,6 +1514,7 @@ def _format_results(
     query_type: str = "general",
     query_types: list[str] | None = None,
     rep_store=None,
+    max_results_override: int | None = None,
 ) -> str:
     """Build the final text output for the MCP tool.
 
@@ -1534,7 +1526,7 @@ def _format_results(
     total_char_budget — if > 0, stop adding result blocks once the cumulative
     character count would exceed it (prevents flooding the model context).
     """
-    max_results = output_profile.max_results
+    max_results = max_results_override if max_results_override is not None else output_profile.max_results
     _qtypes = query_types if query_types else [query_type]
     scored: list[tuple[float, int, SearchResult, PreviewPayload]] = []
     for idx, (result, payload) in enumerate(zip(results, payloads)):
@@ -1557,8 +1549,8 @@ def _format_results(
                 for qt in _qtypes:
                     try:
                         rep_store.record(domain, qt, signal)
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        logger.debug("rep_store.record failed domain=%s qt=%s: %s", domain, qt, _e)
 
     scored.sort(key=lambda x: (-x[0], x[1]))
 
@@ -1658,7 +1650,6 @@ def _format_results(
 @dataclass
 class WebSearchOptions:
     max_results: int = 10
-    use_yacy: bool = True
     fetch_previews: bool = True
     concurrency: int = 4
     fetch_timeout: float = 6.0
@@ -1667,7 +1658,7 @@ class WebSearchOptions:
 
 
 class WebSearchService:
-    """Orchestrate fast web search across DDGS and optionally YaCy."""
+    """Orchestrate fast web search across DDGS and hosted search APIs."""
 
     def __init__(self, options: Optional[WebSearchOptions] = None) -> None:
         cfg = load_search_config()
@@ -1677,6 +1668,80 @@ class WebSearchService:
             fetch_timeout=cfg.search.preview_fetch_timeout,
             total_timeout=cfg.search.preview_total_timeout,
         )
+
+    async def _run_search_pipeline(
+        self,
+        query: str,
+        lang: str,
+        query_types: list[str],
+        query_type: str,
+        out_profile: _OutputProfile,
+        opts: WebSearchOptions,
+        req_id: str = "-",
+    ) -> tuple[list[SearchResult], list]:
+        """Shared provider fetch → merge → dedup → triage. Returns (deduped, triage)."""
+        pool_multiplier = max(1, int(self._cfg.search.candidate_pool_multiplier))
+        buffer = max(0, int(self._cfg.search.result_buffer_size))
+        fetch_max = out_profile.max_results + buffer
+
+        hosted_engines = available_hosted_engines()
+        n_hosted = len(hosted_engines)
+        ddgs_multiplier = max(1, pool_multiplier - n_hosted)
+        ddgs_hedge = max(1, 2 - n_hosted)
+        hosted_max = fetch_max
+
+        _trace(req_id, "providers.config",
+               n_hosted=n_hosted, ddgs_multiplier=ddgs_multiplier,
+               ddgs_hedge=ddgs_hedge, hosted_engines=hosted_engines)
+
+        ddgs_task = asyncio.create_task(
+            async_ddgs_search(
+                query,
+                max_results=fetch_max * ddgs_multiplier,
+                query_type=query_type,
+                query_types=query_types,
+                lang=lang,
+                timelimit=opts.timelimit,
+                hedge_count=ddgs_hedge,
+            )
+        )
+        hosted_tasks: dict[str, asyncio.Task] = {
+            engine: asyncio.create_task(
+                async_hosted_search(
+                    engine, query, max_results=hosted_max,
+                    timelimit=opts.timelimit, query_type=query_type,
+                )
+            )
+            for engine in hosted_engines
+        }
+
+        provider_t0 = time.perf_counter()
+        ddgs_results: list[SearchResult] = await ddgs_task
+        hosted_results: dict[str, list[SearchResult]] = {}
+        for engine, task in hosted_tasks.items():
+            try:
+                hosted_results[engine] = await task
+            except Exception as exc:
+                logger.warning("[hosted:%s] task raised: %s", engine, exc)
+                hosted_results[engine] = []
+
+        _trace(req_id, "providers.done",
+               elapsed=round(time.perf_counter() - provider_t0, 3),
+               ddgs=len(ddgs_results),
+               **{f"hosted_{k}": len(v) for k, v in hosted_results.items()})
+
+        merge_t0 = time.perf_counter()
+        merged = ddgs_results[:fetch_max * pool_multiplier]
+        for h_results in hosted_results.values():
+            merged = merged + h_results
+        merged = merged[: fetch_max * pool_multiplier * 2]
+        deduped = _dedup_results(merged)
+        _trace(req_id, "merge.done",
+               elapsed=round(time.perf_counter() - merge_t0, 3),
+               merged=len(merged), deduped=len(deduped))
+
+        triage = _triage_results(deduped, query) if deduped else []
+        return deduped, triage
 
     async def search(self, query: str, deadline: float | None = None) -> str:
         """Run web search and return formatted text result."""
@@ -1720,139 +1785,22 @@ class WebSearchService:
             fetch_previews=opts.fetch_previews,
         )
 
-        # fetch_max = how many results to request from search engines.
-        # Based on the profile's output count so providers get a proportional ask.
-        buffer = max(0, int(self._cfg.search.result_buffer_size))
-        fetch_max = out_profile.max_results + buffer
-
-        # -- Load balancing across providers --
-        #
-        # When hosted API engines supplement DDGS, over-fetching from every
-        # provider wastes money and rate-limit quota.  Strategy:
-        #
-        #   n_hosted = 0  → DDGS gets full multiplier (×pool_multiplier), 2-engine hedge
-        #   n_hosted = 1  → DDGS multiplier drops by 1, hedge reduced to 1 engine
-        #   n_hosted ≥ 2  → DDGS gets bare fetch_max (×1), single engine, no tertiary
-        #
-        # Hosted engines each get fetch_max (×1) — they already provide
-        # good quality results without over-fetching.
-        hosted_engines = available_hosted_engines()
-        n_hosted = len(hosted_engines)
-
-        ddgs_multiplier = max(1, pool_multiplier - n_hosted)
-        ddgs_hedge      = max(1, 2 - n_hosted)          # 2→1→1 as hosted grows
-        hosted_max      = fetch_max                      # no multiplier for paid APIs
-
-        _trace(
-            req_id,
-            "providers.config",
-            n_hosted=n_hosted,
-            ddgs_multiplier=ddgs_multiplier,
-            ddgs_hedge=ddgs_hedge,
-            hosted_engines=hosted_engines,
-        )
-
-        # -- Provider calls --
-        ddgs_task = asyncio.create_task(
-            async_ddgs_search(
-                query,
-                max_results=fetch_max * ddgs_multiplier,
-                query_type=query_type,
-                query_types=query_types,
-                lang=lang,
-                timelimit=opts.timelimit,
-                hedge_count=ddgs_hedge,
-            )
-        )
-
-        yacy_task = None
-        if opts.use_yacy and is_yacy_available(timeout=1):
-            yacy_task = asyncio.create_task(
-                async_yacy_search(query, max_results=fetch_max * pool_multiplier)
-            )
-
-        # -- Hosted API providers (Tavily / Brave / Bing / SerpAPI) --
-        # Each gets fetch_max results — no multiplier needed since DDGS already
-        # covers the candidate pool and we don't want to burn API credits.
-        hosted_tasks: dict[str, asyncio.Task] = {
-            engine: asyncio.create_task(
-                async_hosted_search(
-                    engine,
-                    query,
-                    max_results=hosted_max,
-                    timelimit=opts.timelimit,
-                    query_type=query_type,
-                )
-            )
-            for engine in hosted_engines
-        }
-
-        provider_t0 = time.perf_counter()
-        ddgs_results: list[SearchResult] = await ddgs_task
-        yacy_results: list[SearchResult] = await yacy_task if yacy_task else []
-        hosted_results: dict[str, list[SearchResult]] = {}
-        for engine, task in hosted_tasks.items():
-            try:
-                hosted_results[engine] = await task
-            except Exception as exc:
-                logger.warning("[hosted:%s] task raised: %s", engine, exc)
-                hosted_results[engine] = []
-
-        _trace(
-            req_id,
-            "providers.done",
-            elapsed=round(time.perf_counter() - provider_t0, 3),
-            ddgs=len(ddgs_results),
-            yacy=len(yacy_results),
-            yacy_used=bool(yacy_task),
-            **{f"hosted_{k}": len(v) for k, v in hosted_results.items()},
-        )
-
-        # -- Merge + dedup --
-        # Start with YaCy + DDGS proportional merge, then append hosted results.
-        # Hosted results are appended after DDGS so DDGS rank signal is preserved;
-        # dedup will remove duplicates across all sources.
-        merge_t0 = time.perf_counter()
-        merged = _proportional_merge(
-            yacy_results,
-            ddgs_results,
-            cap=fetch_max * pool_multiplier,
-        )
-        for h_results in hosted_results.values():
-            merged = merged + h_results
-        merged = merged[: fetch_max * pool_multiplier * 2]  # hard cap before dedup
-        deduped = _dedup_results(merged)
-        _trace(
-            req_id,
-            "merge.done",
-            elapsed=round(time.perf_counter() - merge_t0, 3),
-            merged=len(merged),
-            deduped=len(deduped),
+        deduped, triage = await self._run_search_pipeline(
+            query, lang, query_types, query_type, out_profile, opts, req_id
         )
 
         if not deduped:
             _trace(req_id, "search.empty", elapsed=round(time.perf_counter() - overall_t0, 3))
             return f"No results found for: {query}"
 
-        # -- Snippet triage --
-        # Fast per-result score (no network). Decides skip/policy per result
-        # and populates trust_tier as a side effect.
-        triage = _triage_results(deduped, query)
         skipped_count = sum(1 for t in triage if t.skip)
         race_count = sum(1 for t in triage if not t.skip and t.fetch_policy == "race")
-        _trace(
-            req_id,
-            "triage.done",
-            skipped=skipped_count,
-            race=race_count,
-            cheap=len(triage) - skipped_count - race_count,
-            total=len(triage),
-        )
+        _trace(req_id, "triage.done",
+               skipped=skipped_count, race=race_count,
+               cheap=len(triage) - skipped_count - race_count, total=len(triage))
         if skipped_count or race_count:
-            logger.debug(
-                "triage: skipped=%d race=%d cheap=%d (total=%d)",
-                skipped_count, race_count, len(triage) - skipped_count - race_count, len(triage),
-            )
+            logger.debug("triage: skipped=%d race=%d cheap=%d (total=%d)",
+                         skipped_count, race_count, len(triage) - skipped_count - race_count, len(triage))
 
         # Build ordered fetch candidate list: non-skipped, up to preview_fetch_limit
         to_fetch: list[SearchResult] = []
@@ -1912,7 +1860,8 @@ class WebSearchService:
         format_t0 = time.perf_counter()
         try:
             _rep_store = get_reputation_store()
-        except Exception:
+        except Exception as _e:
+            logger.debug("reputation_store unavailable: %s", _e)
             _rep_store = None
 
         result_text = _format_results(
@@ -1925,6 +1874,7 @@ class WebSearchService:
             query_type=query_type,
             query_types=query_types,
             rep_store=_rep_store,
+            max_results_override=min(out_profile.max_results, opts.max_results),
         )
         _trace(
             req_id,
@@ -1953,70 +1903,13 @@ class WebSearchService:
         query_types = infer_query_types(query)
         query_type = query_types[0]
         out_profile = _get_output_profile(query_types)
-        pool_multiplier = max(1, int(self._cfg.search.candidate_pool_multiplier))
-        buffer = max(0, int(self._cfg.search.result_buffer_size))
-        fetch_max = out_profile.max_results + buffer
 
-        hosted_engines = available_hosted_engines()
-        n_hosted = len(hosted_engines)
-        ddgs_multiplier = max(1, pool_multiplier - n_hosted)
-        ddgs_hedge = max(1, 2 - n_hosted)
-        hosted_max = fetch_max
-
-        ddgs_task = asyncio.create_task(
-            async_ddgs_search(
-                query,
-                max_results=fetch_max * ddgs_multiplier,
-                query_type=query_type,
-                query_types=query_types,
-                lang=lang,
-                timelimit=opts.timelimit,
-                hedge_count=ddgs_hedge,
-            )
+        deduped, triage = await self._run_search_pipeline(
+            query, lang, query_types, query_type, out_profile, opts
         )
-
-        yacy_task = None
-        if opts.use_yacy and is_yacy_available(timeout=1):
-            yacy_task = asyncio.create_task(
-                async_yacy_search(query, max_results=fetch_max * pool_multiplier)
-            )
-
-        hosted_tasks: dict[str, asyncio.Task] = {
-            engine: asyncio.create_task(
-                async_hosted_search(
-                    engine,
-                    query,
-                    max_results=hosted_max,
-                    timelimit=opts.timelimit,
-                    query_type=query_type,
-                )
-            )
-            for engine in hosted_engines
-        }
-
-        ddgs_results: list[SearchResult] = await ddgs_task
-        yacy_results: list[SearchResult] = await yacy_task if yacy_task else []
-        hosted_results: dict[str, list[SearchResult]] = {}
-        for engine, task in hosted_tasks.items():
-            try:
-                hosted_results[engine] = await task
-            except Exception as exc:
-                logger.warning("[hosted:%s] structured task raised: %s", engine, exc)
-                hosted_results[engine] = []
-
-        merged = _proportional_merge(
-            yacy_results,
-            ddgs_results,
-            cap=fetch_max * pool_multiplier,
-        )
-        for h_results in hosted_results.values():
-            merged = merged + h_results
-        merged = merged[: fetch_max * pool_multiplier * 2]
-        deduped = _dedup_results(merged)
         if not deduped:
             return []
 
-        triage = _triage_results(deduped, query)
         ranked: list[SearchResult] = []
         skipped: list[SearchResult] = []
         for result, tr in zip(deduped, triage):
@@ -2048,7 +1941,6 @@ _SEARCH_HARD_TIMEOUT: float = 20.0
 async def run_web_search(
     query: str,
     max_results: int = 10,
-    use_yacy: bool = True,
     fetch_previews: bool = True,
     timelimit: Optional[str] = None,
     time_range: Optional[str] = None,
@@ -2080,7 +1972,6 @@ async def run_web_search(
     resolved_timelimit = explicit_timelimit or auto_timelimit
     opts = WebSearchOptions(
         max_results=max_results,
-        use_yacy=use_yacy,
         fetch_previews=fetch_previews,
         timelimit=resolved_timelimit,
     )
@@ -2106,7 +1997,6 @@ async def run_web_search(
 async def run_web_search_structured(
     query: str,
     max_results: int = 10,
-    use_yacy: bool = True,
     timelimit: Optional[str] = None,
     hard_timeout: float = _SEARCH_HARD_TIMEOUT,
     time_range: Optional[str] = None,
@@ -2124,7 +2014,6 @@ async def run_web_search_structured(
     resolved_timelimit = explicit_timelimit or auto_timelimit
     opts = WebSearchOptions(
         max_results=max_results,
-        use_yacy=use_yacy,
         fetch_previews=False,
         timelimit=resolved_timelimit,
     )

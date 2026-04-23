@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import html
 import io
 import logging
 import random
@@ -16,8 +15,6 @@ from typing import Optional
 from urllib.parse import unquote, urlparse, urlunparse
 
 import httpx
-import requests
-from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 
 from .config import settings
 
@@ -130,9 +127,6 @@ class SearchClient:
         "quora.com",
         "pinterest.com",
     }
-    YACY_URL = "http://localhost:8090"
-    YACY_USER = "admin"
-    YACY_PASS = "admin123"
     SKIP_EXTS = (".pdf", ".mp4", ".mp3", ".avi", ".mov", ".zip", ".exe", ".dmg")
 
     def __init__(
@@ -238,70 +232,6 @@ class SearchClient:
         except Exception as exc:
             logger.warning("DDGS search failed: %s", exc)
             return []
-
-    async def _search_yacy(self, query: str, limit: int) -> list[SearchResult]:
-        """Query the local YaCy node and normalize the response."""
-
-        def _sync_search() -> list[SearchResult]:
-            params = {
-                "query": query,
-                "resource": "global",
-                "maximumRecords": limit,
-                "verify": "false",
-                "contentdom": "text",
-            }
-            auth = HTTPBasicAuth(self.YACY_USER, self.YACY_PASS)
-            digest = HTTPDigestAuth(self.YACY_USER, self.YACY_PASS)
-            try:
-                response = requests.get(f"{self.YACY_URL}/yacysearch.json", params=params, auth=auth, timeout=8)
-                if response.status_code == 401:
-                    response = requests.get(f"{self.YACY_URL}/yacysearch.json", params=params, auth=digest, timeout=8)
-                response.raise_for_status()
-                data = response.json()
-            except Exception:
-                return []
-
-            output: list[SearchResult] = []
-            for item in (data.get("channels") or [{}])[0].get("items", []):
-                link = item.get("link", "")
-                if not link:
-                    continue
-                output.append(
-                    SearchResult(
-                        title=html.unescape(item.get("title", "")),
-                        url=link,
-                        content=html.unescape(item.get("description", ""))[:500],
-                        engine="yacy_global",
-                    )
-                )
-            return output
-
-        return await asyncio.get_running_loop().run_in_executor(None, _sync_search)
-
-    def _merge_sources(self, yacy_results: list[SearchResult], ddgs_results: list[SearchResult], limit: int) -> list[SearchResult]:
-        """Blend YaCy and DDGS results proportionally into one shortlist."""
-
-        y_count = len(yacy_results)
-        d_count = len(ddgs_results)
-        if y_count == 0:
-            return ddgs_results[:limit]
-        if d_count == 0:
-            return yacy_results[:limit]
-        total = y_count + d_count
-        y_take = max(1, round(limit * y_count / total))
-        d_take = limit - y_take
-        if y_take > y_count:
-            y_take = y_count
-            d_take = min(limit - y_take, d_count)
-        elif d_take > d_count:
-            d_take = d_count
-            y_take = min(limit - d_take, y_count)
-        y_slice = yacy_results[:y_take]
-        d_slice = ddgs_results[:d_take]
-        merged = [item for pair in zip(y_slice, d_slice) for item in pair]
-        merged += y_slice[len(d_slice):] + d_slice[len(y_slice):]
-        return merged[:limit]
-
 
     # Read heuristics
     def _is_skippable(self, url: str) -> bool:
@@ -726,7 +656,7 @@ class SearchClient:
         language: Optional[str] = None,
         skip_cache: bool = False,
     ) -> list[SearchResult]:
-        """Run cached multi-source search and enrich the top results."""
+        """Run cached web search and enrich the top results."""
 
         limit = limit or settings.search_results_limit
         lang_code = language or settings.searxng_language
@@ -740,15 +670,12 @@ class SearchClient:
                 return entry.results[:limit]
             del self._cache[cache_key]
 
-        # Query both backends inside the shared concurrency budget.
+        # Query the search backend inside the shared concurrency budget.
         async with self._semaphore:
-            yacy_task = asyncio.create_task(self._search_yacy(query, limit))
-            ddgs_task = asyncio.create_task(self._search_ddgs(query, limit, lang))
-            yacy_results, ddgs_results = await asyncio.gather(yacy_task, ddgs_task)
+            results = await self._search_ddgs(query, limit, lang)
 
         # Normalize and enrich before storing the final shortlist.
-        merged = self._merge_sources(yacy_results, ddgs_results, limit)
-        deduped = self._sort_by_trust(self._deduplicate(merged))
+        deduped = self._sort_by_trust(self._deduplicate(results))
         enriched = await self._enrich_with_light_reads(deduped[:limit])
         self._cache[cache_key] = CacheEntry(enriched, self.cache_ttl)
         return enriched[:limit]

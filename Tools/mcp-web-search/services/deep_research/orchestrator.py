@@ -14,6 +14,7 @@ from services.deep_research.artifacts import persist_run_artifacts
 from services.deep_research.config import ResearchConfig
 from services.deep_research.models import AgentDecision, ResearchBrief, ResearchSession, ToolTrace
 from services.deep_research.prompts import build_controller_prompt, decision_schema
+from services.deep_research.runtime_logging import DeepResearchRunLogger
 from services.deep_research.synthesis import synthesize_report
 from services.deep_research.tools import run_agent_python, run_agent_read_page, run_agent_web_search
 from services.deep_research.tools.base import summarize_text
@@ -93,6 +94,42 @@ def _fallback_decision(session: ResearchSession, step: int) -> AgentDecision:
     )
 
 
+def _runtime_log(session: ResearchSession) -> DeepResearchRunLogger | None:
+    logger = getattr(session, "runtime_logger", None)
+    return logger if isinstance(logger, DeepResearchRunLogger) else None
+
+
+def _remaining_budgets(session: ResearchSession) -> dict[str, int]:
+    cfg = session.config
+    return {
+        "web_search": max(0, int(cfg.max_search_calls) + session.extra_search_quota - session.search_calls),
+        "academic_search": max(0, int(cfg.max_search_calls) + session.extra_search_quota - session.search_calls),
+        "read_page": max(0, int(cfg.max_read_calls) + session.extra_read_quota - session.read_calls),
+        "site_map": max(0, int(getattr(cfg, "max_site_map_calls", 4)) - session.site_map_calls),
+        "python": max(0, int(cfg.max_python_calls) - session.python_calls),
+        "import_web_file": 1 if _budget_allows(session, "import_web_file") else 0,
+    }
+
+
+def _session_snapshot(session: ResearchSession) -> dict[str, Any]:
+    return {
+        "elapsed_sec": round(session.elapsed, 2),
+        "context_chars": session.context_size_estimate(),
+        "sources": len(session.source_pool),
+        "read_artifacts": len(session.read_artifacts),
+        "tool_calls": len(session.tool_trace),
+        "reflect_streak": session.reflect_streak,
+        "remaining": _remaining_budgets(session),
+    }
+
+
+def _log_session_event(session: ResearchSession, name: str, **payload: Any) -> None:
+    logger = _runtime_log(session)
+    if logger is None:
+        return
+    logger.event(name, **payload)
+
+
 async def _ask_controller(session: ResearchSession, step: int) -> AgentDecision:
     prompt = build_controller_prompt(session, step)
     try:
@@ -109,10 +146,40 @@ async def _ask_controller(session: ResearchSession, step: int) -> AgentDecision:
             debug_label="deep_research_controller",
         )
         decision = _coerce_decision(payload, overdrive=overdrive_mode)
-        return decision or _fallback_decision(session, step)
+        if decision is None:
+            fallback = _fallback_decision(session, step)
+            _log_session_event(
+                session,
+                "controller_invalid_payload",
+                step=step,
+                payload_summary=summarize_text(str(payload), 600),
+                fallback_action=fallback.action,
+                snapshot=_session_snapshot(session),
+            )
+            return fallback
+        _log_session_event(
+            session,
+            "controller_decision",
+            step=step,
+            action=decision.action,
+            confidence=round(float(decision.confidence), 3),
+            thought=summarize_text(decision.thought, 400),
+            action_input=decision.action_input,
+            snapshot=_session_snapshot(session),
+        )
+        return decision
     except Exception as exc:
         session.errors.append(f"Controller failed: {type(exc).__name__}: {exc}")
-        return _fallback_decision(session, step)
+        fallback = _fallback_decision(session, step)
+        _log_session_event(
+            session,
+            "controller_error",
+            step=step,
+            error=f"{type(exc).__name__}: {exc}",
+            fallback_action=fallback.action,
+            snapshot=_session_snapshot(session),
+        )
+        return fallback
 
 
 def _record_reflection(session: ResearchSession, decision: AgentDecision, step: int) -> None:
@@ -136,6 +203,13 @@ def _record_reflection(session: ResearchSession, decision: AgentDecision, step: 
     if payload.get("request_extra_quota") and not session.extra_quota_used:
         grant_msg = _grant_extra_quota(session)
         session.reflection_log.append(grant_msg)
+        _log_session_event(
+            session,
+            "extra_quota_granted",
+            step=step,
+            message=grant_msg,
+            snapshot=_session_snapshot(session),
+        )
 
     session.add_trace(
         ToolTrace(
@@ -183,6 +257,15 @@ def _finish(session: ResearchSession, decision: AgentDecision) -> None:
         used_source_ids=used,
         recommended_followups=followups,
         synthesis_ready=_bool_input(payload, "synthesis_ready", True),
+    )
+    _log_session_event(
+        session,
+        "finish_selected",
+        summary=summarize_text(session.final_brief.summary, 400),
+        used_source_ids=list(session.final_brief.used_source_ids),
+        claims=len(session.final_brief.claims),
+        gaps=len(session.final_brief.gaps),
+        snapshot=_session_snapshot(session),
     )
 
 
@@ -290,11 +373,27 @@ async def _execute_decision(session: ResearchSession, decision: AgentDecision, s
     action = decision.action
     if not _budget_allows(session, action):
         session.reflection_log.append(f"Budget blocked action {action}: {decision.thought}")
+        _log_session_event(
+            session,
+            "budget_blocked",
+            step=step,
+            requested_action=action,
+            thought=summarize_text(decision.thought, 300),
+            snapshot=_session_snapshot(session),
+        )
         action = "reflect"
 
     if action == "reflect":
         session.reflect_streak += 1
         _record_reflection(session, decision, step)
+        _log_session_event(
+            session,
+            "reflection_recorded",
+            step=step,
+            thought=summarize_text(decision.thought, 400),
+            action_input=decision.action_input,
+            snapshot=_session_snapshot(session),
+        )
         if session.reflect_streak > int(session.config.max_reflect_without_tool):
             if _budget_allows(session, "web_search"):
                 forced = AgentDecision(
@@ -309,6 +408,14 @@ async def _execute_decision(session: ResearchSession, decision: AgentDecision, s
     session.reflect_streak = 0
     start = time.time()
     payload: dict[str, Any] = dict(decision.action_input)
+    _log_session_event(
+        session,
+        "tool_started",
+        step=step,
+        action=action,
+        action_input=payload,
+        snapshot=_session_snapshot(session),
+    )
     try:
         if action == "finish" and not session.source_pool and _budget_allows(session, "web_search"):
             forced = AgentDecision(
@@ -370,6 +477,16 @@ async def _execute_decision(session: ResearchSession, decision: AgentDecision, s
                 elapsed_ms=int((time.time() - start) * 1000),
             )
         )
+        _log_session_event(
+            session,
+            "tool_completed",
+            step=step,
+            action=action,
+            status="success",
+            elapsed_ms=int((time.time() - start) * 1000),
+            output_summary=summarize_text(output, 800),
+            snapshot=_session_snapshot(session),
+        )
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"
         session.errors.append(message)
@@ -382,6 +499,16 @@ async def _execute_decision(session: ResearchSession, decision: AgentDecision, s
                 output_summary=message,
                 elapsed_ms=int((time.time() - start) * 1000),
             )
+        )
+        _log_session_event(
+            session,
+            "tool_completed",
+            step=step,
+            action=action,
+            status="error",
+            elapsed_ms=int((time.time() - start) * 1000),
+            error=message,
+            snapshot=_session_snapshot(session),
         )
     return False
 
@@ -406,6 +533,29 @@ async def orchestrate(question: str, depth: str = "standard", total_timeout_sec:
         )
 
     session = ResearchSession(question=question.strip(), config=cfg, overdrive_settings=od_settings)
+    run_logger = None
+    if bool(getattr(cfg, "write_logs", True)):
+        try:
+            run_logger = DeepResearchRunLogger(session.question, cfg.depth)
+            session.runtime_logger = run_logger
+            _log_session_event(
+                session,
+                "session_configured",
+                depth=cfg.depth,
+                content_type=getattr(cfg, "content_type", "general"),
+                total_timeout_sec=float(cfg.total_timeout_sec),
+                synthesis_reserve_sec=float(cfg.synthesis_reserve_sec),
+                controller_timeout_sec=float(cfg.controller_timeout_sec),
+                max_steps=int(cfg.max_steps),
+                max_search_calls=int(cfg.max_search_calls),
+                max_read_calls=int(cfg.max_read_calls),
+                max_python_calls=int(cfg.max_python_calls),
+                max_site_map_calls=int(getattr(cfg, "max_site_map_calls", 4)),
+                effective_tool_context_budget=int(cfg.effective_tool_context_budget),
+            )
+        except Exception as exc:
+            _orch_log.warning("Failed to initialize deep research runtime log: %s", exc)
+            run_logger = None
 
     # Adapt synthesis_context_budget to the model's actual loaded context window.
     try:
@@ -427,6 +577,15 @@ async def orchestrate(question: str, depth: str = "standard", total_timeout_sec:
                 loaded_ctx, usable, cfg.synthesis_context_budget, cfg.read_page_max_chars,
                 model_info.get("id", "?"),
             )
+            _log_session_event(
+                session,
+                "model_context_loaded",
+                loaded_context_length=loaded_ctx,
+                usable_context=usable,
+                synthesis_context_budget=int(cfg.synthesis_context_budget),
+                read_page_max_chars=int(cfg.read_page_max_chars),
+                model_id=model_info.get("id", "?"),
+            )
     except Exception:
         pass
 
@@ -445,20 +604,50 @@ async def orchestrate(question: str, depth: str = "standard", total_timeout_sec:
             await sandbox.start()
             session.sandbox = sandbox
             _orch_log.info("Overdrive sandbox started: %s", sandbox.container_name)
+            _log_session_event(
+                session,
+                "sandbox_started",
+                container_name=getattr(sandbox, "container_name", ""),
+            )
         except Exception as exc:
             _orch_log.warning("Failed to start overdrive sandbox: %s — continuing without it", exc)
+            _log_session_event(
+                session,
+                "sandbox_start_failed",
+                error=f"{type(exc).__name__}: {exc}",
+            )
             sandbox = None
 
     try:
         for step in range(1, int(cfg.max_steps) + 1):
+            _log_session_event(
+                session,
+                "step_started",
+                step=step,
+                snapshot=_session_snapshot(session),
+            )
             if session.elapsed >= _effective_deadline(session):
                 session.errors.append("Research deadline reached; starting synthesis with available context.")
+                _log_session_event(
+                    session,
+                    "deadline_reached",
+                    step=step,
+                    snapshot=_session_snapshot(session),
+                )
                 break
             ctx = session.context_size_estimate()
             if ctx >= cfg.effective_tool_context_budget:
                 session.errors.append(
                     f"Context budget reached ({ctx:,} / {cfg.effective_tool_context_budget:,} chars); "
                     "starting synthesis."
+                )
+                _log_session_event(
+                    session,
+                    "context_budget_reached",
+                    step=step,
+                    context_chars=ctx,
+                    effective_tool_context_budget=int(cfg.effective_tool_context_budget),
+                    snapshot=_session_snapshot(session),
                 )
                 break
             decision = await _ask_controller(session, step)
@@ -469,16 +658,49 @@ async def orchestrate(question: str, depth: str = "standard", total_timeout_sec:
         if session.final_brief is None:
             _finish(session, _fallback_decision(session, int(cfg.max_steps) + 1))
 
+        _log_session_event(
+            session,
+            "synthesis_started",
+            snapshot=_session_snapshot(session),
+        )
         report = await synthesize_report(session)
+        _log_session_event(
+            session,
+            "synthesis_completed",
+            report_chars=len(report),
+            errors=len(session.errors),
+            snapshot=_session_snapshot(session),
+        )
         if bool(getattr(cfg, "write_logs", True)) and "PYTEST_CURRENT_TEST" not in os.environ:
             try:
-                persist_run_artifacts(session, report)
+                artifact_dir = persist_run_artifacts(session, report)
+                _log_session_event(
+                    session,
+                    "artifacts_persisted",
+                    path=str(artifact_dir),
+                )
             except Exception as exc:
                 session.errors.append(f"Log persistence failed: {type(exc).__name__}: {exc}")
+                _log_session_event(
+                    session,
+                    "artifacts_persist_failed",
+                    error=f"{type(exc).__name__}: {exc}",
+                )
         return report
     finally:
         if sandbox is not None:
-            await sandbox.stop()
+            try:
+                await sandbox.stop()
+                _log_session_event(
+                    session,
+                    "sandbox_stopped",
+                    container_name=getattr(sandbox, "container_name", ""),
+                )
+            finally:
+                if run_logger is not None:
+                    run_logger.close()
+        elif run_logger is not None:
+            run_logger.close()
 
 
 async def run_deep_research(

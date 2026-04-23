@@ -11,7 +11,7 @@ Provides search, page reading, file download, and long-form research.
 
 ### `web_search(query, limit=10)`
 
-Fast web search with merged results from YaCy and DDGS.
+Fast web search with DDGS-backed results.
 `query` accepts a string or a list of strings (parallel batch search).
 Returns: title, URL, snippet, preview (600 chars), source engine.
 

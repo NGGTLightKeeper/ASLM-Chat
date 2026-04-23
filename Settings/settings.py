@@ -22,6 +22,8 @@ ENGINE_LABELS = {
     "google-genai": "Google GenAI",
 }
 
+ENGINE_IDS = ("ollama-service", "lms", "openai", "google-genai")
+
 ENGINE_ALIASES = {
     "ollama": "ollama-service",
     "ollama-service": "ollama-service",
@@ -62,7 +64,6 @@ DEFAULTS: dict[str, Any] = {
     "ollama-service_models": None,
     "lms": False,
     "lms_url": "127.0.0.1:1234",
-    "use-yacy": False,
     "openai": False,
     "openai_url": "127.0.0.1:8000/v1",
     "openai_api_key": "",
@@ -190,14 +191,55 @@ def normalize_engine_name(engine: str | None) -> str:
     normalized = str(engine).strip().lower()
     return ENGINE_ALIASES.get(normalized, normalized)
 
+
+# List enabled engine identifiers from one settings snapshot.
+def _get_enabled_engine_ids_from_settings(settings_data: dict[str, Any]) -> list[str]:
+    """Return engine ids that are enabled in the given settings snapshot."""
+
+    return [engine_id for engine_id in ENGINE_IDS if bool(settings_data.get(engine_id, False))]
+
+
+# Resolve one engine against the enabled engine list.
+def _resolve_enabled_engine_from_settings(
+    settings_data: dict[str, Any],
+    engine: str | None,
+    default: str = "ollama-service",
+) -> str:
+    """Return an enabled engine, falling back to the first enabled engine when needed."""
+
+    canonical = normalize_engine_name(engine or default)
+    enabled_engine_ids = _get_enabled_engine_ids_from_settings(settings_data)
+
+    if canonical in enabled_engine_ids:
+        return canonical
+    if enabled_engine_ids:
+        return enabled_engine_ids[0]
+
+    return canonical
+
+
 # List engines supported by the UI.
 def get_supported_engines() -> list[dict[str, str]]:
-    """Return the engines that ASLM-Chat can expose in the UI."""
+    """Return the enabled engines that ASLM-Chat can expose in the UI."""
 
     return [
         {"id": engine_id, "label": ENGINE_LABELS[engine_id]}
-        for engine_id in ("ollama-service", "lms", "openai", "google-genai")
+        for engine_id in get_enabled_engine_ids()
     ]
+
+
+# List enabled engine identifiers from the effective settings.
+def get_enabled_engine_ids() -> list[str]:
+    """Return the canonical engine ids currently allowed by settings."""
+
+    return _get_enabled_engine_ids_from_settings(load_settings())
+
+
+# Resolve one requested engine against the current enabled engine list.
+def resolve_enabled_engine(engine: str | None, default: str = "ollama-service") -> str:
+    """Return a canonical engine that is currently allowed by settings."""
+
+    return _resolve_enabled_engine_from_settings(load_settings(), engine, default)
 
 
 # Read the settings payload from disk.
@@ -241,7 +283,11 @@ def _normalize_loaded_settings(data: dict[str, Any]) -> dict[str, Any]:
     for key in NORMALIZED_ADDRESS_KEYS:
         normalized[key] = normalize_engine_address(normalized.get(key, DEFAULTS.get(key, "")))
 
-    normalized["llm-engine"] = normalize_engine_name(normalized.get("llm-engine"))
+    normalized["llm-engine"] = _resolve_enabled_engine_from_settings(
+        normalized,
+        normalized.get("llm-engine"),
+        DEFAULTS["llm-engine"],
+    )
     return normalized
 
 
@@ -293,6 +339,25 @@ def _serialize_env_value(value: Any) -> str:
 
     return str(value)
 
+# Apply one runtime setting to the current process environment.
+def _apply_process_environment_value(key: str, value: Any) -> None:
+    """Keep the current process environment in sync with one setting."""
+
+    env_key = _to_env_var_name(key)
+    serialized = _serialize_env_value(value)
+    if serialized:
+        os.environ[env_key] = serialized
+    elif env_key in os.environ:
+        del os.environ[env_key]
+
+# Load stored settings without applying ASLM_ environment overrides.
+def _load_stored_settings_snapshot() -> dict[str, Any]:
+    """Return the persisted settings snapshot normalized with defaults."""
+
+    settings_data = dict(DEFAULTS)
+    settings_data.update(_load_settings_from_disk())
+    return _normalize_loaded_settings(settings_data)
+
 # Locate the ASLM module manifest when available.
 def _get_module_manifest_path() -> Path | None:
     """Return the module manifest path when ASLM module metadata is available."""
@@ -332,6 +397,9 @@ def _sync_module_manifest_setting(key: str, value: Any) -> None:
         if setting_item.get("key") != key:
             continue
 
+        if setting_item.get("value") == value:
+            return
+
         setting_item["value"] = value
         changed = True
         break
@@ -357,8 +425,17 @@ def get(key: str, default: Any = None) -> Any:
 def set(key: str, value: Any) -> None:
     """Update one setting value and persist the full settings file."""
 
+    if key == "llm-engine":
+        value = resolve_enabled_engine(str(value) if value is not None else None)
+
     if key in NORMALIZED_ADDRESS_KEYS:
         value = normalize_engine_address(value)
+
+    stored_data = _load_stored_settings_snapshot()
+    if stored_data.get(key, DEFAULTS.get(key)) == value:
+        _apply_process_environment_value(key, value)
+        _store_settings_cache(_apply_environment_overrides(stored_data), _get_settings_mtime_ns())
+        return
 
     # Save the normalized value to disk first.
     data = load_settings()
@@ -366,12 +443,7 @@ def set(key: str, value: Any) -> None:
     save_settings(data)
 
     # Keep the current process environment in sync with the saved value.
-    env_key = _to_env_var_name(key)
-    serialized = _serialize_env_value(value)
-    if serialized:
-        os.environ[env_key] = serialized
-    elif env_key in os.environ:
-        del os.environ[env_key]
+    _apply_process_environment_value(key, value)
     _invalidate_settings_cache()
 
     # Mirror the updated setting into the ASLM module manifest when available.

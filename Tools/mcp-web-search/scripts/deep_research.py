@@ -22,7 +22,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--depth", default="standard", help="standard (default) or overdrive (higher limits, Docker sandbox).")
     parser.add_argument("--id", default="")
     parser.add_argument("--timeout", type=float, default=0.0, help="Optional hard timeout in seconds.")
-    parser.add_argument("--no-yacy", action="store_true", help="Accepted for legacy compatibility.")
     return parser.parse_args()
 
 

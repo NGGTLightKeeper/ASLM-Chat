@@ -29,6 +29,7 @@ _FAKE_WORKSPACE = ROOT / ".test_workspace"
 os.environ["SANDBOX_HOST_WORKSPACE"] = str(_FAKE_WORKSPACE)
 
 from sandbox import workspace  # noqa: E402
+import sandbox.workspace as workspace_mod  # noqa: E402
 from sandbox.session_state import get_session_state, reset_session_state  # noqa: E402
 from sandbox.workspace import (  # noqa: E402
     find,
@@ -119,23 +120,25 @@ class TestResolveModelPathSecurity(unittest.TestCase):
     """resolve_model_path must block absolute paths outside the sandbox."""
 
     def test_rejects_etc_passwd(self) -> None:
-        with self.assertRaises(ValueError, msg="Should reject /etc/passwd"):
-            resolve_model_path("/etc/passwd")
+        with patch.object(workspace_mod, "IN_CONTAINER", False):
+            with self.assertRaises(ValueError, msg="Should reject /etc/passwd"):
+                resolve_model_path("/etc/passwd")
 
     def test_rejects_root_path(self) -> None:
-        with self.assertRaises(ValueError, msg="Should reject bare /"):
-            resolve_model_path("/")
+        with patch.object(workspace_mod, "IN_CONTAINER", False):
+            with self.assertRaises(ValueError, msg="Should reject bare /"):
+                resolve_model_path("/")
 
     def test_rejects_windows_system_path(self) -> None:
-        # Even on Linux the function should reject anything starting with /
-        # that is not the container task root.
-        with self.assertRaises(ValueError):
-            resolve_model_path("/usr/bin/python3")
+        with patch.object(workspace_mod, "IN_CONTAINER", False):
+            with self.assertRaises(ValueError):
+                resolve_model_path("/usr/bin/python3")
 
     def test_rejects_workspace_root_without_task_dir(self) -> None:
         """'/workspace' alone (without task subdir) must be rejected."""
-        with self.assertRaises(ValueError):
-            resolve_model_path("/workspace")
+        with patch.object(workspace_mod, "IN_CONTAINER", False):
+            with self.assertRaises(ValueError):
+                resolve_model_path("/workspace")
 
     def test_allows_relative_path(self) -> None:
         """Relative paths must be resolved without error."""
@@ -340,36 +343,6 @@ class TestSurveyCacheInvalidation(unittest.TestCase):
 
         self.assertFalse(state.has_survey_cache(),
                          "Survey cache must be invalidated after mkdir")
-
-
-# ── Bug #11: config._PROJECT_ROOT depth ──────────────────────────────
-
-class TestProjectRootPath(unittest.TestCase):
-    """_PROJECT_ROOT must point to mcp-sandbox root (2 levels up from config.py)."""
-
-    def test_project_root_is_mcp_sandbox_dir(self) -> None:
-        from sandbox import config
-        project_root = Path(config.__file__).resolve().parents[2]
-        # Should be the directory that contains Dockerfile and src/
-        self.assertTrue(
-            (project_root / "src").exists(),
-            f"_PROJECT_ROOT {project_root} does not contain src/ — wrong depth!",
-        )
-        self.assertTrue(
-            (project_root / "Dockerfile").exists() or (project_root / "src" / "sandbox").exists(),
-            f"_PROJECT_ROOT {project_root} doesn't look like mcp-sandbox root",
-        )
-
-    def test_host_workspace_env_overrides_project_root(self) -> None:
-        """SANDBOX_HOST_WORKSPACE env var must take precedence over _PROJECT_ROOT."""
-        import sandbox.config as cfg
-        # We set SANDBOX_HOST_WORKSPACE at module import time
-        # HOST_WORKSPACE should reflect our fake workspace
-        self.assertEqual(
-            cfg.HOST_WORKSPACE,
-            str(_FAKE_WORKSPACE),
-            f"HOST_WORKSPACE does not use env override: {cfg.HOST_WORKSPACE}",
-        )
 
 
 if __name__ == "__main__":

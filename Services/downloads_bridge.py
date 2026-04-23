@@ -12,9 +12,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
-import requests
-from bs4 import BeautifulSoup
-
 # Bridge configuration
 BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "Data" / "downloads_bridge_cache"
@@ -274,6 +271,8 @@ def _search_cache_path(search_query: OllamaSearchQuery) -> Path:
 def _request_text(url: str, params: list[tuple[str, str]] | None = None) -> str:
     """Fetch page content from Ollama."""
 
+    import requests
+
     response = requests.get(
         url,
         params=params or None,
@@ -282,6 +281,15 @@ def _request_text(url: str, params: list[tuple[str, str]] | None = None) -> str:
     )
     response.raise_for_status()
     return response.text
+
+
+# Build a BeautifulSoup parser lazily so metadata-only bridge calls stay cheap.
+def _make_soup(markup: str) -> Any:
+    """Return a BeautifulSoup parser for one HTML fragment."""
+
+    from bs4 import BeautifulSoup
+
+    return BeautifulSoup(markup, "html.parser")
 
 
 # Resolve a relative URL against the current page
@@ -319,6 +327,43 @@ def _build_ollama_category() -> dict[str, Any]:
         "targetRef": OLLAMA_TARGET_REF,
         "sortOrder": 10,
     }
+
+
+# Build default Ollama filter payloads when live filter data is not available.
+def _build_default_filter_payloads(search_query: OllamaSearchQuery) -> list[dict[str, Any]]:
+    """Return a stable fallback filter list for cache-first catalog loads."""
+
+    active_capabilities = set(search_query.capabilities)
+    active_sort = search_query.sort_key or DEFAULT_SORT_KEY
+    filters: list[dict[str, Any]] = [
+        {
+            "key": f"{SORT_FILTER_PREFIX}popular",
+            "title": "Popular",
+            "kind": "sort",
+            "selected": active_sort == "popular",
+            "sortOrder": 10,
+        },
+        {
+            "key": f"{SORT_FILTER_PREFIX}newest",
+            "title": "Newest",
+            "kind": "sort",
+            "selected": active_sort == "newest",
+            "sortOrder": 11,
+        },
+    ]
+
+    for index, capability in enumerate(("cloud", "embedding", "vision", "tools", "thinking")):
+        filters.append(
+            {
+                "key": f"{CAPABILITY_FILTER_PREFIX}{capability}",
+                "title": capability.title(),
+                "kind": "capability",
+                "selected": capability in active_capabilities,
+                "sortOrder": 100 + index,
+            }
+        )
+
+    return filters
 
 
 # HTML rendering helpers
@@ -508,7 +553,7 @@ def _build_html_document(inner_html: str, page_url: str, title: str) -> str:
 def _create_html_block_file(slug: str, block_id: str, title: str, node_html: str, page_url: str) -> str:
     """Create a cached HTML file for a rendered detail block."""
 
-    fragment = BeautifulSoup(node_html, "html.parser")
+    fragment = _make_soup(node_html)
 
     # Normalize media links so cached files keep working offline
     for node in fragment.select("[src]"):
@@ -729,23 +774,28 @@ def _load_search_payload(
     # Resolve the cache entry for the current search request
     search_query = _normalize_search_query(query_text, filter_keys)
     cache_path = _search_cache_path(search_query)
-    cached = _read_cache(cache_path) if prefer_cached or not force_refresh else None
+    cached = _read_cache(cache_path)
 
     # Serve the cached payload immediately when the caller requests it
     if cached and prefer_cached and not force_refresh:
         return list(cached.get("items", [])), list(cached.get("filters", [])), []
 
+    # Keep cache-first catalog opens fast. If no real cache exists yet, ASLM's
+    # background force-refresh pass will populate it from Ollama.
+    if prefer_cached and not force_refresh:
+        return [], _build_default_filter_payloads(search_query), []
+
     try:
         # Refresh the cache from the live Ollama search page
         html = _request_text(OLLAMA_SEARCH_URL, _build_search_params(search_query))
-        soup = BeautifulSoup(html, "html.parser")
+        soup = _make_soup(html)
         filters = _parse_filter_payloads(soup, search_query)
         items = _parse_search_items(soup)
         _write_cache(cache_path, {"items": items, "filters": filters})
         return items, filters, []
     except Exception as exc:
         # Fall back to the previous cache when live refresh fails
-        if cached and prefer_cached:
+        if cached:
             return (
                 list(cached.get("items", [])),
                 list(cached.get("filters", [])),
@@ -875,7 +925,7 @@ def _extract_readme_html_file(slug: str, soup: BeautifulSoup, page_url: str) -> 
 def _parse_item_detail(slug: str, html: str) -> dict[str, Any]:
     """Build the bridge detail payload for a model page."""
 
-    soup = BeautifulSoup(html, "html.parser")
+    soup = _make_soup(html)
     page_url = _resolve_model_page_url(slug)
 
     # Read the primary page metadata

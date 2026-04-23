@@ -10,7 +10,7 @@ __all__ = [
 ]
 
 
-def run_deep_research(question: str, depth: str = "medium"):
+def run_deep_research(question: str, depth: str = "standard"):
     """Lazy-import wrapper so heavy deps are not loaded at server startup."""
     from services.deep_research.orchestrator import run_deep_research as _run
     return _run(question, depth)
