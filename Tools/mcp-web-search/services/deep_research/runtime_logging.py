@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Realtime file logging for deep research runs."""
 
 from __future__ import annotations

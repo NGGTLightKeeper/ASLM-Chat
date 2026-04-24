@@ -1,4 +1,7 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Container-side facade — native execution only (no Docker path)."""
+
 from __future__ import annotations
 
 from sandbox.exec import (

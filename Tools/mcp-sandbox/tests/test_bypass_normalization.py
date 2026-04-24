@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Integration tests: compound pipeline bypass normalization.
 
 Verifies that common syntax bypasses are now intercepted by the

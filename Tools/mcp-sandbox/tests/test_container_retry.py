@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Tests for container.py idempotent retry logic (_ensure_container_running).
 
 All tests here work entirely with mocked Docker CLI — no real container needed.

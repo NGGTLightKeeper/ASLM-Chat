@@ -3,7 +3,7 @@
     "id": "aslm-chat",
     "name": "ASLM Chat",
     "description": "ASLM Chat Module",
-    "version": "0.4.1.4",
+    "version": "0.5.0.27",
     "author": "NGGT-ASLM",
     "type": "ui",
     "hasPage": true,
@@ -12,6 +12,17 @@
     "source": {
         "type": "github",
         "repo": "NGGTLightKeeper/ASLM-Chat"
+    },
+    "update": {
+        "mode": "release",
+        "channel": "release",
+        "branch": "main",
+        "preserve": [
+            "Data/downloads_bridge_cache",
+            "Settings/settings.json",
+            "db.sqlite3"
+        ],
+        "runFirstRunAfterUpdate": true
     },
     "dependencies": {
         "engines": [

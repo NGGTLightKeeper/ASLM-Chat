@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Tests for intent classification and compound pipeline normalization."""
 
 import os

@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Presentation layer for sandbox tool responses.
 
 Transforms raw backend data into structured, navigable representations

@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Sandbox tool API.
 
 Public tool surface for the model: bash, write, edit.

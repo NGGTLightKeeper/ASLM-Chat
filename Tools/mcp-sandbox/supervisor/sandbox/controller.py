@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Intent-based controller.
 
 Replaces the command-syntax router in api.py with intent-based dispatch.

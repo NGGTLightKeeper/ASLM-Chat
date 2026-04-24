@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Quick smoke tests for Phase 1 changes."""
 
 import os
