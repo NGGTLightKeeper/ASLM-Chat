@@ -77,6 +77,15 @@ class NormalizedCommand:
     include_hidden: bool = False
     glob_pattern: str | None = None
 
+    # LOCATE: grep context lines
+    context_before: int = 0
+    context_after: int = 0
+    files_with_matches: bool = False
+
+    # SURVEY/find: name pattern, type filter
+    name_pattern: str | None = None
+    find_type: str | None = None
+
     # Set when the original was a compound pipeline that we normalized
     was_compound: bool = False
 
@@ -96,7 +105,8 @@ _LOCATE_CMDS = frozenset({
 _SURVEY_CMDS = frozenset({
     "ls", "ll", "la", "tree",
     "find", "fd",
-    "du",
+    # `du` is intentionally NOT here: routing it as a directory listing
+    # would silently misrepresent disk-usage output. Goes to real bash.
 })
 
 _MUTATE_CMDS = frozenset({
@@ -112,9 +122,11 @@ _MUTATE_CMDS = frozenset({
 # whole expression is still classified as OPEN or LOCATE.
 _READ_ONLY_RHS_CMDS = frozenset({
     "head", "tail", "grep", "egrep", "rg",
-    "wc", "less", "more", "cat",
-    "sed", "awk", "cut", "sort", "uniq",
-    "tr", "nl", "tee",
+    "less", "more", "cat",
+    "sed",
+    # Excluded: tee has side effects (writes to file), wc/cut/sort/uniq/tr/nl/awk
+    # change output format — if their semantics aren't implemented, the pipeline
+    # must go to real bash rather than silently returning wrong output.
 })
 
 
@@ -201,6 +213,10 @@ def _parse_open_args(cmd: str, args: list[str]) -> dict[str, Any]:
                 n_lines = int(p[1:])
                 i += 1
             elif p.startswith("-"):
+                # Any flag besides -n/-N is unsupported:
+                # -f/--follow changes semantics entirely (streaming),
+                # -c/--bytes, --pid, --retry, -q, -v, etc. are not implemented.
+                result["unsupported"] = True
                 i += 1
             else:
                 files.append(p)
@@ -263,22 +279,46 @@ def _parse_locate_args(cmd: str, args: list[str]) -> dict[str, Any]:
         "glob_pattern": None,
         "context_before": 0,
         "context_after": 0,
+        "files_with_matches": False,
+        "unsupported": False,
     }
 
     _RG_TYPE_TO_GLOB = RG_TYPE_TO_GLOB
 
     i = 0
     positional: list[str] = []
+    # Combined short-flag set we know how to interpret for grep/rg.
+    _GREP_COMBINABLE = set("rRniIlLvV")
     while i < len(args):
         p = args[i]
-        if p in ("-i", "--ignore-case", "-ri", "-ir", "-rin", "-rni"):
+        if p in ("--ignore-case",):
             result["case_sensitive"] = False
             i += 1
-        elif p in ("-r", "-R", "--recursive", "-rn", "-nr", "-rni", "-rin"):
-            if "i" in p:
-                result["case_sensitive"] = False
+        elif p in ("--recursive",):
             i += 1
-        elif p in ("-n", "--line-number", "-l", "--files-with-matches", "-v"):
+        elif (
+            len(p) >= 2
+            and p.startswith("-")
+            and not p.startswith("--")
+            and all(ch in _GREP_COMBINABLE for ch in p[1:])
+        ):
+            for ch in p[1:]:
+                if ch in ("i", "I"):
+                    result["case_sensitive"] = False
+                elif ch in ("l", "L"):
+                    result["files_with_matches"] = True
+                elif ch in ("v", "V"):
+                    result["unsupported"] = True
+                # r/R/n: noop (recursive is default; line numbers always shown)
+            i += 1
+        elif p in ("-l", "--files-with-matches"):
+            result["files_with_matches"] = True
+            i += 1
+        elif p in ("-n", "--line-number"):
+            i += 1
+        elif p == "-v":
+            # Inverted match — semantics differ, fall back to real bash
+            result["unsupported"] = True
             i += 1
         elif p in ("--include", "-g", "--glob") and i + 1 < len(args):
             result["glob_pattern"] = args[i + 1]
@@ -310,7 +350,8 @@ def _parse_locate_args(cmd: str, args: list[str]) -> dict[str, Any]:
                 pass
             i += 2
         elif p.startswith("-"):
-            # Unknown flag: skip (possibly with argument)
+            # Unknown flag → can't safely simulate; fall back to real bash.
+            result["unsupported"] = True
             if i + 1 < len(args) and not args[i + 1].startswith("-"):
                 i += 2
             else:
@@ -335,26 +376,52 @@ def _parse_survey_args(cmd: str, args: list[str]) -> dict[str, Any]:
         "include_hidden": False,
         "name_pattern": None,
         "find_type": None,
+        "unsupported": False,
     }
+
+    is_find = cmd in ("find", "fd")
+    # ls combinable short flags we understand: -a (hidden), -A (hidden no .), -l/-h/-F/-1 (display-only).
+    _LS_COMBINABLE = set("aAlhF1RrSt")
 
     i = 0
     while i < len(args):
         p = args[i]
-        if p == "-L" and i + 1 < len(args):
+        if p == "-L" and i + 1 < len(args) and not is_find:
             try:
                 result["depth"] = int(args[i + 1])
             except ValueError:
                 pass
             i += 2
-        elif p == "-a":
+        elif p == "-a" or p == "-A" or p == "--all":
             result["include_hidden"] = True
+            i += 1
+        elif (
+            not is_find
+            and len(p) >= 2
+            and p.startswith("-")
+            and not p.startswith("--")
+            and all(ch in _LS_COMBINABLE for ch in p[1:])
+        ):
+            # Combined ls short flags: e.g. -la, -lah, -Al
+            if "a" in p or "A" in p:
+                result["include_hidden"] = True
             i += 1
         elif p == "-name" and i + 1 < len(args):
             result["name_pattern"] = args[i + 1]
             i += 2
+        elif p == "-iname" and i + 1 < len(args):
+            # Case-insensitive name match — not supported by our find handler.
+            result["unsupported"] = True
+            i += 2
         elif p == "-type" and i + 1 < len(args):
             t = args[i + 1]
-            result["find_type"] = "file" if t == "f" else "directory" if t == "d" else None
+            if t == "f":
+                result["find_type"] = "file"
+            elif t == "d":
+                result["find_type"] = "directory"
+            else:
+                # l/s/p/c/b — unsupported by our find handler.
+                result["unsupported"] = True
             i += 2
         elif p == "-maxdepth" and i + 1 < len(args):
             try:
@@ -362,8 +429,15 @@ def _parse_survey_args(cmd: str, args: list[str]) -> dict[str, Any]:
             except ValueError:
                 pass
             i += 2
+        elif is_find and p in ("-mindepth", "-mtime", "-ctime", "-atime", "-size",
+                                "-exec", "-execdir", "-delete", "-print0", "-prune",
+                                "-newer", "-perm", "-user", "-group", "-not", "!", "-o"):
+            # find features that change result semantics — fall back to real bash.
+            result["unsupported"] = True
+            i += 1
         elif p.startswith("-"):
-            # Unknown flag that takes a value arg
+            # Unknown flag → can't safely simulate.
+            result["unsupported"] = True
             if i + 1 < len(args) and not args[i + 1].startswith("-"):
                 i += 2
             else:
@@ -537,21 +611,32 @@ def classify(command: str, cwd: str = ".") -> NormalizedCommand | None:
 
     if intent == Intent.OPEN:
         parsed = _parse_open_args(cmd, args)
+        if parsed.get("unsupported"):
+            return None
         target = parsed.get("target", ".")
         # Container absolute path → real bash
         if _is_container_path(target):
+            return None
+        # Multi-file: cat a.txt b.txt — let real bash concatenate correctly
+        if parsed.get("extra_targets"):
             return None
         return NormalizedCommand(
             intent=intent,
             raw_command=command,
             target=target,
-            extra_targets=parsed.get("extra_targets", []),
+            extra_targets=[],
             start_line=parsed.get("start_line"),
             end_line=parsed.get("end_line"),
         )
 
     if intent == Intent.LOCATE:
         parsed = _parse_locate_args(cmd, args)
+        if parsed.get("unsupported"):
+            return None
+        # -l/-L change output format to filenames — not implemented in handler,
+        # so let real bash (or rg) return the correct output.
+        if parsed.get("files_with_matches"):
+            return None
         target = parsed.get("target", ".")
         if _is_container_path(target):
             return None
@@ -562,10 +647,15 @@ def classify(command: str, cwd: str = ".") -> NormalizedCommand | None:
             pattern=parsed.get("pattern"),
             case_sensitive=parsed.get("case_sensitive", True),
             glob_pattern=parsed.get("glob_pattern"),
+            context_before=parsed.get("context_before", 0),
+            context_after=parsed.get("context_after", 0),
+            files_with_matches=False,
         )
 
     if intent == Intent.SURVEY:
         parsed = _parse_survey_args(cmd, args)
+        if parsed.get("unsupported"):
+            return None
         target = parsed.get("target", ".")
         if _is_container_path(target):
             return None
@@ -575,6 +665,8 @@ def classify(command: str, cwd: str = ".") -> NormalizedCommand | None:
             target=target,
             depth=parsed.get("depth"),
             include_hidden=parsed.get("include_hidden", False),
+            name_pattern=parsed.get("name_pattern"),
+            find_type=parsed.get("find_type"),
         )
 
     # MUTATE — no special parsing needed here, pass through

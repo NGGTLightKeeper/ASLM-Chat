@@ -155,6 +155,75 @@ def test_locate_rg_type_flag():
     print(f"PASS: rg --type py → glob_pattern=*.py")
 
 
+def test_find_carries_name_and_type():
+    """find -name '*.py' -type f → NormalizedCommand with name_pattern/find_type."""
+    nc = classify('find . -name "*.py" -type f -maxdepth 2')
+    assert nc is not None, "find with supported flags should classify"
+    assert nc.intent == Intent.SURVEY
+    assert nc.name_pattern == "*.py", f"name_pattern={nc.name_pattern!r}"
+    assert nc.find_type == "file", f"find_type={nc.find_type!r}"
+    assert nc.depth == 2, f"depth={nc.depth!r}"
+
+
+def test_grep_context_carried():
+    """grep -C 2 pattern file → context_before/after = 2."""
+    nc = classify("grep -C 2 pattern file.py")
+    assert nc is not None
+    assert nc.intent == Intent.LOCATE
+    assert nc.context_before == 2 and nc.context_after == 2, (
+        f"context=({nc.context_before},{nc.context_after})"
+    )
+
+    nc = classify("grep -A 3 -B 1 pattern file.py")
+    assert nc is not None
+    assert nc.context_before == 1 and nc.context_after == 3
+
+
+def test_ls_la_includes_hidden():
+    """ls -la and combined short flags must enable include_hidden."""
+    for cmd in ("ls -la", "ls -al", "ls -lah .", "ls -A"):
+        nc = classify(cmd)
+        assert nc is not None, cmd
+        assert nc.intent == Intent.SURVEY
+        assert nc.include_hidden is True, f"include_hidden False for: {cmd}"
+
+
+def test_du_falls_through_to_bash():
+    """du is NOT routed as a directory listing — must reach real bash."""
+    nc = classify("du -sh .")
+    # Either None (no routing) or RUN intent — must not be SURVEY.
+    if nc is not None:
+        assert nc.intent == Intent.RUN, f"du routed as {nc.intent}"
+
+
+def test_find_unsupported_flags_fall_back():
+    """find with -exec / -mtime / etc. must fall back to real bash."""
+    for cmd in (
+        "find . -name '*.log' -exec rm {} ;",
+        "find . -mtime -7",
+        "find . -iname '*.PY'",
+        "find . -type l",
+    ):
+        nc = classify(cmd)
+        if nc is not None:
+            assert nc.intent == Intent.RUN, f"{cmd!r} routed as {nc.intent}"
+
+
+def test_grep_files_with_matches():
+    """grep -l changes output format to filenames — not implemented, fall back to bash."""
+    nc = classify("grep -l pattern src/")
+    # -l/-L are not handled by the router, so classifier returns None → real bash
+    if nc is not None:
+        assert nc.intent == Intent.RUN
+
+
+def test_grep_inverted_falls_back():
+    """grep -v changes semantics — fall back to real bash."""
+    nc = classify("grep -v pattern file.py")
+    if nc is not None:
+        assert nc.intent == Intent.RUN
+
+
 if __name__ == "__main__":
     tests = [
         test_open_variants,
@@ -168,6 +237,13 @@ if __name__ == "__main__":
         test_chains_return_none,
         test_locate_case_sensitivity,
         test_locate_rg_type_flag,
+        test_find_carries_name_and_type,
+        test_grep_context_carried,
+        test_ls_la_includes_hidden,
+        test_du_falls_through_to_bash,
+        test_find_unsupported_flags_fall_back,
+        test_grep_files_with_matches,
+        test_grep_inverted_falls_back,
     ]
     passed = 0
     failed = 0
