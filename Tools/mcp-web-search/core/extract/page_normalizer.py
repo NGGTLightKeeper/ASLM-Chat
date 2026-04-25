@@ -6,7 +6,7 @@ Page normalizer: turns raw HTML into a clean, structured markdown document.
 Refactored from legacy src/page_normalizer.py:
   - Removed all try/except import fallbacks for internal modules
   - content_processor imported via absolute package path (core.extract)
-  - Removed references to [OVERDRIVE] / [PREVIEW_BOT] method tags
+  - Removed references to legacy method tags such as [PREVIEW_BOT]
   - All constants and helpers preserved
 
 Public API

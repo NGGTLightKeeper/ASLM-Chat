@@ -92,7 +92,7 @@
       "rps": 0.3,
       "burst": 1,
       "response_time_ms": 3090,
-      "notes": "Heavy SPA, requires browser rendering. Use overdrive/camoufox.",
+      "notes": "Heavy SPA, requires browser rendering. Use camoufox.",
       "topics": [
         "shopping"
       ]
@@ -105,12 +105,12 @@
         "ebay.fr",
         "ebay.it"
       ],
-      "tier": "friendly",
-      "method": "http",
-      "rps": 1.0,
-      "burst": 3,
-      "response_time_ms": 3290,
-      "notes": "Server-rendered product and search pages are well-structured and crawlable.",
+      "tier": "fortress",
+      "method": "camoufox",
+      "rps": 0.2,
+      "burst": 1,
+      "response_time_ms": 20000,
+      "notes": "Simple HTTP clients usually hit splashui/challenge, but browser fetches via Camoufox/Patchright can reach product pages. Treat as browser-first and expect occasional retries.",
       "topics": [
         "shopping"
       ]
@@ -125,15 +125,17 @@
         "amazon.es",
         "amazon.co.jp"
       ],
-      "tier": "fortress",
-      "method": "skip",
-      "rps": 0,
-      "burst": 0,
-      "notes": "Direct scraping triggers heavy bot detection. Skip.",
+      "tier": "hardened",
+      "method": "http",
+      "rps": 0.3,
+      "burst": 1,
+      "response_time_ms": 3500,
+      "notes": "Product pages can work with plain HTTP when using a conservative browser-like header profile, but responses are unstable and price blocks may be missing. Keep rate low and avoid assuming structured pricing is present.",
       "topics": [
         "shopping",
         "finance"
-      ]
+      ],
+      "try_preview_bot": true
     },
     {
       "pattern": "wikipedia.org",
@@ -527,10 +529,25 @@
     {
       "pattern": "dns-shop.ru",
       "tier": "fortress",
-      "method": "skip",
-      "rps": 0,
-      "burst": 0,
-      "notes": "Major Russian electronics retailer. Heavy SPA with aggressive anti-bot. Skip.",
+      "method": "camoufox",
+      "rps": 0.2,
+      "burst": 1,
+      "response_time_ms": 12000,
+      "notes": "Major Russian electronics retailer. Direct HTTP fetches commonly return 401, but Camoufox can load product and product-subpages reliably enough for read_page.",
+      "topics": [
+        "shopping",
+        "tech",
+        "ru"
+      ]
+    },
+    {
+      "pattern": "citilink.ru",
+      "tier": "fortress",
+      "method": "camoufox",
+      "rps": 0.2,
+      "burst": 1,
+      "response_time_ms": 12000,
+      "notes": "Major Russian electronics retailer. Direct HTTP fetches commonly hit 429/challenge pages, while Camoufox can render product cards for read_page.",
       "topics": [
         "shopping",
         "tech",

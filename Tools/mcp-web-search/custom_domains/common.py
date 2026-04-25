@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from core.extract.content_processor import _preclean_html
+from core.extract.page_normalizer import (
+    _build_markdown,
+    _clean_content,
+    _extract_content,
+    _extract_meta,
+    _extract_with_trafilatura_formatted,
+    _fallback_segment,
+)
+
+
+CHROME_BASIC_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+}
+
+
+def trim(text: str, limit: int = 240) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()[:limit]
+
+
+def extract_title(html: str) -> str:
+    match = re.search(r"<title[^>]*>(.*?)</title>", html or "", re.IGNORECASE | re.DOTALL)
+    return trim(match.group(1) if match else "", 180)
+
+
+def looks_blocked(title: str, html: str) -> bool:
+    lower_title = (title or "").lower()
+    lower_html = (html or "").lower()
+    return any(
+        marker in lower_title or marker in lower_html
+        for marker in ("captcha", "pardon our interruption", "are you not a robot", "showcaptcha", "smartcaptcha")
+    )
+
+
+def clean_trafilatura_snapshot(text: str) -> str:
+    lines = [line.rstrip() for line in (text or "").splitlines()]
+    cleaned: list[str] = []
+    skip_markers = (
+        "oops! looks like we're having trouble connecting to our server.",
+        "refresh your browser window to try again.",
+        "payments:",
+    )
+
+    for line in lines:
+        stripped = line.strip()
+        lower = stripped.lower().lstrip("#").strip()
+        if any(marker == lower for marker in skip_markers):
+            continue
+        cleaned.append(line)
+
+    return "\n".join(cleaned).strip()
+
+
+def extract_with_preferred_pipeline(url: str, raw_html: str, *, prefer_trafilatura: bool) -> dict[str, Any]:
+    meta = _extract_meta(raw_html, None, url)
+    cleaned_html = _preclean_html(raw_html)
+    strategy = "normalize_page"
+
+    if prefer_trafilatura:
+        text = _extract_with_trafilatura_formatted(cleaned_html, url)
+        strategy = "trafilatura"
+        if not text.strip():
+            text = _extract_content(raw_html, None, url)
+            strategy = "trafilatura_fallback"
+    else:
+        text = _extract_content(raw_html, None, url)
+
+    if not text.strip():
+        markdown = _build_markdown(meta, "*No content extracted.*")
+    else:
+        cleaned = clean_trafilatura_snapshot(text) if prefer_trafilatura else text
+        cleaned = _clean_content(cleaned, strict=not prefer_trafilatura)
+        block_count = len([block for block in cleaned.split("\n\n") if block.strip()])
+        if block_count <= 1 and len(cleaned) > 300:
+            cleaned = _fallback_segment(text)
+            cleaned = _clean_content(cleaned, strict=not prefer_trafilatura)
+        markdown = _build_markdown(meta, cleaned)
+
+    return {
+        "strategy": strategy,
+        "markdown": markdown,
+        "markdown_chars": len(markdown),
+        "markdown_preview": trim(markdown, 400),
+    }

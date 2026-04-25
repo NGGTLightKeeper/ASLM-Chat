@@ -223,6 +223,7 @@ class TavilyClient:
                 title=title,
                 snippet=snippet,
                 engine="hosted:tavily",
+                published_date=str(item.get("published_date") or ""),
             ))
 
         return results, content_map
@@ -306,6 +307,7 @@ class BraveClient:
                 title=title,
                 snippet=snippet[:2000],
                 engine="hosted:brave",
+                published_date=str(item.get("page_age") or item.get("age") or ""),
             ))
         return out
 
@@ -372,6 +374,7 @@ class BingClient:
                 title=title,
                 snippet=snippet[:2000],
                 engine="hosted:bing",
+                published_date=str(item.get("datePublished") or item.get("dateLastCrawled") or ""),
             ))
         return out
 
@@ -441,6 +444,7 @@ class SerpApiClient:
                 title=title,
                 snippet=snippet[:2000],
                 engine="hosted:serpapi",
+                published_date=str(item.get("date") or ""),
             ))
         return out
 

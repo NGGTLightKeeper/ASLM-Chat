@@ -84,69 +84,63 @@ def _stackexchange_api_get(url: str, timeout: int) -> dict[str, Any]:
     return resp.json()
 
 
-def render_stackexchange_question_markdown(
+def _owner_name(item: dict[str, Any]) -> str:
+    owner = item.get("owner") if isinstance(item.get("owner"), dict) else {}
+    return str(owner.get("display_name") or "").strip()
+
+
+def _normalize_comment(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "comment_id": int(item.get("comment_id") or 0),
+        "score": int(item.get("score") or 0),
+        "created_at": _format_timestamp(item.get("creation_date")),
+        "author": _owner_name(item),
+        "body_text": _strip_html_fragment(str(item.get("body") or "")),
+    }
+
+
+def _normalize_answer(item: dict[str, Any], comments: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "answer_id": int(item.get("answer_id") or 0),
+        "score": int(item.get("score") or 0),
+        "is_accepted": bool(item.get("is_accepted")),
+        "created_at": _format_timestamp(item.get("creation_date")),
+        "last_activity_at": _format_timestamp(item.get("last_activity_date")),
+        "author": _owner_name(item),
+        "body_markdown": _strip_html_fragment(str(item.get("body") or "")),
+        "comment_count": len(comments),
+        "comments": comments,
+    }
+
+
+def _comments_by_post_id(items: list[dict[str, Any]], id_field: str) -> dict[int, list[dict[str, Any]]]:
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for item in items:
+        try:
+            key = int(item.get(id_field) or 0)
+        except Exception:
+            key = 0
+        if not key:
+            continue
+        grouped.setdefault(key, []).append(_normalize_comment(item))
+    return grouped
+
+
+def fetch_stackexchange_question_data_sync(
     url: str,
-    question: dict[str, Any],
-    answers: list[dict[str, Any]],
-) -> str:
-    host = _host(url)
-    title = str(question.get("title") or "").strip() or "Stack Exchange Question"
-    body = _strip_html_fragment(str(question.get("body") or ""))
-    owner = question.get("owner") if isinstance(question.get("owner"), dict) else {}
-    author = str(owner.get("display_name") or "").strip()
-    created = _format_timestamp(question.get("creation_date"))
-    score = question.get("score")
-    tags = question.get("tags") if isinstance(question.get("tags"), list) else []
-
-    lines = [f"# {title}", "", f"**Site:** {host}", f"**URL:** {url}"]
-    if author:
-        lines.append(f"**Author:** {author}")
-    if created:
-        lines.append(f"**Created:** {created}")
-    if score is not None:
-        lines.append(f"**Score:** {score}")
-    if tags:
-        lines.append(f"**Tags:** {', '.join(str(tag) for tag in tags if str(tag).strip())}")
-    lines.extend(["", "---", ""])
-    if body:
-        lines.append(body)
-
-    if answers:
-        lines.extend(["", "## Top Answers", ""])
-        for idx, answer in enumerate(answers, 1):
-            answer_owner = answer.get("owner") if isinstance(answer.get("owner"), dict) else {}
-            answer_author = str(answer_owner.get("display_name") or "").strip()
-            answer_created = _format_timestamp(answer.get("creation_date"))
-            answer_score = answer.get("score")
-            accepted = bool(answer.get("is_accepted"))
-            header = f"### Answer {idx}"
-            if accepted:
-                header += " [accepted]"
-            lines.extend([header, ""])
-            meta: list[str] = []
-            if answer_author:
-                meta.append(f"Author: {answer_author}")
-            if answer_created:
-                meta.append(f"Created: {answer_created}")
-            if answer_score is not None:
-                meta.append(f"Score: {answer_score}")
-            if meta:
-                lines.append(" | ".join(meta))
-                lines.append("")
-            answer_body = _strip_html_fragment(str(answer.get("body") or ""))
-            if answer_body:
-                lines.append(answer_body)
-            lines.append("")
-
-    return "\n".join(lines).strip()
-
-
-def fetch_stackexchange_question_sync(url: str, timeout: float = 20.0, answer_limit: int = 3) -> str:
+    timeout: float = 20.0,
+    answer_limit: int = 3,
+    comment_limit: int = 5,
+) -> dict[str, Any]:
     host = _host(url)
     site = _site_from_host(host)
     qid = stackexchange_question_id(url)
     if not site or not qid:
-        return f"Error: Unsupported Stack Exchange question URL: {url}"
+        return {
+            "ok": False,
+            "error": f"Unsupported Stack Exchange question URL: {url}",
+            "url": url,
+        }
 
     timeout_int = max(10, int(timeout))
     question_url = f"https://api.stackexchange.com/2.3/questions/{qid}?site={site}&filter=withbody"
@@ -154,27 +148,200 @@ def fetch_stackexchange_question_sync(url: str, timeout: float = 20.0, answer_li
         f"https://api.stackexchange.com/2.3/questions/{qid}/answers"
         f"?site={site}&filter=withbody&sort=votes"
     )
+    question_comments_url = (
+        f"https://api.stackexchange.com/2.3/questions/{qid}/comments"
+        f"?site={site}&filter=withbody&sort=votes"
+    )
 
     question_payload = _stackexchange_api_get(question_url, timeout_int)
     question_items = question_payload.get("items") if isinstance(question_payload, dict) else []
     if not isinstance(question_items, list) or not question_items:
-        return f"Error: Stack Exchange API returned no question data for: {url}"
+        return {
+            "ok": False,
+            "error": f"Stack Exchange API returned no question data for: {url}",
+            "url": url,
+        }
+
+    question_item = question_items[0]
 
     answers_payload = _stackexchange_api_get(answers_url, timeout_int)
     answer_items = answers_payload.get("items") if isinstance(answers_payload, dict) else []
     if not isinstance(answer_items, list):
         answer_items = []
+    answer_items = answer_items[: max(0, int(answer_limit))]
 
-    return render_stackexchange_question_markdown(
-        url,
-        question_items[0],
-        answer_items[: max(0, int(answer_limit))],
+    question_comments_payload = _stackexchange_api_get(question_comments_url, timeout_int)
+    question_comment_items = question_comments_payload.get("items") if isinstance(question_comments_payload, dict) else []
+    if not isinstance(question_comment_items, list):
+        question_comment_items = []
+    question_comments = [_normalize_comment(item) for item in question_comment_items[: max(0, int(comment_limit))]]
+
+    answer_comments_by_id: dict[int, list[dict[str, Any]]] = {}
+    answer_ids = [int(item.get("answer_id") or 0) for item in answer_items if int(item.get("answer_id") or 0)]
+    if answer_ids:
+        joined_ids = ";".join(str(item) for item in answer_ids)
+        answer_comments_url = (
+            f"https://api.stackexchange.com/2.3/answers/{joined_ids}/comments"
+            f"?site={site}&filter=withbody&sort=votes"
+        )
+        answer_comments_payload = _stackexchange_api_get(answer_comments_url, timeout_int)
+        answer_comment_items = answer_comments_payload.get("items") if isinstance(answer_comments_payload, dict) else []
+        if not isinstance(answer_comment_items, list):
+            answer_comment_items = []
+        limited_comments: list[dict[str, Any]] = []
+        per_answer_counts: dict[int, int] = {}
+        for item in answer_comment_items:
+            try:
+                post_id = int(item.get("post_id") or 0)
+            except Exception:
+                post_id = 0
+            if not post_id:
+                continue
+            if per_answer_counts.get(post_id, 0) >= max(0, int(comment_limit)):
+                continue
+            limited_comments.append(item)
+            per_answer_counts[post_id] = per_answer_counts.get(post_id, 0) + 1
+        answer_comments_by_id = _comments_by_post_id(limited_comments, "post_id")
+
+    answers = [
+        _normalize_answer(item, answer_comments_by_id.get(int(item.get("answer_id") or 0), []))
+        for item in answer_items
+    ]
+
+    question = {
+        "question_id": int(question_item.get("question_id") or 0),
+        "title": str(question_item.get("title") or "").strip(),
+        "author": _owner_name(question_item),
+        "created_at": _format_timestamp(question_item.get("creation_date")),
+        "last_activity_at": _format_timestamp(question_item.get("last_activity_date")),
+        "score": int(question_item.get("score") or 0),
+        "view_count": int(question_item.get("view_count") or 0),
+        "answer_count": int(question_item.get("answer_count") or 0),
+        "is_answered": bool(question_item.get("is_answered")),
+        "accepted_answer_id": int(question_item.get("accepted_answer_id") or 0) or None,
+        "tags": [str(tag) for tag in (question_item.get("tags") or []) if str(tag).strip()],
+        "body_markdown": _strip_html_fragment(str(question_item.get("body") or "")),
+        "comment_count": len(question_comments),
+        "comments": question_comments,
+    }
+
+    return {
+        "ok": True,
+        "source": "stackexchange_api",
+        "site": site,
+        "host": host,
+        "url": url,
+        "quota_remaining": int(question_payload.get("quota_remaining") or 0),
+        "question": question,
+        "answers": answers,
+    }
+
+
+def render_stackexchange_question_markdown(data: dict[str, Any]) -> str:
+    if not data.get("ok"):
+        return f"Error: {data.get('error') or 'unknown Stack Exchange fetch failure'}"
+
+    question = data.get("question") if isinstance(data.get("question"), dict) else {}
+    answers = data.get("answers") if isinstance(data.get("answers"), list) else []
+
+    title = str(question.get("title") or "").strip() or "Stack Exchange Question"
+    body = str(question.get("body_markdown") or "").strip()
+
+    lines = [f"# {title}", "", f"**Site:** {data.get('host') or data.get('site') or ''}", f"**URL:** {data.get('url') or ''}"]
+    if question.get("author"):
+        lines.append(f"**Author:** {question['author']}")
+    if question.get("created_at"):
+        lines.append(f"**Created:** {question['created_at']}")
+    if question.get("last_activity_at"):
+        lines.append(f"**Last Activity:** {question['last_activity_at']}")
+    lines.append(f"**Score:** {int(question.get('score') or 0)}")
+    lines.append(f"**Views:** {int(question.get('view_count') or 0)}")
+    lines.append(f"**Answer Count:** {int(question.get('answer_count') or 0)}")
+    lines.append(f"**Is Answered:** {bool(question.get('is_answered'))}")
+    if question.get("accepted_answer_id"):
+        lines.append(f"**Accepted Answer ID:** {question['accepted_answer_id']}")
+    tags = question.get("tags") if isinstance(question.get("tags"), list) else []
+    if tags:
+        lines.append(f"**Tags:** {', '.join(str(tag) for tag in tags if str(tag).strip())}")
+    lines.extend(["", "---", ""])
+    if body:
+        lines.append(body)
+
+    question_comments = question.get("comments") if isinstance(question.get("comments"), list) else []
+    if question_comments:
+        lines.extend(["", "## Question Comments", ""])
+        for idx, comment in enumerate(question_comments, 1):
+            meta = [f"Comment {idx}"]
+            if comment.get("author"):
+                meta.append(f"Author: {comment['author']}")
+            if comment.get("created_at"):
+                meta.append(f"Created: {comment['created_at']}")
+            meta.append(f"Score: {int(comment.get('score') or 0)}")
+            lines.append(" | ".join(meta))
+            if comment.get("body_text"):
+                lines.append(str(comment["body_text"]))
+            lines.append("")
+
+    if answers:
+        lines.extend(["", "## Top Answers", ""])
+        for idx, answer in enumerate(answers, 1):
+            header = f"### Answer {idx}"
+            if answer.get("is_accepted"):
+                header += " [accepted]"
+            lines.extend([header, ""])
+            meta: list[str] = []
+            if answer.get("author"):
+                meta.append(f"Author: {answer['author']}")
+            if answer.get("created_at"):
+                meta.append(f"Created: {answer['created_at']}")
+            meta.append(f"Score: {int(answer.get('score') or 0)}")
+            if meta:
+                lines.append(" | ".join(meta))
+                lines.append("")
+            if answer.get("body_markdown"):
+                lines.append(str(answer["body_markdown"]))
+                lines.append("")
+
+            answer_comments = answer.get("comments") if isinstance(answer.get("comments"), list) else []
+            if answer_comments:
+                lines.append("Comments:")
+                for comment in answer_comments:
+                    meta = []
+                    if comment.get("author"):
+                        meta.append(str(comment["author"]))
+                    if comment.get("created_at"):
+                        meta.append(str(comment["created_at"]))
+                    meta.append(f"score={int(comment.get('score') or 0)}")
+                    prefix = " | ".join(meta)
+                    lines.append(f"- {prefix}: {str(comment.get('body_text') or '').strip()}")
+                lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def fetch_stackexchange_question_sync(url: str, timeout: float = 20.0, answer_limit: int = 3) -> str:
+    data = fetch_stackexchange_question_data_sync(url, timeout=timeout, answer_limit=answer_limit)
+    return render_stackexchange_question_markdown(data)
+
+
+async def fetch_stackexchange_question_data(
+    url: str,
+    timeout: float = 20.0,
+    answer_limit: int = 3,
+    comment_limit: int = 5,
+) -> dict[str, Any]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _io_pool,
+        lambda: fetch_stackexchange_question_data_sync(
+            url,
+            timeout=timeout,
+            answer_limit=answer_limit,
+            comment_limit=comment_limit,
+        ),
     )
 
 
 async def fetch_stackexchange_question(url: str, timeout: float = 20.0, answer_limit: int = 3) -> str:
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        _io_pool,
-        lambda: fetch_stackexchange_question_sync(url, timeout=timeout, answer_limit=answer_limit),
-    )
+    data = await fetch_stackexchange_question_data(url, timeout=timeout, answer_limit=answer_limit)
+    return render_stackexchange_question_markdown(data)

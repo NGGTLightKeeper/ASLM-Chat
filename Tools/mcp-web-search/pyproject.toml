@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mcp-web-search"
+version = "0.1.0"
+description = "MCP web search and read-page server with hosted search, anti-bot browser paths, and PDF/text extraction."
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [
+  { name = "NGGT.LightKeeper" },
+  { name = "Di120078" },
+]
+dependencies = [
+  "aiohttp",
+  "beautifulsoup4",
+  "camoufox",
+  "curl-cffi",
+  "ddgs",
+  "gliner",
+  "httpx",
+  "mcp",
+  "patchright",
+  "pylatexenc",
+  "pymupdf4llm",
+  "PyMuPDF",
+  "requests",
+  "seleniumbase",
+  "torch",
+  "trafilatura",
+  "youtube-transcript-api",
+  "yt-dlp",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+]
+
+[tool.hatch.build.targets.wheel]
+include = [
+  "adapters",
+  "config",
+  "core",
+  "custom_domains",
+  "services",
+  "mcp-server.py",
+]

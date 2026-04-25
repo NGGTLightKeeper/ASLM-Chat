@@ -265,6 +265,16 @@
             "cat": "engineering"
         },
         {
+            "pattern": "amazon.com",
+            "tier": "B",
+            "cat": "shopping"
+        },
+        {
+            "pattern": "ebay.com",
+            "tier": "B",
+            "cat": "shopping"
+        },
+        {
             "pattern": "reuters.com",
             "tier": "A",
             "cat": "news"

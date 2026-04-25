@@ -5,7 +5,7 @@ Shared ThreadPoolExecutor for sync-to-async bridging.
 
 All run_in_executor calls across mcp-web-search use this pool instead of
 the default asyncio executor so the pool size is under explicit control and
-concurrent deep_research + web_search + read_page loads cannot exhaust it.
+concurrent web_search + read_page loads cannot exhaust it.
 """
 
 from __future__ import annotations
