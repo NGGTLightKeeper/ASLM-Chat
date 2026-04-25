@@ -3,7 +3,7 @@
     "id": "aslm-chat",
     "name": "ASLM Chat",
     "description": "ASLM Chat Module",
-    "version": "0.4.1.4",
+    "version": "0.5.0.27",
     "author": "NGGT-ASLM",
     "type": "ui",
     "hasPage": true,
@@ -13,69 +13,23 @@
         "type": "github",
         "repo": "NGGTLightKeeper/ASLM-Chat"
     },
+    "update": {
+        "mode": "release",
+        "channel": "release",
+        "branch": "main",
+        "preserve": [
+            "Data/downloads_bridge_cache",
+            "Settings/settings.json",
+            "db.sqlite3"
+        ],
+        "runFirstRunAfterUpdate": true
+    },
     "dependencies": {
         "engines": [
             {
                 "id": "python-runtime",
                 "libraries": [
-                    "argon2-cffi==25.1.0",
-                    "aiofiles==24.1.0",
-                    "aiohttp==3.11.0",
-                    "accelerate==0.30.1",
-                    "adblockparser==0.7",
-                    "beautifulsoup4==4.12.3",
-                    "camoufox==0.4.10",
-                    "colorama==0.4.6",
-                    "crawl4ai==0.4.0",
-                    "cffi==1.17.1",
-                    "curl_cffi==0.7.0",
-                    "ddgs==9.10.0",
-                    "django==6.0.2",
-                    "django-cors-headers==4.9.0",
-                    "duckduckgo-search==7.0.2",
-                    "easyocr==1.7.2",
-                    "av==13.1.0",
-                    "faster-whisper==1.1.1",
-                    "fastapi==0.128.0",
-                    "gliner==0.2.22",
-                    "gliner2==1.2.5",
-                    "httpx==0.28.1",
-                    "huggingface_hub==0.23.0",
-                    "litellm==1.80.0",
-                    "lmstudio==1.5.0",
-                    "markdownify==0.11.0",
-                    "martor==1.7.16",
-                    "mcp==1.26.0",
-                    "networkx==3.6.1",
-                    "nltk==3.9.2",
-                    "nodriver==0.35",
-                    "numpy==2.0.0",
-                    "google-genai==1.72.0",
-                    "openai==2.16.0",
-                    "ollama==0.6.1",
-                    "pillow==10.4.0",
-                    "playwright==1.50.0",
-                    "psutil==6.0.0",
-                    "pymupdf4llm==0.3.4",
-                    "pydantic-settings==2.7.0",
-                    "pydantic==2.11.7",
-                    "python-dotenv==1.0.1",
-                    "pyyaml==6.0.2",
-                    "requests==2.32.3",
-                    "rich==13.9.4",
-                    "scipy==1.17.0",
-                    "seleniumbase==4.33.0",
-                    "sentence-transformers==5.2.0",
-                    "spacy==3.8.11",
-                    "tenacity==9.0.0",
-                    "torch==2.6.0",
-                    "tqdm==4.67.0",
-                    "trafilatura==2.0.0",
-                    "ultralytics==8.4.21",
-                    "uvicorn[standard]==0.40.0",
-                    "whitenoise==6.12.0",
-                    "youtube-transcript-api==0.6.0",
-                    "yt-dlp==2024.3.10"
+                    "virtualenv"
                 ]
             },
             {
@@ -165,7 +119,7 @@
             "name": "Ollama",
             "description": "Whether the Ollama inference service is installed",
             "type": "engine",
-            "default": false,
+            "default": true,
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key ollama-service",
             "setExec": "main.py set_setting --key ollama-service --value {value}"
@@ -215,7 +169,7 @@
             "name": "LM Studio",
             "description": "Whether LM Studio integration is available",
             "type": "engine",
-            "default": false,
+            "default": true,
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key lms",
             "setExec": "main.py set_setting --key lms --value {value}"
@@ -236,7 +190,7 @@
             "name": "OpenAI-Compatible API",
             "description": "Whether an OpenAI-compatible API endpoint is available",
             "type": "engine",
-            "default": false,
+            "default": true,
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key openai",
             "setExec": "main.py set_setting --key openai --value {value}"
@@ -246,11 +200,11 @@
             "name": "OpenAI-Compatible Address",
             "description": "Base URL of the OpenAI-compatible API endpoint",
             "type": "string",
-            "default": "127.0.0.1:8000/v1",
+            "default": "127.0.0.1:1234/v1",
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key openai_url",
             "setExec": "main.py set_setting --key openai_url --value {value}",
-            "value": "127.0.0.1:9000/v1"
+            "value": "127.0.0.1:1234/v1"
         },
         {
             "key": "openai_api_key",
@@ -267,7 +221,7 @@
             "name": "Google GenAI",
             "description": "Whether Google GenAI integration is available",
             "type": "engine",
-            "default": false,
+            "default": true,
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key google-genai",
             "setExec": "main.py set_setting --key google-genai --value {value}"
@@ -291,49 +245,6 @@
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key google_genai_api_key",
             "setExec": "main.py set_setting --key google_genai_api_key --value {value}"
-        },
-        {
-            "key": "yacy",
-            "name": "Use YaCy",
-            "description": "Whether web-search tools should use and auto-start the local YaCy service.",
-            "type": "bool",
-            "default": false,
-            "engine": "python-runtime",
-            "getExec": "main.py get_setting --key use-yacy",
-            "setExec": "main.py set_setting --key use-yacy --value {value}"
-        },
-        {
-            "key": "yacy_url",
-            "name": "YaCy URL",
-            "description": "Base URL of the local YaCy search service.",
-            "type": "string",
-            "default": "http://localhost:8090",
-            "value": "http://localhost:8090",
-            "engine": "python-runtime",
-            "getExec": "main.py get_setting --key yacy_url",
-            "setExec": "main.py set_setting --key yacy_url --value {value}"
-        },
-        {
-            "key": "yacy_user",
-            "name": "YaCy Username",
-            "description": "Username for YaCy admin authentication.",
-            "type": "string",
-            "default": "admin",
-            "value": "admin",
-            "engine": "python-runtime",
-            "getExec": "main.py get_setting --key yacy_user",
-            "setExec": "main.py set_setting --key yacy_user --value {value}"
-        },
-        {
-            "key": "yacy_pass",
-            "name": "YaCy Password",
-            "description": "Password for YaCy admin authentication.",
-            "type": "password",
-            "default": "admin",
-            "value": "admin",
-            "engine": "python-runtime",
-            "getExec": "main.py get_setting --key yacy_pass",
-            "setExec": "main.py set_setting --key yacy_pass --value {value}"
         }
     ],
     "downloadsBridge": {

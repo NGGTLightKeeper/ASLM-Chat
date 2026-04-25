@@ -27,7 +27,6 @@ def _build_initial_settings(existing: dict[str, Any], ui_port: int, api_port: in
             "debug": existing.get("debug", False),
             "llm-engine": existing.get("llm-engine", "ollama-service"),
             "lms_url": existing.get("lms_url", "127.0.0.1:1234"),
-            "use-yacy": existing.get("use-yacy", False),
             "openai_url": existing.get("openai_url", "127.0.0.1:8000/v1"),
             "openai_api_key": existing.get("openai_api_key", ""),
             "google_genai_url": existing.get("google_genai_url", "generativelanguage.googleapis.com"),
@@ -83,30 +82,36 @@ def _run_optional_command(
 
 
 # Ensure Playwright browsers are installed.
-def _ensure_playwright_browsers(log: bool) -> None:
+def _ensure_playwright_browsers(venv_id: str, log: bool) -> None:
     """Install Playwright browsers needed by the bundled tools."""
 
-    if importlib.util.find_spec("playwright") is None:
-        _print_warning("Skipping Playwright browser install because 'playwright' is not installed.")
+    from Services import venv_manager
+
+    python_path = venv_manager.get_venv_python(venv_id)
+    if not python_path.exists():
+        _print_warning(f"Skipping Playwright browser install because venv '{venv_id}' is missing.")
         return
 
     _run_optional_command(
-        [sys.executable, "-m", "playwright", "install", "chromium", "firefox"],
-        description="Installing Playwright browsers (chromium, firefox)",
+        [str(python_path), "-m", "playwright", "install", "chromium", "firefox"],
+        description=f"Installing Playwright browsers for {venv_id} (chromium, firefox)",
         log=log,
     )
 
 # Ensure the Camoufox browser binary is available.
-def _ensure_camoufox_binary(log: bool) -> None:
+def _ensure_camoufox_binary(venv_id: str, log: bool) -> None:
     """Download the Camoufox browser binary when available."""
 
-    if importlib.util.find_spec("camoufox") is None:
-        _print_warning("Skipping Camoufox fetch because 'camoufox' is not installed.")
+    from Services import venv_manager
+
+    python_path = venv_manager.get_venv_python(venv_id)
+    if not python_path.exists():
+        _print_warning(f"Skipping Camoufox fetch because venv '{venv_id}' is missing.")
         return
 
     _run_optional_command(
-        [sys.executable, "-m", "camoufox", "fetch"],
-        description="Fetching Camoufox browser binary",
+        [str(python_path), "-m", "camoufox", "fetch"],
+        description=f"Fetching Camoufox browser binary for {venv_id}",
         log=log,
     )
 
@@ -114,78 +119,61 @@ def _ensure_camoufox_binary(log: bool) -> None:
 def _ensure_nltk_data(log: bool) -> None:
     """Download the NLTK datasets expected by the tool stack."""
 
+    from Services import venv_manager
+
+    code = """
+import nltk
+failed = []
+for package in ("punkt", "punkt_tab", "stopwords", "wordnet"):
     try:
-        import nltk
-    except ImportError:
-        _print_warning("Skipping NLTK data bootstrap because 'nltk' is not installed.")
-        return
-
-    required_packages = ("punkt", "punkt_tab", "stopwords", "wordnet")
-    failed: list[str] = []
-
-    if log:
-        print("[ASLM-Chat] Downloading NLTK data packages...")
-
-    for package in required_packages:
-        try:
-            ok = nltk.download(package, quiet=not log)
-        except Exception:
-            ok = False
-
-        if not ok:
-            failed.append(package)
-
-    if failed:
-        _print_warning(f"NLTK data download failed for: {', '.join(failed)}")
+        ok = nltk.download(package, quiet=False)
+    except Exception:
+        ok = False
+    if not ok:
+        failed.append(package)
+if failed:
+    raise SystemExit("NLTK data download failed for: " + ", ".join(failed))
+"""
+    if not venv_manager.run_venv_code("mcp-web-search", code, log=log):
+        _print_warning("NLTK data bootstrap did not complete successfully.")
 
 # Ensure the default spaCy English model is installed.
 def _ensure_spacy_model(log: bool) -> None:
     """Install the default spaCy English model when missing."""
 
-    if importlib.util.find_spec("spacy") is None:
-        _print_warning("Skipping spaCy model install because 'spacy' is not installed.")
-        return
+    from Services import venv_manager
 
-    if importlib.util.find_spec("en_core_web_sm") is not None:
-        if log:
-            print("[ASLM-Chat] spaCy model 'en_core_web_sm' is already installed.")
-        return
-
-    _run_optional_command(
-        [sys.executable, "-m", "spacy", "download", "en_core_web_sm"],
-        description="Installing spaCy model en_core_web_sm",
-        log=log,
-    )
-
-# Ensure the bundled YaCy runtime is installed when enabled.
-def _ensure_yacy_installed(log: bool) -> None:
-    """Install and configure the bundled YaCy runtime when enabled."""
-
-    try:
-        from Services import yacy_service
-    except ImportError as exc:
-        _print_warning(f"Skipping YaCy bootstrap because the service helper is unavailable: {exc}")
-        return
-
-    if not yacy_service.ensure_installed(log=log):
-        _print_warning("YaCy bootstrap did not complete successfully.")
+    code = """
+import importlib.util
+import subprocess
+import sys
+if importlib.util.find_spec("en_core_web_sm") is None:
+    raise SystemExit(subprocess.call([sys.executable, "-m", "spacy", "download", "en_core_web_sm"]))
+print("[ASLM-Chat] spaCy model 'en_core_web_sm' is already installed.")
+"""
+    if not venv_manager.run_venv_code("mcp-web-search", code, log=log):
+        _print_warning("spaCy model bootstrap did not complete successfully.")
 
 # Run all optional tool bootstrap steps.
-def _run_tool_bootstrap(log: bool, use_yacy: bool) -> None:
+def _run_tool_bootstrap(log: bool) -> None:
     """Run post-dependency bootstrap tasks that were previously handled by install.bat."""
+
+    from Services import venv_manager
+
+    if not venv_manager.ensure_all(log=log):
+        _print_warning("One or more ASLM-Chat venvs did not install successfully.")
 
     if not TOOLS_DIR.exists():
         if log:
             print(f"[ASLM-Chat] Tools directory not found, skipping tool bootstrap: {TOOLS_DIR}")
         return
 
-    _ensure_playwright_browsers(log)
-    _ensure_camoufox_binary(log)
+    for browser_venv_id in ("mcp-browser-agent", "mcp-web-search"):
+        _ensure_playwright_browsers(browser_venv_id, log)
+        _ensure_camoufox_binary(browser_venv_id, log)
+
     _ensure_nltk_data(log)
     _ensure_spacy_model(log)
-
-    if use_yacy:
-        _ensure_yacy_installed(log)
 
 
 # Print the first-run summary.
@@ -212,7 +200,7 @@ def run(log: bool = False, ui_port: int = 30000, api_port: int = 30001) -> None:
     existing = load_settings()
     initial = _build_initial_settings(existing, ui_port, api_port)
     save_settings(initial)
-    _run_tool_bootstrap(log, bool(initial.get("use-yacy", False)))
+    _run_tool_bootstrap(log)
 
     if log:
         _print_summary(SETTINGS_FILE, initial)

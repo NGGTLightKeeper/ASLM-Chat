@@ -1,0 +1,106 @@
+{
+    "fileVersion": 1,
+    "venvs": [
+        {
+            "id": "server",
+            "path": "Data/venvs/server",
+            "packages": [
+                "argon2-cffi==25.1.0",
+                "beautifulsoup4==4.12.3",
+                "django==6.0.2",
+                "django-cors-headers==4.9.0",
+                "google-genai==1.72.0",
+                "lmstudio==1.5.0",
+                "martor==1.7.16",
+                "ollama==0.6.1",
+                "openai==2.16.0",
+                "PyMuPDF==1.27.2.2",
+                "requests==2.32.3",
+                "whitenoise==6.12.0"
+            ]
+        },
+        {
+            "id": "mcp-browser-agent",
+            "path": "Data/venvs/tools/mcp-browser-agent",
+            "tool": "mcp-browser-agent",
+            "packages": [
+                "camoufox==0.4.10",
+                "mcp==1.26.0",
+                "playwright==1.50.0",
+                "starlette",
+                "uvicorn[standard]==0.40.0"
+            ]
+        },
+        {
+            "id": "mcp-web-search",
+            "path": "Data/venvs/tools/mcp-web-search",
+            "tool": "mcp-web-search",
+            "packages": [
+                "aiohttp==3.11.0",
+                "beautifulsoup4==4.12.3",
+                "camoufox==0.4.10",
+                "cffi==1.17.1",
+                "colorama==0.4.6",
+                "curl_cffi==0.7.0",
+                "ddgs==9.10.0",
+                "duckduckgo-search==7.0.2",
+                "gliner==0.2.22",
+                "httpx==0.28.1",
+                "huggingface_hub==0.23.0",
+                "mcp==1.26.0",
+                "networkx==3.6.1",
+                "nltk==3.9.2",
+                "numpy==2.0.0",
+                "playwright==1.50.0",
+                "pydantic==2.11.7",
+                "pydantic-settings==2.7.0",
+                "pymupdf4llm==0.3.4",
+                "pyyaml==6.0.2",
+                "requests==2.32.3",
+                "scipy==1.17.0",
+                "sentence-transformers==5.2.0",
+                "spacy==3.8.11",
+                "torch==2.6.0",
+                "tqdm==4.67.0",
+                "trafilatura==2.0.0",
+                "uvicorn[standard]==0.40.0",
+                "youtube-transcript-api==0.6.0",
+                "yt-dlp==2024.3.10"
+            ]
+        },
+        {
+            "id": "mcp-deep-think",
+            "path": "Data/venvs/tools/mcp-deep-think",
+            "tool": "mcp-deep-think",
+            "packages": [
+                "ddgs==9.10.0",
+                "duckduckgo-search==7.0.2",
+                "httpx==0.28.1",
+                "mcp==1.26.0",
+                "ollama==0.6.1",
+                "pydantic==2.11.7",
+                "requests==2.32.3",
+                "tenacity==9.0.0",
+                "youtube-transcript-api==0.6.0",
+                "yt-dlp==2024.3.10"
+            ]
+        },
+        {
+            "id": "mcp-sandbox",
+            "path": "Data/venvs/tools/mcp-sandbox",
+            "tool": "mcp-sandbox",
+            "packages": [
+                "mcp==1.26.0"
+            ]
+        },
+        {
+            "id": "mcp-guide-db",
+            "path": "Data/venvs/tools/mcp-guide-db",
+            "tool": "mcp-guide-db",
+            "packages": [
+                "mcp==1.26.0",
+                "pyyaml==6.0.2"
+            ]
+        }
+    ]
+}

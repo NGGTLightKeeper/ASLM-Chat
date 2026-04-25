@@ -40,6 +40,10 @@ export function bindEventHandlers(context, dependencies) {
     chatController.deleteMessage($(this).closest('.msg'));
   });
 
+  dom.$messagesInner.on('click', '.msg-tool-call-card[data-tool-segment-index]', function onToolCardClick() {
+    messagesUi.openToolInspectorFromCard($(this));
+  });
+
   dom.$messagesInner.on('mousedown', '.msg-thoughts-toggle', function onThoughtToggleMouseDown(event) {
     event.preventDefault();
     event.stopPropagation();

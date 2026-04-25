@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Tests for dynamic rg type map loading and derived code-extension detection."""
 
 import os

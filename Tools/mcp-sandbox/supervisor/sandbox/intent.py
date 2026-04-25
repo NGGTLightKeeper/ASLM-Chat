@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Intent classification and command normalization.
 
 The core idea: instead of routing by command syntax (cat → handler,

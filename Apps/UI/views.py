@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import base64
 import binascii
-import io
+import copy
+import hashlib
 import json
 import logging
 import mimetypes
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
-from django.http import JsonResponse, StreamingHttpResponse
+from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.views.generic import TemplateView
 
 from API import llm_api, mcp as tool_registry
@@ -52,6 +54,16 @@ logger = logging.getLogger(__name__)
 THINK_PARAM_NAMES = {"think", "thinking", "reasoning"}
 THINK_LEVEL_PARAM_NAMES = {"think_level", "thinking_level", "reasoning_effort"}
 TOOL_CAPABILITY_NAMES = {"tools", "tool", "tool-calling", "tool_calling"}
+OLLAMA_TOOL_TEMPLATE_MARKERS = (
+    ".Tools",
+    ".ToolCalls",
+    "tool_calls",
+    "tool_call_id",
+    "<tool_call",
+    "[TOOL_CALLS]",
+    "available_tools",
+    "function_call",
+)
 TEXT_ATTACHMENT_EXTENSIONS = {
     ".adoc", ".ahk", ".asm", ".asciidoc", ".bash", ".bat", ".bib", ".c", ".cc", ".cfg",
     ".clj", ".cljc", ".cljs", ".cmd", ".cmake", ".conf", ".config", ".cpp", ".cs",
@@ -108,6 +120,12 @@ TEXT_ATTACHMENT_FILENAMES = {
     "vagrantfile",
 }
 ATTACHMENT_TEXT_CHAR_LIMIT = 24000
+LLM_HISTORY_MAX_MESSAGES = 40
+LLM_HISTORY_MIN_MESSAGES = 8
+LLM_HISTORY_DEFAULT_CHAR_BUDGET = 48000
+LLM_HISTORY_MAX_CHAR_BUDGET = 160000
+MODEL_INFO_CACHE_TTL_SECONDS = 300
+MODEL_LIST_CACHE_TTL_SECONDS = 45
 LLM_CONTROL_TOKEN_PATTERNS = (
     re.compile(
         r"<\|start\|>\s*(?:assistant|user|system)?\s*(?:<\|channel\|>\s*(?:final|analysis|commentary))?\s*(?:<\|message\|>)?",
@@ -121,6 +139,231 @@ LLM_CONTROL_TOKEN_PATTERNS = (
     re.compile(r"<\|im_(?:start|end)\|>", flags=re.IGNORECASE),
     re.compile(r"<\|(?:assistant|user|system|endoftext)\|>", flags=re.IGNORECASE),
 )
+
+_metadata_cache_lock = threading.RLock()
+_model_info_cache: dict[tuple[str, str, str, str], tuple[float, dict[str, Any]]] = {}
+_model_list_cache: dict[tuple[str, str, str], tuple[float, list[str]]] = {}
+_tool_server_cache: dict[tuple[str, str, str, str], tuple[float, list[dict[str, Any]]]] = {}
+_active_model_lock = threading.RLock()
+_active_model_by_engine: dict[str, str] = {}
+
+CONTEXT_WINDOW_KEYS = (
+    "num_ctx",
+    "context_length",
+    "contextLength",
+    "context_window",
+    "contextWindow",
+    "max_context_length",
+    "maxContextLength",
+    "max_context_window",
+    "maxContextWindow",
+    "input_token_limit",
+    "inputTokenLimit",
+)
+OUTPUT_TOKEN_KEYS = (
+    "num_predict",
+    "maxTokens",
+    "max_tokens",
+    "max_completion_tokens",
+    "max_output_tokens",
+    "output_token_limit",
+    "outputTokenLimit",
+)
+
+
+# Return a stable runtime scope for model metadata caches.
+def _engine_metadata_scope(engine: str) -> tuple[str, str]:
+    """Return endpoint and API-key scope for runtime metadata caches."""
+
+    try:
+        endpoint = settings.get_engine_url(engine)
+    except Exception:
+        endpoint = ""
+
+    try:
+        api_key = settings.get_engine_api_key(engine)
+    except Exception:
+        api_key = ""
+
+    api_key_hash = hashlib.sha256(str(api_key or "").encode("utf-8")).hexdigest()[:16]
+    return endpoint, api_key_hash
+
+
+# Return a defensive deep copy of a cacheable payload.
+def _clone_metadata_payload(payload: Any) -> Any:
+    """Return a detached copy so callers cannot mutate cached metadata."""
+
+    return copy.deepcopy(payload)
+
+
+# Clear cached model metadata.
+def _clear_model_metadata_caches() -> None:
+    """Invalidate runtime metadata caches after settings or presets change."""
+
+    with _metadata_cache_lock:
+        _model_info_cache.clear()
+        _model_list_cache.clear()
+        _tool_server_cache.clear()
+
+
+# Remember the latest selected model for one engine.
+def _remember_active_model(engine: str, model_name: str) -> None:
+    """Store the latest selected model for this server process."""
+
+    normalized_engine = settings.normalize_engine_name(engine)
+    normalized_model = str(model_name or "").strip()
+    if not normalized_model:
+        return
+
+    with _active_model_lock:
+        _active_model_by_engine[normalized_engine] = normalized_model
+
+
+# Read the latest selected model for one engine.
+def _get_remembered_active_model(engine: str) -> str:
+    """Return the latest selected model for this server process."""
+
+    normalized_engine = settings.normalize_engine_name(engine)
+    with _active_model_lock:
+        return _active_model_by_engine.get(normalized_engine, "")
+
+
+# Convert one value into a positive integer when possible.
+def _coerce_positive_int(value: Any) -> int | None:
+    """Return a positive integer or ``None`` when the value is not numeric."""
+
+    if isinstance(value, bool) or value is None:
+        return None
+
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    return number if number > 0 else None
+
+
+# Read the first positive integer from a mapping.
+def _first_positive_int(mapping: dict[str, Any], keys: tuple[str, ...]) -> int | None:
+    """Return the first positive integer found under one of the given keys."""
+
+    if not isinstance(mapping, dict):
+        return None
+
+    for key in keys:
+        number = _coerce_positive_int(mapping.get(key))
+        if number is not None:
+            return number
+
+    return None
+
+
+# Resolve the model name represented by an inference-info request.
+def _resolve_inference_model(engine: str, requested_model: str | None = None) -> tuple[str, str]:
+    """Return the model name and where that selection came from."""
+
+    model_name = str(requested_model or "").strip()
+    if model_name:
+        return model_name, "request"
+
+    model_name = _get_remembered_active_model(engine)
+    if model_name:
+        return model_name, "runtime_selection"
+
+    models = _load_models_for_engine(engine)
+    if models:
+        return models[0], "model_list"
+
+    return "", "none"
+
+
+# Return cached model info when it is still fresh.
+def _get_cached_model_info(engine: str, model_name: str) -> dict[str, Any] | None:
+    """Return a cached model-info payload if available."""
+
+    endpoint, api_key_hash = _engine_metadata_scope(engine)
+    cache_key = (engine, model_name, endpoint, api_key_hash)
+    now = time.monotonic()
+
+    with _metadata_cache_lock:
+        cached = _model_info_cache.get(cache_key)
+        if cached is None:
+            return None
+        cached_at, payload = cached
+        if now - cached_at > MODEL_INFO_CACHE_TTL_SECONDS:
+            _model_info_cache.pop(cache_key, None)
+            return None
+        return _clone_metadata_payload(payload)
+
+
+# Store model info in the runtime cache.
+def _set_cached_model_info(engine: str, model_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Cache and return a detached model-info payload."""
+
+    endpoint, api_key_hash = _engine_metadata_scope(engine)
+    cache_key = (engine, model_name, endpoint, api_key_hash)
+    cached_payload = _clone_metadata_payload(payload)
+
+    with _metadata_cache_lock:
+        _model_info_cache[cache_key] = (time.monotonic(), cached_payload)
+
+    return _clone_metadata_payload(cached_payload)
+
+
+# Return cached model names when still fresh.
+def _get_cached_model_list(engine: str) -> list[str] | None:
+    """Return a cached model list for one engine if available."""
+
+    endpoint, api_key_hash = _engine_metadata_scope(engine)
+    cache_key = (engine, endpoint, api_key_hash)
+    now = time.monotonic()
+
+    with _metadata_cache_lock:
+        cached = _model_list_cache.get(cache_key)
+        if cached is None:
+            return None
+        cached_at, models = cached
+        if now - cached_at > MODEL_LIST_CACHE_TTL_SECONDS:
+            _model_list_cache.pop(cache_key, None)
+            return None
+        return list(models)
+
+
+# Store model names in the runtime cache.
+def _set_cached_model_list(engine: str, models: list[str]) -> list[str]:
+    """Cache and return a detached model list."""
+
+    endpoint, api_key_hash = _engine_metadata_scope(engine)
+    cache_key = (engine, endpoint, api_key_hash)
+    cached_models = list(models)
+
+    with _metadata_cache_lock:
+        _model_list_cache[cache_key] = (time.monotonic(), cached_models)
+
+    return list(cached_models)
+
+
+# Return cached tool servers when still fresh.
+def _list_tool_servers_cached(engine: str, model_name: str | None = None) -> list[dict[str, Any]]:
+    """Return supported tool servers with a short runtime cache."""
+
+    endpoint, api_key_hash = _engine_metadata_scope(engine)
+    normalized_model = str(model_name or "")
+    cache_key = (engine, normalized_model, endpoint, api_key_hash)
+    now = time.monotonic()
+
+    with _metadata_cache_lock:
+        cached = _tool_server_cache.get(cache_key)
+        if cached is not None:
+            cached_at, servers = cached
+            if now - cached_at <= MODEL_LIST_CACHE_TTL_SECONDS:
+                return _clone_metadata_payload(servers)
+            _tool_server_cache.pop(cache_key, None)
+
+    servers = tool_registry.list_servers(engine, model_name)
+    with _metadata_cache_lock:
+        _tool_server_cache[cache_key] = (time.monotonic(), _clone_metadata_payload(servers))
+    return _clone_metadata_payload(servers)
 
 
 # Emit one concise runtime event for the ASLM console.
@@ -246,6 +489,43 @@ def _decode_base64_payload(raw_value: Any) -> bytes:
         return base64.b64decode(payload)
 
 
+# Estimate decoded byte size without materializing the full payload.
+def _estimate_base64_payload_size(raw_value: Any) -> int:
+    """Return the decoded byte size for one base64 payload or data URL."""
+
+    payload = str(raw_value or "").strip()
+    if not payload:
+        return 0
+
+    if payload.startswith("data:") and "," in payload:
+        payload = payload.split(",", 1)[1]
+
+    payload = "".join(payload.split())
+    if not payload:
+        return 0
+
+    padding = len(payload) - len(payload.rstrip("="))
+    return max((len(payload) * 3) // 4 - padding, 0)
+
+
+# Return whether one payload is structurally valid base64.
+def _is_valid_base64_payload(raw_value: Any) -> bool:
+    """Return whether one base64 payload has a valid lightweight shape."""
+
+    payload = str(raw_value or "").strip()
+    if not payload:
+        return False
+
+    if payload.startswith("data:") and "," in payload:
+        payload = payload.split(",", 1)[1]
+
+    payload = "".join(payload.split())
+    if not payload or len(payload) % 4 == 1:
+        return False
+
+    return re.fullmatch(r"[A-Za-z0-9+/]*={0,2}", payload) is not None
+
+
 # Split a data URL into MIME type and base64 payload.
 def _parse_data_url(raw_value: Any) -> tuple[str, str]:
     """Split a data URL into MIME type and base64 payload."""
@@ -312,15 +592,15 @@ def _normalize_attachment_payload(raw_attachment: Any, order: int) -> dict[str, 
     if not encoded:
         return None
 
-    file_bytes = _decode_base64_payload(encoded)
-    if not file_bytes:
-        return None
-
     if encoded.startswith("data:"):
         parsed_mime, parsed_data = _parse_data_url(encoded)
         if parsed_mime:
             mime_type = parsed_mime
         encoded = parsed_data
+
+    size_bytes = _estimate_base64_payload_size(encoded)
+    if size_bytes <= 0 or not _is_valid_base64_payload(encoded):
+        return None
 
     kind = _guess_attachment_kind(mime_type, name)
     if not name:
@@ -333,7 +613,7 @@ def _normalize_attachment_payload(raw_attachment: Any, order: int) -> dict[str, 
         "name": name,
         "mime_type": mime_type,
         "data": encoded,
-        "size_bytes": len(file_bytes),
+        "size_bytes": size_bytes,
         "order": order,
     }
 
@@ -352,40 +632,58 @@ def _normalize_request_attachments(data: dict[str, Any]) -> list[dict[str, Any]]
     return normalized
 
 
+# Build an attachment content endpoint path.
+def _attachment_content_url(record_type: str, record_id: int) -> str:
+    """Return the lazy content endpoint for one stored attachment."""
+
+    return f"/api/attachment/{record_type}/{record_id}/content/"
+
+
 # Convert a persisted attachment-like object into the frontend payload.
-def _serialize_attachment_record(attachment: Any) -> dict[str, Any]:
+def _serialize_attachment_record(attachment: Any, *, include_data: bool = True) -> dict[str, Any]:
     """Convert a persisted attachment-like object into the frontend payload."""
 
     if isinstance(attachment, MessageAttachment):
-        return {
+        payload = {
+            "id": attachment.id,
+            "record_type": "attachment",
             "kind": attachment.kind,
             "name": attachment.name,
             "mime_type": attachment.mime_type,
             "size_bytes": attachment.size_bytes,
             "order": attachment.order,
-            "data_url": attachment.data_url(),
+            "content_url": _attachment_content_url("attachment", attachment.id),
         }
+        if include_data:
+            payload["data_url"] = attachment.data_url()
+            payload["extracted_text"] = attachment.extracted_text
+            payload["extracted_text_ready"] = attachment.extracted_text_ready
+        return payload
 
     if isinstance(attachment, MessageImage):
         payload = {
+            "id": attachment.id,
+            "record_type": "image",
             "kind": MessageAttachmentKind.IMAGE,
             "name": f"image-{attachment.order + 1}",
             "mime_type": attachment.mime_type,
-            "size_bytes": len(_decode_base64_payload(attachment.data)),
+            "size_bytes": _estimate_base64_payload_size(attachment.data),
             "order": attachment.order,
-            "data_url": attachment.data_url(),
+            "content_url": _attachment_content_url("image", attachment.id),
         }
+        if include_data:
+            payload["data_url"] = attachment.data_url()
         return payload
 
     return {}
 
 
 # Return all persisted attachments for a message in a shared shape.
-def _get_message_attachments(message: Message) -> list[dict[str, Any]]:
+def _get_message_attachments(message: Message, *, include_data: bool = True) -> list[dict[str, Any]]:
     """Return all persisted attachments for a message in a shared shape."""
 
-    attachments = [_serialize_attachment_record(item) for item in message.attachments.all()]
-    legacy_images = [_serialize_attachment_record(item) for item in message.images.all()]
+    attachments = [_serialize_attachment_record(item, include_data=include_data) for item in message.attachments.all()]
+    legacy_images = [_serialize_attachment_record(item, include_data=include_data) for item in message.images.all()]
     combined = [item for item in attachments + legacy_images if item]
     combined.sort(key=lambda item: (int(item.get("order") or 0), item.get("name", "")))
     return combined
@@ -395,7 +693,10 @@ def _get_message_attachments(message: Message) -> list[dict[str, Any]]:
 def _attachment_data_to_bytes(attachment: dict[str, Any]) -> bytes:
     """Decode one serialized attachment payload into bytes."""
 
-    return _decode_base64_payload(attachment.get("data_url") or attachment.get("data"))
+    try:
+        return _decode_base64_payload(attachment.get("data_url") or attachment.get("data"))
+    except (ValueError, binascii.Error):
+        return b""
 
 
 # Return whether the attachment should be decoded as text.
@@ -444,15 +745,43 @@ def _truncate_attachment_text(text: str, limit: int = ATTACHMENT_TEXT_CHAR_LIMIT
     return f"{normalized[:limit].rstrip()}\n...[truncated]"
 
 
+# Persist extracted text for one stored file attachment.
+def _cache_attachment_text(attachment: dict[str, Any], extracted_text: str) -> str:
+    """Store extracted attachment text so future requests do not decode it again."""
+
+    attachment["extracted_text"] = extracted_text
+    attachment["extracted_text_ready"] = True
+
+    if attachment.get("record_type") != "attachment":
+        return extracted_text
+
+    try:
+        attachment_id = int(attachment.get("id") or 0)
+    except (TypeError, ValueError):
+        attachment_id = 0
+
+    if attachment_id <= 0:
+        return extracted_text
+
+    MessageAttachment.objects.filter(id=attachment_id).update(
+        extracted_text=extracted_text,
+        extracted_text_ready=True,
+    )
+    return extracted_text
+
+
 # Extract prompt-friendly text from a file attachment when possible.
 def _extract_attachment_text(attachment: dict[str, Any]) -> str:
     """Extract prompt-friendly text from a file attachment when possible."""
+
+    if attachment.get("extracted_text_ready"):
+        return _truncate_attachment_text(str(attachment.get("extracted_text") or ""))
 
     attachment_name = str(attachment.get("name") or "file").strip() or "file"
     mime_type = str(attachment.get("mime_type") or "application/octet-stream").strip()
     file_bytes = _attachment_data_to_bytes(attachment)
     if not file_bytes:
-        return ""
+        return _cache_attachment_text(attachment, "")
 
     suffix = Path(attachment_name).suffix.lower()
     if mime_type == "application/pdf" or suffix == ".pdf":
@@ -461,18 +790,18 @@ def _extract_attachment_text(attachment: dict[str, Any]) -> str:
 
             with fitz.open(stream=file_bytes, filetype="pdf") as document:
                 pages = [page.get_text("text") for page in document]
-            return _truncate_attachment_text("\n".join(pages))
+            return _cache_attachment_text(attachment, _truncate_attachment_text("\n".join(pages)))
         except Exception:
-            return ""
+            return _cache_attachment_text(attachment, "")
 
     if _is_text_attachment(mime_type, attachment_name):
         for encoding in ("utf-8", "utf-8-sig", "cp1251", "latin-1"):
             try:
-                return _truncate_attachment_text(file_bytes.decode(encoding))
+                return _cache_attachment_text(attachment, _truncate_attachment_text(file_bytes.decode(encoding)))
             except UnicodeDecodeError:
                 continue
 
-    return ""
+    return _cache_attachment_text(attachment, "")
 
 
 # Serialize one non-image attachment into universal text context.
@@ -593,6 +922,10 @@ def _extract_model_name(model_entry: Any) -> str:
 def _load_models_for_engine(engine: str) -> list[str]:
     """Return sorted model names for the selected engine."""
 
+    cached_models = _get_cached_model_list(engine)
+    if cached_models is not None:
+        return cached_models
+
     try:
         raw_models = llm_api.get_models(engine)
     except NotImplementedError:
@@ -610,7 +943,11 @@ def _load_models_for_engine(engine: str) -> list[str]:
         if model_name:
             model_names.append(model_name)
 
-    return sorted(set(model_names), key=str.casefold)
+    sorted_model_names = sorted(set(model_names), key=str.casefold)
+    if not sorted_model_names and settings.is_ollama_engine(engine):
+        return []
+
+    return _set_cached_model_list(engine, sorted_model_names)
 
 
 # Build shared template context
@@ -624,7 +961,7 @@ def _build_base_context() -> dict[str, Any]:
         "models": [],
         "engine_options": settings.get_supported_engines(),
         "runtime_settings": runtime_settings,
-        "available_tool_servers": tool_registry.list_servers(engine=engine),
+        "available_tool_servers": _list_tool_servers_cached(engine=engine),
         "chats": Chat.objects.all(),
     }
 
@@ -808,7 +1145,7 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
 
 
 # Serialize message
-def _serialize_message(message: Message) -> dict[str, Any]:
+def _serialize_message(message: Message, *, include_attachment_data: bool = True) -> dict[str, Any]:
     """Convert a database message to the JSON shape expected by the frontend."""
 
     payload = {
@@ -820,10 +1157,14 @@ def _serialize_message(message: Message) -> dict[str, Any]:
     activity_segments = _build_activity_segments(message)
     if activity_segments:
         payload["activity_segments"] = activity_segments
-    attachments = _get_message_attachments(message)
+    attachments = _get_message_attachments(message, include_data=include_attachment_data)
     if attachments:
         payload["attachments"] = attachments
-        payload["images"] = [item["data_url"] for item in attachments if item.get("kind") == MessageAttachmentKind.IMAGE]
+        payload["images"] = [
+            item.get("data_url") or item.get("content_url")
+            for item in attachments
+            if item.get("kind") == MessageAttachmentKind.IMAGE and (item.get("data_url") or item.get("content_url"))
+        ]
     return payload
 
 
@@ -865,6 +1206,60 @@ def _serialize_tool_result_marker(alias: str, content: str) -> str:
 
 
 # Extract Ollama model info
+def _normalize_capability_tokens(capabilities: Any) -> set[str]:
+    """Return normalized capability names from loosely shaped runtime metadata."""
+
+    if capabilities is None:
+        return set()
+
+    raw_items: list[Any]
+    if isinstance(capabilities, dict):
+        raw_items = [key for key, value in capabilities.items() if bool(value)]
+    elif isinstance(capabilities, str):
+        raw_items = re.split(r"[\s,;|]+", capabilities)
+    elif isinstance(capabilities, (list, tuple, set)):
+        raw_items = list(capabilities)
+    else:
+        raw_items = [capabilities]
+
+    tokens: set[str] = set()
+    for item in raw_items:
+        value = str(item or "").strip().lower()
+        if not value:
+            continue
+        tokens.add(value)
+        if "." in value:
+            tokens.add(value.rsplit(".", 1)[-1])
+    return tokens
+
+
+# Return whether one Ollama chat template can serialize tools.
+def _ollama_template_supports_tool_calling(template: str) -> bool:
+    """Return whether an Ollama template contains tool-call placeholders."""
+
+    normalized_template = str(template or "")
+    if not normalized_template:
+        return False
+
+    folded_template = normalized_template.lower()
+    return any(marker.lower() in folded_template for marker in OLLAMA_TOOL_TEMPLATE_MARKERS)
+
+
+# Return whether Ollama metadata is strong enough to expose local tools.
+def _ollama_metadata_supports_tool_calling(
+    capabilities: Any,
+    template: str,
+) -> bool:
+    """Return whether Ollama model metadata indicates real tool-call support."""
+
+    if capabilities is not None:
+        return bool(_normalize_capability_tokens(capabilities) & TOOL_CAPABILITY_NAMES)
+
+    # Older/custom Ollama responses may not expose `capabilities`. In that
+    # case, fall back to whether the model template can serialize tool calls.
+    return _ollama_template_supports_tool_calling(template)
+
+
 def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
     """Parse Ollama-specific model metadata into a frontend-friendly payload."""
 
@@ -874,15 +1269,15 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
 
     # Read raw metadata from dict-like or SDK responses.
     if isinstance(settings_data, dict):
-        modelinfo = settings_data.get("modelinfo", {}) or {}
+        modelinfo = settings_data.get("modelinfo", settings_data.get("model_info", {})) or {}
         parameters_str = settings_data.get("parameters", "") or ""
         template_str = settings_data.get("template", "") or ""
-        capabilities = settings_data.get("capabilities", []) or []
+        capabilities = settings_data.get("capabilities")
     else:
         modelinfo = getattr(settings_data, "modelinfo", {}) or {}
         parameters_str = getattr(settings_data, "parameters", "") or ""
         template_str = getattr(settings_data, "template", "") or ""
-        capabilities = getattr(settings_data, "capabilities", []) or []
+        capabilities = getattr(settings_data, "capabilities", None)
 
     # Extract numeric limits from Ollama's flat metadata keys.
     for key, value in modelinfo.items():
@@ -925,7 +1320,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
 
     think_param_name = "think"
     think_level_param_name = "think_level"
-    normalized_capabilities = {str(item).strip().lower() for item in capabilities}
+    normalized_capabilities = _normalize_capability_tokens(capabilities)
 
     # Detect supported features from the template, defaults, and capabilities.
     supports_thinking = any(
@@ -952,7 +1347,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
             break
 
     supports_vision = "vision" in normalized_capabilities
-    supports_tool_calling = bool(normalized_capabilities & TOOL_CAPABILITY_NAMES)
+    supports_tool_calling = _ollama_metadata_supports_tool_calling(capabilities, template_str)
 
     # Runtime limits are used by the frontend controls.
     cpu_threads = max(int(os.cpu_count() or 1), 1)
@@ -1052,6 +1447,10 @@ def _build_model_info_payload(
 ) -> dict[str, Any]:
     """Load adapter metadata and normalize it for the frontend."""
 
+    cached_payload = _get_cached_model_info(engine, model_name)
+    if cached_payload is not None:
+        return cached_payload
+
     try:
         settings_data = llm_api.get_model_settings(engine, model_name)
     except Exception:
@@ -1077,11 +1476,92 @@ def _build_model_info_payload(
         payload = _extract_generic_model_info(settings_data)
 
     payload["available_tool_servers"] = (
-        tool_registry.list_servers(engine, model_name) if payload.get("supports_tool_calling") else []
+        _list_tool_servers_cached(engine, model_name) if payload.get("supports_tool_calling") else []
     )
     payload["model"] = model_name
     payload["engine"] = engine
-    return payload
+    return _set_cached_model_info(engine, model_name, payload)
+
+
+# Build a stable engine label for API payloads.
+def _get_engine_label(engine: str) -> str:
+    """Return a human-readable engine label."""
+
+    return getattr(settings, "ENGINE_LABELS", {}).get(engine, engine)
+
+
+# Normalize model metadata into a compact runtime-inference payload.
+def _build_inference_info_payload(
+    engine: str,
+    model_name: str,
+    model_info_payload: dict[str, Any],
+    model_source: str,
+) -> dict[str, Any]:
+    """Return unified runtime inference metadata independent of engine."""
+
+    defaults = model_info_payload.get("defaults", {})
+    if not isinstance(defaults, dict):
+        defaults = {}
+
+    runtime_limits = model_info_payload.get("runtime_limits", {})
+    if not isinstance(runtime_limits, dict):
+        runtime_limits = {}
+
+    model_context_limit = _coerce_positive_int(model_info_payload.get("context_length"))
+    current_context_window = _first_positive_int(defaults, CONTEXT_WINDOW_KEYS) or model_context_limit
+    current_output_tokens = _first_positive_int(defaults, OUTPUT_TOKEN_KEYS)
+    output_token_limit = (
+        _first_positive_int(runtime_limits, OUTPUT_TOKEN_KEYS)
+        or _coerce_positive_int(model_info_payload.get("output_token_limit"))
+    )
+
+    available_tool_servers = model_info_payload.get("available_tool_servers", [])
+    if not isinstance(available_tool_servers, list):
+        available_tool_servers = []
+
+    capabilities = model_info_payload.get("capabilities", [])
+    if not isinstance(capabilities, list):
+        capabilities = []
+
+    supported_parameters = model_info_payload.get("supported_parameters", [])
+    if not isinstance(supported_parameters, list):
+        supported_parameters = []
+
+    return {
+        "ok": True,
+        "engine": engine,
+        "engine_label": _get_engine_label(engine),
+        "model": model_name,
+        "model_name": model_name,
+        "context_window": current_context_window,
+        "model_context_limit": model_context_limit,
+        "max_output_tokens": current_output_tokens,
+        "output_token_limit": output_token_limit,
+        "limits": {
+            "context_window": current_context_window,
+            "model_context_limit": model_context_limit,
+            "max_output_tokens": current_output_tokens,
+            "output_token_limit": output_token_limit,
+        },
+        "capabilities": {
+            "items": capabilities,
+            "supports_thinking": bool(model_info_payload.get("supports_thinking", False)),
+            "supports_think_toggle": bool(
+                model_info_payload.get("supports_think_toggle", model_info_payload.get("supports_thinking", False))
+            ),
+            "supports_think_level": bool(model_info_payload.get("supports_think_level", False)),
+            "supports_vision": bool(model_info_payload.get("supports_vision", False)),
+            "supports_tool_calling": bool(model_info_payload.get("supports_tool_calling", False)),
+            "supports_files": bool(model_info_payload.get("supports_files", False)),
+        },
+        "generation_defaults": defaults,
+        "supported_parameters": supported_parameters,
+        "runtime_limits": runtime_limits,
+        "tool_servers": available_tool_servers,
+        "source": {
+            "model": model_source,
+        },
+    }
 
 
 # Read JSON body
@@ -1123,7 +1603,7 @@ def _validate_tool_server_support(
 ) -> None:
     """Raise when tools are requested for a model that should not call tools."""
 
-    if not tool_server_ids or engine not in {"lms", "openai", "google-genai"}:
+    if not tool_server_ids:
         return
 
     payload = payload or _build_model_info_payload(engine, model_name, allow_fallback=True)
@@ -1175,13 +1655,52 @@ def _store_message_attachments(message_record: Message, attachments: list[dict[s
             order=int(attachment.get("order") or 0),
         )
 
+
+# Resolve a bounded history budget from model metadata.
+def _resolve_history_char_budget(model_info_payload: dict[str, Any] | None) -> int:
+    """Return an approximate character budget for replayed chat history."""
+
+    if not isinstance(model_info_payload, dict):
+        return LLM_HISTORY_DEFAULT_CHAR_BUDGET
+
+    try:
+        context_length = int(model_info_payload.get("context_length") or 0)
+    except (TypeError, ValueError):
+        context_length = 0
+
+    if context_length <= 0:
+        return LLM_HISTORY_DEFAULT_CHAR_BUDGET
+
+    # Approximate one token as a few characters and leave room for the answer.
+    return max(16000, min(context_length * 3, LLM_HISTORY_MAX_CHAR_BUDGET))
+
+
+# Estimate the prompt cost of one normalized LLM entry.
+def _estimate_llm_entry_chars(entry: dict[str, Any]) -> int:
+    """Return a lightweight size estimate for one outbound LLM entry."""
+
+    if not isinstance(entry, dict):
+        return 0
+
+    cost = len(str(entry.get("content") or ""))
+    cost += len(str(entry.get("thinking") or ""))
+    if isinstance(entry.get("tool_calls"), list):
+        cost += len(json.dumps(entry["tool_calls"], ensure_ascii=False))
+    if isinstance(entry.get("google_parts"), list):
+        cost += len(json.dumps(entry["google_parts"], ensure_ascii=False))
+
+    images = entry.get("images") if isinstance(entry.get("images"), list) else []
+    cost += len(images) * 4096
+    return cost
+
+
 # Build LLM message history
 def _build_chat_history(
     chat: Chat,
     user_message_record: Message,
     user_message: str,
     system_prompt: str,
-    attachments: list[dict[str, Any]],
+    model_info_payload: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build the message history sent to the selected backend."""
 
@@ -1189,12 +1708,37 @@ def _build_chat_history(
     if system_prompt:
         llm_messages.append({"role": "system", "content": system_prompt})
 
-    history_qs = chat.messages.exclude(id=user_message_record.id).prefetch_related("attachments", "images")
+    history_budget = _resolve_history_char_budget(model_info_payload)
+    used_history_chars = 0
+    selected_history: list[list[dict[str, Any]]] = []
+    history_qs = (
+        chat.messages
+        .exclude(id=user_message_record.id)
+        .prefetch_related("attachments", "images")
+        .order_by("-created_at", "-id")[:LLM_HISTORY_MAX_MESSAGES]
+    )
     for historical_message in history_qs:
-        llm_messages.extend(_build_llm_history_entries(historical_message))
+        entries = _build_llm_history_entries(historical_message)
+        if not entries:
+            continue
+
+        entry_cost = sum(_estimate_llm_entry_chars(entry) for entry in entries)
+        if (
+            selected_history
+            and len(selected_history) >= LLM_HISTORY_MIN_MESSAGES
+            and used_history_chars + entry_cost > history_budget
+        ):
+            break
+
+        selected_history.append(entries)
+        used_history_chars += entry_cost
+
+    for entries in reversed(selected_history):
+        llm_messages.extend(entries)
 
     current_entry: dict[str, Any] = {"role": "user", "content": user_message}
-    llm_messages.append(_apply_attachments_to_llm_entry(current_entry, attachments))
+    current_attachments = _get_message_attachments(user_message_record)
+    llm_messages.append(_apply_attachments_to_llm_entry(current_entry, current_attachments))
 
     return llm_messages
 
@@ -1441,12 +1985,18 @@ def chat_api(request):
         if not user_message and not attachments:
             return JsonResponse({"error": "Missing message or attachments"}, status=400)
 
-        if engine in {"lms", "openai", "google-genai"}:
+        _remember_active_model(engine, model_name)
+        selected_tool_servers = _resolve_tool_servers(engine, model_name, tool_server_ids)
+        if engine in {"lms", "openai", "google-genai"} or (settings.is_ollama_engine(engine) and selected_tool_servers):
             model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
         else:
             model_info_payload = _build_fallback_model_info_payload(engine, model_name)
-        _validate_tool_server_support(engine, model_name, tool_server_ids, payload=model_info_payload)
-        selected_tool_servers = _resolve_tool_servers(engine, model_name, tool_server_ids)
+        _validate_tool_server_support(
+            engine,
+            model_name,
+            [server["id"] for server in selected_tool_servers],
+            payload=model_info_payload,
+        )
 
         # Reuse the existing chat when provided, otherwise create a new one.
         try:
@@ -1474,7 +2024,7 @@ def chat_api(request):
             user_message_record,
             user_message,
             system_prompt,
-            attachments,
+            model_info_payload,
         )
 
         # Split generic options from thinking-specific controls.
@@ -1548,6 +2098,40 @@ def abort_generation_api(request):
         return JsonResponse({"ok": True})
     except Exception as exc:
         logger.exception("Failed to abort generation")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Return stored attachment bytes on demand.
+def attachment_content_api(request, record_type: str, attachment_id: int):
+    """Stream one persisted attachment without embedding it into chat JSON."""
+
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        normalized_type = str(record_type or "").strip().lower()
+        if normalized_type == "attachment":
+            attachment = MessageAttachment.objects.get(id=attachment_id)
+            mime_type = attachment.mime_type
+            name = attachment.name or f"attachment-{attachment.id}"
+            encoded = attachment.data
+        elif normalized_type == "image":
+            attachment = MessageImage.objects.get(id=attachment_id)
+            mime_type = attachment.mime_type
+            name = f"image-{attachment.order + 1}"
+            encoded = attachment.data
+        else:
+            return JsonResponse({"error": "Unknown attachment type"}, status=404)
+
+        safe_name = re.sub(r'["\\\r\n]', "_", Path(name).name or "attachment")
+        response = HttpResponse(_decode_base64_payload(encoded), content_type=mime_type)
+        response["Cache-Control"] = "private, max-age=3600"
+        response["Content-Disposition"] = f'inline; filename="{safe_name}"'
+        return response
+    except (MessageAttachment.DoesNotExist, MessageImage.DoesNotExist):
+        return JsonResponse({"error": "Attachment not found"}, status=404)
+    except Exception as exc:
+        logger.exception("Failed to load attachment %s/%s", record_type, attachment_id)
         return JsonResponse({"error": str(exc)}, status=500)
 
 
@@ -1661,7 +2245,7 @@ def load_chat_api(request, chat_id):
     try:
         chat = Chat.objects.get(id=chat_id)
         messages = chat.messages.all().prefetch_related("attachments", "images")
-        payload = [_serialize_message(message) for message in messages]
+        payload = [_serialize_message(message, include_attachment_data=False) for message in messages]
         active_tool_server_ids = _parse_active_tool_slugs(chat.active_tool_slug)
         return JsonResponse({
             "chat_id": str(chat.id),
@@ -1695,6 +2279,7 @@ def get_model_info_api(request):
 
     try:
         payload = _build_model_info_payload(engine, model_name)
+        _remember_active_model(engine, model_name)
         _print_runtime_event(
             "Model info loaded: "
             f"engine={engine}, "
@@ -1716,6 +2301,82 @@ def get_model_info_api(request):
             logger.exception("Error getting model info for %s on engine %s", model_name, engine)
         _print_runtime_event(f"Model info failed: engine={engine}, model={model_name}, error={formatted_error}")
         return JsonResponse({"error": formatted_error}, status=500)
+
+
+# Return unified runtime inference metadata for the active engine/model.
+def get_inference_info_api(request):
+    """Return active inference engine, model, context and output limits."""
+
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    engine = _get_active_engine(request.GET.get("engine"))
+    model_name, model_source = _resolve_inference_model(engine, request.GET.get("model"))
+    if not model_name:
+        return JsonResponse(
+            {
+                "ok": False,
+                "engine": engine,
+                "engine_label": _get_engine_label(engine),
+                "model": "",
+                "model_name": "",
+                "context_window": None,
+                "model_context_limit": None,
+                "max_output_tokens": None,
+                "output_token_limit": None,
+                "limits": {
+                    "context_window": None,
+                    "model_context_limit": None,
+                    "max_output_tokens": None,
+                    "output_token_limit": None,
+                },
+                "capabilities": {
+                    "items": [],
+                    "supports_thinking": False,
+                    "supports_think_toggle": False,
+                    "supports_think_level": False,
+                    "supports_vision": False,
+                    "supports_tool_calling": False,
+                    "supports_files": False,
+                },
+                "generation_defaults": {},
+                "supported_parameters": [],
+                "runtime_limits": {},
+                "tool_servers": [],
+                "source": {"model": model_source},
+                "error": "No active model is available for the selected engine.",
+            },
+            status=404,
+        )
+
+    started_at = time.perf_counter()
+
+    try:
+        model_info_payload = _build_model_info_payload(engine, model_name)
+        if model_source == "request":
+            _remember_active_model(engine, model_name)
+        payload = _build_inference_info_payload(engine, model_name, model_info_payload, model_source)
+        _print_runtime_event(
+            "Inference info loaded: "
+            f"engine={engine}, "
+            f"model={model_name}, "
+            f"context={payload.get('context_window')}, "
+            f"output={payload.get('max_output_tokens')}, "
+            f"took={(time.perf_counter() - started_at):.2f}s"
+        )
+        return JsonResponse(payload)
+    except NotImplementedError as exc:
+        logger.info("Inference info is not implemented for engine %s: %s", engine, exc)
+        _print_runtime_event(f"Inference info not supported: engine={engine}, model={model_name}")
+        return JsonResponse({"ok": False, "engine": engine, "model": model_name, "error": str(exc)}, status=501)
+    except Exception as exc:
+        formatted_error = _format_runtime_error(engine, exc)
+        if _is_expected_runtime_error(exc):
+            logger.warning("Error getting inference info for %s on engine %s: %s", model_name, engine, formatted_error)
+        else:
+            logger.exception("Error getting inference info for %s on engine %s", model_name, engine)
+        _print_runtime_event(f"Inference info failed: engine={engine}, model={model_name}, error={formatted_error}")
+        return JsonResponse({"ok": False, "engine": engine, "model": model_name, "error": formatted_error}, status=500)
 
 
 # Return the model list for the selected engine.
@@ -1743,7 +2404,7 @@ def get_tools_api(request):
 
     engine = _get_active_engine(request.GET.get("engine"))
     model_name = str(request.GET.get("model", "") or "").strip() or None
-    servers = tool_registry.list_servers(engine, model_name)
+    servers = _list_tool_servers_cached(engine, model_name)
     return JsonResponse({"tool_servers": servers, "servers": servers, "tools": servers})
 
 
@@ -1785,6 +2446,14 @@ def get_lms_presets_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Return a JSON response after invalidating model metadata.
+def _preset_mutation_response(payload: dict[str, Any]) -> JsonResponse:
+    """Invalidate model-info caches after a preset mutation."""
+
+    _clear_model_metadata_caches()
+    return JsonResponse(payload)
+
+
 # Sync the active Ollama preset.
 def sync_ollama_preset_api(request):
     """Persist UI changes to the active Ollama preset."""
@@ -1798,7 +2467,7 @@ def sync_ollama_preset_api(request):
         config = data.get("config", {})
         if not model_name:
             return JsonResponse({"error": "Model parameter is required"}, status=400)
-        return JsonResponse(sync_active_ollama_preset(model_name, config))
+        return _preset_mutation_response(sync_active_ollama_preset(model_name, config))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except Exception as exc:
@@ -1819,7 +2488,7 @@ def sync_lms_preset_api(request):
         config = data.get("config", {})
         if not model_name:
             return JsonResponse({"error": "Model parameter is required"}, status=400)
-        return JsonResponse(sync_active_lms_preset(model_name, config))
+        return _preset_mutation_response(sync_active_lms_preset(model_name, config))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except Exception as exc:
@@ -1840,7 +2509,7 @@ def select_ollama_preset_api(request):
         preset_id = str(data.get("preset_id", "") or "").strip()
         if not model_name or not preset_id:
             return JsonResponse({"error": "Model and preset_id are required"}, status=400)
-        return JsonResponse(activate_ollama_preset(model_name, preset_id))
+        return _preset_mutation_response(activate_ollama_preset(model_name, preset_id))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except OllamaPreset.DoesNotExist as exc:
@@ -1863,7 +2532,7 @@ def select_lms_preset_api(request):
         preset_id = str(data.get("preset_id", "") or "").strip()
         if not model_name or not preset_id:
             return JsonResponse({"error": "Model and preset_id are required"}, status=400)
-        return JsonResponse(activate_lms_preset(model_name, preset_id))
+        return _preset_mutation_response(activate_lms_preset(model_name, preset_id))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except LmsPreset.DoesNotExist as exc:
@@ -1887,7 +2556,7 @@ def create_ollama_preset_api(request):
         config = data.get("config", {})
         if not model_name:
             return JsonResponse({"error": "Model parameter is required"}, status=400)
-        return JsonResponse(
+        return _preset_mutation_response(
             create_ollama_preset(
                 model_name,
                 name=preset_name or None,
@@ -1916,7 +2585,7 @@ def create_lms_preset_api(request):
         config = data.get("config", {})
         if not model_name:
             return JsonResponse({"error": "Model parameter is required"}, status=400)
-        return JsonResponse(
+        return _preset_mutation_response(
             create_lms_preset(
                 model_name,
                 name=preset_name or None,
@@ -1945,7 +2614,7 @@ def rename_ollama_preset_api(request):
         preset_name = str(data.get("name", "") or "").strip()
         if not model_name or not preset_id or not preset_name:
             return JsonResponse({"error": "Model, preset_id and name are required"}, status=400)
-        return JsonResponse(rename_ollama_preset(model_name, preset_id, preset_name))
+        return _preset_mutation_response(rename_ollama_preset(model_name, preset_id, preset_name))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except OllamaPreset.DoesNotExist as exc:
@@ -1969,7 +2638,7 @@ def rename_lms_preset_api(request):
         preset_name = str(data.get("name", "") or "").strip()
         if not model_name or not preset_id or not preset_name:
             return JsonResponse({"error": "Model, preset_id and name are required"}, status=400)
-        return JsonResponse(rename_lms_preset(model_name, preset_id, preset_name))
+        return _preset_mutation_response(rename_lms_preset(model_name, preset_id, preset_name))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except LmsPreset.DoesNotExist as exc:
@@ -1992,7 +2661,7 @@ def delete_ollama_preset_api(request):
         preset_id = str(data.get("preset_id", "") or "").strip()
         if not model_name or not preset_id:
             return JsonResponse({"error": "Model and preset_id are required"}, status=400)
-        return JsonResponse(delete_ollama_preset(model_name, preset_id))
+        return _preset_mutation_response(delete_ollama_preset(model_name, preset_id))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except OllamaPreset.DoesNotExist as exc:
@@ -2015,7 +2684,7 @@ def delete_lms_preset_api(request):
         preset_id = str(data.get("preset_id", "") or "").strip()
         if not model_name or not preset_id:
             return JsonResponse({"error": "Model and preset_id are required"}, status=400)
-        return JsonResponse(delete_lms_preset(model_name, preset_id))
+        return _preset_mutation_response(delete_lms_preset(model_name, preset_id))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except LmsPreset.DoesNotExist as exc:
@@ -2060,7 +2729,7 @@ def runtime_settings_api(request):
             continue
 
         if raw_key == "llm-engine":
-            value = settings.normalize_engine_name(raw_value)
+            value = settings.resolve_enabled_engine(raw_value)
             next_engine = value
         else:
             value = str(raw_value or "").strip()
@@ -2069,6 +2738,7 @@ def runtime_settings_api(request):
 
     # Apply runtime transitions after the new settings are saved.
     llm_api.handle_engine_transition(previous_engine, next_engine)
+    _clear_model_metadata_caches()
 
     return JsonResponse(_build_runtime_settings_payload())
 

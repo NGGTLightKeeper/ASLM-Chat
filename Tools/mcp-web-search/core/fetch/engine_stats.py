@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """
 engine_stats.py — Rolling reputation tracker for DDGS backends.
 

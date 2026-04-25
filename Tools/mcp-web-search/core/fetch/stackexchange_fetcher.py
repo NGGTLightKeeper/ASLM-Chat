@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """Public Stack Exchange question fetcher for read_page and preview paths."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 """
 _ddgs_worker.py — Isolated subprocess worker for async_ddgs_search().
 

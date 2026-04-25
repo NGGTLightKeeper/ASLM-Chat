@@ -66,6 +66,11 @@ export function createMessagesUi(context, dependencies) {
     return DOMPurify.sanitize(marked.parse(content));
   }
 
+  // Render text cheaply while a message is still streaming.
+  function renderPlainTextSegment(content) {
+    return escHtml(content);
+  }
+
 
   // Activity parsing.
   // Parse model output into visible text, thoughts, and tool events.
@@ -242,7 +247,9 @@ export function createMessagesUi(context, dependencies) {
 
   // Activity timeline rendering.
   // Render thoughts, tool calls, and visible text into the assistant timeline.
-  function renderActivityTimeline($msgRow, segments) {
+  function renderActivityTimeline($msgRow, segments, options) {
+    const renderOptions = options || {};
+    const useMarkdown = renderOptions.markdown !== false;
     const $stream = $msgRow.find('.msg-activity-stream');
     const $bubble = $msgRow.find('.msg-bubble');
 
@@ -254,6 +261,7 @@ export function createMessagesUi(context, dependencies) {
       $stream.hide().empty();
       $bubble.html('');
       $msgRow.removeAttr('data-expanded-thoughts');
+      $msgRow.removeData('toolSegments');
       return;
     }
 
@@ -298,7 +306,7 @@ export function createMessagesUi(context, dependencies) {
 
       return `
         <div class="msg-stream-text">
-          <div class="markdown-body">${renderMarkdownSegment(segment.content)}</div>
+          <div class="markdown-body${useMarkdown ? '' : ' is-streaming'}">${useMarkdown ? renderMarkdownSegment(segment.content) : renderPlainTextSegment(segment.content)}</div>
         </div>
       `;
     }).join('');
@@ -306,19 +314,7 @@ export function createMessagesUi(context, dependencies) {
     $bubble.empty();
     $stream.html(html).show();
     setExpandedThoughtIndices($msgRow, expandedThoughts);
-
-    $stream.find('.msg-tool-call-card[data-tool-segment-index]').each(function bindToolInspector() {
-      const index = parseInt($(this).attr('data-tool-segment-index'), 10);
-      const segment = toolSegments[index];
-
-      if (!segment) {
-        return;
-      }
-
-      $(this).on('click', function openInspector() {
-        toolInspector.open(segment);
-      });
-    });
+    $msgRow.data('toolSegments', toolSegments);
   }
 
   // Parse and render one assistant transcript string.
@@ -328,10 +324,31 @@ export function createMessagesUi(context, dependencies) {
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
 
+  // Parse and render one assistant transcript during active streaming.
+  function renderMessageStream($msgRow, rawText) {
+    const parsed = parseMessageTimeline(rawText);
+    renderActivityTimeline($msgRow, parsed.segments, { markdown: false });
+    $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
+  }
+
+  // Open the inspector for a delegated tool-card click.
+  function openToolInspectorFromCard($card) {
+    const index = parseInt($card.attr('data-tool-segment-index') || '-1', 10);
+    if (!Number.isInteger(index) || index < 0) {
+      return;
+    }
+
+    const toolSegments = $card.closest('.msg').data('toolSegments') || [];
+    const segment = toolSegments[index];
+    if (segment) {
+      toolInspector.open(segment);
+    }
+  }
+
 
   // Message row rendering.
-  // Append one user or assistant message to the stream.
-  function appendMessage(role, text, attachments, timestamp, options) {
+  // Build one user or assistant message row.
+  function buildMessageRow(role, text, attachments, timestamp, options) {
     const viewOptions = options || {};
     const isUser = role === 'user';
     const label = isUser ? 'You' : 'ASLM';
@@ -391,10 +408,10 @@ export function createMessagesUi(context, dependencies) {
     `);
 
     if (isUser) {
-      $row.find('.msg-bubble')
+      const $bubble = $row.find('.msg-bubble')
         .attr('data-raw', text)
-        .attr('data-attachments', JSON.stringify(attachments || []))
         .append($('<span>').text(text));
+      $bubble.data('attachments', attachments || []);
     } else if (Array.isArray(viewOptions.activitySegments) && viewOptions.activitySegments.length > 0) {
       $row.find('.msg-bubble').attr('data-raw', text);
       renderActivityTimeline($row, viewOptions.activitySegments);
@@ -402,10 +419,45 @@ export function createMessagesUi(context, dependencies) {
       renderMessageHtml($row, text);
     }
 
-    dom.$messagesInner.append($row);
-    updateRegenButtons();
-    scrollBottom();
     return $row;
+  }
+
+  // Append one user or assistant message to the stream.
+  function appendMessage(role, text, attachments, timestamp, options) {
+    const viewOptions = options || {};
+    const $row = buildMessageRow(role, text, attachments, timestamp, viewOptions);
+    dom.$messagesInner.append($row);
+    if (!viewOptions.deferSideEffects) {
+      updateRegenButtons();
+      scrollBottom();
+    }
+    return $row;
+  }
+
+  // Append a batch of stored messages with one DOM insertion.
+  function appendMessages(messages, options) {
+    const batchOptions = options || {};
+    const rows = [];
+    const fragment = document.createDocumentFragment();
+
+    (messages || []).forEach(function buildStoredMessage(message) {
+      const $row = buildMessageRow(
+        message.role,
+        message.text,
+        message.attachments,
+        message.timestamp,
+        message.options || {}
+      );
+      rows.push($row);
+      fragment.appendChild($row[0]);
+    });
+
+    dom.$messagesInner[0].appendChild(fragment);
+    updateRegenButtons();
+    if (batchOptions.scroll !== false) {
+      scrollBottom();
+    }
+    return rows;
   }
 
   // Toggle the queued badge for one user row.
@@ -547,10 +599,13 @@ export function createMessagesUi(context, dependencies) {
 
   return {
     appendMessage,
+    appendMessages,
     appendTyping,
     configureMarkdown,
     copyMessage,
+    openToolInspectorFromCard,
     renderMessageHtml,
+    renderMessageStream,
     scrollBottom,
     setQueuedMessageState,
     toggleThoughtSection,
