@@ -8,15 +8,13 @@ from .camoufox_fetcher import (
     fetch_with_camoufox,
     fetch_batch_with_camoufox,
 )
-from .file_importer import download_file, get_download_info, ALLOWED_EXTENSIONS, BLOCKED_EXTENSIONS
-from .academic_pdf_fetcher import AcademicPdfFetcher, AcademicPdfResult
+from .download_types import get_download_info, ALLOWED_EXTENSIONS, BLOCKED_EXTENSIONS
 from .academic_fetcher import AcademicFetcher
 
 __all__ = [
     "DDGSClient", "async_ddgs_search", "get_ddgs_client", "normalize_snippet",
     "PageFetcher", "is_antibot", "is_skippable",
     "FetchResult", "is_camoufox_available", "fetch_with_camoufox", "fetch_batch_with_camoufox",
-    "download_file", "get_download_info", "ALLOWED_EXTENSIONS", "BLOCKED_EXTENSIONS",
-    "AcademicPdfFetcher", "AcademicPdfResult",
+    "get_download_info", "ALLOWED_EXTENSIONS", "BLOCKED_EXTENSIONS",
     "AcademicFetcher",
 ]

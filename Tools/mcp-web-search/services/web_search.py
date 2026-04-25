@@ -25,11 +25,12 @@ run_web_search(query, ...)  -- top-level convenience coroutine
 from __future__ import annotations
 
 import asyncio
+import html as html_lib
 import logging
 import re
 import secrets
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -37,13 +38,20 @@ from urllib.parse import urlparse
 from core.models.search import SearchResult
 from core.config import load_search_config
 from core.fetch.ddgs_client import async_ddgs_search
+from core.fetch.academic_fetcher import AcademicFetcher
 from core.fetch.hosted_clients import async_hosted_search, available_hosted_engines
+from core.query import (
+    build_provider_query,
+    filter_results_by_domain_constraints,
+    parse_domain_constraints,
+)
 from core.extract.content_processor import (
     build_preview_payload, get_preview_settings, warm_preview_models, PreviewPayload,
 )
 from core.extract.page_normalizer import normalize_page
 from core.registry.trust_registry import get_trust_registry
 from core.registry.domain_reputation import get_reputation_store, domain_from_url
+from core.registry.domain_registry import get_registry
 from core.fetch.antibot import is_antibot
 from core.fetch.stackexchange_fetcher import fetch_stackexchange_question, is_stackexchange_question_url
 from core.fetch.url_utils import normalize_url
@@ -98,6 +106,27 @@ trace_logger = logging.getLogger("trace.web_search")
 
 _DEFAULT_PREVIEW_FETCH_TIMEOUT = 6.0
 _DEFAULT_PREVIEW_TOTAL_TIMEOUT = 12.0
+
+_BOT_MIMIC_USER_AGENTS: tuple[str, ...] = (
+    "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)",
+    "TelegramBot (like TwitterBot)",
+    "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+)
+_BOT_MIMIC_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_BOT_MIMIC_OG_TITLE_RE = re.compile(
+    r'<meta\s+(?:property|name)=["\']og:title["\']\s+content=["\'](.*?)["\']',
+    re.IGNORECASE,
+)
+_BOT_MIMIC_OG_DESC_RE = re.compile(
+    r'<meta\s+(?:property|name)=["\']og:description["\']\s+content=["\'](.*?)["\']',
+    re.IGNORECASE,
+)
+_BOT_MIMIC_DESC_RE = re.compile(
+    r'<meta\s+(?:property|name)=["\']description["\']\s+content=["\'](.*?)["\']',
+    re.IGNORECASE,
+)
+_BOT_MIMIC_TAG_RE = re.compile(r"<[^>]+>")
+_BOT_MIMIC_SPACE_RE = re.compile(r"\s+")
 
 
 # ---------------------------------------------------------------------------
@@ -775,6 +804,82 @@ class TriageResult:
     score: float        # triage relevance score [0, 1]
 
 
+def _triage_soft_score(
+    result: SearchResult,
+    query: str,
+    *,
+    index: int,
+    total: int,
+) -> float:
+    """Cheap lexical/trust score used before preview fetching."""
+    title = (result.title or "").strip()
+    snippet = (result.snippet or "").strip()
+    pos_score = 1.0 - (index / max(total - 1, 1))
+    snip_score = min(1.0, len(snippet) / 300)
+    lex = _lexical_score(query, title, snippet, result.url)
+    tier_trust = _TIER_TRUST_SCORES.get(result.trust_tier or "unknown", 0.5)
+    date_boost = 0.08 if _DATE_SIGNAL_RE.search(snippet) else 0.0
+    hub_pen = _hub_penalty(result.url, title, snippet)
+
+    score = (
+        0.25 * pos_score
+        + 0.10 * snip_score
+        + 0.40 * lex
+        + 0.15 * tier_trust
+        + date_boost
+        - 0.20 * hub_pen
+    )
+    return max(0.0, min(1.0, score))
+
+
+def _triage_one_result(
+    result: SearchResult,
+    query: str,
+    *,
+    index: int,
+    total: int,
+    trust_reg=None,
+    rep_store=None,
+) -> TriageResult:
+    """Run the cheap triage logic for a single result."""
+    url = result.url
+    title = (result.title or "").strip()
+    snippet = (result.snippet or "").strip()
+    title_lower = title.lower()
+
+    if result.trust_tier == "?" and trust_reg is not None:
+        tier = trust_reg.get_tier(url)
+        if tier:
+            result.trust_tier = tier
+
+    if len(snippet) < 30 or (len(snippet) < 60 and len(title) < 20):
+        return TriageResult(skip=True, fetch_policy="cheap", score=0.0)
+
+    if any(p in title_lower for p in _SKIP_TITLE_PATTERNS):
+        return TriageResult(skip=True, fetch_policy="cheap", score=0.0)
+
+    if trust_reg is not None:
+        try:
+            if trust_reg.is_blacklisted(url):
+                return TriageResult(skip=True, fetch_policy="cheap", score=0.0)
+        except Exception as _e:
+            logger.debug("trust_reg.is_blacklisted failed for %s: %s", url, _e)
+
+    if rep_store is not None:
+        try:
+            if rep_store.is_auto_blacklisted(domain_from_url(url)):
+                return TriageResult(skip=True, fetch_policy="cheap", score=0.0)
+        except Exception as _e:
+            logger.debug("rep_store.is_auto_blacklisted failed for %s: %s", url, _e)
+
+    score = _triage_soft_score(result, query, index=index, total=total)
+    if score < 0.10:
+        return TriageResult(skip=True, fetch_policy="cheap", score=score)
+    if score >= 0.50:
+        return TriageResult(skip=False, fetch_policy="race", score=score)
+    return TriageResult(skip=False, fetch_policy="cheap", score=score)
+
+
 def _triage_results(results: list[SearchResult], query: str) -> list[TriageResult]:
     """Cheap per-result triage (< 1ms each, no network).
 
@@ -801,73 +906,16 @@ def _triage_results(results: list[SearchResult], query: str) -> list[TriageResul
     out: list[TriageResult] = []
 
     for idx, result in enumerate(results):
-        url = result.url
-        title = (result.title or "").strip()
-        snippet = (result.snippet or "").strip()
-        title_lower = title.lower()
-
-        # Populate trust tier as a side effect so _result_score can use it
-        if result.trust_tier == "?" and trust_reg is not None:
-            tier = trust_reg.get_tier(url)
-            if tier:
-                result.trust_tier = tier
-
-        # --- Hard skip rules (instant) ---
-
-        # Too short to contain useful content
-        if len(snippet) < 30 or (len(snippet) < 60 and len(title) < 20):
-            out.append(TriageResult(skip=True, fetch_policy="cheap", score=0.0))
-            continue
-
-        # Login / error pages
-        if any(p in title_lower for p in _SKIP_TITLE_PATTERNS):
-            out.append(TriageResult(skip=True, fetch_policy="cheap", score=0.0))
-            continue
-
-        # Blacklisted domain (static registry)
-        if trust_reg is not None:
-            try:
-                if trust_reg.is_blacklisted(url):
-                    out.append(TriageResult(skip=True, fetch_policy="cheap", score=0.0))
-                    continue
-            except Exception as _e:
-                logger.debug("trust_reg.is_blacklisted failed for %s: %s", url, _e)
-
-        # Dynamically blacklisted domain (reputation tracker)
-        if rep_store is not None:
-            try:
-                if rep_store.is_auto_blacklisted(domain_from_url(url)):
-                    out.append(TriageResult(skip=True, fetch_policy="cheap", score=0.0))
-                    continue
-            except Exception as _e:
-                logger.debug("rep_store.is_auto_blacklisted failed for %s: %s", url, _e)
-
-        # --- Soft score (0–1) ---
-        pos_score = 1.0 - (idx / max(total - 1, 1))
-        snip_score = min(1.0, len(snippet) / 300)
-        lex = _lexical_score(query, title, snippet, url)
-        tier_trust = _TIER_TRUST_SCORES.get(result.trust_tier, 0.5)
-        date_boost = 0.08 if _DATE_SIGNAL_RE.search(snippet) else 0.0
-        hub_pen = _hub_penalty(url, title, snippet)
-
-        score = (
-            0.25 * pos_score
-            + 0.10 * snip_score
-            + 0.40 * lex
-            + 0.15 * tier_trust
-            + date_boost
-            - 0.20 * hub_pen
+        out.append(
+            _triage_one_result(
+                result,
+                query,
+                index=idx,
+                total=total,
+                trust_reg=trust_reg,
+                rep_store=rep_store,
+            )
         )
-        score = max(0.0, min(1.0, score))
-
-        if score < 0.10:
-            out.append(TriageResult(skip=True, fetch_policy="cheap", score=score))
-        elif score >= 0.50:
-            # High relevance → race: httpx + curl_cffi simultaneously
-            out.append(TriageResult(skip=False, fetch_policy="race", score=score))
-        else:
-            # Medium relevance → cheap: httpx only
-            out.append(TriageResult(skip=False, fetch_policy="cheap", score=score))
 
     return out
 
@@ -899,12 +947,48 @@ def _dedup_results(results: list[SearchResult]) -> list[SearchResult]:
 # ---------------------------------------------------------------------------
 
 _TIER_TRUST_SCORES = {
+    "A": 1.0,
+    "B": 0.75,
+    "C": 0.45,
     "friendly": 1.0,
     "moderate": 0.75,
     "hardened": 0.35,
     "fortress": 0.05,
+    "?": 0.50,
     "unknown": 0.50,
 }
+
+_TRUST_BLEND_WEIGHTS: dict[str, tuple[float, float]] = {
+    "academic": (0.80, 0.20),
+    "medical": (0.80, 0.20),
+    "technical": (0.70, 0.30),
+    "shopping": (0.55, 0.45),
+    "forum": (0.55, 0.45),
+    "journalistic": (0.60, 0.40),
+    "finance": (0.60, 0.40),
+    "general": (0.65, 0.35),
+}
+
+
+def _trust_blend_weights(query_type: str) -> tuple[float, float]:
+    return _TRUST_BLEND_WEIGHTS.get(query_type, _TRUST_BLEND_WEIGHTS["general"])
+
+
+def _academic_engine_bonus(result: SearchResult, query_type: str) -> float:
+    if query_type not in {"academic", "medical"}:
+        return 0.0
+    engine = (result.engine or "").lower()
+    if not engine.startswith("academic:"):
+        return 0.0
+
+    bonus = 0.10
+    url_l = (result.url or "").lower()
+    snippet_l = (result.snippet or "").lower()
+    if "doi.org/" in url_l:
+        bonus += 0.02
+    if any(token in snippet_l for token in ("abstract", "journal", "trial", "cohort", "doi", "pmid")):
+        bonus += 0.02
+    return min(bonus, 0.14)
 
 
 
@@ -936,9 +1020,9 @@ def _result_score(
     hub_pen = _hub_penalty(result.url, result.title or "", result.snippet or "")
 
     # Trust component: blend static tier with dynamic reputation score.
-    # - Static tier (from trust_registry.json) provides curated ground truth.
-    # - Dynamic reputation (from DomainReputationStore) adjusts over time.
-    # Blend: 70% static + 30% dynamic when static exists; 100% dynamic otherwise.
+    # The blend is query-type aware so ranking can trust curated registries
+    # more for safety-critical domains and react faster to dynamic quality in
+    # volatile domains (shopping/forum/news).
     tier = result.trust_tier or "unknown"
     static_trust = _TIER_TRUST_SCORES.get(tier, None)  # None = not in static registry
     if rep_store is not None:
@@ -948,7 +1032,8 @@ def _result_score(
         rep_score = 0.50
 
     if static_trust is not None:
-        trust = 0.70 * static_trust + 0.30 * rep_score
+        static_weight, dynamic_weight = _trust_blend_weights(query_type)
+        trust = static_weight * static_trust + dynamic_weight * rep_score
     else:
         trust = rep_score
 
@@ -965,6 +1050,7 @@ def _result_score(
     if profile["years"]:
         score += 0.20 * year_score
     score -= 0.30 * hub_pen
+    score += _academic_engine_bonus(result, query_type)
     return max(0.0, score)
 
 
@@ -981,6 +1067,140 @@ def _content_quality_signal(payload: PreviewPayload, result: SearchResult, query
         + 0.35 * max(0.0, min(float(payload.quality_score or 0.0), 1.0))
         + 0.20 * lex
     )
+
+
+def _bot_mimic_applies(query_types: list[str], cfg) -> bool:
+    mode = str(getattr(cfg.search, "bot_mimic_mode", "off") or "off").strip().lower()
+    if mode not in {"fallback", "always"}:
+        return False
+    allowed = list(getattr(cfg.search, "bot_mimic_for_query_types", []) or [])
+    return not allowed or any(qt in allowed for qt in query_types)
+
+
+def _bot_mimic_candidate_indices(
+    results: list[SearchResult],
+    triage: list[TriageResult],
+    *,
+    mode: str,
+    top_k: int,
+) -> list[int]:
+    if top_k <= 0:
+        return []
+
+    registry = get_registry()
+    selected: list[int] = []
+    for idx, (result, tr) in enumerate(zip(results, triage)):
+        if tr.skip:
+            continue
+        if mode == "fallback":
+            try:
+                if not registry.lookup(result.url).try_preview_bot:
+                    continue
+            except Exception as exc:
+                logger.debug("domain registry lookup failed for %s: %s", result.url, exc)
+                continue
+        selected.append(idx)
+        if len(selected) >= top_k:
+            break
+    return selected
+
+
+def _bot_mimic_extract_fields(url: str, raw_html: str) -> tuple[str, str]:
+    title_match = _BOT_MIMIC_TITLE_RE.search(raw_html or "")
+    og_title_match = _BOT_MIMIC_OG_TITLE_RE.search(raw_html or "")
+    og_desc_match = _BOT_MIMIC_OG_DESC_RE.search(raw_html or "")
+    desc_match = _BOT_MIMIC_DESC_RE.search(raw_html or "")
+
+    title = html_lib.unescape((og_title_match or title_match).group(1)).strip() if (og_title_match or title_match) else ""
+    snippet = ""
+    for match in (og_desc_match, desc_match):
+        if match:
+            snippet = html_lib.unescape(match.group(1)).strip()
+            break
+
+    if not snippet:
+        try:
+            markdown = normalize_page(url, raw_html)
+        except Exception:
+            markdown = _BOT_MIMIC_TAG_RE.sub(" ", raw_html or "")
+        snippet = _BOT_MIMIC_SPACE_RE.sub(" ", markdown or "").strip(" -|")
+
+    return title[:200].strip(), snippet[:800].strip()
+
+
+async def _bot_mimic_fetch_one(
+    session,
+    url: str,
+    *,
+    timeout: float,
+) -> tuple[str, str] | None:
+    headers_base = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    for user_agent in _BOT_MIMIC_USER_AGENTS:
+        headers = dict(headers_base)
+        headers["User-Agent"] = user_agent
+        try:
+            async with session.get(url, allow_redirects=True, headers=headers) as resp:
+                if resp.status >= 400:
+                    continue
+                content_type = (resp.headers.get("Content-Type") or "").lower()
+                if content_type and all(token not in content_type for token in ("html", "xml", "text")):
+                    continue
+                raw_html = await asyncio.wait_for(resp.text(errors="replace"), timeout=timeout)
+        except Exception:
+            continue
+
+        if not raw_html or is_antibot(raw_html):
+            continue
+
+        title, snippet = _bot_mimic_extract_fields(url, raw_html)
+        if title or snippet:
+            return title, snippet
+    return None
+
+
+async def _bot_mimic_enrich_results(
+    results: list[SearchResult],
+    triage: list[TriageResult],
+    *,
+    query_types: list[str],
+    cfg,
+    deadline: float | None = None,
+) -> dict[int, tuple[str, str]]:
+    if not _bot_mimic_applies(query_types, cfg):
+        return {}
+
+    mode = str(getattr(cfg.search, "bot_mimic_mode", "off") or "off").strip().lower()
+    top_k = int(getattr(cfg.search, "bot_mimic_top_k", 0) or 0)
+    timeout = float(getattr(cfg.search, "bot_mimic_timeout_seconds", 0.8) or 0.8)
+    indices = _bot_mimic_candidate_indices(results, triage, mode=mode, top_k=top_k)
+    if not indices:
+        return {}
+
+    if deadline is not None:
+        remaining = max(0.0, deadline - asyncio.get_running_loop().time() - 0.2)
+        if remaining < 0.2:
+            return {}
+        timeout = min(timeout, remaining)
+
+    import aiohttp
+
+    connector = await _get_http_connector(max(1, min(len(indices), 4)))
+    client_timeout = aiohttp.ClientTimeout(total=max(0.2, timeout))
+    async with aiohttp.ClientSession(timeout=client_timeout, connector=connector, connector_owner=False) as session:
+        tasks = [asyncio.create_task(_bot_mimic_fetch_one(session, results[idx].url, timeout=timeout)) for idx in indices]
+        fetched = await asyncio.gather(*tasks, return_exceptions=True)
+
+    enriched: dict[int, tuple[str, str]] = {}
+    for idx, payload in zip(indices, fetched):
+        if isinstance(payload, Exception) or not payload:
+            continue
+        title, snippet = payload
+        if title or snippet:
+            enriched[idx] = (title, snippet)
+    return enriched
 
 
 # ---------------------------------------------------------------------------
@@ -1186,6 +1406,31 @@ async def _fetch_preview_one(
                 )
                 return PreviewPayload(text=text, quality_score=0.85, strategy_used="stackexchange_api")
             _trace(req_id, "preview_fetch.empty", url=url, policy="stackexchange_api", elapsed=round(time.perf_counter() - t0, 3))
+            return PreviewPayload()
+
+        from custom_domains.router import get_custom_route
+        _route = get_custom_route(url)
+        if _route and not _route.is_heavy:
+            text = await _route.fetch_preview(url, fetch_timeout)
+            if text:
+                _cache.cache_page(url, result.title or "", clean_text=text)
+                _trace(
+                    req_id,
+                    "preview_fetch.done",
+                    url=url,
+                    policy=f"custom:{_route.name}",
+                    elapsed=round(time.perf_counter() - t0, 3),
+                    chars=len(text),
+                    quality=_route.quality_score,
+                    semantic=0.0,
+                    strategy=f"custom:{_route.name}",
+                )
+                return PreviewPayload(
+                    text=text,
+                    quality_score=_route.quality_score,
+                    strategy_used=f"custom:{_route.name}",
+                )
+            _trace(req_id, "preview_fetch.empty", url=url, policy=f"custom:{_route.name}", elapsed=round(time.perf_counter() - t0, 3))
             return PreviewPayload()
 
         async def _aiohttp() -> str | None:
@@ -1399,21 +1644,17 @@ async def _fetch_previews(
         logger.debug("preview batch failed: %s", exc, exc_info=True)
         _trace(req_id, "preview_batch.error", elapsed=round(time.perf_counter() - t0, 3))
         return [PreviewPayload() for _ in results]
+    failures = sum(1 for p in payloads if not p.text)
     _trace(
         req_id,
         "preview_batch.done",
         elapsed=round(time.perf_counter() - t0, 3),
         nonempty=sum(1 for p in payloads if p.text),
         total=len(payloads),
+        fetch_failures=failures,
+        fallback_path="aiohttp_to_curl_race",
     )
     return payloads
-
-
-# ---------------------------------------------------------------------------
-# Merge providers
-# ---------------------------------------------------------------------------
-
-
 
 # ---------------------------------------------------------------------------
 # Result formatting
@@ -1452,12 +1693,126 @@ _OUTPUT_PROFILES: dict[str, _OutputProfile] = {
     "general":         _OutputProfile(10, 4, 2, 0.30),
 }
 _DEFAULT_OUTPUT_PROFILE = _OUTPUT_PROFILES["general"]
+_ADAPTIVE_BREADTH_QUERY_TYPES: frozenset[str] = frozenset({"technical", "troubleshooting"})
 
 
 def _get_output_profile(query_types: list[str]) -> _OutputProfile:
     """Return the output profile for the primary query type."""
     return _OUTPUT_PROFILES.get(query_types[0] if query_types else "general",
                                 _DEFAULT_OUTPUT_PROFILE)
+
+
+def _adapt_output_profile(
+    results: list[SearchResult],
+    triage: list[TriageResult],
+    base_profile: _OutputProfile,
+    *,
+    query_types: list[str],
+    payloads: list[PreviewPayload] | None = None,
+) -> tuple[_OutputProfile, dict[str, object]]:
+    """Expand technical/troubleshooting output breadth when evidence is thin.
+
+    This controller is intentionally conservative:
+      - only widens output for technical-style queries
+      - only expands, never shrinks, the baseline profile
+      - post-fetch adaptation can widen the displayed set, but does not refetch
+    """
+    primary = query_types[0] if query_types else "general"
+    meta: dict[str, object] = {
+        "applied": False,
+        "query_type": primary,
+        "reasons": [],
+    }
+    if primary not in _ADAPTIVE_BREADTH_QUERY_TYPES or not results or not triage:
+        return base_profile, meta
+
+    profile = replace(base_profile)
+    top_window = min(len(results), max(profile.max_results + 2, 8))
+    top_results = results[:top_window]
+    top_triage = triage[:top_window]
+    top_scores = [float(item.score or 0.0) for item in top_triage if not item.skip]
+    domains = [domain_from_url(item.url) for item in top_results if domain_from_url(item.url)]
+    domain_diversity = len(set(domains))
+    low_diversity = domain_diversity < min(4, len(top_results))
+    clustered_scores = (
+        len(top_scores) >= 3
+        and (top_scores[0] - top_scores[min(2, len(top_scores) - 1)]) <= 0.12
+    )
+    mid_band_count = sum(1 for score in top_scores[:6] if 0.22 <= score <= 0.55)
+    reasons: list[str] = []
+
+    if low_diversity:
+        reasons.append("low_domain_diversity")
+    if payloads is None:
+        if clustered_scores:
+            reasons.append("clustered_scores")
+        if mid_band_count >= 3:
+            reasons.append("mid_confidence_cluster")
+
+    parsed_count = 0
+    parse_ratio = 0.0
+    trusted_count = 0
+    if payloads is not None:
+        preview_window = min(profile.preview_fetch_limit, len(payloads))
+        top_payloads = payloads[:preview_window]
+        parsed_count = sum(1 for payload in top_payloads if payload.text)
+        parse_ratio = (parsed_count / max(1, preview_window)) if preview_window else 0.0
+        trusted_count = sum(
+            1 for result in top_results[:4]
+            if (result.trust_tier or "?") in {"A", "B", "friendly", "moderate"}
+        )
+        if parsed_count <= 2:
+            reasons.append("sparse_previews")
+        elif parse_ratio < 0.5:
+            reasons.append("low_preview_ratio")
+
+        # Strong technical evidence already present — don't widen just because
+        # the query is technical.
+        if parsed_count >= 4 and trusted_count >= 2 and not low_diversity and not clustered_scores:
+            meta.update(
+                {
+                    "domain_diversity": domain_diversity,
+                    "parsed_count": parsed_count,
+                    "parse_ratio": round(parse_ratio, 3),
+                    "trusted_count": trusted_count,
+                    "reasons": reasons,
+                }
+            )
+            return base_profile, meta
+
+    if not reasons:
+        meta.update(
+            {
+                "domain_diversity": domain_diversity,
+                "parsed_count": parsed_count,
+                "parse_ratio": round(parse_ratio, 3),
+                "trusted_count": trusted_count,
+                "reasons": reasons,
+            }
+        )
+        return base_profile, meta
+
+    growth = 2 if primary == "technical" else 1
+    profile.max_results = min(max(profile.max_results, base_profile.max_results) + growth, 10)
+    if payloads is None:
+        profile.preview_fetch_limit = min(
+            max(profile.preview_fetch_limit, base_profile.preview_fetch_limit) + 1,
+            7,
+        )
+    profile.unparsed_bonus = min(max(profile.unparsed_bonus, base_profile.unparsed_bonus) + 1, 3)
+    profile.min_score_unparsed = max(0.20, min(profile.min_score_unparsed, base_profile.min_score_unparsed) - 0.05)
+
+    meta.update(
+        {
+            "applied": True,
+            "domain_diversity": domain_diversity,
+            "parsed_count": parsed_count,
+            "parse_ratio": round(parse_ratio, 3),
+            "trusted_count": trusted_count,
+            "reasons": reasons,
+        }
+    )
+    return profile, meta
 
 
 _DOWNLOADABLE_EXTS = (".pdf", ".mp4", ".mp3", ".docx", ".xlsx", ".csv")
@@ -1480,8 +1835,32 @@ def _badge_type(url: str) -> str:
     return "WEB"
 
 
+def _infer_pdf_url(result: SearchResult) -> str:
+    current = str(result.pdf_url or "").strip()
+    if current:
+        return current
+
+    url = str(result.url or "").strip()
+    if not url:
+        return ""
+    if looks_like_pdf_url(url):
+        return url
+    if "arxiv.org/abs/" in url:
+        return url.replace("/abs/", "/pdf/", 1)
+    return ""
+
+
+def _enrich_pdf_urls(results: list[SearchResult]) -> list[SearchResult]:
+    for result in results:
+        result.pdf_url = _infer_pdf_url(result)
+    return results
+
+
 def _badge_engine(engine: str) -> str:
     e = engine.lower()
+    if e.startswith("academic:"):
+        provider = e[len("academic:"):]
+        return provider.split(".", 1)[0].replace("-", "").capitalize()
     if "yandex" in e:
         return "Yandex"
     # hosted:tavily / hosted:brave / hosted:bing / hosted:serpapi
@@ -1500,6 +1879,40 @@ def _display_text(text: str, limit: int) -> str:
     if not compact:
         return ""
     return compact[:limit].rstrip(" ,;:|-")
+
+
+_ISO_DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
+_MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+# Matches "Aug 15,2025", "Aug 15, 2025", "Aug. 15, 2025", "Feb 13, 2025"
+_HUMAN_DATE_RE = re.compile(
+    r"^([A-Z][a-z]{2})\.?\s+(\d{1,2}),?\s*(\d{4})"
+)
+
+
+def _normalize_date(raw: str) -> str:
+    """Normalize any engine date string to 'Mon DD, YYYY'. Returns '' if unparseable."""
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    m = _ISO_DATE_RE.search(raw)
+    if m:
+        try:
+            y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if 1 <= mo <= 12 and 1 <= d <= 31 and 2000 <= y <= 2100:
+                return f"{_MONTH_NAMES[mo - 1]} {d:02d}, {y}"
+        except (ValueError, IndexError):
+            pass
+    # Human-readable: "Aug 15,2025", "Feb 13, 2025", "Aug. 15, 2025"
+    m = _HUMAN_DATE_RE.match(raw)
+    if m:
+        try:
+            mon, day, year = m.group(1), int(m.group(2)), int(m.group(3))
+            if 1 <= day <= 31 and 2000 <= year <= 2100:
+                return f"{mon} {day:02d}, {year}"
+        except (ValueError, IndexError):
+            pass
+    return ""
 
 
 def _format_results(
@@ -1591,11 +2004,17 @@ def _format_results(
         snippet_text = _display_text(result.snippet or "", snippet_char_budget)
         preview_text = _display_text(payload.text or "", preview_char_budget)
 
+        date_str = _normalize_date(result.published_date)
         block_lines = [f"[{rank}] [{badge}] [{engine}] [{tier}]"]
         block_lines.append("Title  :")
         block_lines.append(result.title)
         block_lines.append("URL    :")
         block_lines.append(result.url)
+        if result.pdf_url and result.pdf_url != result.url:
+            block_lines.append("PDF URL:")
+            block_lines.append(result.pdf_url)
+        if date_str:
+            block_lines.append(f"Date   : {date_str}")
         if preview_text:
             if snippet_text:
                 block_lines.append("Snippet:")
@@ -1618,27 +2037,6 @@ def _format_results(
 
     if len(scored) == 0:
         lines.append("No results found.")
-
-    # Downloadable file hint — list every result that points to a file type
-    # supported by import_web_file so the model knows it can save them.
-    from core.fetch.file_importer import get_download_info
-    downloadable = [
-        (rank, result, get_download_info(result.url))
-        for rank, (_, _, result, _) in enumerate(final, 1)
-        if get_download_info(result.url) is not None
-    ]
-    if downloadable:
-        hint_lines = ["", "--- Downloadable files in results ---"]
-        for rank, result, info in downloadable:
-            ext, category = info
-            title = (result.title or result.url)[:80]
-            hint_lines.append(f"[{rank}] {title}")
-            hint_lines.append(f"    {result.url}")
-            hint_lines.append(f"    {ext}  ·  category: {category}")
-            hint_lines.append(
-                f"    → import_web_file(\"{result.url}\", allowed_types=[\"{category}\"])"
-            )
-        lines.append("\n".join(hint_lines))
 
     return "\n".join(lines).strip()
 
@@ -1685,14 +2083,17 @@ class WebSearchService:
         fetch_max = out_profile.max_results + buffer
 
         hosted_engines = available_hosted_engines()
+        use_fast_academic = bool({"academic", "medical"} & set(query_types))
         n_hosted = len(hosted_engines)
         ddgs_multiplier = max(1, pool_multiplier - n_hosted)
         ddgs_hedge = max(1, 2 - n_hosted)
         hosted_max = fetch_max
+        academic_max = min(fetch_max, 8)
 
         _trace(req_id, "providers.config",
                n_hosted=n_hosted, ddgs_multiplier=ddgs_multiplier,
-               ddgs_hedge=ddgs_hedge, hosted_engines=hosted_engines)
+               ddgs_hedge=ddgs_hedge, hosted_engines=hosted_engines,
+               fast_academic=use_fast_academic)
 
         ddgs_task = asyncio.create_task(
             async_ddgs_search(
@@ -1714,6 +2115,16 @@ class WebSearchService:
             )
             for engine in hosted_engines
         }
+        academic_task: asyncio.Task | None = None
+        if use_fast_academic:
+            academic_fetcher = AcademicFetcher(timeout=min(max(float(opts.fetch_timeout), 4.0), 8.0))
+            academic_task = asyncio.create_task(
+                academic_fetcher.search_fast(
+                    query,
+                    max_results=academic_max,
+                    topics=[qt for qt in query_types if qt in {"academic", "medical"}],
+                )
+            )
 
         provider_t0 = time.perf_counter()
         ddgs_results: list[SearchResult] = await ddgs_task
@@ -1724,17 +2135,28 @@ class WebSearchService:
             except Exception as exc:
                 logger.warning("[hosted:%s] task raised: %s", engine, exc)
                 hosted_results[engine] = []
+        academic_results: list[SearchResult] = []
+        if academic_task is not None:
+            try:
+                academic_results = await academic_task
+            except Exception as exc:
+                logger.warning("[academic_fast] task raised: %s", exc)
+                academic_results = []
 
         _trace(req_id, "providers.done",
                elapsed=round(time.perf_counter() - provider_t0, 3),
                ddgs=len(ddgs_results),
+               academic_fast=len(academic_results),
                **{f"hosted_{k}": len(v) for k, v in hosted_results.items()})
 
         merge_t0 = time.perf_counter()
         merged = ddgs_results[:fetch_max * pool_multiplier]
         for h_results in hosted_results.values():
             merged = merged + h_results
+        if academic_results:
+            merged = merged + academic_results
         merged = merged[: fetch_max * pool_multiplier * 2]
+        merged = _enrich_pdf_urls(merged)
         deduped = _dedup_results(merged)
         _trace(req_id, "merge.done",
                elapsed=round(time.perf_counter() - merge_t0, 3),
@@ -1748,6 +2170,7 @@ class WebSearchService:
         opts = self._opts
         req_id = _make_request_id()
         overall_t0 = time.perf_counter()
+        original_query = query
         pool_multiplier = max(1, int(self._cfg.search.candidate_pool_multiplier))
         preview_fetch_limit = max(1, int(self._cfg.search.preview_fetch_limit))
         snippet_char_budget = max(600, int(self._cfg.search.max_snippet_chars))
@@ -1755,7 +2178,11 @@ class WebSearchService:
             int(self._cfg.search.preview_max_chars),
             int(self._cfg.search.max_snippet_chars),
         )
-        query, _ = _apply_year_hint_policy(query, self._cfg.query)
+        constraints = parse_domain_constraints(query)
+        analysis_query = constraints.clean_query or query
+        analysis_query, _ = _apply_year_hint_policy(analysis_query, self._cfg.query)
+        provider_query = build_provider_query(original_query, constraints) or analysis_query
+        query = analysis_query
         lang = infer_query_language(query)
         query_types = infer_query_types(query)
         query_type = query_types[0]
@@ -1775,23 +2202,68 @@ class WebSearchService:
         _trace(
             req_id,
             "search.start",
-            query=query,
+            query=original_query,
+            normalized_query=query,
+            provider_query=provider_query,
             lang=lang,
             query_type=query_type,
             query_types=query_types,
+            include_domains=constraints.include_domains,
+            exclude_domains=constraints.exclude_domains,
             out_max_results=out_profile.max_results,
             out_preview_fetch_limit=out_profile.preview_fetch_limit,
             out_unparsed_bonus=out_profile.unparsed_bonus,
             fetch_previews=opts.fetch_previews,
+            chosen_profile=f"{out_profile.max_results}/{out_profile.preview_fetch_limit}/{out_profile.unparsed_bonus}",
         )
 
         deduped, triage = await self._run_search_pipeline(
-            query, lang, query_types, query_type, out_profile, opts, req_id
+            provider_query, lang, query_types, query_type, out_profile, opts, req_id
         )
+        if constraints.has_constraints:
+            before = len(deduped)
+            deduped = filter_results_by_domain_constraints(deduped, constraints)
+            _trace(
+                req_id,
+                "constraints.filter",
+                before=before,
+                after=len(deduped),
+                include_domains=constraints.include_domains,
+                exclude_domains=constraints.exclude_domains,
+            )
+            triage = _triage_results(deduped, query) if deduped else []
 
         if not deduped:
             _trace(req_id, "search.empty", elapsed=round(time.perf_counter() - overall_t0, 3))
-            return f"No results found for: {query}"
+            if constraints.has_constraints:
+                return (
+                    f"No results found for: {original_query}\n"
+                    f"Applied domain constraints: "
+                    f"include={constraints.include_domains or ['*']} "
+                    f"exclude={constraints.exclude_domains or []}"
+                )
+            return f"No results found for: {original_query}"
+
+        adapted_profile, adapt_meta = _adapt_output_profile(
+            deduped,
+            triage,
+            out_profile,
+            query_types=query_types,
+        )
+        if adapted_profile != out_profile:
+            out_profile = adapted_profile
+            preview_fetch_limit = out_profile.preview_fetch_limit
+            _trace(
+                req_id,
+                "profile.adapt.pre",
+                out_max_results=out_profile.max_results,
+                out_preview_fetch_limit=out_profile.preview_fetch_limit,
+                out_unparsed_bonus=out_profile.unparsed_bonus,
+                reasons=list(adapt_meta.get("reasons", [])),
+                domain_diversity=adapt_meta.get("domain_diversity"),
+                trigger_reason=";".join(list(adapt_meta.get("reasons", []))),
+                chosen_top_k=out_profile.max_results,
+            )
 
         skipped_count = sum(1 for t in triage if t.skip)
         race_count = sum(1 for t in triage if not t.skip and t.fetch_policy == "race")
@@ -1840,6 +2312,62 @@ class WebSearchService:
             for i, payload in zip(to_fetch_indices, fetched):
                 payloads[i] = payload
 
+        adapted_post_profile, post_meta = _adapt_output_profile(
+            deduped,
+            triage,
+            out_profile,
+            query_types=query_types,
+            payloads=payloads,
+        )
+        if adapted_post_profile != out_profile:
+            out_profile = adapted_post_profile
+            _trace(
+                req_id,
+                "profile.adapt.post",
+                out_max_results=out_profile.max_results,
+                out_preview_fetch_limit=out_profile.preview_fetch_limit,
+                out_unparsed_bonus=out_profile.unparsed_bonus,
+                reasons=list(post_meta.get("reasons", [])),
+                parsed_count=post_meta.get("parsed_count"),
+                parse_ratio=post_meta.get("parse_ratio"),
+                domain_diversity=post_meta.get("domain_diversity"),
+                trigger_reason=";".join(list(post_meta.get("reasons", []))),
+                chosen_top_k=out_profile.max_results,
+            )
+
+        enriched_regular = await _bot_mimic_enrich_results(
+            deduped,
+            triage,
+            query_types=query_types,
+            cfg=self._cfg,
+            deadline=deadline,
+        )
+        if enriched_regular:
+            _trace(
+                req_id,
+                "bot_mimic.regular",
+                trigger_reason="regular_rank_enrichment",
+                chosen_top_k=len(enriched_regular),
+                fallback_path="rank_only",
+            )
+            for idx, (title, snippet) in enriched_regular.items():
+                enriched_result = replace(
+                    deduped[idx],
+                    title=title or deduped[idx].title,
+                    snippet=snippet or deduped[idx].snippet,
+                )
+                enriched_tr = _triage_one_result(
+                    enriched_result,
+                    query,
+                    index=0,
+                    total=1,
+                )
+                triage[idx] = TriageResult(
+                    skip=triage[idx].skip and enriched_tr.skip,
+                    fetch_policy=enriched_tr.fetch_policy if enriched_tr.score > triage[idx].score else triage[idx].fetch_policy,
+                    score=max(triage[idx].score, enriched_tr.score),
+                )
+
         # -- Background prefetch of non-displayed buffer results --
         # Candidates: non-skipped results that didn't make the preview_fetch_limit
         # cut, and whose URLs are not already fresh in the source cache.
@@ -1865,7 +2393,7 @@ class WebSearchService:
             _rep_store = None
 
         result_text = _format_results(
-            deduped, payloads, query,
+            deduped, payloads, original_query,
             query_profile=query_profile,
             output_profile=out_profile,
             snippet_char_budget=snippet_char_budget,
@@ -1896,19 +2424,94 @@ class WebSearchService:
         This is the deep-research entry point. It preserves the current isolated
         provider lifecycle and cheap triage scoring, but skips preview formatting.
         """
-        del deadline  # Search providers already have their own internal timeouts.
         opts = self._opts
-        query, _ = _apply_year_hint_policy(query, self._cfg.query)
+        constraints = parse_domain_constraints(query)
+        analysis_query = constraints.clean_query or query
+        analysis_query, _ = _apply_year_hint_policy(analysis_query, self._cfg.query)
+        provider_query = build_provider_query(query, constraints) or analysis_query
+        query = analysis_query
         lang = infer_query_language(query)
         query_types = infer_query_types(query)
         query_type = query_types[0]
         out_profile = _get_output_profile(query_types)
 
+        req_id = _make_request_id()
         deduped, triage = await self._run_search_pipeline(
-            query, lang, query_types, query_type, out_profile, opts
+            provider_query, lang, query_types, query_type, out_profile, opts, req_id
         )
+        if constraints.has_constraints:
+            deduped = filter_results_by_domain_constraints(deduped, constraints)
+            triage = _triage_results(deduped, query) if deduped else []
         if not deduped:
             return []
+
+        adapted_profile, adapt_meta = _adapt_output_profile(
+            deduped,
+            triage,
+            out_profile,
+            query_types=query_types,
+        )
+        if adapted_profile != out_profile:
+            out_profile = adapted_profile
+            _trace(
+                req_id,
+                "structured.profile.adapt",
+                trigger_reason=";".join(list(adapt_meta.get("reasons", []))),
+                chosen_profile=f"{out_profile.max_results}/{out_profile.preview_fetch_limit}/{out_profile.unparsed_bonus}",
+                chosen_top_k=out_profile.max_results,
+            )
+
+        enriched = await _bot_mimic_enrich_results(
+            deduped,
+            triage,
+            query_types=query_types,
+            cfg=self._cfg,
+            deadline=deadline,
+        )
+        if enriched:
+            _trace(
+                req_id,
+                "structured.bot_mimic",
+                trigger_reason="structured_rerank",
+                chosen_top_k=len(enriched),
+                fallback_path="triage_rerank",
+            )
+            try:
+                trust_reg = get_trust_registry()
+            except Exception as _e:
+                logger.debug("trust_registry unavailable during bot mimic rerank: %s", _e)
+                trust_reg = None
+            try:
+                rep_store = get_reputation_store()
+            except Exception as _e:
+                logger.debug("reputation_store unavailable during bot mimic rerank: %s", _e)
+                rep_store = None
+
+            rank_only = bool(getattr(self._cfg.search, "bot_mimic_only_for_rank_enrichment", True))
+            for idx, (title, snippet) in enriched.items():
+                enriched_result = replace(
+                    deduped[idx],
+                    title=title or deduped[idx].title,
+                    snippet=snippet or deduped[idx].snippet,
+                )
+                # Structured rerank should let enriched content compete on its
+                # own merits instead of being capped by the provider position.
+                enriched_tr = _triage_one_result(
+                    enriched_result,
+                    query,
+                    index=0,
+                    total=1,
+                    trust_reg=trust_reg,
+                    rep_store=rep_store,
+                )
+                triage[idx] = TriageResult(
+                    skip=triage[idx].skip and enriched_tr.skip,
+                    fetch_policy=enriched_tr.fetch_policy if enriched_tr.score > triage[idx].score else triage[idx].fetch_policy,
+                    score=max(triage[idx].score, enriched_tr.score),
+                )
+                if not rank_only:
+                    deduped[idx].title = enriched_result.title
+                    deduped[idx].snippet = enriched_result.snippet
 
         ranked: list[SearchResult] = []
         skipped: list[SearchResult] = []
@@ -1923,7 +2526,9 @@ class WebSearchService:
         ranked.sort(key=lambda r: (float(r.score or 0.0), len(r.snippet or "")), reverse=True)
         skipped.sort(key=lambda r: (float(r.score or 0.0), len(r.snippet or "")), reverse=True)
         combined = ranked + skipped
-        return combined[: max(1, int(opts.max_results))]
+        top_k = max(1, int(opts.max_results))
+        _trace(req_id, "structured.done", chosen_top_k=top_k, skipped=len(skipped), ranked=len(ranked))
+        return combined[:top_k]
 
 
 # ---------------------------------------------------------------------------
@@ -1959,7 +2564,9 @@ async def run_web_search(
     """
     init_t0 = time.perf_counter()
     cfg = load_search_config()
-    query_for_search, year_tl = _apply_year_hint_policy(query, cfg.query)
+    constraints = parse_domain_constraints(query)
+    query_for_search = constraints.clean_query or query
+    query_for_search, year_tl = _apply_year_hint_policy(query_for_search, cfg.query)
     # Type-based timelimit: inferred from query classification.
     type_tl = _auto_timelimit(infer_query_types(query_for_search))
     # Use the more restrictive of the two signals.
@@ -1984,7 +2591,7 @@ async def run_web_search(
     try:
         loop = asyncio.get_event_loop()
         deadline = loop.time() + hard_timeout
-        return await asyncio.wait_for(service.search(query_for_search, deadline=deadline), timeout=hard_timeout)
+        return await asyncio.wait_for(service.search(query, deadline=deadline), timeout=hard_timeout)
     except asyncio.TimeoutError:
         elapsed = round(time.perf_counter() - init_t0, 1)
         logger.warning(
@@ -2001,9 +2608,11 @@ async def run_web_search_structured(
     hard_timeout: float = _SEARCH_HARD_TIMEOUT,
     time_range: Optional[str] = None,
 ) -> list[SearchResult]:
-    """Structured counterpart to run_web_search for deep research."""
+    """Structured counterpart to run_web_search for structured callers."""
     cfg = load_search_config()
-    query_for_search, year_tl = _apply_year_hint_policy(query, cfg.query)
+    constraints = parse_domain_constraints(query)
+    query_for_search = constraints.clean_query or query
+    query_for_search, year_tl = _apply_year_hint_policy(query_for_search, cfg.query)
     type_tl = _auto_timelimit(infer_query_types(query_for_search))
     auto_timelimit = _stricter_timelimit(year_tl, type_tl)
     explicit_timelimit = (
@@ -2022,7 +2631,7 @@ async def run_web_search_structured(
     deadline = loop.time() + hard_timeout
     try:
         return await asyncio.wait_for(
-            service.search_structured(query_for_search, deadline=deadline),
+            service.search_structured(query, deadline=deadline),
             timeout=hard_timeout,
         )
     except asyncio.TimeoutError:

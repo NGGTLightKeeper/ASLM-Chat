@@ -21,6 +21,7 @@ from queue import Empty, Queue
 from typing import Callable
 
 from sandbox.config import (
+    BACKGROUND_TIMEOUT_THRESHOLD,
     COMMAND_USER,
     CONFIG_FILE_PATH,
     CONTAINER_NAME,
@@ -31,7 +32,13 @@ from sandbox.config import (
     DEV_BIND,
     DOCKER_START_TIMEOUT_SECONDS,
     HOST_WORKSPACE,
+    MAX_CAT_FILE_BYTES,
+    MAX_CAT_LINE_THRESHOLD,
+    MAX_FIND_RESULTS,
+    MAX_GREP_RESULTS,
+    MAX_LS_ENTRIES,
     MAX_OUTPUT_CHARS,
+    MAX_READ_BYTES,
     MEMORY_LIMIT,
     MEMORY_SWAP_LIMIT,
     MODEL_WORKSPACE_CONTAINER,
@@ -314,13 +321,27 @@ def _build_run_command(
     command.extend([
         "-v", f"{task_host_path}:{MODEL_WORKSPACE_CONTAINER}",
         "-w", MODEL_WORKSPACE_CONTAINER,
+        # Runtime identity — container-side constants.
         "-e", "SANDBOX_IN_CONTAINER=1",
         "-e", f"SANDBOX_COMMAND_USER={COMMAND_USER}",
         "-e", f"SANDBOX_HOST_WORKSPACE={CONTAINER_WORKSPACE}",
         "-e", f"SANDBOX_SUPERVISOR_SRC={SUPERVISOR_SRC}",
         "-e", f"SANDBOX_SUPERVISOR_VENV={SUPERVISOR_VENV}",
         "-e", "PYTHONDONTWRITEBYTECODE=1",
+        # Execution limits — user-configurable via sandbox.env, passed explicitly
+        # so that host-only vars (image name, container name, Windows paths, etc.)
+        # never leak into the container environment.
+        "-e", f"SANDBOX_DEFAULT_TIMEOUT={DEFAULT_TIMEOUT}",
+        "-e", f"SANDBOX_MAX_OUTPUT_CHARS={MAX_OUTPUT_CHARS}",
+        "-e", f"SANDBOX_MAX_READ_BYTES={MAX_READ_BYTES}",
+        "-e", f"SANDBOX_MAX_CAT_FILE_BYTES={MAX_CAT_FILE_BYTES}",
+        "-e", f"SANDBOX_MAX_CAT_LINE_THRESHOLD={MAX_CAT_LINE_THRESHOLD}",
+        "-e", f"SANDBOX_MAX_LS_ENTRIES={MAX_LS_ENTRIES}",
+        "-e", f"SANDBOX_MAX_FIND_RESULTS={MAX_FIND_RESULTS}",
+        "-e", f"SANDBOX_MAX_GREP_RESULTS={MAX_GREP_RESULTS}",
+        "-e", f"SANDBOX_BACKGROUND_TIMEOUT_THRESHOLD={BACKGROUND_TIMEOUT_THRESHOLD}",
         "-e", f"SANDBOX_NETWORK_LIMIT_MBIT={NETWORK_LIMIT_MBIT}",
+        # Thread limits — propagated to ML libraries too.
         "-e", f"SANDBOX_THREAD_LIMIT={THREAD_LIMIT}",
         "-e", f"OMP_NUM_THREADS={THREAD_LIMIT}",
         "-e", f"OPENBLAS_NUM_THREADS={THREAD_LIMIT}",
@@ -328,10 +349,6 @@ def _build_run_command(
         "-e", f"NUMEXPR_NUM_THREADS={THREAD_LIMIT}",
         "-e", f"VECLIB_MAXIMUM_THREADS={THREAD_LIMIT}",
     ])
-
-    # sandbox.env is appended last so user overrides win over the defaults above.
-    if os.path.isfile(CONFIG_FILE_PATH):
-        command.extend(["--env-file", CONFIG_FILE_PATH])
 
     if DEV_BIND and supervisor_src_host and os.path.isdir(supervisor_src_host):
         command.extend(["-v", f"{supervisor_src_host}:{SUPERVISOR_SRC}:ro"])

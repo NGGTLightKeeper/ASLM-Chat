@@ -8,11 +8,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-SERVER_ROOT = Path(__file__).resolve().parent
+SERVER_ROOT = Path(__file__).resolve().parents[2]
 if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
-ASLM_ROOT = Path(__file__).resolve().parents[2]
+ASLM_ROOT = Path(__file__).resolve().parents[4]
 if str(ASLM_ROOT) not in sys.path:
     sys.path.insert(0, str(ASLM_ROOT))
 
@@ -22,7 +22,7 @@ from adapters.mcp.tool_descriptions import (
     WEB_SEARCH_TOOL_DESCRIPTION,
 )
 from core.config import load_search_config as _load_cfg
-from core.fetch.thread_pool import io_pool as _io_pool  # noqa: F401 — initialise shared pool
+from core.fetch.thread_pool import io_pool as _io_pool  # noqa: F401 - initialise shared pool
 
 _CFG = _load_cfg()
 _MAX_RESULTS = max(1, int(_CFG.search.max_results))
@@ -84,6 +84,7 @@ def _maybe_parse_list(val: Any) -> Any:
         stripped = val.strip()
         if stripped.startswith("["):
             import json
+
             try:
                 parsed = json.loads(stripped)
                 if isinstance(parsed, list):
@@ -105,6 +106,7 @@ async def call_tool(
 
     if tool_id == "web_search":
         from services import run_web_search
+
         query = args.get("query", "")
         if isinstance(query, list):
             queries = [q.strip() for q in query if isinstance(q, str) and q.strip()]
@@ -119,6 +121,7 @@ async def call_tool(
 
     if tool_id == "read_page":
         from services import run_read_page
+
         url = args.get("url", "")
         if isinstance(url, list):
             urls = [u.strip() for u in url if isinstance(u, str) and u.strip()]

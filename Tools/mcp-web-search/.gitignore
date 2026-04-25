@@ -11,4 +11,5 @@ todo.md
 __pycache__
 .bat
 tests/antigravity_exp
-deep_research_overdrive.toml
+/archive
+

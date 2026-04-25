@@ -199,8 +199,8 @@ def _handle_locate(
         path=path,
         glob=nc.glob_pattern,
         case_sensitive=nc.case_sensitive,
-        context_before=0,
-        context_after=0,
+        context_before=nc.context_before,
+        context_after=nc.context_after,
         max_results=MAX_GREP_RESULTS,
     )
 
@@ -280,8 +280,8 @@ def _handle_find(
 
     result = find(
         path=path,
-        name_pattern=getattr(nc, "name_pattern", None),
-        type_filter=getattr(nc, "find_type", None),
+        name_pattern=nc.name_pattern,
+        type_filter=nc.find_type,
         max_depth=nc.depth or 8,
         max_results=MAX_FIND_RESULTS,
     )

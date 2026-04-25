@@ -13,9 +13,12 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from adapters.mcp.logging_setup import setup_logging
+from adapters.mcp.tool_descriptions import (
+    READ_PAGE_TOOL_DESCRIPTION,
+    WEB_SEARCH_TOOL_DESCRIPTION,
+)
 from core.config import load_search_config
-from core.fetch.file_importer import download_file, ALLOWED_EXTENSIONS
-from services import run_read_page, run_web_search, run_deep_research
+from services import run_read_page, run_web_search
 from services.web_search import shutdown_web_search
 
 try:
@@ -38,7 +41,6 @@ if str(ASLM_ROOT) not in sys.path:
 setup_logging()
 
 mcp = FastMCP("mcp-web-search")
-_SANDBOX_ROOT = ASLM_ROOT / "_sandbox"
 logger = __import__("logging").getLogger("adapters.mcp.server")
 _CFG = load_search_config()
 _WEB_SEARCH_RESULT_LIMIT = max(1, int(_CFG.search.max_results))
@@ -121,35 +123,10 @@ def _split_search_result_blocks(text: str) -> list[str]:
     return [part.strip() for part in _RESULT_BLOCK_SPLIT_RE.split(normalized) if part.strip()]
 
 
-@mcp.tool()
 async def web_search(
     query: str | list[str],
     context: FastMCPContext | dict[str, Any] | None = None,
 ) -> list[str]:
-    """
-    Search the web and return the strongest sources for a topic.
-
-    Use it when you need:
-    - recent news, developments, or announcements
-    - articles, documentation, research pages, or official sources
-    - one query or a small batch of alternative phrasings to compare
-
-    What it returns:
-    - around 10 results per query
-    - title, URL, source snippet, and a larger preview when available
-    - separate result blocks instead of one giant wall of text
-
-    The date window is selected automatically based on the query type:
-    news and finance queries are limited to the last month; shopping,
-    troubleshooting, forum, and technical queries to the last year;
-    academic, medical, and open-ended queries have no date restriction.
-
-    Prompting hints for the model:
-    - Prefer English as the default search language whenever the task allows it, even if the final answer is in another language.
-    - Use other languages only when the situation truly requires them: the user explicitly asks for local-language sources, the topic is region-specific, or the key terminology is native to that language.
-    - Prefer short, focused English queries over one oversized mixed-language query.
-    - When the topic has several angles, use a small batch of short query variants, and keep them in English unless non-English search is clearly necessary.
-    """
     logger.info(
         "mcp.web_search.start batch=%s query_preview=%r",
         isinstance(query, list),
@@ -196,22 +173,14 @@ async def web_search(
         raise
 
 
-@mcp.tool()
+web_search.__doc__ = WEB_SEARCH_TOOL_DESCRIPTION
+web_search = mcp.tool()(web_search)
+
+
 async def read_page(
     url: str | list[str],
     context: FastMCPContext | dict[str, Any] | None = None,
 ) -> list[str]:
-    """
-    Open a page and extract readable text from it.
-
-    Use it when you need:
-    - the full content of an article, documentation page, post, or thread
-    - cleaner text after you already found promising URLs with search
-    - a small batch read of several shortlisted pages
-
-    It works best as the second step after search, when discovery is done
-    and you want to actually read the sources.
-    """
     logger.info(
         "mcp.read_page.start batch=%s url_preview=%r",
         isinstance(url, list),
@@ -231,112 +200,8 @@ async def read_page(
     return [result]
 
 
-# ---------------------------------------------------------------------------
-# Deep research runtime
-# ---------------------------------------------------------------------------
-_DEEP_RESEARCH_MAX_WALL_SEC = 30 * 60
-
-
-@mcp.tool()
-async def deep_research(
-    question: str,
-    depth: str = "standard",
-    context: FastMCPContext | dict[str, Any] | None = None,
-) -> str:
-    """
-    Conduct autonomous deep research on a question.
-
-    Use it when web_search is not enough and you need:
-    - full-page extraction rather than only search snippets
-    - iterative query refinement — gaps found during research trigger follow-up searches
-    - source triage and de-duplication before synthesis
-    - a structured markdown report rather than a list of snippets
-
-    The tool runs an agentic research loop:
-      1. web_search - uses the ranked/trust-aware search backend
-      2. read_page - reads complete pages or compact windows/chunks
-      3. python - performs quick bounded calculations or parsing checks
-      4. synthesize - writes a structured markdown report with citations
-
-    Runtime uses one autonomous research profile with a safety timeout.
-    The depth argument is accepted only for backwards compatibility.
-
-    Returns a markdown-formatted research report. If any phase times out
-    the tool returns a partial report rather than an error, so callers
-    always get something useful.
-    """
-    depth = (depth or "standard").strip().lower()
-
-    logger.info(
-        "mcp.deep_research.start question_preview=%r depth=%s timeout=%.0fs",
-        str(question)[:160], depth, _DEEP_RESEARCH_MAX_WALL_SEC,
-    )
-
-    try:
-        report = await _keepalive(
-            context,
-            "deep research...",
-            run_deep_research(question=question.strip(), depth=depth, hard_timeout=_DEEP_RESEARCH_MAX_WALL_SEC),
-        )
-        logger.info(
-            "mcp.deep_research.done depth=%s report_chars=%d",
-            depth, len(report or ""),
-        )
-        return report or "Research complete but no report was generated."
-    except Exception:
-        logger.exception(
-            "mcp.deep_research.failed depth=%s question_preview=%r",
-            depth, str(question)[:160],
-        )
-        return (
-            f"# Research: {question}\n\n"
-            "Deep research failed due to an unexpected error. "
-            "Try rephrasing the question."
-        )
-
-
-_IMPORT_FILE_MAX_MB = 50
-
-@mcp.tool()
-async def import_web_file(
-    url: str,
-    save_to: str = "downloads/",
-    context: FastMCPContext | dict[str, Any] | None = None,
-) -> dict:
-    """
-    Download a file from the web and save it to the sandbox workspace.
-
-    Use it when you need to save a document, dataset, archive, media file, or
-    source code file from a URL so you can work with it locally.
-
-    Supported types: documents (.pdf .docx .xlsx .csv .txt .md .json .xml .html),
-    media (.mp3 .mp4 .wav .webm .mkv .jpg .png .gif .webp),
-    archives (.zip .tar .gz .7z), databases (.sqlite .db),
-    source code (.py .js .ts .jsx .tsx .css .scss .rb .php .lua).
-    Blocked: executables and shell scripts (.exe .dll .sh .bat .ps1 …).
-
-    url: direct link to the file
-    save_to: subdirectory inside _sandbox/ where the file is saved (default: "downloads/")
-
-    Returns: {status, file, size_bytes, content_type, message}
-    """
-    logger.info("mcp.import_web_file.start url_preview=%r save_to=%r", url[:160], save_to)
-    result = await _keepalive(
-        context,
-        "downloading...",
-        download_file(
-            url=url,
-            sandbox_root=_SANDBOX_ROOT,
-            save_to=save_to,
-            allowed_types=None,
-            max_size_mb=_IMPORT_FILE_MAX_MB,
-        ),
-    )
-    logger.info(
-        "mcp.import_web_file.done status=%s file=%r",
-        result.get("status"), result.get("file"),
-    )
-    return result
+read_page.__doc__ = READ_PAGE_TOOL_DESCRIPTION
+read_page = mcp.tool()(read_page)
 
 
 if __name__ == "__main__":

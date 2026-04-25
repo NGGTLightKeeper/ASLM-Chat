@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from urllib.parse import urlparse
+
+from core.models.search import SearchResult
+
+
+_SITE_TOKEN_RE = re.compile(r"(?<!\S)(-?)site:([a-z0-9.-]+\.[a-z]{2,})(?=\s|$)", re.IGNORECASE)
+_BARE_EXCLUDE_RE = re.compile(r"(?<!\S)-([a-z0-9.-]+\.[a-z]{2,})(?=\s|$)", re.IGNORECASE)
+_DOMAIN_CONNECTOR_RE = re.compile(r"(?<!\S)(?:OR|\|)(?=\s|$)", re.IGNORECASE)
+_SPACE_RE = re.compile(r"\s+")
+
+
+@dataclass(slots=True)
+class DomainConstraints:
+    include_domains: list[str] = field(default_factory=list)
+    exclude_domains: list[str] = field(default_factory=list)
+    clean_query: str = ""
+    raw_tokens: list[str] = field(default_factory=list)
+
+    @property
+    def has_constraints(self) -> bool:
+        return bool(self.include_domains or self.exclude_domains)
+
+
+def _normalize_domain(domain: str) -> str:
+    value = (domain or "").strip().lower().rstrip(".")
+    if value.startswith("www."):
+        value = value[4:]
+    return value
+
+
+def _is_host_match(host: str, pattern: str) -> bool:
+    host = _normalize_domain(host)
+    pattern = _normalize_domain(pattern)
+    return bool(host and pattern and (host == pattern or host.endswith(f".{pattern}")))
+
+
+def _append_unique(target: list[str], value: str) -> None:
+    if value and value not in target:
+        target.append(value)
+
+
+def parse_domain_constraints(query: str) -> DomainConstraints:
+    text = query or ""
+    include_domains: list[str] = []
+    exclude_domains: list[str] = []
+    raw_tokens: list[str] = []
+
+    def _site_replace(match: re.Match[str]) -> str:
+        negated = match.group(1) == "-"
+        domain = _normalize_domain(match.group(2))
+        raw_tokens.append(match.group(0))
+        if negated:
+            _append_unique(exclude_domains, domain)
+        else:
+            _append_unique(include_domains, domain)
+        return " "
+
+    cleaned = _SITE_TOKEN_RE.sub(_site_replace, text)
+    if raw_tokens:
+        def _connector_replace(match: re.Match[str]) -> str:
+            raw_tokens.append(match.group(0))
+            return " "
+
+        cleaned = _DOMAIN_CONNECTOR_RE.sub(_connector_replace, cleaned)
+
+    def _bare_replace(match: re.Match[str]) -> str:
+        domain = _normalize_domain(match.group(1))
+        raw = match.group(0)
+        if domain in include_domains or domain in exclude_domains:
+            return raw
+        raw_tokens.append(raw)
+        _append_unique(exclude_domains, domain)
+        return " "
+
+    cleaned = _BARE_EXCLUDE_RE.sub(_bare_replace, cleaned)
+    cleaned = _SPACE_RE.sub(" ", cleaned).strip()
+
+    return DomainConstraints(
+        include_domains=include_domains,
+        exclude_domains=exclude_domains,
+        clean_query=cleaned,
+        raw_tokens=raw_tokens,
+    )
+
+
+def build_provider_query(raw_query: str, constraints: DomainConstraints) -> str:
+    clean = constraints.clean_query or (raw_query or "").strip()
+    if not constraints.has_constraints:
+        return clean
+
+    parts: list[str] = []
+    if constraints.include_domains:
+        include_expr = " OR ".join(f"site:{domain}" for domain in constraints.include_domains)
+        parts.append(include_expr)
+        if clean:
+            parts.append(clean)
+        parts.extend(f"-site:{domain}" for domain in constraints.exclude_domains)
+        return " ".join(parts).strip()
+
+    return clean
+
+
+def matches_domain_constraints(url: str, constraints: DomainConstraints) -> bool:
+    if not constraints.has_constraints:
+        return True
+
+    host = _normalize_domain(urlparse(url).netloc)
+    if not host:
+        return False
+
+    if any(_is_host_match(host, domain) for domain in constraints.exclude_domains):
+        return False
+
+    if constraints.include_domains:
+        return any(_is_host_match(host, domain) for domain in constraints.include_domains)
+
+    return True
+
+
+def filter_results_by_domain_constraints(
+    results: list[SearchResult],
+    constraints: DomainConstraints,
+) -> list[SearchResult]:
+    if not constraints.has_constraints:
+        return results
+    return [result for result in results if matches_domain_constraints(result.url, constraints)]

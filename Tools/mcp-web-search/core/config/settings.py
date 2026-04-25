@@ -48,6 +48,11 @@ class SearchSection:
     preview_max_chars: int = 4_000
     total_context_budget: int = 40_000  # max chars in total search output (0 = no limit)
     early_return_threshold: int = 0     # cancel remaining fetches after N good previews (0 = disabled)
+    bot_mimic_mode: str = "off"         # off | fallback | always
+    bot_mimic_top_k: int = 6
+    bot_mimic_timeout_seconds: float = 0.8
+    bot_mimic_for_query_types: list[str] = field(default_factory=list)
+    bot_mimic_only_for_rank_enrichment: bool = True
     enable_gliner: bool = False
     gliner_trigger_min_score: float = 0.18
 
@@ -152,6 +157,15 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             batch_query_limit=int(s.get("batch_query_limit", 10)),
             total_context_budget=int(s.get("total_context_budget", 40_000)),
             early_return_threshold=int(s.get("early_return_threshold", 0)),
+            bot_mimic_mode=str(s.get("bot_mimic_mode", "off")).strip().lower() or "off",
+            bot_mimic_top_k=max(0, int(s.get("bot_mimic_top_k", 6))),
+            bot_mimic_timeout_seconds=max(0.1, float(s.get("bot_mimic_timeout_seconds", 0.8))),
+            bot_mimic_for_query_types=[
+                str(item).strip().lower()
+                for item in (s.get("bot_mimic_for_query_types") or [])
+                if str(item).strip()
+            ],
+            bot_mimic_only_for_rank_enrichment=bool(s.get("bot_mimic_only_for_rank_enrichment", True)),
             candidate_pool_multiplier=int(s.get("candidate_pool_multiplier", 2)),
             auto_scrape_preview=bool(s.get("auto_scrape_preview", True)),
             preview_fetch_limit=int(s.get("preview_fetch_limit", 10)),

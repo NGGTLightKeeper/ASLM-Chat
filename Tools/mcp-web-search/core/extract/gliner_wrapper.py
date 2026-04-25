@@ -287,7 +287,7 @@ def score_entity_density_with_entities(
 # Deep-research extensions (ported from legacy deep-research/src/gliner_wrapper.py)
 # ---------------------------------------------------------------------------
 
-# Per-domain label presets for deep research NER.
+# Per-domain label presets for focused NER extraction.
 LABELS_BY_DOMAIN: dict[str, list[str]] = {
     "general": ["person", "organization", "location", "date", "money", "product"],
     "technical": [

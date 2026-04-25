@@ -117,6 +117,7 @@ def main() -> None:
             "trust_tier": r.trust_tier,
             "score": float(r.score or 0.0),
             "method_hint": r.method_hint,
+            "published_date": r.published_date,
         }
         for r in results
     ]

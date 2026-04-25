@@ -94,13 +94,8 @@ try:
     _DDGS_AVAILABLE = True
     _EXCEPTION_CLASSES = (RatelimitException, TimeoutException, DDGSException)
 except ImportError:
-    try:
-        from duckduckgo_search import DDGS  # type: ignore
-        _DDGS_AVAILABLE = True
-        _EXCEPTION_CLASSES = (Exception,)
-    except ImportError:
-        _DDGS_AVAILABLE = False
-        _EXCEPTION_CLASSES = (Exception,)
+    _DDGS_AVAILABLE = False
+    _EXCEPTION_CLASSES = (Exception,)
 
 _RETRYABLE_ERRORS = ("ssl", "eof", "connect", "connection", "timeout", "reset", "broken pipe")
 _HARD_FAILURE_ERRORS = ("403", "forbidden")
@@ -258,6 +253,18 @@ def normalize_snippet(text: str) -> str:
     text = _SEPARATOR_RE.sub(r" \1 ", text)
     text = _DASH_RE.sub(r" \1 ", text)
     return _MULTI_SPACE_RE.sub(" ", text).strip()
+
+
+# DDGS sometimes prepends a date to the snippet body: "Feb 13, 2025 · text..."
+# No space before year is common: "Aug 15,2025 ·" — hence \s* before \d{4}.
+_SNIPPET_DATE_RE = re.compile(
+    r"^([A-Z][a-z]{2}\.?\s+\d{1,2},?\s*\d{4}|\d{4}-\d{2}-\d{2})\s*[·—–\-]"
+)
+
+
+def _extract_snippet_date(snippet: str) -> str:
+    m = _SNIPPET_DATE_RE.match(snippet or "")
+    return m.group(1).rstrip(",").strip() if m else ""
 
 
 # ---------------------------------------------------------------------------
@@ -475,12 +482,14 @@ class DDGSClient:
             url = item.get("href") or item.get("url") or ""
             if not url:
                 continue
+            snippet = normalize_snippet(item.get("body", "") or item.get("snippet", ""))
             results.append(
                 SearchResult(
                     url=url,
                     title=normalize_snippet(item.get("title", "")),
-                    snippet=normalize_snippet(item.get("body", "") or item.get("snippet", "")),
+                    snippet=snippet,
                     engine=f"ddgs:{backend}",
+                    published_date=_extract_snippet_date(snippet),
                 )
             )
         return results
@@ -753,6 +762,7 @@ def _deserialize_results(payload: list[dict]) -> list[SearchResult]:
                 trust_tier=str(item.get("trust_tier") or "?"),
                 score=float(item.get("score") or 0.0),
                 method_hint=str(item.get("method_hint") or ""),
+                published_date=str(item.get("published_date") or ""),
             )
         )
     return results

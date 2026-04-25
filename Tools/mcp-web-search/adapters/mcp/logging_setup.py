@@ -10,8 +10,10 @@ Log files
 ---------
 logs/web_search.log
 logs/read_page.log
-logs/deep_research/<YYYY-MM-DD_HH-MM-SS>.log  (per-run, managed by logging_config.py)
-logs/import_from_web.log (reserved)
+logs/web_search_trace.log
+logs/read_page_trace.log
+logs/mcp_trace.log
+logs/core.log
 """
 
 from __future__ import annotations
@@ -28,11 +30,10 @@ _LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 _SERVICE_LOGS: dict[str, str] = {
     "services.web_search":    "web_search.log",
     "services.read_page":     "read_page.log",
-    # services.deep_research uses per-run files in logs/deep_research/; skip here.
-    "services.import_from_web": "import_from_web.log",
-    "core":                   "core.log",
-    "adapters.mcp.server":    "mcp_trace.log",
     "trace.web_search":       "web_search_trace.log",
+    "trace.read_page":        "read_page_trace.log",
+    "adapters.mcp.server":    "mcp_trace.log",
+    "core":                   "core.log",
 }
 
 _FORMAT = "%(asctime)s [%(levelname)s] %(name)s — %(message)s"

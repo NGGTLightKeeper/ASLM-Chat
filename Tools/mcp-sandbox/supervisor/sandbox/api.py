@@ -1103,6 +1103,13 @@ _READ_COMMANDS = frozenset({"cat", "head", "tail", "less", "more", "sed"})
 _SEARCH_COMMANDS = frozenset({"grep", "egrep", "rg"})
 _SURVEY_COMMANDS = frozenset({"ls", "tree", "find", "fd"})
 
+# Commands fully owned by the intent controller.
+# If controller_dispatch() returns None for these, they go straight to real
+# bash — the legacy _ROUTE_MAP must not intercept them.  Without this guard
+# the legacy parsers silently return wrong output for unsupported flags
+# (e.g. grep -v, grep -F, tail -f, find -type l).
+_INTENT_ONLY_COMMANDS = _READ_COMMANDS | _SEARCH_COMMANDS | _SURVEY_COMMANDS
+
 
 def _try_supervise(command: str, cwd: str = ".") -> dict[str, Any] | None:
     """Try to route a shell command to an internal structured tool.
@@ -1169,6 +1176,12 @@ def _try_supervise(command: str, cwd: str = ".") -> dict[str, Any] | None:
 
     cmd = m.group("cmd")
     args_str = m.group("args")
+
+    # Intent-only commands: controller already decided to fall through (returned
+    # None), so the legacy router must not intercept them.  Intercepting would
+    # silently return wrong output for unsupported flags (grep -v, tail -f, etc.)
+    if cmd in _INTENT_ONLY_COMMANDS:
+        return None
 
     router = _ROUTE_MAP.get(cmd)
     if router is None:

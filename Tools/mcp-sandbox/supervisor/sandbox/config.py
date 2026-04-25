@@ -10,28 +10,20 @@ from pathlib import Path
 
 
 # Core sandbox paths.
+#
+# IMPORTANT: sandbox.env is the single bridge between host and container config.
+# It must be loaded BEFORE any os.getenv() call that reads sandbox-controlled
+# variables, otherwise edits to sandbox.env are silently ignored.
+# Only SANDBOX_IN_CONTAINER and SANDBOX_CONFIG_FILE are read pre-load —
+# the first decides whether we load at all (container env wins), the second
+# tells us where to load from.
 
-CONTAINER_NAME = os.getenv("SANDBOX_CONTAINER_NAME", "mcp-sandbox")
-SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "dima1312313/mcp-sandbox:latest")
-SANDBOX_IMAGE_SOURCE = os.getenv("SANDBOX_IMAGE_SOURCE", "local").strip().lower()
-SNAPSHOT_IMAGE_PREFIX = os.getenv(
-    "SANDBOX_SNAPSHOT_PREFIX",
-    f"{CONTAINER_NAME}-snapshot",
-)
-CONTAINER_WORKSPACE = "/workspace"
-DEFAULT_TASK_DIR = os.getenv("SANDBOX_DEFAULT_TASK_DIR", "_sandbox")
-MODEL_WORKSPACE_CONTAINER = (
-    f"{CONTAINER_WORKSPACE.rstrip('/')}/{DEFAULT_TASK_DIR}"
-    if DEFAULT_TASK_DIR not in ("", ".")
-    else CONTAINER_WORKSPACE
-)
 IN_CONTAINER = os.getenv("SANDBOX_IN_CONTAINER", "").strip().lower() in {
     "1",
     "true",
     "yes",
 }
 
-# Determine config file path early so we can load it before any os.getenv calls.
 CONFIG_FILE_PATH = os.getenv(
     "SANDBOX_CONFIG_FILE",
     os.path.join(str(Path(__file__).resolve().parents[2]), "sandbox.env"),
@@ -57,13 +49,28 @@ def _load_sandbox_env(path: str) -> None:
 if not IN_CONTAINER:
     _load_sandbox_env(CONFIG_FILE_PATH)
 
+CONTAINER_NAME = os.getenv("SANDBOX_CONTAINER_NAME", "mcp-sandbox")
+SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "dima1312313/mcp-sandbox:latest")
+SANDBOX_IMAGE_SOURCE = os.getenv("SANDBOX_IMAGE_SOURCE", "auto").strip().lower()
+SNAPSHOT_IMAGE_PREFIX = os.getenv(
+    "SANDBOX_SNAPSHOT_PREFIX",
+    f"{CONTAINER_NAME}-snapshot",
+)
+CONTAINER_WORKSPACE = "/workspace"
+DEFAULT_TASK_DIR = os.getenv("SANDBOX_DEFAULT_TASK_DIR", "_sandbox")
+MODEL_WORKSPACE_CONTAINER = (
+    f"{CONTAINER_WORKSPACE.rstrip('/')}/{DEFAULT_TASK_DIR}"
+    if DEFAULT_TASK_DIR not in ("", ".")
+    else CONTAINER_WORKSPACE
+)
+
 COMMAND_USER = os.getenv("SANDBOX_COMMAND_USER", "sandbox_user")
 SUPERVISOR_SRC = os.getenv("SANDBOX_SUPERVISOR_SRC", "/opt/sandbox-src")
 SUPERVISOR_VENV = os.getenv("SANDBOX_SUPERVISOR_VENV", "/opt/sandbox-venv")
 SUPERVISOR_VENV_HOST = os.getenv("SANDBOX_SUPERVISOR_VENV_HOST", "").strip()
 
 _PROJECT_ROOT = (
-    Path(__file__).resolve().parents[4]
+    Path(__file__).resolve().parents[2]  # mcp-sandbox/
     if not IN_CONTAINER
     else Path(SUPERVISOR_SRC)
 )

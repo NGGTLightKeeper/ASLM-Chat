@@ -27,6 +27,7 @@ class QueryPlan:
 
     query: str
     target_domains: list[str] = field(default_factory=list)
+    excluded_domains: list[str] = field(default_factory=list)
     # Hint for provider selection: "ddgs" | "auto"
     method_hint: str = "auto"
 
@@ -50,6 +51,10 @@ class SearchResult:
     score: float = 0.0
     # Optional opaque hint forwarded to the extraction layer
     method_hint: str = ""
+    # Publication date as provided by the search engine (raw string, engine-dependent format)
+    published_date: str = ""
+    # Direct PDF URL when the source page or engine exposes one.
+    pdf_url: str = ""
     # Debugging fields (filled by service layer, stripped in MCP adapter)
     extract_debug_stage: str = ""
     extract_debug_timeout_sec: float = 0.0

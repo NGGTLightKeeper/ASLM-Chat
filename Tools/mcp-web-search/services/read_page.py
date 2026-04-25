@@ -21,25 +21,40 @@ run_read_page(url, ...) -- top-level convenience coroutine
 from __future__ import annotations
 
 import asyncio
-import html
 import logging
-import json as _json
 import re
 from dataclasses import dataclass
 from typing import Optional
-from urllib.parse import quote as _quote, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote as _quote, urlencode, urlparse, urlunparse
 
 from core.config import load_search_config
 from core.extract.page_normalizer import normalize_page
 from core.fetch.antibot import is_antibot
-from core.fetch.stackexchange_fetcher import fetch_stackexchange_question, is_stackexchange_question_url
+from core.fetch.camoufox_fetcher import fetch_with_camoufox
 from core.fetch.url_utils import has_non_text_extension, is_non_text_content_type
+from core.registry.domain_registry import get_registry
+from custom_domains.amazon import fetch_amazon_snapshot
+from custom_domains.ebay import fetch_ebay_snapshot
+from custom_domains.dns_shop import camoufox_fetch_kwargs as _dns_camoufox_fetch_kwargs
+from custom_domains.dns_shop import dns_variant_urls as _dns_variant_urls
+from custom_domains.dns_shop import rewrite_read_page_url as _rewrite_read_page_url
+from custom_domains.reddit import fetch_reddit_json as _fetch_reddit_json
+from custom_domains.reddit import is_reddit as _is_reddit
+from custom_domains.retail import extract_retail_metadata as _extract_retail_metadata
+from custom_domains.retail import prepend_retail_metadata as _prepend_retail_metadata
+from custom_domains.stackexchange import fetch_stackexchange_question
+from custom_domains.stackexchange import is_stackexchange_question_url
+from custom_domains.x import fetch_x_post as _fetch_x_post
+from custom_domains.x import is_x_post as _is_x_post
+from custom_domains.x import x_status_id as _x_status_id
 from services.web_search import _cache
 
 from core.fetch.constants import DEFAULT_UA as _UA
 from core.fetch.thread_pool import io_pool as _io_pool
 
 logger = logging.getLogger("services.read_page")
+trace_logger = logging.getLogger("trace.read_page")
+_READ_PAGE_STRATEGY_VERSION = "2026-04-followups-v1"
 
 
 # ---------------------------------------------------------------------------
@@ -48,10 +63,6 @@ logger = logging.getLogger("services.read_page")
 
 _SKIP_HOSTS = ("twitter.com", "x.com", "vimeo.com", "tiktok.com")
 _YT_HOSTS = ("youtube.com", "youtu.be", "www.youtube.com", "m.youtube.com")
-_REDDIT_PATTERN = re.compile(r"reddit\.com/r/[^/]+/comments/")
-_X_POST_PATTERN = re.compile(r"/(?:(?:i|[^/]+)/web/)?status/(\d+)|/[^/]+/status/(\d+)")
-
-
 
 
 def _host(url: str) -> str:
@@ -60,21 +71,6 @@ def _host(url: str) -> str:
 
 def _is_youtube(url: str) -> bool:
     return _host(url) in ("youtube.com", "youtu.be")
-
-
-def _is_reddit(url: str) -> bool:
-    return bool(_REDDIT_PATTERN.search(url))
-
-
-def _is_x_post(url: str) -> bool:
-    return _host(url) in {"twitter.com", "x.com"} and _x_status_id(url) is not None
-
-
-def _x_status_id(url: str) -> str | None:
-    m = _X_POST_PATTERN.search(urlparse(url).path)
-    if not m:
-        return None
-    return m.group(1) or m.group(2)
 
 
 def _is_skippable(url: str) -> bool:
@@ -87,128 +83,45 @@ def _is_skippable(url: str) -> bool:
     return any(_host(url) == s or _host(url).endswith("." + s) for s in _SKIP_HOSTS)
 
 
-def _strip_html_fragment(text: str) -> str:
-    clean = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
-    clean = re.sub(r"</p\s*>", "\n\n", clean, flags=re.IGNORECASE)
-    clean = re.sub(r"<[^>]+>", "", clean)
-    return html.unescape(clean).strip()
+def _cache_key_for_read(url: str, *, strategy_tag: str, variant: str = "") -> str:
+    parsed = urlparse(url)
+    query_items = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k != "__rpv"]
+    token = strategy_tag.strip() or _READ_PAGE_STRATEGY_VERSION
+    suffix = f"{token}:{variant}" if variant else token
+    query_items.append(("__rpv", suffix))
+    query = urlencode(query_items, doseq=True)
+    return urlunparse(parsed._replace(query=query))
 
 
-def _parse_x_syndication_payload(data: dict, url: str) -> str:
-    text = str(data.get("text") or "").strip()
-    user = data.get("user") if isinstance(data.get("user"), dict) else {}
-    author_name = str(user.get("name") or "").strip()
-    author_handle = str(user.get("screen_name") or "").strip()
-    created_at = str(data.get("created_at") or "").strip()
-
-    lines: list[str] = ["# X Post"]
-    meta: list[str] = []
-    if author_name or author_handle:
-        if author_name and author_handle:
-            meta.append(f"Author: {author_name} (@{author_handle})")
-        elif author_handle:
-            meta.append(f"Author: @{author_handle}")
-        else:
-            meta.append(f"Author: {author_name}")
-    if created_at:
-        meta.append(f"Created: {created_at}")
-    if meta:
-        lines.extend(meta)
-    lines.append(f"URL: {url}")
-    lines.append("")
-    if text:
-        lines.append(text)
-
-    entities = data.get("entities") if isinstance(data.get("entities"), dict) else {}
-    urls = entities.get("urls") if isinstance(entities.get("urls"), list) else []
-    expanded = [str(item.get("expanded_url") or item.get("url") or "").strip() for item in urls if isinstance(item, dict)]
-    expanded = [item for item in expanded if item]
-    if expanded:
-        lines.append("")
-        lines.append("Links:")
-        lines.extend(f"- {item}" for item in expanded)
-
-    media = data.get("mediaDetails") if isinstance(data.get("mediaDetails"), list) else []
-    media_urls: list[str] = []
-    for item in media:
-        if not isinstance(item, dict):
-            continue
-        candidate = str(item.get("media_url_https") or item.get("media_url") or "").strip()
-        if candidate:
-            media_urls.append(candidate)
-    if media_urls:
-        lines.append("")
-        lines.append("Media:")
-        lines.extend(f"- {item}" for item in media_urls)
-
-    return "\n".join(lines).strip()
+def _variant_label(url: str) -> str:
+    if url.endswith("/.xaml"):
+        return "dns_xaml"
+    if "/product/characteristics/" in url:
+        return "dns_characteristics"
+    return "default"
 
 
-def _parse_x_oembed_payload(data: dict, url: str) -> str:
-    author_name = str(data.get("author_name") or "").strip()
-    author_url = str(data.get("author_url") or "").strip()
-    html_block = str(data.get("html") or "")
-    text = _strip_html_fragment(html_block)
+def _is_weak_extraction(markdown: str, *, min_length: int) -> bool:
+    if not markdown:
+        return True
+    stripped = markdown.strip()
+    if not stripped:
+        return True
+    if len(stripped) < min_length:
+        return True
 
-    lines = ["# X Post"]
-    if author_name:
-        lines.append(f"Author: {author_name}")
-    if author_url:
-        lines.append(f"Author URL: {author_url}")
-    lines.append(f"URL: {url}")
-    lines.append("")
-    if text:
-        lines.append(text)
-    return "\n".join(lines).strip()
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    if len(lines) <= 4:
+        return True
 
+    boilerplate_hits = 0
+    for marker in ("**Site:**", "**URL:**", "---"):
+        if marker in stripped:
+            boilerplate_hits += 1
+    if boilerplate_hits >= 3 and len(lines) <= 6:
+        return True
 
-def _x_fetch_json(endpoint: str, timeout: int) -> dict | None:
-    from curl_cffi import requests as _r
-
-    resp = _r.get(
-        endpoint,
-        impersonate="chrome124",
-        timeout=timeout,
-        headers={
-            "Accept": "application/json,text/plain,*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "User-Agent": _UA,
-        },
-    )
-    resp.raise_for_status()
-    try:
-        return resp.json()
-    except Exception:
-        return _json.loads(resp.text)
-
-
-async def _fetch_x_post(url: str, timeout: float) -> str:
-    status_id = _x_status_id(url)
-    if not status_id:
-        return f"Error: Could not extract X/Twitter status ID from: {url}"
-
-    loop = asyncio.get_running_loop()
-
-    def _sync() -> str | None:
-        syndication_url = f"https://cdn.syndication.twimg.com/tweet-result?id={status_id}&token=x"
-        try:
-            data = _x_fetch_json(syndication_url, max(10, int(timeout)))
-            if isinstance(data, dict) and data.get("text"):
-                return _parse_x_syndication_payload(data, url)
-        except Exception:
-            logger.debug("X syndication fetch failed for %s", url, exc_info=True)
-
-        oembed_url = "https://publish.twitter.com/oembed?omit_script=1&url=" + _quote(url, safe="")
-        try:
-            data = _x_fetch_json(oembed_url, max(10, int(timeout)))
-            if isinstance(data, dict) and data.get("html"):
-                return _parse_x_oembed_payload(data, url)
-        except Exception:
-            logger.debug("X oEmbed fetch failed for %s", url, exc_info=True)
-        return None
-
-    result = await loop.run_in_executor(_io_pool, _sync)
-    return result or f"Error: Could not fetch X/Twitter post content from: {url}"
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -361,64 +274,6 @@ async def _fetch_youtube_transcript(url: str) -> str:
 
     result = await loop.run_in_executor(_io_pool,_yt_dlp_try)
     return result or f"Error: No transcript available for: {url}"
-
-
-# ---------------------------------------------------------------------------
-# Reddit JSON fetch
-# ---------------------------------------------------------------------------
-
-async def _fetch_reddit_json(url: str) -> str:
-    """Fetch Reddit post+comments via .json endpoint using Firefox TLS fingerprint."""
-    import json as _json
-
-    loop = asyncio.get_running_loop()
-    p = urlparse(url)
-    path = p.path.rstrip("/")
-    if not path.endswith(".json"):
-        path += ".json"
-    json_url = urlunparse((p.scheme, p.netloc, path, "", "limit=50&depth=3", ""))
-
-    def _do() -> dict:
-        from curl_cffi import requests as _r
-        resp = _r.get(json_url, impersonate="firefox133", timeout=15, headers={
-            "Accept": "application/json",
-            "Accept-Language": "en-US,en;q=0.9",
-        })
-        resp.raise_for_status()
-        return resp.json()
-
-    try:
-        data = await loop.run_in_executor(_io_pool,_do)
-    except Exception as exc:
-        return f"Error: Reddit fetch failed: {exc}"
-
-    lines: list[str] = []
-    try:
-        post = data[0]["data"]["children"][0]["data"]
-    except (IndexError, KeyError, TypeError):
-        return f"Error: Unexpected Reddit response structure for {url}"
-    lines.append(f"r/{post.get('subreddit','')} | u/{post.get('author','')} | score: {post.get('score',0)}")
-    lines.append(f"# {post.get('title','')}")
-    if post.get("selftext"):
-        lines.append(post["selftext"])
-    lines.append("")
-
-    def _comments(children: list, depth: int = 0) -> None:
-        for child in children:
-            if child.get("kind") != "t1":
-                continue
-            d = child["data"]
-            body = d.get("body", "").strip()
-            if body and body != "[deleted]":
-                lines.append("  " * depth + f"[{d.get('author','?')} | +{d.get('score',0)}] {body}")
-            replies = d.get("replies")
-            if isinstance(replies, dict):
-                _comments(replies["data"]["children"], depth + 1)
-
-    if len(data) > 1:
-        _comments(data[1]["data"]["children"])
-
-    return "\n".join(lines)[:15_000]
 
 
 # ---------------------------------------------------------------------------
@@ -611,35 +466,85 @@ class ReadPageOptions:
     max_chars: int = 20_000
 
 
+@dataclass
+class ReadPageVariantAttempt:
+    url: str
+    variant: str
+    fetch_method: str
+    markdown_length: int
+    weak: bool
+    winner: bool
+
+
 class ReadPageService:
     """Fetch a single page and return clean markdown text."""
 
     def __init__(self, options: Optional[ReadPageOptions] = None) -> None:
         cfg = load_search_config()
         self._cfg = cfg
+        self._registry = get_registry()
         self._opts = options or ReadPageOptions(
             timeout=cfg.extraction.timeout_seconds,
             max_chars=cfg.extraction.max_page_chars,
         )
 
-    async def read(self, url: str) -> str:
-        """Fetch a URL and return its content as clean markdown."""
+    async def _fetch_raw_html(self, url: str, opts: ReadPageOptions, original_url: str) -> str | None:
+        if self._registry.needs_camoufox(url):
+            camoufox_kwargs: dict[str, object] = {
+                "wait_sec": 4.0,
+                "timeout_sec": opts.timeout,
+                "process_timeout": opts.timeout + 15.0,
+                "warmup_count": 0,
+                "normalize": False,
+            }
+            if _host(url) == "dns-shop.ru":
+                camoufox_kwargs.update(_dns_camoufox_fetch_kwargs(url, opts.timeout))
+            camoufox_result = await fetch_with_camoufox(
+                url,
+                **camoufox_kwargs,
+            )
+            raw_html = camoufox_result.html if camoufox_result.success else None
+            if not raw_html:
+                detail = camoufox_result.error or "unknown browser fetch failure"
+                logger.warning("Camoufox read_page fetch failed for %s: %s", url, detail)
+                return None
+            return raw_html
+
+        raw_html = await _fetch_race(url, timeout=opts.timeout, tls_verify=self._cfg.search.tls_verify)
+        if not raw_html and opts.use_wayback_fallback:
+            raw_html = await _fetch_wayback(url, timeout=30)
+        return raw_html
+
+    async def trace(self, url: str) -> list[ReadPageVariantAttempt]:
+        _, attempts = await self._read(url.strip(), collect_attempts=True)
+        return attempts
+
+    async def read_with_trace(self, url: str) -> tuple[str, list[ReadPageVariantAttempt]]:
+        return await self._read(url.strip(), collect_attempts=True)
+
+    async def _read(
+        self,
+        url: str,
+        *,
+        collect_attempts: bool,
+    ) -> tuple[str, list[ReadPageVariantAttempt]]:
         from core.extract.pdf_extractor import looks_like_pdf_text_dump, looks_like_pdf_url
 
         opts = self._opts
-        url = url.strip()
+        fetch_url = _rewrite_read_page_url(url)
+        attempts: list[ReadPageVariantAttempt] = []
 
-        logger.info("read_page url=%r", url)
+        logger.info("read_page url=%r fetch_url=%r", url, fetch_url)
 
         if is_stackexchange_question_url(url):
-            return await fetch_stackexchange_question(url, timeout=opts.timeout)
+            return await fetch_stackexchange_question(url, timeout=opts.timeout), attempts
 
         if _is_x_post(url):
-            return await _fetch_x_post(url, opts.timeout)
+            return await _fetch_x_post(url, opts.timeout), attempts
 
         if _is_skippable(url):
             if has_non_text_extension(url):
-                from core.fetch.file_importer import get_download_info
+                from core.fetch.download_types import get_download_info
                 info = get_download_info(url)
                 if info:
                     ext, category = info
@@ -647,20 +552,58 @@ class ReadPageService:
                         f"This URL points to a downloadable file, not a web page.\n"
                         f"  URL      : {url}\n"
                         f"  Extension: {ext}\n"
-                        f"  Category : {category}\n\n"
-                        f"To save it to the sandbox workspace:\n"
-                        f"  import_web_file(\"{url}\", save_to=\"downloads/\", allowed_types=[\"{category}\"])"
-                    )
-            return f"Error: URL type not supported for text extraction: {url}"
+                        f"  Category : {category}"
+                    ), attempts
+            return f"Error: URL type not supported for text extraction: {url}", attempts
 
         if _is_youtube(url):
-            return await _fetch_youtube_transcript(url)
+            return await _fetch_youtube_transcript(url), attempts
 
         if _is_reddit(url):
             try:
-                return await _fetch_reddit_json(url)
+                return await _fetch_reddit_json(url), attempts
             except Exception as exc:
                 logger.warning("Reddit fetch failed for %s: %s", url, exc)
+
+        if _host(url) == "amazon.com":
+            try:
+                snapshot = await fetch_amazon_snapshot(url, timeout=opts.timeout)
+                markdown = str(snapshot.get("markdown") or "").strip()
+                blocked_like = bool(snapshot.get("blocked_like"))
+                useless_banner = "continue shopping" in markdown.lower()
+                if markdown and not blocked_like and not useless_banner:
+                    attempt = ReadPageVariantAttempt(
+                        url=url,
+                        variant="amazon_custom",
+                        fetch_method=str(snapshot.get("engine") or "custom"),
+                        markdown_length=len(markdown),
+                        weak=False,
+                        winner=True,
+                    )
+                    if collect_attempts:
+                        attempts.append(attempt)
+                    return markdown, attempts
+            except Exception:
+                logger.debug("Amazon custom snapshot failed for %s, falling through", url, exc_info=True)
+
+        if _host(url) == "ebay.com":
+            try:
+                snapshot = await fetch_ebay_snapshot(url, timeout=opts.timeout)
+                markdown = str(snapshot.get("markdown") or "").strip()
+                if markdown:
+                    attempt = ReadPageVariantAttempt(
+                        url=url,
+                        variant="ebay_custom",
+                        fetch_method=str(snapshot.get("engine") or "custom"),
+                        markdown_length=len(markdown),
+                        weak=False,
+                        winner=True,
+                    )
+                    if collect_attempts:
+                        attempts.append(attempt)
+                    return markdown, attempts
+            except Exception:
+                logger.debug("eBay custom snapshot failed for %s, falling through", url, exc_info=True)
 
         if looks_like_pdf_url(url):
             return await _read_pdf(
@@ -668,46 +611,150 @@ class ReadPageService:
                 timeout=opts.timeout,
                 tls_verify=self._cfg.search.tls_verify,
                 max_chars=opts.max_chars,
+            ), attempts
+
+        fetch_candidates = _dns_variant_urls(url) if _host(url) == "dns-shop.ru" else [fetch_url]
+        markdown = ""
+        raw_html: str | None = None
+
+        for idx, candidate_url in enumerate(fetch_candidates):
+            variant_label = _variant_label(candidate_url)
+            cache_key = _cache_key_for_read(
+                candidate_url,
+                strategy_tag=_READ_PAGE_STRATEGY_VERSION,
+                variant=variant_label,
+            )
+            cached_page = _cache.get_cached(cache_key)
+            fetch_method = "cache"
+            if cached_page and _cache.is_fresh(cache_key) and cached_page.raw_html:
+                candidate_html: str | None = cached_page.raw_html
+            else:
+                fetch_method = "network"
+                candidate_html = await self._fetch_raw_html(candidate_url, opts, url)
+
+            if not candidate_html:
+                attempt = ReadPageVariantAttempt(
+                    url=candidate_url,
+                    variant=variant_label,
+                    fetch_method=fetch_method,
+                    markdown_length=0,
+                    weak=True,
+                    winner=False,
+                )
+                if collect_attempts:
+                    attempts.append(attempt)
+                trace_logger.info(
+                    "read_page.variant url=%r variant=%s fetch=%s markdown_len=0 weak=True winner=False",
+                    candidate_url,
+                    variant_label,
+                    fetch_method,
+                )
+                continue
+
+            raw_html = candidate_html
+            if is_antibot(raw_html):
+                attempt = ReadPageVariantAttempt(
+                    url=candidate_url,
+                    variant=variant_label,
+                    fetch_method=fetch_method,
+                    markdown_length=0,
+                    weak=True,
+                    winner=False,
+                )
+                if collect_attempts:
+                    attempts.append(attempt)
+                continue
+
+            if looks_like_pdf_text_dump(raw_html):
+                return await _read_pdf(
+                    url,
+                    timeout=opts.timeout,
+                    tls_verify=self._cfg.search.tls_verify,
+                    max_chars=opts.max_chars,
+                ), attempts
+
+            retail_meta = _extract_retail_metadata(candidate_url, raw_html)
+            candidate_markdown = normalize_page(candidate_url, raw_html)
+            candidate_markdown = _prepend_retail_metadata(candidate_markdown, retail_meta)
+            markdown = candidate_markdown
+            weak = _is_weak_extraction(candidate_markdown, min_length=self._cfg.extraction.min_content_length)
+            if fetch_method == "network" and not weak and not is_antibot(raw_html):
+                _cache.cache_page(cache_key, "", clean_text="", raw_html=raw_html)
+            if _host(url) == "dns-shop.ru" and fetch_method == "cache" and weak:
+                refreshed_html = await self._fetch_raw_html(candidate_url, opts, url)
+                if refreshed_html and not is_antibot(refreshed_html):
+                    _cache.cache_page(cache_key, "", clean_text="", raw_html=refreshed_html)
+                    refreshed_meta = _extract_retail_metadata(candidate_url, refreshed_html)
+                    refreshed_markdown = normalize_page(candidate_url, refreshed_html)
+                    refreshed_markdown = _prepend_retail_metadata(refreshed_markdown, refreshed_meta)
+                    refreshed_weak = _is_weak_extraction(
+                        refreshed_markdown,
+                        min_length=self._cfg.extraction.min_content_length,
+                    )
+                    if not refreshed_weak or len(refreshed_markdown or "") > len(candidate_markdown or ""):
+                        raw_html = refreshed_html
+                        candidate_markdown = refreshed_markdown
+                        markdown = refreshed_markdown
+                        weak = refreshed_weak
+                        fetch_method = "network_refresh"
+            winner = _host(url) != "dns-shop.ru" or not weak or idx == len(fetch_candidates) - 1
+            attempt = ReadPageVariantAttempt(
+                url=candidate_url,
+                variant=variant_label,
+                fetch_method=fetch_method,
+                markdown_length=len(candidate_markdown or ""),
+                weak=weak,
+                winner=winner,
+            )
+            if collect_attempts:
+                attempts.append(attempt)
+            trace_logger.info(
+                "read_page.variant url=%r variant=%s fetch=%s markdown_len=%d weak=%s winner=%s",
+                candidate_url,
+                variant_label,
+                fetch_method,
+                len(candidate_markdown or ""),
+                weak,
+                winner,
             )
 
-        cached_page = _cache.get_cached(url)
-        if cached_page and _cache.is_fresh(url) and cached_page.raw_html:
-            raw_html: str | None = cached_page.raw_html
-        else:
-            # -- Fetch: httpx + curl_cffi race, Wayback as last resort --
-            raw_html = await _fetch_race(url, timeout=opts.timeout, tls_verify=self._cfg.search.tls_verify)
-
-            if not raw_html and opts.use_wayback_fallback:
-                raw_html = await _fetch_wayback(url, timeout=30)
-            
-            if raw_html and not is_antibot(raw_html):
-                _cache.cache_page(url, "", clean_text="", raw_html=raw_html)
+            if _host(url) != "dns-shop.ru":
+                break
+            if not weak:
+                break
+            logger.info("Weak DNS extraction for %s via %s; trying next variant", url, candidate_url)
+            if idx == len(fetch_candidates) - 1:
+                break
 
         if not raw_html:
-            return f"Error: Could not fetch content from: {url}"
+            return f"Error: Could not fetch content from: {url}", attempts
 
         if is_antibot(raw_html):
             return (
                 f"Error: Anti-bot protection detected on {url}. "
                 "Cannot extract content without a browser."
-            )
+            ), attempts
 
-        if looks_like_pdf_text_dump(raw_html):
-            return await _read_pdf(
-                url,
-                timeout=opts.timeout,
-                tls_verify=self._cfg.search.tls_verify,
-                max_chars=opts.max_chars,
-            )
-
-        # -- Normalize --
-        markdown = normalize_page(url, raw_html)
         if not markdown or len(markdown.strip()) < self._cfg.extraction.min_content_length:
-            return f"Warning: Very little content extracted from: {url}\n\n{markdown}"
+            return f"Warning: Very little content extracted from: {url}\n\n{markdown}", attempts
 
         if len(markdown) > opts.max_chars:
             markdown = markdown[:opts.max_chars].rsplit("\n", 1)[0] + "\n\n[...truncated]"
 
+        return markdown, attempts
+
+    async def read(self, url: str) -> str:
+        """Fetch a URL and return its content as clean markdown."""
+        url = url.strip()
+        deadline = max(self._opts.timeout * 3, 60.0)
+        try:
+            markdown, _ = await asyncio.wait_for(
+                self._read(url, collect_attempts=False),
+                timeout=deadline,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("read_page global deadline exceeded (%.0fs) for %s", deadline, url)
+            return f"Error: Page read timed out after {int(deadline)}s: {url}"
         return markdown
 
 

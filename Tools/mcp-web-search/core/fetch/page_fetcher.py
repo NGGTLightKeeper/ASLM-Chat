@@ -9,7 +9,7 @@ Refactored from legacy src/page_fetcher.py:
   - Anti-bot detection extracted to shared core.fetch.antibot module
   - SourceCache type import uses TYPE_CHECKING to avoid circular deps
 
-No browsers, no overdrive. Designed for cache-first retrieval where
+No browsers, no fallback runtime modes. Designed for cache-first retrieval where
 the goal is cheap, fast page downloads with strict budgets.
 
 Public API
