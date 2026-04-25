@@ -7,6 +7,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 SERVER_ROOT = Path(__file__).resolve().parent
 if str(SERVER_ROOT) not in sys.path:
@@ -44,11 +45,8 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "query": {
-                    "description": "A search string or a list of search strings.",
-                    "oneOf": [
-                        {"type": "string"},
-                        {"type": "array", "items": {"type": "string"}},
-                    ],
+                    "description": "A single web search query.",
+                    "type": "string",
                 },
             },
             "required": ["query"],
@@ -93,6 +91,62 @@ def _maybe_parse_list(val: Any) -> Any:
     return val
 
 
+def _source_domain(url: str) -> str:
+    host = urlparse(url or "").netloc.lower()
+    if "@" in host:
+        host = host.rsplit("@", 1)[-1]
+    if ":" in host:
+        host = host.split(":", 1)[0]
+    return host.removeprefix("www.")
+
+
+def _display_domain(domain: str) -> str:
+    parts = [part for part in (domain or "").split(".") if part]
+    if len(parts) >= 2:
+        label = parts[-2]
+    elif parts:
+        label = parts[0]
+    else:
+        return ""
+    return label.replace("-", " ").title()
+
+
+def _favicon_url(domain: str) -> str:
+    return f"https://icons.duckduckgo.com/ip3/{domain}.ico" if domain else ""
+
+
+def _read_page_source(url: str, rank: int, result_text: str = "") -> dict[str, object]:
+    domain = _source_domain(url)
+    ok = not str(result_text or "").lstrip().lower().startswith("error:")
+    return {
+        "rank": rank,
+        "url": (url or "").strip(),
+        "domain": domain,
+        "display_domain": _display_domain(domain) or domain,
+        "favicon_url": _favicon_url(domain),
+        "ok": ok,
+    }
+
+
+def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, object]:
+    sources = [
+        _read_page_source(url, index, results[index - 1] if index - 1 < len(results) else "")
+        for index, url in enumerate(urls, 1)
+    ]
+    ok_count = sum(1 for source in sources if bool(source.get("ok")))
+    return {
+        "query": ", ".join(urls),
+        "sources": sources,
+        "model_context": "\n\n".join(str(result or "") for result in results).strip(),
+        "ui": {
+            "kind": "read_page",
+            "status": "done" if ok_count == len(sources) else ("partial" if ok_count else "error"),
+            "result_count": len(sources),
+            "sources": sources,
+        },
+    }
+
+
 async def call_tool(
     tool_id: str,
     arguments: dict[str, Any] | None,
@@ -104,18 +158,10 @@ async def call_tool(
             args[key] = _maybe_parse_list(args[key])
 
     if tool_id == "web_search":
-        from services import run_web_search
+        from services import run_web_search_rich
+
         query = args.get("query", "")
-        if isinstance(query, list):
-            queries = [q.strip() for q in query if isinstance(q, str) and q.strip()]
-            results = await asyncio.gather(
-                *[run_web_search(q, max_results=_MAX_RESULTS) for q in queries[:_BATCH_LIMIT]],
-                return_exceptions=True,
-            )
-            return "\n\n---\n\n".join(
-                r if isinstance(r, str) else f"Error: {r}" for r in results
-            )
-        return await run_web_search(query.strip(), max_results=_MAX_RESULTS)
+        return await run_web_search_rich(str(query).strip(), max_results=_MAX_RESULTS)
 
     if tool_id == "read_page":
         from services import run_read_page
@@ -126,9 +172,10 @@ async def call_tool(
                 *[run_read_page(u) for u in urls[:_BATCH_LIMIT]],
                 return_exceptions=True,
             )
-            return "\n\n---\n\n".join(
-                r if isinstance(r, str) else f"Error: {r}" for r in results
-            )
-        return await run_read_page(url.strip())
+            texts = [r if isinstance(r, str) else f"Error: {r}" for r in results]
+            return _read_page_payload(urls[:_BATCH_LIMIT], texts)
+        url_text = url.strip()
+        result = await run_read_page(url_text)
+        return _read_page_payload([url_text], [result])
 
     raise ValueError(f"Unknown tool: {tool_id}")

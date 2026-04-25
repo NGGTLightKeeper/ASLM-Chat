@@ -43,6 +43,8 @@ def _venv_subprocess_env(python_path: Path) -> dict[str, str]:
     venv_path = python_path.parent.parent
     env["VIRTUAL_ENV"] = str(venv_path)
     env["PATH"] = str(python_path.parent) + os.pathsep + env.get("PATH", "")
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     env.pop("PYTHONHOME", None)
     return env
 
@@ -68,6 +70,8 @@ class ExternalWorkerSession:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(self.server_file.parent),
             env=_venv_subprocess_env(self.python_path),
             bufsize=1,
@@ -77,31 +81,39 @@ class ExternalWorkerSession:
         """Send one request to the worker process and return its result."""
 
         with self.lock:
-            self._start()
-            assert self.process is not None
-            assert self.process.stdin is not None
-            assert self.process.stdout is not None
-
             request_payload = {
                 "operation": operation,
                 "payload": payload or {},
             }
-            try:
-                self.process.stdin.write(json.dumps(request_payload, ensure_ascii=False) + "\n")
-                self.process.stdin.flush()
-                raw_response = self.process.stdout.readline()
-            except (BrokenPipeError, OSError):
-                self.close()
+
+            raw_response = ""
+            last_error: Exception | None = None
+            for attempt in range(2):
                 self._start()
                 assert self.process is not None
                 assert self.process.stdin is not None
                 assert self.process.stdout is not None
-                self.process.stdin.write(json.dumps(request_payload, ensure_ascii=False) + "\n")
-                self.process.stdin.flush()
-                raw_response = self.process.stdout.readline()
+
+                try:
+                    self.process.stdin.write(json.dumps(request_payload, ensure_ascii=False) + "\n")
+                    self.process.stdin.flush()
+                    raw_response = self.process.stdout.readline()
+                except (BrokenPipeError, OSError) as exc:
+                    last_error = exc
+                    raw_response = ""
+
+                if raw_response:
+                    break
+
+                self.close()
+                if attempt == 0:
+                    logger.warning("Tool worker stopped before response; restarting once for %s", self.server_file)
+                    continue
 
             if not raw_response:
                 self.close()
+                if last_error is not None:
+                    raise RuntimeError(f"Tool worker stopped for {self.server_file}: {last_error}")
                 raise RuntimeError(f"Tool worker stopped for {self.server_file}.")
 
             try:
@@ -399,6 +411,8 @@ def _run_worker(
         input=request_payload,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=str(server_file.parent),
         env=_venv_subprocess_env(python_path),
         check=False,
@@ -832,10 +846,44 @@ def _serialize_tool_result(result: Any) -> str:
     if isinstance(result, str):
         return result
 
+    if isinstance(result, dict) and isinstance(result.get("model_context"), str):
+        return result["model_context"]
+
     if isinstance(result, (dict, list, tuple, int, float, bool)):
         return json.dumps(result, ensure_ascii=False, indent=2)
 
     return str(result)
+
+
+def _extract_structured_tool_result(result: Any) -> dict[str, Any] | None:
+    """Return frontend metadata for rich structured tool results."""
+
+    if not isinstance(result, dict):
+        return None
+    if not isinstance(result.get("model_context"), str):
+        return None
+    if not isinstance(result.get("ui"), dict) and not isinstance(result.get("sources"), list):
+        return None
+    return result
+
+
+def split_tool_result_payload(content: Any) -> tuple[str, dict[str, Any]]:
+    """Split one tool result into model-visible text and UI-only metadata."""
+
+    if isinstance(content, dict) and "_image_b64" in content:
+        return f"[Image: {content.get('_path', 'image')}]", {}
+
+    if isinstance(content, dict) and "_tool_result_content" in content:
+        extras: dict[str, Any] = {}
+        structured = content.get("_tool_result_structured")
+        if isinstance(structured, dict):
+            extras["structured_content"] = structured
+            ui_payload = structured.get("ui")
+            if isinstance(ui_payload, dict):
+                extras["tool_ui"] = ui_payload
+        return str(content.get("_tool_result_content") or ""), extras
+
+    return _serialize_tool_result(content), {}
 
 
 # Extract one inline image payload.
@@ -908,16 +956,32 @@ def call_ollama_tool(
     try:
         if server_definition.get("external"):
             worker_context = json.loads(json.dumps(call_context, ensure_ascii=False, default=str))
-            result = _run_worker(
-                Path(server_definition["server_file"]),
-                "call",
-                {
-                    "tool_id": tool_definition["id"],
-                    "arguments": call_arguments,
-                    "context": worker_context,
-                },
-                persistent=True,
-            )
+            worker_payload = {
+                "tool_id": tool_definition["id"],
+                "arguments": call_arguments,
+                "context": worker_context,
+            }
+            server_file = Path(server_definition["server_file"])
+            try:
+                result = _run_worker(
+                    server_file,
+                    "call",
+                    worker_payload,
+                    persistent=True,
+                )
+            except RuntimeError as worker_exc:
+                if "Tool worker stopped" not in str(worker_exc):
+                    raise
+                logger.warning(
+                    "Persistent tool worker stopped for %s; retrying call in one-shot mode.",
+                    server_file,
+                )
+                result = _run_worker(
+                    server_file,
+                    "call",
+                    worker_payload,
+                    persistent=False,
+                )
         else:
             handler = server_definition["tool_handlers"].get(tool_definition["id"])
             if handler is None:
@@ -965,6 +1029,12 @@ def call_ollama_tool(
                 f"took={time.perf_counter() - started_at:.2f}s, "
                 f"result={_summarize_tool_result(result)}"
             )
+        structured_result = _extract_structured_tool_result(result)
+        if structured_result is not None:
+            return {
+                "_tool_result_content": _serialize_tool_result(result),
+                "_tool_result_structured": structured_result,
+            }
         return _serialize_tool_result(result)
     except Exception as exc:
         logger.exception("Tool execution failed for %s.%s", server_definition["id"], tool_definition["id"])

@@ -40,7 +40,21 @@ export function bindEventHandlers(context, dependencies) {
     chatController.deleteMessage($(this).closest('.msg'));
   });
 
-  dom.$messagesInner.on('click', '.msg-tool-call-card[data-tool-segment-index]', function onToolCardClick() {
+  dom.$messagesInner.on('click', '.msg-search-chip', function onSearchChipClick(event) {
+    event.stopPropagation();
+  });
+
+  dom.$messagesInner.on('click', '.msg-citation-chip', function onCitationChipClick(event) {
+    event.stopPropagation();
+  });
+
+  dom.$messagesInner.on('click', '.msg-search-chip--more', function onSearchMoreClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    messagesUi.toggleSearchSources($(this));
+  });
+
+  dom.$messagesInner.on('click', '.msg-tool-call-card[data-tool-segment-index], .msg-search-card[data-tool-segment-index]', function onToolCardClick() {
     messagesUi.openToolInspectorFromCard($(this));
   });
 

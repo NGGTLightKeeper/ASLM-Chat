@@ -1040,12 +1040,14 @@ def _build_tool_message(
 ) -> dict[str, Any]:
     """Build a tool message payload for the OpenAI-compatible conversation."""
 
+    model_content, tool_extras = tool_registry.split_tool_result_payload(content)
     payload: dict[str, Any] = {
         "role": "tool",
         "tool_call_id": tool_call_id,
         "name": tool_name,
-        "content": content if isinstance(content, str) else str(content),
+        "content": model_content,
     }
+    payload.update(tool_extras)
 
     if tool_event:
         payload.update(
@@ -1448,10 +1450,12 @@ def _run_tool_loop(
 
         yield {"transcript_message": assistant_message}
 
-        for tool_call_index, tool_call in enumerate(tool_calls, start=1):
-            tool_event = _build_tool_event(tool_lookup, tool_call)
-            yield {"tool_event": tool_event}
+        tool_events = [_build_tool_event(tool_lookup, tool_call) for tool_call in tool_calls]
+        for _i, _ev in enumerate(tool_events):
+            _ev["alias"] = f"{_ev['alias']}__{_i}"
+        yield {"tool_events": tool_events}
 
+        for tool_call_index, (tool_call, tool_event) in enumerate(zip(tool_calls, tool_events), start=1):
             call_context = dict(tool_context or {})
             call_context.update(
                 {

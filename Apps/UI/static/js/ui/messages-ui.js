@@ -7,6 +7,10 @@ import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
 export function createMessagesUi(context, dependencies) {
   const { attachmentUi, toolInspector } = dependencies;
   const { dom, icons, state } = context;
+  const MORE_LABEL = '\u0415\u0449\u0435';
+  const HIDE_LABEL = '\u0421\u043a\u0440\u044b\u0442\u044c';
+  const SEARCH_BATCH_FIRST_CALL_HOLD_MS = 0;
+  const SEARCH_BATCH_MULTI_CALL_SETTLE_MS = 0;
 
   // Composer state.
   // Sync both send buttons with the current generation and attachment state.
@@ -58,17 +62,179 @@ export function createMessagesUi(context, dependencies) {
 
   // Markdown rendering.
   // Render one visible text segment as sanitized HTML.
-  function renderMarkdownSegment(content) {
+  function renderMarkdownSegment(content, citationSources) {
+    const hasCitationSources = citationSources && typeof citationSources === 'object' && Object.keys(citationSources).length > 0;
+    const visibleContent = hasCitationSources
+      ? String(content || '')
+      : String(content || '').replace(/\s*\[(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3}-\d+)\]/gi, '');
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
-      return escHtml(content);
+      return decorateCitationsInHtml(escHtml(visibleContent), citationSources);
     }
 
-    return DOMPurify.sanitize(marked.parse(content));
+    return decorateCitationsInHtml(DOMPurify.sanitize(marked.parse(visibleContent)), citationSources);
   }
 
   // Render text cheaply while a message is still streaming.
   function renderPlainTextSegment(content) {
     return escHtml(content);
+  }
+
+  function normalizeCitationId(value) {
+    return String(value || '').trim().toUpperCase();
+  }
+
+  function sourceDisplayDomain(source) {
+    const candidate = String(source.display_domain || source.domain || '').trim();
+    if (candidate) {
+      return candidate;
+    }
+
+    try {
+      return new URL(String(source.url || '')).hostname.replace(/^www\./i, '');
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  function safeExternalUrl(value) {
+    const rawValue = String(value || '').trim();
+    if (!rawValue) {
+      return '';
+    }
+
+    try {
+      const parsed = new URL(rawValue);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  function sourceHasExtractedPreview(source) {
+    const safeSource = source && typeof source === 'object' ? source : {};
+    const hasPreviewField = Object.prototype.hasOwnProperty.call(safeSource, 'preview');
+    const hasSnippetField = Object.prototype.hasOwnProperty.call(safeSource, 'snippet');
+    if (!hasPreviewField && !hasSnippetField) {
+      return true;
+    }
+
+    const preview = String(safeSource.preview || '').trim();
+    const snippet = String(safeSource.snippet || '').trim();
+    return !!preview && preview !== snippet;
+  }
+
+  function sourceFaviconUrl(source) {
+    if (!sourceHasExtractedPreview(source)) {
+      return '';
+    }
+
+    return safeExternalUrl(source.favicon_url);
+  }
+
+  function domainAccentStyle(value, extraStyle) {
+    const text = String(value || '').trim().toLowerCase();
+    let hash = 0;
+    for (let index = 0; index < text.length; index += 1) {
+      hash = ((hash << 5) - hash) + text.charCodeAt(index);
+      hash |= 0;
+    }
+
+    const hue = Math.abs(hash) % 360;
+    const base = `--msg-source-accent-bg: hsla(${hue}, 68%, 46%, 0.36); --msg-source-accent-fg: hsl(${hue}, 86%, 82%);`;
+    return extraStyle ? `${base} ${extraStyle}` : base;
+  }
+
+  function renderCitationChip(source, sourceId) {
+    const safeSource = source && typeof source === 'object' ? source : {};
+    const normalizedId = normalizeCitationId(sourceId || safeSource.id);
+    const sourceUrl = safeExternalUrl(safeSource.url);
+    if (!normalizedId || !sourceUrl) {
+      return escHtml(`[${normalizedId || sourceId}]`);
+    }
+
+    const domain = sourceDisplayDomain(safeSource) || normalizedId;
+    const title = String(safeSource.title || domain || normalizedId).trim();
+    const faviconUrl = sourceFaviconUrl(safeSource);
+    const fallbackLetter = domain.charAt(0).toUpperCase();
+    const faviconHtml = faviconUrl
+      ? `<img class="msg-citation-favicon" src="${escapeAttributeValue(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
+      : '';
+    const fallbackStyle = domainAccentStyle(domain, faviconUrl ? 'display:none;' : '');
+
+    return `
+      <a class="msg-citation-chip" href="${escapeAttributeValue(sourceUrl)}" target="_blank" rel="noopener noreferrer" title="${escapeAttributeValue(title)}">
+        ${faviconHtml}<span class="msg-citation-fallback" style="${escapeAttributeValue(fallbackStyle)}">${escHtml(fallbackLetter)}</span>
+        <span class="msg-citation-domain">${escHtml(domain)}</span>
+      </a>
+    `;
+  }
+
+  function decorateCitationsInHtml(html, citationSources) {
+    if (!citationSources || typeof citationSources !== 'object' || Object.keys(citationSources).length === 0) {
+      return html;
+    }
+
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    const citationPattern = /\[((?:S\d+)|(?:source-(?:[a-z0-9]+-)?\d+)|(?:c[a-z0-9]{3}-\d+))\]/gi;
+    const ignoredTags = new Set(['A', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA']);
+
+    function appendChip(fragment, source, sourceId) {
+      const chipTemplate = document.createElement('template');
+      chipTemplate.innerHTML = renderCitationChip(source, sourceId).trim();
+      fragment.appendChild(chipTemplate.content.cloneNode(true));
+    }
+
+    function walk(node) {
+      if (!node) {
+        return;
+      }
+
+      if (node.nodeType === Node.ELEMENT_NODE && ignoredTags.has(node.tagName)) {
+        return;
+      }
+
+      if (node.nodeType === Node.TEXT_NODE) {
+        const value = node.nodeValue || '';
+        citationPattern.lastIndex = 0;
+        if (!citationPattern.test(value)) {
+          return;
+        }
+
+        citationPattern.lastIndex = 0;
+        const fragment = document.createDocumentFragment();
+        let lastIndex = 0;
+        let match = citationPattern.exec(value);
+
+        while (match) {
+          const sourceId = normalizeCitationId(match[1]);
+          const source = citationSources[sourceId];
+          if (match.index > lastIndex) {
+            fragment.appendChild(document.createTextNode(value.slice(lastIndex, match.index)));
+          }
+          if (source) {
+            appendChip(fragment, source, sourceId);
+          }
+          lastIndex = match.index + match[0].length;
+          match = citationPattern.exec(value);
+        }
+
+        if (lastIndex === 0) {
+          return;
+        }
+
+        if (lastIndex < value.length) {
+          fragment.appendChild(document.createTextNode(value.slice(lastIndex)));
+        }
+        node.parentNode.replaceChild(fragment, node);
+        return;
+      }
+
+      Array.from(node.childNodes).forEach(walk);
+    }
+
+    Array.from(template.content.childNodes).forEach(walk);
+    return template.innerHTML;
   }
 
 
@@ -196,6 +362,10 @@ export function createMessagesUi(context, dependencies) {
 
         if (target) {
           target.result = String(parsed.content || '');
+          target.toolUi = parsed.tool_ui && typeof parsed.tool_ui === 'object' ? parsed.tool_ui : null;
+          target.structuredContent = parsed.structured_content && typeof parsed.structured_content === 'object'
+            ? parsed.structured_content
+            : null;
         }
       } catch (_error) {
         // Ignore malformed tool results.
@@ -247,6 +417,291 @@ export function createMessagesUi(context, dependencies) {
 
   // Activity timeline rendering.
   // Render thoughts, tool calls, and visible text into the assistant timeline.
+  function isSearchToolSegment(segment) {
+    const toolId = String(segment.toolId || '').toLowerCase();
+    const alias = String(segment.alias || '').toLowerCase();
+    return toolId === 'web_search'
+      || toolId === 'web_search_rich'
+      || alias.endsWith('__web_search')
+      || alias.endsWith('__web_search_rich')
+      || !!(segment.toolUi && segment.toolUi.compact);
+  }
+
+  function searchQueryFromSegment(segment) {
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    return String(args.query || args.q || '').trim();
+  }
+
+  function isReadPageToolSegment(segment) {
+    const toolId = String(segment.toolId || '').toLowerCase();
+    const alias = String(segment.alias || '').toLowerCase();
+    const uiKind = segment.toolUi && segment.toolUi.kind ? String(segment.toolUi.kind).toLowerCase() : '';
+    return toolId === 'read_page'
+      || alias.endsWith('__read_page')
+      || uiKind === 'read_page';
+  }
+
+  function sourceFromUrl(value, rank) {
+    const rawUrl = String(value || '').trim();
+    if (!rawUrl) {
+      return null;
+    }
+
+    let domain = '';
+    try {
+      domain = new URL(rawUrl).hostname.replace(/^www\./i, '');
+    } catch (_error) {
+      domain = rawUrl.replace(/^https?:\/\//i, '').split('/')[0].replace(/^www\./i, '');
+    }
+
+    const parts = domain.split('.').filter(Boolean);
+    const label = parts.length >= 2 ? parts[parts.length - 2] : (parts[0] || domain);
+    const displayDomain = label.replace(/-/g, ' ').replace(/\b\w/g, function titleCase(letter) {
+      return letter.toUpperCase();
+    });
+
+    return {
+      rank: rank || 0,
+      url: rawUrl,
+      domain,
+      display_domain: displayDomain || domain,
+      favicon_url: domain ? `https://icons.duckduckgo.com/ip3/${domain}.ico` : '',
+    };
+  }
+
+  function searchSourcesFromSegment(segment) {
+    const structured = segment.structuredContent && typeof segment.structuredContent === 'object'
+      ? segment.structuredContent
+      : null;
+    if (structured && Array.isArray(structured.sources) && structured.sources.length > 0) {
+      return structured.sources;
+    }
+
+    const compact = segment.toolUi && segment.toolUi.compact && typeof segment.toolUi.compact === 'object'
+      ? segment.toolUi.compact
+      : null;
+    return compact && Array.isArray(compact.source_chips) ? compact.source_chips : [];
+  }
+
+  function readPageSourcesFromSegment(segment) {
+    const structured = segment.structuredContent && typeof segment.structuredContent === 'object'
+      ? segment.structuredContent
+      : null;
+    const uiSources = segment.toolUi && Array.isArray(segment.toolUi.sources) ? segment.toolUi.sources : [];
+    if (uiSources.length > 0) {
+      return uiSources;
+    }
+    if (structured && Array.isArray(structured.sources) && structured.sources.length > 0) {
+      return structured.sources;
+    }
+
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    const rawUrls = Array.isArray(args.url) ? args.url : [args.url || args.urls];
+    return rawUrls
+      .flatMap(function flattenUrls(item) { return Array.isArray(item) ? item : [item]; })
+      .map(function mapUrl(item, index) { return sourceFromUrl(item, index + 1); })
+      .filter(Boolean);
+  }
+
+  function addSearchSourcesToCitationRegistry(registry, segment) {
+    searchSourcesFromSegment(segment).forEach(function registerSource(source) {
+      if (!source || typeof source !== 'object') {
+        return;
+      }
+
+      const sourceId = normalizeCitationId(source.id || source.source_id);
+      if (!/^(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{3}-\d+)$/.test(sourceId)) {
+        return;
+      }
+
+      registry[sourceId] = source;
+    });
+  }
+
+  function renderSourceChip(chip) {
+    const source = chip && typeof chip === 'object' ? chip : {};
+    const domain = String(source.display_domain || source.domain || '').trim();
+    if (!domain) {
+      return '';
+    }
+    const faviconUrl = sourceFaviconUrl(source);
+    const sourceUrl = String(source.url || '').trim();
+    const fallbackLetter = domain.charAt(0).toUpperCase();
+    const imgHtml = faviconUrl
+      ? `<img class="msg-search-chip-favicon" src="${escapeAttributeValue(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
+      : '';
+    const fallbackStyle = domainAccentStyle(domain, faviconUrl ? 'display:none;' : '');
+    const tagName = sourceUrl ? 'a' : 'span';
+    const linkAttrs = sourceUrl
+      ? ` href="${escapeAttributeValue(sourceUrl)}" target="_blank" rel="noopener noreferrer"`
+      : '';
+    return `
+      <${tagName} class="msg-search-chip" title="${escapeAttributeValue(source.title || domain)}"${linkAttrs}>
+        ${imgHtml}<span class="msg-search-chip-fallback" style="${escapeAttributeValue(fallbackStyle)}">${escHtml(fallbackLetter)}</span>
+        <span class="msg-search-chip-domain">${escHtml(domain)}</span>
+      </${tagName}>
+    `;
+  }
+
+  function dedupeSearchSources(sources) {
+    const seen = {};
+    return (Array.isArray(sources) ? sources : []).filter(function keepFirstSource(source) {
+      if (!source || typeof source !== 'object') {
+        return false;
+      }
+
+      const key = String(source.domain || source.display_domain || source.url || source.source_id || source.id || '').trim().toLowerCase();
+      if (!key || seen[key]) {
+        return false;
+      }
+
+      seen[key] = true;
+      return true;
+    });
+  }
+
+  function renderSearchToolCard(segment, toolSegmentIndex, options) {
+    const renderOptions = options || {};
+    const hasResult = segment.result !== null && segment.result !== undefined;
+    const compact = segment.toolUi && segment.toolUi.compact && typeof segment.toolUi.compact === 'object'
+      ? segment.toolUi.compact
+      : null;
+    const query = searchQueryFromSegment(segment);
+    const sources = searchSourcesFromSegment(segment);
+    const visibleSources = sources.slice(0, 3);
+    const hiddenSources = sources.slice(3);
+    let label = '';
+    if (renderOptions.compactLabel && query) {
+      label = query;
+    } else if (hasResult) {
+      label = sources.length > 0 ? `Searched for ${query || 'sources'}` : `No sources found for ${query || 'sources'}`;
+    } else {
+      label = compact && compact.label ? String(compact.label) : `Searching for ${query || 'sources'}`;
+    }
+    const chipsHtml = visibleSources.map(renderSourceChip).join('');
+    const hiddenChipsHtml = hiddenSources.map(renderSourceChip).join('');
+    const moreCount = hiddenSources.length || (compact ? Math.max(0, parseInt(compact.more_count || 0, 10) || 0) : 0);
+    const moreButtonAttrs = `type="button" data-search-more-count="${moreCount}" aria-expanded="false"`;
+    const collapsedMoreHtml = moreCount > 0
+      ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-collapsed" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(`${MORE_LABEL} ${moreCount}`)}</span></button>`
+      : '';
+    const expandedMoreHtml = moreCount > 0
+      ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-expanded" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(HIDE_LABEL)}</span></button>`
+      : '';
+    const pendingHtml = hasResult ? '' : '<span class="msg-search-pending-dot"></span>';
+    const status = segment.toolUi && segment.toolUi.status ? String(segment.toolUi.status) : '';
+    const iconHtml = status === 'error' || status === 'timeout'
+      ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
+      : (icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+
+    return `
+      <div class="msg-search-card${hasResult ? ' is-done' : ' is-pending'}${renderOptions.compactLabel ? ' msg-search-card--batch-item' : ''}" data-tool-segment-index="${toolSegmentIndex}">
+        <div class="msg-search-line">
+          ${renderOptions.hideIcon ? '' : `<span class="msg-search-icon">${iconHtml}</span>`}
+          <span class="msg-search-label">${escHtml(label)}</span>
+          ${pendingHtml}
+        </div>
+        ${chipsHtml || collapsedMoreHtml ? `<div class="msg-search-chips">${chipsHtml}${collapsedMoreHtml}</div>` : ''}
+        ${hiddenChipsHtml || expandedMoreHtml ? `<div class="msg-search-extra-chips">${hiddenChipsHtml}${expandedMoreHtml}</div>` : ''}
+      </div>
+    `;
+  }
+
+  function renderSearchToolGroup(searchItems) {
+    if (!Array.isArray(searchItems) || searchItems.length === 0) {
+      return '';
+    }
+
+    if (searchItems.length === 1) {
+      return renderSearchToolCard(searchItems[0].segment, searchItems[0].index);
+    }
+
+    const hasProblem = searchItems.some(function hasProblemStatus(item) {
+      const status = item.segment.toolUi && item.segment.toolUi.status ? String(item.segment.toolUi.status) : '';
+      return status === 'error' || status === 'timeout';
+    });
+    const iconHtml = hasProblem
+      ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
+      : (icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+    const activePendingIndex = searchItems.findIndex(function findPendingSearch(item) {
+      return item.segment.result === null || item.segment.result === undefined;
+    });
+    const hasPending = activePendingIndex !== -1;
+    const queriesHtml = searchItems.map(function renderBatchQuery(item, itemIndex) {
+      const query = searchQueryFromSegment(item.segment);
+      const compact = item.segment.toolUi && item.segment.toolUi.compact && typeof item.segment.toolUi.compact === 'object'
+        ? item.segment.toolUi.compact
+        : null;
+      const label = query || (compact && compact.label ? String(compact.label).replace(/^Searching for\s+/i, '') : 'sources');
+      const activeClass = itemIndex === activePendingIndex ? ' is-active' : '';
+      const activeDot = itemIndex === activePendingIndex ? '<span class="msg-search-pending-dot"></span>' : '';
+      return `<div class="msg-search-batch-query${activeClass}"><span class="msg-search-batch-query-text">${escHtml(label)}</span>${activeDot}</div>`;
+    }).join('');
+    const combinedSources = dedupeSearchSources(searchItems.flatMap(function collectSources(item) {
+      return searchSourcesFromSegment(item.segment);
+    }));
+    const visibleSources = combinedSources.slice(0, 3);
+    const hiddenSources = combinedSources.slice(3);
+    const chipsHtml = visibleSources.map(renderSourceChip).join('');
+    const hiddenChipsHtml = hiddenSources.map(renderSourceChip).join('');
+    const moreCount = hiddenSources.length;
+    const moreButtonAttrs = `type="button" data-search-more-count="${moreCount}" aria-expanded="false"`;
+    const collapsedMoreHtml = moreCount > 0
+      ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-collapsed" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(`${MORE_LABEL} ${moreCount}`)}</span></button>`
+      : '';
+    const expandedMoreHtml = moreCount > 0
+      ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-expanded" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(HIDE_LABEL)}</span></button>`
+      : '';
+    const firstIndex = Number.isInteger(searchItems[0].index) ? searchItems[0].index : 0;
+
+    return `
+      <div class="msg-search-card msg-search-card--batch${hasPending ? ' is-pending' : ' is-done'}" data-tool-segment-index="${firstIndex}">
+        <div class="msg-search-batch-head">
+          <span class="msg-search-icon msg-search-batch-icon">${iconHtml}</span>
+          <div class="msg-search-batch-queries">${queriesHtml}</div>
+        </div>
+        ${chipsHtml || collapsedMoreHtml ? `<div class="msg-search-chips msg-search-chips--batch">${chipsHtml}${collapsedMoreHtml}</div>` : ''}
+        ${hiddenChipsHtml || expandedMoreHtml ? `<div class="msg-search-extra-chips msg-search-extra-chips--batch">${hiddenChipsHtml}${expandedMoreHtml}</div>` : ''}
+      </div>
+    `;
+  }
+
+  function renderReadPageToolCard(readItems) {
+    const items = Array.isArray(readItems) ? readItems : [];
+    const firstItem = items[0] || {};
+    const sourcesByUrl = {};
+    items.forEach(function collectSources(item) {
+      readPageSourcesFromSegment(item.segment).forEach(function collectSource(source) {
+        const key = String(source.url || source.domain || '').trim();
+        if (key && !sourcesByUrl[key]) {
+          sourcesByUrl[key] = source;
+        }
+      });
+    });
+
+    const sources = Object.keys(sourcesByUrl).map(function mapSource(key) { return sourcesByUrl[key]; });
+    const chipsHtml = sources.map(renderSourceChip).join('');
+    const resultCount = sources.length;
+    const label = resultCount === 1 ? 'Read source:' : 'Read sources:';
+    const status = firstItem.segment && firstItem.segment.toolUi && firstItem.segment.toolUi.status
+      ? String(firstItem.segment.toolUi.status)
+      : '';
+    const iconHtml = status === 'error'
+      ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
+      : (icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+    const dataIndex = Number.isInteger(firstItem.index) ? ` data-tool-segment-index="${firstItem.index}"` : '';
+
+    return `
+      <div class="msg-read-page-card${status === 'error' ? ' is-error' : ' is-done'}"${dataIndex}>
+        <div class="msg-read-page-line">
+          <span class="msg-read-page-icon">${iconHtml}</span>
+          <span class="msg-read-page-label">${escHtml(label)}</span>
+        </div>
+        ${chipsHtml ? `<div class="msg-read-page-chips">${chipsHtml}</div>` : ''}
+      </div>
+    `;
+  }
+
   function renderActivityTimeline($msgRow, segments, options) {
     const renderOptions = options || {};
     const useMarkdown = renderOptions.markdown !== false;
@@ -268,24 +723,60 @@ export function createMessagesUi(context, dependencies) {
     const expandedThoughts = getExpandedThoughtIndices($msgRow);
     let thoughtIndex = -1;
     let toolSegmentIndex = 0;
+    const citationRegistry = {};
     const toolSegments = segments.filter(function onlyToolSegments(segment) {
       return segment.type === 'tool';
     });
 
-    const html = segments.map(function renderSegment(segment) {
+    const htmlParts = [];
+    for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+      const segment = segments[segmentIndex];
       if (segment.type === 'thought') {
         thoughtIndex += 1;
         const isExpanded = expandedThoughts.has(thoughtIndex);
 
-        return `
+        htmlParts.push(`
           <div class="msg-thoughts-wrapper${isExpanded ? ' expanded' : ''}" data-thought-index="${thoughtIndex}">
             <div class="msg-thoughts-toggle">Thought Process</div>
             <div class="msg-thoughts-content" style="display:${isExpanded ? 'block' : 'none'};">${escHtml(segment.content)}</div>
           </div>
-        `;
+        `);
+        continue;
       }
 
       if (segment.type === 'tool') {
+        if (isSearchToolSegment(segment)) {
+          const searchItems = [];
+          while (
+            segmentIndex < segments.length
+            && segments[segmentIndex].type === 'tool'
+            && isSearchToolSegment(segments[segmentIndex])
+          ) {
+            const searchSegment = segments[segmentIndex];
+            searchItems.push({ segment: searchSegment, index: toolSegmentIndex++ });
+            addSearchSourcesToCitationRegistry(citationRegistry, searchSegment);
+            segmentIndex += 1;
+          }
+          segmentIndex -= 1;
+          htmlParts.push(renderSearchToolGroup(searchItems));
+          continue;
+        }
+
+        if (isReadPageToolSegment(segment)) {
+          const readItems = [];
+          while (
+            segmentIndex < segments.length
+            && segments[segmentIndex].type === 'tool'
+            && isReadPageToolSegment(segments[segmentIndex])
+          ) {
+            readItems.push({ segment: segments[segmentIndex], index: toolSegmentIndex++ });
+            segmentIndex += 1;
+          }
+          segmentIndex -= 1;
+          htmlParts.push(renderReadPageToolCard(readItems));
+          continue;
+        }
+
         const label = escHtml(segment.toolName || segment.alias || segment.toolId || 'Tool');
         const badge = escHtml(segment.serverName || segment.serverId || 'server');
         const hasResult = segment.result !== null && segment.result !== undefined;
@@ -293,7 +784,7 @@ export function createMessagesUi(context, dependencies) {
           ? '<span class="msg-tool-call-dot msg-tool-call-dot--done"></span>'
           : '<span class="msg-tool-call-dot msg-tool-call-dot--pending"></span>';
 
-        return `
+        htmlParts.push(`
           <div class="msg-tool-call-card" data-tool-segment-index="${toolSegmentIndex++}">
             <div class="msg-tool-call-main">
               ${statusDot}
@@ -301,15 +792,17 @@ export function createMessagesUi(context, dependencies) {
             </div>
             <div class="msg-tool-call-badge">${badge}</div>
           </div>
-        `;
+        `);
+        continue;
       }
 
-      return `
+      htmlParts.push(`
         <div class="msg-stream-text">
-          <div class="markdown-body${useMarkdown ? '' : ' is-streaming'}">${useMarkdown ? renderMarkdownSegment(segment.content) : renderPlainTextSegment(segment.content)}</div>
+          <div class="markdown-body${useMarkdown ? '' : ' is-streaming'}">${useMarkdown ? renderMarkdownSegment(segment.content, citationRegistry) : renderPlainTextSegment(segment.content)}</div>
         </div>
-      `;
-    }).join('');
+      `);
+    }
+    const html = htmlParts.join('');
 
     $bubble.empty();
     $stream.html(html).show();
@@ -317,8 +810,69 @@ export function createMessagesUi(context, dependencies) {
     $msgRow.data('toolSegments', toolSegments);
   }
 
+  function searchSegmentCount(segments) {
+    return (Array.isArray(segments) ? segments : []).filter(function onlySearchSegment(segment) {
+      return segment && segment.type === 'tool' && isSearchToolSegment(segment);
+    }).length;
+  }
+
+  function clearSearchBatchHold($msgRow) {
+    const holdState = $msgRow.data('searchBatchHoldState');
+    if (holdState && holdState.timer) {
+      window.clearTimeout(holdState.timer);
+    }
+
+    $msgRow.removeData('searchBatchHoldState');
+    $msgRow.removeData('searchBatchHoldRaw');
+  }
+
+  function shouldHoldStreamingSearchBatch($msgRow, parsed, rawText) {
+    const count = searchSegmentCount(parsed.segments);
+    if (count === 0) {
+      clearSearchBatchHold($msgRow);
+      return false;
+    }
+
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const holdState = $msgRow.data('searchBatchHoldState') || {};
+    if (holdState.count !== count) {
+      holdState.count = count;
+      holdState.changedAt = now;
+    }
+    if (!holdState.changedAt) {
+      holdState.changedAt = now;
+    }
+
+    const holdMs = count <= 1 ? SEARCH_BATCH_FIRST_CALL_HOLD_MS : SEARCH_BATCH_MULTI_CALL_SETTLE_MS;
+    const remaining = holdMs - (now - holdState.changedAt);
+    $msgRow.data('searchBatchHoldRaw', rawText);
+
+    if (remaining <= 0) {
+      if (holdState.timer) {
+        window.clearTimeout(holdState.timer);
+        holdState.timer = null;
+      }
+      $msgRow.data('searchBatchHoldState', holdState);
+      return false;
+    }
+
+    if (holdState.timer) {
+      window.clearTimeout(holdState.timer);
+    }
+    holdState.timer = window.setTimeout(function renderHeldSearchBatch() {
+      const latestRaw = $msgRow.data('searchBatchHoldRaw');
+      const latestState = $msgRow.data('searchBatchHoldState') || {};
+      latestState.timer = null;
+      $msgRow.data('searchBatchHoldState', latestState);
+      renderMessageStream($msgRow, latestRaw || rawText);
+    }, Math.max(0, remaining + 16));
+    $msgRow.data('searchBatchHoldState', holdState);
+    return true;
+  }
+
   // Parse and render one assistant transcript string.
   function renderMessageHtml($msgRow, rawText) {
+    clearSearchBatchHold($msgRow);
     const parsed = parseMessageTimeline(rawText);
     renderActivityTimeline($msgRow, parsed.segments);
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
@@ -327,6 +881,11 @@ export function createMessagesUi(context, dependencies) {
   // Parse and render one assistant transcript during active streaming.
   function renderMessageStream($msgRow, rawText) {
     const parsed = parseMessageTimeline(rawText);
+    if (shouldHoldStreamingSearchBatch($msgRow, parsed, rawText)) {
+      $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
+      return;
+    }
+
     renderActivityTimeline($msgRow, parsed.segments, { markdown: false });
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
@@ -341,8 +900,27 @@ export function createMessagesUi(context, dependencies) {
     const toolSegments = $card.closest('.msg').data('toolSegments') || [];
     const segment = toolSegments[index];
     if (segment) {
+      const toolDebugEnabled = state.runtimeSettings && (
+        state.runtimeSettings.tool_output_debug === true
+        || state.runtimeSettings.tool_output_debug === 'true'
+        || state.runtimeSettings['tool-output-debug'] === true
+        || state.runtimeSettings['tool-output-debug'] === 'true'
+      );
+      if (isSearchToolSegment(segment) && !toolDebugEnabled) {
+        return;
+      }
       toolInspector.open(segment);
     }
+  }
+
+  function toggleSearchSources($button) {
+    const $card = $button.closest('.msg-search-card');
+    const expanded = !$card.hasClass('is-expanded');
+    const moreCount = parseInt($button.attr('data-search-more-count') || '0', 10) || 0;
+    $card.toggleClass('is-expanded', expanded);
+    $card.find('.msg-search-chip--more').attr('aria-expanded', expanded ? 'true' : 'false');
+    $card.find('.msg-search-chip--more-collapsed .msg-search-chip-domain').text(`${MORE_LABEL} ${moreCount}`);
+    $card.find('.msg-search-chip--more-expanded .msg-search-chip-domain').text(HIDE_LABEL);
   }
 
 
@@ -608,6 +1186,7 @@ export function createMessagesUi(context, dependencies) {
     renderMessageStream,
     scrollBottom,
     setQueuedMessageState,
+    toggleSearchSources,
     toggleThoughtSection,
     updateRegenButtons,
     updateSendButtons

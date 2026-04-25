@@ -30,12 +30,12 @@ import logging
 import re
 import secrets
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from core.models.search import SearchResult
+from core.models.search import SearchResult, SearchRichResult, SearchSource
 from core.config import load_search_config
 from core.fetch.ddgs_client import async_ddgs_search
 from core.fetch.academic_fetcher import AcademicFetcher
@@ -608,9 +608,16 @@ _MEDICAL_HINTS = frozenset({
     "medicine", "medication", "drug", "dose", "dosage",
     "diagnosis", "therapy", "syndrome", "cancer", "diabetes",
     "infection", "vaccine", "surgery", "doctor", "physician", "health",
+    "medical", "clinical", "clinical trial", "clinical trials", "biotechnology",
+    "biotech", "crispr", "gene therapy", "gene editing", "implant", "implants",
+    "neuralink", "brain-computer", "brain computer",
     # Russian / Ukrainian
     "симптом", "болезнь", "лечение", "препарат", "диагноз", "здоровье",
     "симптом", "хвороба", "лікування", "препарат", "діагноз",
+    "медицинские", "медицина", "рак", "вакцины", "вакцина",
+    "генная терапия", "биотехнологии", "биотехнология", "редактирование генов",
+    "клинические испытания", "нейроинтерфейс", "нейроинтерфейсы",
+    "имплантат", "имплантаты", "мозг-компьютер", "мозг компьютер",
     # German / Dutch
     "symptom", "krankheit", "behandlung", "medikament", "diagnose", "therapie", "arzt",
     "ziekte", "behandeling", "medicijn", "gezondheid", "dokter",
@@ -1702,6 +1709,11 @@ def _get_output_profile(query_types: list[str]) -> _OutputProfile:
                                 _DEFAULT_OUTPUT_PROFILE)
 
 
+def _effective_output_limit(profile: _OutputProfile, opts: WebSearchOptions) -> int:
+    """Return the final model-visible result cap for this query."""
+    return max(1, min(int(profile.max_results), int(opts.max_results)))
+
+
 def _adapt_output_profile(
     results: list[SearchResult],
     triage: list[TriageResult],
@@ -1879,6 +1891,128 @@ def _display_text(text: str, limit: int) -> str:
     if not compact:
         return ""
     return compact[:limit].rstrip(" ,;:|-")
+
+
+def _source_domain(url: str) -> str:
+    host = urlparse(url or "").netloc.lower()
+    if "@" in host:
+        host = host.rsplit("@", 1)[-1]
+    if ":" in host:
+        host = host.split(":", 1)[0]
+    return host.removeprefix("www.")
+
+
+def _display_domain(domain: str) -> str:
+    parts = [p for p in (domain or "").split(".") if p]
+    if len(parts) >= 2:
+        label = parts[-2]
+    elif parts:
+        label = parts[0]
+    else:
+        return ""
+    return label.replace("-", " ").title()
+
+
+def _favicon_url(domain: str) -> str:
+    return f"https://icons.duckduckgo.com/ip3/{domain}.ico" if domain else ""
+
+
+def _source_from_result(
+    result: SearchResult,
+    rank: int,
+    *,
+    source_id: str | None = None,
+    score: float | None = None,
+    preview: str = "",
+    snippet_limit: int = 600,
+    preview_limit: int = 1600,
+) -> SearchSource:
+    domain = _source_domain(result.url)
+    return SearchSource(
+        id=source_id or f"source-{rank}",
+        rank=rank,
+        title=(result.title or "").strip(),
+        url=(result.url or "").strip(),
+        domain=domain,
+        display_domain=_display_domain(domain) or domain,
+        favicon_url=_favicon_url(domain),
+        snippet=_display_text(result.snippet or "", snippet_limit),
+        preview=_display_text(preview or result.snippet or "", preview_limit),
+        published_date=_normalize_date(result.published_date) or (result.published_date or ""),
+        engine=result.engine or "",
+        trust_tier=result.trust_tier or "?",
+        score=round(float(score if score is not None else result.score or 0.0), 4),
+        pdf_url=_infer_pdf_url(result),
+    )
+
+
+def _build_model_context(query: str, sources: list[SearchSource]) -> str:
+    lines: list[str] = [
+        f"Search results for: {query}",
+        "",
+        "Citation rules:",
+        "- Cite search evidence only with the exact citation handles listed below, for example [cabc-1].",
+        "- Put the citation handle immediately after the sentence or bullet it supports.",
+        "- Use a handle only when that source's Title, Preview, or Content explicitly supports the claim.",
+        "- Do not cite a source because its domain or title merely looks related.",
+        "- Do not reuse handles from other searches or earlier tool calls unless they appear in this exact source list.",
+        "- Do not invent, renumber, shorten, translate, or combine citation handles.",
+        "- Do not write bare domain names, URLs, or source numbers as citations when a handle is available.",
+        "- If no listed source supports a claim, say that the search did not confirm it or omit the claim.",
+        "- Prefer parsed Content over search-engine Preview. Treat Preview-only sources as weaker evidence.",
+        "- The UI renders valid citation handles as compact source chips.",
+        "",
+        "Sources:",
+    ]
+    for source in sources:
+        lines.append(f"Citation handle: [{source.id}]")
+        evidence_kind = "parsed_content" if source.preview and source.preview != source.snippet else "search_preview_only"
+        lines.append(f"Evidence kind: {evidence_kind}")
+        lines.append(f"Title: {source.title}")
+        lines.append(f"Domain: {source.domain}")
+        lines.append(f"URL: {source.url}")
+        if source.published_date:
+            lines.append(f"Date: {source.published_date}")
+        excerpt = source.preview or source.snippet
+        if excerpt:
+            label = "Content" if source.preview and source.preview != source.snippet else "Preview"
+            lines.append(f"{label}: {excerpt}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _citation_source_id(search_id: str, rank: int) -> str:
+    compact = re.sub(r"[^a-z0-9]+", "", (search_id or "").lower())
+    compact = compact.removeprefix("srch")
+    namespace = (compact[:3] or "src").ljust(3, "0")
+    return f"c{namespace}-{rank}"
+
+
+def _build_compact_ui(query: str, sources: list[SearchSource], limit: int = 3) -> dict[str, object]:
+    visible = sources[: max(0, limit)]
+    return {
+        "label": f"Searching for {query}",
+        "source_chips": [
+            {
+                "source_id": source.id,
+                "domain": source.domain,
+                "display_domain": source.domain,
+                "favicon_url": source.favicon_url,
+            }
+            for source in visible
+        ],
+        "more_count": max(0, len(sources) - len(visible)),
+    }
+
+
+def _rich_result_to_dict(result: SearchRichResult) -> dict[str, object]:
+    return {
+        "query": result.query,
+        "search_id": result.search_id,
+        "sources": [asdict(source) for source in result.sources],
+        "model_context": result.model_context,
+        "ui": result.ui,
+    }
 
 
 _ISO_DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
@@ -2526,9 +2660,63 @@ class WebSearchService:
         ranked.sort(key=lambda r: (float(r.score or 0.0), len(r.snippet or "")), reverse=True)
         skipped.sort(key=lambda r: (float(r.score or 0.0), len(r.snippet or "")), reverse=True)
         combined = ranked + skipped
-        top_k = max(1, int(opts.max_results))
+        top_k = _effective_output_limit(out_profile, opts)
         _trace(req_id, "structured.done", chosen_top_k=top_k, skipped=len(skipped), ranked=len(ranked))
         return combined[:top_k]
+
+    async def search_rich(
+        self,
+        query: str,
+        deadline: float | None = None,
+    ) -> SearchRichResult:
+        """Run web search and return a UI/model friendly structured payload."""
+        search_id = f"srch_{_make_request_id()}"
+        results = await self.search_structured(query, deadline=deadline)
+        payloads: list[PreviewPayload] = [PreviewPayload()] * len(results)
+
+        if results and self._opts.fetch_previews and self._cfg.search.auto_scrape_preview:
+            query_types = infer_query_types(query)
+            preview_limit = _get_output_profile(query_types).preview_fetch_limit
+            to_fetch = results[: min(len(results), preview_limit)]
+            preview_settings = get_preview_settings(apply_hardware_profile=False)
+            fetched = await _fetch_previews(
+                to_fetch,
+                query=query,
+                concurrency=self._opts.concurrency,
+                fetch_timeout=self._opts.fetch_timeout,
+                total_timeout=self._opts.total_timeout,
+                preview_settings=preview_settings,
+                loop=asyncio.get_running_loop(),
+                policies=[result.method_hint or "cheap" for result in to_fetch],
+                early_return_threshold=max(0, int(self._cfg.search.early_return_threshold)),
+                req_id=search_id,
+                deadline=deadline,
+            )
+            for idx, payload in enumerate(fetched):
+                payloads[idx] = payload
+
+        sources = [
+            _source_from_result(
+                result,
+                rank,
+                source_id=_citation_source_id(search_id, rank),
+                score=result.score,
+                preview=payloads[rank - 1].text if rank - 1 < len(payloads) else "",
+            )
+            for rank, result in enumerate(results, 1)
+        ]
+        model_context = _build_model_context(query, sources)
+        return SearchRichResult(
+            query=query,
+            search_id=search_id,
+            sources=sources,
+            model_context=model_context,
+            ui={
+                "status": "done",
+                "result_count": len(sources),
+                "compact": _build_compact_ui(query, sources),
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2640,3 +2828,60 @@ async def run_web_search_structured(
             query[:80], hard_timeout,
         )
         return []
+
+
+async def run_web_search_rich(
+    query: str,
+    max_results: int = 10,
+    timelimit: Optional[str] = None,
+    hard_timeout: float = _SEARCH_HARD_TIMEOUT,
+    time_range: Optional[str] = None,
+) -> dict[str, object]:
+    """Structured web-search payload for MCP structuredContent/UI clients."""
+    cfg = load_search_config()
+    constraints = parse_domain_constraints(query)
+    query_for_search = constraints.clean_query or query
+    query_for_search, year_tl = _apply_year_hint_policy(query_for_search, cfg.query)
+    type_tl = _auto_timelimit(infer_query_types(query_for_search))
+    auto_timelimit = _stricter_timelimit(year_tl, type_tl)
+    explicit_timelimit = (
+        _normalize_time_range(time_range)
+        or _normalize_time_range(timelimit)
+        or timelimit
+    )
+    resolved_timelimit = explicit_timelimit or auto_timelimit
+    opts = WebSearchOptions(
+        max_results=max_results,
+        fetch_previews=True,
+        timelimit=resolved_timelimit,
+    )
+    service = WebSearchService(options=opts)
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + hard_timeout
+    try:
+        rich = await asyncio.wait_for(
+            service.search_rich(query.strip(), deadline=deadline),
+            timeout=hard_timeout,
+        )
+        return _rich_result_to_dict(rich)
+    except asyncio.TimeoutError:
+        logger.warning(
+            "web_search_rich.hard_timeout query=%r limit=%.0fs",
+            query[:80], hard_timeout,
+        )
+        search_id = f"srch_{_make_request_id()}"
+        return {
+            "query": query_for_search,
+            "search_id": search_id,
+            "sources": [],
+            "model_context": f"Search timed out after {hard_timeout:.0f}s for: {query_for_search}",
+            "ui": {
+                "status": "timeout",
+                "result_count": 0,
+                "compact": {
+                    "label": f"Searching for {query_for_search}",
+                    "source_chips": [],
+                    "more_count": 0,
+                },
+            },
+        }

@@ -58,3 +58,34 @@ class SearchResult:
     # Debugging fields (filled by service layer, stripped in MCP adapter)
     extract_debug_stage: str = ""
     extract_debug_timeout_sec: float = 0.0
+
+
+@dataclass
+class SearchSource:
+    """UI/model-facing representation of one ranked search source."""
+
+    id: str
+    rank: int
+    title: str
+    url: str
+    domain: str
+    display_domain: str
+    favicon_url: str
+    snippet: str
+    preview: str = ""
+    published_date: str = ""
+    engine: str = ""
+    trust_tier: str = "?"
+    score: float = 0.0
+    pdf_url: str = ""
+
+
+@dataclass
+class SearchRichResult:
+    """Structured web-search payload shared by model context and UI."""
+
+    query: str
+    search_id: str
+    sources: list[SearchSource]
+    model_context: str
+    ui: dict[str, object] = field(default_factory=dict)

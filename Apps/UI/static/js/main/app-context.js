@@ -10,6 +10,11 @@ function svgIcon(iconPath, attrs) {
   return `<svg ${attrs}><use href="${iconPath}#icon"></use></svg>`;
 }
 
+// Build one image icon string for bitmap UI assets.
+function imageIcon(iconPath, className, altText) {
+  return `<img class="${className}" src="${iconPath}" alt="${altText || ''}" aria-hidden="true">`;
+}
+
 
 // Application context.
 // Create the shared DOM map, icon set, and runtime state.
@@ -74,6 +79,9 @@ export function createAppContext() {
     DELETE_MESSAGE_ICON: svgIcon(uiIconPaths.trash, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     COPIED_ICON: svgIcon(uiIconPaths.check, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     CHAT_ITEM_ICON: svgIcon(uiIconPaths.chatBubble, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
+    GLOBE_ICON: svgIcon(uiIconPaths.globe, 'width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
+    WEB_SEARCH_ICON: imageIcon(uiIconPaths.webSearch, 'msg-search-main-icon', ''),
+    WEB_SEARCH_ERROR_ICON: imageIcon(uiIconPaths.webSearchError, 'msg-search-main-icon', ''),
     CHAT_ITEM_MENU_ICON: svgIcon(uiIconPaths.ellipsisVertical, 'width="14" height="14" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"')
   };
 

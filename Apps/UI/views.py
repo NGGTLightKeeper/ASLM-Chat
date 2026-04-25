@@ -1055,6 +1055,12 @@ def _normalize_transcript_entries(raw_entries: Any) -> list[dict[str, Any]]:
             arguments = raw_entry.get("arguments")
             if isinstance(arguments, dict):
                 entry["arguments"] = arguments
+            tool_ui = raw_entry.get("tool_ui")
+            if isinstance(tool_ui, dict):
+                entry["tool_ui"] = tool_ui
+            structured_content = raw_entry.get("structured_content")
+            if isinstance(structured_content, dict):
+                entry["structured_content"] = structured_content
         entries.append(entry)
 
     return entries
@@ -1108,13 +1114,17 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
         return []
 
     # Index tool results by alias for quick lookup (alias = server__tool_id).
-    tool_results: dict[str, str] = {}
+    tool_results: dict[str, dict[str, Any]] = {}
     for entry in transcript_entries:
         if entry.get("role") == "tool":
             # Prefer the full alias stored by _build_tool_message, fall back to tool_id/name.
             alias = str(entry.get("alias") or entry.get("tool_id") or entry.get("name") or "")
             if alias:
-                tool_results[alias] = str(entry.get("content") or "")
+                tool_results[alias] = {
+                    "content": str(entry.get("content") or ""),
+                    "toolUi": entry.get("tool_ui") if isinstance(entry.get("tool_ui"), dict) else None,
+                    "structuredContent": entry.get("structured_content") if isinstance(entry.get("structured_content"), dict) else None,
+                }
 
     segments: list[dict[str, Any]] = []
     for entry in transcript_entries:
@@ -1128,18 +1138,23 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
             continue
 
         seg_alias = str(entry.get("alias") or entry.get("tool_id", entry.get("name", "")) or "")
-        segments.append(
-            {
-                "type": "tool",
-                "alias": seg_alias,
-                "serverId": str(entry.get("server_id", "") or ""),
-                "serverName": str(entry.get("server_name", "") or ""),
-                "toolId": str(entry.get("tool_id", entry.get("name", "")) or ""),
-                "toolName": str(entry.get("tool_display_name", entry.get("tool_name", entry.get("name", ""))) or ""),
-                "arguments": entry.get("arguments") if isinstance(entry.get("arguments"), dict) else {},
-                "result": tool_results.get(seg_alias, None),
-            }
-        )
+        result_payload = tool_results.get(seg_alias)
+        segment = {
+            "type": "tool",
+            "alias": seg_alias,
+            "serverId": str(entry.get("server_id", "") or ""),
+            "serverName": str(entry.get("server_name", "") or ""),
+            "toolId": str(entry.get("tool_id", entry.get("name", "")) or ""),
+            "toolName": str(entry.get("tool_display_name", entry.get("tool_name", entry.get("name", ""))) or ""),
+            "arguments": entry.get("arguments") if isinstance(entry.get("arguments"), dict) else {},
+            "result": result_payload.get("content") if isinstance(result_payload, dict) else None,
+        }
+        if isinstance(result_payload, dict):
+            if isinstance(result_payload.get("toolUi"), dict):
+                segment["toolUi"] = result_payload["toolUi"]
+            if isinstance(result_payload.get("structuredContent"), dict):
+                segment["structuredContent"] = result_payload["structuredContent"]
+        segments.append(segment)
 
     return segments
 
@@ -1198,10 +1213,20 @@ def _serialize_tool_call_marker(tool_event: dict[str, Any]) -> str:
 
 
 # Serialize tool result marker
-def _serialize_tool_result_marker(alias: str, content: str) -> str:
+def _serialize_tool_result_marker(
+    alias: str,
+    content: str,
+    *,
+    tool_ui: dict[str, Any] | None = None,
+    structured_content: dict[str, Any] | None = None,
+) -> str:
     """Encode a tool result into an inline marker so the frontend can show _out_."""
 
     payload = {"alias": alias, "content": content}
+    if isinstance(tool_ui, dict):
+        payload["tool_ui"] = tool_ui
+    if isinstance(structured_content, dict):
+        payload["structured_content"] = structured_content
     return f'<tool_result>{json.dumps(payload, ensure_ascii=False)}</tool_result>'
 
 
@@ -1870,7 +1895,31 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
                     transcript_entries.append(tool_message)
                     alias = str(tool_message.get("alias") or tool_message.get("tool_id") or tool_message.get("name") or "")
                     content = str(tool_message.get("content") or "")
-                    yield _serialize_tool_result_marker(alias, content)
+                    tool_ui = tool_message.get("tool_ui") if isinstance(tool_message.get("tool_ui"), dict) else None
+                    structured_content = (
+                        tool_message.get("structured_content")
+                        if isinstance(tool_message.get("structured_content"), dict)
+                        else None
+                    )
+                    yield _serialize_tool_result_marker(
+                        alias,
+                        content,
+                        tool_ui=tool_ui,
+                        structured_content=structured_content,
+                    )
+                continue
+
+            if isinstance(chunk, dict) and isinstance(chunk.get("tool_events"), list):
+                if is_thinking:
+                    is_thinking = False
+                    yield "\n</think>\n"
+                markers = [
+                    _serialize_tool_call_marker(tool_event)
+                    for tool_event in chunk["tool_events"]
+                    if isinstance(tool_event, dict)
+                ]
+                if markers:
+                    yield "".join(markers)
                 continue
 
             # Tool events are sent as inline markers for the frontend.

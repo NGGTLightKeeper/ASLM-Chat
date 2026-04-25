@@ -1338,7 +1338,41 @@ def _build_google_history_part(raw_part: Any, *, include_text: bool = True) -> d
     if thought_signature:
         history_part["thought_signature"] = thought_signature
 
+    function_call = part.get("function_call")
+    if isinstance(function_call, dict):
+        function_name = str(function_call.get("name", "") or "").strip()
+        if function_name:
+            history_part["function_call"] = {
+                "name": function_name,
+                "args": _normalize_tool_call_arguments(function_call.get("args")),
+            }
+
     return history_part if history_part else None
+
+
+def _history_parts_have_function_call(parts: list[dict[str, Any]]) -> bool:
+    """Return whether preserved Gemini history already includes function calls."""
+
+    return any(isinstance(part, dict) and isinstance(part.get("function_call"), dict) for part in parts)
+
+
+def _google_parts_have_unsigned_function_call(raw_parts: Any) -> bool:
+    """Return whether preserved Gemini parts contain a function call without its signature."""
+
+    if isinstance(raw_parts, dict):
+        raw_parts = [raw_parts]
+    if not isinstance(raw_parts, list):
+        return False
+
+    for raw_part in raw_parts:
+        if not isinstance(raw_part, dict):
+            continue
+        if not isinstance(raw_part.get("function_call"), dict):
+            continue
+        signature = raw_part.get("thought_signature", raw_part.get("thoughtSignature"))
+        if not _encode_binary_payload(signature):
+            return True
+    return False
 
 
 # Convert ASLM chat messages into Gemini-compatible contents.
@@ -1348,6 +1382,7 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
     system_fragments: list[str] = []
     contents: list[dict[str, Any]] = []
     image_bytes_cache: dict[str, bytes] = {}
+    skip_orphan_tool_responses = False
 
     for message_index, message in enumerate(messages, start=1):
         role = str(message.get("role", "user")).lower()
@@ -1364,6 +1399,8 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
         parts: list[dict[str, Any]] = []
 
         if role == "tool":
+            if skip_orphan_tool_responses:
+                continue
             tool_name = (
                 str(
                     message.get("name")
@@ -1384,18 +1421,22 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
             contents.append({"role": "user", "parts": parts})
             continue
 
+        skip_orphan_tool_responses = False
+
         # Prefer preserved Gemini-native parts when they exist so follow-up
         # rounds can replay tool calls and thought signatures losslessly.
+        google_parts = message.get("google_parts") if isinstance(message.get("google_parts"), list) else None
+        has_unsigned_google_function_call = _google_parts_have_unsigned_function_call(google_parts)
         structured_parts = _normalize_google_request_parts(
-            message.get("google_parts")
-            if isinstance(message.get("google_parts"), list)
-            else raw_content
+            None if has_unsigned_google_function_call else (google_parts if google_parts is not None else raw_content)
         )
         used_structured_parts = bool(structured_parts)
         if used_structured_parts:
             parts.extend(structured_parts)
         elif content:
             parts.append({"text": content})
+        if role == "assistant" and has_unsigned_google_function_call:
+            skip_orphan_tool_responses = True
 
         for image_index, image_base64 in enumerate(images):
             mime_type = "image/jpeg"
@@ -1417,7 +1458,7 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
                     }
                 )
 
-        if role == "assistant" and not used_structured_parts:
+        if role == "assistant" and not used_structured_parts and not has_unsigned_google_function_call:
             # Rebuild assistant tool calls from the generic transcript shape
             # when no Gemini-native parts were stored with the message.
             for raw_tool_call in message.get("tool_calls") or []:
@@ -1639,12 +1680,14 @@ def _build_tool_message(
 ) -> dict[str, Any]:
     """Build a tool message payload for the shared ASLM transcript."""
 
+    model_content, tool_extras = tool_registry.split_tool_result_payload(content)
     payload: dict[str, Any] = {
         "role": "tool",
         "tool_call_id": tool_call_id,
         "name": tool_name,
-        "content": content if isinstance(content, str) else str(content),
+        "content": model_content,
     }
+    payload.update(tool_extras)
 
     if tool_event:
         payload.update(
@@ -1958,15 +2001,16 @@ def _stream_google_round(
             }
             for tool_call in tool_calls
         ]
-        assistant_history_parts.extend(
-            {
-                "function_call": {
-                    "name": tool_call["name"],
-                    "args": tool_call.get("arguments") or {},
+        if not _history_parts_have_function_call(assistant_history_parts):
+            assistant_history_parts.extend(
+                {
+                    "function_call": {
+                        "name": tool_call["name"],
+                        "args": tool_call.get("arguments") or {},
+                    }
                 }
-            }
-            for tool_call in tool_calls
-        )
+                for tool_call in tool_calls
+            )
     if assistant_history_parts:
         assistant_message["google_parts"] = assistant_history_parts
 
@@ -2098,10 +2142,12 @@ def _run_tool_loop(
         yield {"transcript_message": assistant_message}
 
         tool_response_parts: list[dict[str, Any]] = []
-        for tool_call_index, tool_call in enumerate(tool_calls, start=1):
-            tool_event = _build_tool_event(tool_lookup, tool_call)
-            yield {"tool_event": tool_event}
+        tool_events = [_build_tool_event(tool_lookup, tool_call) for tool_call in tool_calls]
+        for _i, _ev in enumerate(tool_events):
+            _ev["alias"] = f"{_ev['alias']}__{_i}"
+        yield {"tool_events": tool_events}
 
+        for tool_call_index, (tool_call, tool_event) in enumerate(zip(tool_calls, tool_events), start=1):
             call_context = dict(tool_context or {})
             call_context.update(
                 {

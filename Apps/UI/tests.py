@@ -609,6 +609,110 @@ class GoogleGenAiAdapterTests(SimpleTestCase):
         google_genai_api._reset_runtime_caches()
         super().tearDown()
 
+    # Test Gemini function-call replay preserves thought signatures.
+    def test_function_call_history_preserves_thought_signature(self):
+        raw_part = {
+            "thought_signature": b"signature-bytes",
+            "function_call": {
+                "name": "web_search",
+                "args": {"query": "latest ai news"},
+            },
+        }
+
+        history_part = google_genai_api._build_google_history_part(raw_part, include_text=False)
+        replay_parts = google_genai_api._normalize_google_request_parts([history_part])
+
+        self.assertEqual(history_part["function_call"]["name"], "web_search")
+        self.assertIn("thought_signature", history_part)
+        self.assertEqual(replay_parts[0]["thought_signature"], b"signature-bytes")
+        self.assertEqual(replay_parts[0]["function_call"]["name"], "web_search")
+        self.assertEqual(replay_parts[0]["function_call"]["args"], {"query": "latest ai news"})
+
+    # Test fallback function-call reconstruction is skipped for preserved Gemini parts.
+    def test_preserved_function_call_parts_avoid_unsigned_duplicate(self):
+        preserved_parts = [
+            {
+                "thought_signature": "c2lnbmF0dXJlLWJ5dGVz",
+                "function_call": {
+                    "name": "web_search",
+                    "args": {"query": "latest ai news"},
+                },
+            }
+        ]
+
+        self.assertTrue(google_genai_api._history_parts_have_function_call(preserved_parts))
+        content = google_genai_api._assistant_message_to_content(
+            {
+                "role": "assistant",
+                "content": "",
+                "google_parts": preserved_parts,
+                "tool_calls": [
+                    {
+                        "id": "call_1_web_search",
+                        "type": "function",
+                        "function": {
+                            "name": "web_search",
+                            "arguments": json.dumps({"query": "latest ai news"}),
+                        },
+                    }
+                ],
+            }
+        )
+
+        function_call_parts = [
+            part for part in content["parts"] if isinstance(part.get("function_call"), dict)
+        ]
+        self.assertEqual(len(function_call_parts), 1)
+        self.assertEqual(function_call_parts[0]["thought_signature"], b"signature-bytes")
+
+    # Test legacy unsigned Gemini tool-call transcript is not replayed.
+    def test_unsigned_legacy_function_call_history_is_skipped(self):
+        _system_instruction, contents = google_genai_api._build_google_contents(
+            [
+                {"role": "user", "content": "Search this"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "google_parts": [
+                        {
+                            "function_call": {
+                                "name": "web_search",
+                                "args": {"query": "latest ai news"},
+                            }
+                        }
+                    ],
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "web_search",
+                                "arguments": json.dumps({"query": "latest ai news"}),
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "name": "web_search", "content": "{\"result\": \"ok\"}"},
+                {"role": "user", "content": "Continue"},
+            ]
+        )
+
+        self.assertEqual(contents[0], {"role": "user", "parts": [{"text": "Search this"}]})
+        self.assertEqual(contents[-1], {"role": "user", "parts": [{"text": "Continue"}]})
+        self.assertFalse(
+            any(
+                isinstance(part.get("function_call"), dict)
+                for content in contents
+                for part in content.get("parts", [])
+            )
+        )
+        self.assertFalse(
+            any(
+                isinstance(part.get("function_response"), dict)
+                for content in contents
+                for part in content.get("parts", [])
+            )
+        )
+
     # Test get models filters out non generate content models.
     @patch("API.google_genai._close_client")
     @patch("API.google_genai._get_client")
