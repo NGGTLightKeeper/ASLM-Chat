@@ -2669,15 +2669,21 @@ class WebSearchService:
         query: str,
         deadline: float | None = None,
     ) -> SearchRichResult:
-        """Run web search and return a UI/model friendly structured payload."""
-        search_id = f"srch_{_make_request_id()}"
-        results = await self.search_structured(query, deadline=deadline)
-        payloads: list[PreviewPayload] = [PreviewPayload()] * len(results)
+        """Run web search and return a UI/model friendly structured payload.
 
-        if results and self._opts.fetch_previews and self._cfg.search.auto_scrape_preview:
-            query_types = infer_query_types(query)
-            preview_limit = _get_output_profile(query_types).preview_fetch_limit
-            to_fetch = results[: min(len(results), preview_limit)]
+        Mirrors search() pipeline step-for-step:
+          _run_search_pipeline → pre-fetch _adapt_output_profile (updates preview_fetch_limit)
+          → triage-aware to_fetch list → _fetch_previews → post-fetch _adapt_output_profile
+          → bot_mimic enrichment (AFTER fetch, like search()) → background prefetch
+        Skip/fetch_policy decisions from the triage system are fully honoured.
+        """
+        opts = self._opts
+        search_id = f"srch_{_make_request_id()}"
+
+        # --- 1. Query normalisation (mirrors search() / search_structured()) ---
+        constraints = parse_domain_constraints(query)
+        analysis_query = constraints.clean_query or query
+        analysis_query, _ = _apply_year_hint_policy(analysis_query, self._cfg.query)
             preview_settings = get_preview_settings(apply_hardware_profile=False)
             fetched = await _fetch_previews(
                 to_fetch,
@@ -2706,6 +2712,7 @@ class WebSearchService:
             for rank, result in enumerate(results, 1)
         ]
         model_context = _build_model_context(query, sources)
+        _trace(req_id, "rich.done", sources=len(sources))
         return SearchRichResult(
             query=query,
             search_id=search_id,
