@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,23 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 REQUIREMENTS_FILE = BASE_DIR / "Settings" / "venv_requirements.json"
 STATE_FILE_NAME = ".aslm_venv_state.json"
 ACTIVE_VENV_ENV = "ASLM_CHAT_ACTIVE_VENV"
+
+
+# Format a log line for a specific venv/process.
+def _log_message(message: str, *, log_prefix: str | None = None) -> str:
+    """Return one ASLM-Chat log line with an optional worker prefix."""
+
+    prefix = "[ASLM-Chat]"
+    if log_prefix:
+        prefix = f"{prefix}[{log_prefix}]"
+    return f"{prefix} {message}"
+
+
+# Print one log line for a specific venv/process.
+def _print_log(message: str, *, log_prefix: str | None = None) -> None:
+    """Print one ASLM-Chat log line with an optional worker prefix."""
+
+    print(_log_message(message, log_prefix=log_prefix), flush=True)
 
 
 # Read venv requirements configuration.
@@ -125,24 +143,54 @@ def get_tool_python(tool_dir_name: str) -> Path | None:
 
 
 # Run one subprocess command.
-def _run(command: list[str], *, log: bool, cwd: Path | None = None) -> bool:
+def _run(
+    command: list[str],
+    *,
+    log: bool,
+    cwd: Path | None = None,
+    log_prefix: str | None = None,
+) -> bool:
     """Run one command and optionally stream output to the console."""
+
+    working_dir = str(cwd or BASE_DIR)
+    if log:
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=working_dir,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=1,
+            )
+        except Exception as exc:
+            _print_log(f"Command could not be started: {exc}", log_prefix=log_prefix)
+            return False
+
+        assert process.stdout is not None
+        for line in process.stdout:
+            text = line.rstrip()
+            if text:
+                _print_log(text, log_prefix=log_prefix)
+
+        return_code = process.wait()
+        if return_code != 0:
+            _print_log(
+                f"Command failed with exit code {return_code}: {' '.join(command)}",
+                log_prefix=log_prefix,
+            )
+        return return_code == 0
 
     try:
         result = subprocess.run(
             command,
-            cwd=str(cwd or BASE_DIR),
+            cwd=working_dir,
             text=True,
-            capture_output=not log,
+            capture_output=True,
             check=False,
         )
-    except Exception as exc:
-        if log:
-            print(f"[ASLM-Chat] Command could not be started: {exc}")
+    except Exception:
         return False
-
-    if log and result.returncode != 0:
-        print(f"[ASLM-Chat] Command failed with exit code {result.returncode}: {' '.join(command)}")
 
     return result.returncode == 0
 
@@ -184,25 +232,37 @@ def _write_state(venv_path: Path, packages: list[str]) -> None:
 
 
 # Create a virtual environment.
-def _create_venv(venv_id: str, log: bool) -> bool:
+def _create_venv(venv_id: str, log: bool, log_prefix: str | None = None) -> bool:
     """Create a Python virtual environment for one ASLM-Chat part."""
 
     venv_path = get_venv_path(venv_id)
     venv_path.parent.mkdir(parents=True, exist_ok=True)
 
     if log:
-        print(f"[ASLM-Chat] Creating venv '{venv_id}' at {venv_path}")
+        _print_log(f"Creating venv '{venv_id}' at {venv_path}", log_prefix=log_prefix)
 
-    if importlib.util.find_spec("venv") is not None and _run([sys.executable, "-m", "venv", str(venv_path)], log=log):
+    if importlib.util.find_spec("venv") is not None and _run(
+        [sys.executable, "-m", "venv", str(venv_path)],
+        log=log,
+        log_prefix=log_prefix,
+    ):
         return True
 
     # Some embeddable Python runtimes do not ship the stdlib venv module.
-    _run([sys.executable, "-m", "pip", "install", "--no-warn-script-location", "virtualenv"], log=log)
-    return _run([sys.executable, "-m", "virtualenv", str(venv_path)], log=log)
+    _run(
+        [sys.executable, "-m", "pip", "install", "--no-warn-script-location", "virtualenv"],
+        log=log,
+        log_prefix=log_prefix,
+    )
+    return _run(
+        [sys.executable, "-m", "virtualenv", str(venv_path)],
+        log=log,
+        log_prefix=log_prefix,
+    )
 
 
 # Install packages into one venv.
-def _install_packages(venv_id: str, packages: list[str], log: bool) -> bool:
+def _install_packages(venv_id: str, packages: list[str], log: bool, log_prefix: str | None = None) -> bool:
     """Install the configured packages into one venv."""
 
     if not packages:
@@ -219,7 +279,7 @@ def _install_packages(venv_id: str, packages: list[str], log: bool) -> bool:
 
     try:
         if log:
-            print(f"[ASLM-Chat] Installing {len(packages)} package(s) into venv '{venv_id}'")
+            _print_log(f"Installing {len(packages)} package(s) into venv '{venv_id}'", log_prefix=log_prefix)
 
         return _run(
             [
@@ -232,6 +292,7 @@ def _install_packages(venv_id: str, packages: list[str], log: bool) -> bool:
                 requirements_path,
             ],
             log=log,
+            log_prefix=log_prefix,
         )
     finally:
         try:
@@ -241,29 +302,29 @@ def _install_packages(venv_id: str, packages: list[str], log: bool) -> bool:
 
 
 # Ensure one configured venv exists and has its packages.
-def ensure_venv(venv_id: str, *, log: bool = True) -> bool:
+def ensure_venv(venv_id: str, *, log: bool = True, log_prefix: str | None = None) -> bool:
     """Create or update one internal ASLM-Chat venv."""
 
     config = get_venv_config(venv_id)
     if config is None:
         if log:
-            print(f"[ASLM-Chat] Unknown venv '{venv_id}'.")
+            _print_log(f"Unknown venv '{venv_id}'.", log_prefix=log_prefix)
         return False
 
     venv_path = get_venv_path(venv_id)
     python_path = get_venv_python(venv_id)
     packages = list(config.get("packages", []))
 
-    if not python_path.exists() and not _create_venv(venv_id, log):
+    if not python_path.exists() and not _create_venv(venv_id, log, log_prefix):
         return False
 
     state = _read_state(venv_path)
     if state.get("packagesHash") == _packages_signature(packages):
         if log:
-            print(f"[ASLM-Chat] Venv '{venv_id}' is up to date.")
+            _print_log(f"Venv '{venv_id}' is up to date.", log_prefix=log_prefix)
         return True
 
-    if not _install_packages(venv_id, packages, log):
+    if not _install_packages(venv_id, packages, log, log_prefix):
         return False
 
     _write_state(venv_path, packages)
@@ -274,9 +335,38 @@ def ensure_venv(venv_id: str, *, log: bool = True) -> bool:
 def ensure_all(*, log: bool = True) -> bool:
     """Create or update every configured ASLM-Chat venv."""
 
+    configs = iter_venv_configs()
+    if not configs:
+        return True
+
+    if log:
+        _print_log(f"Preparing {len(configs)} venv(s) in parallel.")
+
     ok = True
-    for config in iter_venv_configs():
-        ok = ensure_venv(str(config["id"]), log=log) and ok
+    with ThreadPoolExecutor(max_workers=len(configs)) as executor:
+        futures = {
+            executor.submit(
+                ensure_venv,
+                str(config["id"]),
+                log=log,
+                log_prefix=str(config["id"]),
+            ): str(config["id"])
+            for config in configs
+        }
+        for future in as_completed(futures):
+            venv_id = futures[future]
+            try:
+                venv_ok = future.result()
+            except Exception as exc:
+                venv_ok = False
+                if log:
+                    _print_log(f"Venv '{venv_id}' failed with unexpected error: {exc}", log_prefix=venv_id)
+
+            ok = venv_ok and ok
+            if log:
+                status = "ready" if venv_ok else "failed"
+                _print_log(f"Venv '{venv_id}' {status}.", log_prefix=venv_id)
+
     return ok
 
 
