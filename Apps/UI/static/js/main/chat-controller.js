@@ -513,7 +513,7 @@ export function createChatController(context, dependencies) {
     });
 
     $button.on('click', function onClick() {
-      if (state.isChatGenerating && state.currentAbortController) {
+      if ($button.hasClass('stop-btn') && state.isChatGenerating && state.currentAbortController) {
         abortGeneration();
         return;
       }

@@ -2,11 +2,11 @@
 
 import { createAttachmentsUi } from '../ui/attachments-ui.js';
 import { createChatHistoryUi } from '../ui/chat-history-ui.js';
-import { createMessagesUi } from '../ui/messages-ui.js';
+import { createMessagesUi } from '../ui/messages-ui.js?v=20260425e';
 import { createParametersUi } from '../ui/parameters-ui.js';
 import { createToolInspector } from '../ui/tool-inspector.js';
 import { createAppContext } from './app-context.js';
-import { createChatController } from './chat-controller.js';
+import { createChatController } from './chat-controller.js?v=20260425e';
 import { createEngineManager } from './engine-manager.js';
 import { bindEventHandlers } from './event-bindings.js';
 

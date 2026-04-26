@@ -58,6 +58,41 @@ export function bindEventHandlers(context, dependencies) {
     messagesUi.openToolInspectorFromCard($(this));
   });
 
+  dom.$messagesInner.on('click', '.msg-write-card[data-write-segment-index]', function onWriteCardClick() {
+    messagesUi.toggleWriteCard($(this));
+  });
+
+  dom.$messagesInner.on('keydown', '.msg-write-card[data-write-segment-index]', function onWriteCardKeyDown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    event.preventDefault();
+    messagesUi.toggleWriteCard($(this));
+  });
+
+  dom.$messagesInner.on('click', '.msg-edit-card[data-edit-segment-index]', function onEditCardClick() {
+    messagesUi.toggleEditCard($(this));
+  });
+
+  dom.$messagesInner.on('keydown', '.msg-edit-card[data-edit-segment-index]', function onEditCardKeyDown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    event.preventDefault();
+    messagesUi.toggleEditCard($(this));
+  });
+
+  dom.$messagesInner.on('mousedown', '.msg-write-preview, .msg-edit-preview', function onToolPreviewMouseDown(event) {
+    messagesUi.startWritePreviewPan(event, $(this));
+  });
+
+  dom.$messagesInner.on('auxclick', '.msg-write-preview, .msg-edit-preview', function onToolPreviewAuxClick(event) {
+    if (event.button === 1) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  });
+
   dom.$messagesInner.on('mousedown', '.msg-thoughts-toggle', function onThoughtToggleMouseDown(event) {
     event.preventDefault();
     event.stopPropagation();
