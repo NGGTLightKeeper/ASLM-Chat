@@ -2272,10 +2272,10 @@ body.is-resizing-reasoning-drawer * {
   height: 16px;
   flex: 0 0 auto;
   background: currentColor;
-  color: var(--c-primary);
+  color: var(--c-text);
   -webkit-mask: url("../../img/ui/brain.svg") center / contain no-repeat;
   mask: url("../../img/ui/brain.svg") center / contain no-repeat;
-  opacity: 0.86;
+  opacity: 0.9;
 }
 
 .reasoning-drawer-title {
