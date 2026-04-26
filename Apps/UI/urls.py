@@ -17,6 +17,7 @@ urlpatterns = [
     path("api/chat/abort/", views.abort_generation_api, name="abort_generation_api"),
     path("api/chat/<uuid:chat_id>/", views.load_chat_api, name="load_chat_api"),
     path("api/chat/<uuid:chat_id>/last/", views.delete_last_assistant_api, name="delete_last_assistant_api"),
+    path("api/chat/<uuid:chat_id>/regenerate/", views.regenerate_chat_api, name="regenerate_chat_api"),
     path("api/attachment/<str:record_type>/<int:attachment_id>/content/", views.attachment_content_api, name="attachment_content_api"),
     path("api/message/<int:message_id>/delete/", views.delete_message_api, name="delete_message_api"),
     path("api/chat/<uuid:chat_id>/rename/", views.rename_chat_api, name="rename_chat_api"),

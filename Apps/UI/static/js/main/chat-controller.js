@@ -102,26 +102,40 @@ export function createChatController(context, dependencies) {
 
       request.model = selectedModel;
 
+      const isRegenerate = !!request.regenerate;
+      const targetChatId = request.chatId || state.currentChatId;
+
       const payload = {
         engine: request.engine,
-        message: request.text,
         model: selectedModel,
         system_prompt: request.systemPrompt,
-        chat_id: request.chatId || state.currentChatId,
         options: request.options || {}
       };
+
+      if (!isRegenerate) {
+        payload.message = request.text;
+        payload.chat_id = targetChatId;
+      } else if (request.userMessageId) {
+        payload.user_message_id = request.userMessageId;
+      }
 
       if (request.toolServerIds && request.toolServerIds.length > 0) {
         payload.tool_server_ids = request.toolServerIds;
       }
 
-      const attachmentPayloads = await buildAttachmentPayloads(request.attachments);
-      if (attachmentPayloads.length > 0) {
-        payload.attachments = attachmentPayloads;
+      if (!isRegenerate) {
+        const attachmentPayloads = await buildAttachmentPayloads(request.attachments);
+        if (attachmentPayloads.length > 0) {
+          payload.attachments = attachmentPayloads;
+        }
       }
 
+      const url = isRegenerate
+        ? `/api/chat/${targetChatId}/regenerate/`
+        : '/api/chat/';
+
       state.currentAbortController = new AbortController();
-      const response = await fetch('/api/chat/', {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -142,6 +156,17 @@ export function createChatController(context, dependencies) {
         }
 
         return;
+      }
+
+      // Stamp backend message IDs on the DOM so delete/regenerate target the
+      // real DB rows instead of falling back to DOM-only removal.
+      const userMessageId = response.headers.get('X-User-Message-ID');
+      const assistantMessageId = response.headers.get('X-Assistant-Message-ID');
+      if (userMessageId && request.$userRow && request.$userRow.length) {
+        request.$userRow.attr('data-message-id', userMessageId);
+      }
+      if (assistantMessageId && $msgRow && $msgRow.length) {
+        $msgRow.attr('data-message-id', assistantMessageId);
       }
 
       // The backend can create a chat lazily. When that happens, patch the
@@ -375,76 +400,51 @@ export function createChatController(context, dependencies) {
     }).catch(function ignoreAbortError() {});
   }
 
-  // Queue a follow-up regeneration request.
-  function queueRegenerationRequest(text, attachments) {
-    const request = buildQueuedRequest(text, attachments);
-    request.$userRow = { length: 0 };
+  // Queue a regeneration request that targets an existing user message in the chat.
+  function queueRegenerationRequest($userRow, $assistantRow) {
+    const request = buildQueuedRequest('', []);
+    request.regenerate = true;
     request.chatId = state.currentChatId;
+    request.userMessageId = $userRow && $userRow.length ? $userRow.attr('data-message-id') : null;
+    request.$userRow = $userRow && $userRow.length ? $userRow : { length: 0 };
+    request.$existingAssistantRow = $assistantRow && $assistantRow.length ? $assistantRow : null;
     state.chatRequestQueue.push(request);
     processChatQueue();
   }
 
 
   // Regeneration helpers.
-  // Delete the last assistant response and queue it again.
-  async function doRegenerate() {
-    if (!state.currentChatId) {
-      return;
-    }
-
-    try {
-      const data = await deleteJson(`/api/chat/${state.currentChatId}/last/`);
-      if (!data.ok) {
-        return;
-      }
-
-      const $assistantMessages = dom.$messagesInner.find('.msg.assistant');
-      if ($assistantMessages.length) {
-        $assistantMessages.last().remove();
-      }
-
-      messagesUi.updateSendButtons();
-
-      if (!data.user_message) {
-        return;
-      }
-
-      const text = data.user_message.content || '';
-      const attachments = (data.user_message.attachments || [])
-        .map(attachmentUi.normalizeAttachment)
-        .filter(Boolean);
-
-      queueRegenerationRequest(text, attachments);
-    } catch (error) {
-      console.error('Failed to delete last assistant message', error);
-    }
-  }
-
   // Regenerate the most recent assistant response.
   function regenerateLastResponse() {
     if (!state.currentChatId) {
       return;
     }
 
+    function startRegen() {
+      const $lastUser = dom.$messagesInner.find('.msg.user').last();
+      const $lastAssistant = dom.$messagesInner.find('.msg.assistant').last();
+      if (!$lastUser.length) {
+        return;
+      }
+      if ($lastAssistant.length) {
+        $lastAssistant.remove();
+      }
+      messagesUi.updateSendButtons();
+      queueRegenerationRequest($lastUser, null);
+    }
+
     if (state.isChatGenerating) {
       abortGeneration();
-      setTimeout(function regenerateAfterAbort() {
-        doRegenerate();
-      }, 300);
+      setTimeout(startRegen, 300);
       return;
     }
 
-    doRegenerate();
+    startRegen();
   }
 
   // Regenerate the assistant response attached to one user row.
-  async function regenerateFromUserMessage($userMsg) {
+  function regenerateFromUserMessage($userMsg) {
     if (!state.currentChatId || state.isChatGenerating) {
-      return;
-    }
-
-    const userText = $userMsg.find('.msg-bubble').attr('data-raw') || $userMsg.find('.msg-bubble').text();
-    if (!userText.trim()) {
       return;
     }
 
@@ -453,43 +453,9 @@ export function createChatController(context, dependencies) {
       return;
     }
 
-    const assistantMessageId = $nextAssistant.data('message-id');
-
-    // Remove the rendered assistant row and rebuild the request from the
-    // original user message stored in the DOM.
-    function doUserRegen() {
-      $nextAssistant.remove();
-      messagesUi.updateRegenButtons();
-
-      let userAttachments = [];
-
-      try {
-        const $bubble = $userMsg.find('.msg-bubble');
-        const storedAttachments = $bubble.data('attachments');
-        userAttachments = Array.isArray(storedAttachments)
-          ? storedAttachments
-          : JSON.parse($bubble.attr('data-attachments') || '[]');
-      } catch (_error) {
-        userAttachments = [];
-      }
-
-      queueRegenerationRequest(userText, userAttachments);
-    }
-
-    if (assistantMessageId) {
-      try {
-        const data = await deleteJson(`/api/message/${assistantMessageId}/delete/`);
-        if (data.ok) {
-          doUserRegen();
-        }
-      } catch (error) {
-        console.error('Failed to delete assistant message for regen', assistantMessageId, error);
-      }
-
-      return;
-    }
-
-    doUserRegen();
+    $nextAssistant.remove();
+    messagesUi.updateRegenButtons();
+    queueRegenerationRequest($userMsg, null);
   }
 
 

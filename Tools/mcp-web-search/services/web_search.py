@@ -2684,22 +2684,137 @@ class WebSearchService:
         constraints = parse_domain_constraints(query)
         analysis_query = constraints.clean_query or query
         analysis_query, _ = _apply_year_hint_policy(analysis_query, self._cfg.query)
+        provider_query = build_provider_query(query, constraints) or analysis_query
+        query = analysis_query
+        lang = infer_query_language(query)
+        query_types = infer_query_types(query)
+        query_type = query_types[0]
+        out_profile = _get_output_profile(query_types)
+        preview_fetch_limit = out_profile.preview_fetch_limit
+        req_id = search_id
+
+        # --- 2. Provider fetch → merge → dedup → triage ---
+        deduped, triage = await self._run_search_pipeline(
+            provider_query, lang, query_types, query_type, out_profile, opts, req_id
+        )
+        if constraints.has_constraints:
+            deduped = filter_results_by_domain_constraints(deduped, constraints)
+            triage = _triage_results(deduped, query) if deduped else []
+
+        if not deduped:
+            return SearchRichResult(
+                query=query,
+                search_id=search_id,
+                sources=[],
+                model_context=_build_model_context(query, []),
+                ui={"status": "done", "result_count": 0, "compact": _build_compact_ui(query, [])},
+            )
+
+        # --- 3. Pre-fetch adaptive profile (may update preview_fetch_limit) ---
+        adapted_profile, adapt_meta = _adapt_output_profile(
+            deduped, triage, out_profile, query_types=query_types,
+        )
+        if adapted_profile != out_profile:
+            out_profile = adapted_profile
+            preview_fetch_limit = out_profile.preview_fetch_limit  # keep in sync!
+            _trace(
+                req_id, "rich.profile.adapt.pre",
+                trigger_reason=";".join(list(adapt_meta.get("reasons", []))),
+                chosen_profile=f"{out_profile.max_results}/{out_profile.preview_fetch_limit}/{out_profile.unparsed_bonus}",
+            )
+
+        skipped_count = sum(1 for t in triage if t.skip)
+        race_count = sum(1 for t in triage if not t.skip and t.fetch_policy == "race")
+        _trace(req_id, "rich.triage.done",
+               skipped=skipped_count, race=race_count,
+               cheap=len(triage) - skipped_count - race_count, total=len(triage))
+
+        # --- 4. Triage-aware fetch candidate list ---
+        # Only fetch pages where triage said skip=False, up to preview_fetch_limit.
+        to_fetch: list[SearchResult] = []
+        to_fetch_indices: list[int] = []
+        to_fetch_policies: list[str] = []
+        for i, (result, tr) in enumerate(zip(deduped, triage)):
+            if not tr.skip and len(to_fetch) < preview_fetch_limit:
+                to_fetch.append(result)
+                to_fetch_indices.append(i)
+                to_fetch_policies.append(tr.fetch_policy)
+        _trace(req_id, "rich.fetch_plan.done", to_fetch=len(to_fetch), policies=to_fetch_policies[:])
+
+        # --- 5. Preview fetching ---
+        loop = asyncio.get_running_loop()
+        payloads: list[PreviewPayload] = [PreviewPayload()] * len(deduped)
+
+        if to_fetch and opts.fetch_previews and self._cfg.search.auto_scrape_preview:
             preview_settings = get_preview_settings(apply_hardware_profile=False)
             fetched = await _fetch_previews(
                 to_fetch,
                 query=query,
-                concurrency=self._opts.concurrency,
-                fetch_timeout=self._opts.fetch_timeout,
-                total_timeout=self._opts.total_timeout,
+                concurrency=opts.concurrency,
+                fetch_timeout=opts.fetch_timeout,
+                total_timeout=opts.total_timeout,
                 preview_settings=preview_settings,
-                loop=asyncio.get_running_loop(),
-                policies=[result.method_hint or "cheap" for result in to_fetch],
+                loop=loop,
+                policies=to_fetch_policies,
                 early_return_threshold=max(0, int(self._cfg.search.early_return_threshold)),
-                req_id=search_id,
+                req_id=req_id,
                 deadline=deadline,
             )
-            for idx, payload in enumerate(fetched):
-                payloads[idx] = payload
+            for i, payload in zip(to_fetch_indices, fetched):
+                payloads[i] = payload
+
+        # --- 6. Post-fetch adaptive profile ---
+        adapted_post, post_meta = _adapt_output_profile(
+            deduped, triage, out_profile, query_types=query_types, payloads=payloads,
+        )
+        if adapted_post != out_profile:
+            out_profile = adapted_post
+            _trace(
+                req_id, "rich.profile.adapt.post",
+                trigger_reason=";".join(list(post_meta.get("reasons", []))),
+                parsed_count=post_meta.get("parsed_count"),
+                parse_ratio=post_meta.get("parse_ratio"),
+                chosen_profile=f"{out_profile.max_results}/{out_profile.preview_fetch_limit}/{out_profile.unparsed_bonus}",
+            )
+
+        # --- 7. Bot-mimic enrichment AFTER fetch (mirrors search(), not search_structured()) ---
+        enriched_regular = await _bot_mimic_enrich_results(
+            deduped, triage, query_types=query_types, cfg=self._cfg, deadline=deadline,
+        )
+        if enriched_regular:
+            _trace(req_id, "rich.bot_mimic", trigger_reason="regular_rank_enrichment",
+                   chosen_top_k=len(enriched_regular))
+            for idx, (title, snippet) in enriched_regular.items():
+                enriched_result = replace(
+                    deduped[idx],
+                    title=title or deduped[idx].title,
+                    snippet=snippet or deduped[idx].snippet,
+                )
+                enriched_tr = _triage_one_result(enriched_result, query, index=0, total=1)
+                triage[idx] = TriageResult(
+                    skip=triage[idx].skip and enriched_tr.skip,
+                    fetch_policy=enriched_tr.fetch_policy if enriched_tr.score > triage[idx].score else triage[idx].fetch_policy,
+                    score=max(triage[idx].score, enriched_tr.score),
+                )
+
+        # --- 8. Background prefetch (fire-and-forget, does not block response) ---
+        if opts.fetch_previews and self._cfg.search.auto_scrape_preview:
+            fetched_urls = {r.url for r in to_fetch}
+            prefetch_candidates = [
+                r.url
+                for r, tr in zip(deduped, triage)
+                if r.url not in fetched_urls and not tr.skip
+            ][:_PREFETCH_MAX_URLS]
+            if prefetch_candidates:
+                asyncio.create_task(
+                    _prefetch_urls_background(prefetch_candidates, req_id=req_id)
+                )
+                _trace(req_id, "rich.prefetch.scheduled", urls=len(prefetch_candidates))
+
+        # --- 9. Build sources and return ---
+        top_k = _effective_output_limit(out_profile, opts)
+        top_results = deduped[:top_k]
+        top_payloads = payloads[:top_k]
 
         sources = [
             _source_from_result(
@@ -2707,9 +2822,9 @@ class WebSearchService:
                 rank,
                 source_id=_citation_source_id(search_id, rank),
                 score=result.score,
-                preview=payloads[rank - 1].text if rank - 1 < len(payloads) else "",
+                preview=top_payloads[rank - 1].text if rank - 1 < len(top_payloads) else "",
             )
-            for rank, result in enumerate(results, 1)
+            for rank, result in enumerate(top_results, 1)
         ]
         model_context = _build_model_context(query, sources)
         _trace(req_id, "rich.done", sources=len(sources))

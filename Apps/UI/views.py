@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
+from django.utils import timezone
 from django.views.generic import TemplateView
 
 from API import llm_api, mcp as tool_registry
@@ -1888,7 +1889,12 @@ def _build_generate_kwargs(
     return generate_kwargs
 
 # Stream and save assistant response
-def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, Any]):
+def _stream_chat_response(
+    chat: Chat,
+    engine: str,
+    generate_kwargs: dict[str, Any],
+    assistant_message_record: Message,
+):
     """Stream visible content and persist the machine transcript."""
 
     visible_parts: list[str] = []
@@ -2014,12 +2020,14 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
                 synthesized_entry["thinking"] = thinking_content
             transcript_entries.append(synthesized_entry)
         if visible_content or transcript_entries:
-            Message.objects.create(
-                chat=chat,
-                role="assistant",
-                content=visible_content,
-                llm_transcript=transcript_entries,
-            )
+            assistant_message_record.content = visible_content
+            assistant_message_record.llm_transcript = transcript_entries
+            assistant_message_record.save(update_fields=["content", "llm_transcript"])
+            # Bump chat ordering so sidebar reflects the latest activity.
+            Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
+        else:
+            # Nothing was generated; drop the empty placeholder we pre-created.
+            assistant_message_record.delete()
 
         duration_seconds = time.perf_counter() - started_at
         _print_runtime_event(
@@ -2110,6 +2118,16 @@ def chat_api(request):
             content=user_message,
         )
         _store_message_attachments(user_message_record, attachments)
+        Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
+
+        # Pre-create the assistant row so the client knows its ID up front
+        # and can target it for delete/regenerate without waiting for reload.
+        assistant_message_record = Message.objects.create(
+            chat=chat,
+            role="assistant",
+            content="",
+            llm_transcript=[],
+        )
 
         # Rebuild the message history expected by the selected backend.
         llm_messages = _build_chat_history(
@@ -2163,11 +2181,13 @@ def chat_api(request):
         )
 
         response = StreamingHttpResponse(
-            _stream_chat_response(chat, engine, generate_kwargs),
+            _stream_chat_response(chat, engine, generate_kwargs, assistant_message_record),
             content_type="text/plain; charset=utf-8",
         )
         response["X-Chat-ID"] = str(chat.id)
         response["X-LLM-Engine"] = engine
+        response["X-User-Message-ID"] = str(user_message_record.id)
+        response["X-Assistant-Message-ID"] = str(assistant_message_record.id)
         return response
 
     except ValueError as exc:
@@ -2283,6 +2303,145 @@ def delete_last_assistant_api(request, chat_id):
         return JsonResponse({"error": "Chat not found"}, status=404)
     except Exception as exc:
         logger.exception("Failed to delete last assistant message for chat %s", chat_id)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Regenerate the assistant reply for an existing user message without duplicating it.
+def regenerate_chat_api(request, chat_id):
+    """Re-run generation against an existing user message in the chat."""
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+
+        model_name = data.get("model", "")
+        system_prompt = _compose_system_prompt(data.get("system_prompt", ""))
+        options = data.get("options", {}) or {}
+        engine = _get_active_engine(data.get("engine"))
+        raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
+        if isinstance(raw_tool_ids, str):
+            raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
+        tool_server_ids = [str(s).strip() for s in raw_tool_ids if str(s).strip()]
+
+        if not model_name:
+            return JsonResponse({"error": "Missing model parameter"}, status=400)
+
+        try:
+            chat = Chat.objects.get(id=chat_id)
+        except Chat.DoesNotExist:
+            return JsonResponse({"error": "Chat not found"}, status=404)
+
+        target_id = data.get("user_message_id")
+        ordered = list(chat.messages.order_by("created_at", "id"))
+        if target_id:
+            user_message_record = next(
+                (m for m in ordered if m.role == "user" and str(m.id) == str(target_id)),
+                None,
+            )
+        else:
+            user_message_record = next((m for m in reversed(ordered) if m.role == "user"), None)
+
+        if user_message_record is None:
+            return JsonResponse({"error": "No user message to regenerate"}, status=400)
+
+        # Drop every message that came after the targeted user turn — including
+        # the assistant reply we are about to replace.
+        for message in ordered:
+            if message.created_at > user_message_record.created_at or (
+                message.created_at == user_message_record.created_at and message.id > user_message_record.id
+            ):
+                message.delete()
+
+        _remember_active_model(engine, model_name)
+        selected_tool_servers = _resolve_tool_servers(engine, model_name, tool_server_ids)
+        if engine in {"lms", "openai", "google-genai"} or (settings.is_ollama_engine(engine) and selected_tool_servers):
+            model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
+        else:
+            model_info_payload = _build_fallback_model_info_payload(engine, model_name)
+        _validate_tool_server_support(
+            engine,
+            model_name,
+            [server["id"] for server in selected_tool_servers],
+            payload=model_info_payload,
+        )
+
+        import json as _json
+        active_slug = _json.dumps([s["id"] for s in selected_tool_servers], ensure_ascii=False)
+        if chat.active_tool_slug != active_slug:
+            chat.active_tool_slug = active_slug
+            chat.save(update_fields=["active_tool_slug", "updated_at"])
+
+        llm_messages = _build_chat_history(
+            chat,
+            user_message_record,
+            user_message_record.content,
+            system_prompt,
+            model_info_payload,
+        )
+
+        think_value, think_level_value, clean_options = _split_generation_options(
+            options,
+            think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
+            think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
+        )
+
+        generate_kwargs = _build_generate_kwargs(
+            engine,
+            model_name,
+            llm_messages,
+            think_value,
+            think_level_value,
+            clean_options,
+            chat,
+            selected_tool_servers,
+            think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
+            think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
+            sync_operation_defaults=(
+                {
+                    **(
+                        model_info_payload.get("defaults", {})
+                        if isinstance(model_info_payload.get("defaults"), dict)
+                        else {}
+                    ),
+                    **(
+                        {str(model_info_payload.get("think_param_name")): think_value}
+                        if engine == "lms" and think_value is not None and str(model_info_payload.get("think_param_name", "")).startswith("ext.")
+                        else {}
+                    ),
+                    **(
+                        {str(model_info_payload.get("think_level_param_name")): think_level_value}
+                        if engine == "lms" and think_level_value is not None and str(model_info_payload.get("think_level_param_name", "")).startswith("ext.")
+                        else {}
+                    ),
+                }
+                if engine == "lms"
+                else {}
+            ),
+        )
+
+        assistant_message_record = Message.objects.create(
+            chat=chat,
+            role="assistant",
+            content="",
+            llm_transcript=[],
+        )
+
+        response = StreamingHttpResponse(
+            _stream_chat_response(chat, engine, generate_kwargs, assistant_message_record),
+            content_type="text/plain; charset=utf-8",
+        )
+        response["X-Chat-ID"] = str(chat.id)
+        response["X-LLM-Engine"] = engine
+        response["X-User-Message-ID"] = str(user_message_record.id)
+        response["X-Assistant-Message-ID"] = str(assistant_message_record.id)
+        return response
+
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Unhandled exception in regenerate_chat_api")
         return JsonResponse({"error": str(exc)}, status=500)
 
 

@@ -1464,6 +1464,38 @@
   line-height: 1;
 }
 
+.msg-tool-only-group {
+  width: min(100%, 720px);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.msg-tool-only-group > .msg-search-card,
+.msg-tool-only-group > .msg-read-page-card,
+.msg-tool-only-group > .msg-sandbox-card,
+.msg-tool-only-group > .msg-write-card,
+.msg-tool-only-group > .msg-edit-card,
+.msg-tool-only-group > .msg-reasoning-tool-row {
+  width: 100%;
+  max-width: 100%;
+}
+
+.msg-tool-only-group > .msg-search-card,
+.msg-tool-only-group > .msg-read-page-card {
+  align-items: stretch;
+}
+
+.msg-tool-only-group .msg-search-line,
+.msg-tool-only-group .msg-read-page-line,
+.msg-tool-only-group .msg-search-chips,
+.msg-tool-only-group .msg-search-extra-chips,
+.msg-tool-only-group .msg-read-page-chips {
+  width: 100%;
+}
+
 .msg-search-card {
   display: inline-flex;
   flex-direction: column;
@@ -2236,12 +2268,14 @@ body.is-resizing-reasoning-drawer * {
 }
 
 .reasoning-drawer-icon {
-  width: 8px;
-  height: 8px;
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--c-primary);
-  opacity: 0.75;
+  background: currentColor;
+  color: var(--c-primary);
+  -webkit-mask: url("../../img/ui/brain.svg") center / contain no-repeat;
+  mask: url("../../img/ui/brain.svg") center / contain no-repeat;
+  opacity: 0.86;
 }
 
 .reasoning-drawer-title {

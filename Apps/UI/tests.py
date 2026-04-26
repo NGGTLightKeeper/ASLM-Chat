@@ -2392,3 +2392,94 @@ class LmsPresetApiTests(TestCase):
         self.assertEqual(deleted.status_code, 400)
         self.assertIn("default preset", renamed.json()["error"])
         self.assertIn("default preset", deleted.json()["error"])
+
+
+# Verify the three critical fixes: message IDs in headers, no user duplication
+# on regenerate, and chat.updated_at bumped on every mutation.
+class MessageIdAndRegenerateTests(ToolRegistryTestMixin, TestCase):
+    """Verify message IDs are returned and regenerate does not duplicate user messages."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+
+    # chat_api must return X-User-Message-ID and X-Assistant-Message-ID headers
+    # so the frontend can stamp fresh rows without waiting for a page reload.
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_api_returns_message_id_headers(self, _mock_engine, mock_generate, _mock_runtime):
+        mock_generate.return_value = [{"message": {"content": "Hi"}}]
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"Hello","model":"llama3"}',
+            content_type="application/json",
+        )
+        b"".join(response.streaming_content)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.has_header("X-User-Message-ID"), "X-User-Message-ID header missing")
+        self.assertTrue(response.has_header("X-Assistant-Message-ID"), "X-Assistant-Message-ID header missing")
+
+        user_id = int(response["X-User-Message-ID"])
+        assistant_id = int(response["X-Assistant-Message-ID"])
+        self.assertTrue(Message.objects.filter(id=user_id, role="user").exists())
+        self.assertTrue(Message.objects.filter(id=assistant_id, role="assistant").exists())
+
+    # After a normal send + regenerate the chat must contain exactly one user
+    # message — not two copies of the same prompt.
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_regenerate_does_not_duplicate_user_message(self, _mock_engine, mock_generate, _mock_runtime):
+        mock_generate.return_value = [{"message": {"content": "Answer"}}]
+
+        r1 = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"hello","model":"llama3"}',
+            content_type="application/json",
+        )
+        b"".join(r1.streaming_content)
+        chat_id = r1["X-Chat-ID"]
+
+        self.assertEqual(Message.objects.filter(chat__id=chat_id, role="user").count(), 1)
+
+        mock_generate.return_value = [{"message": {"content": "New answer"}}]
+        r2 = self.client.post(
+            reverse("regenerate_chat_api", args=[chat_id]),
+            data='{"model":"llama3"}',
+            content_type="application/json",
+        )
+        b"".join(r2.streaming_content)
+
+        self.assertEqual(r2.status_code, 200)
+        user_count = Message.objects.filter(chat__id=chat_id, role="user").count()
+        self.assertEqual(user_count, 1, f"Expected 1 user message after regenerate, got {user_count}")
+        assistant_count = Message.objects.filter(chat__id=chat_id, role="assistant").count()
+        self.assertEqual(assistant_count, 1, f"Expected 1 assistant message after regenerate, got {assistant_count}")
+
+    # chat.updated_at must be bumped when messages are added so the sidebar
+    # sort order stays correct.
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_updated_at_is_bumped_after_generation(self, _mock_engine, mock_generate, _mock_runtime):
+        import time
+
+        mock_generate.return_value = [{"message": {"content": "Hi"}}]
+
+        chat = Chat.objects.create(title="Test")
+        ts_before = chat.updated_at
+
+        time.sleep(0.05)
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data=f'{{"message":"Hi","model":"llama3","chat_id":"{chat.id}"}}',
+            content_type="application/json",
+        )
+        b"".join(response.streaming_content)
+
+        chat.refresh_from_db()
+        self.assertGreater(chat.updated_at, ts_before, "chat.updated_at was not bumped after generation")

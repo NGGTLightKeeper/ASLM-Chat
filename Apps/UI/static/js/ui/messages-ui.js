@@ -576,6 +576,51 @@ export function createMessagesUi(context, dependencies) {
     $msgRow.attr('data-expanded-searches', normalized.join(','));
   }
 
+  // Read search cards expanded by stable tool keys. This survives stream
+  // frames where the numeric tool index can shift while the tool alias stays.
+  function getExpandedSearchKeys($msgRow) {
+    const existing = $msgRow.data('expandedSearchKeys');
+    if (existing instanceof Set) {
+      return new Set(existing);
+    }
+
+    const rawValue = String($msgRow.attr('data-expanded-search-keys') || '').trim();
+    if (!rawValue) {
+      return new Set();
+    }
+
+    return new Set(
+      rawValue
+        .split(',')
+        .map(function decodeKey(value) {
+          try {
+            return decodeURIComponent(value);
+          } catch (_error) {
+            return '';
+          }
+        })
+        .filter(Boolean)
+    );
+  }
+
+  // Persist expanded search keys on the row and in jQuery data.
+  function setExpandedSearchKeys($msgRow, expandedKeys) {
+    const normalized = Array.from(expandedKeys)
+      .map(function normalizeKey(value) { return String(value || '').trim(); })
+      .filter(Boolean)
+      .sort();
+
+    const keySet = new Set(normalized);
+    $msgRow.data('expandedSearchKeys', keySet);
+
+    if (normalized.length === 0) {
+      $msgRow.removeAttr('data-expanded-search-keys');
+      return;
+    }
+
+    $msgRow.attr('data-expanded-search-keys', normalized.map(encodeURIComponent).join(','));
+  }
+
 
   // Read the set of expanded write cards for one row.
   function getExpandedWriteIndices($msgRow) {
@@ -652,6 +697,26 @@ export function createMessagesUi(context, dependencies) {
   function searchQueryFromSegment(segment) {
     const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
     return String(args.query || args.q || '').trim();
+  }
+
+  function searchSegmentKey(segment, fallbackIndex) {
+    const safeSegment = segment && typeof segment === 'object' ? segment : {};
+    const alias = String(safeSegment.alias || '').trim();
+    if (alias) {
+      return `alias:${alias}`;
+    }
+
+    const query = searchQueryFromSegment(safeSegment).toLowerCase();
+    const toolId = String(safeSegment.toolId || safeSegment.toolName || '').trim().toLowerCase();
+    if (query) {
+      return `query:${toolId}:${query}`;
+    }
+
+    if (Number.isInteger(fallbackIndex) && fallbackIndex >= 0) {
+      return `index:${fallbackIndex}`;
+    }
+
+    return '';
   }
 
   function isReadPageToolSegment(segment) {
@@ -836,9 +901,11 @@ export function createMessagesUi(context, dependencies) {
     const iconHtml = status === 'error' || status === 'timeout'
       ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
       : (icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+    const searchKey = searchSegmentKey(segment, toolSegmentIndex);
+    const searchKeyAttr = searchKey ? ` data-search-key="${escapeAttributeValue(searchKey)}"` : '';
 
     return `
-      <div class="msg-search-card${hasResult ? ' is-done' : ' is-pending'}${isExpanded ? ' is-expanded' : ''}${renderOptions.compactLabel ? ' msg-search-card--batch-item' : ''}" data-tool-segment-index="${toolSegmentIndex}">
+      <div class="msg-search-card${hasResult ? ' is-done' : ' is-pending'}${isExpanded ? ' is-expanded' : ''}${renderOptions.compactLabel ? ' msg-search-card--batch-item' : ''}" data-tool-segment-index="${toolSegmentIndex}"${searchKeyAttr}>
         <div class="msg-search-line">
           ${renderOptions.hideIcon ? '' : `<span class="msg-search-icon">${iconHtml}</span>`}
           <span class="msg-search-label">${escHtml(label)}</span>
@@ -891,6 +958,11 @@ export function createMessagesUi(context, dependencies) {
     const moreCount = hiddenSources.length;
     const firstIndex = Number.isInteger(searchItems[0].index) ? searchItems[0].index : 0;
     const isExpanded = renderOptions.expanded === undefined ? false : !!renderOptions.expanded;
+    const searchKey = searchItems
+      .map(function mapSearchItemKey(item) { return searchSegmentKey(item.segment, item.index); })
+      .filter(Boolean)
+      .join('|');
+    const searchKeyAttr = searchKey ? ` data-search-key="${escapeAttributeValue(searchKey)}"` : '';
     const moreButtonAttrs = `type="button" data-search-more-count="${moreCount}" aria-expanded="${isExpanded ? 'true' : 'false'}"`;
     const collapsedMoreHtml = moreCount > 0
       ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-collapsed" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(`${MORE_LABEL} ${moreCount}`)}</span></button>`
@@ -900,7 +972,7 @@ export function createMessagesUi(context, dependencies) {
       : '';
 
     return `
-      <div class="msg-search-card msg-search-card--batch${hasPending ? ' is-pending' : ' is-done'}${isExpanded ? ' is-expanded' : ''}" data-tool-segment-index="${firstIndex}">
+      <div class="msg-search-card msg-search-card--batch${hasPending ? ' is-pending' : ' is-done'}${isExpanded ? ' is-expanded' : ''}" data-tool-segment-index="${firstIndex}"${searchKeyAttr}>
         <div class="msg-search-batch-head">
           <span class="msg-search-icon msg-search-batch-icon">${iconHtml}</span>
           <div class="msg-search-batch-queries">${queriesHtml}</div>
@@ -1576,20 +1648,13 @@ export function createMessagesUi(context, dependencies) {
       summaryParts.push(`${toolCount} tool ${toolCount === 1 ? 'call' : 'calls'}`);
     }
 
-    // Tool-only group (no reasoning): wrap in a pill without the "Thought for Xs" label
-    // so tools don't flash in chat and then jump into a reasoning block when thinking arrives.
+    // Tool-only group (no reasoning): render tool cards inline. The reasoning
+    // wrapper content is drawer-only, so putting tools there hides them.
     if (thoughtCount === 0) {
       const toolsHtml = safeItems.map(function renderToolOnlyItem(item) {
         return item && item.type === 'tool' ? renderReasoningToolItem(item) : '';
       }).join('');
-      return `
-        <div class="msg-thoughts-wrapper msg-reasoning-wrapper${isExpanded ? ' expanded' : ''}" data-thought-index="${thoughtIndex}">
-          <button type="button" class="msg-thoughts-toggle msg-reasoning-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}">
-            ${summaryParts.length ? `<span class="msg-reasoning-summary">${escHtml(summaryParts.join(' · '))}</span>` : ''}
-          </button>
-          <div class="msg-thoughts-content msg-reasoning-content" style="display:${isExpanded ? 'block' : 'none'};">${toolsHtml}</div>
-        </div>
-      `;
+      return `<div class="msg-tool-only-group">${toolsHtml}</div>`;
     }
 
     const renderItems = toolCount > 0
@@ -1658,40 +1723,198 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
+  // Return a stable identity key for an element so the morpher can match it
+  // across re-renders without destroying the DOM node.
+  function getElementMorphKey(el) {
+    if (!el || el.nodeType !== 1) {
+      return null;
+    }
+    const searchKey = el.classList.contains('msg-search-card')
+      ? el.getAttribute('data-search-key')
+      : null;
+    if (searchKey) {
+      return 'search:' + searchKey;
+    }
+    const writeIdx = el.getAttribute('data-write-segment-index');
+    if (writeIdx !== null) {
+      return 'write:' + writeIdx;
+    }
+    const editIdx = el.getAttribute('data-edit-segment-index');
+    if (editIdx !== null) {
+      return 'edit:' + editIdx;
+    }
+    const toolIdx = el.getAttribute('data-tool-segment-index');
+    if (toolIdx !== null) {
+      return 'tool:' + toolIdx;
+    }
+    const activityKey = el.getAttribute('data-activity-key');
+    if (activityKey) {
+      return 'activity:' + activityKey;
+    }
+    // Structural singletons keyed by class so their DOM identity is preserved
+    // and CSS transitions (e.g. search extra-chips) are not interrupted.
+    if (el.classList.contains('msg-search-extra-chips')) {
+      return 'search-extra-chips';
+    }
+    if (el.classList.contains('msg-search-chips')) {
+      return 'search-chips';
+    }
+    if (el.classList.contains('msg-write-preview')) {
+      return 'write-preview';
+    }
+    if (el.classList.contains('msg-edit-preview')) {
+      return 'edit-preview';
+    }
+    return null;
+  }
+
+  // Copy attributes from toEl onto fromEl without touching fromEl's identity.
+  function syncElementAttrs(fromEl, toEl) {
+    const toAttrs = toEl.attributes;
+    for (let i = 0; i < toAttrs.length; i += 1) {
+      const { name, value } = toAttrs[i];
+      if (fromEl.getAttribute(name) !== value) {
+        fromEl.setAttribute(name, value);
+      }
+    }
+    for (let i = fromEl.attributes.length - 1; i >= 0; i -= 1) {
+      const name = fromEl.attributes[i].name;
+      if (!toEl.hasAttribute(name)) {
+        fromEl.removeAttribute(name);
+      }
+    }
+  }
+
+  // Recursively morph fromEl's attributes and children to match toEl while
+  // keeping matched DOM nodes alive so CSS transitions are not interrupted.
+  function morphDomNode(fromEl, toEl) {
+    if (fromEl.nodeType === 3 && toEl.nodeType === 3) {
+      if (fromEl.nodeValue !== toEl.nodeValue) {
+        fromEl.nodeValue = toEl.nodeValue;
+      }
+      return fromEl;
+    }
+    if (fromEl.nodeType !== 1 || fromEl.nodeName !== toEl.nodeName) {
+      const replacement = toEl.cloneNode(true);
+      if (fromEl.parentNode) {
+        fromEl.parentNode.replaceChild(replacement, fromEl);
+      }
+      return replacement;
+    }
+    syncElementAttrs(fromEl, toEl);
+    morphDomChildren(fromEl, toEl);
+    return fromEl;
+  }
+
+  // Reconcile fromParent's children against toParent's children, reusing
+  // existing DOM nodes that share a morph key and matching unkeyed nodes by
+  // tag name when possible.
+  function morphDomChildren(fromParent, toParent) {
+    const toChildren = Array.from(toParent.childNodes);
+    const fromByKey = new Map();
+    const fromUnkeyed = [];
+
+    Array.from(fromParent.childNodes).forEach(function catalogFromChild(child) {
+      const k = child.nodeType === 1 ? getElementMorphKey(child) : null;
+      if (k) {
+        fromByKey.set(k, child);
+      } else {
+        fromUnkeyed.push(child);
+      }
+    });
+
+    let unkeyedIdx = 0;
+    const targetNodes = [];
+
+    toChildren.forEach(function processToChild(toChild) {
+      const toKey = toChild.nodeType === 1 ? getElementMorphKey(toChild) : null;
+      if (toKey && fromByKey.has(toKey)) {
+        const fromChild = fromByKey.get(toKey);
+        fromByKey.delete(toKey);
+        targetNodes.push(morphDomNode(fromChild, toChild));
+        return;
+      }
+      const candidate = fromUnkeyed[unkeyedIdx];
+      if (candidate && candidate.nodeName === toChild.nodeName) {
+        unkeyedIdx += 1;
+        targetNodes.push(morphDomNode(candidate, toChild));
+        return;
+      }
+      targetNodes.push(toChild.cloneNode(true));
+    });
+
+    let referenceNode = fromParent.firstChild;
+    targetNodes.forEach(function placeTargetNode(node) {
+      if (node === referenceNode) {
+        referenceNode = referenceNode.nextSibling;
+        return;
+      }
+      fromParent.insertBefore(node, referenceNode);
+    });
+
+    const targetSet = new Set(targetNodes);
+    Array.from(fromParent.childNodes).forEach(function removeUnexpectedNode(node) {
+      if (!targetSet.has(node)) {
+        fromParent.removeChild(node);
+      }
+    });
+  }
+
   function applyActivityBlocks($stream, blocks) {
     const safeBlocks = Array.isArray(blocks) ? blocks : [];
-    const $existing = $stream.children('.msg-activity-block[data-activity-key]');
-    let canPatch = $existing.length === safeBlocks.length;
-
-    if (canPatch) {
-      safeBlocks.forEach(function compareBlock(block, index) {
-        if ($existing.eq(index).attr('data-activity-key') !== block.key) {
-          canPatch = false;
-        }
-      });
-    }
-
-    function appendBlock(block) {
-      const $block = $(block.html);
-      $block.data('activityHtml', block.html);
-      $stream.append($block);
-    }
-
-    if (!canPatch) {
-      $stream.empty();
-      safeBlocks.forEach(appendBlock);
+    const streamEl = $stream[0];
+    if (!streamEl) {
       return;
     }
 
-    safeBlocks.forEach(function patchBlock(block, index) {
-      const $block = $existing.eq(index);
-      if ($block.data('activityHtml') === block.html) {
+    // Build a keyed map of existing blocks for O(1) lookup.
+    const existingByKey = new Map();
+    $stream.children('.msg-activity-block[data-activity-key]').each(function () {
+      existingByKey.set($(this).attr('data-activity-key'), this);
+    });
+
+    const targetNodes = [];
+
+    safeBlocks.forEach(function processBlock(block) {
+      const existing = existingByKey.get(block.key);
+      if (existing) {
+        existingByKey.delete(block.key);
+        if ($(existing).data('activityHtml') !== block.html) {
+          // Morph in-place so CSS transitions on child elements survive.
+          const $newBlock = $(block.html);
+          morphDomChildren(existing, $newBlock[0]);
+          syncElementAttrs(existing, $newBlock[0]);
+          $(existing).data('activityHtml', block.html);
+        }
+        targetNodes.push(existing);
+      } else {
+        const $block = $(block.html);
+        $block.data('activityHtml', block.html);
+        targetNodes.push($block[0]);
+      }
+    });
+
+    // Remove blocks no longer in the list.
+    existingByKey.forEach(function (el) {
+      el.parentNode && el.parentNode.removeChild(el);
+    });
+
+    // Restore order without detaching nodes that are already in the right
+    // position; active CSS transitions survive across stream render frames.
+    let referenceNode = streamEl.firstChild;
+    targetNodes.forEach(function placeTargetNode(node) {
+      if (node === referenceNode) {
+        referenceNode = referenceNode.nextSibling;
         return;
       }
+      streamEl.insertBefore(node, referenceNode);
+    });
 
-      const $newBlock = $(block.html);
-      $newBlock.data('activityHtml', block.html);
-      $block.replaceWith($newBlock);
+    const targetSet = new Set(targetNodes);
+    Array.from(streamEl.childNodes).forEach(function removeUnexpectedNode(node) {
+      if (!targetSet.has(node)) {
+        streamEl.removeChild(node);
+      }
     });
   }
 
@@ -1718,6 +1941,8 @@ export function createMessagesUi(context, dependencies) {
       $bubble.html('');
       $msgRow.removeAttr('data-expanded-thoughts');
       $msgRow.removeAttr('data-expanded-searches');
+      $msgRow.removeAttr('data-expanded-search-keys');
+      $msgRow.removeData('expandedSearchKeys');
       $msgRow.removeAttr('data-expanded-writes');
       $msgRow.removeAttr('data-expanded-edits');
       $msgRow.removeData('toolSegments');
@@ -1726,6 +1951,7 @@ export function createMessagesUi(context, dependencies) {
 
     const expandedThoughts = getExpandedThoughtIndices($msgRow);
     const expandedSearches = getExpandedSearchIndices($msgRow);
+    const expandedSearchKeys = getExpandedSearchKeys($msgRow);
     const expandedWrites = getExpandedWriteIndices($msgRow);
     const expandedEdits = getExpandedEditIndices($msgRow);
     let thoughtIndex = -1;
@@ -1774,7 +2000,10 @@ export function createMessagesUi(context, dependencies) {
               segment: groupSegment,
               toolIndex: currentToolIndex,
               expanded: isSearchToolSegment(groupSegment)
-                ? expandedSearches.has(currentToolIndex)
+                ? (
+                  expandedSearches.has(currentToolIndex)
+                  || expandedSearchKeys.has(searchSegmentKey(groupSegment, currentToolIndex))
+                )
                 : (isWriteToolSegment(groupSegment)
                   ? expandedWrites.has(currentToolIndex)
                   : (isEditToolSegment(groupSegment) ? expandedEdits.has(currentToolIndex) : false))
@@ -1813,6 +2042,7 @@ export function createMessagesUi(context, dependencies) {
     $stream.css('display', 'flex');
     setExpandedThoughtIndices($msgRow, expandedThoughts);
     setExpandedSearchIndices($msgRow, expandedSearches);
+    setExpandedSearchKeys($msgRow, expandedSearchKeys);
     setExpandedWriteIndices($msgRow, expandedWrites);
     setExpandedEditIndices($msgRow, expandedEdits);
     $msgRow.data('toolSegments', toolSegments);
@@ -2034,7 +2264,9 @@ export function createMessagesUi(context, dependencies) {
     const expanded = !$card.hasClass('is-expanded');
     const moreCount = parseInt($button.attr('data-search-more-count') || '0', 10) || 0;
     const cardIndex = parseInt($card.attr('data-tool-segment-index') || '-1', 10);
+    const searchKey = String($card.attr('data-search-key') || '').trim();
     const expandedSearches = getExpandedSearchIndices($row);
+    const expandedSearchKeys = getExpandedSearchKeys($row);
 
     if (Number.isInteger(cardIndex) && cardIndex >= 0) {
       if (expanded) {
@@ -2043,6 +2275,14 @@ export function createMessagesUi(context, dependencies) {
         expandedSearches.delete(cardIndex);
       }
       setExpandedSearchIndices($row, expandedSearches);
+    }
+    if (searchKey) {
+      if (expanded) {
+        expandedSearchKeys.add(searchKey);
+      } else {
+        expandedSearchKeys.delete(searchKey);
+      }
+      setExpandedSearchKeys($row, expandedSearchKeys);
     }
 
     $card.toggleClass('is-expanded', expanded);
@@ -2066,15 +2306,22 @@ export function createMessagesUi(context, dependencies) {
       setExpandedWriteIndices($row, expandedWrites);
     }
 
+    // Update the existing card element in-place so the DOM node stays alive
+    // and the next stream render (which also reads data-expanded-writes) agrees.
+    $card.toggleClass('is-expanded', willExpand).attr('aria-expanded', willExpand ? 'true' : 'false');
+
+    // Swap the preview content between collapsed and expanded line counts
+    // by morphing the preview element directly.
     const toolSegments = $row.data('toolSegments') || $('#reasoningDrawerBody').data('toolSegments') || [];
     const segment = toolSegments[cardIndex];
-    if (!segment) {
-      $card.toggleClass('is-expanded', willExpand).attr('aria-expanded', willExpand ? 'true' : 'false');
-      return;
+    if (segment) {
+      const $preview = $card.find('.msg-write-preview');
+      const $newCard = $(renderWriteToolCard(segment, cardIndex, { expanded: willExpand }));
+      const $newPreview = $newCard.find('.msg-write-preview');
+      if ($preview.length && $newPreview.length) {
+        morphDomChildren($preview[0], $newPreview[0]);
+      }
     }
-
-    const $replacement = $(renderWriteToolCard(segment, cardIndex, { expanded: willExpand }));
-    $card.replaceWith($replacement);
   }
 
   function toggleEditCard($card) {
@@ -2092,15 +2339,18 @@ export function createMessagesUi(context, dependencies) {
       setExpandedEditIndices($row, expandedEdits);
     }
 
+    $card.toggleClass('is-expanded', willExpand).attr('aria-expanded', willExpand ? 'true' : 'false');
+
     const toolSegments = $row.data('toolSegments') || $('#reasoningDrawerBody').data('toolSegments') || [];
     const segment = toolSegments[cardIndex];
-    if (!segment) {
-      $card.toggleClass('is-expanded', willExpand).attr('aria-expanded', willExpand ? 'true' : 'false');
-      return;
+    if (segment) {
+      const $preview = $card.find('.msg-edit-preview');
+      const $newCard = $(renderEditToolCard(segment, cardIndex, { expanded: willExpand }));
+      const $newPreview = $newCard.find('.msg-edit-preview');
+      if ($preview.length && $newPreview.length) {
+        morphDomChildren($preview[0], $newPreview[0]);
+      }
     }
-
-    const $replacement = $(renderEditToolCard(segment, cardIndex, { expanded: willExpand }));
-    $card.replaceWith($replacement);
   }
 
   function startWritePreviewPan(event, $preview) {
