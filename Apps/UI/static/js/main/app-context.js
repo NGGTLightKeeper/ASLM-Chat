@@ -21,6 +21,7 @@ function imageIcon(iconPath, className, altText) {
 export function createAppContext() {
   const dom = {
     $body: $('body'),
+    $chatShell: $('.chat-shell'),
     $newChatBtn: $('#newChatBtn'),
     $historyList: $('#historyList'),
     $chatTitle: $('#chatTitle'),
@@ -63,7 +64,9 @@ export function createAppContext() {
     $thinkToggleBtn: $('#thinkToggleBtn'),
     $thinkToggleBtnConv: $('#thinkToggleBtnConv'),
     $thinkLevelSelector: $('#thinkLevelSelector'),
-    $thinkLevelSelectorConv: $('#thinkLevelSelectorConv')
+    $thinkLevelSelectorConv: $('#thinkLevelSelectorConv'),
+    $sidebarRight: $('#sidebarRight'),
+    $sidebarRightToggle: $('#sidebarRightToggle')
   };
 
   const runtimeSettings = parseJsonScript('runtimeSettingsData') || {};
@@ -78,10 +81,15 @@ export function createAppContext() {
     REGENERATE_ICON: svgIcon(uiIconPaths.refresh, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     DELETE_MESSAGE_ICON: svgIcon(uiIconPaths.trash, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     COPIED_ICON: svgIcon(uiIconPaths.check, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
+    ARROW_LEFT_ICON: svgIcon(uiIconPaths.arrowLeft, 'width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     CHAT_ITEM_ICON: svgIcon(uiIconPaths.chatBubble, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     GLOBE_ICON: svgIcon(uiIconPaths.globe, 'width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     WEB_SEARCH_ICON: imageIcon(uiIconPaths.webSearch, 'msg-search-main-icon', ''),
     WEB_SEARCH_ERROR_ICON: imageIcon(uiIconPaths.webSearchError, 'msg-search-main-icon', ''),
+    TOOL_BASH_ICON: imageIcon(uiIconPaths.toolBash, 'msg-tool-svg-icon', ''),
+    TOOL_MAKE_FILE_ICON: imageIcon(uiIconPaths.toolMakeFile, 'msg-tool-svg-icon', ''),
+    TOOL_EDIT_FILE_ICON: imageIcon(uiIconPaths.toolEditFile, 'msg-tool-svg-icon', ''),
+    TOOL_SEARCH_ICON: imageIcon(uiIconPaths.toolSearch, 'msg-tool-svg-icon', ''),
     CHAT_ITEM_MENU_ICON: svgIcon(uiIconPaths.ellipsisVertical, 'width="14" height="14" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"')
   };
 

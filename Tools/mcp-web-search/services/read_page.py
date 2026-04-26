@@ -35,6 +35,8 @@ from core.fetch.url_utils import has_non_text_extension, is_non_text_content_typ
 from core.registry.domain_registry import get_registry
 from custom_domains.amazon import fetch_amazon_snapshot
 from custom_domains.ebay import fetch_ebay_snapshot
+from custom_domains.github import fetch_github_page as _fetch_github_page
+from custom_domains.github import is_github_url as _is_github_url
 from custom_domains.dns_shop import camoufox_fetch_kwargs as _dns_camoufox_fetch_kwargs
 from custom_domains.dns_shop import dns_variant_urls as _dns_variant_urls
 from custom_domains.dns_shop import rewrite_read_page_url as _rewrite_read_page_url
@@ -122,6 +124,12 @@ def _is_weak_extraction(markdown: str, *, min_length: int) -> bool:
         return True
 
     return False
+
+
+def _truncate_markdown(markdown: str, max_chars: int) -> str:
+    if len(markdown) <= max_chars:
+        return markdown
+    return markdown[:max_chars].rsplit("\n", 1)[0] + "\n\n[...truncated]"
 
 
 # ---------------------------------------------------------------------------
@@ -565,6 +573,21 @@ class ReadPageService:
             except Exception as exc:
                 logger.warning("Reddit fetch failed for %s: %s", url, exc)
 
+        if _is_github_url(url):
+            markdown = await _fetch_github_page(url, timeout=opts.timeout)
+            markdown = _truncate_markdown(markdown, opts.max_chars)
+            attempt = ReadPageVariantAttempt(
+                url=url,
+                variant="github_api",
+                fetch_method="github_api",
+                markdown_length=len(markdown or ""),
+                weak=markdown.lstrip().lower().startswith("error:"),
+                winner=True,
+            )
+            if collect_attempts:
+                attempts.append(attempt)
+            return markdown, attempts
+
         if _host(url) == "amazon.com":
             try:
                 snapshot = await fetch_amazon_snapshot(url, timeout=opts.timeout)
@@ -738,8 +761,7 @@ class ReadPageService:
         if not markdown or len(markdown.strip()) < self._cfg.extraction.min_content_length:
             return f"Warning: Very little content extracted from: {url}\n\n{markdown}", attempts
 
-        if len(markdown) > opts.max_chars:
-            markdown = markdown[:opts.max_chars].rsplit("\n", 1)[0] + "\n\n[...truncated]"
+        markdown = _truncate_markdown(markdown, opts.max_chars)
 
         return markdown, attempts
 

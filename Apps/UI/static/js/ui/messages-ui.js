@@ -11,6 +11,17 @@ export function createMessagesUi(context, dependencies) {
   const HIDE_LABEL = '\u0421\u043a\u0440\u044b\u0442\u044c';
   const SEARCH_BATCH_FIRST_CALL_HOLD_MS = 0;
   const SEARCH_BATCH_MULTI_CALL_SETTLE_MS = 0;
+  const PRE_TOOL_TEXT_HOLD_MS = 650;
+  const WRITE_PREVIEW_COLLAPSED_LINES = 4;
+  const WRITE_PREVIEW_EXPANDED_LINES = 80;
+  const EDIT_PREVIEW_COLLAPSED_ROWS = 4;
+  const EDIT_PREVIEW_EXPANDED_ROWS = 120;
+  const SANDBOX_INPUT_PREVIEW_CHARS = 12000;
+  const HEAVY_TOOL_ARGUMENT_KEYS = {
+    bash: ['stdin'],
+    edit: ['content', 'new_str', 'old_str'],
+    write: ['content']
+  };
 
   // Composer state.
   // Sync both send buttons with the current generation and attachment state.
@@ -321,6 +332,22 @@ export function createMessagesUi(context, dependencies) {
 
   // Activity parsing.
   // Parse model output into visible text, thoughts, and tool events.
+  function hasOpenActivityMarker(rawText, openTag, closeTag) {
+    const source = String(rawText || '').toLowerCase();
+    const open = String(openTag || '').toLowerCase();
+    const close = String(closeTag || '').toLowerCase();
+    const openIndex = source.lastIndexOf(open);
+    if (openIndex === -1) {
+      return false;
+    }
+    return source.indexOf(close, openIndex + open.length) === -1;
+  }
+
+  function hasOpenToolPayload(rawText) {
+    return hasOpenActivityMarker(rawText, '<tool_call>', '</tool_call>')
+      || hasOpenActivityMarker(rawText, '<tool_result>', '</tool_result>');
+  }
+
   function parseMessageTimeline(rawText) {
     const source = String(rawText || '');
     const lowerSource = source.toLowerCase();
@@ -808,7 +835,7 @@ export function createMessagesUi(context, dependencies) {
     const status = segment.toolUi && segment.toolUi.status ? String(segment.toolUi.status) : '';
     const iconHtml = status === 'error' || status === 'timeout'
       ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
-      : (icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+      : (icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
 
     return `
       <div class="msg-search-card${hasResult ? ' is-done' : ' is-pending'}${isExpanded ? ' is-expanded' : ''}${renderOptions.compactLabel ? ' msg-search-card--batch-item' : ''}" data-tool-segment-index="${toolSegmentIndex}">
@@ -941,14 +968,19 @@ export function createMessagesUi(context, dependencies) {
 
   function renderWritePreviewLines(content, isExpanded, path) {
     const lines = String(content || '').split(/\r?\n/);
-    const visibleLines = isExpanded ? lines : lines.slice(0, 4);
+    const maxLines = isExpanded ? WRITE_PREVIEW_EXPANDED_LINES : WRITE_PREVIEW_COLLAPSED_LINES;
+    const visibleLines = lines.slice(0, maxLines);
     const language = languageFromPath(path, 'plaintext');
-    return visibleLines.map(function renderLine(line, index) {
-      const isFadeLine = !isExpanded && index === 3 && lines.length > 4;
+    const rowsHtml = visibleLines.map(function renderLine(line, index) {
+      const isFadeLine = !isExpanded && index === WRITE_PREVIEW_COLLAPSED_LINES - 1 && lines.length > WRITE_PREVIEW_COLLAPSED_LINES;
       const lineClass = isFadeLine ? ' msg-write-line--fade' : '';
       const lineText = isFadeLine && !line ? '...' : line;
       return `<div class="msg-write-line${lineClass}">${lineText ? highlightCode(lineText, language) : ' '}</div>`;
     }).join('');
+    if (isExpanded && lines.length > maxLines) {
+      return `${rowsHtml}<div class="msg-write-line msg-write-line--fade">... ${escHtml(String(lines.length - maxLines))} more lines omitted</div>`;
+    }
+    return rowsHtml;
   }
 
   function renderWriteToolCard(segment, toolSegmentIndex, options) {
@@ -956,15 +988,18 @@ export function createMessagesUi(context, dependencies) {
     const content = writeContentFromSegment(segment);
     const path = writePathFromSegment(segment);
     const isExpanded = !!renderOptions.expanded;
-    const lineCount = content ? String(content).split(/\r?\n/).length : 0;
-    const hasMore = lineCount > 4;
+    const lineCount = textLineCount(content);
+    const byteCount = utf8ByteLength(content);
+    const hasMore = lineCount > WRITE_PREVIEW_COLLAPSED_LINES;
     const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-write-segment-index="${toolSegmentIndex}"` : '';
     const label = path ? `Write ${path}` : 'Write';
-    const summary = lineCount > 0 ? `${lineCount} ${lineCount === 1 ? 'line' : 'lines'}` : toolStatusText(segment);
+    const summary = lineCount > 0
+      ? `${lineCount} ${lineCount === 1 ? 'line' : 'lines'}${byteCount > 8192 ? ` · ${Math.round(byteCount / 1024)} KB` : ''}`
+      : toolStatusText(segment);
     const language = languageFromPath(path, 'plaintext');
 
     return `
-      <div class="msg-write-card${isExpanded ? ' is-expanded' : ''}${hasMore ? ' has-more' : ''}"${dataIndex} role="button" tabindex="0" aria-expanded="${isExpanded ? 'true' : 'false'}">
+      <div class="msg-write-card${toolStatusClass(segment)}${isExpanded ? ' is-expanded' : ''}${hasMore ? ' has-more' : ''}"${dataIndex} role="button" tabindex="0" aria-expanded="${isExpanded ? 'true' : 'false'}">
         <span class="msg-write-head">
           <span class="msg-write-title">${escHtml(label)}</span>
           <span class="msg-write-summary">${escHtml(summary)}</span>
@@ -1090,10 +1125,11 @@ export function createMessagesUi(context, dependencies) {
 
   function renderEditRows(rows, isExpanded, language) {
     const safeRows = Array.isArray(rows) ? rows : [];
-    const visibleRows = isExpanded ? safeRows : safeRows.slice(0, 4);
+    const maxRows = isExpanded ? EDIT_PREVIEW_EXPANDED_ROWS : EDIT_PREVIEW_COLLAPSED_ROWS;
+    const visibleRows = safeRows.slice(0, maxRows);
     const codeLanguage = normalizeHighlightLanguage(language);
-    return visibleRows.map(function renderEditRow(row, index) {
-      const isFadeLine = !isExpanded && index === 3 && safeRows.length > 4;
+    const rowsHtml = visibleRows.map(function renderEditRow(row, index) {
+      const isFadeLine = !isExpanded && index === EDIT_PREVIEW_COLLAPSED_ROWS - 1 && safeRows.length > EDIT_PREVIEW_COLLAPSED_ROWS;
       const rowClass = `msg-edit-row is-${row.type || 'context'}${isFadeLine ? ' msg-edit-row--fade' : ''}`;
       const lineNo = row.type === 'delete'
         ? row.oldNo
@@ -1105,6 +1141,10 @@ export function createMessagesUi(context, dependencies) {
         </span>
       `;
     }).join('');
+    if (isExpanded && safeRows.length > maxRows) {
+      return `${rowsHtml}<span class="msg-edit-row is-context msg-edit-row--fade"><span class="msg-edit-gutter"></span><span class="msg-edit-code">... ${escHtml(String(safeRows.length - maxRows))} more rows omitted</span></span>`;
+    }
+    return rowsHtml;
   }
 
   function renderEditToolCard(segment, toolSegmentIndex, options) {
@@ -1125,10 +1165,12 @@ export function createMessagesUi(context, dependencies) {
     }
     if (result.d !== undefined) {
       summaryParts.push(`${Number(result.d) >= 0 ? '+' : ''}${result.d} lines`);
+    } else if (rows.length > EDIT_PREVIEW_EXPANDED_ROWS) {
+      summaryParts.push(`${rows.length} rows`);
     }
 
     return `
-      <div class="msg-edit-card${isExpanded ? ' is-expanded' : ''}"${dataIndex} role="button" tabindex="0" aria-expanded="${isExpanded ? 'true' : 'false'}">
+      <div class="msg-edit-card${toolStatusClass(segment)}${isExpanded ? ' is-expanded' : ''}"${dataIndex} role="button" tabindex="0" aria-expanded="${isExpanded ? 'true' : 'false'}">
         <span class="msg-edit-head">
           <span class="msg-edit-title">${escHtml(label)}</span>
           <span class="msg-edit-summary">${escHtml(summaryParts.join(' · '))}</span>
@@ -1158,6 +1200,45 @@ export function createMessagesUi(context, dependencies) {
     } catch (_error) {
       return truncateInlineText(String(value), 150);
     }
+  }
+
+  function utf8ByteLength(value) {
+    const text = String(value || '');
+    if (typeof TextEncoder !== 'undefined') {
+      return new TextEncoder().encode(text).length;
+    }
+    return unescape(encodeURIComponent(text)).length;
+  }
+
+  function textLineCount(value) {
+    const text = String(value || '');
+    return text ? text.split(/\r?\n/).length : 0;
+  }
+
+  function truncateTextPreview(value, maxChars) {
+    const text = String(value || '');
+    const limit = Math.max(0, Number(maxChars) || 0);
+    if (!limit || text.length <= limit) {
+      return { text, truncated: false, omittedChars: 0 };
+    }
+    return {
+      text: text.slice(0, limit),
+      truncated: true,
+      omittedChars: text.length - limit
+    };
+  }
+
+  function heavyToolKeysForSegment(segment) {
+    if (isWriteToolSegment(segment)) {
+      return HEAVY_TOOL_ARGUMENT_KEYS.write;
+    }
+    if (isEditToolSegment(segment)) {
+      return HEAVY_TOOL_ARGUMENT_KEYS.edit;
+    }
+    if (isSandboxToolSegment(segment)) {
+      return HEAVY_TOOL_ARGUMENT_KEYS.bash;
+    }
+    return [];
   }
 
   function toolIdentityText(segment) {
@@ -1223,6 +1304,14 @@ export function createMessagesUi(context, dependencies) {
     return String(command || '');
   }
 
+  function sandboxInputPreviewText(segment) {
+    const preview = truncateTextPreview(sandboxInputText(segment), SANDBOX_INPUT_PREVIEW_CHARS);
+    if (!preview.truncated) {
+      return preview.text;
+    }
+    return `${preview.text}\n\n... ${preview.omittedChars} more characters omitted`;
+  }
+
   function sandboxLanguage(segment) {
     const identity = toolIdentityText(segment);
     if (/python/.test(identity)) {
@@ -1261,7 +1350,7 @@ export function createMessagesUi(context, dependencies) {
     const detail = reasoningToolDetail(segment);
     const result = parseSandboxResult(segment);
     const language = sandboxLanguage(segment);
-    const inputText = sandboxInputText(segment) || detail;
+    const inputText = sandboxInputPreviewText(segment) || detail;
     const hasResult = segment.result !== null && segment.result !== undefined;
     const outputText = result.stdout || (!hasResult ? 'Running...' : '');
     const exitCodeText = result.exitCode !== null && result.exitCode !== undefined ? `exit ${result.exitCode}` : status;
@@ -1272,7 +1361,7 @@ export function createMessagesUi(context, dependencies) {
     return `
       <div class="msg-sandbox-card${sandboxStatusClass(segment, result)}"${dataIndex}>
         <div class="msg-sandbox-head">
-          <span class="msg-reasoning-tool-icon is-sandbox" aria-hidden="true">S</span>
+          ${icons.TOOL_BASH_ICON || '<span class="msg-reasoning-tool-icon is-sandbox" aria-hidden="true">S</span>'}
           <span class="msg-sandbox-title">Sandbox</span>
           ${detail ? `<span class="msg-sandbox-detail">${escHtml(detail)}</span>` : ''}
           <span class="msg-reasoning-tool-status">${escHtml(exitCodeText)}</span>
@@ -1334,34 +1423,52 @@ export function createMessagesUi(context, dependencies) {
     }
 
     const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    const heavyKeys = new Set(heavyToolKeysForSegment(segment));
     const preferredKeys = ['query', 'q', 'url', 'urls', 'path', 'file', 'filename', 'command', 'cmd', 'code', 'prompt', 'input'];
     for (let index = 0; index < preferredKeys.length; index += 1) {
       const key = preferredKeys[index];
+      if (heavyKeys.has(key)) {
+        continue;
+      }
       if (args[key] !== undefined && args[key] !== null && String(args[key]).trim() !== '') {
         return compactToolValue(args[key]);
       }
     }
 
     const keys = Object.keys(args).filter(function keepKey(key) {
-      return args[key] !== undefined && args[key] !== null && String(args[key]).trim() !== '';
+      return !heavyKeys.has(key) && args[key] !== undefined && args[key] !== null && String(args[key]).trim() !== '';
     });
     return keys.slice(0, 2).map(function formatArg(key) {
       return `${key}: ${compactToolValue(args[key])}`;
     }).join(' · ');
   }
 
+  function toolIconHtml(segment) {
+    if (isSearchToolSegment(segment) || isReadPageToolSegment(segment)) {
+      return icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON || '';
+    }
+    if (isWriteToolSegment(segment)) {
+      return icons.TOOL_MAKE_FILE_ICON || '';
+    }
+    if (isEditToolSegment(segment)) {
+      return icons.TOOL_EDIT_FILE_ICON || '';
+    }
+    if (isSandboxToolSegment(segment)) {
+      return icons.TOOL_BASH_ICON || '';
+    }
+    return '';
+  }
+
   function renderReasoningToolRow(segment) {
     const name = toolDisplayName(segment);
     const detail = reasoningToolDetail(segment);
     const status = toolStatusText(segment);
-    const iconClass = isSearchToolSegment(segment)
-      ? ' is-search'
-      : (isSandboxToolSegment(segment) ? ' is-sandbox' : '');
+    const iconHtml = toolIconHtml(segment);
     const initial = name.charAt(0).toUpperCase() || 'T';
 
     return `
       <div class="msg-reasoning-tool-row${toolStatusClass(segment)}">
-        <span class="msg-reasoning-tool-icon${iconClass}" aria-hidden="true">${escHtml(initial)}</span>
+        ${iconHtml || `<span class="msg-reasoning-tool-icon" aria-hidden="true">${escHtml(initial)}</span>`}
         <span class="msg-reasoning-tool-main">
           <span class="msg-reasoning-tool-name">${escHtml(name)}</span>
           ${detail ? `<span class="msg-reasoning-tool-detail">${escHtml(detail)}</span>` : ''}
@@ -1371,35 +1478,160 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
-  function renderReasoningGroup(items, thoughtIndex, isExpanded) {
+  function renderReasoningToolItem(item) {
+    const segment = item && item.segment ? item.segment : item;
+    const toolIndex = item && Number.isInteger(item.toolIndex) ? item.toolIndex : undefined;
+    if (!segment) {
+      return '';
+    }
+
+    if (isSearchToolSegment(segment)) {
+      return renderSearchToolCard(segment, toolIndex, { compactLabel: true, hideIcon: false, expanded: !!item.expanded });
+    }
+    if (isReadPageToolSegment(segment)) {
+      return renderReadPageToolCard([{ segment, index: toolIndex }]);
+    }
+    if (isWriteToolSegment(segment)) {
+      return renderWriteToolCard(segment, toolIndex, { expanded: !!item.expanded });
+    }
+    if (isEditToolSegment(segment)) {
+      return renderEditToolCard(segment, toolIndex, { expanded: !!item.expanded });
+    }
+    if (isSandboxToolSegment(segment)) {
+      return renderSandboxToolBlock(segment, toolIndex);
+    }
+    return renderReasoningToolRow(segment);
+  }
+
+  function reasoningToolStepTitle(segment) {
+    if (isSearchToolSegment(segment)) {
+      return toolStatusText(segment) === 'Done' ? 'Searched sources' : 'Searching sources';
+    }
+    if (isReadPageToolSegment(segment)) {
+      return 'Reading source page';
+    }
+    if (isWriteToolSegment(segment)) {
+      const path = writePathFromSegment(segment);
+      return path ? `Writing ${path}` : 'Writing file';
+    }
+    if (isEditToolSegment(segment)) {
+      const result = parseToolResultObject(segment);
+      const path = editPathFromSegment(segment, result);
+      return path ? `Editing ${path}` : 'Editing file';
+    }
+    if (isSandboxToolSegment(segment)) {
+      return 'Running sandbox command';
+    }
+    return toolDisplayName(segment);
+  }
+
+  function formatReasoningElapsed(seconds) {
+    const numericSeconds = Number(seconds);
+    if (!Number.isFinite(numericSeconds) || numericSeconds <= 0) {
+      return '';
+    }
+    if (numericSeconds < 60) {
+      return `${Math.max(1, Math.round(numericSeconds))}s`;
+    }
+    const minutes = Math.floor(numericSeconds / 60);
+    const remainder = Math.round(numericSeconds % 60);
+    return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`;
+  }
+
+  function reasoningElapsedSeconds($msgRow) {
+    const fixedValue = Number($msgRow.data('reasoningElapsedSeconds'));
+    if (Number.isFinite(fixedValue) && fixedValue > 0) {
+      return fixedValue;
+    }
+
+    const startedAt = Number($msgRow.data('responseStartedAt'));
+    if (!Number.isFinite(startedAt) || startedAt <= 0) {
+      return null;
+    }
+
+    return Math.max(0, (Date.now() - startedAt) / 1000);
+  }
+
+  function reasoningToggleLabel($msgRow) {
+    const elapsed = formatReasoningElapsed(reasoningElapsedSeconds($msgRow));
+    return elapsed ? `Thought for ${elapsed}` : 'Thought';
+  }
+
+  function hasThoughtSegments(segments) {
+    return (Array.isArray(segments) ? segments : []).some(function hasThought(segment) {
+      return segment && segment.type === 'thought';
+    });
+  }
+
+  function hasClosedReasoning(rawText) {
+    return /<\/(?:think|reasoning|analysis)>/i.test(String(rawText || ''));
+  }
+
+  function renderReasoningGroup(items, thoughtIndex, isExpanded, toggleLabel) {
     const safeItems = Array.isArray(items) ? items : [];
     const thoughtCount = safeItems.filter(function countThoughts(item) { return item && item.type === 'thought'; }).length;
     const toolCount = safeItems.filter(function countTools(item) { return item && item.type === 'tool'; }).length;
     const summaryParts = [];
-    if (thoughtCount > 0) {
-      summaryParts.push(`${thoughtCount} reasoning ${thoughtCount === 1 ? 'block' : 'blocks'}`);
-    }
     if (toolCount > 0) {
-      summaryParts.push(`${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}`);
+      summaryParts.push(`${toolCount} tool ${toolCount === 1 ? 'call' : 'calls'}`);
     }
 
-    const contentHtml = safeItems.map(function renderReasoningItem(item) {
+    // Tool-only group (no reasoning): wrap in a pill without the "Thought for Xs" label
+    // so tools don't flash in chat and then jump into a reasoning block when thinking arrives.
+    if (thoughtCount === 0) {
+      const toolsHtml = safeItems.map(function renderToolOnlyItem(item) {
+        return item && item.type === 'tool' ? renderReasoningToolItem(item) : '';
+      }).join('');
+      return `
+        <div class="msg-thoughts-wrapper msg-reasoning-wrapper${isExpanded ? ' expanded' : ''}" data-thought-index="${thoughtIndex}">
+          <button type="button" class="msg-thoughts-toggle msg-reasoning-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}">
+            ${summaryParts.length ? `<span class="msg-reasoning-summary">${escHtml(summaryParts.join(' · '))}</span>` : ''}
+          </button>
+          <div class="msg-thoughts-content msg-reasoning-content" style="display:${isExpanded ? 'block' : 'none'};">${toolsHtml}</div>
+        </div>
+      `;
+    }
+
+    const renderItems = toolCount > 0
+      ? safeItems.filter(function keepToolItems(item) { return item && item.type === 'tool'; })
+      : safeItems;
+    const contentHtml = renderItems.map(function renderReasoningItem(item) {
       if (!item) {
         return '';
       }
       if (item.type === 'tool') {
-        if (isSandboxToolSegment(item)) {
-          return renderSandboxToolBlock(item);
-        }
-        return renderReasoningToolRow(item);
+        const segment = item && item.segment ? item.segment : item;
+        const title = reasoningToolStepTitle(segment || {});
+        const status = toolStatusText(segment || {});
+        const iconHtml = toolIconHtml(segment || {});
+        const hideStepTitle = isWriteToolSegment(segment || {}) || isEditToolSegment(segment || {});
+        return `
+          <div class="msg-reasoning-step msg-reasoning-step--tool${toolStatusClass(segment || {})}">
+            <div class="msg-reasoning-step-dot" aria-hidden="true">${iconHtml}</div>
+            <div class="msg-reasoning-step-body">
+              <div class="msg-reasoning-step-title">
+                ${hideStepTitle ? '' : `<span>${escHtml(title)}</span>`}
+                <span class="msg-reasoning-step-status">${escHtml(status)}</span>
+              </div>
+              ${renderReasoningToolItem(item)}
+            </div>
+          </div>
+        `;
       }
-      return `<div class="msg-reasoning-text">${escHtml(item.content || '')}</div>`;
+      return `
+        <div class="msg-reasoning-step">
+          <div class="msg-reasoning-step-dot" aria-hidden="true"></div>
+          <div class="msg-reasoning-step-body">
+            <div class="msg-reasoning-text">${escHtml(item.content || '')}</div>
+          </div>
+        </div>
+      `;
     }).join('');
 
     return `
       <div class="msg-thoughts-wrapper msg-reasoning-wrapper${isExpanded ? ' expanded' : ''}" data-thought-index="${thoughtIndex}">
         <button type="button" class="msg-thoughts-toggle msg-reasoning-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}">
-          <span class="msg-reasoning-title">Reasoning</span>
+          <span class="msg-reasoning-title">${escHtml(toggleLabel || 'Thought')}</span>
           ${summaryParts.length ? `<span class="msg-reasoning-summary">${escHtml(summaryParts.join(' · '))}</span>` : ''}
         </button>
         <div class="msg-thoughts-content msg-reasoning-content" style="display:${isExpanded ? 'block' : 'none'};">${contentHtml}</div>
@@ -1411,7 +1643,7 @@ export function createMessagesUi(context, dependencies) {
     return `
       <div class="msg-thoughts-wrapper msg-reasoning-wrapper${isExpanded ? ' expanded' : ''}" data-thought-index="${thoughtIndex}">
         <button type="button" class="msg-thoughts-toggle msg-reasoning-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}">
-          <span class="msg-reasoning-title">Reasoning</span>
+          <span class="msg-reasoning-title">Thought</span>
         </button>
         <div class="msg-thoughts-content msg-reasoning-content" style="display:${isExpanded ? 'block' : 'none'};"><div class="msg-reasoning-text">${escHtml(content)}</div></div>
       </div>
@@ -1468,6 +1700,14 @@ export function createMessagesUi(context, dependencies) {
     const useMarkdown = renderOptions.markdown !== false;
     const $stream = $msgRow.find('.msg-activity-stream');
     const $bubble = $msgRow.find('.msg-bubble');
+    const shouldSyncOpenDrawer = (
+      $activeReasoningWrapper
+      && $('#reasoningDrawer').hasClass('is-open')
+      && $activeReasoningWrapper.closest('.msg')[0] === $msgRow[0]
+    );
+    const activeReasoningIndex = shouldSyncOpenDrawer
+      ? String($activeReasoningWrapper.attr('data-thought-index') || '')
+      : '';
 
     if (!$stream.length) {
       return;
@@ -1494,12 +1734,11 @@ export function createMessagesUi(context, dependencies) {
     const toolSegments = segments.filter(function onlyToolSegments(segment) {
       return segment.type === 'tool';
     });
-    const firstTextIndex = segments.findIndex(function findFirstText(segment) {
-      return segment.type === 'text';
-    });
-    const hasReasoningBeforeAnswer = segments.some(function hasThoughtBeforeAnswer(segment, index) {
-      return segment.type === 'thought' && (firstTextIndex === -1 || index < firstTextIndex);
-    });
+    const lastToolSegmentIndex = segments.reduce(function findLastToolIndex(lastIndex, segment, index) {
+      return segment && segment.type === 'tool' ? index : lastIndex;
+    }, -1);
+    let reasoningGroupIndex = -1;
+    const thoughtToggleLabel = reasoningToggleLabel($msgRow);
 
     const blocks = [];
     function pushBlock(key, html) {
@@ -1512,145 +1751,50 @@ export function createMessagesUi(context, dependencies) {
     for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
       const segment = segments[segmentIndex];
 
-      if (
-        hasReasoningBeforeAnswer
-        && (firstTextIndex === -1 || segmentIndex < firstTextIndex)
-        && (segment.type === 'thought' || (
-          segment.type === 'tool'
-          && !isSandboxToolSegment(segment)
-          && !isWriteToolSegment(segment)
-          && !isEditToolSegment(segment)
-        ))
-      ) {
+      if (segment.type === 'thought' || segment.type === 'tool') {
+        const groupStartIndex = segmentIndex;
         const groupItems = [];
-        const groupThoughtIndex = thoughtIndex + 1;
+        reasoningGroupIndex += 1;
 
         while (
           segmentIndex < segments.length
-          && (firstTextIndex === -1 || segmentIndex < firstTextIndex)
-          && (
-            segments[segmentIndex].type === 'thought'
-            || (
-              segments[segmentIndex].type === 'tool'
-              && !isSandboxToolSegment(segments[segmentIndex])
-              && !isWriteToolSegment(segments[segmentIndex])
-              && !isEditToolSegment(segments[segmentIndex])
-            )
-          )
+          && (segments[segmentIndex].type === 'thought' || segments[segmentIndex].type === 'tool')
         ) {
           const groupSegment = segments[segmentIndex];
           if (groupSegment.type === 'thought') {
             thoughtIndex += 1;
             groupItems.push(groupSegment);
           } else {
+            const currentToolIndex = toolSegmentIndex;
             if (isSearchToolSegment(groupSegment)) {
               addSearchSourcesToCitationRegistry(citationRegistry, groupSegment);
             }
-            groupItems.push(groupSegment);
+            groupItems.push({
+              type: 'tool',
+              segment: groupSegment,
+              toolIndex: currentToolIndex,
+              expanded: isSearchToolSegment(groupSegment)
+                ? expandedSearches.has(currentToolIndex)
+                : (isWriteToolSegment(groupSegment)
+                  ? expandedWrites.has(currentToolIndex)
+                  : (isEditToolSegment(groupSegment) ? expandedEdits.has(currentToolIndex) : false))
+            });
             toolSegmentIndex += 1;
           }
           segmentIndex += 1;
         }
 
         segmentIndex -= 1;
-        pushBlock(
-          `reasoning-${groupThoughtIndex}`,
-          renderReasoningGroup(groupItems, groupThoughtIndex, expandedThoughts.has(groupThoughtIndex))
-        );
+        if (groupItems.some(function hasToolItem(item) { return item && item.type === 'tool'; }) || groupStartIndex > lastToolSegmentIndex) {
+          pushBlock(
+            `reasoning-${reasoningGroupIndex}`,
+            renderReasoningGroup(groupItems, reasoningGroupIndex, expandedThoughts.has(reasoningGroupIndex), thoughtToggleLabel)
+          );
+        }
         continue;
       }
 
-      if (segment.type === 'thought') {
-        thoughtIndex += 1;
-        const isExpanded = expandedThoughts.has(thoughtIndex);
-        pushBlock(
-          `thought-${thoughtIndex}`,
-          renderThoughtBlock(segment.content, thoughtIndex, isExpanded)
-        );
-        continue;
-      }
-
-      if (segment.type === 'tool') {
-        if (isSearchToolSegment(segment)) {
-          const searchItems = [];
-          const firstSearchIndex = toolSegmentIndex;
-          while (
-            segmentIndex < segments.length
-            && segments[segmentIndex].type === 'tool'
-            && isSearchToolSegment(segments[segmentIndex])
-          ) {
-            const searchSegment = segments[segmentIndex];
-            searchItems.push({ segment: searchSegment, index: toolSegmentIndex++ });
-            addSearchSourcesToCitationRegistry(citationRegistry, searchSegment);
-            segmentIndex += 1;
-          }
-          segmentIndex -= 1;
-          pushBlock(
-            `search-${firstSearchIndex}`,
-            renderSearchToolGroup(searchItems, { expanded: expandedSearches.has(firstSearchIndex) })
-          );
-          continue;
-        }
-
-        if (isReadPageToolSegment(segment)) {
-          const readItems = [];
-          const firstReadIndex = toolSegmentIndex;
-          while (
-            segmentIndex < segments.length
-            && segments[segmentIndex].type === 'tool'
-            && isReadPageToolSegment(segments[segmentIndex])
-          ) {
-            readItems.push({ segment: segments[segmentIndex], index: toolSegmentIndex++ });
-            segmentIndex += 1;
-          }
-          segmentIndex -= 1;
-          pushBlock(`read-${firstReadIndex}`, renderReadPageToolCard(readItems));
-          continue;
-        }
-
-        const currentToolIndex = toolSegmentIndex;
-        toolSegmentIndex += 1;
-
-        if (isWriteToolSegment(segment)) {
-          pushBlock(
-            `write-${currentToolIndex}`,
-            renderWriteToolCard(segment, currentToolIndex, { expanded: expandedWrites.has(currentToolIndex) })
-          );
-          continue;
-        }
-
-        if (isEditToolSegment(segment)) {
-          pushBlock(
-            `edit-${currentToolIndex}`,
-            renderEditToolCard(segment, currentToolIndex, { expanded: expandedEdits.has(currentToolIndex) })
-          );
-          continue;
-        }
-
-        if (isSandboxToolSegment(segment)) {
-          pushBlock(`sandbox-${currentToolIndex}`, renderSandboxToolBlock(segment, currentToolIndex));
-          continue;
-        }
-
-        const label = escHtml(segment.toolName || segment.alias || segment.toolId || 'Tool');
-        const badge = escHtml(segment.serverName || segment.serverId || 'server');
-        const hasResult = segment.result !== null && segment.result !== undefined;
-        const statusDot = hasResult
-          ? '<span class="msg-tool-call-dot msg-tool-call-dot--done"></span>'
-          : '<span class="msg-tool-call-dot msg-tool-call-dot--pending"></span>';
-
-        pushBlock(
-          `tool-${currentToolIndex}`,
-          `
-          <div class="msg-tool-call-card" data-tool-segment-index="${currentToolIndex}">
-            <div class="msg-tool-call-main">
-              ${statusDot}
-              <div class="msg-tool-call-name">${label}</div>
-            </div>
-            <div class="msg-tool-call-badge">${badge}</div>
-          </div>
-        `
-        );
+      if (lastToolSegmentIndex !== -1 && segmentIndex < lastToolSegmentIndex) {
         continue;
       }
 
@@ -1666,12 +1810,30 @@ export function createMessagesUi(context, dependencies) {
 
     $bubble.empty();
     applyActivityBlocks($stream, blocks);
-    $stream.show();
+    $stream.css('display', 'flex');
     setExpandedThoughtIndices($msgRow, expandedThoughts);
     setExpandedSearchIndices($msgRow, expandedSearches);
     setExpandedWriteIndices($msgRow, expandedWrites);
     setExpandedEditIndices($msgRow, expandedEdits);
     $msgRow.data('toolSegments', toolSegments);
+
+    if (shouldSyncOpenDrawer) {
+      const $nextActiveWrapper = $msgRow
+        .find('.msg-thoughts-wrapper, .msg-reasoning-wrapper')
+        .filter(function matchActiveReasoningWrapper() {
+          return String($(this).attr('data-thought-index') || '') === activeReasoningIndex;
+        })
+        .first();
+
+      if ($nextActiveWrapper.length) {
+        $activeReasoningWrapper = $nextActiveWrapper;
+        $nextActiveWrapper.addClass('is-active');
+        $nextActiveWrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'true');
+        syncReasoningDrawerFromWrapper($nextActiveWrapper);
+      } else {
+        closeReasoningDrawer();
+      }
+    }
   }
 
   function searchSegmentCount(segments) {
@@ -1688,6 +1850,70 @@ export function createMessagesUi(context, dependencies) {
 
     $msgRow.removeData('searchBatchHoldState');
     $msgRow.removeData('searchBatchHoldRaw');
+  }
+
+  function clearPreToolTextHold($msgRow) {
+    const holdState = $msgRow.data('preToolTextHoldState');
+    if (holdState && holdState.timer) {
+      window.clearTimeout(holdState.timer);
+    }
+
+    $msgRow.removeData('preToolTextHoldState');
+    $msgRow.removeData('preToolTextHoldRaw');
+  }
+
+  function shouldHoldPreToolText($msgRow, parsed, rawText) {
+    const segments = Array.isArray(parsed && parsed.segments) ? parsed.segments : [];
+    if (!segments.length || segments.some(function hasTool(segment) { return segment && segment.type === 'tool'; })) {
+      clearPreToolTextHold($msgRow);
+      return false;
+    }
+
+    const hasRenderableText = segments.some(function hasTextLikeSegment(segment) {
+      return segment
+        && (segment.type === 'text' || segment.type === 'thought')
+        && String(segment.content || '').trim();
+    });
+    if (!hasRenderableText) {
+      clearPreToolTextHold($msgRow);
+      return false;
+    }
+
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const holdState = $msgRow.data('preToolTextHoldState') || {};
+    if (!holdState.startedAt) {
+      holdState.startedAt = now;
+    }
+    if (holdState.released) {
+      return false;
+    }
+
+    const remaining = PRE_TOOL_TEXT_HOLD_MS - (now - holdState.startedAt);
+    $msgRow.data('preToolTextHoldRaw', rawText);
+
+    if (remaining <= 0) {
+      holdState.released = true;
+      if (holdState.timer) {
+        window.clearTimeout(holdState.timer);
+        holdState.timer = null;
+      }
+      $msgRow.data('preToolTextHoldState', holdState);
+      return false;
+    }
+
+    if (holdState.timer) {
+      window.clearTimeout(holdState.timer);
+    }
+    holdState.timer = window.setTimeout(function renderHeldPreToolText() {
+      const latestRaw = $msgRow.data('preToolTextHoldRaw');
+      const latestState = $msgRow.data('preToolTextHoldState') || {};
+      latestState.timer = null;
+      latestState.released = true;
+      $msgRow.data('preToolTextHoldState', latestState);
+      renderMessageStream($msgRow, latestRaw || rawText);
+    }, Math.max(0, remaining + 16));
+    $msgRow.data('preToolTextHoldState', holdState);
+    return true;
   }
 
   function shouldHoldStreamingSearchBatch($msgRow, parsed, rawText) {
@@ -1737,20 +1963,45 @@ export function createMessagesUi(context, dependencies) {
   // Parse and render one assistant transcript string.
   function renderMessageHtml($msgRow, rawText) {
     clearSearchBatchHold($msgRow);
+    clearPreToolTextHold($msgRow);
     const parsed = parseMessageTimeline(rawText);
+    if (hasThoughtSegments(parsed.segments) && !$msgRow.data('reasoningElapsedSeconds')) {
+      const startedAt = Number($msgRow.data('responseStartedAt'));
+      if (Number.isFinite(startedAt) && startedAt > 0) {
+        $msgRow.data('reasoningElapsedSeconds', Math.max(1, (Date.now() - startedAt) / 1000));
+      }
+    }
     renderActivityTimeline($msgRow, parsed.segments);
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
 
   // Parse and render one assistant transcript during active streaming.
   function renderMessageStream($msgRow, rawText) {
+    if (hasOpenToolPayload(rawText)) {
+      $msgRow.find('.msg-bubble').attr('data-raw', rawText);
+      return;
+    }
+
     const parsed = parseMessageTimeline(rawText);
+    if (hasThoughtSegments(parsed.segments) && !$msgRow.data('responseStartedAt')) {
+      $msgRow.data('responseStartedAt', Date.now());
+    }
+    if (hasThoughtSegments(parsed.segments) && !$msgRow.data('reasoningElapsedSeconds') && hasClosedReasoning(rawText)) {
+      const startedAt = Number($msgRow.data('responseStartedAt'));
+      if (Number.isFinite(startedAt) && startedAt > 0) {
+        $msgRow.data('reasoningElapsedSeconds', Math.max(1, (Date.now() - startedAt) / 1000));
+      }
+    }
+    if (shouldHoldPreToolText($msgRow, parsed, rawText)) {
+      $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
+      return;
+    }
     if (shouldHoldStreamingSearchBatch($msgRow, parsed, rawText)) {
       $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
       return;
     }
 
-    renderActivityTimeline($msgRow, parsed.segments, { markdown: false });
+    renderActivityTimeline($msgRow, parsed.segments);
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
 
@@ -1815,7 +2066,7 @@ export function createMessagesUi(context, dependencies) {
       setExpandedWriteIndices($row, expandedWrites);
     }
 
-    const toolSegments = $row.data('toolSegments') || [];
+    const toolSegments = $row.data('toolSegments') || $('#reasoningDrawerBody').data('toolSegments') || [];
     const segment = toolSegments[cardIndex];
     if (!segment) {
       $card.toggleClass('is-expanded', willExpand).attr('aria-expanded', willExpand ? 'true' : 'false');
@@ -1841,7 +2092,7 @@ export function createMessagesUi(context, dependencies) {
       setExpandedEditIndices($row, expandedEdits);
     }
 
-    const toolSegments = $row.data('toolSegments') || [];
+    const toolSegments = $row.data('toolSegments') || $('#reasoningDrawerBody').data('toolSegments') || [];
     const segment = toolSegments[cardIndex];
     if (!segment) {
       $card.toggleClass('is-expanded', willExpand).attr('aria-expanded', willExpand ? 'true' : 'false');
@@ -2074,6 +2325,7 @@ export function createMessagesUi(context, dependencies) {
   // Append a temporary assistant typing row.
   function appendTyping(timestamp) {
     const timeStr = timeNow(timestamp);
+    const startedAt = timestamp ? new Date(timestamp).getTime() : Date.now();
     const $row = $(`
       <div class="msg assistant">
         <div class="msg-avatar">A</div>
@@ -2094,6 +2346,7 @@ export function createMessagesUi(context, dependencies) {
       </div>
     `);
 
+    $row.data('responseStartedAt', Number.isFinite(startedAt) ? startedAt : Date.now());
     dom.$messagesInner.append($row);
     return $row;
   }
@@ -2146,29 +2399,156 @@ export function createMessagesUi(context, dependencies) {
   }
 
 
-  // Thought UI.
-  // Toggle one collapsible thought block.
-  function toggleThoughtSection($toggle) {
-    const $wrapper = $toggle.closest('.msg-thoughts-wrapper');
-    const $row = $toggle.closest('.msg');
-    const $content = $wrapper.find('.msg-thoughts-content');
-    const thoughtIndex = parseInt($wrapper.attr('data-thought-index') || '-1', 10);
-    const expandedThoughts = getExpandedThoughtIndices($row);
-    const willExpand = !$wrapper.hasClass('expanded');
+  // Reasoning drawer state.
+  let $activeReasoningWrapper = null;
+  const REASONING_DRAWER_DEFAULT_WIDTH = 340;
+  const REASONING_DRAWER_MIN_WIDTH = 300;
+  const REASONING_DRAWER_MAX_WIDTH = 720;
+  const REASONING_DRAWER_CLOSE_WIDTH = 220;
 
-    if (Number.isInteger(thoughtIndex) && thoughtIndex >= 0) {
-      if (willExpand) {
-        expandedThoughts.add(thoughtIndex);
-      } else {
-        expandedThoughts.delete(thoughtIndex);
-      }
+  function reasoningDrawerMaxWidth() {
+    return Math.max(
+      REASONING_DRAWER_MIN_WIDTH,
+      Math.min(REASONING_DRAWER_MAX_WIDTH, Math.floor(window.innerWidth * 0.82))
+    );
+  }
 
-      setExpandedThoughtIndices($row, expandedThoughts);
+  function setReasoningDrawerWidth(width) {
+    const clamped = Math.max(
+      REASONING_DRAWER_MIN_WIDTH,
+      Math.min(reasoningDrawerMaxWidth(), Math.round(Number(width) || REASONING_DRAWER_DEFAULT_WIDTH))
+    );
+    $('#reasoningDrawer').css('--reasoning-drawer-width', `${clamped}px`);
+  }
+
+  function resetReasoningDrawerWidth() {
+    setReasoningDrawerWidth(REASONING_DRAWER_DEFAULT_WIDTH);
+  }
+
+  function syncReasoningDrawerFromWrapper($wrapper) {
+    const $drawer = $('#reasoningDrawer');
+    const $body = $('#reasoningDrawerBody');
+    const $summary = $('#reasoningDrawerSummary');
+
+    if (!$drawer.hasClass('is-open') || !$body.length) {
+      return;
     }
 
-    $wrapper.toggleClass('expanded', willExpand);
-    $toggle.attr('aria-expanded', willExpand ? 'true' : 'false');
-    $content.stop(true, true)[willExpand ? 'slideDown' : 'slideUp'](160);
+    const $content = $wrapper.find('.msg-thoughts-content, .msg-reasoning-content').first();
+    const summaryText = $wrapper.find('.msg-reasoning-summary').text().trim();
+    const bodyEl = $body[0];
+    const isNearBottom = bodyEl ? bodyEl.scrollHeight - bodyEl.clientHeight <= bodyEl.scrollTop + 50 : false;
+    $summary.text(summaryText);
+    $body.html(`<div class="msg-reasoning-content">${$content.html() || ''}</div>`);
+    $body.data('toolSegments', $wrapper.closest('.msg').data('toolSegments') || []);
+    if (isNearBottom && bodyEl) {
+      bodyEl.scrollTop = bodyEl.scrollHeight;
+    }
+  }
+
+  function openReasoningDrawer($wrapper) {
+    const $drawer = $('#reasoningDrawer');
+    const $backdrop = $('#reasoningDrawerBackdrop');
+
+    if (!$drawer.length) {
+      return;
+    }
+
+    resetReasoningDrawerWidth();
+
+    // Deactivate previously active pill.
+    if ($activeReasoningWrapper && $activeReasoningWrapper[0] !== $wrapper[0]) {
+      $activeReasoningWrapper.removeClass('is-active');
+      $activeReasoningWrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'false');
+    }
+
+    // If clicking the same pill while open, close the drawer.
+    if ($activeReasoningWrapper && $activeReasoningWrapper[0] === $wrapper[0] && $drawer.hasClass('is-open')) {
+      closeReasoningDrawer();
+      return;
+    }
+
+    $activeReasoningWrapper = $wrapper;
+    $wrapper.addClass('is-active');
+    $wrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'true');
+
+    $drawer.addClass('is-open');
+    $backdrop.addClass('is-visible');
+    syncReasoningDrawerFromWrapper($wrapper);
+  }
+
+  function closeReasoningDrawer() {
+    const $drawer = $('#reasoningDrawer');
+    const $backdrop = $('#reasoningDrawerBackdrop');
+
+    $drawer.removeClass('is-open is-resizing');
+    $backdrop.removeClass('is-visible');
+    $('body').removeClass('is-resizing-reasoning-drawer');
+
+    if ($activeReasoningWrapper) {
+      $activeReasoningWrapper.removeClass('is-active');
+      $activeReasoningWrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'false');
+      $activeReasoningWrapper = null;
+    }
+
+    // Clear body after transition.
+    setTimeout(function clearDrawerBody() {
+      if (!$drawer.hasClass('is-open')) {
+        $('#reasoningDrawerBody').empty();
+      }
+    }, 250);
+  }
+
+  function bindReasoningDrawerResize() {
+    const $handle = $('#reasoningDrawerResizeHandle');
+    if (!$handle.length) {
+      return;
+    }
+
+    $handle.on('pointerdown', function onReasoningResizeStart(event) {
+      const $drawer = $('#reasoningDrawer');
+      if (!$drawer.hasClass('is-open')) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      let shouldClose = false;
+      $drawer.addClass('is-resizing');
+      $('body').addClass('is-resizing-reasoning-drawer');
+
+      function widthFromPointer(pointerEvent) {
+        return window.innerWidth - pointerEvent.clientX;
+      }
+
+      function onMove(moveEvent) {
+        const nextWidth = widthFromPointer(moveEvent);
+        shouldClose = nextWidth <= REASONING_DRAWER_CLOSE_WIDTH;
+        if (!shouldClose) {
+          setReasoningDrawerWidth(nextWidth);
+        }
+      }
+
+      function onEnd() {
+        $(document).off('.reasoningDrawerResize');
+        $drawer.removeClass('is-resizing');
+        $('body').removeClass('is-resizing-reasoning-drawer');
+        if (shouldClose) {
+          closeReasoningDrawer();
+        }
+      }
+
+      $(document)
+        .on('pointermove.reasoningDrawerResize', onMove)
+        .on('pointerup.reasoningDrawerResize pointercancel.reasoningDrawerResize', onEnd);
+    });
+  }
+
+  // Thought UI.
+  function toggleThoughtSection($toggle) {
+    const $wrapper = $toggle.closest('.msg-thoughts-wrapper, .msg-reasoning-wrapper');
+    openReasoningDrawer($wrapper);
   }
 
 
@@ -2188,6 +2568,8 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  bindReasoningDrawerResize();
+
   return {
     appendMessage,
     appendMessages,
@@ -2204,6 +2586,7 @@ export function createMessagesUi(context, dependencies) {
     toggleWriteCard,
     startWritePreviewPan,
     toggleThoughtSection,
+    closeReasoningDrawer,
     updateRegenButtons,
     updateSendButtons
   };

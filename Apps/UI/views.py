@@ -51,6 +51,11 @@ from Settings import settings
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SYSTEM_PROMPT_PATH = settings.BASE_DIR / "SYSTEM_PROMPT.md"
+_default_system_prompt_lock = threading.RLock()
+_default_system_prompt_mtime_ns: int | None = None
+_default_system_prompt_cache = ""
+
 THINK_PARAM_NAMES = {"think", "thinking", "reasoning"}
 THINK_LEVEL_PARAM_NAMES = {"think_level", "thinking_level", "reasoning_effort"}
 TOOL_CAPABILITY_NAMES = {"tools", "tool", "tool-calling", "tool_calling"}
@@ -82,6 +87,45 @@ TEXT_ATTACHMENT_EXTENSIONS = {
     ".tfvars", ".toml", ".ts", ".tsv", ".tsx", ".twig", ".txt", ".vb", ".vbs", ".vue",
     ".vtt", ".xhtml", ".xml", ".xsd", ".xsl", ".yaml", ".yml", ".zsh",
 }
+
+
+# Read the project-level system prompt file.
+def _read_default_system_prompt() -> str:
+    """Return the root SYSTEM_PROMPT.md content, reloading it when changed."""
+
+    global _default_system_prompt_cache, _default_system_prompt_mtime_ns
+
+    try:
+        mtime_ns = DEFAULT_SYSTEM_PROMPT_PATH.stat().st_mtime_ns
+    except OSError:
+        mtime_ns = None
+
+    with _default_system_prompt_lock:
+        if mtime_ns == _default_system_prompt_mtime_ns:
+            return _default_system_prompt_cache
+
+        prompt = ""
+        if mtime_ns is not None:
+            try:
+                prompt = DEFAULT_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+            except OSError:
+                logger.exception("Failed to read default system prompt from %s", DEFAULT_SYSTEM_PROMPT_PATH)
+                prompt = ""
+
+        _default_system_prompt_mtime_ns = mtime_ns
+        _default_system_prompt_cache = prompt
+        return prompt
+
+
+# Merge the project prompt with per-request user instructions.
+def _compose_system_prompt(user_system_prompt: str) -> str:
+    """Build the system prompt sent to the model for one request."""
+
+    default_prompt = _read_default_system_prompt()
+    user_prompt = str(user_system_prompt or "").strip()
+    if default_prompt and user_prompt:
+        return f"{default_prompt}\n\nAdditional user system instructions:\n{user_prompt}"
+    return default_prompt or user_prompt
 TEXT_ATTACHMENT_FILENAMES = {
     ".bash_profile",
     ".bashrc",
@@ -2019,7 +2063,7 @@ def chat_api(request):
         # Read request payload and validate required inputs.
         user_message = data.get("message", "")
         model_name = data.get("model", "")
-        system_prompt = data.get("system_prompt", "")
+        system_prompt = _compose_system_prompt(data.get("system_prompt", ""))
         options = data.get("options", {}) or {}
         chat_id = data.get("chat_id", "")
         attachments = _normalize_request_attachments(data)

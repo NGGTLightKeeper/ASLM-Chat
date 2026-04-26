@@ -107,9 +107,29 @@
     </main>
 
     {# Runtime settings sidebar. #}
+    {# Reasoning side drawer. #}
+    <div class="reasoning-drawer" id="reasoningDrawer" aria-label="Reasoning panel" role="dialog" aria-modal="false">
+        <div class="reasoning-drawer-resize-handle" id="reasoningDrawerResizeHandle" aria-hidden="true"></div>
+        <div class="reasoning-drawer-header">
+            <div class="reasoning-drawer-header-left">
+                <span class="reasoning-drawer-icon" aria-hidden="true"></span>
+                <span class="reasoning-drawer-title">Reasoning</span>
+                <span class="reasoning-drawer-summary" id="reasoningDrawerSummary"></span>
+            </div>
+            <button class="reasoning-drawer-close" id="reasoningDrawerClose" type="button" aria-label="Close reasoning panel">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/x.svg' %}#icon"></use></svg>
+            </button>
+        </div>
+        <div class="reasoning-drawer-body" id="reasoningDrawerBody"></div>
+    </div>
+    <div class="reasoning-drawer-backdrop" id="reasoningDrawerBackdrop"></div>
+
     <aside class="sidebar sidebar-right" id="sidebarRight">
         <div class="sidebar-header">
             <span class="logo-name">Model Settings</span>
+            <button class="sidebar-collapse-btn" id="sidebarRightToggle" type="button" title="Collapse settings" aria-label="Collapse settings" aria-expanded="true">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/arrow-left.svg' %}#icon"></use></svg>
+            </button>
         </div>
 
         <div class="settings-panel">
@@ -294,5 +314,5 @@
 {{ runtime_settings|json_script:"runtimeSettingsData" }}
 {{ engine_options|json_script:"engineOptionsData" }}
 {{ available_tool_servers|json_script:"availableToolServersData" }}
-<script type="module" src="{% static 'js/main/main.js' %}?v=20260425e"></script>
+<script type="module" src="{% static 'js/main/main.js' %}"></script>
 {% endblock %}

@@ -12,6 +12,30 @@ export function bindEventHandlers(context, dependencies) {
     parametersUi
   } = dependencies;
   const { dom, state } = context;
+  const rightSidebarStorageKey = 'aslm.settingsSidebarCollapsed';
+  const $activityRoots = dom.$messagesInner.add($('#reasoningDrawerBody'));
+
+  function setRightSidebarCollapsed(collapsed, persist) {
+    dom.$chatShell.toggleClass('settings-collapsed', !!collapsed);
+    dom.$sidebarRightToggle
+      .attr('aria-expanded', collapsed ? 'false' : 'true')
+      .attr('aria-label', collapsed ? 'Expand settings' : 'Collapse settings')
+      .attr('title', collapsed ? 'Expand settings' : 'Collapse settings');
+
+    if (persist !== false) {
+      try {
+        window.localStorage.setItem(rightSidebarStorageKey, collapsed ? '1' : '0');
+      } catch (_error) {
+        // Ignore storage failures in privacy-restricted contexts.
+      }
+    }
+  }
+
+  try {
+    setRightSidebarCollapsed(window.localStorage.getItem(rightSidebarStorageKey) === '1', false);
+  } catch (_error) {
+    setRightSidebarCollapsed(false, false);
+  }
 
   // Chat shell events.
   dom.$newChatBtn.on('click', function onNewChatClick(event) {
@@ -40,29 +64,33 @@ export function bindEventHandlers(context, dependencies) {
     chatController.deleteMessage($(this).closest('.msg'));
   });
 
-  dom.$messagesInner.on('click', '.msg-search-chip', function onSearchChipClick(event) {
+  dom.$sidebarRightToggle.on('click', function onRightSidebarToggleClick() {
+    setRightSidebarCollapsed(!dom.$chatShell.hasClass('settings-collapsed'), true);
+  });
+
+  $activityRoots.on('click', '.msg-search-chip:not(.msg-search-chip--more)', function onSearchChipClick(event) {
     event.stopPropagation();
   });
 
-  dom.$messagesInner.on('click', '.msg-citation-chip', function onCitationChipClick(event) {
+  $activityRoots.on('click', '.msg-citation-chip', function onCitationChipClick(event) {
     event.stopPropagation();
   });
 
-  dom.$messagesInner.on('click', '.msg-search-chip--more', function onSearchMoreClick(event) {
+  $activityRoots.on('click', '.msg-search-chip--more', function onSearchMoreClick(event) {
     event.preventDefault();
     event.stopPropagation();
     messagesUi.toggleSearchSources($(this));
   });
 
-  dom.$messagesInner.on('click', '.msg-tool-call-card[data-tool-segment-index], .msg-search-card[data-tool-segment-index]', function onToolCardClick() {
+  $activityRoots.on('click', '.msg-tool-call-card[data-tool-segment-index], .msg-search-card[data-tool-segment-index]', function onToolCardClick() {
     messagesUi.openToolInspectorFromCard($(this));
   });
 
-  dom.$messagesInner.on('click', '.msg-write-card[data-write-segment-index]', function onWriteCardClick() {
+  $activityRoots.on('click', '.msg-write-card[data-write-segment-index]', function onWriteCardClick() {
     messagesUi.toggleWriteCard($(this));
   });
 
-  dom.$messagesInner.on('keydown', '.msg-write-card[data-write-segment-index]', function onWriteCardKeyDown(event) {
+  $activityRoots.on('keydown', '.msg-write-card[data-write-segment-index]', function onWriteCardKeyDown(event) {
     if (event.key !== 'Enter' && event.key !== ' ') {
       return;
     }
@@ -70,11 +98,11 @@ export function bindEventHandlers(context, dependencies) {
     messagesUi.toggleWriteCard($(this));
   });
 
-  dom.$messagesInner.on('click', '.msg-edit-card[data-edit-segment-index]', function onEditCardClick() {
+  $activityRoots.on('click', '.msg-edit-card[data-edit-segment-index]', function onEditCardClick() {
     messagesUi.toggleEditCard($(this));
   });
 
-  dom.$messagesInner.on('keydown', '.msg-edit-card[data-edit-segment-index]', function onEditCardKeyDown(event) {
+  $activityRoots.on('keydown', '.msg-edit-card[data-edit-segment-index]', function onEditCardKeyDown(event) {
     if (event.key !== 'Enter' && event.key !== ' ') {
       return;
     }
@@ -82,21 +110,36 @@ export function bindEventHandlers(context, dependencies) {
     messagesUi.toggleEditCard($(this));
   });
 
-  dom.$messagesInner.on('mousedown', '.msg-write-preview, .msg-edit-preview', function onToolPreviewMouseDown(event) {
+  $activityRoots.on('mousedown', '.msg-write-preview, .msg-edit-preview', function onToolPreviewMouseDown(event) {
     messagesUi.startWritePreviewPan(event, $(this));
   });
 
-  dom.$messagesInner.on('auxclick', '.msg-write-preview, .msg-edit-preview', function onToolPreviewAuxClick(event) {
+  $activityRoots.on('auxclick', '.msg-write-preview, .msg-edit-preview', function onToolPreviewAuxClick(event) {
     if (event.button === 1) {
       event.preventDefault();
       event.stopPropagation();
     }
   });
 
-  dom.$messagesInner.on('mousedown', '.msg-thoughts-toggle', function onThoughtToggleMouseDown(event) {
+  dom.$messagesInner.on('click', '.msg-thoughts-toggle', function onThoughtToggleClick(event) {
     event.preventDefault();
     event.stopPropagation();
     messagesUi.toggleThoughtSection($(this));
+  });
+
+  // Reasoning drawer: close button and backdrop.
+  $(document).on('click', '#reasoningDrawerClose', function onReasoningDrawerClose() {
+    messagesUi.closeReasoningDrawer();
+  });
+
+  $(document).on('click', '#reasoningDrawerBackdrop', function onReasoningDrawerBackdropClick() {
+    messagesUi.closeReasoningDrawer();
+  });
+
+  $(document).on('keydown', function onReasoningDrawerKeydown(event) {
+    if (event.key === 'Escape' && $('#reasoningDrawer').hasClass('is-open')) {
+      messagesUi.closeReasoningDrawer();
+    }
   });
 
 

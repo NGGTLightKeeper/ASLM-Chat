@@ -178,7 +178,7 @@ export function createChatController(context, dependencies) {
       let lastRenderedText = '';
       let streamRenderTimer = null;
       let streamRenderLastAt = 0;
-      const streamRenderIntervalMs = 80;
+      const streamRenderIntervalMs = 750;
       const signal = state.currentAbortController ? state.currentAbortController.signal : null;
 
       // Batch expensive timeline/markdown work while chunks are arriving.
