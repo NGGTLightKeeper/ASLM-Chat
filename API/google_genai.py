@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper. All Rights Reserved.
+﻿# Copyright NGGT.LightKeeper. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -1652,6 +1652,16 @@ def _apply_learned_request_preferences(model_name: str, config: dict[str, Any]) 
     return dict(config or {})
 
 
+def _strip_tools_from_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Return a request config clone with function tools disabled."""
+
+    normalized_config = dict(config or {})
+    normalized_config.pop("tools", None)
+    normalized_config.pop("automatic_function_calling", None)
+    normalized_config.pop("tool_config", None)
+    return normalized_config
+
+
 # Serialize one tool invocation so the UI can render it during streaming.
 def _build_tool_event(tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]) -> dict[str, Any]:
     """Serialize one tool invocation so the UI can render it during streaming."""
@@ -2106,6 +2116,10 @@ def _run_tool_loop(
         )
         return
 
+    tool_quota_counters: dict[str, int] = {}
+    seen_tool_signatures: set[str] = set()
+    consecutive_blocked_tool_results = 0
+
     for round_index in range(MAX_TOOL_ROUNDS):
         # Re-apply learned preferences each round because earlier failures may
         # have updated the runtime capability cache.
@@ -2159,13 +2173,46 @@ def _run_tool_loop(
                     "tool_round_index": round_index + 1,
                 }
             )
-
-            tool_result = tool_registry.call_ollama_tool(
-                tool_lookup,
-                tool_call["name"],
-                tool_call.get("arguments") or {},
+            tool_registry.log_search_tool_io(
+                "request",
+                tool_event,
+                arguments=tool_call.get("arguments") or {},
                 context=call_context,
             )
+
+            tool_cooldown_error = tool_registry.consume_tool_cooldown(
+                tool_event,
+                tool_call.get("arguments") or {},
+            )
+            if tool_cooldown_error is not None:
+                tool_result = tool_cooldown_error
+            else:
+                duplicate_error = tool_registry.consume_duplicate_tool_call(
+                    tool_event,
+                    tool_call.get("arguments") or {},
+                    seen_tool_signatures,
+                )
+                if duplicate_error is not None:
+                    tool_result = duplicate_error
+                else:
+                    quota_error = tool_registry.consume_tool_quota(tool_event, tool_quota_counters)
+                    if quota_error is not None:
+                        tool_result = quota_error
+                    else:
+                        tool_result = tool_registry.call_ollama_tool(
+                            tool_lookup,
+                            tool_call["name"],
+                            tool_call.get("arguments") or {},
+                            context=call_context,
+                        )
+                        tool_registry.remember_tool_cooldown(
+                            tool_event,
+                            tool_call.get("arguments") or {},
+                        )
+            if tool_registry.is_blocking_tool_result(tool_result):
+                consecutive_blocked_tool_results += 1
+            else:
+                consecutive_blocked_tool_results = 0
 
             if isinstance(tool_result, dict) and "_image_b64" in tool_result:
                 tool_result = f"[Image: {tool_result.get('_path', 'image')}]"
@@ -2186,10 +2233,31 @@ def _run_tool_loop(
                     }
                 }
             )
+            tool_registry.log_search_tool_io(
+                "response",
+                tool_event,
+                arguments=tool_call.get("arguments") or {},
+                context=call_context,
+                result=tool_response_parts[-1],
+            )
             yield {"tool_result": dict(tool_message)}
 
         if tool_response_parts:
             conversation.append({"role": "user", "parts": tool_response_parts})
+
+        if consecutive_blocked_tool_results >= 2:
+            conversation.append(
+                {
+                    "role": "user",
+                    "parts": [{"text": tool_registry.forced_final_prompt_after_tool_blocks()}],
+                }
+            )
+            final_config = _strip_tools_from_config(request_config)
+            assistant_message = yield from _yield_stream_round(
+                _stream_google_round(client, model_name, conversation, final_config, stream=stream)
+            )
+            yield {"transcript_message": assistant_message}
+            return
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
 
@@ -2431,3 +2499,4 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
             yield {"transcript_message": assistant_message}
     finally:
         _close_client(client)
+

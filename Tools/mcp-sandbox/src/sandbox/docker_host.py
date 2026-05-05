@@ -35,9 +35,11 @@ from sandbox.config import (
     MAX_CAT_FILE_BYTES,
     MAX_CAT_LINE_THRESHOLD,
     MAX_FIND_RESULTS,
+    MAX_FILE_MAP_SYMBOLS,
     MAX_GREP_RESULTS,
     MAX_LS_ENTRIES,
-    MAX_OUTPUT_CHARS,
+    MAX_OUTPUT_BYTES,
+    OUTPUT_HEAD_RATIO,
     MAX_READ_BYTES,
     MEMORY_LIMIT,
     MEMORY_SWAP_LIMIT,
@@ -56,6 +58,7 @@ from sandbox.config import (
     WINDOWS_DOCKER_DESKTOP_PATHS,
 )
 from sandbox.exec import (
+    BoundedOutputCollector,
     _background_error_result,
     _new_background_job_id,
     _read_stream_chunks,
@@ -73,6 +76,14 @@ logger = logging.getLogger(__name__)
 REQUIRED_IMAGE_LABEL = "org.aslm.sandbox.supervisor-runtime"
 REQUIRED_IMAGE_LABEL_VALUE = "container-v2"
 SUPERVISOR_PONG = "sandbox-supervisor-pong-v2"
+LEGACY_UPLOAD_MODEL_ROOT = "/mnt/data/User"
+UPLOAD_MODEL_ROOT = f"{MODEL_WORKSPACE_CONTAINER.rstrip('/')}/User"
+
+
+def _rewrite_legacy_upload_paths(command: str) -> str:
+    """Keep old model-facing upload paths usable in plain bash commands."""
+
+    return str(command or "").replace(LEGACY_UPLOAD_MODEL_ROOT, UPLOAD_MODEL_ROOT)
 
 
 # ── Subprocess helpers ───────────────────────────────────────────────
@@ -90,6 +101,7 @@ def _run_command(
         capture_output=True,
         text=True,
         encoding="utf-8",
+        errors="replace",
         timeout=timeout,
         check=check,
     )
@@ -111,6 +123,13 @@ def _docker_info(timeout: int = 5):
     return _run_command(["docker", "info", "--format", "{{json .}}"], timeout=timeout)
 
 
+def _auto_start_docker_enabled() -> bool:
+    """Return whether host tools may launch Docker Desktop automatically."""
+
+    value = os.environ.get("SANDBOX_AUTO_START_DOCKER", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _ensure_docker_running() -> tuple[bool, str]:
     """Ensure the Docker daemon is available."""
     if not _docker_cli_available():
@@ -125,6 +144,13 @@ def _ensure_docker_running() -> tuple[bool, str]:
 
     if os.name != "nt":
         return False, "Docker daemon is not running. Start Docker and try again."
+
+    if not _auto_start_docker_enabled():
+        return (
+            False,
+            "Docker daemon is not running. Start Docker Desktop manually to use sandbox tools, "
+            "or set SANDBOX_AUTO_START_DOCKER=1 to allow automatic launch.",
+        )
 
     launched = False
     for path in WINDOWS_DOCKER_DESKTOP_PATHS:
@@ -247,7 +273,8 @@ _CONFIG_TEMPLATE = """\
 
 # === Execution limits (inside container) ===
 #SANDBOX_DEFAULT_TIMEOUT=60
-#SANDBOX_MAX_OUTPUT_CHARS=40000
+#SANDBOX_MAX_OUTPUT_BYTES=60000
+#SANDBOX_OUTPUT_HEAD_RATIO=0.5
 #SANDBOX_MAX_READ_BYTES=200000
 #SANDBOX_MAX_CAT_FILE_BYTES=30720
 #SANDBOX_MAX_CAT_LINE_THRESHOLD=300
@@ -263,11 +290,7 @@ _CONFIG_TEMPLATE = """\
 # === Workspace ===
 #SANDBOX_DEFAULT_TASK_DIR=_sandbox
 
-# === Presentation tuning ===
-#SANDBOX_FILE_MAP_MIN_LINES=200
-#SANDBOX_GREP_CLUSTER_THRESHOLD=30
 #SANDBOX_MAX_FILE_MAP_SYMBOLS=50
-#SANDBOX_LOOP_BREAK_THRESHOLD=3
 
 # === Docker startup ===
 #SANDBOX_DOCKER_START_TIMEOUT_SECONDS=60
@@ -332,13 +355,15 @@ def _build_run_command(
         # so that host-only vars (image name, container name, Windows paths, etc.)
         # never leak into the container environment.
         "-e", f"SANDBOX_DEFAULT_TIMEOUT={DEFAULT_TIMEOUT}",
-        "-e", f"SANDBOX_MAX_OUTPUT_CHARS={MAX_OUTPUT_CHARS}",
+        "-e", f"SANDBOX_MAX_OUTPUT_BYTES={MAX_OUTPUT_BYTES}",
+        "-e", f"SANDBOX_OUTPUT_HEAD_RATIO={OUTPUT_HEAD_RATIO}",
         "-e", f"SANDBOX_MAX_READ_BYTES={MAX_READ_BYTES}",
         "-e", f"SANDBOX_MAX_CAT_FILE_BYTES={MAX_CAT_FILE_BYTES}",
         "-e", f"SANDBOX_MAX_CAT_LINE_THRESHOLD={MAX_CAT_LINE_THRESHOLD}",
         "-e", f"SANDBOX_MAX_LS_ENTRIES={MAX_LS_ENTRIES}",
         "-e", f"SANDBOX_MAX_FIND_RESULTS={MAX_FIND_RESULTS}",
         "-e", f"SANDBOX_MAX_GREP_RESULTS={MAX_GREP_RESULTS}",
+        "-e", f"SANDBOX_MAX_FILE_MAP_SYMBOLS={MAX_FILE_MAP_SYMBOLS}",
         "-e", f"SANDBOX_BACKGROUND_TIMEOUT_THRESHOLD={BACKGROUND_TIMEOUT_THRESHOLD}",
         "-e", f"SANDBOX_NETWORK_LIMIT_MBIT={NETWORK_LIMIT_MBIT}",
         # Thread limits — propagated to ML libraries too.
@@ -597,15 +622,169 @@ def snapshot_image_name(name: str) -> str:
     return f"{SNAPSHOT_IMAGE_PREFIX}:{safe_name}"
 
 
-def snapshot_container(name: str = "stable") -> dict:
+def _snapshot_check_result(
+    name: str,
+    ok: bool,
+    *,
+    message: str = "",
+    details: dict | None = None,
+) -> dict:
+    return {
+        "name": name,
+        "ok": ok,
+        "message": message,
+        "details": details or {},
+    }
+
+
+def _run_snapshot_preflight() -> dict:
+    """Run safety/stability checks before mutating Docker snapshot state."""
+    checks: list[dict] = []
+
+    def add(name: str, ok: bool, message: str = "", details: dict | None = None) -> None:
+        checks.append(_snapshot_check_result(name, ok, message=message, details=details))
+
+    health_ok, health_message = healthcheck_container_supervisor(timeout_s=5)
+    add("supervisor_healthcheck", health_ok, health_message)
+
+    if not health_ok:
+        return {"ok": False, "checks": checks}
+
+    workspace_jobs = _docker_exec_shell(
+        "test ! -e /workspace/_sandbox/.sandbox_jobs",
+        timeout=10,
+    )
+    add(
+        "job_state_outside_workspace",
+        workspace_jobs.returncode == 0,
+        (
+            "No model-writable .sandbox_jobs under workspace."
+            if workspace_jobs.returncode == 0
+            else "Workspace contains .sandbox_jobs; refusing to snapshot runtime state."
+        ),
+    )
+
+    job_root_probe = _docker_exec_shell(
+        (
+            f"{shlex.quote(SUPERVISOR_VENV)}/bin/python - <<'PY'\n"
+            "import os, sys\n"
+            "os.environ.setdefault('SANDBOX_IN_CONTAINER', '1')\n"
+            f"os.environ.setdefault('SANDBOX_SUPERVISOR_SRC', {SUPERVISOR_SRC!r})\n"
+            f"sys.path.insert(0, {SUPERVISOR_SRC!r})\n"
+            "from sandbox.exec import job_root\n"
+            "root = job_root()\n"
+            "print(root)\n"
+            "raise SystemExit(0 if str(root).startswith('/tmp/') and not root.is_symlink() else 1)\n"
+            "PY"
+        ),
+        timeout=15,
+    )
+    add(
+        "job_root_private",
+        job_root_probe.returncode == 0,
+        job_root_probe.stdout.strip() or job_root_probe.stderr.strip(),
+    )
+
+    cap_probe = _exec_bash_docker(
+        "python3 - <<'PY'\nprint('A' * 120000)\nPY",
+        timeout_s=15,
+        background="never",
+    )
+    cap_stdout = str(cap_probe.get("stdout") or "")
+    add(
+        "stdout_cap_head_tail",
+        bool(cap_probe.get("truncated")) and "[output truncated:" in cap_stdout,
+        "Large stdout is bounded and marked.",
+        {
+            "exit_code": cap_probe.get("exit_code"),
+            "stdout_bytes": len(cap_stdout.encode("utf-8", errors="replace")),
+            "truncated": cap_probe.get("truncated"),
+        },
+    )
+
+    invalid_utf8_probe = _exec_bash_docker(
+        "python3 - <<'PY'\nimport sys\nsys.stdout.buffer.write(bytes([0xff, 0xfe, 0xfd]) + b' ok\\n')\nPY",
+        timeout_s=15,
+        background="never",
+    )
+    add(
+        "invalid_utf8_replace",
+        invalid_utf8_probe.get("exit_code") == 0 and "ok" in str(invalid_utf8_probe.get("stdout") or ""),
+        "Invalid UTF-8 does not crash output readers.",
+        {"exit_code": invalid_utf8_probe.get("exit_code")},
+    )
+
+    bg_probe = _exec_bash_docker(
+        "sleep 2; printf background-ok",
+        timeout_s=1,
+        background="always",
+    )
+    job_id = bg_probe.get("job_id")
+    bg_ok = bool(job_id) and bg_probe.get("error_type") == "backgrounded"
+    fg_ok = False
+    fg_details: dict = {"job_id": job_id}
+    if job_id:
+        time.sleep(2.3)
+        try:
+            fg_result = foreground_background_job(str(job_id))
+            fg_stdout = str(fg_result.get("new_stdout") or "")
+            fg_ok = fg_result.get("status") == "done" and "background-ok" in fg_stdout
+            fg_details.update(
+                {
+                    "status": fg_result.get("status"),
+                    "exit_code": fg_result.get("exit_code"),
+                    "stdout": fg_stdout,
+                }
+            )
+            JOB_REGISTRY.remove(str(job_id), cleanup=False)
+        except Exception as exc:
+            fg_details["error"] = str(exc)
+    add(
+        "background_job_lifecycle",
+        bg_ok and fg_ok,
+        "Background job can be tracked and foregrounded.",
+        fg_details,
+    )
+
+    ok = all(check["ok"] for check in checks)
+    return {"ok": ok, "checks": checks}
+
+
+def snapshot_container(name: str = "stable", *, preflight: bool = True) -> dict:
     container_ok, message = _ensure_container_running()
     if not container_ok:
         return {"ok": False, "error": message}
+    preflight_result: dict | None = None
+    if preflight:
+        preflight_result = _run_snapshot_preflight()
+        if not preflight_result.get("ok"):
+            failed = [
+                check["name"]
+                for check in preflight_result.get("checks", [])
+                if not check.get("ok")
+            ]
+            return {
+                "ok": False,
+                "error": (
+                    "Snapshot preflight failed; docker commit was not executed. "
+                    f"Failed checks: {', '.join(failed) or 'unknown'}."
+                ),
+                "preflight": preflight_result,
+            }
     image_name = snapshot_image_name(name)
     result = _run_command(["docker", "commit", CONTAINER_NAME, image_name], timeout=600)
     if result.returncode != 0:
-        return {"ok": False, "error": result.stderr.strip() or "Failed to snapshot container."}
-    return {"ok": True, "snapshot_image": image_name, "name": name}
+        return {
+            "ok": False,
+            "error": result.stderr.strip() or "Failed to snapshot container.",
+            "preflight": preflight_result,
+        }
+    return {
+        "ok": True,
+        "snapshot_image": image_name,
+        "name": name,
+        "preflight": preflight_result,
+    }
 
 
 def reset_container(preserve_workspace: bool = True) -> dict:
@@ -1034,6 +1213,43 @@ def _refresh_docker_job(job: BackgroundJob) -> BackgroundJob:
     return job
 
 
+def list_background_jobs() -> dict:
+    for job in JOB_REGISTRY.list_jobs():
+        if job.get("runtime") == "docker" and job.get("status") == "running":
+            try:
+                _refresh_docker_job(JOB_REGISTRY.get(job["job_id"]))
+            except Exception:
+                pass
+    return {"jobs": JOB_REGISTRY.list_jobs()}
+
+
+def foreground_background_job(job_id: str) -> dict:
+    job = _refresh_docker_job(JOB_REGISTRY.get(job_id))
+    stdout = _read_docker_job_file(job, "stdout", incremental=True)
+    stderr = _read_docker_job_file(job, "stderr", incremental=True)
+    stdout, trunc_out = _truncate(stdout)
+    stderr, trunc_err = _truncate(stderr)
+    return {
+        **job.to_result(),
+        "new_stdout": stdout,
+        "new_stderr": stderr,
+        "truncated": trunc_out or trunc_err,
+    }
+
+
+def kill_background_job(job_id: str) -> dict:
+    job = JOB_REGISTRY.get(job_id)
+    if job.runtime == "docker" and job.container_job_dir:
+        job_dir = shlex.quote(job.container_job_dir)
+        _docker_exec_shell(
+            f"kill $(cat {job_dir}/pid 2>/dev/null) >/dev/null 2>&1 || true; "
+            f"echo killed > {job_dir}/status",
+            timeout=10,
+        )
+    JOB_REGISTRY.mark_killed(job.job_id)
+    return job.to_result()
+
+
 def _exec_bash_docker_background(
     command: str,
     cwd: str,
@@ -1100,7 +1316,6 @@ def _exec_bash_docker_background(
                 "stdout": stdout,
                 "stderr": stderr,
                 "error": None if job.exit_code == 0 else f"Exit code: {job.exit_code}",
-                "job_id": job.job_id,
                 "elapsed_ms": int((time.time() - start_time) * 1000),
                 "truncated": trunc_out or trunc_err,
                 "cwd": normalize_model_relative_path(cwd),
@@ -1139,6 +1354,8 @@ def _exec_bash_docker(
 ) -> dict:
     """Execute a bash command inside the sandbox container via docker exec."""
     from sandbox.exec import should_use_background
+
+    command = _rewrite_legacy_upload_paths(command)
 
     if timeout_s <= 0:
         raise ValueError("timeout_s must be greater than 0.")
@@ -1198,6 +1415,7 @@ def _exec_bash_docker(
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
+            errors="replace",
         )
     except Exception as exc:
         return {
@@ -1210,8 +1428,8 @@ def _exec_bash_docker(
             "cwd": normalize_model_relative_path(cwd),
         }
 
-    stdout_chunks: list[str] = []
-    stderr_chunks: list[str] = []
+    stdout_chunks = BoundedOutputCollector()
+    stderr_chunks = BoundedOutputCollector()
     stdout_thread = threading.Thread(
         target=_read_stream_chunks,
         args=(process.stdout, stdout_chunks, on_stdout),
@@ -1252,22 +1470,24 @@ def _exec_bash_docker(
         process.kill()
         stdout_thread.join(timeout=2)
         stderr_thread.join(timeout=2)
+        stdout_value, trunc_out = stdout_chunks.value()
+        stderr_value, trunc_err = stderr_chunks.value()
         restart_container()
         return {
             "exit_code": None,
-            "stdout": "".join(stdout_chunks),
-            "stderr": "".join(stderr_chunks),
+            "stdout": stdout_value,
+            "stderr": stderr_value,
             "error": (
                 f"Execution timed out after {timeout_s} seconds. "
                 "Container restarted to free resources."
             ),
             "elapsed_ms": int((time.time() - start_time) * 1000),
-            "truncated": False,
+            "truncated": trunc_out or trunc_err,
             "cwd": normalize_model_relative_path(cwd),
         }
 
-    stdout_value, trunc_out = _truncate("".join(stdout_chunks))
-    stderr_value, trunc_err = _truncate("".join(stderr_chunks))
+    stdout_value, trunc_out = stdout_chunks.value()
+    stderr_value, trunc_err = stderr_chunks.value()
 
     if on_progress is not None:
         on_progress(100.0, f"Bash finished in {normalize_model_relative_path(cwd)}")

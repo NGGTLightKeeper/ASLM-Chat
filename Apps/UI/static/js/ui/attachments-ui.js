@@ -1,5 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
+import { getCsrfToken } from '../main/api.js';
 import { escHtml } from '../main/utils.js';
 
 // Attachment UI.
@@ -46,10 +47,8 @@ export function createAttachmentsUi(context) {
   // Attachment controls.
   // Toggle attachment buttons and badges from model capabilities.
   function updateAttachmentControls() {
-    const canAttach = state.visionState.supported || state.fileState.supported;
-
-    dom.$attachBtn.toggle(canAttach);
-    dom.$attachBtnConv.toggle(canAttach);
+    dom.$attachBtn.show();
+    dom.$attachBtnConv.show();
     dom.$visionBadge.toggle(state.visionState.supported);
     dom.$visionBadgeConv.toggle(state.visionState.supported);
   }
@@ -90,19 +89,25 @@ export function createAttachmentsUi(context) {
 
     const contentUrl = attachment.contentUrl || attachment.content_url || '';
     const dataUrl = attachment.dataUrl || attachment.data_url || contentUrl || '';
+    const previewDataUrl = attachment.previewDataUrl || attachment.preview_data_url || '';
     const mimeType = attachment.mimeType || attachment.mime_type || 'application/octet-stream';
     const base64 = attachment.base64 || attachment.data || dataUrlToBase64(dataUrl);
 
     return {
       id: attachment.id || null,
       kind: attachment.kind || 'file',
+      fileId: attachment.fileId || attachment.file_id || '',
       name: attachment.name || '',
       mimeType,
       size: attachment.size || attachment.size_bytes || 0,
       base64,
       dataUrl: dataUrl || (base64 ? `data:${mimeType};base64,${base64}` : ''),
+      previewDataUrl,
       contentUrl,
-      recordType: attachment.recordType || attachment.record_type || ''
+      recordType: attachment.recordType || attachment.record_type || '',
+      status: attachment.status || 'ready',
+      displayKind: attachment.displayKind || attachment.display_kind || '',
+      typeLabel: attachment.typeLabel || attachment.type_label || ''
     };
   }
 
@@ -142,6 +147,70 @@ export function createAttachmentsUi(context) {
 
 
   // Preview rendering.
+  function previewLabel(attachment) {
+    return attachment.typeLabel || attachment.mimeType || 'File';
+  }
+
+  function uploadIconLabel(attachment) {
+    const kind = String(attachment.displayKind || attachment.kind || '').toLowerCase();
+    if (kind === 'image') {
+      return 'IMG';
+    }
+    if (kind === 'archive') {
+      return 'ZIP';
+    }
+    if (kind === 'code') {
+      return '</>';
+    }
+    if (kind === 'table') {
+      return 'CSV';
+    }
+    if (kind === 'document') {
+      return 'DOC';
+    }
+    return 'FILE';
+  }
+
+  function isImageFile(file) {
+    const name = String(file && file.name ? file.name : '').toLowerCase();
+    const mimeType = String(file && file.type ? file.type : '').toLowerCase();
+    return mimeType.startsWith('image/')
+      || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(name);
+  }
+
+  function displayKindForFile(file) {
+    const name = String(file && file.name ? file.name : '').toLowerCase();
+    const mimeType = String(file && file.type ? file.type : '').toLowerCase();
+    if (isImageFile(file)) {
+      return ['image', 'Image'];
+    }
+    if (name.endsWith('.zip') || mimeType === 'application/zip' || mimeType === 'application/x-zip-compressed') {
+      return ['archive', 'ZIP archive'];
+    }
+    if (name.endsWith('.rar') || name.endsWith('.7z')) {
+      return ['archive', 'Archive'];
+    }
+    if (name.endsWith('.pdf') || mimeType === 'application/pdf') {
+      return ['document', 'PDF document'];
+    }
+    if (name.endsWith('.docx')) {
+      return ['document', 'Word document'];
+    }
+    if (name.endsWith('.xlsx')) {
+      return ['table', 'Excel spreadsheet'];
+    }
+    if (name.endsWith('.pptx')) {
+      return ['presentation', 'PowerPoint presentation'];
+    }
+    if (/\.(py|js|ts|css|html|sql|sh|ps1)$/i.test(name)) {
+      return ['code', 'Code file'];
+    }
+    if (/\.(txt|md|log|json|yaml|yml|xml|csv)$/i.test(name) || mimeType.startsWith('text/')) {
+      return name.endsWith('.csv') ? ['table', 'CSV table'] : ['text', 'Text file'];
+    }
+    return ['file', 'File'];
+  }
+
   // Rebuild both preview strips from the current pending attachments.
   function rebuildPreviewStrips() {
     const $strips = dom.$imagePreviewStrip.add(dom.$imagePreviewStripConv);
@@ -156,20 +225,24 @@ export function createAttachmentsUi(context) {
     state.attachmentState.pending.forEach(function renderAttachment(attachment, index) {
       let html = '';
 
-      if (attachment.kind === 'image') {
+      const imagePreviewSrc = attachment.dataUrl || attachment.previewDataUrl || '';
+      if ((attachment.kind === 'image' || attachment.displayKind === 'image') && imagePreviewSrc) {
         html = `
           <div class="img-preview-thumb" data-idx="${index}">
-            <img src="${attachment.dataUrl}" alt="Attached image">
+            <img src="${imagePreviewSrc}" alt="Attached image">
             <button class="img-preview-remove" aria-label="Remove attachment">
               ${icons.REMOVE_ATTACHMENT_ICON}
             </button>
           </div>
         `;
       } else {
+        const isUploading = attachment.status === 'uploading';
+        const isError = attachment.status === 'error';
         html = `
-          <div class="file-preview-chip" data-idx="${index}">
+          <div class="file-preview-chip${isUploading ? ' is-uploading' : ''}${isError ? ' is-error' : ''}" data-idx="${index}">
+            <div class="file-preview-icon" aria-hidden="true">${escHtml(uploadIconLabel(attachment))}</div>
             <div class="file-preview-name">${escHtml(attachment.name || 'File')}</div>
-            <div class="file-preview-meta">${escHtml(attachment.mimeType || 'application/octet-stream')}</div>
+            <div class="file-preview-meta">${escHtml(isUploading ? 'Uploading...' : (isError ? 'Upload failed' : previewLabel(attachment)))}</div>
             <button class="img-preview-remove" aria-label="Remove attachment">
               ${icons.REMOVE_ATTACHMENT_ICON}
             </button>
@@ -196,61 +269,130 @@ export function createAttachmentsUi(context) {
 
 
   // File input handling.
-  // Read selected files and queue them for the next request.
-  function handleFileInput(event) {
-    const maxAttachments = 20;
-    const files = Array.from(event.target.files || []);
+  function readFileAsDataUrl(file) {
+    return new Promise(function resolveFile(resolve, reject) {
+      const reader = new FileReader();
+      reader.onload = function onLoad(loadEvent) {
+        resolve(String(loadEvent.target.result || ''));
+      };
+      reader.onerror = function onError() {
+        reject(reader.error || new Error('Failed to read file'));
+      };
+      reader.readAsDataURL(file);
+    });
+  }
 
-    if (!files.length) {
+  async function uploadOneFile(file, pendingAttachment) {
+    const formData = new FormData();
+    formData.append('files', file, file.name || 'file');
+    formData.append('scope', state.currentChatId || 'pending');
+    formData.append('supports_vision', state.visionState.supported ? '1' : '0');
+
+    const response = await fetch('/api/uploads/', {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': getCsrfToken()
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error(`Upload failed: ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const uploadedFile = Array.isArray(payload.files) ? payload.files[0] : null;
+    if (!uploadedFile || uploadedFile.status === 'error') {
+      throw new Error((uploadedFile && uploadedFile.error) || 'Upload failed');
+    }
+
+    Object.assign(pendingAttachment, {
+      fileId: uploadedFile.file_id || '',
+      name: uploadedFile.name || pendingAttachment.name,
+      size: uploadedFile.size_bytes || pendingAttachment.size,
+      status: uploadedFile.status || 'ready',
+      displayKind: uploadedFile.display_kind || pendingAttachment.displayKind,
+      typeLabel: uploadedFile.type_label || pendingAttachment.typeLabel
+    });
+  }
+
+  // Upload selected files and queue them for the next request.
+  async function queueFiles(files) {
+    const maxAttachments = 20;
+    const selectedFiles = Array.from(files || []);
+
+    if (!selectedFiles.length) {
       return;
     }
 
-    files.forEach(function queueFile(file) {
-      const isImage = file.type.startsWith('image/');
-
-      if (isImage && !state.visionState.supported) {
-        return;
-      }
-
-      if (!isImage && !state.fileState.supported) {
-        return;
-      }
+    selectedFiles.forEach(function queueFile(file) {
+      const isImage = isImageFile(file);
+      const [displayKind, typeLabel] = displayKindForFile(file);
 
       if (state.attachmentState.pending.length >= maxAttachments) {
         console.warn(`Max ${maxAttachments} attachments allowed`);
         return;
       }
 
-      const reader = new FileReader();
-
-      reader.onload = function onLoad(loadEvent) {
-        if (state.attachmentState.pending.length >= maxAttachments) {
-          return;
-        }
-
-        const dataUrl = loadEvent.target.result;
-        const base64 = String(dataUrl || '').split(',')[1] || '';
-
-        state.attachmentState.pending.push({
-          kind: isImage ? 'image' : 'file',
-          name: file.name || '',
-          mimeType: file.type || 'application/octet-stream',
-          size: file.size || 0,
-          base64,
-          dataUrl
-        });
-
-        rebuildPreviewStrips();
+      const pendingAttachment = {
+        kind: isImage && state.visionState.supported ? 'image' : 'file',
+        fileId: '',
+        name: file.name || '',
+        mimeType: file.type || 'application/octet-stream',
+        size: file.size || 0,
+        base64: '',
+        dataUrl: '',
+        previewDataUrl: '',
+        status: 'uploading',
+        displayKind,
+        typeLabel
       };
 
-      reader.readAsDataURL(file);
+      state.attachmentState.pending.push(pendingAttachment);
+      rebuildPreviewStrips();
+
+      const imagePreviewPromise = isImage
+        ? readFileAsDataUrl(file).then(function applyDataUrl(dataUrl) {
+          if (state.visionState.supported) {
+            pendingAttachment.dataUrl = dataUrl;
+            pendingAttachment.base64 = String(dataUrl || '').split(',')[1] || '';
+          } else {
+            pendingAttachment.previewDataUrl = dataUrl;
+          }
+          rebuildPreviewStrips();
+        }).catch(function ignorePreviewError() {})
+        : Promise.resolve();
+
+      Promise.all([uploadOneFile(file, pendingAttachment), imagePreviewPromise])
+        .then(function onUploaded() {
+          if (pendingAttachment.status !== 'error') {
+            pendingAttachment.status = 'ready';
+          }
+          rebuildPreviewStrips();
+        })
+        .catch(function onUploadError(error) {
+          console.error(error);
+          pendingAttachment.status = 'error';
+          pendingAttachment.typeLabel = 'Upload failed';
+          rebuildPreviewStrips();
+        });
     });
+  }
+
+  // Read selected files and queue them for the next request.
+  function handleFileInput(event) {
+    queueFiles(event.target.files || []);
 
     $(event.target).val('');
   }
 
+  function handleDroppedFiles(files) {
+    queueFiles(files || []);
+  }
+
   return {
     clearPendingAttachments,
+    handleDroppedFiles,
     handleFileInput,
     normalizeAttachment,
     rebuildPreviewStrips,

@@ -52,7 +52,15 @@ Check:
 If the synthesis has specific gaps:
 
 ```text
-web_search("specific gap query")
+web_search({
+  "query": {
+    "terms": ["specific gap"],
+    "entities": [],
+    "model_identifiers": [],
+    "intent": "general",
+    "source_type": "any"
+  }
+})
 read_page("https://specific-source.com")
 ```
 

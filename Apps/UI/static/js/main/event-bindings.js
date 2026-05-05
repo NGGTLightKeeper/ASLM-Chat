@@ -68,6 +68,13 @@ export function bindEventHandlers(context, dependencies) {
     setRightSidebarCollapsed(!dom.$chatShell.hasClass('settings-collapsed'), true);
   });
 
+  $(document).on('click', '#contextUsageBtn, #contextUsageBtnConv', function onContextUsageClick(event) {
+    event.preventDefault();
+    chatController.triggerContextCompression(true).catch(function onContextCompressionError(error) {
+      console.error('Failed to compress context:', error);
+    });
+  });
+
   $activityRoots.on('click', '.msg-search-chip:not(.msg-search-chip--more)', function onSearchChipClick(event) {
     event.stopPropagation();
   });
@@ -82,7 +89,13 @@ export function bindEventHandlers(context, dependencies) {
     messagesUi.toggleSearchSources($(this));
   });
 
-  $activityRoots.on('click', '.msg-tool-call-card[data-tool-segment-index], .msg-search-card[data-tool-segment-index]', function onToolCardClick() {
+  $activityRoots.on('click', [
+    '.msg-tool-call-card[data-tool-segment-index]',
+    '.msg-reasoning-tool-row[data-tool-segment-index]'
+  ].join(', '), function onToolCardClick(event) {
+    if ($(event.target).closest('.msg-search-chip, .msg-write-card, .msg-edit-card, a, button').length) {
+      return;
+    }
     messagesUi.openToolInspectorFromCard($(this));
   });
 
@@ -108,6 +121,12 @@ export function bindEventHandlers(context, dependencies) {
     }
     event.preventDefault();
     messagesUi.toggleEditCard($(this));
+  });
+
+  $activityRoots.on('click', '.msg-compression-context-btn', function onCompressionContextClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    messagesUi.toggleCompressionContext($(this));
   });
 
   $activityRoots.on('mousedown', '.msg-write-preview, .msg-edit-preview', function onToolPreviewMouseDown(event) {
@@ -144,16 +163,29 @@ export function bindEventHandlers(context, dependencies) {
 
 
   // Attachment events.
+  const $dropOverlay = $('<div class="file-drop-overlay" aria-hidden="true"><div class="file-drop-overlay-inner">Drop files to attach</div></div>');
+  $('body').append($dropOverlay);
+
+  function showDropOverlay() {
+    $dropOverlay.addClass('is-visible');
+    dom.$chatShell.addClass('is-file-dragging');
+  }
+
+  function hideDropOverlay() {
+    $dropOverlay.removeClass('is-visible');
+    dom.$chatShell.removeClass('is-file-dragging');
+  }
+
   dom.$imageInput.add(dom.$imageInputConv).on('change', function onAttachmentChange(event) {
     attachmentsUi.handleFileInput(event);
   });
 
   $(document).on('click', '#attachBtn', function onAttachClick() {
-    dom.$imageInput.trigger('click');
+    dom.$imageInput.attr('accept', '*/*').prop('disabled', false).trigger('click');
   });
 
   $(document).on('click', '#attachBtnConv', function onAttachConvClick() {
-    dom.$imageInputConv.trigger('click');
+    dom.$imageInputConv.attr('accept', '*/*').prop('disabled', false).trigger('click');
   });
 
   $(document).on('click', '.img-preview-remove', function onAttachmentRemove(event) {
@@ -161,6 +193,100 @@ export function bindEventHandlers(context, dependencies) {
     const index = $(this).closest('[data-idx]').data('idx');
     attachmentsUi.removePendingAttachment(index);
   });
+
+  function getDragDataTransfer(event) {
+    return event && (event.dataTransfer || (event.originalEvent && event.originalEvent.dataTransfer));
+  }
+
+  function eventHasDraggedFiles(event) {
+    const dataTransfer = getDragDataTransfer(event);
+    if (!dataTransfer) {
+      return false;
+    }
+    if (dataTransfer.files && dataTransfer.files.length > 0) {
+      return true;
+    }
+    if (dataTransfer.items && dataTransfer.items.length > 0) {
+      return Array.from(dataTransfer.items).some(function isFileItem(item) {
+        return String(item && item.kind ? item.kind : '').toLowerCase() === 'file';
+      });
+    }
+
+    return Array.from(dataTransfer.types || []).some(function isFilesType(type) {
+      return String(type || '').toLowerCase() === 'files';
+    });
+  }
+
+  function handleFileDrag(event) {
+    const dataTransfer = getDragDataTransfer(event);
+    if (!dataTransfer) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    dataTransfer.dropEffect = 'copy';
+    showDropOverlay();
+  }
+
+  function handleFileDragEnd(event) {
+    if (!event) {
+      return;
+    }
+    if (event.type === 'dragend' || event.type === 'drop') {
+      hideDropOverlay();
+      return;
+    }
+    if (event.clientX <= 0 || event.clientY <= 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight) {
+      hideDropOverlay();
+    }
+  }
+
+  function handleFileDrop(event) {
+    const dataTransfer = getDragDataTransfer(event);
+    const files = dataTransfer ? dataTransfer.files : null;
+    if (!dataTransfer) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    hideDropOverlay();
+    if (files && files.length > 0) {
+      attachmentsUi.handleDroppedFiles(files);
+    }
+  }
+
+  const dragTargets = [
+    window,
+    document,
+    document.documentElement,
+    document.body,
+    dom.$chatShell.get(0),
+    dom.$messagesArea.get(0),
+    dom.$welcomeScreen.get(0),
+    dom.$conversationInput.get(0)
+  ].filter(Boolean);
+
+  dragTargets.forEach(function bindDragTarget(target) {
+    target.addEventListener('dragenter', handleFileDrag, true);
+    target.addEventListener('dragover', handleFileDrag, true);
+    target.addEventListener('dragleave', handleFileDragEnd, true);
+    target.addEventListener('dragend', handleFileDragEnd, true);
+    target.addEventListener('drop', handleFileDrop, true);
+  });
+
+  const dropOverlayNode = $dropOverlay.get(0);
+  if (dropOverlayNode) {
+    dropOverlayNode.addEventListener('dragenter', handleFileDrag, true);
+    dropOverlayNode.addEventListener('dragover', handleFileDrag, true);
+    dropOverlayNode.addEventListener('dragleave', function onOverlayDragLeave(event) {
+      if (event.target === dropOverlayNode) {
+        hideDropOverlay();
+      }
+    }, true);
+    dropOverlayNode.addEventListener('drop', handleFileDrop, true);
+  }
 
 
   // Settings panel events.

@@ -34,7 +34,7 @@ logger = logging.getLogger("core.cache.source_cache")
 # URL helpers (inlined from legacy crawl_frontier to remove cross-deps)
 # ---------------------------------------------------------------------------
 
-from core.fetch.url_utils import _TRACKING_PARAMS
+from core.fetch.url_utils import _TRACKING_PARAMS, UnsafeFetchUrl, validate_public_fetch_url
 
 
 def canonicalize_url(url: str) -> str:
@@ -231,6 +231,12 @@ class SourceCache:
         status: str = "ok",
     ) -> None:
         """Insert or update a page in the cache."""
+        try:
+            validate_public_fetch_url(url)
+        except UnsafeFetchUrl as exc:
+            logger.warning("source_cache: blocked unsafe cache write url=%r reason=%s", url, exc)
+            return
+
         if not domain:
             try:
                 domain = urlparse(url).netloc.lower()
@@ -272,6 +278,12 @@ class SourceCache:
 
     def get_cached(self, url: str) -> Optional[CachedPage]:
         """Return a cached page by URL, or None."""
+        try:
+            validate_public_fetch_url(url)
+        except UnsafeFetchUrl as exc:
+            logger.warning("source_cache: blocked unsafe cache read url=%r reason=%s", url, exc)
+            return None
+
         uhash = url_hash(url)
         r = self._get_conn().execute(
             "SELECT * FROM pages WHERE url_hash = ?", (uhash,)
@@ -293,6 +305,11 @@ class SourceCache:
 
     def is_fresh(self, url: str, max_age_sec: int | None = None) -> bool:
         """Check whether a cached page exists and is still fresh."""
+        try:
+            validate_public_fetch_url(url)
+        except UnsafeFetchUrl:
+            return False
+
         uhash = url_hash(url)
         ttl = max_age_sec or self._default_ttl
         cutoff = time.time() - ttl
@@ -351,4 +368,3 @@ class SourceCache:
         if deleted:
             logger.info("source_cache: evicted %d stale pages (ttl=%ds)", deleted, ttl)
         return deleted
-

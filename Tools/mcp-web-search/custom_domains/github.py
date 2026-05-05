@@ -46,7 +46,7 @@ def _github_headers() -> dict[str, str]:
 def _api_get_json(url: str, timeout: int) -> Any:
     import httpx
 
-    resp = httpx.get(url, headers=_github_headers(), timeout=timeout, follow_redirects=True)
+    resp = httpx.get(url, headers=_github_headers(), timeout=timeout, follow_redirects=False)
     resp.raise_for_status()
     return resp.json()
 
@@ -196,7 +196,7 @@ async def fetch_github_page(url: str, timeout: float = 20.0) -> str:
                         raw_url,
                         headers={"User-Agent": _UA},
                         timeout=timeout_i,
-                        follow_redirects=True,
+                        follow_redirects=False,
                     )
                     resp.raise_for_status()
                     text = resp.text

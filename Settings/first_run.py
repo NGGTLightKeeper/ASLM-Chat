@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import secrets
 import subprocess
 import sys
@@ -12,8 +11,6 @@ from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TOOLS_DIR = BASE_DIR / "Tools"
-MODULE_MANIFEST = BASE_DIR / "ASLM_Module.json"
-REQUIRED_PRESERVE_PATHS = ("Data/venvs",)
 
 
 # Build the initial settings payload for the first run.
@@ -44,48 +41,6 @@ def _print_warning(message: str) -> None:
     """Print a standardized first-run warning message."""
 
     print(f"[ASLM-Chat] Warning: {message}")
-
-
-# Ensure installed module metadata preserves runtime-owned venv directories.
-def _ensure_module_preserve_paths(log: bool) -> None:
-    """Add required preserve paths to the local module manifest when possible."""
-
-    if not MODULE_MANIFEST.exists():
-        return
-
-    try:
-        payload = json.loads(MODULE_MANIFEST.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        _print_warning(f"Could not inspect module preserve rules: {exc}")
-        return
-
-    if not isinstance(payload, dict):
-        return
-
-    update = payload.setdefault("update", {})
-    if not isinstance(update, dict):
-        return
-
-    preserve = update.setdefault("preserve", [])
-    if not isinstance(preserve, list):
-        return
-
-    existing = {str(path).replace("\\", "/").strip("/") for path in preserve}
-    missing = [path for path in REQUIRED_PRESERVE_PATHS if path not in existing]
-    if not missing:
-        return
-
-    preserve.extend(missing)
-
-    try:
-        MODULE_MANIFEST.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    except OSError as exc:
-        _print_warning(f"Could not update module preserve rules: {exc}")
-        return
-
-    if log:
-        print(f"[ASLM-Chat] Added preserve path(s) to module manifest: {', '.join(missing)}")
-
 
 # Run an optional bootstrap command without failing the setup.
 def _run_optional_command(
@@ -245,7 +200,6 @@ def run(log: bool = False, ui_port: int = 30000, api_port: int = 30001) -> None:
     existing = load_settings()
     initial = _build_initial_settings(existing, ui_port, api_port)
     save_settings(initial)
-    _ensure_module_preserve_paths(log)
     _run_tool_bootstrap(log)
 
     if log:

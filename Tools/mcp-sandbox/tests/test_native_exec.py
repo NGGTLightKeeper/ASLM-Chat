@@ -19,7 +19,6 @@ if str(SRC) not in sys.path:
 os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT / ".test_workspace"))
 
 from sandbox import workspace  # noqa: E402
-import sandbox.container as container_mod  # noqa: E402
 import sandbox.exec as exec_mod  # noqa: E402
 
 
@@ -51,8 +50,8 @@ class NativeExecTests(unittest.TestCase):
     def test_native_exec_uses_task_root_cwd_and_process_group(self) -> None:
         fake = TextProcess(stdout="ok\n")
 
-        with patch.object(container_mod.subprocess, "Popen", return_value=fake) as popen_mock:
-            result = container_mod._exec_bash_native("echo ok")
+        with patch.object(exec_mod.subprocess, "Popen", return_value=fake) as popen_mock:
+            result = exec_mod._exec_bash_native("echo ok")
 
         self.assertEqual(result["stdout"], "ok\n")
         kwargs = popen_mock.call_args.kwargs
@@ -62,10 +61,12 @@ class NativeExecTests(unittest.TestCase):
     def test_native_exec_sets_home_for_command_user(self) -> None:
         fake = TextProcess(stdout="ok\n")
 
-        with patch.object(exec_mod, "COMMAND_USER", "sandbox_user"), \
-             patch.object(exec_mod, "_command_user_env", return_value={"HOME": "/home/sandbox_user"}), \
-             patch.object(container_mod.subprocess, "Popen", return_value=fake) as popen_mock:
-            result = container_mod._exec_bash_native("echo ok")
+        with (
+            patch.object(exec_mod, "COMMAND_USER", "sandbox_user"),
+            patch.object(exec_mod, "_command_user_env", return_value={"HOME": "/home/sandbox_user"}),
+            patch.object(exec_mod.subprocess, "Popen", return_value=fake) as popen_mock,
+        ):
+            result = exec_mod._exec_bash_native("echo ok")
 
         self.assertEqual(result["stdout"], "ok\n")
         self.assertEqual(popen_mock.call_args.kwargs["env"]["HOME"], "/home/sandbox_user")
@@ -77,17 +78,17 @@ class NativeExecTests(unittest.TestCase):
         def fake_time() -> float:
             return next(times, 101.2)
 
-        with patch.object(container_mod.subprocess, "Popen", return_value=fake), \
-             patch.object(exec_mod, "_kill_process_group") as killpg_mock, \
-             patch.object(container_mod, "restart_container") as restart_mock, \
-             patch.object(exec_mod.time, "sleep", return_value=None), \
-             patch.object(exec_mod.time, "time", side_effect=fake_time):
-            result = container_mod._exec_bash_native("sleep 60", timeout_s=1)
+        with (
+            patch.object(exec_mod.subprocess, "Popen", return_value=fake),
+            patch.object(exec_mod, "_kill_process_group") as killpg_mock,
+            patch.object(exec_mod.time, "sleep", return_value=None),
+            patch.object(exec_mod.time, "time", side_effect=fake_time),
+        ):
+            result = exec_mod._exec_bash_native("sleep 60", timeout_s=1)
 
         self.assertIsNone(result["exit_code"])
         self.assertIn("timed out", result["error"])
         killpg_mock.assert_called_once_with(fake)
-        restart_mock.assert_not_called()
 
 
 if __name__ == "__main__":

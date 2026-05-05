@@ -7,26 +7,49 @@ import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
 export function createMessagesUi(context, dependencies) {
   const { attachmentUi, toolInspector } = dependencies;
   const { dom, icons, state } = context;
-  const MORE_LABEL = '\u0415\u0449\u0435';
-  const HIDE_LABEL = '\u0421\u043a\u0440\u044b\u0442\u044c';
+  const MORE_LABEL = 'More';
+  const HIDE_LABEL = 'Hide';
   const SEARCH_BATCH_FIRST_CALL_HOLD_MS = 0;
   const SEARCH_BATCH_MULTI_CALL_SETTLE_MS = 0;
-  const PRE_TOOL_TEXT_HOLD_MS = 650;
+  const PRE_TOOL_TEXT_HOLD_MS = 0;
   const WRITE_PREVIEW_COLLAPSED_LINES = 4;
   const WRITE_PREVIEW_EXPANDED_LINES = 80;
   const EDIT_PREVIEW_COLLAPSED_ROWS = 4;
   const EDIT_PREVIEW_EXPANDED_ROWS = 120;
   const SANDBOX_INPUT_PREVIEW_CHARS = 12000;
+  const REASONING_CHUNK_TARGET_CHARS = 132;
+  const REASONING_CHUNK_MAX_CHARS = 168;
+  const DOWNLOAD_FILE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="currentColor" aria-hidden="true"><path d="M480-320 280-520l56-58 104 104v-326h80v326l104-104 56 58-200 200ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z"/></svg>';
+  const loadedSandboxImageSrcs = new Set();
   const HEAVY_TOOL_ARGUMENT_KEYS = {
     bash: ['stdin'],
     edit: ['content', 'new_str', 'old_str'],
     write: ['content']
   };
+  const STREAMING_ACTIVITY_MARKERS = [
+    '<tool_call>',
+    '</tool_call>',
+    '<tool_result>',
+    '</tool_result>',
+    '<context_compression>',
+    '</context_compression>',
+    '<think>',
+    '</think>',
+    '<thinking>',
+    '</thinking>',
+    '<reasoning>',
+    '</reasoning>',
+    '<analysis>',
+    '</analysis>'
+  ];
 
   // Composer state.
   // Sync both send buttons with the current generation and attachment state.
   function updateSendButtons() {
     const hasPendingAttachments = state.attachmentState.pending.length > 0;
+    const hasBlockedAttachments = state.attachmentState.pending.some(function isBlocked(attachment) {
+      return attachment && (attachment.status === 'uploading' || attachment.status === 'error');
+    });
 
     function syncComposerButton($button, $input) {
       const hasDraft = !!String($input.val() || '').trim() || hasPendingAttachments;
@@ -48,7 +71,7 @@ export function createMessagesUi(context, dependencies) {
         .removeClass('stop-btn')
         .html(icons.SEND_ICON)
         .attr('aria-label', state.isChatGenerating ? 'Queue message' : 'Send Message')
-        .prop('disabled', !hasDraft);
+        .prop('disabled', !hasDraft || hasBlockedAttachments);
     }
 
     syncComposerButton(dom.$sendBtn, dom.$chatInput);
@@ -83,9 +106,10 @@ export function createMessagesUi(context, dependencies) {
   // Render one visible text segment as sanitized HTML.
   function renderMarkdownSegment(content, citationSources) {
     const hasCitationSources = citationSources && typeof citationSources === 'object' && Object.keys(citationSources).length > 0;
+    const normalizedContent = normalizeCitationSpacing(normalizeCitationBrackets(content));
     const visibleContent = hasCitationSources
-      ? String(content || '')
-      : String(content || '').replace(/\s*\[(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3}-\d+)\]/gi, '');
+      ? normalizedContent
+      : normalizedContent.replace(/\s*\[(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3}-\d+)\]/gi, '');
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
       return decorateCitationsInHtml(escHtml(visibleContent), citationSources);
     }
@@ -175,6 +199,19 @@ export function createMessagesUi(context, dependencies) {
     return String(value || '').trim().toUpperCase();
   }
 
+  function normalizeCitationBrackets(value) {
+    return String(value || '')
+      .replace(/[【［]/g, '[')
+      .replace(/[】］]/g, ']');
+  }
+
+  function normalizeCitationSpacing(value) {
+    return String(value || '').replace(
+      /([^\s\[(])\[(S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3}-\d+)(\s*,\s*(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3}-\d+))*\]/gi,
+      '$1 [$2$3]'
+    );
+  }
+
   function sourceDisplayDomain(source) {
     const candidate = String(source.display_domain || source.domain || '').trim();
     if (candidate) {
@@ -202,6 +239,28 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  function faviconDomain(source) {
+    const safeSource = source && typeof source === 'object' ? source : {};
+    const directDomain = String(safeSource.domain || '').trim();
+    if (directDomain) {
+      return directDomain.replace(/^www\./i, '');
+    }
+
+    try {
+      return new URL(String(safeSource.url || '')).hostname.replace(/^www\./i, '');
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  function localFaviconUrlForDomain(domain) {
+    const cleanDomain = String(domain || '').trim().replace(/^www\./i, '');
+    if (!cleanDomain || /[^a-z0-9.-]/i.test(cleanDomain)) {
+      return '';
+    }
+    return `/api/favicon/?domain=${encodeURIComponent(cleanDomain)}`;
+  }
+
   function sourceHasExtractedPreview(source) {
     const safeSource = source && typeof source === 'object' ? source : {};
     const hasPreviewField = Object.prototype.hasOwnProperty.call(safeSource, 'preview');
@@ -216,10 +275,15 @@ export function createMessagesUi(context, dependencies) {
   }
 
   function sourceFaviconUrl(source) {
-    if (!sourceHasExtractedPreview(source)) {
-      return '';
+    const safeSource = source && typeof source === 'object' ? source : {};
+    const localFaviconUrl = localFaviconUrlForDomain(faviconDomain(safeSource));
+    if (localFaviconUrl) {
+      return localFaviconUrl;
     }
 
+    if (!sourceHasExtractedPreview(safeSource)) {
+      return '';
+    }
     return safeExternalUrl(source.favicon_url);
   }
 
@@ -268,7 +332,8 @@ export function createMessagesUi(context, dependencies) {
 
     const template = document.createElement('template');
     template.innerHTML = html;
-    const citationPattern = /\[((?:S\d+)|(?:source-(?:[a-z0-9]+-)?\d+)|(?:c[a-z0-9]{3}-\d+))\]/gi;
+    const citationIdPattern = /(?:S\d+)|(?:source-(?:[a-z0-9]+-)?\d+)|(?:c[a-z0-9]{3}-\d+)/gi;
+    const citationPattern = /\[\s*([^\]]+)\s*\]/gi;
     const ignoredTags = new Set(['A', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA']);
 
     function appendChip(fragment, source, sourceId) {
@@ -288,35 +353,55 @@ export function createMessagesUi(context, dependencies) {
 
       if (node.nodeType === Node.TEXT_NODE) {
         const value = node.nodeValue || '';
+        const normalizedValue = normalizeCitationSpacing(normalizeCitationBrackets(value));
         citationPattern.lastIndex = 0;
-        if (!citationPattern.test(value)) {
+        if (!citationPattern.test(normalizedValue)) {
           return;
         }
 
         citationPattern.lastIndex = 0;
         const fragment = document.createDocumentFragment();
         let lastIndex = 0;
-        let match = citationPattern.exec(value);
+        let match = citationPattern.exec(normalizedValue);
 
         while (match) {
-          const sourceId = normalizeCitationId(match[1]);
-          const source = citationSources[sourceId];
-          if (match.index > lastIndex) {
-            fragment.appendChild(document.createTextNode(value.slice(lastIndex, match.index)));
+          const sourceIds = [];
+          const inner = String(match[1] || '');
+          let idMatch = citationIdPattern.exec(inner);
+          while (idMatch) {
+            const normalizedId = normalizeCitationId(idMatch[0]);
+            if (normalizedId) {
+              sourceIds.push(normalizedId);
+            }
+            idMatch = citationIdPattern.exec(inner);
           }
-          if (source) {
+          citationIdPattern.lastIndex = 0;
+          if (match.index > lastIndex) {
+            fragment.appendChild(document.createTextNode(normalizedValue.slice(lastIndex, match.index)));
+          }
+          sourceIds.forEach(function appendCitationById(sourceId, sourceIndex) {
+            const source = citationSources[sourceId];
+            if (!source) {
+              return;
+            }
+            if (sourceIndex > 0) {
+              fragment.appendChild(document.createTextNode(' '));
+            }
             appendChip(fragment, source, sourceId);
+          });
+          if (!sourceIds.some(function hasRegisteredSource(sourceId) { return !!citationSources[sourceId]; })) {
+            fragment.appendChild(document.createTextNode(match[0]));
           }
           lastIndex = match.index + match[0].length;
-          match = citationPattern.exec(value);
+          match = citationPattern.exec(normalizedValue);
         }
 
         if (lastIndex === 0) {
           return;
         }
 
-        if (lastIndex < value.length) {
-          fragment.appendChild(document.createTextNode(value.slice(lastIndex)));
+        if (lastIndex < normalizedValue.length) {
+          fragment.appendChild(document.createTextNode(normalizedValue.slice(lastIndex)));
         }
         node.parentNode.replaceChild(fragment, node);
         return;
@@ -332,20 +417,95 @@ export function createMessagesUi(context, dependencies) {
 
   // Activity parsing.
   // Parse model output into visible text, thoughts, and tool events.
-  function hasOpenActivityMarker(rawText, openTag, closeTag) {
-    const source = String(rawText || '').toLowerCase();
-    const open = String(openTag || '').toLowerCase();
-    const close = String(closeTag || '').toLowerCase();
-    const openIndex = source.lastIndexOf(open);
-    if (openIndex === -1) {
-      return false;
-    }
-    return source.indexOf(close, openIndex + open.length) === -1;
+  function findOpenActivityMarker(rawText, markerPairs) {
+    const source = String(rawText || '');
+    const lowerSource = source.toLowerCase();
+    let best = null;
+
+    (markerPairs || []).forEach(function findMarker(pair) {
+      const open = String(pair.open || '').toLowerCase();
+      const close = String(pair.close || '').toLowerCase();
+      if (!open || !close) {
+        return;
+      }
+
+      let searchFrom = 0;
+      while (searchFrom < lowerSource.length) {
+        const openIndex = lowerSource.indexOf(open, searchFrom);
+        if (openIndex === -1) {
+          break;
+        }
+
+        const closeIndex = lowerSource.indexOf(close, openIndex + open.length);
+        if (closeIndex === -1) {
+          if (!best || openIndex < best.pos) {
+            best = { pos: openIndex, open, close };
+          }
+          break;
+        }
+
+        searchFrom = closeIndex + close.length;
+      }
+    });
+
+    return best;
+  }
+
+  function openToolPayloadInfo(rawText) {
+    return findOpenActivityMarker(rawText, [
+      { open: '<tool_call>', close: '</tool_call>' },
+      { open: '<tool_result>', close: '</tool_result>' },
+      { open: '<context_compression>', close: '</context_compression>' }
+    ]);
   }
 
   function hasOpenToolPayload(rawText) {
-    return hasOpenActivityMarker(rawText, '<tool_call>', '</tool_call>')
-      || hasOpenActivityMarker(rawText, '<tool_result>', '</tool_result>');
+    return !!openToolPayloadInfo(rawText);
+  }
+
+  function stripOpenToolPayload(rawText) {
+    const source = String(rawText || '');
+    const openPayload = openToolPayloadInfo(source);
+    return openPayload ? source.slice(0, openPayload.pos) : source;
+  }
+
+  function trailingPartialActivityMarkerInfo(rawText) {
+    const source = String(rawText || '');
+    const lowerSource = source.toLowerCase();
+    let best = null;
+
+    if (!lowerSource) {
+      return null;
+    }
+
+    STREAMING_ACTIVITY_MARKERS.forEach(function checkMarker(marker) {
+      const normalizedMarker = String(marker || '').toLowerCase();
+      const maxLength = Math.min(normalizedMarker.length - 1, lowerSource.length);
+
+      for (let length = maxLength; length > 0; length -= 1) {
+        const suffix = lowerSource.slice(-length);
+        if (!normalizedMarker.startsWith(suffix)) {
+          continue;
+        }
+
+        if (!best || length > best.length) {
+          best = {
+            length,
+            marker: normalizedMarker,
+            isTool: /^<\/?(tool|context_compression)/i.test(suffix)
+          };
+        }
+        break;
+      }
+    });
+
+    return best;
+  }
+
+  function stripTrailingPartialActivityMarker(rawText) {
+    const source = String(rawText || '');
+    const partialMarker = trailingPartialActivityMarkerInfo(source);
+    return partialMarker ? source.slice(0, source.length - partialMarker.length) : source;
   }
 
   function parseMessageTimeline(rawText) {
@@ -355,6 +515,7 @@ export function createMessagesUi(context, dependencies) {
     const toolSegmentByAlias = {};
     const reasoningTagPairs = [
       { start: '<think>', end: '</think>' },
+      { start: '<thinking>', end: '</thinking>' },
       { start: '<reasoning>', end: '</reasoning>' },
       { start: '<analysis>', end: '</analysis>' }
     ];
@@ -401,10 +562,12 @@ export function createMessagesUi(context, dependencies) {
       const reasoningStart = findNextReasoningStart(cursor);
       const toolCallStart = lowerSource.indexOf('<tool_call>', cursor);
       const toolResultStart = lowerSource.indexOf('<tool_result>', cursor);
+      const compressionStart = lowerSource.indexOf('<context_compression>', cursor);
       const candidates = [
         reasoningStart,
         toolCallStart !== -1 ? { pos: toolCallStart, kind: 'tool' } : null,
-        toolResultStart !== -1 ? { pos: toolResultStart, kind: 'result' } : null
+        toolResultStart !== -1 ? { pos: toolResultStart, kind: 'result' } : null,
+        compressionStart !== -1 ? { pos: compressionStart, kind: 'compression' } : null
       ].filter(Boolean);
 
       if (candidates.length === 0) {
@@ -479,6 +642,39 @@ export function createMessagesUi(context, dependencies) {
         continue;
       }
 
+      if (next.kind === 'compression') {
+        const openTag = '<context_compression>';
+        const closeTag = '</context_compression>';
+        const compressionEnd = lowerSource.indexOf(closeTag, next.pos + openTag.length);
+        if (compressionEnd === -1) {
+          break;
+        }
+
+        const payload = source.substring(next.pos + openTag.length, compressionEnd);
+        try {
+          const parsed = JSON.parse(payload);
+          segments.push({
+            type: 'tool',
+            alias: String(parsed.alias || 'context_compression_summary').trim(),
+            serverId: String(parsed.server_id || 'system').trim(),
+            serverName: String(parsed.server_name || 'System').trim(),
+            toolId: String(parsed.tool_id || 'context_compression_summary').trim(),
+            toolName: String(parsed.tool_name || parsed.tool_display_name || 'Context Compression').trim(),
+            arguments: parsed.arguments && typeof parsed.arguments === 'object' ? parsed.arguments : {},
+            result: String(parsed.content || ''),
+            toolUi: parsed.tool_ui && typeof parsed.tool_ui === 'object' ? parsed.tool_ui : { kind: 'context_compression', status: 'done' },
+            structuredContent: parsed.structured_content && typeof parsed.structured_content === 'object'
+              ? parsed.structured_content
+              : { kind: 'context_compression' }
+          });
+        } catch (_error) {
+          // Ignore malformed compression payloads.
+        }
+
+        cursor = compressionEnd + closeTag.length;
+        continue;
+      }
+
       const resultOpenTag = '<tool_result>';
       const resultCloseTag = '</tool_result>';
       const resultEnd = lowerSource.indexOf(resultCloseTag, next.pos + resultOpenTag.length);
@@ -491,7 +687,22 @@ export function createMessagesUi(context, dependencies) {
       try {
         const parsed = JSON.parse(payload);
         const alias = String(parsed.alias || '').trim();
-        const target = toolSegmentByAlias[alias];
+        let target = toolSegmentByAlias[alias];
+
+        if (!target && alias) {
+          target = {
+            type: 'tool',
+            alias,
+            serverId: String(parsed.server_id || '').trim(),
+            serverName: String(parsed.server_name || '').trim(),
+            toolId: String(parsed.tool_id || '').trim(),
+            toolName: String(parsed.tool_name || parsed.tool_display_name || '').trim(),
+            arguments: parsed.arguments && typeof parsed.arguments === 'object' ? parsed.arguments : {},
+            result: null
+          };
+          segments.push(target);
+          toolSegmentByAlias[alias] = target;
+        }
 
         if (target) {
           target.result = String(parsed.content || '');
@@ -696,7 +907,96 @@ export function createMessagesUi(context, dependencies) {
 
   function searchQueryFromSegment(segment) {
     const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
-    return String(args.query || args.q || '').trim();
+    return formatSearchQueryValue(args.query || args.q || '').trim();
+  }
+
+  function appendUniqueSearchPart(parts, value) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (text && !parts.includes(text)) {
+      parts.push(text);
+    }
+  }
+
+  function appendSearchList(parts, value) {
+    if (!Array.isArray(value)) {
+      return;
+    }
+    value.forEach(function appendItem(item) {
+      appendUniqueSearchPart(parts, item);
+    });
+  }
+
+  function formatSearchQueryValue(value) {
+    if (value === null || value === undefined) {
+      return '';
+    }
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      const text = String(value).replace(/\s+/g, ' ').trim();
+      if (text && (text[0] === '{' || text[0] === '[')) {
+        try {
+          const parsed = JSON.parse(text);
+          return formatSearchQueryValue(parsed);
+        } catch (_error) {
+          // Fall through to plain text for malformed partial JSON from streaming.
+        }
+      }
+      return text;
+    }
+    if (Array.isArray(value)) {
+      return value.map(formatSearchQueryValue).filter(Boolean).join(', ');
+    }
+    if (typeof value !== 'object') {
+      return String(value || '').replace(/\s+/g, ' ').trim();
+    }
+
+    const plan = value.query && typeof value.query === 'object' && !Array.isArray(value.query)
+      ? value.query
+      : value;
+    const parts = [];
+    ['entities', 'model_identifiers', 'terms'].forEach(function appendKey(key) {
+      appendSearchList(parts, plan[key]);
+    });
+    appendSearchList(parts, (plan.exact_phrases || []).map(function quotePhrase(phrase) {
+      return `"${String(phrase || '').replace(/\s+/g, ' ').trim()}"`;
+    }));
+    appendSearchList(parts, (plan.required_terms || []).map(function requireTerm(term) {
+      const text = String(term || '').replace(/\s+/g, ' ').trim();
+      return text ? `+${text}` : '';
+    }));
+    if (plan.intent && plan.intent !== 'general') {
+      appendUniqueSearchPart(parts, plan.intent);
+    }
+    appendUniqueSearchPart(parts, plan.region);
+
+    const numericMin = parseInt(plan.numeric_min ?? plan.price_min ?? 0, 10) || 0;
+    const numericMax = parseInt(plan.numeric_max ?? plan.price_max ?? 0, 10) || 0;
+    if (numericMin && numericMax) {
+      appendUniqueSearchPart(parts, `${numericMin}-${numericMax}`);
+    } else if (numericMin) {
+      appendUniqueSearchPart(parts, numericMin);
+    } else if (numericMax) {
+      appendUniqueSearchPart(parts, numericMax);
+    }
+    appendUniqueSearchPart(parts, plan.unit || plan.currency);
+
+    if (plan.year) {
+      appendUniqueSearchPart(parts, plan.year);
+    }
+    appendSearchList(parts, (plan.site_include || []).map(function includeDomain(domain) {
+      return `site:${String(domain || '').replace(/^site:/i, '').trim()}`;
+    }));
+    appendSearchList(parts, (plan.site_exclude || []).map(function excludeDomain(domain) {
+      return `-site:${String(domain || '').replace(/^-?site:/i, '').trim()}`;
+    }));
+    appendSearchList(parts, (plan.excluded_terms || []).map(function excludeTerm(term) {
+      const text = String(term || '').replace(/\s+/g, ' ').trim();
+      return text ? `-${text}` : '';
+    }));
+
+    if (parts.length === 0 && plan.raw_query) {
+      appendUniqueSearchPart(parts, plan.raw_query);
+    }
+    return parts.join(' ').replace(/\s+/g, ' ').trim();
   }
 
   function searchSegmentKey(segment, fallbackIndex) {
@@ -772,22 +1072,83 @@ export function createMessagesUi(context, dependencies) {
       url: rawUrl,
       domain,
       display_domain: displayDomain || domain,
-      favicon_url: domain ? `https://icons.duckduckgo.com/ip3/${domain}.ico` : '',
+      favicon_url: localFaviconUrlForDomain(domain),
     };
+  }
+
+  function normalizeSearchSourceItem(item, rank) {
+    if (typeof item === 'string') {
+      return sourceFromUrl(item, rank);
+    }
+
+    if (!item || typeof item !== 'object') {
+      return null;
+    }
+
+    const rawUrl = String(item.url || item.link || item.href || item.source_url || '').trim();
+    const fromUrl = rawUrl ? sourceFromUrl(rawUrl, rank) : null;
+    const domain = String(
+      item.domain
+      || item.display_domain
+      || item.host
+      || (fromUrl ? fromUrl.domain : '')
+      || ''
+    ).trim();
+
+    if (!rawUrl && !domain) {
+      return null;
+    }
+
+    return {
+      ...(fromUrl || {}),
+      ...item,
+      rank: item.rank || rank || (fromUrl ? fromUrl.rank : 0),
+      url: rawUrl || item.url || (fromUrl ? fromUrl.url : ''),
+      domain: domain || (fromUrl ? fromUrl.domain : ''),
+      display_domain: String(item.display_domain || item.displayDomain || '').trim()
+        || (fromUrl ? fromUrl.display_domain : domain),
+      favicon_url: item.favicon_url || item.faviconUrl || (fromUrl ? fromUrl.favicon_url : ''),
+    };
+  }
+
+  function collectSourceCandidates(container) {
+    if (Array.isArray(container)) {
+      return container;
+    }
+
+    if (!container || typeof container !== 'object') {
+      return [];
+    }
+
+    return [
+      container.sources,
+      container.source_chips,
+      container.sourceChips,
+      container.results,
+      container.items,
+      container.documents,
+      container.data
+    ]
+      .filter(Array.isArray)
+      .flat();
   }
 
   function searchSourcesFromSegment(segment) {
     const structured = segment.structuredContent && typeof segment.structuredContent === 'object'
       ? segment.structuredContent
       : null;
-    if (structured && Array.isArray(structured.sources) && structured.sources.length > 0) {
-      return structured.sources;
-    }
-
+    const toolUi = segment.toolUi && typeof segment.toolUi === 'object' ? segment.toolUi : null;
     const compact = segment.toolUi && segment.toolUi.compact && typeof segment.toolUi.compact === 'object'
       ? segment.toolUi.compact
       : null;
-    return compact && Array.isArray(compact.source_chips) ? compact.source_chips : [];
+    const resultObject = parseToolResultObject(segment);
+
+    return dedupeSearchSources([
+      ...collectSourceCandidates(structured),
+      ...collectSourceCandidates(toolUi),
+      ...collectSourceCandidates(compact),
+      ...collectSourceCandidates(resultObject)
+    ].map(normalizeSearchSourceItem));
   }
 
   function readPageSourcesFromSegment(segment) {
@@ -867,6 +1228,25 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  function renderSearchSourcesWithOverflow(sources, maxVisible) {
+    const items = Array.isArray(sources) ? sources : [];
+    const visibleLimit = Number.isInteger(maxVisible) && maxVisible > 0 ? maxVisible : 3;
+    const rendered = items.map(function mapRenderedSource(source) {
+      return {
+        source,
+        html: renderSourceChip(source)
+      };
+    }).filter(function filterRenderableSource(item) {
+      return !!String(item.html || '').trim();
+    });
+
+    return {
+      visibleHtml: rendered.slice(0, visibleLimit).map(function mapVisible(item) { return item.html; }).join(''),
+      hiddenHtml: rendered.slice(visibleLimit).map(function mapHidden(item) { return item.html; }).join(''),
+      hiddenCount: Math.max(0, rendered.length - visibleLimit)
+    };
+  }
+
   function renderSearchToolCard(segment, toolSegmentIndex, options) {
     const renderOptions = options || {};
     const hasResult = segment.result !== null && segment.result !== undefined;
@@ -875,20 +1255,23 @@ export function createMessagesUi(context, dependencies) {
       : null;
     const query = searchQueryFromSegment(segment);
     const sources = searchSourcesFromSegment(segment);
-    const visibleSources = sources.slice(0, 3);
-    const hiddenSources = sources.slice(3);
+    const renderedSources = renderSearchSourcesWithOverflow(sources, 3);
     const isExpanded = !!renderOptions.expanded;
+    const status = segment.toolUi && segment.toolUi.status ? String(segment.toolUi.status) : '';
+    const isRejected = status === 'rejected' || /^BAD_QUERY:/i.test(String(segment.result || '').trim());
     let label = '';
     if (renderOptions.compactLabel && query) {
-      label = query;
+      label = isRejected ? `Bad query: ${query}` : query;
+    } else if (isRejected) {
+      label = `Bad query: ${query || 'query'}`;
     } else if (hasResult) {
       label = sources.length > 0 ? `Searched for ${query || 'sources'}` : `No sources found for ${query || 'sources'}`;
     } else {
       label = compact && compact.label ? String(compact.label) : `Searching for ${query || 'sources'}`;
     }
-    const chipsHtml = visibleSources.map(renderSourceChip).join('');
-    const hiddenChipsHtml = hiddenSources.map(renderSourceChip).join('');
-    const moreCount = hiddenSources.length || (compact ? Math.max(0, parseInt(compact.more_count || 0, 10) || 0) : 0);
+    const chipsHtml = renderedSources.visibleHtml;
+    const hiddenChipsHtml = renderedSources.hiddenHtml;
+    const moreCount = renderedSources.hiddenCount || (compact ? Math.max(0, parseInt(compact.more_count || 0, 10) || 0) : 0);
     const moreButtonAttrs = `type="button" data-search-more-count="${moreCount}" aria-expanded="${isExpanded ? 'true' : 'false'}"`;
     const collapsedMoreHtml = moreCount > 0
       ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-collapsed" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(`${MORE_LABEL} ${moreCount}`)}</span></button>`
@@ -897,15 +1280,14 @@ export function createMessagesUi(context, dependencies) {
       ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-expanded" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(HIDE_LABEL)}</span></button>`
       : '';
     const pendingHtml = hasResult ? '' : '<span class="msg-search-pending-dot"></span>';
-    const status = segment.toolUi && segment.toolUi.status ? String(segment.toolUi.status) : '';
-    const iconHtml = status === 'error' || status === 'timeout'
+    const iconHtml = status === 'error' || status === 'timeout' || isRejected
       ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
       : (icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
     const searchKey = searchSegmentKey(segment, toolSegmentIndex);
     const searchKeyAttr = searchKey ? ` data-search-key="${escapeAttributeValue(searchKey)}"` : '';
 
     return `
-      <div class="msg-search-card${hasResult ? ' is-done' : ' is-pending'}${isExpanded ? ' is-expanded' : ''}${renderOptions.compactLabel ? ' msg-search-card--batch-item' : ''}" data-tool-segment-index="${toolSegmentIndex}"${searchKeyAttr}>
+      <div class="msg-search-card${hasResult ? ' is-done' : ' is-pending'}${isRejected ? ' is-error' : ''}${isExpanded ? ' is-expanded' : ''}${renderOptions.compactLabel ? ' msg-search-card--batch-item' : ''}" data-tool-segment-index="${toolSegmentIndex}"${searchKeyAttr}>
         <div class="msg-search-line">
           ${renderOptions.hideIcon ? '' : `<span class="msg-search-icon">${iconHtml}</span>`}
           <span class="msg-search-label">${escHtml(label)}</span>
@@ -929,7 +1311,7 @@ export function createMessagesUi(context, dependencies) {
 
     const hasProblem = searchItems.some(function hasProblemStatus(item) {
       const status = item.segment.toolUi && item.segment.toolUi.status ? String(item.segment.toolUi.status) : '';
-      return status === 'error' || status === 'timeout';
+      return status === 'error' || status === 'timeout' || status === 'rejected' || /^BAD_QUERY:/i.test(String(item.segment.result || '').trim());
     });
     const iconHtml = hasProblem
       ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
@@ -940,10 +1322,13 @@ export function createMessagesUi(context, dependencies) {
     const hasPending = activePendingIndex !== -1;
     const queriesHtml = searchItems.map(function renderBatchQuery(item, itemIndex) {
       const query = searchQueryFromSegment(item.segment);
+      const itemStatus = item.segment.toolUi && item.segment.toolUi.status ? String(item.segment.toolUi.status) : '';
+      const itemRejected = itemStatus === 'rejected' || /^BAD_QUERY:/i.test(String(item.segment.result || '').trim());
       const compact = item.segment.toolUi && item.segment.toolUi.compact && typeof item.segment.toolUi.compact === 'object'
         ? item.segment.toolUi.compact
         : null;
-      const label = query || (compact && compact.label ? String(compact.label).replace(/^Searching for\s+/i, '') : 'sources');
+      const labelBase = query || (compact && compact.label ? String(compact.label).replace(/^Searching for\s+/i, '') : 'sources');
+      const label = itemRejected ? `Bad query: ${labelBase}` : labelBase;
       const activeClass = itemIndex === activePendingIndex ? ' is-active' : '';
       const activeDot = itemIndex === activePendingIndex ? '<span class="msg-search-pending-dot"></span>' : '';
       return `<div class="msg-search-batch-query${activeClass}"><span class="msg-search-batch-query-text">${escHtml(label)}</span>${activeDot}</div>`;
@@ -951,11 +1336,10 @@ export function createMessagesUi(context, dependencies) {
     const combinedSources = dedupeSearchSources(searchItems.flatMap(function collectSources(item) {
       return searchSourcesFromSegment(item.segment);
     }));
-    const visibleSources = combinedSources.slice(0, 3);
-    const hiddenSources = combinedSources.slice(3);
-    const chipsHtml = visibleSources.map(renderSourceChip).join('');
-    const hiddenChipsHtml = hiddenSources.map(renderSourceChip).join('');
-    const moreCount = hiddenSources.length;
+    const renderedSources = renderSearchSourcesWithOverflow(combinedSources, 3);
+    const chipsHtml = renderedSources.visibleHtml;
+    const hiddenChipsHtml = renderedSources.hiddenHtml;
+    const moreCount = renderedSources.hiddenCount;
     const firstIndex = Number.isInteger(searchItems[0].index) ? searchItems[0].index : 0;
     const isExpanded = renderOptions.expanded === undefined ? false : !!renderOptions.expanded;
     const searchKey = searchItems
@@ -1073,6 +1457,7 @@ export function createMessagesUi(context, dependencies) {
     return `
       <div class="msg-write-card${toolStatusClass(segment)}${isExpanded ? ' is-expanded' : ''}${hasMore ? ' has-more' : ''}"${dataIndex} role="button" tabindex="0" aria-expanded="${isExpanded ? 'true' : 'false'}">
         <span class="msg-write-head">
+          ${icons.TOOL_MAKE_FILE_ICON || ''}
           <span class="msg-write-title">${escHtml(label)}</span>
           <span class="msg-write-summary">${escHtml(summary)}</span>
         </span>
@@ -1098,6 +1483,285 @@ export function createMessagesUi(context, dependencies) {
     } catch (_error) {
       return {};
     }
+  }
+
+  function formatByteSize(bytes) {
+    const size = Number(bytes);
+    if (!Number.isFinite(size) || size < 0) {
+      return '';
+    }
+    if (size < 1024) {
+      return `${Math.round(size)} B`;
+    }
+    if (size < 1024 * 1024) {
+      return `${Math.round(size / 1024)} KB`;
+    }
+    return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+  }
+
+  function normalizeSharedFilePayload(candidate) {
+    if (!candidate || typeof candidate !== 'object') {
+      return null;
+    }
+    const file = candidate.kind === 'shared_file'
+      ? candidate
+      : (candidate.file && typeof candidate.file === 'object' ? candidate.file : null);
+    if (!file || typeof file !== 'object') {
+      return null;
+    }
+    function asScalarText(value) {
+      if (value === null || value === undefined) {
+        return '';
+      }
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        return String(value).trim();
+      }
+      if (typeof value === 'object') {
+        const preferredKeys = ['filename', 'name', 'path', 'file', 'value', 'label'];
+        for (let index = 0; index < preferredKeys.length; index += 1) {
+          const key = preferredKeys[index];
+          if (Object.prototype.hasOwnProperty.call(value, key)) {
+            const nested = asScalarText(value[key]);
+            if (nested) {
+              return nested;
+            }
+          }
+        }
+      }
+      return '';
+    }
+
+    const path = asScalarText(file.path || file.file);
+    if (!path) {
+      return null;
+    }
+    const filename = asScalarText(file.filename || file.name) || path.split(/[\\/]/).pop() || 'download';
+    return {
+      path,
+      filename,
+      mimeType: asScalarText(file.mime_type || file.mimeType || file.type),
+      typeLabel: asScalarText(file.type_label || file.typeLabel || file.mime_type || file.mimeType) || 'File',
+      sizeBytes: Number(file.size_bytes ?? file.sizeBytes ?? -1),
+      downloadUrl: asScalarText(file.download_url || file.downloadUrl),
+      modelContext: asScalarText(file.model_context || file.modelContext)
+    };
+  }
+
+  function sharedFileFromSegment(segment) {
+    const candidates = [
+      segment && segment.structuredContent,
+      segment && segment.toolUi,
+      segment && segment.toolUi && segment.toolUi.file,
+      parseToolResultObject(segment)
+    ];
+
+    for (let index = 0; index < candidates.length; index += 1) {
+      const normalized = normalizeSharedFilePayload(candidates[index]);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return null;
+  }
+
+  function isSharedFileToolSegment(segment) {
+    if (sharedFileFromSegment(segment)) {
+      return true;
+    }
+    return /share[_-\s]?file|download[_-\s]?file/.test(toolIdentityText(segment));
+  }
+
+  function isCompressionContextSegment(segment) {
+    const alias = String(segment && (segment.alias || segment.toolId || segment.toolName || '') || '').trim().toLowerCase();
+    const toolUi = segment && segment.toolUi && typeof segment.toolUi === 'object' ? segment.toolUi : {};
+    const structured = segment && segment.structuredContent && typeof segment.structuredContent === 'object'
+      ? segment.structuredContent
+      : {};
+    return alias === 'context_compression_summary'
+      || String(toolUi.kind || '').toLowerCase() === 'context_compression'
+      || String(structured.kind || '').toLowerCase() === 'context_compression';
+  }
+
+  function compressionContextText(segment) {
+    return String(segment && segment.result ? segment.result : '').trim();
+  }
+
+  function renderCompressionContextCard(segment, toolSegmentIndex) {
+    const text = compressionContextText(segment);
+    if (!text) {
+      return '';
+    }
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-tool-segment-index="${toolSegmentIndex}"` : '';
+    return `
+      <div class="msg-compression-context"${dataIndex}>
+        <div class="msg-compression-context-line">
+          <span class="msg-compression-context-divider"></span>
+          <button type="button" class="msg-compression-context-btn">Compressed context active</button>
+          <span class="msg-compression-context-divider"></span>
+        </div>
+        <pre class="msg-compression-context-json msg-code-block language-json" style="display:none;"><code>${highlightCode(text, 'json')}</code></pre>
+      </div>
+    `;
+  }
+
+  function buildCompressionPendingRow() {
+    return $(`
+      <div class="msg msg-compression-marker msg-compression-marker--pending" data-message-key="context-compression-pending">
+        <div class="msg-compression-marker-body">
+          <div class="msg-compression-context is-pending">
+            <div class="msg-compression-context-line">
+              <span class="msg-compression-context-divider"></span>
+              <span class="msg-compression-context-pending">
+                <span class="msg-compression-context-spinner" aria-hidden="true"></span>
+                Compressing context...
+              </span>
+              <span class="msg-compression-context-divider"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+
+  function appendCompressionPending() {
+    const existing = dom.$messagesInner.find('.msg-compression-marker--pending').last();
+    if (existing.length) {
+      scrollBottom();
+      return existing;
+    }
+    const $row = buildCompressionPendingRow();
+    dom.$messagesInner.append($row);
+    scrollBottom();
+    return $row;
+  }
+
+  function removeCompressionPending($row) {
+    const target = $row && $row.length ? $row : dom.$messagesInner.find('.msg-compression-marker--pending');
+    target.remove();
+  }
+
+  function isCompressionOnlyActivitySegments(segments) {
+    return Array.isArray(segments)
+      && segments.length > 0
+      && segments.every(function onlyCompression(segment) {
+        return segment && segment.type === 'tool' && isCompressionContextSegment(segment);
+      });
+  }
+
+  function sharedFileDownloadUrl(file) {
+    if (!file) {
+      return '';
+    }
+    if (file.downloadUrl) {
+      return file.downloadUrl;
+    }
+    const query = `path=${encodeURIComponent(file.path)}&name=${encodeURIComponent(file.filename || 'download')}`;
+    return `/api/shared-file/download/?${query}`;
+  }
+
+  function renderSharedFileCard(segment) {
+    const file = sharedFileFromSegment(segment);
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    const fallbackPath = String(args.path || args.file || args.filename || '').trim();
+    const normalized = file || normalizeSharedFilePayload({
+      kind: 'shared_file',
+      path: fallbackPath,
+      filename: args.filename || fallbackPath
+    });
+    if (!normalized) {
+      return renderReasoningToolRow(segment);
+    }
+
+    const sizeText = formatByteSize(normalized.sizeBytes);
+    const metaParts = [normalized.typeLabel];
+    if (sizeText) {
+      metaParts.push(sizeText);
+    }
+    const href = sharedFileDownloadUrl(normalized);
+    return `
+      <a class="msg-file-chip msg-shared-file-card" href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(normalized.filename)}">
+        <span class="msg-shared-file-badge" aria-hidden="true">FILE</span>
+        <span class="msg-shared-file-main">
+          <span class="msg-file-name">${escHtml(normalized.filename)}</span>
+          <span class="msg-file-meta">${escHtml(metaParts.filter(Boolean).join(' · '))}</span>
+        </span>
+        <span class="msg-shared-file-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>
+      </a>
+    `;
+  }
+
+  function collectPinnedSharedFileCards(segments) {
+    const safeSegments = Array.isArray(segments) ? segments : [];
+    const cards = [];
+    const seen = {};
+    for (let index = 0; index < safeSegments.length; index += 1) {
+      const segment = safeSegments[index];
+      if (!segment || segment.type !== 'tool' || !isSharedFileToolSegment(segment)) {
+        continue;
+      }
+      const file = sharedFileFromSegment(segment);
+      const dedupeKey = file
+        ? `${String(file.path || '').trim().toLowerCase()}::${String(file.filename || '').trim().toLowerCase()}`
+        : `segment-${index}`;
+      if (seen[dedupeKey]) {
+        continue;
+      }
+      seen[dedupeKey] = true;
+      cards.push(renderSharedFileCard(segment));
+    }
+    return cards.filter(function filterCard(card) {
+      return !!String(card || '').trim();
+    });
+  }
+
+  function isImageViewToolSegment(segment) {
+    const identity = toolIdentityText(segment);
+    if (/view[_-\s]?image|read[_-\s]?image/.test(identity)) {
+      return true;
+    }
+    const result = parseToolResultObject(segment);
+    return result && result.kind === 'image';
+  }
+
+  function imageResultFromSegment(segment) {
+    const candidates = [
+      segment && segment.structuredContent,
+      segment && segment.toolUi && segment.toolUi.image,
+      parseToolResultObject(segment)
+    ];
+
+    for (let index = 0; index < candidates.length; index += 1) {
+      const result = candidates[index];
+      if (!result || typeof result !== 'object') {
+        continue;
+      }
+      const preview = result.preview && typeof result.preview === 'object' ? result.preview : null;
+      if (result.kind === 'image' || (preview && preview.type === 'inline_base64')) {
+        return result;
+      }
+    }
+    return null;
+  }
+
+  function sandboxImageDataUrl(imageResult) {
+    const preview = imageResult && imageResult.preview && typeof imageResult.preview === 'object'
+      ? imageResult.preview
+      : null;
+    if (!preview || preview.type !== 'inline_base64') {
+      return '';
+    }
+
+    let mime = String(preview.mime_type || imageResult.mime || 'image/png').trim().toLowerCase();
+    if (!mime || mime === 'image') {
+      mime = 'image/png';
+    } else if (!mime.includes('/')) {
+      mime = `image/${mime}`;
+    }
+    const dataBase64 = String(preview.data_base64 || '').replace(/\s+/g, '');
+    if (!/^image\/[a-z0-9.+-]+$/i.test(mime) || !dataBase64) {
+      return '';
+    }
+    return `data:${mime};base64,${dataBase64}`;
   }
 
   function editModeFromSegment(segment) {
@@ -1244,6 +1908,7 @@ export function createMessagesUi(context, dependencies) {
     return `
       <div class="msg-edit-card${toolStatusClass(segment)}${isExpanded ? ' is-expanded' : ''}"${dataIndex} role="button" tabindex="0" aria-expanded="${isExpanded ? 'true' : 'false'}">
         <span class="msg-edit-head">
+          ${icons.TOOL_EDIT_FILE_ICON || ''}
           <span class="msg-edit-title">${escHtml(label)}</span>
           <span class="msg-edit-summary">${escHtml(summaryParts.join(' · '))}</span>
         </span>
@@ -1314,12 +1979,13 @@ export function createMessagesUi(context, dependencies) {
   }
 
   function toolIdentityText(segment) {
+    const safeSegment = segment && typeof segment === 'object' ? segment : {};
     return [
-      segment.alias,
-      segment.serverId,
-      segment.serverName,
-      segment.toolId,
-      segment.toolName
+      safeSegment.alias,
+      safeSegment.serverId,
+      safeSegment.serverName,
+      safeSegment.toolId,
+      safeSegment.toolName
     ].join(' ').toLowerCase();
   }
 
@@ -1417,6 +2083,51 @@ export function createMessagesUi(context, dependencies) {
     return toolStatusClass(segment);
   }
 
+  function renderSandboxImageToolBlock(segment, toolSegmentIndex) {
+    const image = imageResultFromSegment(segment);
+    if (!image) {
+      return '';
+    }
+
+    const status = toolStatusText(segment);
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-tool-segment-index="${toolSegmentIndex}"` : '';
+    const path = String(image.path || reasoningToolDetail(segment) || '').trim();
+    const mime = String(image.mime || (image.preview && image.preview.mime_type) || '').trim();
+    const src = sandboxImageDataUrl(image);
+    const width = Number(image.width);
+    const height = Number(image.height);
+    const hasDimensions = Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
+    const metaParts = [
+      hasDimensions ? `${Math.round(width)}x${Math.round(height)}` : '',
+      mime,
+      formatByteSize(image.size_bytes)
+    ].filter(Boolean);
+    const title = path ? `Viewed ${path}` : 'Viewed image';
+    const altText = path ? `Image preview for ${path}` : 'Image preview';
+    const preview = image.preview && typeof image.preview === 'object' ? image.preview : {};
+    const previewUnavailableClass = src ? '' : ' is-preview-unavailable';
+    const previewWithheldClass = preview.type === 'text_placeholder' || (image.vision_gate && image.vision_gate.allowed === false)
+      ? ' is-preview-withheld'
+      : '';
+    const imageLoadedClass = src && loadedSandboxImageSrcs.has(src) ? ' is-loaded' : '';
+    const imageHtml = src
+      ? `<div class="msg-sandbox-image-loader" aria-hidden="true"></div><img class="msg-sandbox-image" src="${escapeAttributeValue(src)}" alt="${escapeAttributeValue(altText)}" loading="lazy" data-sandbox-image-src="${escapeAttributeValue(src)}">`
+      : '<div class="msg-sandbox-image-empty">Preview unavailable</div>';
+
+    return `
+      <div class="msg-sandbox-card msg-sandbox-image-card${previewUnavailableClass}${previewWithheldClass}${toolStatusClass(segment)}"${dataIndex}>
+        <div class="msg-sandbox-head">
+          ${icons.TOOL_IMAGE_VIEW_ICON || icons.TOOL_BASH_ICON || '<span class="msg-reasoning-tool-icon is-sandbox" aria-hidden="true">S</span>'}
+          <span class="msg-sandbox-title">Image</span>
+          <span class="msg-sandbox-detail">${escHtml(title)}</span>
+          <span class="msg-reasoning-tool-status">${escHtml(status)}</span>
+        </div>
+        <div class="msg-sandbox-image-frame${src ? ' is-loading' : ''}${imageLoadedClass}">${imageHtml}</div>
+        ${metaParts.length ? `<div class="msg-sandbox-image-meta">${escHtml(metaParts.join(' В· '))}</div>` : ''}
+      </div>
+    `;
+  }
+
   function renderSandboxToolBlock(segment, toolSegmentIndex) {
     const status = toolStatusText(segment);
     const detail = reasoningToolDetail(segment);
@@ -1429,6 +2140,13 @@ export function createMessagesUi(context, dependencies) {
     const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-tool-segment-index="${toolSegmentIndex}"` : '';
     const stderrHtml = renderSandboxStreamBlock('stderr', result.stderr, 'is-stderr', 'plaintext');
     const stdoutHtml = renderSandboxStreamBlock('stdout', outputText, 'is-stdout', 'plaintext');
+
+    if (result.ok !== false && isImageViewToolSegment(segment)) {
+      const imageHtml = renderSandboxImageToolBlock(segment, toolSegmentIndex);
+      if (imageHtml) {
+        return imageHtml;
+      }
+    }
 
     return `
       <div class="msg-sandbox-card${sandboxStatusClass(segment, result)}"${dataIndex}>
@@ -1444,12 +2162,76 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  function rememberLoadedSandboxImages($root) {
+    const root = $root && $root.length ? $root : dom.$messagesInner;
+    root.find('.msg-sandbox-image-frame.is-loaded .msg-sandbox-image[data-sandbox-image-src]').each(function rememberImage() {
+      const src = String(this.getAttribute('data-sandbox-image-src') || '');
+      if (src) {
+        loadedSandboxImageSrcs.add(src);
+      }
+    });
+  }
+
+  function markSandboxImageLoaded(imageEl) {
+    if (!imageEl) {
+      return;
+    }
+    const src = String(imageEl.getAttribute('data-sandbox-image-src') || imageEl.currentSrc || imageEl.src || '');
+    if (src) {
+      loadedSandboxImageSrcs.add(src);
+    }
+    const frame = imageEl.closest('.msg-sandbox-image-frame');
+    if (frame) {
+      frame.classList.add('is-loaded');
+      frame.classList.remove('is-load-error');
+    }
+  }
+
+  function markSandboxImageError(imageEl) {
+    const frame = imageEl && imageEl.closest ? imageEl.closest('.msg-sandbox-image-frame') : null;
+    if (frame) {
+      frame.classList.add('is-load-error');
+    }
+  }
+
+  function hydrateSandboxImages($root) {
+    const root = $root && $root.length ? $root : dom.$messagesInner;
+    root.find('.msg-sandbox-image[data-sandbox-image-src]').each(function hydrateImage() {
+      const imageEl = this;
+      const src = String(imageEl.getAttribute('data-sandbox-image-src') || imageEl.currentSrc || imageEl.src || '');
+      if (src && loadedSandboxImageSrcs.has(src)) {
+        markSandboxImageLoaded(imageEl);
+        return;
+      }
+      if (imageEl.complete && imageEl.naturalWidth > 0) {
+        markSandboxImageLoaded(imageEl);
+        return;
+      }
+      if (imageEl.dataset.sandboxLoadBound === '1') {
+        return;
+      }
+      imageEl.dataset.sandboxLoadBound = '1';
+      imageEl.addEventListener('load', function onSandboxImageLoad() {
+        markSandboxImageLoaded(imageEl);
+      }, { once: true });
+      imageEl.addEventListener('error', function onSandboxImageError() {
+        markSandboxImageError(imageEl);
+      }, { once: true });
+    });
+  }
+
   function toolDisplayName(segment) {
     if (isSearchToolSegment(segment)) {
       return 'Search';
     }
     if (isReadPageToolSegment(segment)) {
       return 'Read page';
+    }
+    if (isSharedFileToolSegment(segment)) {
+      return 'Shared file';
+    }
+    if (isImageViewToolSegment(segment)) {
+      return 'Image';
     }
     if (isSandboxToolSegment(segment)) {
       return 'Sandbox';
@@ -1494,6 +2276,18 @@ export function createMessagesUi(context, dependencies) {
       return 'source page';
     }
 
+    if (isSharedFileToolSegment(segment)) {
+      const file = sharedFileFromSegment(segment);
+      const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+      return String((file && file.filename) || args.filename || args.path || args.file || 'file').trim();
+    }
+
+    if (isImageViewToolSegment(segment)) {
+      const result = imageResultFromSegment(segment);
+      const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+      return String((result && result.path) || args.path || args.file || args.filename || 'image').trim();
+    }
+
     const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
     const heavyKeys = new Set(heavyToolKeysForSegment(segment));
     const preferredKeys = ['query', 'q', 'url', 'urls', 'path', 'file', 'filename', 'command', 'cmd', 'code', 'prompt', 'input'];
@@ -1519,27 +2313,34 @@ export function createMessagesUi(context, dependencies) {
     if (isSearchToolSegment(segment) || isReadPageToolSegment(segment)) {
       return icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON || '';
     }
+    if (isSharedFileToolSegment(segment)) {
+      return DOWNLOAD_FILE_ICON;
+    }
     if (isWriteToolSegment(segment)) {
-      return icons.TOOL_MAKE_FILE_ICON || '';
+      return icons.TOOL_CODE_EXEC_ICON || icons.TOOL_BASH_ICON || '';
     }
     if (isEditToolSegment(segment)) {
-      return icons.TOOL_EDIT_FILE_ICON || '';
+      return icons.TOOL_CODE_EXEC_ICON || icons.TOOL_BASH_ICON || '';
+    }
+    if (isImageViewToolSegment(segment)) {
+      return icons.TOOL_CODE_EXEC_ICON || icons.TOOL_BASH_ICON || '';
     }
     if (isSandboxToolSegment(segment)) {
-      return icons.TOOL_BASH_ICON || '';
+      return icons.TOOL_CODE_EXEC_ICON || icons.TOOL_BASH_ICON || '';
     }
     return '';
   }
 
-  function renderReasoningToolRow(segment) {
+  function renderReasoningToolRow(segment, toolSegmentIndex) {
     const name = toolDisplayName(segment);
     const detail = reasoningToolDetail(segment);
     const status = toolStatusText(segment);
     const iconHtml = toolIconHtml(segment);
     const initial = name.charAt(0).toUpperCase() || 'T';
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-tool-segment-index="${toolSegmentIndex}"` : '';
 
     return `
-      <div class="msg-reasoning-tool-row${toolStatusClass(segment)}">
+      <div class="msg-reasoning-tool-row${toolStatusClass(segment)}"${dataIndex}>
         ${iconHtml || `<span class="msg-reasoning-tool-icon" aria-hidden="true">${escHtml(initial)}</span>`}
         <span class="msg-reasoning-tool-main">
           <span class="msg-reasoning-tool-name">${escHtml(name)}</span>
@@ -1563,6 +2364,12 @@ export function createMessagesUi(context, dependencies) {
     if (isReadPageToolSegment(segment)) {
       return renderReadPageToolCard([{ segment, index: toolIndex }]);
     }
+    if (isSharedFileToolSegment(segment)) {
+      return renderSharedFileCard(segment);
+    }
+    if (isCompressionContextSegment(segment)) {
+      return renderCompressionContextCard(segment, toolIndex);
+    }
     if (isWriteToolSegment(segment)) {
       return renderWriteToolCard(segment, toolIndex, { expanded: !!item.expanded });
     }
@@ -1572,7 +2379,7 @@ export function createMessagesUi(context, dependencies) {
     if (isSandboxToolSegment(segment)) {
       return renderSandboxToolBlock(segment, toolIndex);
     }
-    return renderReasoningToolRow(segment);
+    return renderReasoningToolRow(segment, toolIndex);
   }
 
   function reasoningToolStepTitle(segment) {
@@ -1581,6 +2388,10 @@ export function createMessagesUi(context, dependencies) {
     }
     if (isReadPageToolSegment(segment)) {
       return 'Reading source page';
+    }
+    if (isSharedFileToolSegment(segment)) {
+      const file = sharedFileFromSegment(segment);
+      return file && file.filename ? `Shared ${file.filename}` : 'Shared file';
     }
     if (isWriteToolSegment(segment)) {
       const path = writePathFromSegment(segment);
@@ -1591,42 +2402,20 @@ export function createMessagesUi(context, dependencies) {
       const path = editPathFromSegment(segment, result);
       return path ? `Editing ${path}` : 'Editing file';
     }
+    if (isImageViewToolSegment(segment)) {
+      const result = imageResultFromSegment(segment);
+      const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+      const path = String((result && result.path) || args.path || '').trim();
+      return path ? `Viewing ${path}` : 'Viewing image';
+    }
     if (isSandboxToolSegment(segment)) {
       return 'Running sandbox command';
     }
     return toolDisplayName(segment);
   }
 
-  function formatReasoningElapsed(seconds) {
-    const numericSeconds = Number(seconds);
-    if (!Number.isFinite(numericSeconds) || numericSeconds <= 0) {
-      return '';
-    }
-    if (numericSeconds < 60) {
-      return `${Math.max(1, Math.round(numericSeconds))}s`;
-    }
-    const minutes = Math.floor(numericSeconds / 60);
-    const remainder = Math.round(numericSeconds % 60);
-    return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`;
-  }
-
-  function reasoningElapsedSeconds($msgRow) {
-    const fixedValue = Number($msgRow.data('reasoningElapsedSeconds'));
-    if (Number.isFinite(fixedValue) && fixedValue > 0) {
-      return fixedValue;
-    }
-
-    const startedAt = Number($msgRow.data('responseStartedAt'));
-    if (!Number.isFinite(startedAt) || startedAt <= 0) {
-      return null;
-    }
-
-    return Math.max(0, (Date.now() - startedAt) / 1000);
-  }
-
-  function reasoningToggleLabel($msgRow) {
-    const elapsed = formatReasoningElapsed(reasoningElapsedSeconds($msgRow));
-    return elapsed ? `Thought for ${elapsed}` : 'Thought';
+  function reasoningToggleLabel() {
+    return 'Thought';
   }
 
   function hasThoughtSegments(segments) {
@@ -1635,34 +2424,170 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
-  function hasClosedReasoning(rawText) {
-    return /<\/(?:think|reasoning|analysis)>/i.test(String(rawText || ''));
+  function hasReasoningMarker(rawText) {
+    return /<\/?(?:think|thinking|reasoning|analysis)>/i.test(String(rawText || ''));
   }
 
-  function renderReasoningGroup(items, thoughtIndex, isExpanded, toggleLabel) {
+  function shouldUseReasoningShell($msgRow, segments, rawText, renderOptions) {
+    const options = renderOptions || {};
+    const rawHasReasoningMarker = hasReasoningMarker(rawText);
+    const segmentHasThoughts = hasThoughtSegments(segments);
+    const trustedSegmentThoughts = segmentHasThoughts && options.trustThoughtSegments !== false;
+    const sawReasoning = trustedSegmentThoughts || rawHasReasoningMarker;
+    if (sawReasoning) {
+      $msgRow.data('sawReasoning', true);
+    }
+
+    return !!options.reasoningMode
+      || !!$msgRow.data('reasoningModeEnabled')
+      || !!$msgRow.data('sawReasoning')
+      || rawHasReasoningMarker
+      || trustedSegmentThoughts;
+  }
+
+  function hasClosedReasoning(rawText) {
+    return /<\/(?:think|thinking|reasoning|analysis)>/i.test(String(rawText || ''));
+  }
+
+  function splitLongReasoningSentence(sentence, targetLength) {
+    const words = String(sentence || '').trim().split(/\s+/).filter(Boolean);
+    const chunks = [];
+    let current = '';
+
+    words.forEach(function addWord(word) {
+      const next = current ? `${current} ${word}` : word;
+      if (current && next.length > targetLength) {
+        chunks.push(current);
+        current = word;
+        return;
+      }
+      current = next;
+    });
+
+    if (current) {
+      chunks.push(current);
+    }
+    return chunks;
+  }
+
+  function splitReasoningText(content) {
+    const normalized = String(content || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+      return [];
+    }
+
+    const sentenceParts = normalized.match(/[^.!?…]+[.!?…]+["')\]]*|[^.!?…]+$/g) || [normalized];
+    const chunks = [];
+    let current = '';
+
+    sentenceParts.forEach(function addSentence(part) {
+      const sentence = String(part || '').trim();
+      if (!sentence) {
+        return;
+      }
+
+      if (sentence.length > REASONING_CHUNK_MAX_CHARS) {
+        if (current) {
+          chunks.push(current);
+          current = '';
+        }
+        splitLongReasoningSentence(sentence, REASONING_CHUNK_TARGET_CHARS).forEach(function pushLongChunk(chunk) {
+          if (chunk) {
+            chunks.push(chunk);
+          }
+        });
+        return;
+      }
+
+      const next = current ? `${current} ${sentence}` : sentence;
+      if (current && next.length > REASONING_CHUNK_MAX_CHARS) {
+        chunks.push(current);
+        current = sentence;
+        return;
+      }
+
+      current = next;
+    });
+
+    if (current) {
+      chunks.push(current);
+    }
+
+    return chunks.length > 0 ? chunks : [normalized];
+  }
+
+  function renderReasoningThoughtText(content) {
+    const text = String(content || '').trim();
+    if (!text) {
+      return '';
+    }
+    return `<div class="msg-reasoning-text">${escHtml(text)}</div>`;
+  }
+
+  function renderPendingToolCallPlaceholder() {
+    return `
+      <div class="msg-tool-pending-card" aria-live="polite">
+        <span class="msg-tool-pending-icon" aria-hidden="true"></span>
+        <span class="msg-tool-pending-main">
+          <span class="msg-tool-pending-title">Preparing tool call</span>
+          <span class="msg-tool-pending-detail">Tool input is being formed</span>
+        </span>
+        <span class="msg-tool-pending-dot" aria-hidden="true"></span>
+      </div>
+    `;
+  }
+
+  function renderReasoningGroup(items, thoughtIndex, isExpanded, toggleLabel, options) {
     const safeItems = Array.isArray(items) ? items : [];
+    const groupOptions = options || {};
     const thoughtCount = safeItems.filter(function countThoughts(item) { return item && item.type === 'thought'; }).length;
-    const toolCount = safeItems.filter(function countTools(item) { return item && item.type === 'tool'; }).length;
+    const toolCount = safeItems.filter(function countTools(item) {
+      return item && (item.type === 'tool' || item.type === 'tool_pending');
+    }).length;
     const summaryParts = [];
+    if (thoughtCount > 1) {
+      summaryParts.push(`${thoughtCount} thoughts`);
+    }
     if (toolCount > 0) {
       summaryParts.push(`${toolCount} tool ${toolCount === 1 ? 'call' : 'calls'}`);
     }
 
-    // Tool-only group (no reasoning): render tool cards inline. The reasoning
-    // wrapper content is drawer-only, so putting tools there hides them.
-    if (thoughtCount === 0) {
+    // Tool-only group (no reasoning): normally render tool cards inline.
+    // When reasoning is active, keep them in the same collapsed shell.
+    if (thoughtCount === 0 && !groupOptions.forceWrapper) {
       const toolsHtml = safeItems.map(function renderToolOnlyItem(item) {
-        return item && item.type === 'tool' ? renderReasoningToolItem(item) : '';
+        if (!item) {
+          return '';
+        }
+        if (item.type === 'tool') {
+          return renderReasoningToolItem(item);
+        }
+        if (item.type === 'tool_pending') {
+          return renderPendingToolCallPlaceholder();
+        }
+        return '';
       }).join('');
       return `<div class="msg-tool-only-group">${toolsHtml}</div>`;
     }
 
-    const renderItems = toolCount > 0
-      ? safeItems.filter(function keepToolItems(item) { return item && item.type === 'tool'; })
-      : safeItems;
+    const renderItems = safeItems;
     const contentHtml = renderItems.map(function renderReasoningItem(item) {
       if (!item) {
         return '';
+      }
+      if (item.type === 'tool_pending') {
+        return `
+          <div class="msg-reasoning-step msg-reasoning-step--tool is-pending">
+            <div class="msg-reasoning-step-dot" aria-hidden="true"></div>
+            <div class="msg-reasoning-step-body">
+              <div class="msg-reasoning-step-title">
+                <span>Preparing tool call</span>
+                <span class="msg-reasoning-step-status">Pending</span>
+              </div>
+              ${renderPendingToolCallPlaceholder()}
+            </div>
+          </div>
+        `;
       }
       if (item.type === 'tool') {
         const segment = item && item.segment ? item.segment : item;
@@ -1687,7 +2612,7 @@ export function createMessagesUi(context, dependencies) {
         <div class="msg-reasoning-step">
           <div class="msg-reasoning-step-dot" aria-hidden="true"></div>
           <div class="msg-reasoning-step-body">
-            <div class="msg-reasoning-text">${escHtml(item.content || '')}</div>
+            ${renderReasoningThoughtText(item.content || '')}
           </div>
         </div>
       `;
@@ -1710,7 +2635,7 @@ export function createMessagesUi(context, dependencies) {
         <button type="button" class="msg-thoughts-toggle msg-reasoning-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}">
           <span class="msg-reasoning-title">Thought</span>
         </button>
-        <div class="msg-thoughts-content msg-reasoning-content" style="display:${isExpanded ? 'block' : 'none'};"><div class="msg-reasoning-text">${escHtml(content)}</div></div>
+        <div class="msg-thoughts-content msg-reasoning-content" style="display:${isExpanded ? 'block' : 'none'};">${renderReasoningThoughtText(content)}</div>
       </div>
     `;
   }
@@ -1746,6 +2671,13 @@ export function createMessagesUi(context, dependencies) {
     const toolIdx = el.getAttribute('data-tool-segment-index');
     if (toolIdx !== null) {
       return 'tool:' + toolIdx;
+    }
+    const reasoningCardIdx = el.getAttribute('data-reasoning-card-index');
+    if (reasoningCardIdx !== null && el.classList.contains('msg-reasoning-thought-card')) {
+      return 'reasoning-card:' + reasoningCardIdx;
+    }
+    if (el.classList.contains('msg-tool-pending-card')) {
+      return 'tool-pending';
     }
     const activityKey = el.getAttribute('data-activity-key');
     if (activityKey) {
@@ -1916,38 +2848,63 @@ export function createMessagesUi(context, dependencies) {
         streamEl.removeChild(node);
       }
     });
+    hydrateSandboxImages($stream);
   }
 
   function renderActivityTimeline($msgRow, segments, options) {
     const renderOptions = options || {};
     const useMarkdown = renderOptions.markdown !== false;
+    const hideTextSegments = renderOptions.hideTextSegments === true;
     const $stream = $msgRow.find('.msg-activity-stream');
     const $bubble = $msgRow.find('.msg-bubble');
-    const shouldSyncOpenDrawer = (
-      $activeReasoningWrapper
-      && $('#reasoningDrawer').hasClass('is-open')
-      && $activeReasoningWrapper.closest('.msg')[0] === $msgRow[0]
-    );
+    rememberLoadedSandboxImages($msgRow);
+    const activeDrawerRow = $activeReasoningMessageRow && $activeReasoningMessageRow[0];
+    const activeWrapperRow = $activeReasoningWrapper ? $activeReasoningWrapper.closest('.msg')[0] : null;
+    const shouldSyncOpenDrawer = $('#reasoningDrawer').hasClass('is-open')
+      && (activeDrawerRow === $msgRow[0] || activeWrapperRow === $msgRow[0]);
     const activeReasoningIndex = shouldSyncOpenDrawer
-      ? String($activeReasoningWrapper.attr('data-thought-index') || '')
+      ? String($activeReasoningIndex || ($activeReasoningWrapper ? $activeReasoningWrapper.attr('data-thought-index') : '') || '')
       : '';
 
     if (!$stream.length) {
       return;
     }
 
-    if (!Array.isArray(segments) || segments.length === 0) {
-      $stream.hide().empty();
-      $bubble.html('');
-      $msgRow.removeAttr('data-expanded-thoughts');
-      $msgRow.removeAttr('data-expanded-searches');
-      $msgRow.removeAttr('data-expanded-search-keys');
-      $msgRow.removeData('expandedSearchKeys');
-      $msgRow.removeAttr('data-expanded-writes');
-      $msgRow.removeAttr('data-expanded-edits');
-      $msgRow.removeData('toolSegments');
-      return;
+    let renderSegments = Array.isArray(segments) ? segments.slice() : [];
+    if (renderOptions.trustThoughtSegments === false) {
+      renderSegments = renderSegments.filter(function removeUntrustedThought(segment) {
+        return !(segment && segment.type === 'thought');
+      });
     }
+    const forceReasoningShell = shouldUseReasoningShell(
+      $msgRow,
+      renderSegments,
+      renderOptions.rawText || '',
+      renderOptions
+    );
+    const pendingToolInReasoning = !!renderOptions.pendingTool && forceReasoningShell;
+
+    if (pendingToolInReasoning) {
+      renderSegments.push({ type: 'tool_pending' });
+    }
+
+    if (renderSegments.length === 0) {
+      if (!renderOptions.pendingTool) {
+        $stream.hide().empty();
+        $bubble.html('');
+        $msgRow.removeAttr('data-expanded-thoughts');
+        $msgRow.removeAttr('data-expanded-searches');
+        $msgRow.removeAttr('data-expanded-search-keys');
+        $msgRow.removeData('expandedSearchKeys');
+        $msgRow.removeAttr('data-expanded-writes');
+        $msgRow.removeAttr('data-expanded-edits');
+        $msgRow.removeData('toolSegments');
+        return;
+      }
+      renderSegments = [];
+    }
+
+    segments = renderSegments;
 
     const expandedThoughts = getExpandedThoughtIndices($msgRow);
     const expandedSearches = getExpandedSearchIndices($msgRow);
@@ -1974,22 +2931,175 @@ export function createMessagesUi(context, dependencies) {
       blocks.push(createActivityBlock(key, html));
     }
 
+    function pushTextSegmentBlock(segment, segmentIndex) {
+      const liveClass = renderOptions.streaming === true ? ' is-live' : '';
+      pushBlock(
+        `text-${segmentIndex}`,
+        `
+        <div class="msg-stream-text${liveClass}">
+          <div class="markdown-body${useMarkdown ? '' : ' is-streaming'}">${useMarkdown ? renderMarkdownSegment(segment.content, citationRegistry) : renderPlainTextSegment(segment.content)}</div>
+        </div>
+      `
+      );
+    }
+
+    if (forceReasoningShell) {
+      const reasoningItems = [];
+      let activeToolSegmentIndex = 0;
+      const lastActivitySegmentIndex = segments.reduce(function findLastActivityIndex(lastIndex, segment, index) {
+        return segment
+          && (segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending')
+          ? index
+          : lastIndex;
+      }, -1);
+      const finalReasoningAnchorTextIndex = segments.reduce(function findReasoningAnchor(lastIndex, segment, index) {
+        if (hideTextSegments || index >= lastActivitySegmentIndex || !segment) {
+          return lastIndex;
+        }
+        return segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending'
+          ? lastIndex
+          : index;
+      }, -1);
+      const reasoningAnchorTextIndex = finalReasoningAnchorTextIndex;
+      const isStreamingTextAfterReasoning = renderOptions.streaming === true
+        && lastActivitySegmentIndex >= 0
+        && segments.slice(lastActivitySegmentIndex + 1).some(function hasTrailingText(segment) {
+          return segment
+            && segment.type !== 'thought'
+            && segment.type !== 'tool'
+            && segment.type !== 'tool_pending'
+            && String(segment.content || '').trim();
+        });
+
+      function renderActiveReasoningBlock() {
+        return renderReasoningGroup(
+          reasoningItems,
+          0,
+          expandedThoughts.has(0),
+          thoughtToggleLabel,
+          { forceWrapper: true }
+        );
+      }
+
+      segments.forEach(function collectReasoningItem(segment) {
+        if (!segment) {
+          return;
+        }
+
+        if (segment.type === 'thought') {
+          reasoningItems.push(segment);
+          return;
+        }
+
+        if (segment.type === 'tool_pending') {
+          reasoningItems.push({ type: 'tool_pending' });
+          return;
+        }
+
+        if (segment.type === 'tool') {
+          const currentToolIndex = activeToolSegmentIndex;
+          if (isSearchToolSegment(segment)) {
+            addSearchSourcesToCitationRegistry(citationRegistry, segment);
+          }
+          reasoningItems.push({
+            type: 'tool',
+            segment,
+            toolIndex: currentToolIndex,
+            expanded: isSearchToolSegment(segment)
+              ? expandedSearches.has(currentToolIndex)
+              : (isWriteToolSegment(segment)
+                ? expandedWrites.has(currentToolIndex)
+                : (isEditToolSegment(segment) ? expandedEdits.has(currentToolIndex) : false))
+          });
+          activeToolSegmentIndex += 1;
+        }
+      });
+
+      if (reasoningItems.length > 0 && reasoningAnchorTextIndex === -1 && !isStreamingTextAfterReasoning) {
+        pushBlock('reasoning-active', renderActiveReasoningBlock());
+      }
+
+      for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+        const segment = segments[segmentIndex];
+        if (!segment) {
+          continue;
+        }
+
+        if (segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending') {
+          continue;
+        }
+
+        if (!hideTextSegments) {
+          pushTextSegmentBlock(segment, segmentIndex);
+        }
+
+        if (segmentIndex === reasoningAnchorTextIndex && reasoningItems.length > 0 && !isStreamingTextAfterReasoning) {
+          pushBlock('reasoning-active', renderActiveReasoningBlock());
+        }
+      }
+
+      const pinnedSharedCards = collectPinnedSharedFileCards(segments);
+      if (pinnedSharedCards.length) {
+        pushBlock(
+          'shared-files-pinned',
+          `<div class="msg-tool-only-group msg-tool-only-group--shared-files">${pinnedSharedCards.join('')}</div>`
+        );
+      }
+
+      $bubble.empty();
+      applyActivityBlocks($stream, blocks);
+      $stream.css('display', 'flex');
+      setExpandedThoughtIndices($msgRow, expandedThoughts);
+      setExpandedSearchIndices($msgRow, expandedSearches);
+      setExpandedSearchKeys($msgRow, expandedSearchKeys);
+      setExpandedWriteIndices($msgRow, expandedWrites);
+      setExpandedEditIndices($msgRow, expandedEdits);
+      $msgRow.data('toolSegments', toolSegments);
+
+      if (shouldSyncOpenDrawer) {
+        const $nextActiveWrapper = $msgRow
+          .find('.msg-thoughts-wrapper, .msg-reasoning-wrapper')
+          .filter(function matchActiveReasoningWrapper() {
+            return String($(this).attr('data-thought-index') || '') === '0';
+          })
+          .first();
+
+        if ($nextActiveWrapper.length) {
+          $activeReasoningWrapper = $nextActiveWrapper;
+          $activeReasoningMessageRow = $msgRow;
+          $activeReasoningIndex = '0';
+          $nextActiveWrapper.addClass('is-active');
+          $nextActiveWrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'true');
+          syncReasoningDrawerFromWrapper($nextActiveWrapper);
+        } else if (!isStreamingTextAfterReasoning) {
+          closeReasoningDrawer();
+        }
+      }
+      return;
+    }
+
     for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
       const segment = segments[segmentIndex];
 
-      if (segment.type === 'thought' || segment.type === 'tool') {
+      if (segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending') {
         const groupStartIndex = segmentIndex;
         const groupItems = [];
         reasoningGroupIndex += 1;
 
         while (
           segmentIndex < segments.length
-          && (segments[segmentIndex].type === 'thought' || segments[segmentIndex].type === 'tool')
+          && (
+            segments[segmentIndex].type === 'thought'
+            || segments[segmentIndex].type === 'tool'
+            || segments[segmentIndex].type === 'tool_pending'
+          )
         ) {
           const groupSegment = segments[segmentIndex];
           if (groupSegment.type === 'thought') {
             thoughtIndex += 1;
             groupItems.push(groupSegment);
+          } else if (groupSegment.type === 'tool_pending') {
+            groupItems.push({ type: 'tool_pending' });
           } else {
             const currentToolIndex = toolSegmentIndex;
             if (isSearchToolSegment(groupSegment)) {
@@ -2000,10 +3110,7 @@ export function createMessagesUi(context, dependencies) {
               segment: groupSegment,
               toolIndex: currentToolIndex,
               expanded: isSearchToolSegment(groupSegment)
-                ? (
-                  expandedSearches.has(currentToolIndex)
-                  || expandedSearchKeys.has(searchSegmentKey(groupSegment, currentToolIndex))
-                )
+                ? expandedSearches.has(currentToolIndex)
                 : (isWriteToolSegment(groupSegment)
                   ? expandedWrites.has(currentToolIndex)
                   : (isEditToolSegment(groupSegment) ? expandedEdits.has(currentToolIndex) : false))
@@ -2014,26 +3121,43 @@ export function createMessagesUi(context, dependencies) {
         }
 
         segmentIndex -= 1;
-        if (groupItems.some(function hasToolItem(item) { return item && item.type === 'tool'; }) || groupStartIndex > lastToolSegmentIndex) {
+        if (
+          groupItems.some(function hasToolItem(item) {
+            return item && (item.type === 'tool' || item.type === 'tool_pending');
+          })
+          || groupStartIndex > lastToolSegmentIndex
+          || forceReasoningShell
+        ) {
           pushBlock(
             `reasoning-${reasoningGroupIndex}`,
-            renderReasoningGroup(groupItems, reasoningGroupIndex, expandedThoughts.has(reasoningGroupIndex), thoughtToggleLabel)
+            renderReasoningGroup(
+              groupItems,
+              reasoningGroupIndex,
+              expandedThoughts.has(reasoningGroupIndex),
+              thoughtToggleLabel,
+              { forceWrapper: forceReasoningShell }
+            )
           );
         }
         continue;
       }
 
-      if (lastToolSegmentIndex !== -1 && segmentIndex < lastToolSegmentIndex) {
+      if (hideTextSegments) {
         continue;
       }
 
+      pushTextSegmentBlock(segment, segmentIndex);
+    }
+
+    if (renderOptions.pendingTool && !pendingToolInReasoning) {
+      pushBlock('tool-pending', renderPendingToolCallPlaceholder());
+    }
+
+    const pinnedSharedCards = collectPinnedSharedFileCards(segments);
+    if (pinnedSharedCards.length) {
       pushBlock(
-        `text-${segmentIndex}`,
-        `
-        <div class="msg-stream-text">
-          <div class="markdown-body${useMarkdown ? '' : ' is-streaming'}">${useMarkdown ? renderMarkdownSegment(segment.content, citationRegistry) : renderPlainTextSegment(segment.content)}</div>
-        </div>
-      `
+        'shared-files-pinned',
+        `<div class="msg-tool-only-group msg-tool-only-group--shared-files">${pinnedSharedCards.join('')}</div>`
       );
     }
 
@@ -2057,6 +3181,8 @@ export function createMessagesUi(context, dependencies) {
 
       if ($nextActiveWrapper.length) {
         $activeReasoningWrapper = $nextActiveWrapper;
+        $activeReasoningMessageRow = $msgRow;
+        $activeReasoningIndex = activeReasoningIndex;
         $nextActiveWrapper.addClass('is-active');
         $nextActiveWrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'true');
         syncReasoningDrawerFromWrapper($nextActiveWrapper);
@@ -2195,32 +3321,35 @@ export function createMessagesUi(context, dependencies) {
     clearSearchBatchHold($msgRow);
     clearPreToolTextHold($msgRow);
     const parsed = parseMessageTimeline(rawText);
-    if (hasThoughtSegments(parsed.segments) && !$msgRow.data('reasoningElapsedSeconds')) {
-      const startedAt = Number($msgRow.data('responseStartedAt'));
-      if (Number.isFinite(startedAt) && startedAt > 0) {
-        $msgRow.data('reasoningElapsedSeconds', Math.max(1, (Date.now() - startedAt) / 1000));
-      }
-    }
-    renderActivityTimeline($msgRow, parsed.segments);
+    renderActivityTimeline($msgRow, parsed.segments, { rawText });
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
 
   // Parse and render one assistant transcript during active streaming.
   function renderMessageStream($msgRow, rawText) {
-    if (hasOpenToolPayload(rawText)) {
-      $msgRow.find('.msg-bubble').attr('data-raw', rawText);
+    const partialMarker = trailingPartialActivityMarkerInfo(rawText);
+    const safeRawText = partialMarker ? stripTrailingPartialActivityMarker(rawText) : rawText;
+    const hasOpenTool = hasOpenToolPayload(safeRawText);
+    const hasPartialToolMarker = !!(partialMarker && partialMarker.isTool);
+    const renderRawText = hasOpenTool ? stripOpenToolPayload(safeRawText) : safeRawText;
+    const parsed = parseMessageTimeline(renderRawText);
+    const hasPendingToolPayload = hasOpenTool || hasPartialToolMarker;
+
+    if (hasPendingToolPayload) {
+      clearSearchBatchHold($msgRow);
+      clearPreToolTextHold($msgRow);
+      renderActivityTimeline($msgRow, parsed.segments, {
+        markdown: false,
+        pendingTool: true,
+        rawText: renderRawText,
+        streaming: true
+      });
+      $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
       return;
     }
 
-    const parsed = parseMessageTimeline(rawText);
     if (hasThoughtSegments(parsed.segments) && !$msgRow.data('responseStartedAt')) {
       $msgRow.data('responseStartedAt', Date.now());
-    }
-    if (hasThoughtSegments(parsed.segments) && !$msgRow.data('reasoningElapsedSeconds') && hasClosedReasoning(rawText)) {
-      const startedAt = Number($msgRow.data('responseStartedAt'));
-      if (Number.isFinite(startedAt) && startedAt > 0) {
-        $msgRow.data('reasoningElapsedSeconds', Math.max(1, (Date.now() - startedAt) / 1000));
-      }
     }
     if (shouldHoldPreToolText($msgRow, parsed, rawText)) {
       $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
@@ -2231,42 +3360,57 @@ export function createMessagesUi(context, dependencies) {
       return;
     }
 
-    renderActivityTimeline($msgRow, parsed.segments);
+    renderActivityTimeline($msgRow, parsed.segments, { rawText: renderRawText, streaming: true });
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
 
   // Open the inspector for a delegated tool-card click.
+  function sourceMessageRowForActivityCard($card) {
+    const $row = $card.closest('.msg');
+    if ($row.length) {
+      return $row;
+    }
+
+    const $drawerBody = $card.closest('#reasoningDrawerBody');
+    if ($drawerBody.length) {
+      const $storedRow = $drawerBody.data('messageRow');
+      if ($storedRow && $storedRow.length) {
+        return $storedRow;
+      }
+      if ($activeReasoningMessageRow && $activeReasoningMessageRow.length) {
+        return $activeReasoningMessageRow;
+      }
+    }
+
+    return $();
+  }
+
   function openToolInspectorFromCard($card) {
     const index = parseInt($card.attr('data-tool-segment-index') || '-1', 10);
     if (!Number.isInteger(index) || index < 0) {
       return;
     }
 
-    const toolSegments = $card.closest('.msg').data('toolSegments') || [];
+    const $message = $card.closest('.msg');
+    let toolSegments = $message.length ? ($message.data('toolSegments') || []) : [];
+    if (!toolSegments.length) {
+      const $drawerBody = $card.closest('#reasoningDrawerBody');
+      toolSegments = ($drawerBody.length ? $drawerBody.data('toolSegments') : null) || $('#reasoningDrawerBody').data('toolSegments') || [];
+    }
+
     const segment = toolSegments[index];
     if (segment) {
-      const toolDebugEnabled = state.runtimeSettings && (
-        state.runtimeSettings.tool_output_debug === true
-        || state.runtimeSettings.tool_output_debug === 'true'
-        || state.runtimeSettings['tool-output-debug'] === true
-        || state.runtimeSettings['tool-output-debug'] === 'true'
-      );
-      if (isSearchToolSegment(segment) && !toolDebugEnabled) {
-        return;
-      }
       toolInspector.open(segment);
     }
   }
 
   function toggleSearchSources($button) {
     const $card = $button.closest('.msg-search-card');
-    const $row = $button.closest('.msg');
+    const $row = sourceMessageRowForActivityCard($card);
     const expanded = !$card.hasClass('is-expanded');
     const moreCount = parseInt($button.attr('data-search-more-count') || '0', 10) || 0;
     const cardIndex = parseInt($card.attr('data-tool-segment-index') || '-1', 10);
-    const searchKey = String($card.attr('data-search-key') || '').trim();
     const expandedSearches = getExpandedSearchIndices($row);
-    const expandedSearchKeys = getExpandedSearchKeys($row);
 
     if (Number.isInteger(cardIndex) && cardIndex >= 0) {
       if (expanded) {
@@ -2276,14 +3420,6 @@ export function createMessagesUi(context, dependencies) {
       }
       setExpandedSearchIndices($row, expandedSearches);
     }
-    if (searchKey) {
-      if (expanded) {
-        expandedSearchKeys.add(searchKey);
-      } else {
-        expandedSearchKeys.delete(searchKey);
-      }
-      setExpandedSearchKeys($row, expandedSearchKeys);
-    }
 
     $card.toggleClass('is-expanded', expanded);
     $card.find('.msg-search-chip--more').attr('aria-expanded', expanded ? 'true' : 'false');
@@ -2292,7 +3428,7 @@ export function createMessagesUi(context, dependencies) {
   }
 
   function toggleWriteCard($card) {
-    const $row = $card.closest('.msg');
+    const $row = sourceMessageRowForActivityCard($card);
     const cardIndex = parseInt($card.attr('data-write-segment-index') || '-1', 10);
     const expandedWrites = getExpandedWriteIndices($row);
     const willExpand = !$card.hasClass('is-expanded');
@@ -2325,7 +3461,7 @@ export function createMessagesUi(context, dependencies) {
   }
 
   function toggleEditCard($card) {
-    const $row = $card.closest('.msg');
+    const $row = sourceMessageRowForActivityCard($card);
     const cardIndex = parseInt($card.attr('data-edit-segment-index') || '-1', 10);
     const expandedEdits = getExpandedEditIndices($row);
     const willExpand = !$card.hasClass('is-expanded');
@@ -2351,6 +3487,14 @@ export function createMessagesUi(context, dependencies) {
         morphDomChildren($preview[0], $newPreview[0]);
       }
     }
+  }
+
+  function toggleCompressionContext($button) {
+    const $card = $button.closest('.msg-compression-context');
+    const $json = $card.find('.msg-compression-context-json').first();
+    const isOpen = $json.is(':visible');
+    $json.toggle(!isOpen);
+    $button.text(isOpen ? 'Compressed context active' : 'Hide compressed context');
   }
 
   function startWritePreviewPan(event, $preview) {
@@ -2452,26 +3596,47 @@ export function createMessagesUi(context, dependencies) {
 
     let attachmentsHtml = '';
 
+    if (!isUser && isCompressionOnlyActivitySegments(viewOptions.activitySegments)) {
+      const markerHtml = viewOptions.activitySegments
+        .map(function renderMarker(segment, index) {
+          return renderCompressionContextCard(segment, index);
+        })
+        .join('');
+      return $(`
+        <div class="msg msg-compression-marker" data-message-key="${escapeAttributeValue(messageKey)}"${messageId ? ` data-message-id="${messageId}"` : ''}>
+          <div class="msg-compression-marker-body">${markerHtml}</div>
+        </div>
+      `);
+    }
+
     if (isUser && attachments && attachments.length > 0) {
       const imageHtml = attachments
         .filter(function onlyImages(attachment) {
-          return typeof attachment === 'string' || attachment.kind === 'image';
+          return typeof attachment === 'string'
+            || attachment.kind === 'image'
+            || (attachment.displayKind || attachment.display_kind) === 'image';
         })
         .map(function renderImage(attachment) {
           const normalizedAttachment = attachmentUi.normalizeAttachment(attachment);
-          const src = normalizedAttachment ? normalizedAttachment.dataUrl : '';
+          const src = normalizedAttachment ? (normalizedAttachment.dataUrl || normalizedAttachment.previewDataUrl) : '';
+          if (!src) {
+            return '';
+          }
           return `<img src="${src}" alt="Attached image">`;
         }).join('');
 
       const fileHtml = attachments
         .filter(function onlyFiles(attachment) {
-          return typeof attachment !== 'string' && attachment.kind === 'file';
+          return typeof attachment !== 'string'
+            && attachment.kind === 'file'
+            && (attachment.displayKind || attachment.display_kind) !== 'image';
         })
         .map(function renderFile(attachment) {
+          const meta = attachment.typeLabel || attachment.type_label || attachment.mimeType || attachment.mime_type || 'File';
           return `
             <div class="msg-file-chip">
               <div class="msg-file-name">${escHtml(attachment.name || 'File')}</div>
-              <div class="msg-file-meta">${escHtml(attachment.mimeType || attachment.mime_type || 'application/octet-stream')}</div>
+              <div class="msg-file-meta">${escHtml(meta)}</div>
             </div>
           `;
         }).join('');
@@ -2505,7 +3670,11 @@ export function createMessagesUi(context, dependencies) {
       $bubble.data('attachments', attachments || []);
     } else if (Array.isArray(viewOptions.activitySegments) && viewOptions.activitySegments.length > 0) {
       $row.find('.msg-bubble').attr('data-raw', text);
-      renderActivityTimeline($row, viewOptions.activitySegments);
+      renderActivityTimeline($row, viewOptions.activitySegments, {
+        rawText: text,
+        reasoningMode: viewOptions.reasoningMode === true,
+        trustThoughtSegments: viewOptions.reasoningMode === true || hasReasoningMarker(text)
+      });
     } else {
       renderMessageHtml($row, text);
     }
@@ -2651,6 +3820,8 @@ export function createMessagesUi(context, dependencies) {
 
   // Reasoning drawer state.
   let $activeReasoningWrapper = null;
+  let $activeReasoningMessageRow = null;
+  let $activeReasoningIndex = '';
   const REASONING_DRAWER_DEFAULT_WIDTH = 340;
   const REASONING_DRAWER_MIN_WIDTH = 300;
   const REASONING_DRAWER_MAX_WIDTH = 720;
@@ -2688,9 +3859,20 @@ export function createMessagesUi(context, dependencies) {
     const summaryText = $wrapper.find('.msg-reasoning-summary').text().trim();
     const bodyEl = $body[0];
     const isNearBottom = bodyEl ? bodyEl.scrollHeight - bodyEl.clientHeight <= bodyEl.scrollTop + 50 : false;
+    const nextBodyHtml = `<div class="msg-reasoning-content">${$content.html() || ''}</div>`;
     $summary.text(summaryText);
-    $body.html(`<div class="msg-reasoning-content">${$content.html() || ''}</div>`);
-    $body.data('toolSegments', $wrapper.closest('.msg').data('toolSegments') || []);
+
+    if (bodyEl) {
+      const template = document.createElement('template');
+      template.innerHTML = nextBodyHtml;
+      morphDomChildren(bodyEl, template.content);
+    } else {
+      $body.html(nextBodyHtml);
+    }
+
+    $body
+      .data('messageRow', $wrapper.closest('.msg'))
+      .data('toolSegments', $wrapper.closest('.msg').data('toolSegments') || []);
     if (isNearBottom && bodyEl) {
       bodyEl.scrollTop = bodyEl.scrollHeight;
     }
@@ -2719,6 +3901,8 @@ export function createMessagesUi(context, dependencies) {
     }
 
     $activeReasoningWrapper = $wrapper;
+    $activeReasoningMessageRow = $wrapper.closest('.msg');
+    $activeReasoningIndex = String($wrapper.attr('data-thought-index') || '');
     $wrapper.addClass('is-active');
     $wrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'true');
 
@@ -2740,11 +3924,13 @@ export function createMessagesUi(context, dependencies) {
       $activeReasoningWrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'false');
       $activeReasoningWrapper = null;
     }
+    $activeReasoningMessageRow = null;
+    $activeReasoningIndex = '';
 
     // Clear body after transition.
     setTimeout(function clearDrawerBody() {
       if (!$drawer.hasClass('is-open')) {
-        $('#reasoningDrawerBody').empty();
+        $('#reasoningDrawerBody').empty().removeData('toolSegments').removeData('messageRow');
       }
     }, 250);
   }
@@ -2823,16 +4009,19 @@ export function createMessagesUi(context, dependencies) {
   return {
     appendMessage,
     appendMessages,
+    appendCompressionPending,
     appendTyping,
     configureMarkdown,
     copyMessage,
     openToolInspectorFromCard,
     renderMessageHtml,
     renderMessageStream,
+    removeCompressionPending,
     scrollBottom,
     setQueuedMessageState,
     toggleSearchSources,
     toggleEditCard,
+    toggleCompressionContext,
     toggleWriteCard,
     startWritePreviewPan,
     toggleThoughtSection,

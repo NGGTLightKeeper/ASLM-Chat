@@ -23,41 +23,30 @@ import logging.handlers
 from pathlib import Path
 
 
-# Default log directory (relative to the project root)
 _LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 
-# Per-service logger names → log files
 _SERVICE_LOGS: dict[str, str] = {
-    "services.web_search":    "web_search.log",
-    "services.read_page":     "read_page.log",
-    "trace.web_search":       "web_search_trace.log",
-    "trace.read_page":        "read_page_trace.log",
-    "adapters.mcp.server":    "mcp_trace.log",
-    "core":                   "core.log",
+    "services.web_search": "web_search.log",
+    "services.read_page": "read_page.log",
+    "trace.web_search": "web_search_trace.log",
+    "trace.read_page": "read_page_trace.log",
+    "adapters.mcp.server": "mcp_trace.log",
+    "mcp_server_bridge": "mcp_trace.log",
+    "core": "core.log",
 }
 
-_FORMAT = "%(asctime)s [%(levelname)s] %(name)s — %(message)s"
+_FORMAT = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
 _DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
 
 def setup_logging(
     log_dir: Path | None = None,
     level: int = logging.INFO,
-    max_bytes: int = 5 * 1024 * 1024,   # 5 MB per file
+    max_bytes: int = 5 * 1024 * 1024,
     backup_count: int = 3,
 ) -> None:
-    """Configure rotating file handlers for every service logger.
+    """Configure rotating file handlers for every service logger."""
 
-    Safe to call multiple times (idempotent: skips loggers that already have
-    file handlers attached).
-
-    Parameters
-    ----------
-    log_dir:      Override default ``logs/`` directory path.
-    level:        Root log level for all service loggers.
-    max_bytes:    Per-file size limit before rotation.
-    backup_count: Number of rotated backups to keep.
-    """
     target_dir = log_dir or _LOG_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -67,8 +56,7 @@ def setup_logging(
         log = logging.getLogger(logger_name)
         log.setLevel(level)
 
-        # Skip if a RotatingFileHandler is already attached.
-        if any(isinstance(h, logging.handlers.RotatingFileHandler) for h in log.handlers):
+        if any(isinstance(handler, logging.handlers.RotatingFileHandler) for handler in log.handlers):
             continue
 
         handler = logging.handlers.RotatingFileHandler(
@@ -79,5 +67,4 @@ def setup_logging(
         )
         handler.setFormatter(formatter)
         log.addHandler(handler)
-        # Prevent propagation to root logger (avoids duplicate stderr output).
         log.propagate = False

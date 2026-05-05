@@ -22,7 +22,7 @@ async def fetch_amazon_snapshot(url: str, timeout: float = 20.0) -> dict[str, An
     async with httpx.AsyncClient(
         headers=CHROME_BASIC_HEADERS,
         timeout=timeout,
-        follow_redirects=True,
+        follow_redirects=False,
         http2=True,
     ) as client:
         response = await client.get(url)

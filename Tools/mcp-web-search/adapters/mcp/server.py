@@ -20,6 +20,8 @@ from adapters.mcp.tool_descriptions import (
     READ_PAGE_TOOL_DESCRIPTION,
     WEB_SEARCH_TOOL_DESCRIPTION,
 )
+from adapters.mcp.search_io_logger import write_search_io_event
+from adapters.mcp.search_query_contract import WebSearchQuery, coerce_search_query
 from core.config import load_search_config
 from services import run_read_page, run_web_search_rich
 from services.web_search import shutdown_web_search
@@ -260,10 +262,20 @@ def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, object]
 
 
 async def web_search(
-    query: str,
+    query: WebSearchQuery,
     context: FastMCPContext | dict[str, Any] | None = None,
 ) -> CallToolResult:
-    query_text = (query or "").strip()
+    started_at = time.perf_counter()
+    query_text = coerce_search_query(query)
+    write_search_io_event(
+        {
+            "layer": "fastmcp_adapter",
+            "phase": "web_search.coerced",
+            "tool_id": "web_search",
+            "raw_query": query,
+            "coerced_query": query_text,
+        }
+    )
     if not query_text:
         payload = {
             "query": "",
@@ -281,6 +293,16 @@ async def web_search(
             },
         }
         SearchRichOutput.model_validate(payload)
+        write_search_io_event(
+            {
+                "layer": "fastmcp_adapter",
+                "phase": "web_search.result",
+                "tool_id": "web_search",
+                "coerced_query": query_text,
+                "result": payload,
+                "elapsed_seconds": time.perf_counter() - started_at,
+            }
+        )
         return CallToolResult(
             content=[TextContent(type="text", text=payload["model_context"])],
             structuredContent=payload,
@@ -305,6 +327,16 @@ async def web_search(
             payload.get("search_id") if isinstance(payload, dict) else None,
         )
         SearchRichOutput.model_validate(payload)
+        write_search_io_event(
+            {
+                "layer": "fastmcp_adapter",
+                "phase": "web_search.result",
+                "tool_id": "web_search",
+                "coerced_query": query_text,
+                "result": payload,
+                "elapsed_seconds": time.perf_counter() - started_at,
+            }
+        )
         return CallToolResult(
             content=[TextContent(type="text", text=str(payload.get("model_context", "")))],
             structuredContent=payload,
@@ -327,10 +359,29 @@ async def read_page(
         isinstance(url, list),
         url[:2] if isinstance(url, list) else str(url)[:160],
     )
+    started_at = time.perf_counter()
+    write_search_io_event(
+        {
+            "layer": "fastmcp_adapter",
+            "phase": "read_page.request",
+            "tool_id": "read_page",
+            "url": url,
+        }
+    )
     if isinstance(url, list):
         urls = [u.strip() for u in url if isinstance(u, str) and u.strip()]
         if not urls:
             payload = _read_page_payload([], ["Error: No URLs provided."])
+            write_search_io_event(
+                {
+                    "layer": "fastmcp_adapter",
+                    "phase": "read_page.result",
+                    "tool_id": "read_page",
+                    "urls": [],
+                    "result": payload,
+                    "elapsed_seconds": time.perf_counter() - started_at,
+                }
+            )
             return CallToolResult(
                 content=[TextContent(type="text", text=str(payload["model_context"]))],
                 structuredContent=payload,
@@ -340,6 +391,16 @@ async def read_page(
         results = await _keepalive(context, "reading...", asyncio.gather(*tasks))
         logger.info("mcp.read_page.done batch=True urls=%d", len(urls))
         payload = _read_page_payload(urls[:_BATCH_QUERY_LIMIT], results)
+        write_search_io_event(
+            {
+                "layer": "fastmcp_adapter",
+                "phase": "read_page.result",
+                "tool_id": "read_page",
+                "urls": urls[:_BATCH_QUERY_LIMIT],
+                "result": payload,
+                "elapsed_seconds": time.perf_counter() - started_at,
+            }
+        )
         return CallToolResult(
             content=[TextContent(type="text", text=str(payload["model_context"]))],
             structuredContent=payload,
@@ -350,6 +411,16 @@ async def read_page(
     result = await _keepalive(context, "reading...", run_read_page(url_text))
     logger.info("mcp.read_page.done batch=False")
     payload = _read_page_payload([url_text], [result])
+    write_search_io_event(
+        {
+            "layer": "fastmcp_adapter",
+            "phase": "read_page.result",
+            "tool_id": "read_page",
+            "urls": [url_text],
+            "result": payload,
+            "elapsed_seconds": time.perf_counter() - started_at,
+        }
+    )
     return CallToolResult(
         content=[TextContent(type="text", text=str(payload["model_context"]))],
         structuredContent=payload,

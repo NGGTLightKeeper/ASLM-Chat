@@ -28,10 +28,18 @@ Answer a factual question using the shortest web search path.
 ### Step 1 -- Search
 
 ```text
-web_search("short keyword query")
+web_search({
+  "query": {
+    "terms": ["specific fact or product"],
+    "entities": ["Exact Name"],
+    "model_identifiers": [],
+    "intent": "general",
+    "source_type": "any"
+  }
+})
 ```
 
-Use compact English keywords. Preserve exact product names and SKUs.
+Use structured fields. Preserve exact product names and SKUs. Do not add SEO terms like "best", "top", "rating", "overview", or trailing year spam.
 
 ### Step 2 -- Check previews
 

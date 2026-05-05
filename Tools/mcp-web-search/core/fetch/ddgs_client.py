@@ -331,9 +331,11 @@ class DDGSClient:
             )
 
     def _cache_key(self, query: str, **kwargs: object) -> str:
-        from core.cache.query_normalizer import normalize_query_key
+        from core.cache.query_normalizer import normalize_exact_query_key, normalize_query_key
         normalized = normalize_query_key(query)
+        exact = normalize_exact_query_key(query)
         raw = f"{normalized}|{json.dumps(kwargs, sort_keys=True)}"
+        raw = f"{exact}|{raw}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     def _cache_get(self, key: str) -> Optional[list]:

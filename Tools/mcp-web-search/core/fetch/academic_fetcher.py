@@ -232,7 +232,7 @@ class AcademicFetcher:
             # Fallback appending query param if it's not in the template
             url = url_template + quote_plus(query)
 
-        async with httpx.AsyncClient(headers=_HEADERS, timeout=self._timeout, follow_redirects=True) as client:
+        async with httpx.AsyncClient(headers=_HEADERS, timeout=self._timeout, follow_redirects=False) as client:
             r = await client.get(url)
             r.raise_for_status()
             data = r.json()
@@ -272,7 +272,7 @@ class AcademicFetcher:
         domain = entry.get("pattern", "")
         url = self._build_web_search_url(domain, query)
         
-        async with httpx.AsyncClient(headers=_HEADERS, timeout=self._timeout, follow_redirects=True) as client:
+        async with httpx.AsyncClient(headers=_HEADERS, timeout=self._timeout, follow_redirects=False) as client:
             r = await client.get(url)
             r.raise_for_status()
             html = r.text

@@ -1172,6 +1172,11 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
         if role == "assistant" and message.get("tool_calls"):
             entry["tool_calls"] = message["tool_calls"]
 
+        if role == "assistant" and message.get("thinking"):
+            # Forward stored thinking from previous turns so reasoning models
+            # retain their own chain-of-thought across multi-turn conversations.
+            entry["thinking"] = message["thinking"]
+
         payload.append(entry)
 
     return payload
@@ -1565,6 +1570,9 @@ def _run_tool_loop(
         return
 
     conversation = conversation if conversation is not None else _build_openai_messages(messages)
+    tool_quota_counters: dict[str, int] = {}
+    seen_tool_signatures: set[str] = set()
+    consecutive_blocked_tool_results = 0
 
     for round_index in range(MAX_TOOL_ROUNDS):
         # Each round lets the model either finish or request another batch of
@@ -1621,15 +1629,46 @@ def _run_tool_loop(
                     "tool_round_index": round_index + 1,
                 }
             )
-
-            tool_result = tool_registry.call_ollama_tool(
-                tool_lookup,
-                tool_call["name"],
-                tool_call.get("arguments") or {},
+            tool_registry.log_search_tool_io(
+                "request",
+                tool_event,
+                arguments=tool_call.get("arguments") or {},
                 context=call_context,
             )
-            if isinstance(tool_result, dict) and "_image_b64" in tool_result:
-                tool_result = f"[Image: {tool_result.get('_path', 'image')}]"
+
+            tool_cooldown_error = tool_registry.consume_tool_cooldown(
+                tool_event,
+                tool_call.get("arguments") or {},
+            )
+            if tool_cooldown_error is not None:
+                tool_result = tool_cooldown_error
+            else:
+                duplicate_error = tool_registry.consume_duplicate_tool_call(
+                    tool_event,
+                    tool_call.get("arguments") or {},
+                    seen_tool_signatures,
+                )
+                if duplicate_error is not None:
+                    tool_result = duplicate_error
+                else:
+                    quota_error = tool_registry.consume_tool_quota(tool_event, tool_quota_counters)
+                    if quota_error is not None:
+                        tool_result = quota_error
+                    else:
+                        tool_result = tool_registry.call_ollama_tool(
+                            tool_lookup,
+                            tool_call["name"],
+                            tool_call.get("arguments") or {},
+                            context=call_context,
+                        )
+                        tool_registry.remember_tool_cooldown(
+                            tool_event,
+                            tool_call.get("arguments") or {},
+                        )
+            if tool_registry.is_blocking_tool_result(tool_result):
+                consecutive_blocked_tool_results += 1
+            else:
+                consecutive_blocked_tool_results = 0
 
             tool_message = _build_tool_message(
                 tool_call["name"],
@@ -1639,14 +1678,39 @@ def _run_tool_loop(
             )
             # Feed the tool result back as a standard tool-role message so the
             # next model round can continue from the resolved state.
-            conversation.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "content": tool_message["content"],
-                }
+            conversation_tool_message = {
+                "role": "tool",
+                "tool_call_id": tool_call["id"],
+                "content": tool_message["content"],
+            }
+            conversation.append(conversation_tool_message)
+            tool_registry.log_search_tool_io(
+                "response",
+                tool_event,
+                arguments=tool_call.get("arguments") or {},
+                context=call_context,
+                result=conversation_tool_message,
             )
             yield {"tool_result": dict(tool_message)}
+
+        if consecutive_blocked_tool_results >= 2:
+            conversation.append(
+                {
+                    "role": "user",
+                    "content": tool_registry.forced_final_prompt_after_tool_blocks(),
+                }
+            )
+            assistant_message = yield from _yield_stream_round(
+                _stream_openai_round(
+                    client,
+                    model_name,
+                    conversation,
+                    options,
+                    stream=stream,
+                )
+            )
+            yield {"transcript_message": assistant_message}
+            return
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
 
@@ -1868,3 +1932,4 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
         raise
     finally:
         _close_client(client)
+

@@ -10,6 +10,7 @@ import os
 import posixpath
 import re
 import shutil
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,7 @@ TEXT_SAMPLE_BYTES = 8192
 IMAGE_MIME_PREFIX = "image/"
 TEXT_MIME_PREFIX = "text/"
 LEGACY_MODEL_ROOT_ALIASES = ("task",)
+LEGACY_UPLOAD_ROOT_PREFIXES = ("mnt/data/User",)
 
 
 def model_root_aliases() -> tuple[str, ...]:
@@ -140,6 +142,10 @@ def normalize_model_relative_path(path: str) -> str:
     """Normalize model-facing paths and tolerate workspace-root aliases."""
 
     normalized = normalize_relative_path(path)
+    legacy_upload = _legacy_upload_relative_path(normalized)
+    if legacy_upload is not None:
+        return legacy_upload
+
     for alias in model_root_aliases():
         if normalized == alias:
             return "."
@@ -157,6 +163,19 @@ def normalize_model_relative_path(path: str) -> str:
             return normalized[len(container_task_prefix_with_slash) :] or "."
 
     return normalized
+
+
+def _legacy_upload_relative_path(normalized_path: str) -> str | None:
+    """Map old upload paths from the prompt contract into the task workspace."""
+
+    normalized = normalize_relative_path(normalized_path)
+    for prefix in LEGACY_UPLOAD_ROOT_PREFIXES:
+        if normalized == prefix:
+            return "User"
+        prefix_with_slash = f"{prefix}/"
+        if normalized.startswith(prefix_with_slash):
+            return f"User/{normalized[len(prefix_with_slash):]}" or "User"
+    return None
 
 
 def validate_model_path(rel_path: str, kind: str = "path") -> None:
@@ -177,6 +196,10 @@ def validate_model_path(rel_path: str, kind: str = "path") -> None:
         )
 
     if raw.startswith("/"):
+        legacy_upload = _legacy_upload_relative_path(raw)
+        if legacy_upload is not None:
+            return
+
         # Always allow workspace-root aliases (e.g. /workspace/_sandbox/...).
         for alias in model_root_aliases():
             container_task_root = f"{CONTAINER_WORKSPACE.rstrip('/')}/{alias}"
@@ -202,6 +225,10 @@ def resolve_model_path(path: str, cwd: str = ".") -> str:
         return normalized_cwd
 
     if raw.startswith("/"):
+        legacy_upload = _legacy_upload_relative_path(raw)
+        if legacy_upload is not None:
+            return legacy_upload
+
         for alias in model_root_aliases():
             container_task_root = f"{CONTAINER_WORKSPACE.rstrip('/')}/{alias}"
             if raw == container_task_root or raw.startswith(f"{container_task_root}/"):
@@ -364,6 +391,119 @@ def _is_probably_binary(data: bytes, mime_type: str) -> bool:
     return (text_like / len(sample)) < 0.85
 
 
+def _image_dimensions(data: bytes, mime_type: str) -> dict[str, int] | None:
+    """Return basic image dimensions for common formats without full decoding."""
+
+    try:
+        if mime_type == "image/png" and data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+            width, height = struct.unpack(">II", data[16:24])
+            return {"width": width, "height": height}
+
+        if mime_type == "image/gif" and data[:6] in (b"GIF87a", b"GIF89a") and len(data) >= 10:
+            width, height = struct.unpack("<HH", data[6:10])
+            return {"width": width, "height": height}
+
+        if mime_type == "image/jpeg" and data.startswith(b"\xff\xd8"):
+            offset = 2
+            sof_markers = {
+                0xC0,
+                0xC1,
+                0xC2,
+                0xC3,
+                0xC5,
+                0xC6,
+                0xC7,
+                0xC9,
+                0xCA,
+                0xCB,
+                0xCD,
+                0xCE,
+                0xCF,
+            }
+            standalone_markers = {0x01, *range(0xD0, 0xD9)}
+            while offset + 4 <= len(data):
+                if data[offset] != 0xFF:
+                    offset += 1
+                    continue
+                while offset < len(data) and data[offset] == 0xFF:
+                    offset += 1
+                if offset >= len(data):
+                    break
+                marker = data[offset]
+                offset += 1
+                if marker in standalone_markers:
+                    continue
+                if offset + 2 > len(data):
+                    break
+                segment_length = int.from_bytes(data[offset : offset + 2], "big")
+                if segment_length < 2 or offset + segment_length > len(data):
+                    break
+                if marker in sof_markers and segment_length >= 7:
+                    height = int.from_bytes(data[offset + 3 : offset + 5], "big")
+                    width = int.from_bytes(data[offset + 5 : offset + 7], "big")
+                    return {"width": width, "height": height}
+                offset += segment_length
+
+        if mime_type == "image/webp" and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            chunk = data[12:16]
+            if chunk == b"VP8X" and len(data) >= 30:
+                width = int.from_bytes(data[24:27], "little") + 1
+                height = int.from_bytes(data[27:30], "little") + 1
+                return {"width": width, "height": height}
+            if chunk == b"VP8L" and len(data) >= 25 and data[20] == 0x2F:
+                bits = int.from_bytes(data[21:25], "little")
+                width = (bits & 0x3FFF) + 1
+                height = ((bits >> 14) & 0x3FFF) + 1
+                return {"width": width, "height": height}
+    except (struct.error, ValueError):
+        return None
+
+    return None
+
+
+def _image_payload(
+    path: str,
+    data: bytes,
+    mime_type: str,
+    *,
+    include_preview: bool = True,
+    max_preview_bytes: int = MAX_IMAGE_PREVIEW_BYTES,
+) -> dict[str, Any]:
+    warnings: list[str] = []
+    preview_data = None
+    max_preview_bytes = max(0, int(max_preview_bytes))
+
+    if include_preview:
+        if len(data) <= max_preview_bytes:
+            preview_data = {
+                "type": "inline_base64",
+                "mime_type": mime_type,
+                "data_base64": base64.b64encode(data).decode("utf-8"),
+            }
+        else:
+            warnings.append(
+                f"Image preview omitted because the file is larger than {max_preview_bytes} bytes."
+            )
+
+    result: dict[str, Any] = {
+        "path": path,
+        "kind": "image",
+        "mime": mime_type,
+        "size_bytes": len(data),
+        "encoding": None,
+        "preview": preview_data,
+    }
+    dimensions = _image_dimensions(data, mime_type)
+    if dimensions is not None:
+        result.update(dimensions)
+
+    return {
+        "result": result,
+        "warnings": warnings,
+        "truncated": False,
+    }
+
+
 def _should_skip_entry(name: str, include_hidden: bool) -> bool:
     if name in IGNORED_DIR_NAMES:
         return True
@@ -489,30 +629,7 @@ def read(
     truncated = False
 
     if mime_type.startswith(IMAGE_MIME_PREFIX):
-        preview_data = None
-        if len(data) <= MAX_IMAGE_PREVIEW_BYTES:
-            preview_data = {
-                "type": "inline_base64",
-                "mime_type": mime_type,
-                "data_base64": base64.b64encode(data).decode("utf-8"),
-            }
-        else:
-            warnings.append(
-                f"Image preview omitted because the file is larger than {MAX_IMAGE_PREVIEW_BYTES} bytes."
-            )
-
-        return {
-            "result": {
-                "path": normalized_path,
-                "kind": "image",
-                "mime": mime_type,
-                "size_bytes": len(data),
-                "encoding": None,
-                "preview": preview_data,
-            },
-            "warnings": warnings,
-            "truncated": False,
-        }
+        return _image_payload(normalized_path, data, mime_type)
 
     if _is_probably_binary(data, mime_type):
         return {
@@ -594,6 +711,42 @@ def describe(path: str) -> dict[str, Any]:
         "warnings": [],
         "truncated": False,
     }
+
+
+def read_image(
+    path: str,
+    include_preview: bool = True,
+    max_preview_bytes: int = MAX_IMAGE_PREVIEW_BYTES,
+) -> dict[str, Any]:
+    """Read image metadata and, when small enough, an inline preview."""
+
+    target = get_secure_task_path(path)
+    _reject_symlink_escape(target, path)
+    if not target.is_file():
+        raise FileNotFoundError(f"File not found: {normalize_model_relative_path(path)}")
+
+    data = target.read_bytes()
+    mime_type = _guess_mime(target)
+    normalized_path = normalize_model_relative_path(path)
+    if not mime_type.startswith(IMAGE_MIME_PREFIX):
+        raise SandboxToolError(
+            "not_image",
+            f"File is not an image: {normalized_path}",
+            result={
+                "path": normalized_path,
+                "kind": "binary" if _is_probably_binary(data, mime_type) else "text",
+                "mime": mime_type,
+                "size_bytes": len(data),
+            },
+        )
+
+    return _image_payload(
+        normalized_path,
+        data,
+        mime_type,
+        include_preview=bool(include_preview),
+        max_preview_bytes=max_preview_bytes,
+    )
 
 
 def write(path: str, content: str) -> dict[str, Any]:

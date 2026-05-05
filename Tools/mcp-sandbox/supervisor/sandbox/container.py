@@ -13,6 +13,17 @@ from sandbox.jobs import JOB_REGISTRY
 
 
 def list_background_jobs() -> dict:
+    for listed in JOB_REGISTRY.list_jobs():
+        if listed.get("runtime") == "native" and listed.get("status") == "running":
+            try:
+                job = JOB_REGISTRY.get(listed["job_id"])
+                process = job.process
+                if process is not None:
+                    returncode = process.poll()
+                    if returncode is not None:
+                        JOB_REGISTRY.mark_done(job.job_id, returncode)
+            except Exception:
+                pass
     return {"jobs": JOB_REGISTRY.list_jobs()}
 
 
@@ -35,7 +46,15 @@ def foreground_background_job(job_id: str) -> dict:
 def kill_background_job(job_id: str) -> dict:
     job = JOB_REGISTRY.get(job_id)
     process = job.process
-    if process is not None and process.poll() is None:
+    if process is not None:
+        returncode = process.poll()
+        if returncode is not None:
+            JOB_REGISTRY.mark_done(job.job_id, returncode)
+            return job.to_result()
         _kill_process_group(process)
+        try:
+            process.wait(timeout=2)
+        except Exception:
+            pass
     JOB_REGISTRY.mark_killed(job.job_id)
     return job.to_result()

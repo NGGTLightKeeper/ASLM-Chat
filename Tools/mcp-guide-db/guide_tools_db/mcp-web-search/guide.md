@@ -9,11 +9,26 @@ Provides search, page reading, file download, and long-form research.
 
 ## Tools
 
-### `web_search(query, limit=10)`
+### `web_search(query)`
 
 Fast web search with DDGS-backed results.
-`query` accepts a string or a list of strings (parallel batch search).
+`query` is a structured JSON search plan, not a sentence or keyword pile.
 Returns: title, URL, snippet, preview (600 chars), source engine.
+
+Minimal query shape:
+
+```json
+{
+  "query": {
+    "terms": ["release notes"],
+    "entities": ["Example Project"],
+    "model_identifiers": ["v2.1"],
+    "intent": "documentation",
+    "source_type": "official",
+    "site_include": ["example.com"]
+  }
+}
+```
 
 ### `read_page(url)` or `read_page([url1, url2, ...])`
 
@@ -38,7 +53,7 @@ Gate behind plan + explicit user confirmation. Run at most once per conversation
 
 ## Golden rules
 
-1. Use compact keyword queries, not long sentences.
+1. Use structured query fields, not long sentences or SEO keyword piles.
 2. Preserve exact model names, SKUs, versions in queries.
 3. Prefer batch reads (`read_page([...])`) over sequential single-page reads.
 4. Do not use `read_page` if the preview already answers the question.

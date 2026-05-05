@@ -18,9 +18,7 @@ os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT / ".test_workspace"))
 
 def reset_task_root():
     from sandbox import workspace
-    from sandbox.session_state import reset_session_state
 
-    reset_session_state()
     task_root = workspace.task_root()
     task_root.mkdir(parents=True, exist_ok=True)
     for child in list(task_root.iterdir()):

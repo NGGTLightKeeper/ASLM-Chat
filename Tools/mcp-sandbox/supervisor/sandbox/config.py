@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import os
-import re as _re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -99,7 +97,14 @@ IMPORT_ROOTS_ENV = os.getenv("SANDBOX_IMPORT_ROOTS", "")
 
 # Execution limits.
 
-MAX_OUTPUT_CHARS = int(os.getenv("SANDBOX_MAX_OUTPUT_CHARS", "40000"))
+MAX_OUTPUT_BYTES = int(os.getenv("SANDBOX_MAX_OUTPUT_BYTES", "60000"))
+OUTPUT_HEAD_RATIO = float(os.getenv("SANDBOX_OUTPUT_HEAD_RATIO", "0.5"))
+JOB_ROOT = os.getenv(
+    "SANDBOX_JOB_ROOT",
+    "/tmp/mcp-sandbox-jobs"
+    if IN_CONTAINER
+    else os.path.join(HOST_WORKSPACE, ".sandbox_jobs"),
+)
 DEFAULT_TIMEOUT = int(os.getenv("SANDBOX_DEFAULT_TIMEOUT", "60"))
 OCR_TIMEOUT = int(os.getenv("SANDBOX_OCR_TIMEOUT", "60"))
 MAX_READ_BYTES = int(os.getenv("SANDBOX_MAX_READ_BYTES", "200000"))
@@ -112,10 +117,7 @@ MAX_GREP_RESULTS = int(os.getenv("SANDBOX_MAX_GREP_RESULTS", "200"))
 
 # Presentation layer tuning.
 
-FILE_MAP_MIN_LINES = int(os.getenv("SANDBOX_FILE_MAP_MIN_LINES", "200"))
-GREP_CLUSTER_THRESHOLD = int(os.getenv("SANDBOX_GREP_CLUSTER_THRESHOLD", "30"))
 MAX_FILE_MAP_SYMBOLS = int(os.getenv("SANDBOX_MAX_FILE_MAP_SYMBOLS", "50"))
-LOOP_BREAK_THRESHOLD = int(os.getenv("SANDBOX_LOOP_BREAK_THRESHOLD", "3"))
 CPU_LIMIT = os.getenv("SANDBOX_CPU_LIMIT", "4")
 THREAD_LIMIT = int(os.getenv("SANDBOX_THREAD_LIMIT", "4"))
 MEMORY_LIMIT = os.getenv("SANDBOX_MEMORY_LIMIT", "3g")
@@ -234,75 +236,3 @@ ALLOWED_IMPORT_ROOTS = get_allowed_import_roots()
 
 os.makedirs(HOST_WORKSPACE, exist_ok=True)
 os.makedirs(os.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR), exist_ok=True)
-
-
-# File-type → glob mapping (used by grep/rg routing and code-extension detection).
-
-_RG_TYPE_FALLBACK: dict[str, str] = {
-    "py": "*.py", "python": "*.py",
-    "js": "*.js", "javascript": "*.js",
-    "ts": "*.ts", "typescript": "*.ts",
-    "tsx": "*.tsx", "jsx": "*.jsx",
-    "rs": "*.rs", "rust": "*.rs",
-    "go": "*.go",
-    "java": "*.java",
-    "c": "*.c",
-    "cpp": "*.cpp", "cc": "*.cc", "cxx": "*.cxx",
-    "h": "*.h", "hpp": "*.hpp",
-    "cs": "*.cs", "csharp": "*.cs",
-    "rb": "*.rb", "ruby": "*.rb",
-    "php": "*.php",
-    "html": "*.html", "css": "*.css",
-    "json": "*.json",
-    "yaml": "*.yaml", "yml": "*.yml",
-    "toml": "*.toml", "xml": "*.xml",
-    "md": "*.md", "markdown": "*.md",
-    "sh": "*.sh", "bash": "*.sh",
-    "sql": "*.sql",
-    "lua": "*.lua",
-    "r": "*.r",
-    "swift": "*.swift",
-    "kt": "*.kt", "kotlin": "*.kt",
-    "scala": "*.scala",
-    "tex": "*.tex",
-    "txt": "*.txt",
-}
-
-
-def _load_rg_type_map() -> dict[str, str]:
-    """Return type→glob map built from `rg --type-list`; falls back to built-in table."""
-    try:
-        proc = subprocess.run(
-            ["rg", "--type-list"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if proc.returncode != 0 or not proc.stdout.strip():
-            return dict(_RG_TYPE_FALLBACK)
-
-        result: dict[str, str] = {}
-        for line in proc.stdout.splitlines():
-            m = _re.match(r'^([\w-]+):\s*(.+)$', line)
-            if not m:
-                continue
-            type_name = m.group(1).lower()
-            globs = [g.strip() for g in m.group(2).split(",")]
-            primary = next((g for g in globs if _re.match(r'^\*\.\w+$', g)), None)
-            if primary is None:
-                continue
-            result[type_name] = primary
-            # Register a short-ext alias for every glob in the type.
-            # Allow overwrite when ext == type_name: if the type is "js" and
-            # primary was "*.cjs" (first in list), we still want result["js"]
-            # to point at "*.js", not "*.cjs".
-            for g in globs:
-                if _re.match(r'^\*\.\w+$', g):
-                    ext = g[2:]
-                    if ext not in result or ext == type_name:
-                        result[ext] = g
-
-        return result if result else dict(_RG_TYPE_FALLBACK)
-    except Exception:
-        return dict(_RG_TYPE_FALLBACK)
-
-
-RG_TYPE_TO_GLOB: dict[str, str] = _load_rg_type_map()

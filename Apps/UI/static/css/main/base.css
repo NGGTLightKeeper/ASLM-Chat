@@ -58,7 +58,7 @@
   --c-gray-5: #2c2c2e;
   --c-gray-6: #1c1c1e;
 
-  --c-bg: #000000;
+  --c-bg: #111113;
   --c-bg-surface: #1c1c1e;
   --c-bg-elevated: #2c2c2e;
 
@@ -97,6 +97,13 @@
   --surface-elevated-soft: rgba(44, 44, 46, 0.8);
   --surface-elevated-hover: rgba(58, 58, 60, 0.9);
 
+  --activity-card-bg: rgba(255, 255, 255, 0.045);
+  --activity-card-bg-hover: rgba(255, 255, 255, 0.07);
+  --activity-card-border: rgba(255, 255, 255, 0.105);
+  --activity-card-border-hover: rgba(255, 255, 255, 0.16);
+  --activity-card-shadow: 0 10px 26px rgba(0, 0, 0, 0.14);
+  --activity-icon-opacity: 0.58;
+
   --border-subtle: rgba(255, 255, 255, 0.1);
   --border-soft: rgba(255, 255, 255, 0.15);
   --border-strong-soft: rgba(255, 255, 255, 0.2);
@@ -109,6 +116,7 @@
   --danger-hover: rgba(255, 69, 58, 0.85);
 
   --font: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --font-size-caption-2: 12px;
   --font-size-caption-1: 13px;
   --font-size-body-2: 15px;

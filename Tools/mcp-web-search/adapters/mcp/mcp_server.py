@@ -22,6 +22,8 @@ from adapters.mcp.tool_descriptions import (
     READ_PAGE_TOOL_DESCRIPTION,
     WEB_SEARCH_TOOL_DESCRIPTION,
 )
+from adapters.mcp.search_io_logger import write_search_io_event
+from adapters.mcp.search_query_contract import SEARCH_QUERY_SCHEMA, coerce_search_query
 from core.config import load_search_config as _load_cfg
 from core.fetch.thread_pool import io_pool as _io_pool  # noqa: F401 - initialise shared pool
 
@@ -41,16 +43,7 @@ TOOLS = [
         "id": "web_search",
         "name": "Web Search",
         "description": WEB_SEARCH_TOOL_DESCRIPTION,
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "description": "A single web search query.",
-                    "type": "string",
-                },
-            },
-            "required": ["query"],
-        },
+        "parameters": SEARCH_QUERY_SCHEMA,
     },
     {
         "id": "read_page",
@@ -161,13 +154,45 @@ async def call_tool(
     if tool_id == "web_search":
         from services import run_web_search_rich
 
-        query = args.get("query", "")
-        return await run_web_search_rich(str(query).strip(), max_results=_MAX_RESULTS)
+        query_text = coerce_search_query(args.get("query", ""))
+        write_search_io_event(
+            {
+                "layer": "mcp_adapter_bridge",
+                "phase": "web_search.coerced",
+                "tool_id": "web_search",
+                "raw_arguments": args,
+                "raw_query": args.get("query", ""),
+                "coerced_query": query_text,
+                "context": context or {},
+            }
+        )
+        result = await run_web_search_rich(query_text, max_results=_MAX_RESULTS)
+        write_search_io_event(
+            {
+                "layer": "mcp_adapter_bridge",
+                "phase": "web_search.result",
+                "tool_id": "web_search",
+                "coerced_query": query_text,
+                "result": result,
+                "elapsed_seconds": asyncio.get_running_loop().time() - started_at,
+            }
+        )
+        return result
 
     if tool_id == "read_page":
         from services import run_read_page
 
         url = args.get("url", "")
+        write_search_io_event(
+            {
+                "layer": "mcp_adapter_bridge",
+                "phase": "read_page.request",
+                "tool_id": "read_page",
+                "raw_arguments": args,
+                "url": url,
+                "context": context or {},
+            }
+        )
         if isinstance(url, list):
             urls = [u.strip() for u in url if isinstance(u, str) and u.strip()]
             results = await asyncio.gather(
@@ -175,9 +200,31 @@ async def call_tool(
                 return_exceptions=True,
             )
             texts = [r if isinstance(r, str) else f"Error: {r}" for r in results]
-            return _read_page_payload(urls[:_BATCH_LIMIT], texts)
+            payload = _read_page_payload(urls[:_BATCH_LIMIT], texts)
+            write_search_io_event(
+                {
+                    "layer": "mcp_adapter_bridge",
+                    "phase": "read_page.result",
+                    "tool_id": "read_page",
+                    "urls": urls[:_BATCH_LIMIT],
+                    "result": payload,
+                    "elapsed_seconds": asyncio.get_running_loop().time() - started_at,
+                }
+            )
+            return payload
         url_text = url.strip()
         result = await run_read_page(url_text)
-        return _read_page_payload([url_text], [result])
+        payload = _read_page_payload([url_text], [result])
+        write_search_io_event(
+            {
+                "layer": "mcp_adapter_bridge",
+                "phase": "read_page.result",
+                "tool_id": "read_page",
+                "urls": [url_text],
+                "result": payload,
+                "elapsed_seconds": asyncio.get_running_loop().time() - started_at,
+            }
+        )
+        return payload
 
     raise ValueError(f"Unknown tool: {tool_id}")

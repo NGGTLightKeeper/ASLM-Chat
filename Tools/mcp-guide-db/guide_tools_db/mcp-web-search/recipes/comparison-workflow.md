@@ -24,13 +24,31 @@ Compare multiple entities with source-backed evidence and explicit tradeoffs.
 
 ## Workflow
 
-### Step 1 -- Parallel batch search
+### Step 1 -- Search each entity with a structured plan
 
 ```text
-web_search(["Product A specs review", "Product B specs review"], limit=5)
+web_search({
+  "query": {
+    "terms": ["specifications"],
+    "entities": ["Product A"],
+    "model_identifiers": [],
+    "intent": "specifications",
+    "source_type": "any"
+  }
+})
+
+web_search({
+  "query": {
+    "terms": ["specifications"],
+    "entities": ["Product B"],
+    "model_identifiers": [],
+    "intent": "specifications",
+    "source_type": "any"
+  }
+})
 ```
 
-One query per entity. This returns grouped results.
+One structured query per entity. Keep entities separated so result quality does not collapse.
 
 ### Step 2 -- Compare previews
 

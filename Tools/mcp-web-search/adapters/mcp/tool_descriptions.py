@@ -4,69 +4,60 @@ from __future__ import annotations
 MCP_SERVER_DESCRIPTION = "Search and page reading tools."
 
 
-WEB_SEARCH_TOOL_DESCRIPTION = """Primary web search tool for current information.
+WEB_SEARCH_TOOL_DESCRIPTION = """\
+Ranked web search and page-content extraction.
 
-Use this tool when you need up-to-date facts, recent news, current product details,
-latest documentation, prices, releases, schedules, or any information that may have
-changed since your built-in knowledge cutoff.
+The query is a search-engine directive, not a question. Write it like a
+librarian's search expression: concrete nouns, identifiers, versions, or
+quoted error text — no prose, no explanation.
 
-Returns ranked sources with URLs, parsed page content when extraction succeeds,
-and search-engine preview text as a fallback.
-Citation policy:
-- Cite web-search evidence only with the citation handles returned in the search context.
-- Put each citation immediately after the exact sentence or bullet it supports.
-- Use a handle only when that source explicitly supports the claim in its title, preview, or parsed content.
-- Never cite a source only because the domain or title sounds related.
-- Never reuse a handle from a different search result list or earlier tool call.
-- Never invent, renumber, shorten, translate, or merge citation handles.
-- Do not use bare domains, URLs, or source numbers as citations when handles are available.
-- If none of the returned sources supports a claim, say the search did not confirm it or omit the claim.
-- Prefer parsed page content over search-engine preview snippets; preview-only sources are weaker evidence.
-The UI renders valid handles as compact source chips.
+QUALITY GATE (enforced automatically):
+  The engine validates every query before sending it to the network.
+  Two violations return a BAD_QUERY error you must resolve:
+  · Vague SEO-style filler words — generic qualifiers that surface
+    clickbait instead of substance (e.g. "great", "ultimate", "overview",
+    "how to", "what is"). Use specific nouns and identifiers instead.
+  · More than 6 content words — operators (site:, -site:, OR, "phrases")
+    are free and do not count toward the limit. Plain filler words do.
 
-HOW TO SEARCH WELL - use layered queries, not one broad question:
+OPERATORS (ASCII only — never translate):
+  site:domain.com           restrict to domain and subdomains
+  -site:domain.com          exclude domain
+  -domain.com               short exclude alias
+  "exact phrase"            force exact match; counts as one content token
+  term1 OR term2            either term
+  site:A OR site:B term     multi-domain search
 
-Bad:  "best database"
-Good: first pass to discover names -> ["relational database comparison", "document database tradeoffs"]
-      then targeted follow-ups per candidate ->
-        ["PostgreSQL indexing documentation", "SQLite WAL mode limitations",
-         "MongoDB transactions documentation site:mongodb.com"]
+  · "reddit", "github", "arxiv" are keywords, not source constraints.
+    Use site:reddit.com, site:github.com, site:arxiv.org instead.
+  · Always quote exact error messages: "ModuleNotFoundError: No module named 'x'"
 
-Other useful patterns:
-- For domain targeting, always use the exact ASCII operator "site:domain.com".
-- Never translate search operators. Do not write "сайт:domain.com", "site：domain.com", "с site", or any localized variant.
-- Do not use a bare domain or brand word when you mean a source constraint. Use "site:reddit.com", not "reddit"; use "site:github.com", not "github".
-- Add "site:reddit.com" or "forum" to get real user opinions vs marketing copy
-- Add "benchmark", "vs", or "review" to get comparative signal
-- Add "site:github.com" for code, issues, release notes
-- Use domain constraints when you need strict source control:
-  "site:who.int H3N2 treatment"
-  "H3N2 treatment site:who.int OR site:pubmed.ncbi.nlm.nih.gov"
-  "Samsung Galaxy S25 specs -site:wikipedia.org"
-  "Samsung Galaxy S25 specs -wikipedia.org"
-- Use exact product, standard, library, or version names instead of generic categories
-- For products: first find the exact product identifier, then search price/availability separately
-- For bugs or errors: search the exact error message in quotes
+LAYERED QUERIES — one narrow query beats one broad one:
+  1. Discover the exact name / version:  pytorch 2.3 release
+  2. Drill into it:  "torch.compile" Python 3.12 site:github.com
+  3. Cross-check a claim:  torch.compile site:pytorch.org
+  Issue steps as separate calls; never bundle them.
 
-Domain constraint behavior:
-- Only the ASCII "site:" operator creates an include-domain constraint
-- "site:domain.com" includes that domain and its subdomains
-- Multiple include domains can be chained with "OR"
-- "-site:domain.com" excludes that domain and its subdomains
-- "-domain.com" is a short exclude alias
-- If the same domain appears in both include and exclude, exclude wins
-- Bare words like "reddit", "github", or "wikipedia" are normal query terms, not domain constraints
+WHAT IT CAN READ:
+  PDF       — any domain (.pdf URL or PDF bytes detected automatically)
+  YouTube   — full transcript (pass the video URL to read_page)
+  Reddit    — posts and comment threads (native JSON, no scraping)
+  GitHub    — READMEs, releases, issues, wiki pages
+  StackExchange / Stack Overflow — questions and top answers
+  X/Twitter — tweet text and metadata
+  Amazon    — product title, price, rating, feature bullets
+  HTML      — articles, docs, blogs (structured content extraction)
 
-Avoid SEO-bait words that surface content farms and listicle spam:
-"best", "top", "ultimate guide", "everything you need to know", "complete list",
-"vs" alone (use "X vs Y benchmark" instead), "free", "easy", "simple".
-Replace them with specifics: version numbers, error text, site: filters, or "reddit".
+CITATION:
+  · Cite only with the handles returned in search context.
+  · Place each handle after the exact sentence it supports.
+  · Only cite a source whose content explicitly confirms the claim.
+  · Never reuse handles from a different query or earlier call.
+  · Parsed content outweighs snippet-only sources.
 
-Language: search in English by default even when answering in another language.
-Use the local language only when sources are region-specific (e.g. Russian retailers, local news).
-
-Returns a dynamically sized ranked set per query depending on query type,
-ranking quality, and search strategy. Accepts a single search string."""
+LANGUAGE: search in English by default; use local language only for
+region-specific sources or proper names that exist only in that language.\
+"""
 
 
 READ_PAGE_TOOL_DESCRIPTION = """Open a page and extract readable text from it.

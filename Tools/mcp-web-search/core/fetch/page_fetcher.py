@@ -1,7 +1,7 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+﻿# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 """
-Page fetcher: httpx → curl_cffi → give up.
+Page fetcher: httpx в†’ curl_cffi в†’ give up.
 
 Refactored from legacy src/page_fetcher.py:
   - Removed all try/except import fallbacks for internal modules
@@ -32,6 +32,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger("core.fetch.page_fetcher")
 
 
+def _is_redirect_status(status_code: int) -> bool:
+    return status_code in {301, 302, 303, 307, 308}
+
+
 # ---------------------------------------------------------------------------
 # Anti-bot detection
 # ---------------------------------------------------------------------------
@@ -40,7 +44,14 @@ from core.fetch.antibot import is_antibot
 from core.fetch.constants import DEFAULT_UA
 from core.fetch.stackexchange_fetcher import fetch_stackexchange_question, is_stackexchange_question_url
 from core.fetch.thread_pool import io_pool as _io_pool
-from core.fetch.url_utils import has_non_text_extension, is_non_text_content_type
+from core.fetch.url_utils import (
+    UnsafeFetchUrl,
+    has_non_text_extension,
+    is_non_text_content_type,
+    max_safe_redirects,
+    validate_public_fetch_url,
+    validate_redirect_target,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +109,7 @@ class _DomainThrottle:
 # ---------------------------------------------------------------------------
 
 class PageFetcher:
-    """Async page fetcher: httpx → curl_cffi → give up.
+    """Async page fetcher: httpx в†’ curl_cffi в†’ give up.
 
     Stores successful fetches in a SourceCache instance.
     """
@@ -121,63 +132,88 @@ class PageFetcher:
 
     # -- Single URL fetch ----------------------------------------------------
 
+
     async def _fetch_httpx(self, url: str) -> tuple[str, int]:
-        """Try fetching with httpx. Returns (raw_html, status_code)."""
+        """Try fetching with httpx, checking every redirect target."""
         import httpx
 
+        current_url = validate_public_fetch_url(url)
         if not self._tls_verify:
-            logger.warning("TLS verification disabled — MITM risk for %s", url)
+            logger.warning("TLS verification disabled - MITM risk for %s", url)
         async with httpx.AsyncClient(
             headers=_HEADERS,
             timeout=self._timeout,
-            follow_redirects=True,
+            follow_redirects=False,
             verify=self._tls_verify,
         ) as client:
-            r = await client.get(url)
+            for _ in range(max_safe_redirects() + 1):
+                r = await client.get(current_url)
+                if _is_redirect_status(r.status_code):
+                    current_url = validate_redirect_target(current_url, r.headers.get("location", ""))
+                    continue
+                break
+            else:
+                return "", 0
             if is_non_text_content_type(r.headers.get("content-type", "")):
                 return "", r.status_code
             return r.text, r.status_code
 
     async def _fetch_pdf_httpx(self, url: str, max_bytes: int) -> tuple[bytes, int]:
-        """Try fetching PDF bytes with httpx."""
+        """Try fetching PDF bytes with httpx, checking every redirect target."""
         import httpx
 
+        current_url = validate_public_fetch_url(url)
         headers = dict(_HEADERS)
         headers["Accept"] = "application/pdf,*/*;q=0.8"
         async with httpx.AsyncClient(
             headers=headers,
             timeout=self._timeout,
-            follow_redirects=True,
+            follow_redirects=False,
             verify=self._tls_verify,
         ) as client:
-            async with client.stream("GET", url) as r:
-                try:
-                    content_length = int(r.headers.get("content-length", "0") or "0")
-                except ValueError:
-                    content_length = 0
-                if content_length > max_bytes:
-                    return b"", r.status_code
-                chunks: list[bytes] = []
-                total = 0
-                async for chunk in r.aiter_bytes():
-                    total += len(chunk)
-                    if total > max_bytes:
+            for _ in range(max_safe_redirects() + 1):
+                async with client.stream("GET", current_url) as r:
+                    if _is_redirect_status(r.status_code):
+                        current_url = validate_redirect_target(current_url, r.headers.get("location", ""))
+                        continue
+                    try:
+                        content_length = int(r.headers.get("content-length", "0") or "0")
+                    except ValueError:
+                        content_length = 0
+                    if content_length > max_bytes:
                         return b"", r.status_code
-                    chunks.append(chunk)
-                return b"".join(chunks), r.status_code
+                    chunks: list[bytes] = []
+                    total = 0
+                    async for chunk in r.aiter_bytes():
+                        total += len(chunk)
+                        if total > max_bytes:
+                            return b"", r.status_code
+                        chunks.append(chunk)
+                    return b"".join(chunks), r.status_code
+            return b"", 0
 
     async def _fetch_curl_cffi(self, url: str) -> tuple[str, int]:
-        """Fallback: curl_cffi with Chrome TLS fingerprint."""
+        """Fallback: curl_cffi with SSRF checks for every redirect."""
         loop = asyncio.get_running_loop()
 
         def _sync() -> tuple[str, int]:
             from curl_cffi import requests as cffi_req
-            r = cffi_req.get(
-                url,
-                impersonate="chrome124",
-                timeout=self._timeout,
-                headers=_HEADERS,
-            )
+
+            current_url = validate_public_fetch_url(url)
+            for _ in range(max_safe_redirects() + 1):
+                r = cffi_req.get(
+                    current_url,
+                    impersonate="chrome124",
+                    timeout=self._timeout,
+                    headers=_HEADERS,
+                    allow_redirects=False,
+                )
+                if _is_redirect_status(int(r.status_code)):
+                    current_url = validate_redirect_target(current_url, r.headers.get("location", ""))
+                    continue
+                break
+            else:
+                return "", 0
             if is_non_text_content_type(r.headers.get("content-type", "")):
                 return "", r.status_code
             return r.text, r.status_code
@@ -185,19 +221,29 @@ class PageFetcher:
         return await loop.run_in_executor(_io_pool, _sync)
 
     async def _fetch_pdf_curl_cffi(self, url: str, max_bytes: int) -> tuple[bytes, int]:
-        """Fallback: fetch PDF bytes with curl_cffi."""
+        """Fallback: fetch PDF bytes with curl_cffi and checked redirects."""
         loop = asyncio.get_running_loop()
 
         def _sync() -> tuple[bytes, int]:
             from curl_cffi import requests as cffi_req
+
+            current_url = validate_public_fetch_url(url)
             headers = dict(_HEADERS)
             headers["Accept"] = "application/pdf,*/*;q=0.8"
-            r = cffi_req.get(
-                url,
-                impersonate="chrome124",
-                timeout=self._timeout,
-                headers=headers,
-            )
+            for _ in range(max_safe_redirects() + 1):
+                r = cffi_req.get(
+                    current_url,
+                    impersonate="chrome124",
+                    timeout=self._timeout,
+                    headers=headers,
+                    allow_redirects=False,
+                )
+                if _is_redirect_status(int(r.status_code)):
+                    current_url = validate_redirect_target(current_url, r.headers.get("location", ""))
+                    continue
+                break
+            else:
+                return b"", 0
             data = bytes(r.content or b"")
             if len(data) > max_bytes:
                 return b"", r.status_code
@@ -208,6 +254,11 @@ class PageFetcher:
     async def _fetch_single(self, url: str) -> tuple[str, int]:
         """Try httpx, then curl_cffi. Returns (raw_html, status_code)."""
         from urllib.parse import urlparse
+        try:
+            validate_public_fetch_url(url)
+        except UnsafeFetchUrl as exc:
+            logger.warning("blocked unsafe page_fetcher url=%r reason=%s", url, exc)
+            return "", 0
         domain = urlparse(url).netloc.lower()
         await self._throttle.acquire(domain)
 
@@ -356,7 +407,7 @@ class PageFetcher:
         urls: list[str],
         budget: int = 10,
     ) -> dict[str, CachedPage | None]:
-        """Fetch up to *budget* URLs, cache them, return url→CachedPage map.
+        """Fetch up to *budget* URLs, cache them, return urlв†’CachedPage map.
 
         Skips URLs that are already fresh in the cache.
         """
@@ -364,6 +415,12 @@ class PageFetcher:
         to_fetch: list[str] = []
 
         for u in urls:
+            try:
+                validate_public_fetch_url(u)
+            except UnsafeFetchUrl as exc:
+                logger.warning("blocked unsafe fetch_and_cache url=%r reason=%s", u, exc)
+                results[u] = None
+                continue
             if is_skippable(u):
                 results[u] = None
             elif self._cache.is_fresh(u):
