@@ -1250,12 +1250,20 @@ def split_tool_result_payload(content: Any) -> tuple[str, dict[str, Any]]:
     if isinstance(content, dict) and "_image_b64" in content:
         return f"[Image: {content.get('_path', 'image')}]", _image_tool_result_extras(content)
 
+    structured = _extract_structured_tool_result(content)
+    if isinstance(structured, dict):
+        extras: dict[str, Any] = {"structured_content": structured}
+        ui_payload = structured.get("ui")
+        if isinstance(ui_payload, dict):
+            extras["tool_ui"] = ui_payload
+        return _serialize_tool_result(content), extras
+
     if isinstance(content, dict) and "_tool_result_content" in content:
         extras: dict[str, Any] = {}
-        structured = content.get("_tool_result_structured")
-        if isinstance(structured, dict):
-            extras["structured_content"] = structured
-            ui_payload = structured.get("ui")
+        wrapped_structured = content.get("_tool_result_structured")
+        if isinstance(wrapped_structured, dict):
+            extras["structured_content"] = wrapped_structured
+            ui_payload = wrapped_structured.get("ui")
             if isinstance(ui_payload, dict):
                 extras["tool_ui"] = ui_payload
         return str(content.get("_tool_result_content") or ""), extras

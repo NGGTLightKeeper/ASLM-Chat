@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -555,6 +556,8 @@ _chat_usage_lock = threading.RLock()
 _chat_usage_by_chat_id: dict[str, dict[str, Any]] = {}
 _favicon_cache_lock = threading.RLock()
 _favicon_cache: dict[str, tuple[float, str, bytes]] = {}
+_generation_state_lock = threading.RLock()
+_active_generation_id_by_engine: dict[str, str] = {}
 FAVICON_CACHE_DIR = settings.BASE_DIR / "Data" / "favicon_cache"
 FAVICON_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 FAVICON_NEGATIVE_CACHE_TTL_SECONDS = 60 * 60
@@ -1688,18 +1691,21 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
     if not transcript_entries:
         return []
 
-    # Index tool results by alias for quick lookup (alias = server__tool_id).
-    tool_results: dict[str, dict[str, Any]] = {}
+    # Index tool results by alias while preserving order. Some runtimes can
+    # emit repeated aliases (for example "sandbox__share_file__0" for several
+    # different files in one answer), so a simple dict overwrite would keep
+    # only the last file after reload.
+    tool_results: dict[str, list[dict[str, Any]]] = {}
     for entry in transcript_entries:
         if entry.get("role") == "tool":
             # Prefer the full alias stored by _build_tool_message, fall back to tool_id/name.
             alias = str(entry.get("alias") or entry.get("tool_id") or entry.get("name") or "")
             if alias:
-                tool_results[alias] = {
+                tool_results.setdefault(alias, []).append({
                     "content": str(entry.get("content") or ""),
                     "toolUi": entry.get("tool_ui") if isinstance(entry.get("tool_ui"), dict) else None,
                     "structuredContent": entry.get("structured_content") if isinstance(entry.get("structured_content"), dict) else None,
-                }
+                })
 
     segments: list[dict[str, Any]] = []
     for entry in transcript_entries:
@@ -1713,7 +1719,15 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
             continue
 
         seg_alias = str(entry.get("alias") or entry.get("tool_id", entry.get("name", "")) or "")
-        result_payload = tool_results.get(seg_alias)
+        payload_queue = tool_results.get(seg_alias) or []
+        if payload_queue:
+            result_payload = payload_queue.pop(0)
+        else:
+            result_payload = {
+                "content": str(entry.get("content") or ""),
+                "toolUi": entry.get("tool_ui") if isinstance(entry.get("tool_ui"), dict) else None,
+                "structuredContent": entry.get("structured_content") if isinstance(entry.get("structured_content"), dict) else None,
+            }
         segment = {
             "type": "tool",
             "alias": seg_alias,
@@ -3108,6 +3122,7 @@ def _stream_chat_response(
     engine: str,
     generate_kwargs: dict[str, Any],
     assistant_message_record: Message,
+    generation_id: str,
     compression_event: dict[str, Any] | None = None,
 ):
     """Stream visible content and persist the machine transcript."""
@@ -3149,6 +3164,8 @@ def _stream_chat_response(
         )
 
     try:
+        with _generation_state_lock:
+            _active_generation_id_by_engine[str(engine)] = str(generation_id or "")
         if isinstance(compression_event, dict):
             transcript_entries.append(compression_event)
             yield _serialize_context_compression_marker(compression_event)
@@ -3267,6 +3284,10 @@ def _stream_chat_response(
             yield "\n</think>\n"
         yield f"\n[Error during generation: {formatted_error}]"
     finally:
+        with _generation_state_lock:
+            active_id = str(_active_generation_id_by_engine.get(str(engine)) or "")
+            if active_id == str(generation_id or ""):
+                _active_generation_id_by_engine.pop(str(engine), None)
         if is_thinking:
             yield "\n</think>\n"
 
@@ -3431,6 +3452,23 @@ def chat_api(request):
             source="generation",
             route="/api/chat/",
         )
+        has_image_attachments = any(
+            attachment.get("kind") == MessageAttachmentKind.IMAGE
+            for attachment in attachments
+            if isinstance(attachment, dict)
+        )
+        vision_supported = bool(model_info_payload.get("supports_vision", False))
+        vision_source = str(model_info_payload.get("supports_vision_source") or "").strip().lower()
+        if has_image_attachments and not vision_supported and vision_source == "explicit_false":
+            return JsonResponse(
+                {
+                    "error": (
+                        f"Model '{model_name}' does not support image input on '{engine}'. "
+                        "Choose a vision-capable model."
+                    )
+                },
+                status=400,
+            )
         _validate_tool_server_support(
             engine,
             model_name,
@@ -3524,14 +3562,23 @@ def chat_api(request):
             ),
         )
 
+        generation_id = uuid.uuid4().hex
         response = StreamingHttpResponse(
-            _stream_chat_response(chat, engine, generate_kwargs, assistant_message_record, compression_event=compression_event),
+            _stream_chat_response(
+                chat,
+                engine,
+                generate_kwargs,
+                assistant_message_record,
+                generation_id,
+                compression_event=compression_event,
+            ),
             content_type="text/plain; charset=utf-8",
         )
         response["X-Chat-ID"] = str(chat.id)
         response["X-LLM-Engine"] = engine
         response["X-User-Message-ID"] = str(user_message_record.id)
         response["X-Assistant-Message-ID"] = str(assistant_message_record.id)
+        response["X-Generation-ID"] = generation_id
         return response
 
     except ValueError as exc:
@@ -3664,7 +3711,15 @@ def abort_generation_api(request):
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
     try:
-        llm_api.abort_generation(_get_active_engine())
+        data = _read_json_request_body(request)
+        engine = _get_active_engine(data.get("engine"))
+        generation_id = str(data.get("generation_id") or "").strip()
+        if generation_id:
+            with _generation_state_lock:
+                active_id = str(_active_generation_id_by_engine.get(str(engine)) or "")
+            if not active_id or active_id != generation_id:
+                return JsonResponse({"ok": True, "ignored": True, "reason": "generation_mismatch"})
+        llm_api.abort_generation(engine)
         return JsonResponse({"ok": True})
     except Exception as exc:
         logger.exception("Failed to abort generation")
@@ -3891,14 +3946,23 @@ def regenerate_chat_api(request, chat_id):
             llm_transcript=[],
         )
 
+        generation_id = uuid.uuid4().hex
         response = StreamingHttpResponse(
-            _stream_chat_response(chat, engine, generate_kwargs, assistant_message_record, compression_event=compression_event),
+            _stream_chat_response(
+                chat,
+                engine,
+                generate_kwargs,
+                assistant_message_record,
+                generation_id,
+                compression_event=compression_event,
+            ),
             content_type="text/plain; charset=utf-8",
         )
         response["X-Chat-ID"] = str(chat.id)
         response["X-LLM-Engine"] = engine
         response["X-User-Message-ID"] = str(user_message_record.id)
         response["X-Assistant-Message-ID"] = str(assistant_message_record.id)
+        response["X-Generation-ID"] = generation_id
         return response
 
     except ValueError as exc:
@@ -4598,6 +4662,29 @@ def runtime_settings_api(request):
     previous_engine = settings.get_llm_engine()
     next_engine = previous_engine
 
+    def _is_masked_api_key(value: str) -> bool:
+        """Return whether the payload looks like a masked placeholder, not a real key."""
+
+        raw = str(value or "")
+        stripped = raw.strip()
+        if not stripped:
+            return False
+
+        # Password placeholders often arrive as repeated mask glyphs.
+        if all(char in {"*", "•", "●", "∙", "·", "◦"} for char in stripped):
+            return True
+
+        lowered = stripped.lower()
+        if lowered in {
+            "stored api key",
+            "stored api key.",
+            "stored key",
+            "use saved key",
+        }:
+            return True
+
+        return False
+
     # Persist only known settings and normalize engine-specific values.
     for raw_key, raw_value in data.items():
         if raw_key not in allowed_keys:
@@ -4608,6 +4695,9 @@ def runtime_settings_api(request):
             next_engine = value
         else:
             value = str(raw_value or "").strip()
+            if raw_key in {"openai_api_key", "google_genai_api_key"} and _is_masked_api_key(value):
+                # Ignore UI mask placeholders so they never overwrite real keys.
+                continue
 
         settings.set(raw_key, value)
 

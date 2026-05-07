@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
+from .markitdown_extractor import extract_markdown
+
 
 TEXT_FILE_EXTENSIONS = {
     ".adoc", ".ahk", ".asm", ".asciidoc", ".bash", ".bat", ".bib", ".c", ".cc", ".cfg",
@@ -310,6 +312,12 @@ def _extract_xlsx_text(archive: zipfile.ZipFile) -> str:
 def _extract_document_text(file_bytes: bytes, name: str, mime: str) -> str:
     suffix = Path(normalize_upload_name(name)).suffix.lower()
     normalized_mime = str(mime or "").lower()
+    if suffix in {".pdf", ".docx", ".pptx", ".xlsx"} or normalized_mime == "application/pdf":
+        # Prefer MarkItDown in safe stream mode, then fall back to local parsers.
+        markdown_text = extract_markdown(file_bytes, name=name, mime=mime)
+        if markdown_text:
+            return markdown_text
+
     if suffix == ".pdf" or normalized_mime == "application/pdf":
         return _extract_pdf_text(file_bytes)
 

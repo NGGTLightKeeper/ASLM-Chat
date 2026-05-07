@@ -7,6 +7,7 @@ After all required tool calls finish, respond to the user normally.
 
 Web-search query quality rules:
 - Build one focused query per attempt. Keep it concise: about 4-10 meaningful tokens.
+- Search operators (`site:`, `-site:`, `OR`, quoted phrases) do not reduce meaningful-word count: adding operators never lowers the count of existing content words.
 - Prefer concrete entities + one intent term (for example: model/spec/review/benchmark/error).
 - Do not stuff SEO noise, filler, or repeated synonyms into a single query.
 - Do not append long shopping/marketing tails, country/currency boilerplate, or year spam unless explicitly required by user intent.
