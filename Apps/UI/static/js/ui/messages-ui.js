@@ -21,6 +21,7 @@ export function createMessagesUi(context, dependencies) {
   const REASONING_CHUNK_MAX_CHARS = 168;
   const DOWNLOAD_FILE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="currentColor" aria-hidden="true"><path d="M480-320 280-520l56-58 104 104v-326h80v326l104-104 56 58-200 200ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z"/></svg>';
   const loadedSandboxImageSrcs = new Set();
+  const sandboxImageLoadStateBySrc = new Map();
   const HEAVY_TOOL_ARGUMENT_KEYS = {
     bash: ['stdin'],
     edit: ['content', 'new_str', 'old_str'],
@@ -103,6 +104,194 @@ export function createMessagesUi(context, dependencies) {
 
 
   // Markdown rendering.
+  function isEscapedAt(text, index) {
+    let backslashCount = 0;
+    for (let cursor = index - 1; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) {
+      backslashCount += 1;
+    }
+    return backslashCount % 2 === 1;
+  }
+
+  function findUnescaped(text, needle, fromIndex) {
+    let cursor = Math.max(0, Number(fromIndex) || 0);
+    while (cursor < text.length) {
+      const index = text.indexOf(needle, cursor);
+      if (index === -1) {
+        return -1;
+      }
+      if (!isEscapedAt(text, index)) {
+        return index;
+      }
+      cursor = index + needle.length;
+    }
+    return -1;
+  }
+
+  function nextLatexDelimiter(text, fromIndex) {
+    const candidates = [
+      { open: '$$', close: '$$', displayMode: true },
+      { open: '\\[', close: '\\]', displayMode: true },
+      { open: '\\(', close: '\\)', displayMode: false },
+      { open: '$', close: '$', displayMode: false }
+    ];
+    let best = null;
+    candidates.forEach(function findDelimiter(delimiter) {
+      const index = findUnescaped(text, delimiter.open, fromIndex);
+      if (index === -1) {
+        return;
+      }
+      if (delimiter.open === '$') {
+        const before = index > 0 ? text[index - 1] : '';
+        const after = index + 1 < text.length ? text[index + 1] : '';
+        if (/\d/.test(before) || /\s/.test(after || '')) {
+          return;
+        }
+      }
+      if (!best || index < best.index || (index === best.index && delimiter.open.length > best.open.length)) {
+        best = { ...delimiter, index };
+      }
+    });
+    return best;
+  }
+
+  function appendLatexHtml(fragment, latexSource, displayMode) {
+    if (typeof katex === 'undefined' || !katex.renderToString) {
+      fragment.appendChild(document.createTextNode(latexSource));
+      return;
+    }
+    const rendered = katex.renderToString(latexSource, {
+      displayMode: !!displayMode,
+      throwOnError: false,
+      strict: 'ignore',
+      trust: false,
+      output: 'htmlAndMathml'
+    });
+    const template = document.createElement('template');
+    template.innerHTML = rendered;
+    fragment.appendChild(template.content);
+  }
+
+  function replaceLatexInTextNode(textNode) {
+    const source = textNode.nodeValue || '';
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    let replaced = false;
+
+    while (cursor < source.length) {
+      const delimiter = nextLatexDelimiter(source, cursor);
+      if (!delimiter) {
+        break;
+      }
+      const contentStart = delimiter.index + delimiter.open.length;
+      const closeIndex = findUnescaped(source, delimiter.close, contentStart);
+      if (closeIndex === -1) {
+        break;
+      }
+      const latexSource = source.slice(contentStart, closeIndex).trim();
+      if (!latexSource) {
+        cursor = closeIndex + delimiter.close.length;
+        continue;
+      }
+      if (delimiter.index > cursor) {
+        fragment.appendChild(document.createTextNode(source.slice(cursor, delimiter.index)));
+      }
+      appendLatexHtml(fragment, latexSource, delimiter.displayMode);
+      replaced = true;
+      cursor = closeIndex + delimiter.close.length;
+    }
+
+    if (!replaced) {
+      return;
+    }
+    if (cursor < source.length) {
+      fragment.appendChild(document.createTextNode(source.slice(cursor)));
+    }
+    textNode.parentNode.replaceChild(fragment, textNode);
+  }
+
+  function renderLatexInHtml(html) {
+    if (typeof document === 'undefined' || typeof katex === 'undefined') {
+      return html;
+    }
+    const template = document.createElement('template');
+    template.innerHTML = String(html || '');
+    const ignoredTags = new Set(['CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA']);
+    const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        let parent = node.parentNode;
+        while (parent && parent !== template.content) {
+          if (ignoredTags.has(parent.nodeName) || (parent.classList && parent.classList.contains('katex'))) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          parent = parent.parentNode;
+        }
+        return /(?:\$|\\\[|\\\()/.test(node.nodeValue || '')
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT;
+      }
+    });
+    const nodes = [];
+    while (walker.nextNode()) {
+      nodes.push(walker.currentNode);
+    }
+    nodes.forEach(replaceLatexInTextNode);
+    return template.innerHTML;
+  }
+
+  function markdownCodeLanguage(codeEl) {
+    const classNames = String((codeEl && codeEl.className) || '');
+    const match = classNames.match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)
+      || classNames.match(/(?:^|\s)lang-([a-z0-9_+#.-]+)/i);
+    const normalized = normalizeHighlightLanguage(match ? match[1] : '');
+    return normalized === 'plaintext' ? 'Code' : normalized.toUpperCase();
+  }
+
+  function markdownCodeHighlightLanguage(codeEl) {
+    const classNames = String((codeEl && codeEl.className) || '');
+    const match = classNames.match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)
+      || classNames.match(/(?:^|\s)lang-([a-z0-9_+#.-]+)/i);
+    return normalizeHighlightLanguage(match ? match[1] : '');
+  }
+
+  function enhanceMarkdownCodeBlocks(html) {
+    if (typeof document === 'undefined' || !html) {
+      return html;
+    }
+
+    const template = document.createElement('template');
+    template.innerHTML = String(html || '');
+    template.content.querySelectorAll('pre > code').forEach(function wrapMarkdownCodeBlock(codeEl) {
+      const preEl = codeEl.parentElement;
+      if (!preEl || preEl.closest('.md-code-card')) {
+        return;
+      }
+
+      const language = markdownCodeHighlightLanguage(codeEl);
+      const safeClassLanguage = language.replace(/[^a-z0-9_-]/gi, '') || 'plaintext';
+      codeEl.innerHTML = highlightCode(codeEl.textContent || '', language);
+      codeEl.classList.add('hljs', `language-${safeClassLanguage}`);
+
+      const cardEl = document.createElement('div');
+      cardEl.className = 'md-code-card';
+
+      const headerEl = document.createElement('div');
+      headerEl.className = 'md-code-head';
+      headerEl.innerHTML = `
+        <span class="md-code-lang">
+          <span class="md-code-icon" aria-hidden="true">&lt;/&gt;</span>
+          <span>${escHtml(markdownCodeLanguage(codeEl))}</span>
+        </span>
+        <button type="button" class="md-code-copy-btn" title="Copy code" aria-label="Copy code">${icons.COPY_MESSAGE_ICON}</button>
+      `;
+
+      preEl.parentNode.insertBefore(cardEl, preEl);
+      cardEl.appendChild(headerEl);
+      cardEl.appendChild(preEl);
+    });
+
+    return template.innerHTML;
+  }
+
   // Render one visible text segment as sanitized HTML.
   function renderMarkdownSegment(content, citationSources) {
     const hasCitationSources = citationSources && typeof citationSources === 'object' && Object.keys(citationSources).length > 0;
@@ -111,10 +300,11 @@ export function createMessagesUi(context, dependencies) {
       ? normalizedContent
       : normalizedContent.replace(/\s*\[(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3}-\d+)\]/gi, '');
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
-      return decorateCitationsInHtml(escHtml(visibleContent), citationSources);
+      return enhanceMarkdownCodeBlocks(renderLatexInHtml(decorateCitationsInHtml(escHtml(visibleContent), citationSources)));
     }
 
-    return decorateCitationsInHtml(DOMPurify.sanitize(marked.parse(visibleContent)), citationSources);
+    const html = decorateCitationsInHtml(DOMPurify.sanitize(marked.parse(visibleContent)), citationSources);
+    return enhanceMarkdownCodeBlocks(renderLatexInHtml(html));
   }
 
   // Render text cheaply while a message is still streaming.
@@ -508,6 +698,142 @@ export function createMessagesUi(context, dependencies) {
     return partialMarker ? source.slice(0, source.length - partialMarker.length) : source;
   }
 
+  function sharedFilePayloadFromTrailingShorthand(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+    const keys = Object.keys(value);
+    const allowedKeys = new Set(['file', 'path', 'filename', 'name', 'mime_type', 'mimeType', 'type', 'size_bytes', 'sizeBytes']);
+    if (!keys.length || keys.some(function hasUnexpectedKey(key) { return !allowedKeys.has(key); })) {
+      return null;
+    }
+    const hasFileKey = Object.prototype.hasOwnProperty.call(value, 'file')
+      || Object.prototype.hasOwnProperty.call(value, 'path')
+      || Object.prototype.hasOwnProperty.call(value, 'filename');
+    if (!hasFileKey) {
+      return null;
+    }
+
+    const path = String(value.path || value.file || value.filename || '').trim();
+    if (!path || path.length > 512 || /[\r\n\x00]/.test(path)) {
+      return null;
+    }
+    const basename = path.split(/[\\/]/).pop() || path;
+    if (!/\.[a-z0-9]{1,12}$/i.test(basename)) {
+      return null;
+    }
+
+    const filename = String(value.filename || value.name || basename || 'download').trim();
+    const mimeType = String(value.mime_type || value.mimeType || value.type || '').trim();
+    return {
+      kind: 'shared_file',
+      path,
+      filename,
+      mime_type: mimeType || '',
+      type_label: mimeType || 'File',
+      size_bytes: Number(value.size_bytes ?? value.sizeBytes ?? -1)
+    };
+  }
+
+  function sharedFileSegmentFromTrailingShorthand(sharedFile) {
+    const safePath = sharedFile && sharedFile.path ? sharedFile.path : '';
+    return {
+      type: 'tool',
+      alias: `trailing_share_file_${safePath.replace(/[^a-z0-9]+/gi, '_').slice(0, 80) || 'file'}`,
+      serverId: 'ui',
+      serverName: 'UI',
+      toolId: 'share_file',
+      toolName: 'Share File',
+      arguments: { path: sharedFile.path, filename: sharedFile.filename },
+      result: '',
+      toolUi: { kind: 'shared_file', status: 'done', file: sharedFile },
+      structuredContent: { kind: 'shared_file', file: sharedFile }
+    };
+  }
+
+  function normalizeTrailingSharedFileShorthandSegments(rawSegments) {
+    const inputSegments = Array.isArray(rawSegments) ? rawSegments : [];
+    const outputSegments = [];
+    inputSegments.forEach(function normalizeSegment(segment) {
+      if (!segment || segment.type !== 'text') {
+        outputSegments.push(segment);
+        return;
+      }
+
+      const content = String(segment.content || '');
+      const inlineRecoveredFiles = [];
+      const inlineLines = content.split(/\r?\n/);
+      let inFence = false;
+      const cleanedInlineLines = inlineLines.map(function cleanInlineLine(rawLine) {
+        const line = String(rawLine || '');
+        if (/^\s*```/.test(line)) {
+          inFence = !inFence;
+          return line;
+        }
+        if (inFence) {
+          return line;
+        }
+
+        return line.replace(/\{\s*"?(file|path|filename)"?\s*:\s*"([^"\r\n]+)"\s*\}/gi, function replaceShorthand(match, _key, filePath) {
+          const sharedFile = sharedFilePayloadFromTrailingShorthand({ file: String(filePath || '').trim() });
+          if (sharedFile) {
+            inlineRecoveredFiles.push(sharedFile);
+            return '';
+          }
+          return match;
+        }).replace(/\s{2,}/g, ' ').replace(/\s+:/g, ':').replace(/\s+$/g, '');
+      });
+      const cleanedContent = cleanedInlineLines.join('\n');
+
+      const lines = content.split(/\r?\n/);
+      let lastIndex = lines.length - 1;
+      while (lastIndex >= 0 && !String(lines[lastIndex] || '').trim()) {
+        lastIndex -= 1;
+      }
+      if (lastIndex < 0) {
+        inlineRecoveredFiles.forEach(function pushRecoveredInline(sharedFile) {
+          outputSegments.push(sharedFileSegmentFromTrailingShorthand(sharedFile));
+        });
+        return;
+      }
+
+      const lastLine = String(lines[lastIndex] || '').trim();
+      if (!/^\{[\s\S]*\}$/.test(lastLine)) {
+        outputSegments.push(segment);
+        return;
+      }
+
+      let sharedFile = null;
+      try {
+        sharedFile = sharedFilePayloadFromTrailingShorthand(JSON.parse(lastLine));
+      } catch (_error) {
+        sharedFile = null;
+      }
+      if (!sharedFile) {
+        const normalizedText = cleanedContent.trim();
+        if (normalizedText) {
+          outputSegments.push({ ...segment, content: normalizedText });
+        }
+        inlineRecoveredFiles.forEach(function pushRecoveredInline(shared) {
+          outputSegments.push(sharedFileSegmentFromTrailingShorthand(shared));
+        });
+        return;
+      }
+
+      const keptLines = cleanedInlineLines.slice(0, lastIndex);
+      const textBefore = keptLines.join('\n').trim();
+      if (textBefore) {
+        outputSegments.push({ ...segment, content: textBefore });
+      }
+      inlineRecoveredFiles.forEach(function pushRecoveredInline(shared) {
+        outputSegments.push(sharedFileSegmentFromTrailingShorthand(shared));
+      });
+      outputSegments.push(sharedFileSegmentFromTrailingShorthand(sharedFile));
+    });
+
+    return outputSegments;
+  }
+
   function parseMessageTimeline(rawText) {
     const source = String(rawText || '');
     const lowerSource = source.toLowerCase();
@@ -541,7 +867,7 @@ export function createMessagesUi(context, dependencies) {
         return;
       }
 
-      segments.push({ type: 'text', content: sanitizedValue });
+      segments.push({ type: 'text', content: sanitizedValue.trim() });
     }
 
     function findNextReasoningStart(fromIndex) {
@@ -718,13 +1044,14 @@ export function createMessagesUi(context, dependencies) {
       cursor = resultEnd + resultCloseTag.length;
     }
 
-    const visibleText = segments
+    const normalizedSegments = normalizeTrailingSharedFileShorthandSegments(segments);
+    const visibleText = normalizedSegments
       .filter(function onlyText(segment) { return segment.type === 'text'; })
       .map(function mapText(segment) { return segment.content; })
       .join('\n\n')
       .trim();
 
-    return { segments, visibleText };
+    return { segments: normalizedSegments, visibleText };
   }
 
   // Thought state helpers.
@@ -1543,7 +1870,8 @@ export function createMessagesUi(context, dependencies) {
       typeLabel: asScalarText(file.type_label || file.typeLabel || file.mime_type || file.mimeType) || 'File',
       sizeBytes: Number(file.size_bytes ?? file.sizeBytes ?? -1),
       downloadUrl: asScalarText(file.download_url || file.downloadUrl),
-      modelContext: asScalarText(file.model_context || file.modelContext)
+      modelContext: asScalarText(file.model_context || file.modelContext),
+      render: file.render && typeof file.render === 'object' ? file.render : null
     };
   }
 
@@ -1659,6 +1987,71 @@ export function createMessagesUi(context, dependencies) {
     return `/api/shared-file/download/?${query}`;
   }
 
+  function sharedFileImageRender(file) {
+    const render = file && file.render && typeof file.render === 'object' ? file.render : null;
+    if (render && String(render.type || '').toLowerCase() === 'image') {
+      const src = sandboxImageDataUrl({
+        mime: render.mime_type || file.mimeType,
+        preview: render.preview
+      });
+      if (src) {
+        return {
+          src,
+          width: Number(render.width),
+          height: Number(render.height),
+          mimeType: String(render.mime_type || file.mimeType || '').trim()
+        };
+      }
+    }
+
+    const mimeType = String(file && file.mimeType ? file.mimeType : '').trim().toLowerCase();
+    const filename = String(file && file.filename ? file.filename : '').trim().toLowerCase();
+    const looksLikeImage = mimeType.startsWith('image/')
+      || /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i.test(filename);
+    if (!looksLikeImage) {
+      return null;
+    }
+
+    return {
+      src: sharedFileDownloadUrl(file),
+      width: NaN,
+      height: NaN,
+      mimeType: mimeType || 'image'
+    };
+  }
+
+  function renderSharedImageFileCard(file) {
+    const render = sharedFileImageRender(file);
+    if (!render) {
+      return '';
+    }
+    const href = sharedFileDownloadUrl(file);
+    const width = Number(render.width);
+    const height = Number(render.height);
+    const hasDimensions = Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
+    const metaParts = [
+      formatByteSize(file.sizeBytes),
+      hasDimensions ? `${Math.round(width)}x${Math.round(height)}` : '',
+      render.mimeType || file.typeLabel
+    ].filter(Boolean);
+    const altText = file.filename ? `Preview for ${file.filename}` : 'Shared image preview';
+
+    return `
+      <a class="msg-shared-image-card" href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(file.filename)}">
+        <span class="msg-shared-image-preview">
+          <img class="msg-shared-image" src="${escapeAttributeValue(render.src)}" alt="${escapeAttributeValue(altText)}" loading="lazy">
+        </span>
+        <span class="msg-shared-image-footer">
+          <span class="msg-shared-image-meta">
+            <span class="msg-shared-image-name">${escHtml(file.filename)}</span>
+            <span class="msg-shared-image-details" data-shared-image-details="${escapeAttributeValue(metaParts.join(' / '))}">${escHtml(metaParts.join(' / '))}</span>
+          </span>
+          <span class="msg-shared-image-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>
+        </span>
+      </a>
+    `;
+  }
+
   function renderSharedFileCard(segment) {
     const file = sharedFileFromSegment(segment);
     const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
@@ -1678,6 +2071,10 @@ export function createMessagesUi(context, dependencies) {
       metaParts.push(sizeText);
     }
     const href = sharedFileDownloadUrl(normalized);
+    const renderedImageCard = renderSharedImageFileCard(normalized);
+    if (renderedImageCard) {
+      return renderedImageCard;
+    }
     return `
       <a class="msg-file-chip msg-shared-file-card" href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(normalized.filename)}">
         <span class="msg-shared-file-badge" aria-hidden="true">FILE</span>
@@ -2109,7 +2506,9 @@ export function createMessagesUi(context, dependencies) {
     const previewWithheldClass = preview.type === 'text_placeholder' || (image.vision_gate && image.vision_gate.allowed === false)
       ? ' is-preview-withheld'
       : '';
-    const imageLoadedClass = src && loadedSandboxImageSrcs.has(src) ? ' is-loaded' : '';
+    const imageLoadState = src ? (sandboxImageLoadStateBySrc.get(src) || '') : '';
+    const imageLoadedClass = src && (loadedSandboxImageSrcs.has(src) || imageLoadState === 'loaded') ? ' is-loaded' : '';
+    const imageErrorClass = imageLoadState === 'error' ? ' is-load-error' : '';
     const imageHtml = src
       ? `<div class="msg-sandbox-image-loader" aria-hidden="true"></div><img class="msg-sandbox-image" src="${escapeAttributeValue(src)}" alt="${escapeAttributeValue(altText)}" loading="lazy" data-sandbox-image-src="${escapeAttributeValue(src)}">`
       : '<div class="msg-sandbox-image-empty">Preview unavailable</div>';
@@ -2122,7 +2521,7 @@ export function createMessagesUi(context, dependencies) {
           <span class="msg-sandbox-detail">${escHtml(title)}</span>
           <span class="msg-reasoning-tool-status">${escHtml(status)}</span>
         </div>
-        <div class="msg-sandbox-image-frame${src ? ' is-loading' : ''}${imageLoadedClass}">${imageHtml}</div>
+        <div class="msg-sandbox-image-frame${src ? ' is-loading' : ''}${imageLoadedClass}${imageErrorClass}">${imageHtml}</div>
         ${metaParts.length ? `<div class="msg-sandbox-image-meta">${escHtml(metaParts.join(' В· '))}</div>` : ''}
       </div>
     `;
@@ -2168,8 +2567,66 @@ export function createMessagesUi(context, dependencies) {
       const src = String(this.getAttribute('data-sandbox-image-src') || '');
       if (src) {
         loadedSandboxImageSrcs.add(src);
+        sandboxImageLoadStateBySrc.set(src, 'loaded');
       }
     });
+  }
+
+  function syncSandboxImageFramesForSrc(src) {
+    const normalizedSrc = String(src || '').trim();
+    if (!normalizedSrc) {
+      return;
+    }
+
+    const stateValue = sandboxImageLoadStateBySrc.get(normalizedSrc) || '';
+    if (!stateValue) {
+      return;
+    }
+
+    const $roots = dom.$messagesInner.add($('#reasoningDrawerBody'));
+    $roots.find('.msg-sandbox-image[data-sandbox-image-src]').each(function syncFrame() {
+      const imageSrc = String(this.getAttribute('data-sandbox-image-src') || this.currentSrc || this.src || '');
+      if (imageSrc !== normalizedSrc) {
+        return;
+      }
+
+      const frame = this.closest('.msg-sandbox-image-frame');
+      if (!frame) {
+        return;
+      }
+
+      if (stateValue === 'loaded') {
+        frame.classList.add('is-loaded');
+        frame.classList.remove('is-load-error');
+      } else if (stateValue === 'error') {
+        frame.classList.add('is-load-error');
+      }
+    });
+  }
+
+  function ensureSandboxImagePreload(src) {
+    const normalizedSrc = String(src || '').trim();
+    if (!normalizedSrc) {
+      return;
+    }
+
+    const knownState = sandboxImageLoadStateBySrc.get(normalizedSrc);
+    if (knownState === 'loading' || knownState === 'loaded' || knownState === 'error') {
+      return;
+    }
+
+    sandboxImageLoadStateBySrc.set(normalizedSrc, 'loading');
+    const preloadImage = new window.Image();
+    preloadImage.onload = function onPreloadLoad() {
+      loadedSandboxImageSrcs.add(normalizedSrc);
+      sandboxImageLoadStateBySrc.set(normalizedSrc, 'loaded');
+      syncSandboxImageFramesForSrc(normalizedSrc);
+    };
+    preloadImage.onerror = function onPreloadError() {
+      sandboxImageLoadStateBySrc.set(normalizedSrc, 'error');
+      syncSandboxImageFramesForSrc(normalizedSrc);
+    };
+    preloadImage.src = normalizedSrc;
   }
 
   function markSandboxImageLoaded(imageEl) {
@@ -2179,6 +2636,7 @@ export function createMessagesUi(context, dependencies) {
     const src = String(imageEl.getAttribute('data-sandbox-image-src') || imageEl.currentSrc || imageEl.src || '');
     if (src) {
       loadedSandboxImageSrcs.add(src);
+      sandboxImageLoadStateBySrc.set(src, 'loaded');
     }
     const frame = imageEl.closest('.msg-sandbox-image-frame');
     if (frame) {
@@ -2188,6 +2646,10 @@ export function createMessagesUi(context, dependencies) {
   }
 
   function markSandboxImageError(imageEl) {
+    const src = String((imageEl && imageEl.getAttribute && imageEl.getAttribute('data-sandbox-image-src')) || (imageEl && imageEl.currentSrc) || (imageEl && imageEl.src) || '');
+    if (src) {
+      sandboxImageLoadStateBySrc.set(src, 'error');
+    }
     const frame = imageEl && imageEl.closest ? imageEl.closest('.msg-sandbox-image-frame') : null;
     if (frame) {
       frame.classList.add('is-load-error');
@@ -2199,9 +2661,21 @@ export function createMessagesUi(context, dependencies) {
     root.find('.msg-sandbox-image[data-sandbox-image-src]').each(function hydrateImage() {
       const imageEl = this;
       const src = String(imageEl.getAttribute('data-sandbox-image-src') || imageEl.currentSrc || imageEl.src || '');
+      const stateValue = src ? (sandboxImageLoadStateBySrc.get(src) || '') : '';
+      if (stateValue === 'loaded') {
+        markSandboxImageLoaded(imageEl);
+        return;
+      }
+      if (stateValue === 'error') {
+        markSandboxImageError(imageEl);
+        return;
+      }
       if (src && loadedSandboxImageSrcs.has(src)) {
         markSandboxImageLoaded(imageEl);
         return;
+      }
+      if (src) {
+        ensureSandboxImagePreload(src);
       }
       if (imageEl.complete && imageEl.naturalWidth > 0) {
         markSandboxImageLoaded(imageEl);
@@ -2217,6 +2691,39 @@ export function createMessagesUi(context, dependencies) {
       imageEl.addEventListener('error', function onSandboxImageError() {
         markSandboxImageError(imageEl);
       }, { once: true });
+    });
+  }
+
+  function hydrateSharedImageCards($root) {
+    const root = $root && $root.length ? $root : dom.$messagesInner;
+    root.find('.msg-shared-image').each(function hydrateSharedImage() {
+      const imageEl = this;
+      if (imageEl.dataset.sharedImageHydrated === '1') {
+        return;
+      }
+      imageEl.dataset.sharedImageHydrated = '1';
+
+      const applyDimensions = function applyDimensions() {
+        const card = imageEl.closest('.msg-shared-image-card');
+        const details = card ? card.querySelector('.msg-shared-image-details') : null;
+        const width = Number(imageEl.naturalWidth);
+        const height = Number(imageEl.naturalHeight);
+        if (!details || !Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+          return;
+        }
+        const base = String(details.dataset.sharedImageDetails || details.textContent || '').trim();
+        const dimensionText = `${Math.round(width)}x${Math.round(height)}`;
+        if (base.includes(dimensionText)) {
+          return;
+        }
+        details.textContent = base ? `${base} / ${dimensionText}` : dimensionText;
+      };
+
+      if (imageEl.complete) {
+        applyDimensions();
+      } else {
+        imageEl.addEventListener('load', applyDimensions, { once: true });
+      }
     });
   }
 
@@ -2849,12 +3356,14 @@ export function createMessagesUi(context, dependencies) {
       }
     });
     hydrateSandboxImages($stream);
+    hydrateSharedImageCards($stream);
   }
 
   function renderActivityTimeline($msgRow, segments, options) {
     const renderOptions = options || {};
     const useMarkdown = renderOptions.markdown !== false;
     const hideTextSegments = renderOptions.hideTextSegments === true;
+    const suppressSharedFileToolRows = renderOptions.reasoningMode !== true;
     const $stream = $msgRow.find('.msg-activity-stream');
     const $bubble = $msgRow.find('.msg-bubble');
     rememberLoadedSandboxImages($msgRow);
@@ -3101,6 +3610,10 @@ export function createMessagesUi(context, dependencies) {
           } else if (groupSegment.type === 'tool_pending') {
             groupItems.push({ type: 'tool_pending' });
           } else {
+            if (suppressSharedFileToolRows && isSharedFileToolSegment(groupSegment)) {
+              segmentIndex += 1;
+              continue;
+            }
             const currentToolIndex = toolSegmentIndex;
             if (isSearchToolSegment(groupSegment)) {
               addSearchSourcesToCitationRegistry(citationRegistry, groupSegment);
@@ -3596,8 +4109,12 @@ export function createMessagesUi(context, dependencies) {
 
     let attachmentsHtml = '';
 
-    if (!isUser && isCompressionOnlyActivitySegments(viewOptions.activitySegments)) {
-      const markerHtml = viewOptions.activitySegments
+    const normalizedActivitySegments = Array.isArray(viewOptions.activitySegments)
+      ? normalizeTrailingSharedFileShorthandSegments(viewOptions.activitySegments)
+      : [];
+
+    if (!isUser && isCompressionOnlyActivitySegments(normalizedActivitySegments)) {
+      const markerHtml = normalizedActivitySegments
         .map(function renderMarker(segment, index) {
           return renderCompressionContextCard(segment, index);
         })
@@ -3668,9 +4185,9 @@ export function createMessagesUi(context, dependencies) {
         .attr('data-raw', text)
         .append($('<span>').text(text));
       $bubble.data('attachments', attachments || []);
-    } else if (Array.isArray(viewOptions.activitySegments) && viewOptions.activitySegments.length > 0) {
+    } else if (normalizedActivitySegments.length > 0) {
       $row.find('.msg-bubble').attr('data-raw', text);
-      renderActivityTimeline($row, viewOptions.activitySegments, {
+      renderActivityTimeline($row, normalizedActivitySegments, {
         rawText: text,
         reasoningMode: viewOptions.reasoningMode === true,
         trustThoughtSegments: viewOptions.reasoningMode === true || hasReasoningMarker(text)
@@ -3804,6 +4321,32 @@ export function createMessagesUi(context, dependencies) {
       $btn.html(icons.COPIED_ICON);
       setTimeout(function restoreIcon() {
         $btn.html(originalHtml);
+      }, 1200);
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(onCopied).catch(function fallback() {
+        fallbackCopy(text, onCopied);
+      });
+      return;
+    }
+
+    fallbackCopy(text, onCopied);
+  }
+
+  function copyCodeBlock($button) {
+    const $btn = $button || $();
+    const $code = $btn.closest('.md-code-card').find('pre code').first();
+    const text = $code.text();
+    if (!$code.length) {
+      return;
+    }
+
+    function onCopied() {
+      const originalHtml = $btn.html();
+      $btn.addClass('is-copied').html(icons.COPIED_ICON);
+      setTimeout(function restoreIcon() {
+        $btn.removeClass('is-copied').html(originalHtml);
       }, 1200);
     }
 
@@ -3989,17 +4532,13 @@ export function createMessagesUi(context, dependencies) {
 
 
   // Markdown configuration.
-  // Configure marked + highlight.js when both libraries are available.
+  // Code highlighting is applied after sanitization when code cards are built.
   function configureMarkdown() {
-    if (typeof marked === 'undefined' || typeof hljs === 'undefined') {
+    if (typeof marked === 'undefined') {
       return;
     }
 
     marked.setOptions({
-      highlight(code, lang) {
-        const language = hljs.getLanguage(lang) ? lang : 'plaintext';
-        return hljs.highlight(code, { language, ignoreIllegals: true }).value;
-      },
       breaks: true
     });
   }
@@ -4012,6 +4551,7 @@ export function createMessagesUi(context, dependencies) {
     appendCompressionPending,
     appendTyping,
     configureMarkdown,
+    copyCodeBlock,
     copyMessage,
     openToolInspectorFromCard,
     renderMessageHtml,

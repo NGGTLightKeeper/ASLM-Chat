@@ -16,6 +16,9 @@ export function createChatController(context, dependencies) {
   let contextUsageTimer = null;
   let contextAutoCompressionAt = 0;
   let contextCompressionInFlight = false;
+  let activeGenerationId = '';
+  let hideCompressedIndicator = false;
+  let clearCompressedIndicatorAfterNextAssistant = false;
 
   // Chat lifecycle helpers.
   // Build a short title from the first user prompt.
@@ -37,6 +40,8 @@ export function createChatController(context, dependencies) {
     dom.$chatInput.val('').css('height', 'auto').focus();
     dom.$chatInputConv.val('').css('height', 'auto');
     state.currentChatId = null;
+    hideCompressedIndicator = false;
+    clearCompressedIndicatorAfterNextAssistant = false;
     historyUi.clearActiveChat();
     dom.$messagesArea.show();
     attachmentUi.clearPendingAttachments();
@@ -79,7 +84,8 @@ export function createChatController(context, dependencies) {
       estimator.chat_observed_chars_per_token || estimator.observed_chars_per_token || 0
     );
     const compressedActive = payload && payload.compressed_context_active === true;
-    const compressionNote = compressedActive
+    const showCompressedIndicator = compressedActive && !hideCompressedIndicator;
+    const compressionNote = showCompressedIndicator
       ? ' Compressed context is active; older turns are represented by a structured summary.'
       : ' Compression is not active for this chat yet.';
     let title = observedPrompt > 0
@@ -108,11 +114,11 @@ export function createChatController(context, dependencies) {
       } else if (ratio >= 0.75) {
         $btn.addClass('is-warn');
       }
-      if (compressedActive) {
+      if (showCompressedIndicator) {
         $btn.addClass('is-compressed');
       }
       $btn.attr('title', `${title}${compressionNote}`);
-      $btn.find('.context-usage-text').text(compressedActive ? `${percent}% / compressed` : `${percent}%`);
+      $btn.find('.context-usage-text').text(showCompressedIndicator ? `${percent}% / compressed` : `${percent}%`);
     });
   }
 
@@ -156,6 +162,8 @@ export function createChatController(context, dependencies) {
       });
       messagesUi.removeCompressionPending($pendingRow);
       if (payload && payload.applied && payload.message) {
+        hideCompressedIndicator = false;
+        clearCompressedIndicatorAfterNextAssistant = true;
         const message = payload.message;
         messagesUi.appendMessage(
           message.role,
@@ -355,6 +363,7 @@ export function createChatController(context, dependencies) {
       // real DB rows instead of falling back to DOM-only removal.
       const userMessageId = response.headers.get('X-User-Message-ID');
       const assistantMessageId = response.headers.get('X-Assistant-Message-ID');
+      activeGenerationId = String(response.headers.get('X-Generation-ID') || '').trim();
       if (userMessageId && request.$userRow && request.$userRow.length) {
         request.$userRow.attr('data-message-id', userMessageId);
       }
@@ -475,6 +484,12 @@ export function createChatController(context, dependencies) {
           fullText += chunk;
           scheduleStreamRender();
         }
+        // Flush decoder tail so split multibyte UTF-8 chars
+        // are not dropped at the end of the stream.
+        const tail = decoder.decode();
+        if (tail) {
+          fullText += tail;
+        }
       } catch (readError) {
         if (readError.name !== 'AbortError') {
           throw readError;
@@ -494,6 +509,7 @@ export function createChatController(context, dependencies) {
       }
     } finally {
       state.currentAbortController = null;
+      activeGenerationId = '';
     }
   }
 
@@ -526,6 +542,11 @@ export function createChatController(context, dependencies) {
       messagesUi.updateRegenButtons();
       state.isChatGenerating = false;
       messagesUi.updateSendButtons();
+      if (clearCompressedIndicatorAfterNextAssistant) {
+        hideCompressedIndicator = true;
+        clearCompressedIndicatorAfterNextAssistant = false;
+        refreshContextUsageNow();
+      }
 
       if (state.chatRequestQueue.length > 0) {
         processChatQueue();
@@ -604,6 +625,13 @@ export function createChatController(context, dependencies) {
     })) {
       return;
     }
+    if (state.contextUsage && state.contextUsage.compressed_context_active === true) {
+      // UI rule: compression highlight is one-shot. Once the user sends the
+      // next message, return the indicator to normal immediately.
+      hideCompressedIndicator = true;
+      clearCompressedIndicatorAfterNextAssistant = false;
+      setContextUsageUi(state.contextUsage || {});
+    }
     await maybeAutoCompressContextBeforeSend();
 
     const attachmentsToSend = clonePendingAttachments(state.attachmentState.pending);
@@ -641,7 +669,14 @@ export function createChatController(context, dependencies) {
 
     fetch('/api/chat/abort/', {
       method: 'POST',
-      headers: { 'X-CSRFToken': getCsrfToken() }
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrfToken()
+      },
+      body: JSON.stringify({
+        engine: engineManager.getActiveEngine(),
+        generation_id: activeGenerationId || ''
+      })
     }).catch(function ignoreAbortError() {});
   }
 
@@ -751,6 +786,8 @@ export function createChatController(context, dependencies) {
       }
 
       state.currentChatId = chatId;
+      hideCompressedIndicator = false;
+      clearCompressedIndicatorAfterNextAssistant = false;
       historyUi.setActiveChat(chatId);
       parametersUi.applySelectedToolServerIds(data.active_tool_server_ids || []);
 

@@ -84,6 +84,92 @@
   background: transparent;
 }
 
+.markdown-body .md-code-card {
+  overflow: hidden;
+  margin: 0 0 16px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  background: #111314;
+}
+
+.markdown-body .md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 14px 8px 18px;
+  color: var(--c-text);
+}
+
+.markdown-body .md-code-lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--c-text);
+  font-size: var(--font-size-caption-1);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.markdown-body .md-code-icon {
+  color: var(--c-text-muted);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.08em;
+}
+
+.markdown-body .md-code-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--c-text);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.markdown-body .md-code-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.markdown-body .md-code-copy-btn:active {
+  transform: scale(0.96);
+}
+
+.markdown-body .md-code-copy-btn.is-copied {
+  color: var(--c-success);
+}
+
+.markdown-body .md-code-card pre {
+  margin: 0;
+  padding: 4px 22px 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.markdown-body .md-code-card pre code {
+  display: block;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.markdown-body .md-code-card .hljs {
+  display: inline;
+  padding: 0;
+  background: transparent;
+}
+
 .markdown-body a {
   color: var(--c-link);
 }

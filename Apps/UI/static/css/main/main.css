@@ -1469,6 +1469,109 @@
   color: var(--c-text);
 }
 
+.msg-shared-image-card {
+  width: min(100%, 420px);
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface-tertiary);
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast), transform var(--t-fast);
+}
+
+.msg-shared-image-card:hover {
+  border-color: color-mix(in srgb, var(--c-border-strong) 78%, var(--c-text));
+  background: var(--surface-secondary);
+  transform: translateY(-1px);
+}
+
+.msg-shared-image-preview {
+  width: 100%;
+  min-height: 96px;
+  max-height: 340px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.035) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.035) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.035) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.035) 75%),
+    color-mix(in srgb, #000 24%, var(--surface-secondary));
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+
+.msg-shared-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 340px;
+  object-fit: contain;
+}
+
+.msg-shared-image-footer {
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px 8px 12px;
+  background: color-mix(in srgb, #7a7f88 26%, var(--surface-secondary));
+}
+
+.msg-shared-image-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.msg-shared-image-name,
+.msg-shared-image-details {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg-shared-image-name {
+  color: var(--c-text);
+  font-size: var(--font-size-caption-1);
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.msg-shared-image-details {
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-2);
+  line-height: 1.25;
+}
+
+.msg-shared-image-download {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+  border-radius: var(--r-sm);
+  color: #fff;
+  background: color-mix(in srgb, #fff 10%, transparent);
+  transition: background var(--t-fast), transform var(--t-fast);
+}
+
+.msg-shared-image-card:hover .msg-shared-image-download {
+  background: color-mix(in srgb, #fff 18%, transparent);
+  transform: translateY(-1px);
+}
+
 .msg-file-name {
   color: var(--c-text);
   font-size: var(--font-size-caption-1);

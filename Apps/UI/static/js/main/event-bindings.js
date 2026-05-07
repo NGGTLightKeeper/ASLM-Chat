@@ -60,6 +60,12 @@ export function bindEventHandlers(context, dependencies) {
     messagesUi.copyMessage($(this));
   });
 
+  $activityRoots.on('click', '.md-code-copy-btn', function onMarkdownCodeCopyClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    messagesUi.copyCodeBlock($(this));
+  });
+
   dom.$messagesInner.on('click', '.msg-delete-btn', function onDeleteClick() {
     chatController.deleteMessage($(this).closest('.msg'));
   });
@@ -420,7 +426,9 @@ export function bindEventHandlers(context, dependencies) {
   });
 
   dom.$modelSelector.on('change', function onModelChange() {
-    engineManager.loadModelInfo($(this).val());
+    const modelName = $(this).val();
+    engineManager.rememberLastModel(engineManager.getActiveEngine(), modelName);
+    engineManager.loadModelInfo(modelName);
   });
 
   dom.$presetSelector.on('change', function onPresetChange() {

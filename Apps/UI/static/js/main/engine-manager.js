@@ -10,6 +10,46 @@ import { isLocalHostname, normalizeAddressForParsing } from './utils.js';
 export function createEngineManager(context, dependencies) {
   const { attachmentsUi, parametersUi } = dependencies;
   const { dom, state } = context;
+  const LAST_MODEL_STORAGE_KEY = 'aslm.lastModelByEngine';
+
+  // Last-model persistence helpers.
+  // Read the serialized map of last selected models by engine.
+  function readLastModelMap() {
+    try {
+      const raw = window.localStorage.getItem(LAST_MODEL_STORAGE_KEY);
+      if (!raw) {
+        return {};
+      }
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_error) {
+      return {};
+    }
+  }
+
+  // Persist one model as the latest selection for one engine.
+  function rememberLastModel(engine, modelName) {
+    const normalizedEngine = normalizeEngineValue(engine);
+    const normalizedModel = String(modelName || '').trim();
+    if (!normalizedEngine || !normalizedModel) {
+      return;
+    }
+
+    const nextMap = readLastModelMap();
+    nextMap[normalizedEngine] = normalizedModel;
+    try {
+      window.localStorage.setItem(LAST_MODEL_STORAGE_KEY, JSON.stringify(nextMap));
+    } catch (_error) {
+      // Ignore storage failures in privacy-restricted contexts.
+    }
+  }
+
+  // Read the latest remembered model for one engine.
+  function getRememberedLastModel(engine) {
+    const normalizedEngine = normalizeEngineValue(engine);
+    const modelMap = readLastModelMap();
+    return String(modelMap[normalizedEngine] || '').trim();
+  }
 
   // Active selection helpers.
   // Read the active engine in canonical form.
@@ -301,7 +341,10 @@ export function createEngineManager(context, dependencies) {
   function renderModelOptions(models, preferredModel) {
     const uniqueModels = normalizeModelNames(models);
     const fallbackModel = uniqueModels[0] || '';
-    const selectedModel = uniqueModels.includes(preferredModel) ? preferredModel : fallbackModel;
+    const rememberedModel = getRememberedLastModel(getActiveEngine());
+    const selectedModel = uniqueModels.includes(preferredModel)
+      ? preferredModel
+      : (uniqueModels.includes(rememberedModel) ? rememberedModel : fallbackModel);
 
     dom.$modelSelector.empty();
 
@@ -344,7 +387,7 @@ export function createEngineManager(context, dependencies) {
   async function ensureModelsLoadedForActiveEngine(options) {
     const loadOptions = options || {};
     const engine = getActiveEngine();
-    const preferredModel = loadOptions.preferredModel || dom.$modelSelector.val() || '';
+    const preferredModel = loadOptions.preferredModel || dom.$modelSelector.val() || getRememberedLastModel(engine) || '';
 
     if (Array.isArray(state.modelsCache[engine]) && state.modelsCache[engine].length > 0) {
       const selectedModel = renderModelOptions(state.modelsCache[engine], preferredModel);
@@ -592,6 +635,7 @@ export function createEngineManager(context, dependencies) {
 
       // Rebuild all capability-dependent panels from the latest payload.
       state.currentModelInfo = data;
+      rememberLastModel(requestedEngine, model);
       parametersUi.resetDynamicPanels();
       applyPresetState(data.ollama_presets || data.lms_presets || null);
 
@@ -605,7 +649,9 @@ export function createEngineManager(context, dependencies) {
       state.visionState.supported = !!data.supports_vision;
       state.fileState.supported = !!data.supports_files;
       attachmentsUi.updateAttachmentControls();
-      attachmentsUi.clearPendingAttachments();
+      // Do not drop queued attachments during routine model-info refreshes.
+      // Pending files should only be cleared explicitly by user action,
+      // after send, or when starting a new chat.
 
       state.thinkState.supported = !!data.supports_thinking;
       state.thinkState.paramName = data.think_param_name || 'think';
@@ -862,6 +908,7 @@ export function createEngineManager(context, dependencies) {
     persistApiKey,
     persistEngineAddress,
     refreshActiveEngineModels,
+    rememberLastModel,
     renamePreset,
     resetModelUiState,
     schedulePresetSync,
