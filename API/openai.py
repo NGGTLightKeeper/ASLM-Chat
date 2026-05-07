@@ -97,6 +97,14 @@ DIRECT_OPTION_KEYS = {
     "user",
     "verbosity",
 }
+OBJECT_REASONING_ENDPOINT_HOSTS = {
+    "openrouter.ai",
+}
+REASONING_EFFORT_KEYS = {
+    "reasoning_effort",
+    "think_level",
+    "thinking_level",
+}
 DEFAULT_CONTAINER_KEYS = {
     "defaults",
     "default_parameters",
@@ -771,6 +779,100 @@ def _extract_context_length(raw_model: dict[str, Any]) -> int:
 
 
 
+# Normalize provider-specific request controls.
+# Match one endpoint host.
+def _endpoint_host_matches(hostname: str, expected_host: str) -> bool:
+    """Return whether one hostname is the expected host or its subdomain."""
+
+    normalized_hostname = str(hostname or "").strip().lower()
+    normalized_expected = str(expected_host or "").strip().lower()
+    return normalized_hostname == normalized_expected or normalized_hostname.endswith(f".{normalized_expected}")
+
+
+# Resolve reasoning parameter shape.
+def _uses_object_reasoning_controls(base_url: Any = None) -> bool:
+    """Return whether the configured endpoint expects object-shaped reasoning controls."""
+
+    configured_base_url = str(base_url if base_url is not None else settings.get_engine_url("openai") or "").strip()
+    if not configured_base_url:
+        return False
+
+    try:
+        parsed = urllib.parse.urlsplit(configured_base_url)
+    except ValueError:
+        return False
+
+    hostname = parsed.hostname or ""
+    return any(_endpoint_host_matches(hostname, expected_host) for expected_host in OBJECT_REASONING_ENDPOINT_HOSTS)
+
+
+# Normalize one reasoning scalar.
+def _coerce_reasoning_control_object(value: Any, effort: Any = None) -> dict[str, Any]:
+    """Convert scalar reasoning controls into the object shape used by some providers."""
+
+    if isinstance(value, dict):
+        normalized = dict(value)
+        if effort is not None and normalized.get("enabled") is not False:
+            normalized.setdefault("effort", effort)
+        return normalized
+
+    if isinstance(value, bool):
+        if value and effort is not None:
+            return {"effort": effort}
+        return {"enabled": value}
+
+    if value is None:
+        return {"effort": effort} if effort is not None else {}
+
+    normalized_value = str(value).strip().lower()
+    if normalized_value in {"true", "1", "yes", "on", "enabled"}:
+        return {"effort": effort} if effort is not None else {"enabled": True}
+    if normalized_value in {"false", "0", "no", "off", "disabled"}:
+        return {"enabled": False}
+
+    return {"effort": value}
+
+
+# Normalize request options for reasoning controls.
+def _normalize_reasoning_request_options(
+    direct_options: dict[str, Any],
+    extra_body: dict[str, Any],
+    *,
+    base_url: Any = None,
+) -> None:
+    """Normalize reasoning controls in-place for the configured compatible endpoint."""
+
+    if not _uses_object_reasoning_controls(base_url):
+        return
+
+    effort_value = None
+    for options in (direct_options, extra_body):
+        for key in list(options.keys()):
+            if _normalize_key_name(key) not in REASONING_EFFORT_KEYS:
+                continue
+            if effort_value is None:
+                effort_value = options.get(key)
+            options.pop(key, None)
+
+    reasoning_value = None
+    has_reasoning_value = False
+    for options in (direct_options, extra_body):
+        if "reasoning" not in options:
+            continue
+        if not has_reasoning_value:
+            reasoning_value = options.get("reasoning")
+            has_reasoning_value = True
+        options.pop("reasoning", None)
+
+    reasoning_object = _coerce_reasoning_control_object(
+        reasoning_value if has_reasoning_value else None,
+        effort=effort_value,
+    )
+    cleaned_reasoning = _clean_nested_config(reasoning_object)
+    if isinstance(cleaned_reasoning, dict) and cleaned_reasoning:
+        direct_options["reasoning"] = cleaned_reasoning
+
+
 # Load companion metadata.
 # Collect companion metadata roots.
 def _iter_companion_metadata_roots() -> list[str]:
@@ -1215,6 +1317,8 @@ def _build_openai_request_options(
         normalized_level_key = DIRECT_OPTION_ALIASES.get(think_level_param_name, think_level_param_name)
         target_options = direct_options if normalized_level_key in DIRECT_OPTION_KEYS else extra_body
         target_options.setdefault(normalized_level_key, think_level)
+
+    _normalize_reasoning_request_options(direct_options, extra_body)
 
     if extra_body:
         merged_extra_body = dict(direct_options.get("extra_body", {}) or {})
