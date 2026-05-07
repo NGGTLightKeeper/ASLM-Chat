@@ -1,7 +1,7 @@
 ﻿# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 """
-Page fetcher: httpx в†’ curl_cffi в†’ give up.
+Page fetcher: httpx -> curl_cffi -> give up.
 
 Refactored from legacy src/page_fetcher.py:
   - Removed all try/except import fallbacks for internal modules
@@ -109,7 +109,7 @@ class _DomainThrottle:
 # ---------------------------------------------------------------------------
 
 class PageFetcher:
-    """Async page fetcher: httpx в†’ curl_cffi в†’ give up.
+    """Async page fetcher: httpx -> curl_cffi -> give up.
 
     Stores successful fetches in a SourceCache instance.
     """
@@ -407,7 +407,7 @@ class PageFetcher:
         urls: list[str],
         budget: int = 10,
     ) -> dict[str, CachedPage | None]:
-        """Fetch up to *budget* URLs, cache them, return urlв†’CachedPage map.
+        """Fetch up to *budget* URLs, cache them, return url -> CachedPage map.
 
         Skips URLs that are already fresh in the cache.
         """
