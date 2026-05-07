@@ -273,6 +273,29 @@ class SandboxV2ContractsTests(unittest.TestCase):
         self.assertEqual(result["tool"], "view_image")
         self.assertEqual(result["error"]["type"], "not_image")
 
+    def test_share_file_includes_image_render_preview(self) -> None:
+        png_bytes = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO8Bf5QAAAAASUVORK5CYII="
+        )
+        (self.task_root / "pixel.png").write_bytes(png_bytes)
+        result = handle_tool("share_file", {"path": "pixel.png"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["tool"], "share_file")
+        self.assertEqual(result["result"]["kind"], "shared_file")
+        self.assertEqual(result["result"]["render"]["type"], "image")
+        self.assertEqual(result["result"]["render"]["mime_type"], "image/png")
+        self.assertEqual(result["result"]["render"]["preview"]["type"], "inline_base64")
+
+    def test_share_file_includes_table_render_preview_for_csv(self) -> None:
+        handle_tool("write", {"path": "report.csv", "content": "name,score\nalice,10\nbob,20\n"})
+        result = handle_tool("share_file", {"path": "report.csv"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["tool"], "share_file")
+        self.assertEqual(result["result"]["render"]["type"], "table")
+        self.assertEqual(result["result"]["render"]["format"], "csv")
+        self.assertEqual(result["result"]["render"]["columns"], ["name", "score"])
+        self.assertEqual(result["result"]["render"]["sample_rows"][0], ["alice", "10"])
+
     def test_edit_returns_typed_error_for_ambiguous_match(self) -> None:
         handle_tool("write", {"path": "app.txt", "content": "hello\nhello\n"})
 
@@ -289,11 +312,11 @@ class SandboxV2ContractsTests(unittest.TestCase):
         self.assertEqual(result["error"]["type"], "ambiguous_match")
         self.assertEqual(result["result"]["match_count"], 2)
 
-    def test_public_tools_are_bash_write_edit_only(self) -> None:
+    def test_public_tools_are_bash_write_edit_view_image_share_file(self) -> None:
         from sandbox.api import TOOLS
 
         tool_ids = {tool["id"] for tool in TOOLS}
-        self.assertEqual(tool_ids, {"bash", "write", "edit", "view_image"})
+        self.assertEqual(tool_ids, {"bash", "write", "edit", "view_image", "share_file"})
 
 
 if __name__ == "__main__":

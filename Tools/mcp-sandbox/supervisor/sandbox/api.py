@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import shlex
+import csv
 from pathlib import Path
 from typing import Any, Callable
 
@@ -178,7 +179,8 @@ CORE_TOOLS = [
             "Present an existing sandbox workspace file to the user as a downloadable file card. "
             "Use this after creating or exporting a file the user should receive. "
             "Use paths under /workspace/_sandbox; absolute Linux paths resolve inside the container. "
-            "Returns kind='shared_file', path, filename, mime_type, size_bytes, and a short model_context."
+            "Returns kind='shared_file', path, filename, mime_type, size_bytes, a short model_context, "
+            "and an optional render block for rich preview (images/SVG/GIF and tabular text files)."
         ),
         "parameters": {
             "type": "object",
@@ -483,7 +485,55 @@ def _handle_share_file(arguments: dict[str, Any], _context: dict[str, Any] | Non
         "size_bytes": int(meta.get("size_bytes", 0) or 0),
         "model_context": f"Shared file ready for download: {filename}",
     }
-    return success_response("share_file", result)
+    render, render_warnings = _build_share_render_preview(raw_path, meta)
+    if render is not None:
+        result["render"] = render
+    return success_response("share_file", result, warnings=render_warnings)
+
+
+def _build_share_render_preview(raw_path: str, meta: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+    mime_type = str(meta.get("mime") or "application/octet-stream")
+    file_kind = str(meta.get("kind") or "")
+    warnings: list[str] = []
+
+    if mime_type.startswith("image/") or file_kind == "image":
+        image_payload = read_image(raw_path, include_preview=True, max_preview_bytes=MAX_IMAGE_PREVIEW_BYTES)
+        image_result = image_payload.get("result", {}) if isinstance(image_payload, dict) else {}
+        render: dict[str, Any] = {
+            "type": "image",
+            "mime_type": mime_type,
+            "preview": image_result.get("preview"),
+        }
+        if "width" in image_result:
+            render["width"] = image_result.get("width")
+        if "height" in image_result:
+            render["height"] = image_result.get("height")
+        warnings.extend(image_payload.get("warnings", []) if isinstance(image_payload, dict) else [])
+        return render, warnings
+
+    lower_path = str(meta.get("path") or raw_path).lower()
+    if mime_type in {"text/csv", "text/tab-separated-values"} or lower_path.endswith((".csv", ".tsv")):
+        table_payload = read(raw_path, max_bytes=min(MAX_READ_BYTES, 131072))
+        table_result = table_payload.get("result", {}) if isinstance(table_payload, dict) else {}
+        if table_result.get("kind") != "text":
+            return None, warnings
+        delimiter = "\t" if mime_type == "text/tab-separated-values" or lower_path.endswith(".tsv") else ","
+        content = str(table_result.get("content") or "")
+        rows = list(csv.reader(content.splitlines(), delimiter=delimiter))
+        if not rows:
+            return {"type": "table", "format": "csv", "columns": [], "sample_rows": []}, warnings
+        header = rows[0]
+        sample_rows = rows[1:11]
+        return {
+            "type": "table",
+            "format": "tsv" if delimiter == "\t" else "csv",
+            "columns": header,
+            "sample_rows": sample_rows,
+            "sample_row_count": len(sample_rows),
+            "truncated": bool(table_payload.get("truncated", False)),
+        }, warnings
+
+    return None, warnings
 
 
 def _has_argument_value(arguments: dict[str, Any], key: str) -> bool:

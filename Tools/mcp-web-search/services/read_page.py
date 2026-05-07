@@ -168,11 +168,14 @@ async def _fetch_youtube_transcript(url: str) -> str:
         except ImportError:
             return None
 
-        api = YouTubeTranscriptApi()
         PREFERRED = ["ru", "en", "uk", "de", "fr"]
 
         try:
-            transcript_list = api.list(video_id)
+            api = YouTubeTranscriptApi()
+            if hasattr(api, "list"):
+                transcript_list = api.list(video_id)
+            else:
+                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         except Exception as e:
             err = str(e)
             if "unavailable" in err.lower() or "no longer available" in err.lower():

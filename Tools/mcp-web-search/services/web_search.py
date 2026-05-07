@@ -2432,6 +2432,83 @@ class WebSearchService:
         triage = _triage_results(deduped, query) if deduped else []
         return deduped, triage
 
+    @staticmethod
+    def _fallback_query_variants(query: str) -> list[str]:
+        """Build progressively simpler query variants for zero-result fallback."""
+        base = " ".join(str(query or "").split()).strip()
+        if not base:
+            return []
+
+        variants: list[str] = []
+
+        def add_variant(value: str) -> None:
+            normalized = " ".join(str(value or "").split()).strip()
+            if normalized and normalized != base and normalized not in variants:
+                variants.append(normalized)
+
+        # 1) Remove quotes that can over-constrain DDGS.
+        unquoted = re.sub(r"[\"'`]+", " ", base)
+        add_variant(unquoted)
+
+        # 2) Strip search operators and site constraints for an open fallback.
+        no_ops = re.sub(r"(?<!\S)-?site:[^\s]+", " ", unquoted, flags=re.IGNORECASE)
+        no_ops = re.sub(r"(?<!\S)(?:OR|\|)(?=\s|$)", " ", no_ops, flags=re.IGNORECASE)
+        no_ops = re.sub(r"(?<!\S)-[^\s]+", " ", no_ops)
+        add_variant(no_ops)
+
+        # 3) Keep only core lexical terms (cap length to improve recall).
+        core_terms = re.findall(r"[A-Za-z0-9_\-]{2,}|[А-Яа-яЁё0-9_\-]{2,}", no_ops)
+        if core_terms:
+            add_variant(" ".join(core_terms[:4]))
+            add_variant(" ".join(core_terms[:3]))
+
+        return variants
+
+    async def _run_with_zero_result_fallback(
+        self,
+        *,
+        provider_query: str,
+        analysis_query: str,
+        query_types: list[str],
+        out_profile: _OutputProfile,
+        opts: WebSearchOptions,
+        req_id: str,
+    ) -> tuple[list[SearchResult], list[_TriageResult], str]:
+        """Run search pipeline and retry with degraded query variants if empty."""
+        lang = infer_query_language(analysis_query)
+        query_type = query_types[0] if query_types else "general"
+        deduped, triage = await self._run_search_pipeline(
+            provider_query,
+            lang,
+            query_types,
+            query_type,
+            out_profile,
+            opts,
+            req_id,
+        )
+        if deduped:
+            return deduped, triage, analysis_query
+
+        for index, variant in enumerate(self._fallback_query_variants(analysis_query), start=1):
+            variant_lang = infer_query_language(variant)
+            variant_types = infer_query_types(variant)
+            variant_type = variant_types[0] if variant_types else query_type
+            _trace(req_id, "search.fallback.try", index=index, variant=variant)
+            deduped, triage = await self._run_search_pipeline(
+                variant,
+                variant_lang,
+                variant_types,
+                variant_type,
+                out_profile,
+                opts,
+                req_id,
+            )
+            if deduped:
+                _trace(req_id, "search.fallback.hit", index=index, variant=variant, count=len(deduped))
+                return deduped, triage, variant
+
+        return [], [], analysis_query
+
     async def search(self, query: str, deadline: float | None = None) -> str:
         """Run web search and return formatted text result."""
         opts = self._opts
@@ -2484,9 +2561,15 @@ class WebSearchService:
             chosen_profile=f"{out_profile.max_results}/{out_profile.preview_fetch_limit}/{out_profile.unparsed_bonus}",
         )
 
-        deduped, triage = await self._run_search_pipeline(
-            provider_query, lang, query_types, query_type, out_profile, opts, req_id
+        deduped, triage, effective_query = await self._run_with_zero_result_fallback(
+            provider_query=provider_query,
+            analysis_query=query,
+            query_types=query_types,
+            out_profile=out_profile,
+            opts=opts,
+            req_id=req_id,
         )
+        query = effective_query
         if constraints.has_constraints:
             before = len(deduped)
             deduped = filter_results_by_domain_constraints(deduped, constraints)
@@ -2670,9 +2753,15 @@ class WebSearchService:
         out_profile = _get_output_profile(query_types)
 
         req_id = _make_request_id()
-        deduped, triage = await self._run_search_pipeline(
-            provider_query, lang, query_types, query_type, out_profile, opts, req_id
+        deduped, triage, effective_query = await self._run_with_zero_result_fallback(
+            provider_query=provider_query,
+            analysis_query=query,
+            query_types=query_types,
+            out_profile=out_profile,
+            opts=opts,
+            req_id=req_id,
         )
+        query = effective_query
         if constraints.has_constraints:
             deduped = filter_results_by_domain_constraints(deduped, constraints)
             triage = _triage_results(deduped, query) if deduped else []
@@ -2742,9 +2831,15 @@ class WebSearchService:
         req_id = search_id
 
         # --- 2. Provider fetch → merge → dedup → triage ---
-        deduped, triage = await self._run_search_pipeline(
-            provider_query, lang, query_types, query_type, out_profile, opts, req_id
+        deduped, triage, effective_query = await self._run_with_zero_result_fallback(
+            provider_query=provider_query,
+            analysis_query=query,
+            query_types=query_types,
+            out_profile=out_profile,
+            opts=opts,
+            req_id=req_id,
         )
+        query = effective_query
         if constraints.has_constraints:
             deduped = filter_results_by_domain_constraints(deduped, constraints)
             triage = _triage_results(deduped, query) if deduped else []
