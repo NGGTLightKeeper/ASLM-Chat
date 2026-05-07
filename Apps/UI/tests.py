@@ -53,6 +53,7 @@ from Apps.UI.file_manifests import (
 )
 from Apps.UI.upload_storage import display_kind_for_upload
 from Apps.UI.views import (
+    _build_activity_segments,
     _build_chat_title,
     _build_model_info_payload,
     _build_uploaded_file_prompt_block,
@@ -1527,6 +1528,76 @@ class ViewFormattingTests(SimpleTestCase):
         self.assertEqual(_parse_active_tool_slugs('["time_suite", "", "browser"]'), ["time_suite", "browser"])
         self.assertEqual(_parse_active_tool_slugs("time_suite"), ["time_suite"])
         self.assertEqual(_parse_active_tool_slugs(""), [])
+
+    # Test shared files keep their UI render payload after tool result splitting.
+    def test_shared_file_tool_result_keeps_ui_metadata(self):
+        payload = {
+            "kind": "shared_file",
+            "path": "/workspace/_sandbox/wave_graph.svg",
+            "filename": "wave_graph.svg",
+            "mime_type": "image/svg+xml",
+            "size_bytes": 123,
+            "render": {
+                "type": "image",
+                "mime_type": "image/svg+xml",
+                "preview": {"kind": "base64", "data": "abc"},
+            },
+        }
+
+        model_text, extras = tool_registry.split_tool_result_payload(payload)
+
+        self.assertEqual(model_text, "Shared file ready for download: wave_graph.svg")
+        self.assertEqual(extras["structured_content"]["kind"], "shared_file")
+        self.assertEqual(extras["structured_content"]["file"]["render"]["type"], "image")
+        self.assertEqual(extras["tool_ui"]["kind"], "shared_file")
+
+    # Test repeated tool aliases preserve all shared files in activity segments.
+    def test_build_activity_segments_keeps_repeated_share_file_aliases(self):
+        class _MessageStub:
+            llm_transcript = [
+                {
+                    "role": "tool",
+                    "alias": "sandbox__share_file__0",
+                    "tool_id": "share_file",
+                    "tool_display_name": "Share File",
+                    "arguments": {"path": "a.txt", "filename": "a.txt"},
+                    "content": "Shared file ready for download: a.txt",
+                    "structured_content": {
+                        "kind": "shared_file",
+                        "file": {"kind": "shared_file", "path": "a.txt", "filename": "a.txt"},
+                    },
+                    "tool_ui": {
+                        "kind": "shared_file",
+                        "status": "done",
+                        "file": {"kind": "shared_file", "path": "a.txt", "filename": "a.txt"},
+                    },
+                },
+                {
+                    "role": "tool",
+                    "alias": "sandbox__share_file__0",
+                    "tool_id": "share_file",
+                    "tool_display_name": "Share File",
+                    "arguments": {"path": "b.txt", "filename": "b.txt"},
+                    "content": "Shared file ready for download: b.txt",
+                    "structured_content": {
+                        "kind": "shared_file",
+                        "file": {"kind": "shared_file", "path": "b.txt", "filename": "b.txt"},
+                    },
+                    "tool_ui": {
+                        "kind": "shared_file",
+                        "status": "done",
+                        "file": {"kind": "shared_file", "path": "b.txt", "filename": "b.txt"},
+                    },
+                },
+            ]
+
+        segments = _build_activity_segments(_MessageStub())
+        files = [
+            (segment.get("structuredContent") or {}).get("file", {}).get("filename")
+            for segment in segments
+            if segment.get("type") == "tool"
+        ]
+        self.assertEqual(files, ["a.txt", "b.txt"])
 
 
 # Model metadata cache tests.
