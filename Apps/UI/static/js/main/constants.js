@@ -404,7 +404,7 @@ export const PARAMETER_DEFINITIONS = {
     max: 32768,
     step: 32,
     decimals: 0,
-    fallback: 1024
+    fallback: 4096
   },
   topPSampling: {
     label: 'Top P',
@@ -582,7 +582,7 @@ export const PARAMETER_DEFINITIONS = {
     max: 32768,
     step: 32,
     decimals: 0,
-    fallback: 1024
+    fallback: 4096
   },
   n: {
     label: 'Candidates',
