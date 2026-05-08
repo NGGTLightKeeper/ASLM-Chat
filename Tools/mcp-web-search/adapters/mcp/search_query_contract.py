@@ -8,6 +8,15 @@ from typing import Any
 
 
 _SPACE_RE = re.compile(r"\s+")
+_EFFORT_VALUES = ("low", "medium", "high")
+_EFFORT_ALIASES = {
+    "": "medium",
+    "normal": "medium",
+    "default": "medium",
+    "standard": "medium",
+}
+
+WebSearchQuery = str | dict[str, Any]
 
 SEARCH_QUERY_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -23,9 +32,32 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
                 "sentence, explanation, or SEO-style keyword pile."
             ),
         },
+        "effort": {
+            "type": "string",
+            "enum": list(_EFFORT_VALUES),
+            "default": "medium",
+            "description": (
+                "Search effort level. low is fast and mostly snippet-based; medium is the "
+                "current default; high expands the current search and scraping budget."
+            ),
+        },
     },
     "required": ["query"],
 }
+
+
+def coerce_search_effort(value: Any = None) -> str:
+    """Normalize the public search effort argument."""
+    if isinstance(value, dict):
+        value = value.get("effort")
+    elif isinstance(value, str):
+        parsed = _try_parse_json(value)
+        if isinstance(parsed, dict):
+            value = parsed.get("effort")
+
+    effort = str(value or "").strip().lower()
+    effort = _EFFORT_ALIASES.get(effort, effort)
+    return effort if effort in _EFFORT_VALUES else "medium"
 
 
 def coerce_search_query(value: Any) -> str:

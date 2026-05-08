@@ -23,7 +23,11 @@ from adapters.mcp.tool_descriptions import (
     WEB_SEARCH_TOOL_DESCRIPTION,
 )
 from adapters.mcp.search_io_logger import write_search_io_event
-from adapters.mcp.search_query_contract import SEARCH_QUERY_SCHEMA, coerce_search_query
+from adapters.mcp.search_query_contract import (
+    SEARCH_QUERY_SCHEMA,
+    coerce_search_effort,
+    coerce_search_query,
+)
 from core.config import load_search_config as _load_cfg
 from core.fetch.thread_pool import io_pool as _io_pool  # noqa: F401 - initialise shared pool
 
@@ -146,6 +150,7 @@ async def call_tool(
     arguments: dict[str, Any] | None,
     context: dict[str, Any] | None = None,
 ) -> Any:
+    started_at = asyncio.get_running_loop().time()
     args = dict(arguments or {})
     for key in ("query", "url"):
         if key in args:
@@ -155,6 +160,7 @@ async def call_tool(
         from services import run_web_search_rich
 
         query_text = coerce_search_query(args.get("query", ""))
+        search_effort = coerce_search_effort(args)
         write_search_io_event(
             {
                 "layer": "mcp_adapter_bridge",
@@ -163,10 +169,15 @@ async def call_tool(
                 "raw_arguments": args,
                 "raw_query": args.get("query", ""),
                 "coerced_query": query_text,
+                "effort": search_effort,
                 "context": context or {},
             }
         )
-        result = await run_web_search_rich(query_text, max_results=_MAX_RESULTS)
+        result = await run_web_search_rich(
+            query_text,
+            max_results=_MAX_RESULTS,
+            effort=search_effort,
+        )
         write_search_io_event(
             {
                 "layer": "mcp_adapter_bridge",

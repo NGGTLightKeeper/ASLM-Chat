@@ -21,7 +21,11 @@ from adapters.mcp.tool_descriptions import (
     WEB_SEARCH_TOOL_DESCRIPTION,
 )
 from adapters.mcp.search_io_logger import write_search_io_event
-from adapters.mcp.search_query_contract import WebSearchQuery, coerce_search_query
+from adapters.mcp.search_query_contract import (
+    WebSearchQuery,
+    coerce_search_effort,
+    coerce_search_query,
+)
 from core.config import load_search_config
 from services import run_read_page, run_web_search_rich
 from services.web_search import shutdown_web_search
@@ -263,10 +267,12 @@ def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, object]
 
 async def web_search(
     query: WebSearchQuery,
+    effort: str = "medium",
     context: FastMCPContext | dict[str, Any] | None = None,
 ) -> CallToolResult:
     started_at = time.perf_counter()
     query_text = coerce_search_query(query)
+    search_effort = coerce_search_effort(query if effort == "medium" else effort)
     write_search_io_event(
         {
             "layer": "fastmcp_adapter",
@@ -274,6 +280,7 @@ async def web_search(
             "tool_id": "web_search",
             "raw_query": query,
             "coerced_query": query_text,
+            "effort": search_effort,
         }
     )
     if not query_text:
@@ -318,6 +325,7 @@ async def web_search(
             run_web_search_rich(
                 query_text,
                 max_results=_WEB_SEARCH_RESULT_LIMIT,
+                effort=search_effort,
             ),
         )
         await _report_progress(context, 100, 100, "search_done")

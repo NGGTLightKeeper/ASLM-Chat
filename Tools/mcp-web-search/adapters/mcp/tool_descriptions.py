@@ -11,6 +11,20 @@ The query is a search-engine directive, not a question. Write it like a
 librarian's search expression: concrete nouns, identifiers, versions, or
 quoted error text - no prose, no explanation.
 
+EFFORT:
+  effort="low"     fast discovery mode, typically ~7-9s. It uses DDGS only,
+                   no hosted/academic engines and no page scraping. Best for
+                   quick source discovery, names, URLs, and rough orientation.
+                   If the DDGS worker hits its short timeout, it returns any
+                   per-request partial source buffer that was already found.
+  effort="medium"  default mode, typically ~10-20s. It keeps the current search
+                   behavior: ranking, triage, normal scraping, and parsed
+                   previews. Best for ordinary cited answers.
+  effort="high"    expanded mode, typically ~15-60s. It gives the current
+                   search/scoring/scraping budget about 3x more room and uses
+                   a larger source pool. Best when source coverage matters more
+                   than latency.
+
 QUALITY GATE (enforced automatically):
   The engine validates every query before sending it to the network.
   Only extreme violations return a BAD_QUERY error you must resolve:

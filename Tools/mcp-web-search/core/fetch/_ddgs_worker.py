@@ -75,6 +75,7 @@ def main() -> None:
     request_delay: list       = payload.get("request_delay", [0.15, 0.6])
     timeout: int              = int(payload.get("timeout", 10))
     max_retries: int          = int(payload.get("max_retries", 2))
+    partial_buffer_path       = payload.get("partial_buffer_path")
 
     # --- Import and run ------------------------------------------------------
     try:
@@ -103,6 +104,7 @@ def main() -> None:
             lang=lang,
             timelimit=timelimit,
             hedge_count=hedge_count,
+            partial_buffer_path=partial_buffer_path,
         )
     except Exception as exc:
         _fail(f"search_with_fallback error: {exc}")
