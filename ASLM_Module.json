@@ -3,7 +3,7 @@
     "id": "aslm-chat",
     "name": "ASLM Chat",
     "description": "ASLM Chat Module",
-    "version": "0.5.0.27",
+    "version": "0.6.0.31",
     "author": "NGGT-ASLM",
     "type": "ui",
     "hasPage": true,
