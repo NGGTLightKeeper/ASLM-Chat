@@ -870,7 +870,7 @@ def _normalize_reasoning_request_options(
     )
     cleaned_reasoning = _clean_nested_config(reasoning_object)
     if isinstance(cleaned_reasoning, dict) and cleaned_reasoning:
-        direct_options["reasoning"] = cleaned_reasoning
+        extra_body["reasoning"] = cleaned_reasoning
 
 
 # Load companion metadata.
