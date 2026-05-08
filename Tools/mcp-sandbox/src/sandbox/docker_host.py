@@ -348,6 +348,7 @@ def _build_run_command(
         "-e", "SANDBOX_IN_CONTAINER=1",
         "-e", f"SANDBOX_COMMAND_USER={COMMAND_USER}",
         "-e", f"SANDBOX_HOST_WORKSPACE={CONTAINER_WORKSPACE}",
+        "-e", f"SANDBOX_DEFAULT_TASK_DIR={DEFAULT_TASK_DIR}",
         "-e", f"SANDBOX_SUPERVISOR_SRC={SUPERVISOR_SRC}",
         "-e", f"SANDBOX_SUPERVISOR_VENV={SUPERVISOR_VENV}",
         "-e", "PYTHONDONTWRITEBYTECODE=1",
@@ -396,6 +397,7 @@ def _ensure_container_running(
     retry_delay: float = 2.0,
 ) -> tuple[bool, str]:
     """Ensure the sandbox container is running — idempotent with retry."""
+    _ensure_sandbox_config()
     docker_ok, msg = _ensure_docker_running()
     if not docker_ok:
         return False, msg
@@ -651,7 +653,7 @@ def _run_snapshot_preflight() -> dict:
         return {"ok": False, "checks": checks}
 
     workspace_jobs = _docker_exec_shell(
-        "test ! -e /workspace/_sandbox/.sandbox_jobs",
+        f"test ! -e {shlex.quote(MODEL_WORKSPACE_CONTAINER)}/.sandbox_jobs",
         timeout=10,
     )
     add(
@@ -860,6 +862,7 @@ def _supervisor_exec_command(
         "-e", "SANDBOX_IN_CONTAINER=1",
         "-e", f"SANDBOX_COMMAND_USER={COMMAND_USER}",
         "-e", f"SANDBOX_HOST_WORKSPACE={CONTAINER_WORKSPACE}",
+        "-e", f"SANDBOX_DEFAULT_TASK_DIR={DEFAULT_TASK_DIR}",
         "-e", f"SANDBOX_SUPERVISOR_SRC={SUPERVISOR_SRC}",
         "-e", f"SANDBOX_SUPERVISOR_VENV={SUPERVISOR_VENV}",
         "-e", f"PYTHONPATH={SUPERVISOR_SRC}",
@@ -1155,9 +1158,15 @@ def pipe_to_container_supervisor(
 # Used when IN_CONTAINER=False. Will be removed after full migration.
 
 def _docker_exec_shell(
-    script: str, *, container_cwd: str | None = None, timeout: int = 30
+    script: str,
+    *,
+    container_cwd: str | None = None,
+    timeout: int = 30,
+    user: str | None = None,
 ):
     args = ["docker", "exec"]
+    if user:
+        args.extend(["-u", user])
     if container_cwd:
         args.extend(["-w", container_cwd])
     args.extend([CONTAINER_NAME, "bash", "-lc", script])
@@ -1276,7 +1285,12 @@ def _exec_bash_docker_background(
         f"echo $! > {quoted_job_dir}/pid; "
         f"cat {quoted_job_dir}/pid"
     )
-    setup = _docker_exec_shell(setup_script, container_cwd=container_cwd, timeout=30)
+    setup = _docker_exec_shell(
+        setup_script,
+        container_cwd=container_cwd,
+        timeout=30,
+        user=COMMAND_USER if COMMAND_USER and COMMAND_USER != "root" else None,
+    )
     if setup.returncode != 0:
         return {
             "exit_code": None,
@@ -1399,13 +1413,16 @@ def _exec_bash_docker(
         )
 
     start_time = time.time()
-    exec_cmd = [
-        "docker", "exec", "-i",
+    exec_cmd = ["docker", "exec", "-i"]
+    if COMMAND_USER and COMMAND_USER != "root":
+        exec_cmd.extend(["-u", COMMAND_USER])
+    exec_cmd.extend([
         "-w", container_cwd,
         "-e", "PYTHONIOENCODING=utf-8",
         "-e", "LANG=C.UTF-8",
+        "-e", f"SANDBOX_DEFAULT_TASK_DIR={DEFAULT_TASK_DIR}",
         CONTAINER_NAME, "bash", "-lc", command,
-    ]
+    ])
 
     try:
         process = subprocess.Popen(

@@ -54,7 +54,7 @@ COPY supervisor /opt/sandbox-src
 RUN useradd --create-home --shell /bin/bash sandbox_user && \
     echo "sandbox_user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/sandbox_user && \
     chmod 0440 /etc/sudoers.d/sandbox_user && \
-    mkdir -p /workspace/_sandbox && \
+    mkdir -p /workspace && \
     chown -R root:root /opt/sandbox-venv /opt/sandbox-src && \
     chmod -R a-w /opt/sandbox-venv /opt/sandbox-src
 
@@ -63,7 +63,7 @@ COPY docker/start-container.sh /usr/local/bin/start-container.sh
 RUN sed -i 's/\r//' /usr/local/bin/start-container.sh && \
     chmod +x /usr/local/bin/start-container.sh
 
-WORKDIR /workspace/_sandbox
+WORKDIR /workspace
 
 ENTRYPOINT ["tini", "--"]
 CMD ["/usr/local/bin/start-container.sh"]

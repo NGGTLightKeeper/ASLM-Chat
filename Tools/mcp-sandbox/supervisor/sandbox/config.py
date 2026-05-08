@@ -72,7 +72,7 @@ _PROJECT_ROOT = (
     if not IN_CONTAINER
     else Path(SUPERVISOR_SRC)
 )
-_DEFAULT_SANDBOX_DIR = os.path.join(os.path.expanduser("~"), ".sandbox-workspace")
+_DEFAULT_SANDBOX_DIR = str(_PROJECT_ROOT)
 HOST_WORKSPACE = os.getenv(
     "SANDBOX_HOST_WORKSPACE",
     CONTAINER_WORKSPACE if IN_CONTAINER else str(_PROJECT_ROOT),

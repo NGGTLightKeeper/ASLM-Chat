@@ -9,6 +9,9 @@ export NUMEXPR_NUM_THREADS="$THREAD_LIMIT"
 export VECLIB_MAXIMUM_THREADS="$THREAD_LIMIT"
 
 NETWORK_LIMIT_MBIT="${SANDBOX_NETWORK_LIMIT_MBIT:-100}"
+DEFAULT_TASK_DIR="${SANDBOX_DEFAULT_TASK_DIR:-_sandbox}"
+WORKSPACE_ROOT="/workspace"
+TASK_ROOT="${WORKSPACE_ROOT}/${DEFAULT_TASK_DIR}"
 
 apply_network_limit() {
     if ! command -v tc >/dev/null 2>&1; then
@@ -35,7 +38,8 @@ apply_network_limit() {
 
 apply_network_limit
 
-mkdir -p /workspace/_sandbox
-chmod -R a+rwX /workspace/_sandbox >/dev/null 2>&1 || true
+mkdir -p "${TASK_ROOT}"
+chmod -R a+rwX "${TASK_ROOT}" >/dev/null 2>&1 || true
+cd "${TASK_ROOT}"
 
 exec tail -f /dev/null
