@@ -12,6 +12,7 @@ Web-search query quality rules:
 - Do not stuff SEO noise, filler, or repeated synonyms into a single query.
 - Do not append long shopping/marketing tails, country/currency boilerplate, or year spam unless explicitly required by user intent.
 - If you need breadth, run multiple different focused queries instead of one mega-query.
+- For closely related discovery work, you may batch search queries in one call by separating them with commas, but use this sparingly and include no more than 3 queries in one batch.
 - If a previous query was rejected or returned poor signal, rewrite semantically (new anchor terms), not trivial rewording.
 - Avoid retry loops: never repeat an identical or near-identical failed query.
 
