@@ -1545,7 +1545,7 @@ export function createMessagesUi(context, dependencies) {
         return false;
       }
 
-      const key = String(source.domain || source.display_domain || source.url || source.source_id || source.id || '').trim().toLowerCase();
+      const key = String(source.url || source.source_id || source.id || source.domain || source.display_domain || '').trim().toLowerCase();
       if (!key || seen[key]) {
         return false;
       }
@@ -1598,7 +1598,7 @@ export function createMessagesUi(context, dependencies) {
     }
     const chipsHtml = renderedSources.visibleHtml;
     const hiddenChipsHtml = renderedSources.hiddenHtml;
-    const moreCount = renderedSources.hiddenCount || (compact ? Math.max(0, parseInt(compact.more_count || 0, 10) || 0) : 0);
+    const moreCount = renderedSources.hiddenCount;
     const moreButtonAttrs = `type="button" data-search-more-count="${moreCount}" aria-expanded="${isExpanded ? 'true' : 'false'}"`;
     const collapsedMoreHtml = moreCount > 0
       ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-collapsed" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(`${MORE_LABEL} ${moreCount}`)}</span></button>`
