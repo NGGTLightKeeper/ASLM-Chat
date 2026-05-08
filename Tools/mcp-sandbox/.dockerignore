@@ -1,0 +1,17 @@
+_sandbox/
+tests/.test_workspace/
+tests/.test_workspace_jobs/
+tests/_sandbox/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.git/
+.hg/
+.svn/
+.idea/
+.vscode/
+*.log
+.env.local
+docker.dev.env
+sandbox.env
