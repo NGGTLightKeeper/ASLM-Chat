@@ -522,7 +522,6 @@ ATTACHMENT_TEXT_CHAR_LIMIT = 24000
 LLM_HISTORY_MAX_MESSAGES = 40
 LLM_HISTORY_MIN_MESSAGES = 8
 LLM_HISTORY_DEFAULT_CHAR_BUDGET = 48000
-LLM_HISTORY_MAX_CHAR_BUDGET = 160000
 LLM_HISTORY_COMPRESSION_TRIGGER_RATIO = 0.80
 LLM_HISTORY_COMPRESSION_MAX_CHARS = 90000
 LLM_HISTORY_COMPRESSION_MAX_LINES = 120
@@ -2474,8 +2473,10 @@ def _resolve_history_char_budget(model_info_payload: dict[str, Any] | None) -> i
     if context_length <= 0:
         return LLM_HISTORY_DEFAULT_CHAR_BUDGET
 
-    # Approximate one token as a few characters and leave room for the answer.
-    return max(16000, min(context_length * 3, LLM_HISTORY_MAX_CHAR_BUDGET))
+    # Approximate one token as a few characters. Do not clamp large-context
+    # models to the legacy local budget; compression should follow the model's
+    # real context window.
+    return max(16000, context_length * 3)
 
 
 # Estimate the prompt cost of one normalized LLM entry.
@@ -2696,7 +2697,7 @@ def _build_manual_compression_event(
         active_model=model_name,
     )
     if runtime_context_tokens > 0:
-        runtime_budget = max(12000, min(runtime_context_tokens * 3, LLM_HISTORY_MAX_CHAR_BUDGET))
+        runtime_budget = max(12000, runtime_context_tokens * 3)
         history_budget = min(history_budget, runtime_budget)
 
     used_history_chars = len(str(system_prompt or ""))
@@ -2913,7 +2914,7 @@ def _build_chat_history(
     if debug_force_4k:
         runtime_context_tokens = 4096
     if runtime_context_tokens > 0:
-        runtime_budget = max(12000, min(runtime_context_tokens * 3, LLM_HISTORY_MAX_CHAR_BUDGET))
+        runtime_budget = max(12000, runtime_context_tokens * 3)
         history_budget = min(history_budget, runtime_budget)
     used_history_chars = 0
     selected_history: list[list[dict[str, Any]]] = []
