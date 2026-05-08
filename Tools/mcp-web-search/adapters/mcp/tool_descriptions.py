@@ -13,11 +13,11 @@ quoted error text - no prose, no explanation.
 
 QUALITY GATE (enforced automatically):
   The engine validates every query before sending it to the network.
-  Two violations return a BAD_QUERY error you must resolve:
-  - Vague SEO-style filler words - generic qualifiers that surface
+  Only extreme violations return a BAD_QUERY error you must resolve:
+  - Explicit banned SEO-style keywords/phrases - generic qualifiers that surface
     clickbait instead of substance (e.g. "great", "ultimate", "overview",
     "how to", "what is"). Use specific nouns and identifiers instead.
-  - More than 6 content words - operators (site:, -site:, OR, "phrases")
+  - More than 18 content words - operators (site:, -site:, OR, "phrases")
     are free and do not count toward the limit, but they also do not reduce
     the existing content-word count: adding operators cannot make an
     overlong query valid. Plain filler words do.

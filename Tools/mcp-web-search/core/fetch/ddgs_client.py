@@ -99,6 +99,8 @@ except ImportError:
 
 _RETRYABLE_ERRORS = ("ssl", "eof", "connect", "connection", "timeout", "reset", "broken pipe")
 _HARD_FAILURE_ERRORS = ("403", "forbidden")
+_OPERATOR_TOKEN_RE = re.compile(r"(?<!\S)(?:-?site:[^\s]+|inurl:[^\s]+|intitle:[^\s]+|filetype:[^\s]+|(?:OR|\|))(?=\s|$)", re.IGNORECASE)
+_LEXICAL_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-]{2,}|[А-Яа-яЁё0-9_\-]{2,}")
 
 # ---------------------------------------------------------------------------
 # Hedged-request constants
@@ -373,6 +375,31 @@ class DDGSClient:
             query = " ".join(query.split()[:10])
         return query[:120]
 
+    @staticmethod
+    def _degraded_query_variants(query: str) -> list[str]:
+        """Return progressively simpler query variants for zero-result fallback."""
+        base = " ".join(str(query or "").split()).strip()
+        if not base:
+            return []
+        variants: list[str] = []
+
+        def add_variant(value: str) -> None:
+            candidate = " ".join(str(value or "").split()).strip()
+            if candidate and candidate != base and candidate not in variants:
+                variants.append(candidate)
+
+        unquoted = re.sub(r"[\"'`]+", " ", base)
+        add_variant(unquoted)
+        no_ops = _OPERATOR_TOKEN_RE.sub(" ", unquoted)
+        no_ops = re.sub(r"(?<!\S)-[^\s]+", " ", no_ops)
+        add_variant(no_ops)
+
+        lexical = _LEXICAL_TOKEN_RE.findall(no_ops)
+        if lexical:
+            add_variant(" ".join(lexical[:4]))
+            add_variant(" ".join(lexical[:2]))
+        return variants
+
     def search_sync(
         self,
         query: str,
@@ -524,6 +551,12 @@ class DDGSClient:
                 results = self.search_to_results(query, max_results, backend=backend, timelimit=timelimit)
                 if results:
                     return results
+            for variant in self._degraded_query_variants(query):
+                for backend in BACKEND_FALLBACK:
+                    results = self.search_to_results(variant, max_results, backend=backend, timelimit=None)
+                    if results:
+                        logger.info("ddgs fallback hit (site query) variant=%r backend=%s", variant, backend)
+                        return results
             return []
 
         # Non-English queries — run backends in parallel and take the first
@@ -575,7 +608,21 @@ class DDGSClient:
             except TimeoutError:
                 logger.debug("multilingual parallel search timed out after %ss", self.timeout)
                 # no pool.shutdown anymore
-            return result
+            if result:
+                return result
+            for variant in self._degraded_query_variants(query):
+                for backend in BACKEND_FALLBACK:
+                    degraded = self.search_to_results(
+                        variant,
+                        max_results,
+                        backend=backend,
+                        region="wt-wt",
+                        timelimit=None,
+                    )
+                    if degraded:
+                        logger.info("ddgs fallback hit (multilingual) variant=%r backend=%s", variant, backend)
+                        return degraded
+            return []
 
         # General queries — router-driven hedged search.
         #
@@ -703,7 +750,22 @@ class DDGSClient:
             stop.set()
             # no pool.shutdown anymore
 
-        return hedged_result
+        if hedged_result:
+            return hedged_result
+
+        for variant in self._degraded_query_variants(query):
+            for backend in BACKEND_FALLBACK:
+                degraded = self.search_to_results(
+                    variant,
+                    max_results,
+                    backend=backend,
+                    region="wt-wt",
+                    timelimit=None,
+                )
+                if degraded:
+                    logger.info("ddgs fallback hit variant=%r backend=%s", variant, backend)
+                    return degraded
+        return []
 
 
 # ---------------------------------------------------------------------------

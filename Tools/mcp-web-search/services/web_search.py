@@ -771,8 +771,10 @@ _NATURAL_INTENT_WORDS: frozenset[str] = frozenset({
 })
 _SEO_SPAM_WORDS = frozenset(word for word in _SEO_SPAM_WORDS if word not in _NATURAL_INTENT_WORDS)
 
-#: Maximum number of content tokens (non-operator words) allowed in a search query.
-_QUERY_MAX_TOKENS: int = 6
+#: Hard ceiling for content tokens (non-operator words) in a search query.
+#: This should only catch sentence-sized keyword dumps, not ordinary focused
+#: technical or academic queries.
+_QUERY_MAX_TOKENS: int = 18
 
 #: Regex matching tokens that are search operators, not content words.
 #: These are excluded from the word-count ceiling check.
@@ -840,6 +842,20 @@ _QUERY_REJECTION_TOO_LONG: str = (
 )
 
 
+def _contains_spam_keyword(query: str, keyword: str) -> bool:
+    """Return whether a banned keyword appears as a real word or phrase."""
+
+    keyword = str(keyword or "").strip().lower()
+    if not keyword:
+        return False
+
+    if re.search(r"\w", keyword, flags=re.UNICODE):
+        return re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", query, flags=re.UNICODE) is not None
+
+    # Scripts without word boundaries still need substring matching.
+    return keyword in query
+
+
 def validate_search_query(query: str) -> str | None:
     """Validate a search query for quality before sending it to the engine.
 
@@ -857,17 +873,9 @@ def validate_search_query(query: str) -> str | None:
         return None  # empty queries are handled elsewhere
 
     q_lower = query.strip().lower()
-    tokens = q_lower.split()
 
-    # ── Check 1: SEO spam words ───────────────────────────────────────────
-    token_set = set(tokens)
-    # Pass A: exact token match (Latin/Cyrillic/Arabic/etc.)
-    spam_hit = token_set & _SEO_SPAM_WORDS
-    if not spam_hit:
-        # Pass B: substring scan for every spam entry.
-        # Covers multi-word phrases ("how to", "top rated") and CJK/Thai
-        # where words are not whitespace-delimited ("最好的Python" → hits "最好").
-        spam_hit = {p for p in _SEO_SPAM_WORDS if p in q_lower}
+    # Check 1: SEO spam words as whole keywords, not substrings.
+    spam_hit = {p for p in _SEO_SPAM_WORDS if _contains_spam_keyword(q_lower, p)}
     if spam_hit:
         return _QUERY_REJECTION_SPAM
 
