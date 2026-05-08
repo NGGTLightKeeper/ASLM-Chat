@@ -17,11 +17,22 @@ from sandbox.config import IN_CONTAINER
 # When imported host-side (e.g. by ASLM's tool_worker), wire bash execution
 # through docker instead of trying to run /bin/bash natively on the host.
 if not IN_CONTAINER:
-    from sandbox.docker_host import _exec_bash_docker
+    from sandbox.docker_host import (
+        _exec_bash_docker,
+        foreground_background_job,
+        kill_background_job,
+        list_background_jobs,
+    )
     import sandbox.container as _container
     import sandbox.api as _api
     _container.exec_bash = _exec_bash_docker
+    _container.foreground_background_job = foreground_background_job
+    _container.kill_background_job = kill_background_job
+    _container.list_background_jobs = list_background_jobs
     _api.exec_bash = _exec_bash_docker
+    _api.foreground_background_job = foreground_background_job
+    _api.kill_background_job = kill_background_job
+    _api.list_background_jobs = list_background_jobs
 
 
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:

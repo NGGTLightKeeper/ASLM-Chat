@@ -19,8 +19,9 @@ if str(SRC) not in sys.path:
 
 os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT / ".test_workspace"))
 
-import sandbox.container as container_mod  # noqa: E402
 import sandbox.docker_host as docker_host_mod  # noqa: E402
+
+container_mod = docker_host_mod
 
 
 class FakeProcess:
@@ -80,6 +81,20 @@ class Read1Stream:
 
 
 class HostProxyTests(unittest.TestCase):
+    def test_ensure_docker_running_does_not_launch_desktop_by_default(self) -> None:
+        info_result = MagicMock(returncode=1)
+
+        with patch.object(docker_host_mod, "_docker_cli_available", return_value=True), \
+             patch.object(docker_host_mod, "_docker_info", return_value=info_result), \
+             patch.object(docker_host_mod.os, "name", "nt"), \
+             patch.dict(docker_host_mod.os.environ, {"SANDBOX_AUTO_START_DOCKER": ""}, clear=False), \
+             patch.object(docker_host_mod.subprocess, "Popen") as popen_mock:
+            ok, message = docker_host_mod._ensure_docker_running()
+
+        self.assertFalse(ok)
+        self.assertIn("Start Docker Desktop manually", message)
+        popen_mock.assert_not_called()
+
     def test_forward_binary_stream_uses_read1_for_pipe_responsiveness(self) -> None:
         source = Read1Stream([b'{"jsonrpc":"2.0"}\n'])
         sink = io.BytesIO()
@@ -269,7 +284,6 @@ class HostProxyTests(unittest.TestCase):
         self.assertEqual(remove_mock.call_count, 2)
         self.assertEqual(create_mock.call_count, 2)
         image_mock.assert_called_once_with(force_rebuild=True)
-
 
 if __name__ == "__main__":
     unittest.main()

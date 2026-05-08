@@ -114,3 +114,15 @@ def normalize_query_key(query: str) -> str:
     # If every term was a stopword, fall back to lowercased original so the
     # query still gets a unique (exact) key rather than collapsing to "".
     return " ".join(content) if content else lowered.strip()
+
+
+def normalize_exact_query_key(query: str) -> str:
+    """Return an order-preserving canonical query string for strict cache keys."""
+    if not query or not query.strip():
+        return ""
+
+    lowered = query.lower()
+    for token, replacement in COMPOSITE_TOKENS.items():
+        lowered = lowered.replace(token, replacement)
+
+    return " ".join(lowered.split())

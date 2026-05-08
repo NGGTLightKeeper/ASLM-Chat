@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sandbox.config import MAX_OUTPUT_BYTES, OUTPUT_HEAD_RATIO
 from sandbox.responses import SandboxToolError
 
 
@@ -94,6 +95,43 @@ class JobRegistry:
             jobs = list(self._jobs.values())
         return [job.to_result() for job in jobs]
 
+    def remove(self, job_id: str, *, cleanup: bool = False) -> BackgroundJob | None:
+        import shutil
+
+        with self._lock:
+            job = self._jobs.pop(job_id, None)
+        if cleanup and job and job.host_job_dir and job.host_job_dir.exists():
+            shutil.rmtree(job.host_job_dir, ignore_errors=True)
+        return job
+
+    def _read_bounded_text(self, path: Path, *, start: int = 0) -> tuple[str, int]:
+        size = path.stat().st_size
+        start = max(0, min(start, size))
+        remaining = size - start
+        if remaining <= MAX_OUTPUT_BYTES:
+            with path.open("rb") as fh:
+                fh.seek(start)
+                return fh.read().decode("utf-8", errors="replace").replace("\r\n", "\n"), size
+
+        head_ratio = min(0.9, max(0.1, OUTPUT_HEAD_RATIO))
+        head_bytes = max(1, int(MAX_OUTPUT_BYTES * head_ratio))
+        tail_bytes = max(1, MAX_OUTPUT_BYTES - head_bytes)
+        with path.open("rb") as fh:
+            fh.seek(start)
+            head = fh.read(head_bytes)
+            fh.seek(max(0, size - tail_bytes))
+            tail = fh.read(tail_bytes)
+        marker = (
+            "\n\n"
+            f"[output truncated while reading job spool: showed first {head_bytes} bytes "
+            f"and last {tail_bytes} bytes of {remaining} new bytes]\n\n"
+        )
+        return (
+            head.decode("utf-8", errors="replace")
+            + marker
+            + tail.decode("utf-8", errors="replace")
+        ).replace("\r\n", "\n"), size
+
     def read_output(self, job_id: str, stream: str = "stdout", *, incremental: bool = True) -> str:
         if stream not in {"stdout", "stderr"}:
             raise ValueError("stream must be 'stdout' or 'stderr'.")
@@ -109,14 +147,14 @@ class JobRegistry:
         if not output_path.exists():
             return ""
 
-        content = output_path.read_text(encoding="utf-8", errors="replace")
         if not incremental:
+            content, _ = self._read_bounded_text(output_path, start=0)
             return content
 
         offset_attr = f"{stream}_offset"
         offset = int(getattr(job, offset_attr))
-        new_content = content[offset:]
-        setattr(job, offset_attr, len(content))
+        new_content, new_offset = self._read_bounded_text(output_path, start=offset)
+        setattr(job, offset_attr, new_offset)
         return new_content
 
     def mark_done(self, job_id: str, exit_code: int | None) -> BackgroundJob:

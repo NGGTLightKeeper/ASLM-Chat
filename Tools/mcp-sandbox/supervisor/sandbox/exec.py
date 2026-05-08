@@ -15,13 +15,16 @@ import subprocess
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Callable
 
 from sandbox.config import (
     BACKGROUND_TIMEOUT_THRESHOLD,
     COMMAND_USER,
     DEFAULT_TIMEOUT,
-    MAX_OUTPUT_CHARS,
+    JOB_ROOT,
+    MAX_OUTPUT_BYTES,
+    OUTPUT_HEAD_RATIO,
 )
 from sandbox.jobs import BackgroundJob, JOB_REGISTRY
 from sandbox.workspace import (
@@ -35,18 +38,86 @@ logger = __import__("logging").getLogger(__name__)
 
 # ── Shared output helpers ────────────────────────────────────────────
 
+def _slice_utf8(data: bytes, start: int | None = None, end: int | None = None) -> str:
+    return data[start:end].decode("utf-8", errors="ignore")
+
+
 def _truncate(value: str | None) -> tuple[str, bool]:
-    """Trim output to MAX_OUTPUT_CHARS, keeping the tail."""
+    """Trim output to a configurable head/tail window with an inline marker."""
     if value is None:
         return "", False
-    if len(value) <= MAX_OUTPUT_CHARS:
+    encoded = value.encode("utf-8", errors="replace")
+    if len(encoded) <= MAX_OUTPUT_BYTES:
         return value, False
-    return value[-MAX_OUTPUT_CHARS:], True
+    head_ratio = min(0.9, max(0.1, OUTPUT_HEAD_RATIO))
+    head_bytes = max(1, int(MAX_OUTPUT_BYTES * head_ratio))
+    tail_bytes = max(1, MAX_OUTPUT_BYTES - head_bytes)
+    shown_bytes = min(len(encoded), head_bytes + tail_bytes)
+    marker = (
+        "\n\n"
+        f"[output truncated: showed first {head_bytes} bytes and "
+        f"last {tail_bytes} bytes of {len(encoded)} bytes]\n\n"
+    )
+    return (
+        _slice_utf8(encoded, 0, head_bytes)
+        + marker
+        + _slice_utf8(encoded, len(encoded) - tail_bytes, None),
+        shown_bytes < len(encoded),
+    )
+
+
+class BoundedOutputCollector:
+    """Collect process output with a fixed head/tail memory budget."""
+
+    def __init__(self) -> None:
+        self._buffer = bytearray()
+        self._head = bytearray()
+        self._tail = bytearray()
+        self._total = 0
+        head_ratio = min(0.9, max(0.1, OUTPUT_HEAD_RATIO))
+        self._head_bytes = max(1, int(MAX_OUTPUT_BYTES * head_ratio))
+        self._tail_bytes = max(1, MAX_OUTPUT_BYTES - self._head_bytes)
+
+    def append(self, chunk: str) -> None:
+        data = chunk.encode("utf-8", errors="replace")
+        if not data:
+            return
+
+        if self._buffer is not None:
+            self._buffer.extend(data)
+            self._total = len(self._buffer)
+            if len(self._buffer) <= MAX_OUTPUT_BYTES:
+                return
+            self._head = self._buffer[: self._head_bytes]
+            self._tail = self._buffer[-self._tail_bytes :]
+            self._buffer = None
+            return
+
+        self._total += len(data)
+        self._tail.extend(data)
+        if len(self._tail) > self._tail_bytes:
+            del self._tail[: len(self._tail) - self._tail_bytes]
+
+    def value(self) -> tuple[str, bool]:
+        if self._buffer is not None:
+            return self._buffer.decode("utf-8", errors="replace"), False
+
+        marker = (
+            "\n\n"
+            f"[output truncated: showed first {self._head_bytes} bytes and "
+            f"last {self._tail_bytes} bytes of {self._total} bytes]\n\n"
+        )
+        return (
+            self._head.decode("utf-8", errors="replace")
+            + marker
+            + self._tail.decode("utf-8", errors="replace"),
+            True,
+        )
 
 
 def _read_stream_chunks(
     stream,
-    sink: list[str],
+    sink: BoundedOutputCollector,
     callback: Callable[[str], None] | None = None,
 ) -> None:
     """Read process output in chunks and forward it to an optional callback."""
@@ -96,6 +167,12 @@ def should_use_background(
 
 def _new_background_job_id() -> str:
     return f"bg_{uuid.uuid4().hex[:8]}"
+
+
+def job_root() -> Path:
+    root = Path(JOB_ROOT)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def _background_error_result(
@@ -173,6 +250,13 @@ def _kill_process_group(process: subprocess.Popen) -> None:
     process.kill()
 
 
+def _wait_after_kill(process: subprocess.Popen, timeout: float = 2.0) -> None:
+    try:
+        process.wait(timeout=timeout)
+    except Exception:
+        pass
+
+
 # ── Native execution ─────────────────────────────────────────────────
 
 def _exec_bash_native_background(
@@ -193,7 +277,7 @@ def _exec_bash_native_background(
 
     start_time = time.time()
     job_id = _new_background_job_id()
-    job_dir = task_root() / ".sandbox_jobs" / job_id
+    job_dir = job_root() / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     stdout_path = job_dir / "stdout"
     stderr_path = job_dir / "stderr"
@@ -219,6 +303,7 @@ def _exec_bash_native_background(
                 stderr=stderr_file,
                 text=True,
                 encoding="utf-8",
+                errors="replace",
                 start_new_session=True,
                 **_popen_user_kwargs(),
             )
@@ -240,6 +325,10 @@ def _exec_bash_native_background(
             pass
         finally:
             process.stdin.close()
+
+    (job_dir / "pid").write_text(f"{process.pid}\n", encoding="utf-8")
+    (job_dir / "pgid").write_text(f"{process.pid}\n", encoding="utf-8")
+    (job_dir / "status").write_text("running\n", encoding="utf-8")
 
     job = JOB_REGISTRY.create(
         command=command,
@@ -270,20 +359,20 @@ def _exec_bash_native_background(
         time.sleep(0.2)
 
     JOB_REGISTRY.mark_done(job.job_id, process.returncode)
+    (job_dir / "status").write_text("done\n", encoding="utf-8")
+    (job_dir / "exit_code").write_text(f"{process.returncode}\n", encoding="utf-8")
     stdout, stderr, truncated = _job_files_result(job, incremental=False)
     if on_progress is not None:
         on_progress(100.0, f"Bash finished in {normalize_model_relative_path(cwd)}")
 
     # Job completed synchronously — clean up its dir, it won't be polled.
-    import shutil
-    shutil.rmtree(job_dir, ignore_errors=True)
+    JOB_REGISTRY.remove(job.job_id, cleanup=True)
 
     return {
         "exit_code": process.returncode,
         "stdout": stdout,
         "stderr": stderr,
         "error": None if process.returncode == 0 else f"Exit code: {process.returncode}",
-        "job_id": job.job_id,
         "elapsed_ms": int((time.time() - start_time) * 1000),
         "truncated": truncated,
         "cwd": normalize_model_relative_path(cwd),
@@ -337,6 +426,7 @@ def _exec_bash_native(
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
+            errors="replace",
             start_new_session=True,
             **_popen_user_kwargs(),
         )
@@ -351,8 +441,8 @@ def _exec_bash_native(
             "cwd": normalize_model_relative_path(cwd),
         }
 
-    stdout_chunks: list[str] = []
-    stderr_chunks: list[str] = []
+    stdout_chunks = BoundedOutputCollector()
+    stderr_chunks = BoundedOutputCollector()
     stdout_thread = threading.Thread(
         target=_read_stream_chunks,
         args=(process.stdout, stdout_chunks, on_stdout),
@@ -380,6 +470,7 @@ def _exec_bash_native(
         if elapsed_s >= timeout_s:
             timed_out = True
             _kill_process_group(process)
+            _wait_after_kill(process)
             break
         if on_progress is not None:
             progress = min(95.0, max(5.0, (elapsed_s / timeout_s) * 90.0))
@@ -389,8 +480,8 @@ def _exec_bash_native(
     stdout_thread.join(timeout=2)
     stderr_thread.join(timeout=2)
 
-    stdout_value, trunc_out = _truncate("".join(stdout_chunks))
-    stderr_value, trunc_err = _truncate("".join(stderr_chunks))
+    stdout_value, trunc_out = stdout_chunks.value()
+    stderr_value, trunc_err = stderr_chunks.value()
 
     if timed_out:
         return {

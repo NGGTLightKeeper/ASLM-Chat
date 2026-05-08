@@ -24,7 +24,6 @@ os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT))
 
 from sandbox import workspace  # noqa: E402
 import sandbox.workspace as workspace_mod  # noqa: E402
-from sandbox.session_state import reset_session_state  # noqa: E402
 from sandbox.workspace import (  # noqa: E402
     read,
     write,
@@ -37,7 +36,6 @@ from sandbox.workspace import (  # noqa: E402
 
 class WorkspaceBoundaryTests(unittest.TestCase):
     def setUp(self) -> None:
-        reset_session_state()
         self.task_root = workspace.task_root()
         self.task_root.mkdir(parents=True, exist_ok=True)
         for child in list(self.task_root.iterdir()):
@@ -207,6 +205,11 @@ class WorkspaceBoundaryTests(unittest.TestCase):
         with patch.object(workspace_mod, "IN_CONTAINER", True):
             p = get_secure_task_path("script.py")
         self.assertEqual(p, workspace.task_root() / "script.py")
+
+    def test_get_secure_task_path_accepts_legacy_upload_path_on_host(self) -> None:
+        with patch.object(workspace_mod, "IN_CONTAINER", False):
+            p = get_secure_task_path("/mnt/data/User/chat/file.zip")
+        self.assertEqual(p, workspace.task_root() / "User" / "chat" / "file.zip")
 
     def test_validate_rejects_absolute_on_host(self) -> None:
         with patch.object(workspace_mod, "IN_CONTAINER", False):

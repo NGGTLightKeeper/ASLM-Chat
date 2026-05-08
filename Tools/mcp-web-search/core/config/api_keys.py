@@ -22,6 +22,7 @@ from pathlib import Path
 logger = logging.getLogger("config.api_keys")
 
 _API_KEYS_PATH = Path(__file__).parent / "api_keys.json"
+_API_KEYS_EXAMPLE_PATH = Path(__file__).parent / "api_keys.json.example"
 
 
 @dataclass
@@ -100,6 +101,22 @@ def _read_nullable_str(raw: dict, key: str) -> str | None:
     return text or None
 
 
+def _bootstrap_api_keys_file(target: Path) -> None:
+    """Create api_keys.json from the example template when missing."""
+
+    if target.exists():
+        return
+    if not _API_KEYS_EXAMPLE_PATH.is_file():
+        return
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_API_KEYS_EXAMPLE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+        logger.info("Created api_keys.json from template at %s", target)
+    except OSError as exc:
+        logger.warning("Failed to create api_keys.json from template at %s: %s", target, exc)
+
+
 def load_api_keys(path: Path | None = None) -> ApiKeysConfig:
     """Load and return the ApiKeysConfig singleton.
 
@@ -111,6 +128,7 @@ def load_api_keys(path: Path | None = None) -> ApiKeysConfig:
         return _cached_api_keys
 
     target = path or _API_KEYS_PATH
+    _bootstrap_api_keys_file(target)
     try:
         raw = json.loads(target.read_text(encoding="utf-8-sig"))
     except FileNotFoundError:

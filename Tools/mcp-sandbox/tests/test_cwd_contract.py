@@ -28,7 +28,6 @@ os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT))
 from sandbox import workspace  # noqa: E402
 from sandbox.api import handle_tool  # noqa: E402
 from sandbox.config import DEFAULT_TASK_DIR  # noqa: E402
-from sandbox.session_state import reset_session_state  # noqa: E402
 
 
 def _mock_exec(stdout: str = "", stderr: str = "", exit_code: int = 0, cwd: str = "."):
@@ -46,7 +45,6 @@ def _mock_exec(stdout: str = "", stderr: str = "", exit_code: int = 0, cwd: str 
 
 class CwdContractTests(unittest.TestCase):
     def setUp(self) -> None:
-        reset_session_state()
         self.task_root = workspace.task_root()
         self.task_root.mkdir(parents=True, exist_ok=True)
         for child in list(self.task_root.iterdir()):
@@ -61,17 +59,19 @@ class CwdContractTests(unittest.TestCase):
     # ── pwd reports correct container path ───────────────────────────
 
     def test_pwd_at_root_reports_task_root(self) -> None:
-        result = handle_tool("bash", {"command": "pwd"})
+        with patch("sandbox.api.exec_bash", return_value=_mock_exec(stdout=f"/workspace/{DEFAULT_TASK_DIR}\n")) as mock:
+            result = handle_tool("bash", {"command": "pwd"})
         self.assertTrue(result["ok"])
-        expected = f"/workspace/{DEFAULT_TASK_DIR}\n"
-        self.assertEqual(result["result"]["stdout"], expected)
+        self.assertEqual(result["result"]["stdout"], f"/workspace/{DEFAULT_TASK_DIR}\n")
+        mock.assert_called_once()
 
     def test_pwd_with_subdir_cwd_reports_subdir(self) -> None:
         handle_tool("write", {"path": "repo/file.txt", "content": "x"})
-        result = handle_tool("bash", {"command": "pwd", "cwd": "repo"})
+        with patch("sandbox.api.exec_bash", return_value=_mock_exec(stdout=f"/workspace/{DEFAULT_TASK_DIR}/repo\n", cwd="repo")) as mock:
+            result = handle_tool("bash", {"command": "pwd", "cwd": "repo"})
         self.assertTrue(result["ok"])
-        expected = f"/workspace/{DEFAULT_TASK_DIR}/repo\n"
-        self.assertEqual(result["result"]["stdout"], expected)
+        self.assertEqual(result["result"]["stdout"], f"/workspace/{DEFAULT_TASK_DIR}/repo\n")
+        mock.assert_called_once()
 
     # ── cwd argument is respected ─────────────────────────────────────
 
@@ -103,9 +103,8 @@ class CwdContractTests(unittest.TestCase):
     def test_cat_container_absolute_path_falls_through(self) -> None:
         """`cat /etc/os-release` must NOT be handled by the workspace controller.
 
-        The intent controller tries to resolve /etc/os-release via
-        get_secure_task_path, which raises ValueError (access denied).
-        The supervisor must catch this and fall through to real bash.
+        The narrow file-preview supervisor only handles workspace files.
+        Container paths must fall through to real bash.
         """
         with patch(
             "sandbox.api.exec_bash",
@@ -154,7 +153,8 @@ class CwdContractTests(unittest.TestCase):
         """Each call is independent; cwd comes from the argument, not session."""
         handle_tool("write", {"path": "a/b/file.txt", "content": "deep"})
 
-        r1 = handle_tool("bash", {"command": "ls .", "cwd": "a"})
+        with patch("sandbox.api.exec_bash", return_value=_mock_exec(stdout="b\n", cwd="a")):
+            r1 = handle_tool("bash", {"command": "ls .", "cwd": "a"})
         self.assertTrue(r1["ok"])
         self.assertIn("b", r1["result"]["stdout"])
         self.assertEqual(r1["result"]["cwd"], "a")

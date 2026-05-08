@@ -910,6 +910,18 @@ def _prepare_native_prediction_options(
 
     prepared = dict(options or {})
     prepared["reasoningParsing"] = _build_reasoning_parsing_config(True)
+    normalized_think_param = str(think_param_name or "").strip()
+    normalized_level_param = str(think_level_param_name or "").strip()
+    if think is not None and normalized_think_param:
+        if normalized_think_param.startswith("ext.virtualModel.customField."):
+            _append_raw_kv_field(prepared, normalized_think_param, think)
+        else:
+            prepared.setdefault(normalized_think_param, think)
+    if think_level is not None and normalized_level_param:
+        if normalized_level_param.startswith("ext.virtualModel.customField."):
+            _append_raw_kv_field(prepared, normalized_level_param, think_level)
+        else:
+            prepared.setdefault(normalized_level_param, think_level)
     return prepared
 
 
@@ -935,6 +947,10 @@ def _prepare_openai_prediction_options(
 
     if think_level and "reasoning_effort" not in direct_options and "reasoning_effort" not in extra_body:
         direct_options["reasoning_effort"] = think_level
+    if think is not None and think_param_name:
+        normalized_think_key = OPENAI_DIRECT_OPTION_ALIASES.get(think_param_name, think_param_name)
+        target_options = direct_options if normalized_think_key in OPENAI_DIRECT_OPTION_KEYS else extra_body
+        target_options.setdefault(normalized_think_key, think)
 
     extra_body["reasoningParsing"] = _build_reasoning_parsing_config(True)
 
@@ -1007,6 +1023,12 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
         if role == "assistant" and message.get("tool_calls"):
             entry["tool_calls"] = message["tool_calls"]
 
+        if role == "assistant" and message.get("thinking"):
+            # LM Studio accepts a top-level 'thinking' field on assistant messages
+            # in its OpenAI-compatible endpoint. Without this the model loses its
+            # own reasoning context on every subsequent turn.
+            entry["thinking"] = message["thinking"]
+
         payload.append(entry)
 
     return payload
@@ -1040,12 +1062,14 @@ def _build_tool_message(
 ) -> dict[str, Any]:
     """Build a tool message payload for the OpenAI-compatible conversation."""
 
+    model_content, tool_extras = tool_registry.split_tool_result_payload(content)
     payload: dict[str, Any] = {
         "role": "tool",
         "tool_call_id": tool_call_id,
         "name": tool_name,
-        "content": content if isinstance(content, str) else str(content),
+        "content": model_content,
     }
+    payload.update(tool_extras)
 
     if tool_event:
         payload.update(
@@ -1414,6 +1438,9 @@ def _run_tool_loop(
         return
 
     conversation = conversation if conversation is not None else _build_openai_messages(messages)
+    tool_quota_counters: dict[str, int] = {}
+    seen_tool_signatures: set[str] = set()
+    consecutive_blocked_tool_results = 0
 
     for round_index in range(MAX_TOOL_ROUNDS):
         # Each round either completes the answer or produces another batch of
@@ -1448,10 +1475,12 @@ def _run_tool_loop(
 
         yield {"transcript_message": assistant_message}
 
-        for tool_call_index, tool_call in enumerate(tool_calls, start=1):
-            tool_event = _build_tool_event(tool_lookup, tool_call)
-            yield {"tool_event": tool_event}
+        tool_events = [_build_tool_event(tool_lookup, tool_call) for tool_call in tool_calls]
+        for _i, _ev in enumerate(tool_events):
+            _ev["alias"] = f"{_ev['alias']}__{_i}"
+        yield {"tool_events": tool_events}
 
+        for tool_call_index, (tool_call, tool_event) in enumerate(zip(tool_calls, tool_events), start=1):
             call_context = dict(tool_context or {})
             call_context.update(
                 {
@@ -1463,13 +1492,46 @@ def _run_tool_loop(
                     "tool_round_index": round_index + 1,
                 }
             )
-
-            tool_result = tool_registry.call_ollama_tool(
-                tool_lookup,
-                tool_call["name"],
-                tool_call.get("arguments") or {},
+            tool_registry.log_search_tool_io(
+                "request",
+                tool_event,
+                arguments=tool_call.get("arguments") or {},
                 context=call_context,
             )
+
+            tool_cooldown_error = tool_registry.consume_tool_cooldown(
+                tool_event,
+                tool_call.get("arguments") or {},
+            )
+            if tool_cooldown_error is not None:
+                tool_result = tool_cooldown_error
+            else:
+                duplicate_error = tool_registry.consume_duplicate_tool_call(
+                    tool_event,
+                    tool_call.get("arguments") or {},
+                    seen_tool_signatures,
+                )
+                if duplicate_error is not None:
+                    tool_result = duplicate_error
+                else:
+                    quota_error = tool_registry.consume_tool_quota(tool_event, tool_quota_counters)
+                    if quota_error is not None:
+                        tool_result = quota_error
+                    else:
+                        tool_result = tool_registry.call_ollama_tool(
+                            tool_lookup,
+                            tool_call["name"],
+                            tool_call.get("arguments") or {},
+                            context=call_context,
+                        )
+                        tool_registry.remember_tool_cooldown(
+                            tool_event,
+                            tool_call.get("arguments") or {},
+                        )
+            if tool_registry.is_blocking_tool_result(tool_result):
+                consecutive_blocked_tool_results += 1
+            else:
+                consecutive_blocked_tool_results = 0
 
             if isinstance(tool_result, dict) and "_image_b64" in tool_result:
                 tool_result = f"[Image: {tool_result.get('_path', 'image')}]"
@@ -1482,14 +1544,33 @@ def _run_tool_loop(
             )
             # The next model round consumes the resolved tool result as a
             # standard tool-role message in the conversation history.
-            conversation.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "content": tool_message["content"],
-                }
+            conversation_tool_message = {
+                "role": "tool",
+                "tool_call_id": tool_call["id"],
+                "content": tool_message["content"],
+            }
+            conversation.append(conversation_tool_message)
+            tool_registry.log_search_tool_io(
+                "response",
+                tool_event,
+                arguments=tool_call.get("arguments") or {},
+                context=call_context,
+                result=conversation_tool_message,
             )
             yield {"tool_result": dict(tool_message)}
+
+        if consecutive_blocked_tool_results >= 2:
+            conversation.append(
+                {
+                    "role": "user",
+                    "content": tool_registry.forced_final_prompt_after_tool_blocks(),
+                }
+            )
+            assistant_message = yield from _yield_stream_round(
+                _stream_openai_round(client, model_name, conversation, options)
+            )
+            yield {"transcript_message": assistant_message}
+            return
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
 
@@ -1735,3 +1816,4 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
         },
         "raw": raw_info,
     }
+

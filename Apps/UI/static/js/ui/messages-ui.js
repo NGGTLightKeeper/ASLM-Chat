@@ -7,31 +7,78 @@ import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
 export function createMessagesUi(context, dependencies) {
   const { attachmentUi, toolInspector } = dependencies;
   const { dom, icons, state } = context;
+  const MORE_LABEL = 'More';
+  const HIDE_LABEL = 'Hide';
+  const SEARCH_BATCH_FIRST_CALL_HOLD_MS = 0;
+  const SEARCH_BATCH_MULTI_CALL_SETTLE_MS = 0;
+  const PRE_TOOL_TEXT_HOLD_MS = 0;
+  const WRITE_PREVIEW_COLLAPSED_LINES = 4;
+  const WRITE_PREVIEW_EXPANDED_LINES = 80;
+  const EDIT_PREVIEW_COLLAPSED_ROWS = 4;
+  const EDIT_PREVIEW_EXPANDED_ROWS = 120;
+  const SANDBOX_INPUT_PREVIEW_CHARS = 12000;
+  const REASONING_CHUNK_TARGET_CHARS = 132;
+  const REASONING_CHUNK_MAX_CHARS = 168;
+  const DOWNLOAD_FILE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="currentColor" aria-hidden="true"><path d="M480-320 280-520l56-58 104 104v-326h80v326l104-104 56 58-200 200ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z"/></svg>';
+  const loadedSandboxImageSrcs = new Set();
+  const sandboxImageLoadStateBySrc = new Map();
+  const HEAVY_TOOL_ARGUMENT_KEYS = {
+    bash: ['stdin'],
+    edit: ['content', 'new_str', 'old_str'],
+    write: ['content']
+  };
+  const STREAMING_ACTIVITY_MARKERS = [
+    '<tool_call>',
+    '</tool_call>',
+    '<tool_result>',
+    '</tool_result>',
+    '<context_compression>',
+    '</context_compression>',
+    '<think>',
+    '</think>',
+    '<thinking>',
+    '</thinking>',
+    '<reasoning>',
+    '</reasoning>',
+    '<analysis>',
+    '</analysis>'
+  ];
 
   // Composer state.
   // Sync both send buttons with the current generation and attachment state.
   function updateSendButtons() {
-    if (state.isChatGenerating) {
-      dom.$sendBtn.prop('disabled', false).addClass('stop-btn').html(icons.STOP_ICON).attr('aria-label', 'Stop generation');
-      dom.$sendBtnConv.prop('disabled', false).addClass('stop-btn').html(icons.STOP_ICON).attr('aria-label', 'Stop generation');
+    const hasPendingAttachments = state.attachmentState.pending.length > 0;
+    const hasBlockedAttachments = state.attachmentState.pending.some(function isBlocked(attachment) {
+      return attachment && (attachment.status === 'uploading' || attachment.status === 'error');
+    });
 
-      return;
+    function syncComposerButton($button, $input) {
+      const hasDraft = !!String($input.val() || '').trim() || hasPendingAttachments;
+
+      // During generation an empty composer acts as a stop button. As soon as
+      // the user types or attaches something, the same button becomes an
+      // enabled send button so follow-up messages can be queued instead of
+      // feeling locked.
+      if (state.isChatGenerating && !hasDraft) {
+        $button
+          .prop('disabled', false)
+          .addClass('stop-btn')
+          .html(icons.STOP_ICON)
+          .attr('aria-label', 'Stop generation');
+        return;
+      }
+
+      $button
+        .removeClass('stop-btn')
+        .html(icons.SEND_ICON)
+        .attr('aria-label', state.isChatGenerating ? 'Queue message' : 'Send Message')
+        .prop('disabled', !hasDraft || hasBlockedAttachments);
     }
 
-    const hasPendingAttachments = state.attachmentState.pending.length > 0;
-
-    dom.$sendBtn
-      .removeClass('stop-btn')
-      .html(icons.SEND_ICON)
-      .attr('aria-label', 'Send Message')
-      .prop('disabled', !dom.$chatInput.val().trim() && !hasPendingAttachments);
-
-    dom.$sendBtnConv
-      .removeClass('stop-btn')
-      .html(icons.SEND_ICON)
-      .attr('aria-label', 'Send Message')
-      .prop('disabled', !dom.$chatInputConv.val().trim() && !hasPendingAttachments);
+    syncComposerButton(dom.$sendBtn, dom.$chatInput);
+    syncComposerButton(dom.$sendBtnConv, dom.$chatInputConv);
   }
+
 
   // Show regen buttons only on the latest assistant exchange.
   function updateRegenButtons() {
@@ -57,13 +104,207 @@ export function createMessagesUi(context, dependencies) {
 
 
   // Markdown rendering.
-  // Render one visible text segment as sanitized HTML.
-  function renderMarkdownSegment(content) {
-    if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
-      return escHtml(content);
+  function isEscapedAt(text, index) {
+    let backslashCount = 0;
+    for (let cursor = index - 1; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) {
+      backslashCount += 1;
+    }
+    return backslashCount % 2 === 1;
+  }
+
+  function findUnescaped(text, needle, fromIndex) {
+    let cursor = Math.max(0, Number(fromIndex) || 0);
+    while (cursor < text.length) {
+      const index = text.indexOf(needle, cursor);
+      if (index === -1) {
+        return -1;
+      }
+      if (!isEscapedAt(text, index)) {
+        return index;
+      }
+      cursor = index + needle.length;
+    }
+    return -1;
+  }
+
+  function nextLatexDelimiter(text, fromIndex) {
+    const candidates = [
+      { open: '$$', close: '$$', displayMode: true },
+      { open: '\\[', close: '\\]', displayMode: true },
+      { open: '\\(', close: '\\)', displayMode: false },
+      { open: '$', close: '$', displayMode: false }
+    ];
+    let best = null;
+    candidates.forEach(function findDelimiter(delimiter) {
+      const index = findUnescaped(text, delimiter.open, fromIndex);
+      if (index === -1) {
+        return;
+      }
+      if (delimiter.open === '$') {
+        const before = index > 0 ? text[index - 1] : '';
+        const after = index + 1 < text.length ? text[index + 1] : '';
+        if (/\d/.test(before) || /\s/.test(after || '')) {
+          return;
+        }
+      }
+      if (!best || index < best.index || (index === best.index && delimiter.open.length > best.open.length)) {
+        best = { ...delimiter, index };
+      }
+    });
+    return best;
+  }
+
+  function appendLatexHtml(fragment, latexSource, displayMode) {
+    if (typeof katex === 'undefined' || !katex.renderToString) {
+      fragment.appendChild(document.createTextNode(latexSource));
+      return;
+    }
+    const rendered = katex.renderToString(latexSource, {
+      displayMode: !!displayMode,
+      throwOnError: false,
+      strict: 'ignore',
+      trust: false,
+      output: 'htmlAndMathml'
+    });
+    const template = document.createElement('template');
+    template.innerHTML = rendered;
+    fragment.appendChild(template.content);
+  }
+
+  function replaceLatexInTextNode(textNode) {
+    const source = textNode.nodeValue || '';
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    let replaced = false;
+
+    while (cursor < source.length) {
+      const delimiter = nextLatexDelimiter(source, cursor);
+      if (!delimiter) {
+        break;
+      }
+      const contentStart = delimiter.index + delimiter.open.length;
+      const closeIndex = findUnescaped(source, delimiter.close, contentStart);
+      if (closeIndex === -1) {
+        break;
+      }
+      const latexSource = source.slice(contentStart, closeIndex).trim();
+      if (!latexSource) {
+        cursor = closeIndex + delimiter.close.length;
+        continue;
+      }
+      if (delimiter.index > cursor) {
+        fragment.appendChild(document.createTextNode(source.slice(cursor, delimiter.index)));
+      }
+      appendLatexHtml(fragment, latexSource, delimiter.displayMode);
+      replaced = true;
+      cursor = closeIndex + delimiter.close.length;
     }
 
-    return DOMPurify.sanitize(marked.parse(content));
+    if (!replaced) {
+      return;
+    }
+    if (cursor < source.length) {
+      fragment.appendChild(document.createTextNode(source.slice(cursor)));
+    }
+    textNode.parentNode.replaceChild(fragment, textNode);
+  }
+
+  function renderLatexInHtml(html) {
+    if (typeof document === 'undefined' || typeof katex === 'undefined') {
+      return html;
+    }
+    const template = document.createElement('template');
+    template.innerHTML = String(html || '');
+    const ignoredTags = new Set(['CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA']);
+    const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        let parent = node.parentNode;
+        while (parent && parent !== template.content) {
+          if (ignoredTags.has(parent.nodeName) || (parent.classList && parent.classList.contains('katex'))) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          parent = parent.parentNode;
+        }
+        return /(?:\$|\\\[|\\\()/.test(node.nodeValue || '')
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT;
+      }
+    });
+    const nodes = [];
+    while (walker.nextNode()) {
+      nodes.push(walker.currentNode);
+    }
+    nodes.forEach(replaceLatexInTextNode);
+    return template.innerHTML;
+  }
+
+  function markdownCodeLanguage(codeEl) {
+    const classNames = String((codeEl && codeEl.className) || '');
+    const match = classNames.match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)
+      || classNames.match(/(?:^|\s)lang-([a-z0-9_+#.-]+)/i);
+    const normalized = normalizeHighlightLanguage(match ? match[1] : '');
+    return normalized === 'plaintext' ? 'Code' : normalized.toUpperCase();
+  }
+
+  function markdownCodeHighlightLanguage(codeEl) {
+    const classNames = String((codeEl && codeEl.className) || '');
+    const match = classNames.match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)
+      || classNames.match(/(?:^|\s)lang-([a-z0-9_+#.-]+)/i);
+    return normalizeHighlightLanguage(match ? match[1] : '');
+  }
+
+  function enhanceMarkdownCodeBlocks(html) {
+    if (typeof document === 'undefined' || !html) {
+      return html;
+    }
+
+    const template = document.createElement('template');
+    template.innerHTML = String(html || '');
+    template.content.querySelectorAll('pre > code').forEach(function wrapMarkdownCodeBlock(codeEl) {
+      const preEl = codeEl.parentElement;
+      if (!preEl || preEl.closest('.md-code-card')) {
+        return;
+      }
+
+      const language = markdownCodeHighlightLanguage(codeEl);
+      const safeClassLanguage = language.replace(/[^a-z0-9_-]/gi, '') || 'plaintext';
+      codeEl.innerHTML = highlightCode(codeEl.textContent || '', language);
+      codeEl.classList.add('hljs', `language-${safeClassLanguage}`);
+
+      const cardEl = document.createElement('div');
+      cardEl.className = 'md-code-card';
+
+      const headerEl = document.createElement('div');
+      headerEl.className = 'md-code-head';
+      headerEl.innerHTML = `
+        <span class="md-code-lang">
+          <span class="md-code-icon" aria-hidden="true">&lt;/&gt;</span>
+          <span>${escHtml(markdownCodeLanguage(codeEl))}</span>
+        </span>
+        <button type="button" class="md-code-copy-btn" title="Copy code" aria-label="Copy code">${icons.COPY_MESSAGE_ICON}</button>
+      `;
+
+      preEl.parentNode.insertBefore(cardEl, preEl);
+      cardEl.appendChild(headerEl);
+      cardEl.appendChild(preEl);
+    });
+
+    return template.innerHTML;
+  }
+
+  // Render one visible text segment as sanitized HTML.
+  function renderMarkdownSegment(content, citationSources) {
+    const hasCitationSources = citationSources && typeof citationSources === 'object' && Object.keys(citationSources).length > 0;
+    const normalizedContent = normalizeCitationSpacing(normalizeCitationBrackets(content));
+    const visibleContent = hasCitationSources
+      ? normalizedContent
+      : normalizedContent.replace(/\s*\[(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3}-\d+)\]/gi, '');
+    if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+      return enhanceMarkdownCodeBlocks(renderLatexInHtml(decorateCitationsInHtml(escHtml(visibleContent), citationSources)));
+    }
+
+    const html = decorateCitationsInHtml(DOMPurify.sanitize(marked.parse(visibleContent)), citationSources);
+    return enhanceMarkdownCodeBlocks(renderLatexInHtml(html));
   }
 
   // Render text cheaply while a message is still streaming.
@@ -71,13 +312,539 @@ export function createMessagesUi(context, dependencies) {
     return escHtml(content);
   }
 
+  function normalizeHighlightLanguage(language) {
+    const raw = String(language || '').trim().toLowerCase();
+    const aliases = {
+      bash: 'bash',
+      sh: 'bash',
+      shell: 'bash',
+      zsh: 'bash',
+      ps1: 'powershell',
+      py: 'python',
+      python: 'python',
+      js: 'javascript',
+      jsx: 'javascript',
+      mjs: 'javascript',
+      cjs: 'javascript',
+      ts: 'typescript',
+      tsx: 'typescript',
+      html: 'xml',
+      xml: 'xml',
+      css: 'css',
+      scss: 'scss',
+      json: 'json',
+      jsonl: 'json',
+      md: 'markdown',
+      markdown: 'markdown',
+      yaml: 'yaml',
+      yml: 'yaml',
+      diff: 'diff'
+    };
+    const normalized = aliases[raw] || raw || 'plaintext';
+    if (typeof hljs !== 'undefined' && hljs.getLanguage && hljs.getLanguage(normalized)) {
+      return normalized;
+    }
+    return 'plaintext';
+  }
+
+  function languageFromPath(path, fallback) {
+    const cleanPath = String(path || '').split(/[?#]/)[0];
+    const baseName = cleanPath.split(/[\\/]/).pop().toLowerCase();
+    const specialNames = {
+      dockerfile: 'dockerfile',
+      makefile: 'makefile',
+      'requirements.txt': 'plaintext',
+      'package.json': 'json',
+      'tsconfig.json': 'json'
+    };
+    if (specialNames[baseName]) {
+      return normalizeHighlightLanguage(specialNames[baseName]);
+    }
+
+    const extension = cleanPath.split('.').pop();
+    if (!extension || extension === cleanPath) {
+      return normalizeHighlightLanguage(fallback || 'plaintext');
+    }
+    return normalizeHighlightLanguage(extension);
+  }
+
+  function highlightCode(code, language) {
+    const text = String(code || '');
+    const safeLanguage = normalizeHighlightLanguage(language);
+    if (typeof hljs === 'undefined' || !hljs.highlight || safeLanguage === 'plaintext') {
+      return escHtml(text);
+    }
+
+    try {
+      return hljs.highlight(text, {
+        language: safeLanguage,
+        ignoreIllegals: true
+      }).value;
+    } catch (_error) {
+      return escHtml(text);
+    }
+  }
+
+  function normalizeCitationId(value) {
+    return String(value || '').trim().toUpperCase();
+  }
+
+  function normalizeCitationBrackets(value) {
+    return String(value || '')
+      .replace(/[【［]/g, '[')
+      .replace(/[】］]/g, ']');
+  }
+
+  function normalizeCitationSpacing(value) {
+    return String(value || '').replace(
+      /([^\s\[(])\[(S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3}-\d+)(\s*,\s*(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3}-\d+))*\]/gi,
+      '$1 [$2$3]'
+    );
+  }
+
+  function sourceDisplayDomain(source) {
+    const candidate = String(source.display_domain || source.domain || '').trim();
+    if (candidate) {
+      return candidate;
+    }
+
+    try {
+      return new URL(String(source.url || '')).hostname.replace(/^www\./i, '');
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  function safeExternalUrl(value) {
+    const rawValue = String(value || '').trim();
+    if (!rawValue) {
+      return '';
+    }
+
+    try {
+      const parsed = new URL(rawValue);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  function faviconDomain(source) {
+    const safeSource = source && typeof source === 'object' ? source : {};
+    const directDomain = String(safeSource.domain || '').trim();
+    if (directDomain) {
+      return directDomain.replace(/^www\./i, '');
+    }
+
+    try {
+      return new URL(String(safeSource.url || '')).hostname.replace(/^www\./i, '');
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  function localFaviconUrlForDomain(domain) {
+    const cleanDomain = String(domain || '').trim().replace(/^www\./i, '');
+    if (!cleanDomain || /[^a-z0-9.-]/i.test(cleanDomain)) {
+      return '';
+    }
+    return `/api/favicon/?domain=${encodeURIComponent(cleanDomain)}`;
+  }
+
+  function sourceHasExtractedPreview(source) {
+    const safeSource = source && typeof source === 'object' ? source : {};
+    const hasPreviewField = Object.prototype.hasOwnProperty.call(safeSource, 'preview');
+    const hasSnippetField = Object.prototype.hasOwnProperty.call(safeSource, 'snippet');
+    if (!hasPreviewField && !hasSnippetField) {
+      return true;
+    }
+
+    const preview = String(safeSource.preview || '').trim();
+    const snippet = String(safeSource.snippet || '').trim();
+    return !!preview && preview !== snippet;
+  }
+
+  function sourceFaviconUrl(source) {
+    const safeSource = source && typeof source === 'object' ? source : {};
+    const localFaviconUrl = localFaviconUrlForDomain(faviconDomain(safeSource));
+    if (localFaviconUrl) {
+      return localFaviconUrl;
+    }
+
+    if (!sourceHasExtractedPreview(safeSource)) {
+      return '';
+    }
+    return safeExternalUrl(source.favicon_url);
+  }
+
+  function domainAccentStyle(value, extraStyle) {
+    const text = String(value || '').trim().toLowerCase();
+    let hash = 0;
+    for (let index = 0; index < text.length; index += 1) {
+      hash = ((hash << 5) - hash) + text.charCodeAt(index);
+      hash |= 0;
+    }
+
+    const hue = Math.abs(hash) % 360;
+    const base = `--msg-source-accent-bg: hsla(${hue}, 68%, 46%, 0.36); --msg-source-accent-fg: hsl(${hue}, 86%, 82%);`;
+    return extraStyle ? `${base} ${extraStyle}` : base;
+  }
+
+  function renderCitationChip(source, sourceId) {
+    const safeSource = source && typeof source === 'object' ? source : {};
+    const normalizedId = normalizeCitationId(sourceId || safeSource.id);
+    const sourceUrl = safeExternalUrl(safeSource.url);
+    if (!normalizedId || !sourceUrl) {
+      return escHtml(`[${normalizedId || sourceId}]`);
+    }
+
+    const domain = sourceDisplayDomain(safeSource) || normalizedId;
+    const title = String(safeSource.title || domain || normalizedId).trim();
+    const faviconUrl = sourceFaviconUrl(safeSource);
+    const fallbackLetter = domain.charAt(0).toUpperCase();
+    const faviconHtml = faviconUrl
+      ? `<img class="msg-citation-favicon" src="${escapeAttributeValue(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
+      : '';
+    const fallbackStyle = domainAccentStyle(domain, faviconUrl ? 'display:none;' : '');
+
+    return `
+      <a class="msg-citation-chip" href="${escapeAttributeValue(sourceUrl)}" target="_blank" rel="noopener noreferrer" title="${escapeAttributeValue(title)}">
+        ${faviconHtml}<span class="msg-citation-fallback" style="${escapeAttributeValue(fallbackStyle)}">${escHtml(fallbackLetter)}</span>
+        <span class="msg-citation-domain">${escHtml(domain)}</span>
+      </a>
+    `;
+  }
+
+  function decorateCitationsInHtml(html, citationSources) {
+    if (!citationSources || typeof citationSources !== 'object' || Object.keys(citationSources).length === 0) {
+      return html;
+    }
+
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    const citationIdPattern = /(?:S\d+)|(?:source-(?:[a-z0-9]+-)?\d+)|(?:c[a-z0-9]{3}-\d+)/gi;
+    const citationPattern = /\[\s*([^\]]+)\s*\]/gi;
+    const ignoredTags = new Set(['A', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA']);
+
+    function appendChip(fragment, source, sourceId) {
+      const chipTemplate = document.createElement('template');
+      chipTemplate.innerHTML = renderCitationChip(source, sourceId).trim();
+      fragment.appendChild(chipTemplate.content.cloneNode(true));
+    }
+
+    function walk(node) {
+      if (!node) {
+        return;
+      }
+
+      if (node.nodeType === Node.ELEMENT_NODE && ignoredTags.has(node.tagName)) {
+        return;
+      }
+
+      if (node.nodeType === Node.TEXT_NODE) {
+        const value = node.nodeValue || '';
+        const normalizedValue = normalizeCitationSpacing(normalizeCitationBrackets(value));
+        citationPattern.lastIndex = 0;
+        if (!citationPattern.test(normalizedValue)) {
+          return;
+        }
+
+        citationPattern.lastIndex = 0;
+        const fragment = document.createDocumentFragment();
+        let lastIndex = 0;
+        let match = citationPattern.exec(normalizedValue);
+
+        while (match) {
+          const sourceIds = [];
+          const inner = String(match[1] || '');
+          let idMatch = citationIdPattern.exec(inner);
+          while (idMatch) {
+            const normalizedId = normalizeCitationId(idMatch[0]);
+            if (normalizedId) {
+              sourceIds.push(normalizedId);
+            }
+            idMatch = citationIdPattern.exec(inner);
+          }
+          citationIdPattern.lastIndex = 0;
+          if (match.index > lastIndex) {
+            fragment.appendChild(document.createTextNode(normalizedValue.slice(lastIndex, match.index)));
+          }
+          sourceIds.forEach(function appendCitationById(sourceId, sourceIndex) {
+            const source = citationSources[sourceId];
+            if (!source) {
+              return;
+            }
+            if (sourceIndex > 0) {
+              fragment.appendChild(document.createTextNode(' '));
+            }
+            appendChip(fragment, source, sourceId);
+          });
+          if (!sourceIds.some(function hasRegisteredSource(sourceId) { return !!citationSources[sourceId]; })) {
+            fragment.appendChild(document.createTextNode(match[0]));
+          }
+          lastIndex = match.index + match[0].length;
+          match = citationPattern.exec(normalizedValue);
+        }
+
+        if (lastIndex === 0) {
+          return;
+        }
+
+        if (lastIndex < normalizedValue.length) {
+          fragment.appendChild(document.createTextNode(normalizedValue.slice(lastIndex)));
+        }
+        node.parentNode.replaceChild(fragment, node);
+        return;
+      }
+
+      Array.from(node.childNodes).forEach(walk);
+    }
+
+    Array.from(template.content.childNodes).forEach(walk);
+    return template.innerHTML;
+  }
+
 
   // Activity parsing.
   // Parse model output into visible text, thoughts, and tool events.
+  function findOpenActivityMarker(rawText, markerPairs) {
+    const source = String(rawText || '');
+    const lowerSource = source.toLowerCase();
+    let best = null;
+
+    (markerPairs || []).forEach(function findMarker(pair) {
+      const open = String(pair.open || '').toLowerCase();
+      const close = String(pair.close || '').toLowerCase();
+      if (!open || !close) {
+        return;
+      }
+
+      let searchFrom = 0;
+      while (searchFrom < lowerSource.length) {
+        const openIndex = lowerSource.indexOf(open, searchFrom);
+        if (openIndex === -1) {
+          break;
+        }
+
+        const closeIndex = lowerSource.indexOf(close, openIndex + open.length);
+        if (closeIndex === -1) {
+          if (!best || openIndex < best.pos) {
+            best = { pos: openIndex, open, close };
+          }
+          break;
+        }
+
+        searchFrom = closeIndex + close.length;
+      }
+    });
+
+    return best;
+  }
+
+  function openToolPayloadInfo(rawText) {
+    return findOpenActivityMarker(rawText, [
+      { open: '<tool_call>', close: '</tool_call>' },
+      { open: '<tool_result>', close: '</tool_result>' },
+      { open: '<context_compression>', close: '</context_compression>' }
+    ]);
+  }
+
+  function hasOpenToolPayload(rawText) {
+    return !!openToolPayloadInfo(rawText);
+  }
+
+  function stripOpenToolPayload(rawText) {
+    const source = String(rawText || '');
+    const openPayload = openToolPayloadInfo(source);
+    return openPayload ? source.slice(0, openPayload.pos) : source;
+  }
+
+  function trailingPartialActivityMarkerInfo(rawText) {
+    const source = String(rawText || '');
+    const lowerSource = source.toLowerCase();
+    let best = null;
+
+    if (!lowerSource) {
+      return null;
+    }
+
+    STREAMING_ACTIVITY_MARKERS.forEach(function checkMarker(marker) {
+      const normalizedMarker = String(marker || '').toLowerCase();
+      const maxLength = Math.min(normalizedMarker.length - 1, lowerSource.length);
+
+      for (let length = maxLength; length > 0; length -= 1) {
+        const suffix = lowerSource.slice(-length);
+        if (!normalizedMarker.startsWith(suffix)) {
+          continue;
+        }
+
+        if (!best || length > best.length) {
+          best = {
+            length,
+            marker: normalizedMarker,
+            isTool: /^<\/?(tool|context_compression)/i.test(suffix)
+          };
+        }
+        break;
+      }
+    });
+
+    return best;
+  }
+
+  function stripTrailingPartialActivityMarker(rawText) {
+    const source = String(rawText || '');
+    const partialMarker = trailingPartialActivityMarkerInfo(source);
+    return partialMarker ? source.slice(0, source.length - partialMarker.length) : source;
+  }
+
+  function sharedFilePayloadFromTrailingShorthand(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+    const keys = Object.keys(value);
+    const allowedKeys = new Set(['file', 'path', 'filename', 'name', 'mime_type', 'mimeType', 'type', 'size_bytes', 'sizeBytes']);
+    if (!keys.length || keys.some(function hasUnexpectedKey(key) { return !allowedKeys.has(key); })) {
+      return null;
+    }
+    const hasFileKey = Object.prototype.hasOwnProperty.call(value, 'file')
+      || Object.prototype.hasOwnProperty.call(value, 'path')
+      || Object.prototype.hasOwnProperty.call(value, 'filename');
+    if (!hasFileKey) {
+      return null;
+    }
+
+    const path = String(value.path || value.file || value.filename || '').trim();
+    if (!path || path.length > 512 || /[\r\n\x00]/.test(path)) {
+      return null;
+    }
+    const basename = path.split(/[\\/]/).pop() || path;
+    if (!/\.[a-z0-9]{1,12}$/i.test(basename)) {
+      return null;
+    }
+
+    const filename = String(value.filename || value.name || basename || 'download').trim();
+    const mimeType = String(value.mime_type || value.mimeType || value.type || '').trim();
+    return {
+      kind: 'shared_file',
+      path,
+      filename,
+      mime_type: mimeType || '',
+      type_label: mimeType || 'File',
+      size_bytes: Number(value.size_bytes ?? value.sizeBytes ?? -1)
+    };
+  }
+
+  function sharedFileSegmentFromTrailingShorthand(sharedFile) {
+    const safePath = sharedFile && sharedFile.path ? sharedFile.path : '';
+    return {
+      type: 'tool',
+      alias: `trailing_share_file_${safePath.replace(/[^a-z0-9]+/gi, '_').slice(0, 80) || 'file'}`,
+      serverId: 'ui',
+      serverName: 'UI',
+      toolId: 'share_file',
+      toolName: 'Share File',
+      arguments: { path: sharedFile.path, filename: sharedFile.filename },
+      result: '',
+      toolUi: { kind: 'shared_file', status: 'done', file: sharedFile },
+      structuredContent: { kind: 'shared_file', file: sharedFile }
+    };
+  }
+
+  function normalizeTrailingSharedFileShorthandSegments(rawSegments) {
+    const inputSegments = Array.isArray(rawSegments) ? rawSegments : [];
+    const outputSegments = [];
+    inputSegments.forEach(function normalizeSegment(segment) {
+      if (!segment || segment.type !== 'text') {
+        outputSegments.push(segment);
+        return;
+      }
+
+      const content = String(segment.content || '');
+      const inlineRecoveredFiles = [];
+      const inlineLines = content.split(/\r?\n/);
+      let inFence = false;
+      const cleanedInlineLines = inlineLines.map(function cleanInlineLine(rawLine) {
+        const line = String(rawLine || '');
+        if (/^\s*```/.test(line)) {
+          inFence = !inFence;
+          return line;
+        }
+        if (inFence) {
+          return line;
+        }
+
+        return line.replace(/\{\s*"?(file|path|filename)"?\s*:\s*"([^"\r\n]+)"\s*\}/gi, function replaceShorthand(match, _key, filePath) {
+          const sharedFile = sharedFilePayloadFromTrailingShorthand({ file: String(filePath || '').trim() });
+          if (sharedFile) {
+            inlineRecoveredFiles.push(sharedFile);
+            return '';
+          }
+          return match;
+        }).replace(/\s{2,}/g, ' ').replace(/\s+:/g, ':').replace(/\s+$/g, '');
+      });
+      const cleanedContent = cleanedInlineLines.join('\n');
+
+      const lines = content.split(/\r?\n/);
+      let lastIndex = lines.length - 1;
+      while (lastIndex >= 0 && !String(lines[lastIndex] || '').trim()) {
+        lastIndex -= 1;
+      }
+      if (lastIndex < 0) {
+        inlineRecoveredFiles.forEach(function pushRecoveredInline(sharedFile) {
+          outputSegments.push(sharedFileSegmentFromTrailingShorthand(sharedFile));
+        });
+        return;
+      }
+
+      const lastLine = String(lines[lastIndex] || '').trim();
+      if (!/^\{[\s\S]*\}$/.test(lastLine)) {
+        outputSegments.push(segment);
+        return;
+      }
+
+      let sharedFile = null;
+      try {
+        sharedFile = sharedFilePayloadFromTrailingShorthand(JSON.parse(lastLine));
+      } catch (_error) {
+        sharedFile = null;
+      }
+      if (!sharedFile) {
+        const normalizedText = cleanedContent.trim();
+        if (normalizedText) {
+          outputSegments.push({ ...segment, content: normalizedText });
+        }
+        inlineRecoveredFiles.forEach(function pushRecoveredInline(shared) {
+          outputSegments.push(sharedFileSegmentFromTrailingShorthand(shared));
+        });
+        return;
+      }
+
+      const keptLines = cleanedInlineLines.slice(0, lastIndex);
+      const textBefore = keptLines.join('\n').trim();
+      if (textBefore) {
+        outputSegments.push({ ...segment, content: textBefore });
+      }
+      inlineRecoveredFiles.forEach(function pushRecoveredInline(shared) {
+        outputSegments.push(sharedFileSegmentFromTrailingShorthand(shared));
+      });
+      outputSegments.push(sharedFileSegmentFromTrailingShorthand(sharedFile));
+    });
+
+    return outputSegments;
+  }
+
   function parseMessageTimeline(rawText) {
     const source = String(rawText || '');
+    const lowerSource = source.toLowerCase();
     const segments = [];
     const toolSegmentByAlias = {};
+    const reasoningTagPairs = [
+      { start: '<think>', end: '</think>' },
+      { start: '<thinking>', end: '</thinking>' },
+      { start: '<reasoning>', end: '</reasoning>' },
+      { start: '<analysis>', end: '</analysis>' }
+    ];
     let cursor = 0;
 
     // Strip control tokens that should never reach the visible transcript.
@@ -100,17 +867,33 @@ export function createMessagesUi(context, dependencies) {
         return;
       }
 
-      segments.push({ type: 'text', content: sanitizedValue });
+      segments.push({ type: 'text', content: sanitizedValue.trim() });
+    }
+
+    function findNextReasoningStart(fromIndex) {
+      let best = null;
+      reasoningTagPairs.forEach(function checkPair(pair) {
+        const pos = lowerSource.indexOf(pair.start, fromIndex);
+        if (pos === -1) {
+          return;
+        }
+        if (!best || pos < best.pos) {
+          best = { pos, kind: 'thought', pair };
+        }
+      });
+      return best;
     }
 
     while (cursor < source.length) {
-      const thinkStart = source.indexOf('<think>', cursor);
-      const toolCallStart = source.indexOf('<tool_call>', cursor);
-      const toolResultStart = source.indexOf('<tool_result>', cursor);
+      const reasoningStart = findNextReasoningStart(cursor);
+      const toolCallStart = lowerSource.indexOf('<tool_call>', cursor);
+      const toolResultStart = lowerSource.indexOf('<tool_result>', cursor);
+      const compressionStart = lowerSource.indexOf('<context_compression>', cursor);
       const candidates = [
-        thinkStart !== -1 ? { pos: thinkStart, kind: 'thought' } : null,
+        reasoningStart,
         toolCallStart !== -1 ? { pos: toolCallStart, kind: 'tool' } : null,
-        toolResultStart !== -1 ? { pos: toolResultStart, kind: 'result' } : null
+        toolResultStart !== -1 ? { pos: toolResultStart, kind: 'result' } : null,
+        compressionStart !== -1 ? { pos: compressionStart, kind: 'compression' } : null
       ].filter(Boolean);
 
       if (candidates.length === 0) {
@@ -129,31 +912,34 @@ export function createMessagesUi(context, dependencies) {
       }
 
       if (next.kind === 'thought') {
-        const thinkEnd = source.indexOf('</think>', next.pos + 7);
+        const contentStart = next.pos + next.pair.start.length;
+        const thinkEnd = lowerSource.indexOf(next.pair.end, contentStart);
         if (thinkEnd === -1) {
-          const content = sanitizeVisibleText(source.substring(next.pos + 7)).trim();
+          const content = sanitizeVisibleText(source.substring(contentStart)).trim();
           if (content) {
             segments.push({ type: 'thought', content });
           }
           break;
         }
 
-        const content = sanitizeVisibleText(source.substring(next.pos + 7, thinkEnd)).trim();
+        const content = sanitizeVisibleText(source.substring(contentStart, thinkEnd)).trim();
         if (content) {
           segments.push({ type: 'thought', content });
         }
 
-        cursor = thinkEnd + 8;
+        cursor = thinkEnd + next.pair.end.length;
         continue;
       }
 
       if (next.kind === 'tool') {
-        const toolEnd = source.indexOf('</tool_call>', next.pos + 11);
+        const openTag = '<tool_call>';
+        const closeTag = '</tool_call>';
+        const toolEnd = lowerSource.indexOf(closeTag, next.pos + openTag.length);
         if (toolEnd === -1) {
           break;
         }
 
-        const payload = source.substring(next.pos + 11, toolEnd);
+        const payload = source.substring(next.pos + openTag.length, toolEnd);
 
         try {
           const parsed = JSON.parse(payload);
@@ -164,7 +950,7 @@ export function createMessagesUi(context, dependencies) {
             serverId: String(parsed.server_id || '').trim(),
             serverName: String(parsed.server_name || '').trim(),
             toolId: String(parsed.tool_id || '').trim(),
-            toolName: String(parsed.tool_name || '').trim(),
+            toolName: String(parsed.tool_name || parsed.tool_display_name || '').trim(),
             arguments: parsed.arguments && typeof parsed.arguments === 'object' ? parsed.arguments : {},
             result: null
           };
@@ -178,41 +964,95 @@ export function createMessagesUi(context, dependencies) {
           // Ignore malformed tool payloads.
         }
 
-        cursor = toolEnd + 12;
+        cursor = toolEnd + closeTag.length;
         continue;
       }
 
-      const resultEnd = source.indexOf('</tool_result>', next.pos + 13);
+      if (next.kind === 'compression') {
+        const openTag = '<context_compression>';
+        const closeTag = '</context_compression>';
+        const compressionEnd = lowerSource.indexOf(closeTag, next.pos + openTag.length);
+        if (compressionEnd === -1) {
+          break;
+        }
+
+        const payload = source.substring(next.pos + openTag.length, compressionEnd);
+        try {
+          const parsed = JSON.parse(payload);
+          segments.push({
+            type: 'tool',
+            alias: String(parsed.alias || 'context_compression_summary').trim(),
+            serverId: String(parsed.server_id || 'system').trim(),
+            serverName: String(parsed.server_name || 'System').trim(),
+            toolId: String(parsed.tool_id || 'context_compression_summary').trim(),
+            toolName: String(parsed.tool_name || parsed.tool_display_name || 'Context Compression').trim(),
+            arguments: parsed.arguments && typeof parsed.arguments === 'object' ? parsed.arguments : {},
+            result: String(parsed.content || ''),
+            toolUi: parsed.tool_ui && typeof parsed.tool_ui === 'object' ? parsed.tool_ui : { kind: 'context_compression', status: 'done' },
+            structuredContent: parsed.structured_content && typeof parsed.structured_content === 'object'
+              ? parsed.structured_content
+              : { kind: 'context_compression' }
+          });
+        } catch (_error) {
+          // Ignore malformed compression payloads.
+        }
+
+        cursor = compressionEnd + closeTag.length;
+        continue;
+      }
+
+      const resultOpenTag = '<tool_result>';
+      const resultCloseTag = '</tool_result>';
+      const resultEnd = lowerSource.indexOf(resultCloseTag, next.pos + resultOpenTag.length);
       if (resultEnd === -1) {
         break;
       }
 
-      const payload = source.substring(next.pos + 13, resultEnd);
+      const payload = source.substring(next.pos + resultOpenTag.length, resultEnd);
 
       try {
         const parsed = JSON.parse(payload);
         const alias = String(parsed.alias || '').trim();
-        const target = toolSegmentByAlias[alias];
+        let target = toolSegmentByAlias[alias];
+
+        if (!target && alias) {
+          target = {
+            type: 'tool',
+            alias,
+            serverId: String(parsed.server_id || '').trim(),
+            serverName: String(parsed.server_name || '').trim(),
+            toolId: String(parsed.tool_id || '').trim(),
+            toolName: String(parsed.tool_name || parsed.tool_display_name || '').trim(),
+            arguments: parsed.arguments && typeof parsed.arguments === 'object' ? parsed.arguments : {},
+            result: null
+          };
+          segments.push(target);
+          toolSegmentByAlias[alias] = target;
+        }
 
         if (target) {
           target.result = String(parsed.content || '');
+          target.toolUi = parsed.tool_ui && typeof parsed.tool_ui === 'object' ? parsed.tool_ui : null;
+          target.structuredContent = parsed.structured_content && typeof parsed.structured_content === 'object'
+            ? parsed.structured_content
+            : null;
         }
       } catch (_error) {
         // Ignore malformed tool results.
       }
 
-      cursor = resultEnd + 14;
+      cursor = resultEnd + resultCloseTag.length;
     }
 
-    const visibleText = segments
+    const normalizedSegments = normalizeTrailingSharedFileShorthandSegments(segments);
+    const visibleText = normalizedSegments
       .filter(function onlyText(segment) { return segment.type === 'text'; })
       .map(function mapText(segment) { return segment.content; })
       .join('\n\n')
       .trim();
 
-    return { segments, visibleText };
+    return { segments: normalizedSegments, visibleText };
   }
-
 
   // Thought state helpers.
   // Read the set of expanded thought indices for one row.
@@ -245,104 +1085,3012 @@ export function createMessagesUi(context, dependencies) {
   }
 
 
+  // Read the set of expanded search cards for one row.
+  function getExpandedSearchIndices($msgRow) {
+    const rawValue = String($msgRow.attr('data-expanded-searches') || '').trim();
+    if (!rawValue) {
+      return new Set();
+    }
+
+    return new Set(
+      rawValue
+        .split(',')
+        .map(function toNumber(value) { return parseInt(value, 10); })
+        .filter(function isValid(value) { return Number.isInteger(value) && value >= 0; })
+    );
+  }
+
+  // Persist expanded search cards back to the row element.
+  function setExpandedSearchIndices($msgRow, expandedIndices) {
+    const normalized = Array.from(expandedIndices)
+      .filter(function isValid(value) { return Number.isInteger(value) && value >= 0; })
+      .sort(function sortValues(left, right) { return left - right; });
+
+    if (normalized.length === 0) {
+      $msgRow.removeAttr('data-expanded-searches');
+      return;
+    }
+
+    $msgRow.attr('data-expanded-searches', normalized.join(','));
+  }
+
+  // Read search cards expanded by stable tool keys. This survives stream
+  // frames where the numeric tool index can shift while the tool alias stays.
+  function getExpandedSearchKeys($msgRow) {
+    const existing = $msgRow.data('expandedSearchKeys');
+    if (existing instanceof Set) {
+      return new Set(existing);
+    }
+
+    const rawValue = String($msgRow.attr('data-expanded-search-keys') || '').trim();
+    if (!rawValue) {
+      return new Set();
+    }
+
+    return new Set(
+      rawValue
+        .split(',')
+        .map(function decodeKey(value) {
+          try {
+            return decodeURIComponent(value);
+          } catch (_error) {
+            return '';
+          }
+        })
+        .filter(Boolean)
+    );
+  }
+
+  // Persist expanded search keys on the row and in jQuery data.
+  function setExpandedSearchKeys($msgRow, expandedKeys) {
+    const normalized = Array.from(expandedKeys)
+      .map(function normalizeKey(value) { return String(value || '').trim(); })
+      .filter(Boolean)
+      .sort();
+
+    const keySet = new Set(normalized);
+    $msgRow.data('expandedSearchKeys', keySet);
+
+    if (normalized.length === 0) {
+      $msgRow.removeAttr('data-expanded-search-keys');
+      return;
+    }
+
+    $msgRow.attr('data-expanded-search-keys', normalized.map(encodeURIComponent).join(','));
+  }
+
+
+  // Read the set of expanded write cards for one row.
+  function getExpandedWriteIndices($msgRow) {
+    const rawValue = String($msgRow.attr('data-expanded-writes') || '').trim();
+    if (!rawValue) {
+      return new Set();
+    }
+
+    return new Set(
+      rawValue
+        .split(',')
+        .map(function toNumber(value) { return parseInt(value, 10); })
+        .filter(function isValid(value) { return Number.isInteger(value) && value >= 0; })
+    );
+  }
+
+  // Persist expanded write cards back to the row element.
+  function setExpandedWriteIndices($msgRow, expandedIndices) {
+    const normalized = Array.from(expandedIndices)
+      .filter(function isValid(value) { return Number.isInteger(value) && value >= 0; })
+      .sort(function sortValues(left, right) { return left - right; });
+
+    if (normalized.length === 0) {
+      $msgRow.removeAttr('data-expanded-writes');
+      return;
+    }
+
+    $msgRow.attr('data-expanded-writes', normalized.join(','));
+  }
+
+
+  // Read the set of expanded edit cards for one row.
+  function getExpandedEditIndices($msgRow) {
+    const rawValue = String($msgRow.attr('data-expanded-edits') || '').trim();
+    if (!rawValue) {
+      return new Set();
+    }
+
+    return new Set(
+      rawValue
+        .split(',')
+        .map(function toNumber(value) { return parseInt(value, 10); })
+        .filter(function isValid(value) { return Number.isInteger(value) && value >= 0; })
+    );
+  }
+
+  // Persist expanded edit cards back to the row element.
+  function setExpandedEditIndices($msgRow, expandedIndices) {
+    const normalized = Array.from(expandedIndices)
+      .filter(function isValid(value) { return Number.isInteger(value) && value >= 0; })
+      .sort(function sortValues(left, right) { return left - right; });
+
+    if (normalized.length === 0) {
+      $msgRow.removeAttr('data-expanded-edits');
+      return;
+    }
+
+    $msgRow.attr('data-expanded-edits', normalized.join(','));
+  }
+
+
   // Activity timeline rendering.
   // Render thoughts, tool calls, and visible text into the assistant timeline.
+  function isSearchToolSegment(segment) {
+    const toolId = String(segment.toolId || '').toLowerCase();
+    const alias = String(segment.alias || '').toLowerCase();
+    return toolId === 'web_search'
+      || toolId === 'web_search_rich'
+      || alias.endsWith('__web_search')
+      || alias.endsWith('__web_search_rich')
+      || !!(segment.toolUi && segment.toolUi.compact);
+  }
+
+  function searchQueryFromSegment(segment) {
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    return formatSearchQueryValue(args.query || args.q || '').trim();
+  }
+
+  function appendUniqueSearchPart(parts, value) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (text && !parts.includes(text)) {
+      parts.push(text);
+    }
+  }
+
+  function appendSearchList(parts, value) {
+    if (!Array.isArray(value)) {
+      return;
+    }
+    value.forEach(function appendItem(item) {
+      appendUniqueSearchPart(parts, item);
+    });
+  }
+
+  function formatSearchQueryValue(value) {
+    if (value === null || value === undefined) {
+      return '';
+    }
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      const text = String(value).replace(/\s+/g, ' ').trim();
+      if (text && (text[0] === '{' || text[0] === '[')) {
+        try {
+          const parsed = JSON.parse(text);
+          return formatSearchQueryValue(parsed);
+        } catch (_error) {
+          // Fall through to plain text for malformed partial JSON from streaming.
+        }
+      }
+      return text;
+    }
+    if (Array.isArray(value)) {
+      return value.map(formatSearchQueryValue).filter(Boolean).join(', ');
+    }
+    if (typeof value !== 'object') {
+      return String(value || '').replace(/\s+/g, ' ').trim();
+    }
+
+    const plan = value.query && typeof value.query === 'object' && !Array.isArray(value.query)
+      ? value.query
+      : value;
+    const parts = [];
+    ['entities', 'model_identifiers', 'terms'].forEach(function appendKey(key) {
+      appendSearchList(parts, plan[key]);
+    });
+    appendSearchList(parts, (plan.exact_phrases || []).map(function quotePhrase(phrase) {
+      return `"${String(phrase || '').replace(/\s+/g, ' ').trim()}"`;
+    }));
+    appendSearchList(parts, (plan.required_terms || []).map(function requireTerm(term) {
+      const text = String(term || '').replace(/\s+/g, ' ').trim();
+      return text ? `+${text}` : '';
+    }));
+    if (plan.intent && plan.intent !== 'general') {
+      appendUniqueSearchPart(parts, plan.intent);
+    }
+    appendUniqueSearchPart(parts, plan.region);
+
+    const numericMin = parseInt(plan.numeric_min ?? plan.price_min ?? 0, 10) || 0;
+    const numericMax = parseInt(plan.numeric_max ?? plan.price_max ?? 0, 10) || 0;
+    if (numericMin && numericMax) {
+      appendUniqueSearchPart(parts, `${numericMin}-${numericMax}`);
+    } else if (numericMin) {
+      appendUniqueSearchPart(parts, numericMin);
+    } else if (numericMax) {
+      appendUniqueSearchPart(parts, numericMax);
+    }
+    appendUniqueSearchPart(parts, plan.unit || plan.currency);
+
+    if (plan.year) {
+      appendUniqueSearchPart(parts, plan.year);
+    }
+    appendSearchList(parts, (plan.site_include || []).map(function includeDomain(domain) {
+      return `site:${String(domain || '').replace(/^site:/i, '').trim()}`;
+    }));
+    appendSearchList(parts, (plan.site_exclude || []).map(function excludeDomain(domain) {
+      return `-site:${String(domain || '').replace(/^-?site:/i, '').trim()}`;
+    }));
+    appendSearchList(parts, (plan.excluded_terms || []).map(function excludeTerm(term) {
+      const text = String(term || '').replace(/\s+/g, ' ').trim();
+      return text ? `-${text}` : '';
+    }));
+
+    if (parts.length === 0 && plan.raw_query) {
+      appendUniqueSearchPart(parts, plan.raw_query);
+    }
+    return parts.join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function searchSegmentKey(segment, fallbackIndex) {
+    const safeSegment = segment && typeof segment === 'object' ? segment : {};
+    const alias = String(safeSegment.alias || '').trim();
+    if (alias) {
+      return `alias:${alias}`;
+    }
+
+    const query = searchQueryFromSegment(safeSegment).toLowerCase();
+    const toolId = String(safeSegment.toolId || safeSegment.toolName || '').trim().toLowerCase();
+    if (query) {
+      return `query:${toolId}:${query}`;
+    }
+
+    if (Number.isInteger(fallbackIndex) && fallbackIndex >= 0) {
+      return `index:${fallbackIndex}`;
+    }
+
+    return '';
+  }
+
+  function isReadPageToolSegment(segment) {
+    const toolId = String(segment.toolId || '').toLowerCase();
+    const alias = String(segment.alias || '').toLowerCase();
+    const uiKind = segment.toolUi && segment.toolUi.kind ? String(segment.toolUi.kind).toLowerCase() : '';
+    return toolId === 'read_page'
+      || alias.endsWith('__read_page')
+      || uiKind === 'read_page';
+  }
+
+  function isWriteToolSegment(segment) {
+    const toolId = String(segment.toolId || '').toLowerCase();
+    const alias = String(segment.alias || '').toLowerCase();
+    const toolName = String(segment.toolName || '').toLowerCase();
+    return toolId === 'write'
+      || alias.endsWith('__write')
+      || toolName === 'write'
+      || toolName === 'write file';
+  }
+
+  function isEditToolSegment(segment) {
+    const toolId = String(segment.toolId || '').toLowerCase();
+    const alias = String(segment.alias || '').toLowerCase();
+    const toolName = String(segment.toolName || '').toLowerCase();
+    return toolId === 'edit'
+      || alias.endsWith('__edit')
+      || toolName === 'edit'
+      || toolName === 'edit file';
+  }
+
+  function sourceFromUrl(value, rank) {
+    const rawUrl = String(value || '').trim();
+    if (!rawUrl) {
+      return null;
+    }
+
+    let domain = '';
+    try {
+      domain = new URL(rawUrl).hostname.replace(/^www\./i, '');
+    } catch (_error) {
+      domain = rawUrl.replace(/^https?:\/\//i, '').split('/')[0].replace(/^www\./i, '');
+    }
+
+    const parts = domain.split('.').filter(Boolean);
+    const label = parts.length >= 2 ? parts[parts.length - 2] : (parts[0] || domain);
+    const displayDomain = label.replace(/-/g, ' ').replace(/\b\w/g, function titleCase(letter) {
+      return letter.toUpperCase();
+    });
+
+    return {
+      rank: rank || 0,
+      url: rawUrl,
+      domain,
+      display_domain: displayDomain || domain,
+      favicon_url: localFaviconUrlForDomain(domain),
+    };
+  }
+
+  function normalizeSearchSourceItem(item, rank) {
+    if (typeof item === 'string') {
+      return sourceFromUrl(item, rank);
+    }
+
+    if (!item || typeof item !== 'object') {
+      return null;
+    }
+
+    const rawUrl = String(item.url || item.link || item.href || item.source_url || '').trim();
+    const fromUrl = rawUrl ? sourceFromUrl(rawUrl, rank) : null;
+    const domain = String(
+      item.domain
+      || item.display_domain
+      || item.host
+      || (fromUrl ? fromUrl.domain : '')
+      || ''
+    ).trim();
+
+    if (!rawUrl && !domain) {
+      return null;
+    }
+
+    return {
+      ...(fromUrl || {}),
+      ...item,
+      rank: item.rank || rank || (fromUrl ? fromUrl.rank : 0),
+      url: rawUrl || item.url || (fromUrl ? fromUrl.url : ''),
+      domain: domain || (fromUrl ? fromUrl.domain : ''),
+      display_domain: String(item.display_domain || item.displayDomain || '').trim()
+        || (fromUrl ? fromUrl.display_domain : domain),
+      favicon_url: item.favicon_url || item.faviconUrl || (fromUrl ? fromUrl.favicon_url : ''),
+    };
+  }
+
+  function collectSourceCandidates(container) {
+    if (Array.isArray(container)) {
+      return container;
+    }
+
+    if (!container || typeof container !== 'object') {
+      return [];
+    }
+
+    return [
+      container.sources,
+      container.source_chips,
+      container.sourceChips,
+      container.results,
+      container.items,
+      container.documents,
+      container.data
+    ]
+      .filter(Array.isArray)
+      .flat();
+  }
+
+  function searchSourcesFromSegment(segment) {
+    const structured = segment.structuredContent && typeof segment.structuredContent === 'object'
+      ? segment.structuredContent
+      : null;
+    const toolUi = segment.toolUi && typeof segment.toolUi === 'object' ? segment.toolUi : null;
+    const compact = segment.toolUi && segment.toolUi.compact && typeof segment.toolUi.compact === 'object'
+      ? segment.toolUi.compact
+      : null;
+    const resultObject = parseToolResultObject(segment);
+
+    return dedupeSearchSources([
+      ...collectSourceCandidates(structured),
+      ...collectSourceCandidates(toolUi),
+      ...collectSourceCandidates(compact),
+      ...collectSourceCandidates(resultObject)
+    ].map(normalizeSearchSourceItem));
+  }
+
+  function readPageSourcesFromSegment(segment) {
+    const structured = segment.structuredContent && typeof segment.structuredContent === 'object'
+      ? segment.structuredContent
+      : null;
+    const uiSources = segment.toolUi && Array.isArray(segment.toolUi.sources) ? segment.toolUi.sources : [];
+    if (uiSources.length > 0) {
+      return uiSources;
+    }
+    if (structured && Array.isArray(structured.sources) && structured.sources.length > 0) {
+      return structured.sources;
+    }
+
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    const rawUrls = Array.isArray(args.url) ? args.url : [args.url || args.urls];
+    return rawUrls
+      .flatMap(function flattenUrls(item) { return Array.isArray(item) ? item : [item]; })
+      .map(function mapUrl(item, index) { return sourceFromUrl(item, index + 1); })
+      .filter(Boolean);
+  }
+
+  function addSearchSourcesToCitationRegistry(registry, segment) {
+    searchSourcesFromSegment(segment).forEach(function registerSource(source) {
+      if (!source || typeof source !== 'object') {
+        return;
+      }
+
+      const sourceId = normalizeCitationId(source.id || source.source_id);
+      if (!/^(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{3}-\d+)$/.test(sourceId)) {
+        return;
+      }
+
+      registry[sourceId] = source;
+    });
+  }
+
+  function renderSourceChip(chip) {
+    const source = chip && typeof chip === 'object' ? chip : {};
+    const domain = String(source.display_domain || source.domain || '').trim();
+    if (!domain) {
+      return '';
+    }
+    const faviconUrl = sourceFaviconUrl(source);
+    const sourceUrl = String(source.url || '').trim();
+    const fallbackLetter = domain.charAt(0).toUpperCase();
+    const imgHtml = faviconUrl
+      ? `<img class="msg-search-chip-favicon" src="${escapeAttributeValue(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
+      : '';
+    const fallbackStyle = domainAccentStyle(domain, faviconUrl ? 'display:none;' : '');
+    const tagName = sourceUrl ? 'a' : 'span';
+    const linkAttrs = sourceUrl
+      ? ` href="${escapeAttributeValue(sourceUrl)}" target="_blank" rel="noopener noreferrer"`
+      : '';
+    return `
+      <${tagName} class="msg-search-chip" title="${escapeAttributeValue(source.title || domain)}"${linkAttrs}>
+        ${imgHtml}<span class="msg-search-chip-fallback" style="${escapeAttributeValue(fallbackStyle)}">${escHtml(fallbackLetter)}</span>
+        <span class="msg-search-chip-domain">${escHtml(domain)}</span>
+      </${tagName}>
+    `;
+  }
+
+  function dedupeSearchSources(sources) {
+    const seen = {};
+    return (Array.isArray(sources) ? sources : []).filter(function keepFirstSource(source) {
+      if (!source || typeof source !== 'object') {
+        return false;
+      }
+
+      const key = String(source.url || source.source_id || source.id || source.domain || source.display_domain || '').trim().toLowerCase();
+      if (!key || seen[key]) {
+        return false;
+      }
+
+      seen[key] = true;
+      return true;
+    });
+  }
+
+  function renderSearchSourcesWithOverflow(sources, maxVisible) {
+    const items = Array.isArray(sources) ? sources : [];
+    const visibleLimit = Number.isInteger(maxVisible) && maxVisible > 0 ? maxVisible : 3;
+    const rendered = items.map(function mapRenderedSource(source) {
+      return {
+        source,
+        html: renderSourceChip(source)
+      };
+    }).filter(function filterRenderableSource(item) {
+      return !!String(item.html || '').trim();
+    });
+
+    return {
+      visibleHtml: rendered.slice(0, visibleLimit).map(function mapVisible(item) { return item.html; }).join(''),
+      hiddenHtml: rendered.slice(visibleLimit).map(function mapHidden(item) { return item.html; }).join(''),
+      hiddenCount: Math.max(0, rendered.length - visibleLimit)
+    };
+  }
+
+  function renderSearchToolCard(segment, toolSegmentIndex, options) {
+    const renderOptions = options || {};
+    const hasResult = segment.result !== null && segment.result !== undefined;
+    const compact = segment.toolUi && segment.toolUi.compact && typeof segment.toolUi.compact === 'object'
+      ? segment.toolUi.compact
+      : null;
+    const query = searchQueryFromSegment(segment);
+    const sources = searchSourcesFromSegment(segment);
+    const renderedSources = renderSearchSourcesWithOverflow(sources, 3);
+    const isExpanded = !!renderOptions.expanded;
+    const status = segment.toolUi && segment.toolUi.status ? String(segment.toolUi.status) : '';
+    const isRejected = status === 'rejected' || /^BAD_QUERY:/i.test(String(segment.result || '').trim());
+    let label = '';
+    if (renderOptions.compactLabel && query) {
+      label = isRejected ? `Bad query: ${query}` : query;
+    } else if (isRejected) {
+      label = `Bad query: ${query || 'query'}`;
+    } else if (hasResult) {
+      label = sources.length > 0 ? `Searched for ${query || 'sources'}` : `No sources found for ${query || 'sources'}`;
+    } else {
+      label = compact && compact.label ? String(compact.label) : `Searching for ${query || 'sources'}`;
+    }
+    const chipsHtml = renderedSources.visibleHtml;
+    const hiddenChipsHtml = renderedSources.hiddenHtml;
+    const moreCount = renderedSources.hiddenCount;
+    const moreButtonAttrs = `type="button" data-search-more-count="${moreCount}" aria-expanded="${isExpanded ? 'true' : 'false'}"`;
+    const collapsedMoreHtml = moreCount > 0
+      ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-collapsed" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(`${MORE_LABEL} ${moreCount}`)}</span></button>`
+      : '';
+    const expandedMoreHtml = moreCount > 0
+      ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-expanded" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(HIDE_LABEL)}</span></button>`
+      : '';
+    const pendingHtml = hasResult ? '' : '<span class="msg-search-pending-dot"></span>';
+    const iconHtml = status === 'error' || status === 'timeout' || isRejected
+      ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
+      : (icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+    const searchKey = searchSegmentKey(segment, toolSegmentIndex);
+    const searchKeyAttr = searchKey ? ` data-search-key="${escapeAttributeValue(searchKey)}"` : '';
+
+    return `
+      <div class="msg-search-card${hasResult ? ' is-done' : ' is-pending'}${isRejected ? ' is-error' : ''}${isExpanded ? ' is-expanded' : ''}${renderOptions.compactLabel ? ' msg-search-card--batch-item' : ''}" data-tool-segment-index="${toolSegmentIndex}"${searchKeyAttr}>
+        <div class="msg-search-line">
+          ${renderOptions.hideIcon ? '' : `<span class="msg-search-icon">${iconHtml}</span>`}
+          <span class="msg-search-label">${escHtml(label)}</span>
+          ${pendingHtml}
+        </div>
+        ${chipsHtml || collapsedMoreHtml ? `<div class="msg-search-chips">${chipsHtml}${collapsedMoreHtml}</div>` : ''}
+        ${hiddenChipsHtml || expandedMoreHtml ? `<div class="msg-search-extra-chips">${hiddenChipsHtml}${expandedMoreHtml}</div>` : ''}
+      </div>
+    `;
+  }
+
+  function renderSearchToolGroup(searchItems, options) {
+    const renderOptions = options || {};
+    if (!Array.isArray(searchItems) || searchItems.length === 0) {
+      return '';
+    }
+
+    if (searchItems.length === 1) {
+      return renderSearchToolCard(searchItems[0].segment, searchItems[0].index, renderOptions);
+    }
+
+    const hasProblem = searchItems.some(function hasProblemStatus(item) {
+      const status = item.segment.toolUi && item.segment.toolUi.status ? String(item.segment.toolUi.status) : '';
+      return status === 'error' || status === 'timeout' || status === 'rejected' || /^BAD_QUERY:/i.test(String(item.segment.result || '').trim());
+    });
+    const iconHtml = hasProblem
+      ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
+      : (icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+    const activePendingIndex = searchItems.findIndex(function findPendingSearch(item) {
+      return item.segment.result === null || item.segment.result === undefined;
+    });
+    const hasPending = activePendingIndex !== -1;
+    const queriesHtml = searchItems.map(function renderBatchQuery(item, itemIndex) {
+      const query = searchQueryFromSegment(item.segment);
+      const itemStatus = item.segment.toolUi && item.segment.toolUi.status ? String(item.segment.toolUi.status) : '';
+      const itemRejected = itemStatus === 'rejected' || /^BAD_QUERY:/i.test(String(item.segment.result || '').trim());
+      const compact = item.segment.toolUi && item.segment.toolUi.compact && typeof item.segment.toolUi.compact === 'object'
+        ? item.segment.toolUi.compact
+        : null;
+      const labelBase = query || (compact && compact.label ? String(compact.label).replace(/^Searching for\s+/i, '') : 'sources');
+      const label = itemRejected ? `Bad query: ${labelBase}` : labelBase;
+      const activeClass = itemIndex === activePendingIndex ? ' is-active' : '';
+      const activeDot = itemIndex === activePendingIndex ? '<span class="msg-search-pending-dot"></span>' : '';
+      return `<div class="msg-search-batch-query${activeClass}"><span class="msg-search-batch-query-text">${escHtml(label)}</span>${activeDot}</div>`;
+    }).join('');
+    const combinedSources = dedupeSearchSources(searchItems.flatMap(function collectSources(item) {
+      return searchSourcesFromSegment(item.segment);
+    }));
+    const renderedSources = renderSearchSourcesWithOverflow(combinedSources, 3);
+    const chipsHtml = renderedSources.visibleHtml;
+    const hiddenChipsHtml = renderedSources.hiddenHtml;
+    const moreCount = renderedSources.hiddenCount;
+    const firstIndex = Number.isInteger(searchItems[0].index) ? searchItems[0].index : 0;
+    const isExpanded = renderOptions.expanded === undefined ? false : !!renderOptions.expanded;
+    const searchKey = searchItems
+      .map(function mapSearchItemKey(item) { return searchSegmentKey(item.segment, item.index); })
+      .filter(Boolean)
+      .join('|');
+    const searchKeyAttr = searchKey ? ` data-search-key="${escapeAttributeValue(searchKey)}"` : '';
+    const moreButtonAttrs = `type="button" data-search-more-count="${moreCount}" aria-expanded="${isExpanded ? 'true' : 'false'}"`;
+    const collapsedMoreHtml = moreCount > 0
+      ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-collapsed" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(`${MORE_LABEL} ${moreCount}`)}</span></button>`
+      : '';
+    const expandedMoreHtml = moreCount > 0
+      ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-expanded" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(HIDE_LABEL)}</span></button>`
+      : '';
+
+    return `
+      <div class="msg-search-card msg-search-card--batch${hasPending ? ' is-pending' : ' is-done'}${isExpanded ? ' is-expanded' : ''}" data-tool-segment-index="${firstIndex}"${searchKeyAttr}>
+        <div class="msg-search-batch-head">
+          <span class="msg-search-icon msg-search-batch-icon">${iconHtml}</span>
+          <div class="msg-search-batch-queries">${queriesHtml}</div>
+        </div>
+        ${chipsHtml || collapsedMoreHtml ? `<div class="msg-search-chips msg-search-chips--batch">${chipsHtml}${collapsedMoreHtml}</div>` : ''}
+        ${hiddenChipsHtml || expandedMoreHtml ? `<div class="msg-search-extra-chips msg-search-extra-chips--batch">${hiddenChipsHtml}${expandedMoreHtml}</div>` : ''}
+      </div>
+    `;
+  }
+
+  function renderReadPageToolCard(readItems) {
+    const items = Array.isArray(readItems) ? readItems : [];
+    const firstItem = items[0] || {};
+    const sourcesByUrl = {};
+    items.forEach(function collectSources(item) {
+      readPageSourcesFromSegment(item.segment).forEach(function collectSource(source) {
+        const key = String(source.url || source.domain || '').trim();
+        if (key && !sourcesByUrl[key]) {
+          sourcesByUrl[key] = source;
+        }
+      });
+    });
+
+    const sources = Object.keys(sourcesByUrl).map(function mapSource(key) { return sourcesByUrl[key]; });
+    const chipsHtml = sources.map(renderSourceChip).join('');
+    const resultCount = sources.length;
+    const label = resultCount === 1 ? 'Read source:' : 'Read sources:';
+    const status = firstItem.segment && firstItem.segment.toolUi && firstItem.segment.toolUi.status
+      ? String(firstItem.segment.toolUi.status)
+      : '';
+    const iconHtml = status === 'error'
+      ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
+      : (icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+    const dataIndex = Number.isInteger(firstItem.index) ? ` data-tool-segment-index="${firstItem.index}"` : '';
+
+    return `
+      <div class="msg-read-page-card${status === 'error' ? ' is-error' : ' is-done'}"${dataIndex}>
+        <div class="msg-read-page-line">
+          <span class="msg-read-page-icon">${iconHtml}</span>
+          <span class="msg-read-page-label">${escHtml(label)}</span>
+        </div>
+        ${chipsHtml ? `<div class="msg-read-page-chips">${chipsHtml}</div>` : ''}
+      </div>
+    `;
+  }
+
+  function writePathFromSegment(segment) {
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    return String(args.path || args.file || args.filename || '').trim();
+  }
+
+  function writeContentFromSegment(segment) {
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    if (args.content !== undefined && args.content !== null) {
+      return String(args.content);
+    }
+    if (args.text !== undefined && args.text !== null) {
+      return String(args.text);
+    }
+    if (args.input !== undefined && args.input !== null) {
+      return String(args.input);
+    }
+    return '';
+  }
+
+  function renderWritePreviewLines(content, isExpanded, path) {
+    const lines = String(content || '').split(/\r?\n/);
+    const maxLines = isExpanded ? WRITE_PREVIEW_EXPANDED_LINES : WRITE_PREVIEW_COLLAPSED_LINES;
+    const visibleLines = lines.slice(0, maxLines);
+    const language = languageFromPath(path, 'plaintext');
+    const rowsHtml = visibleLines.map(function renderLine(line, index) {
+      const isFadeLine = !isExpanded && index === WRITE_PREVIEW_COLLAPSED_LINES - 1 && lines.length > WRITE_PREVIEW_COLLAPSED_LINES;
+      const lineClass = isFadeLine ? ' msg-write-line--fade' : '';
+      const lineText = isFadeLine && !line ? '...' : line;
+      return `<div class="msg-write-line${lineClass}">${lineText ? highlightCode(lineText, language) : ' '}</div>`;
+    }).join('');
+    if (isExpanded && lines.length > maxLines) {
+      return `${rowsHtml}<div class="msg-write-line msg-write-line--fade">... ${escHtml(String(lines.length - maxLines))} more lines omitted</div>`;
+    }
+    return rowsHtml;
+  }
+
+  function renderWriteToolCard(segment, toolSegmentIndex, options) {
+    const renderOptions = options || {};
+    const content = writeContentFromSegment(segment);
+    const path = writePathFromSegment(segment);
+    const isExpanded = !!renderOptions.expanded;
+    const lineCount = textLineCount(content);
+    const byteCount = utf8ByteLength(content);
+    const hasMore = lineCount > WRITE_PREVIEW_COLLAPSED_LINES;
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-write-segment-index="${toolSegmentIndex}"` : '';
+    const label = path ? `Write ${path}` : 'Write';
+    const summary = lineCount > 0
+      ? `${lineCount} ${lineCount === 1 ? 'line' : 'lines'}${byteCount > 8192 ? ` · ${Math.round(byteCount / 1024)} KB` : ''}`
+      : toolStatusText(segment);
+    const language = languageFromPath(path, 'plaintext');
+
+    return `
+      <div class="msg-write-card${toolStatusClass(segment)}${isExpanded ? ' is-expanded' : ''}${hasMore ? ' has-more' : ''}"${dataIndex} role="button" tabindex="0" aria-expanded="${isExpanded ? 'true' : 'false'}">
+        <span class="msg-write-head">
+          ${icons.TOOL_MAKE_FILE_ICON || ''}
+          <span class="msg-write-title">${escHtml(label)}</span>
+          <span class="msg-write-summary">${escHtml(summary)}</span>
+        </span>
+        <span class="msg-write-preview msg-code-block language-${escapeAttributeValue(language)}" data-language="${escapeAttributeValue(language)}">${content ? renderWritePreviewLines(content, isExpanded, path) : '<span class="msg-write-line msg-write-line--empty">No content.</span>'}</span>
+      </div>
+    `;
+  }
+
+  function parseToolResultObject(segment) {
+    const rawResult = segment && segment.result !== null && segment.result !== undefined
+      ? String(segment.result)
+      : '';
+    if (!rawResult) {
+      return {};
+    }
+
+    try {
+      const parsed = JSON.parse(rawResult);
+      if (!parsed || typeof parsed !== 'object') {
+        return {};
+      }
+      return parsed.result && typeof parsed.result === 'object' ? parsed.result : parsed;
+    } catch (_error) {
+      return {};
+    }
+  }
+
+  function formatByteSize(bytes) {
+    const size = Number(bytes);
+    if (!Number.isFinite(size) || size < 0) {
+      return '';
+    }
+    if (size < 1024) {
+      return `${Math.round(size)} B`;
+    }
+    if (size < 1024 * 1024) {
+      return `${Math.round(size / 1024)} KB`;
+    }
+    return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+  }
+
+  function normalizeSharedFilePayload(candidate) {
+    if (!candidate || typeof candidate !== 'object') {
+      return null;
+    }
+    const file = candidate.kind === 'shared_file'
+      ? candidate
+      : (candidate.file && typeof candidate.file === 'object' ? candidate.file : null);
+    if (!file || typeof file !== 'object') {
+      return null;
+    }
+    function asScalarText(value) {
+      if (value === null || value === undefined) {
+        return '';
+      }
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        return String(value).trim();
+      }
+      if (typeof value === 'object') {
+        const preferredKeys = ['filename', 'name', 'path', 'file', 'value', 'label'];
+        for (let index = 0; index < preferredKeys.length; index += 1) {
+          const key = preferredKeys[index];
+          if (Object.prototype.hasOwnProperty.call(value, key)) {
+            const nested = asScalarText(value[key]);
+            if (nested) {
+              return nested;
+            }
+          }
+        }
+      }
+      return '';
+    }
+
+    const path = asScalarText(file.path || file.file);
+    if (!path) {
+      return null;
+    }
+    const filename = asScalarText(file.filename || file.name) || path.split(/[\\/]/).pop() || 'download';
+    return {
+      path,
+      filename,
+      mimeType: asScalarText(file.mime_type || file.mimeType || file.type),
+      typeLabel: asScalarText(file.type_label || file.typeLabel || file.mime_type || file.mimeType) || 'File',
+      sizeBytes: Number(file.size_bytes ?? file.sizeBytes ?? -1),
+      downloadUrl: asScalarText(file.download_url || file.downloadUrl),
+      modelContext: asScalarText(file.model_context || file.modelContext),
+      render: file.render && typeof file.render === 'object' ? file.render : null
+    };
+  }
+
+  function sharedFileFromSegment(segment) {
+    const candidates = [
+      segment && segment.structuredContent,
+      segment && segment.toolUi,
+      segment && segment.toolUi && segment.toolUi.file,
+      parseToolResultObject(segment)
+    ];
+
+    for (let index = 0; index < candidates.length; index += 1) {
+      const normalized = normalizeSharedFilePayload(candidates[index]);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return null;
+  }
+
+  function isSharedFileToolSegment(segment) {
+    if (sharedFileFromSegment(segment)) {
+      return true;
+    }
+    return /share[_-\s]?file|download[_-\s]?file/.test(toolIdentityText(segment));
+  }
+
+  function isCompressionContextSegment(segment) {
+    const alias = String(segment && (segment.alias || segment.toolId || segment.toolName || '') || '').trim().toLowerCase();
+    const toolUi = segment && segment.toolUi && typeof segment.toolUi === 'object' ? segment.toolUi : {};
+    const structured = segment && segment.structuredContent && typeof segment.structuredContent === 'object'
+      ? segment.structuredContent
+      : {};
+    return alias === 'context_compression_summary'
+      || String(toolUi.kind || '').toLowerCase() === 'context_compression'
+      || String(structured.kind || '').toLowerCase() === 'context_compression';
+  }
+
+  function compressionContextText(segment) {
+    return String(segment && segment.result ? segment.result : '').trim();
+  }
+
+  function renderCompressionContextCard(segment, toolSegmentIndex) {
+    const text = compressionContextText(segment);
+    if (!text) {
+      return '';
+    }
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-tool-segment-index="${toolSegmentIndex}"` : '';
+    return `
+      <div class="msg-compression-context"${dataIndex}>
+        <div class="msg-compression-context-line">
+          <span class="msg-compression-context-divider"></span>
+          <button type="button" class="msg-compression-context-btn">Compressed context active</button>
+          <span class="msg-compression-context-divider"></span>
+        </div>
+        <pre class="msg-compression-context-json msg-code-block language-json" style="display:none;"><code>${highlightCode(text, 'json')}</code></pre>
+      </div>
+    `;
+  }
+
+  function buildCompressionPendingRow() {
+    return $(`
+      <div class="msg msg-compression-marker msg-compression-marker--pending" data-message-key="context-compression-pending">
+        <div class="msg-compression-marker-body">
+          <div class="msg-compression-context is-pending">
+            <div class="msg-compression-context-line">
+              <span class="msg-compression-context-divider"></span>
+              <span class="msg-compression-context-pending">
+                <span class="msg-compression-context-spinner" aria-hidden="true"></span>
+                Compressing context...
+              </span>
+              <span class="msg-compression-context-divider"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+
+  function appendCompressionPending() {
+    const existing = dom.$messagesInner.find('.msg-compression-marker--pending').last();
+    if (existing.length) {
+      scrollBottom();
+      return existing;
+    }
+    const $row = buildCompressionPendingRow();
+    dom.$messagesInner.append($row);
+    scrollBottom();
+    return $row;
+  }
+
+  function removeCompressionPending($row) {
+    const target = $row && $row.length ? $row : dom.$messagesInner.find('.msg-compression-marker--pending');
+    target.remove();
+  }
+
+  function isCompressionOnlyActivitySegments(segments) {
+    return Array.isArray(segments)
+      && segments.length > 0
+      && segments.every(function onlyCompression(segment) {
+        return segment && segment.type === 'tool' && isCompressionContextSegment(segment);
+      });
+  }
+
+  function sharedFileDownloadUrl(file) {
+    if (!file) {
+      return '';
+    }
+    if (file.downloadUrl) {
+      return file.downloadUrl;
+    }
+    const query = `path=${encodeURIComponent(file.path)}&name=${encodeURIComponent(file.filename || 'download')}`;
+    return `/api/shared-file/download/?${query}`;
+  }
+
+  function sharedFileImageRender(file) {
+    const render = file && file.render && typeof file.render === 'object' ? file.render : null;
+    if (render && String(render.type || '').toLowerCase() === 'image') {
+      const src = sandboxImageDataUrl({
+        mime: render.mime_type || file.mimeType,
+        preview: render.preview
+      });
+      if (src) {
+        return {
+          src,
+          width: Number(render.width),
+          height: Number(render.height),
+          mimeType: String(render.mime_type || file.mimeType || '').trim()
+        };
+      }
+    }
+
+    const mimeType = String(file && file.mimeType ? file.mimeType : '').trim().toLowerCase();
+    const filename = String(file && file.filename ? file.filename : '').trim().toLowerCase();
+    const looksLikeImage = mimeType.startsWith('image/')
+      || /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i.test(filename);
+    if (!looksLikeImage) {
+      return null;
+    }
+
+    return {
+      src: sharedFileDownloadUrl(file),
+      width: NaN,
+      height: NaN,
+      mimeType: mimeType || 'image'
+    };
+  }
+
+  function renderSharedImageFileCard(file) {
+    const render = sharedFileImageRender(file);
+    if (!render) {
+      return '';
+    }
+    const href = sharedFileDownloadUrl(file);
+    const width = Number(render.width);
+    const height = Number(render.height);
+    const hasDimensions = Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
+    const metaParts = [
+      formatByteSize(file.sizeBytes),
+      hasDimensions ? `${Math.round(width)}x${Math.round(height)}` : '',
+      render.mimeType || file.typeLabel
+    ].filter(Boolean);
+    const altText = file.filename ? `Preview for ${file.filename}` : 'Shared image preview';
+
+    return `
+      <a class="msg-shared-image-card" href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(file.filename)}">
+        <span class="msg-shared-image-preview">
+          <img class="msg-shared-image" src="${escapeAttributeValue(render.src)}" alt="${escapeAttributeValue(altText)}" loading="lazy">
+        </span>
+        <span class="msg-shared-image-footer">
+          <span class="msg-shared-image-meta">
+            <span class="msg-shared-image-name">${escHtml(file.filename)}</span>
+            <span class="msg-shared-image-details" data-shared-image-details="${escapeAttributeValue(metaParts.join(' / '))}">${escHtml(metaParts.join(' / '))}</span>
+          </span>
+          <span class="msg-shared-image-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>
+        </span>
+      </a>
+    `;
+  }
+
+  function renderSharedFileCard(segment) {
+    const file = sharedFileFromSegment(segment);
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    const fallbackPath = String(args.path || args.file || args.filename || '').trim();
+    const normalized = file || normalizeSharedFilePayload({
+      kind: 'shared_file',
+      path: fallbackPath,
+      filename: args.filename || fallbackPath
+    });
+    if (!normalized) {
+      return renderReasoningToolRow(segment);
+    }
+
+    const sizeText = formatByteSize(normalized.sizeBytes);
+    const metaParts = [normalized.typeLabel];
+    if (sizeText) {
+      metaParts.push(sizeText);
+    }
+    const href = sharedFileDownloadUrl(normalized);
+    const renderedImageCard = renderSharedImageFileCard(normalized);
+    if (renderedImageCard) {
+      return renderedImageCard;
+    }
+    return `
+      <a class="msg-file-chip msg-shared-file-card" href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(normalized.filename)}">
+        <span class="msg-shared-file-badge" aria-hidden="true">FILE</span>
+        <span class="msg-shared-file-main">
+          <span class="msg-file-name">${escHtml(normalized.filename)}</span>
+          <span class="msg-file-meta">${escHtml(metaParts.filter(Boolean).join(' · '))}</span>
+        </span>
+        <span class="msg-shared-file-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>
+      </a>
+    `;
+  }
+
+  function collectPinnedSharedFileCards(segments) {
+    const safeSegments = Array.isArray(segments) ? segments : [];
+    const cards = [];
+    const seen = {};
+    for (let index = 0; index < safeSegments.length; index += 1) {
+      const segment = safeSegments[index];
+      if (!segment || segment.type !== 'tool' || !isSharedFileToolSegment(segment)) {
+        continue;
+      }
+      const file = sharedFileFromSegment(segment);
+      const dedupeKey = file
+        ? `${String(file.path || '').trim().toLowerCase()}::${String(file.filename || '').trim().toLowerCase()}`
+        : `segment-${index}`;
+      if (seen[dedupeKey]) {
+        continue;
+      }
+      seen[dedupeKey] = true;
+      cards.push(renderSharedFileCard(segment));
+    }
+    return cards.filter(function filterCard(card) {
+      return !!String(card || '').trim();
+    });
+  }
+
+  function isImageViewToolSegment(segment) {
+    const identity = toolIdentityText(segment);
+    if (/view[_-\s]?image|read[_-\s]?image/.test(identity)) {
+      return true;
+    }
+    const result = parseToolResultObject(segment);
+    return result && result.kind === 'image';
+  }
+
+  function imageResultFromSegment(segment) {
+    const candidates = [
+      segment && segment.structuredContent,
+      segment && segment.toolUi && segment.toolUi.image,
+      parseToolResultObject(segment)
+    ];
+
+    for (let index = 0; index < candidates.length; index += 1) {
+      const result = candidates[index];
+      if (!result || typeof result !== 'object') {
+        continue;
+      }
+      const preview = result.preview && typeof result.preview === 'object' ? result.preview : null;
+      if (result.kind === 'image' || (preview && preview.type === 'inline_base64')) {
+        return result;
+      }
+    }
+    return null;
+  }
+
+  function sandboxImageDataUrl(imageResult) {
+    const preview = imageResult && imageResult.preview && typeof imageResult.preview === 'object'
+      ? imageResult.preview
+      : null;
+    if (!preview || preview.type !== 'inline_base64') {
+      return '';
+    }
+
+    let mime = String(preview.mime_type || imageResult.mime || 'image/png').trim().toLowerCase();
+    if (!mime || mime === 'image') {
+      mime = 'image/png';
+    } else if (!mime.includes('/')) {
+      mime = `image/${mime}`;
+    }
+    const dataBase64 = String(preview.data_base64 || '').replace(/\s+/g, '');
+    if (!/^image\/[a-z0-9.+-]+$/i.test(mime) || !dataBase64) {
+      return '';
+    }
+    return `data:${mime};base64,${dataBase64}`;
+  }
+
+  function editModeFromSegment(segment) {
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    const mode = String(args.mode || '').trim().toLowerCase();
+    if (mode === 'lines' || mode === 'line' || (args.range !== undefined && String(args.range || '').trim())) {
+      return 'lines';
+    }
+    return 'match';
+  }
+
+  function editPathFromSegment(segment, result) {
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    return String((result && (result.p || result.path)) || args.path || args.file || args.filename || '').trim();
+  }
+
+  function parseUnifiedDiffRows(diffText) {
+    const rows = [];
+    const lines = String(diffText || '').split(/\r?\n/);
+    let oldLine = null;
+    let newLine = null;
+
+    lines.forEach(function parseDiffLine(line) {
+      if (!line || line.startsWith('--- ') || line.startsWith('+++ ')) {
+        return;
+      }
+
+      const hunkMatch = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/.exec(line);
+      if (hunkMatch) {
+        oldLine = parseInt(hunkMatch[1], 10);
+        newLine = parseInt(hunkMatch[2], 10);
+        rows.push({ type: 'hunk', oldNo: '', newNo: '', text: line });
+        return;
+      }
+
+      if (oldLine === null || newLine === null) {
+        return;
+      }
+
+      const marker = line.charAt(0);
+      const text = line.slice(1);
+      if (marker === '-') {
+        rows.push({ type: 'delete', oldNo: oldLine, newNo: '', text });
+        oldLine += 1;
+        return;
+      }
+      if (marker === '+') {
+        rows.push({ type: 'add', oldNo: '', newNo: newLine, text });
+        newLine += 1;
+        return;
+      }
+      if (marker === ' ') {
+        rows.push({ type: 'context', oldNo: oldLine, newNo: newLine, text });
+        oldLine += 1;
+        newLine += 1;
+      }
+    });
+
+    return rows;
+  }
+
+  function fallbackEditRows(segment) {
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    const mode = editModeFromSegment(segment);
+    const rows = [];
+
+    if (mode === 'lines') {
+      const rangeLabel = args.range !== undefined ? String(Array.isArray(args.range) ? args.range.join(':') : args.range) : '';
+      if (rangeLabel) {
+        rows.push({ type: 'hunk', oldNo: '', newNo: '', text: `range ${rangeLabel}` });
+      }
+      String(args.content || args.new_str || '')
+        .split(/\r?\n/)
+        .forEach(function addLine(line, index) {
+          rows.push({ type: 'add', oldNo: '', newNo: index + 1, text: line });
+        });
+      return rows;
+    }
+
+    String(args.old_str || '')
+      .split(/\r?\n/)
+      .forEach(function deleteLine(line, index) {
+        rows.push({ type: 'delete', oldNo: index + 1, newNo: '', text: line });
+      });
+    String(args.new_str || '')
+      .split(/\r?\n/)
+      .forEach(function addLine(line, index) {
+        rows.push({ type: 'add', oldNo: '', newNo: index + 1, text: line });
+      });
+    return rows;
+  }
+
+  function editRowsFromSegment(segment, result) {
+    const rows = parseUnifiedDiffRows(result && result.ud ? result.ud : '');
+    return rows.length > 0 ? rows : fallbackEditRows(segment);
+  }
+
+  function renderEditRows(rows, isExpanded, language) {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const maxRows = isExpanded ? EDIT_PREVIEW_EXPANDED_ROWS : EDIT_PREVIEW_COLLAPSED_ROWS;
+    const visibleRows = safeRows.slice(0, maxRows);
+    const codeLanguage = normalizeHighlightLanguage(language);
+    const rowsHtml = visibleRows.map(function renderEditRow(row, index) {
+      const isFadeLine = !isExpanded && index === EDIT_PREVIEW_COLLAPSED_ROWS - 1 && safeRows.length > EDIT_PREVIEW_COLLAPSED_ROWS;
+      const rowClass = `msg-edit-row is-${row.type || 'context'}${isFadeLine ? ' msg-edit-row--fade' : ''}`;
+      const lineNo = row.type === 'delete'
+        ? row.oldNo
+        : (row.newNo !== undefined && row.newNo !== '' ? row.newNo : row.oldNo);
+      return `
+        <span class="${rowClass}">
+          <span class="msg-edit-gutter">${escHtml(lineNo === undefined ? '' : lineNo)}</span>
+          <span class="msg-edit-code">${row.type === 'hunk' ? escHtml(row.text || ' ') : highlightCode(row.text || ' ', codeLanguage)}</span>
+        </span>
+      `;
+    }).join('');
+    if (isExpanded && safeRows.length > maxRows) {
+      return `${rowsHtml}<span class="msg-edit-row is-context msg-edit-row--fade"><span class="msg-edit-gutter"></span><span class="msg-edit-code">... ${escHtml(String(safeRows.length - maxRows))} more rows omitted</span></span>`;
+    }
+    return rowsHtml;
+  }
+
+  function renderEditToolCard(segment, toolSegmentIndex, options) {
+    const renderOptions = options || {};
+    const result = parseToolResultObject(segment);
+    const rows = editRowsFromSegment(segment, result);
+    const isExpanded = !!renderOptions.expanded;
+    const path = editPathFromSegment(segment, result);
+    const mode = editModeFromSegment(segment);
+    const language = languageFromPath(path, 'plaintext');
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-edit-segment-index="${toolSegmentIndex}"` : '';
+    const label = path ? `Edit ${path}` : 'Edit';
+    const summaryParts = [mode];
+    if (result.r) {
+      summaryParts.push(`range ${result.r}`);
+    } else if (result.rep !== undefined) {
+      summaryParts.push(`${result.rep} replaced`);
+    }
+    if (result.d !== undefined) {
+      summaryParts.push(`${Number(result.d) >= 0 ? '+' : ''}${result.d} lines`);
+    } else if (rows.length > EDIT_PREVIEW_EXPANDED_ROWS) {
+      summaryParts.push(`${rows.length} rows`);
+    }
+
+    return `
+      <div class="msg-edit-card${toolStatusClass(segment)}${isExpanded ? ' is-expanded' : ''}"${dataIndex} role="button" tabindex="0" aria-expanded="${isExpanded ? 'true' : 'false'}">
+        <span class="msg-edit-head">
+          ${icons.TOOL_EDIT_FILE_ICON || ''}
+          <span class="msg-edit-title">${escHtml(label)}</span>
+          <span class="msg-edit-summary">${escHtml(summaryParts.join(' · '))}</span>
+        </span>
+        <span class="msg-edit-preview msg-code-block language-${escapeAttributeValue(language)}" data-language="${escapeAttributeValue(language)}">${rows.length ? renderEditRows(rows, isExpanded, language) : '<span class="msg-edit-row is-context"><span class="msg-edit-gutter"></span><span class="msg-edit-code">No diff.</span></span>'}</span>
+      </div>
+    `;
+  }
+
+  function truncateInlineText(value, maxLength) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    const limit = maxLength || 140;
+    return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+  }
+
+  function compactToolValue(value) {
+    if (value === null || value === undefined) {
+      return '';
+    }
+
+    if (typeof value === 'string') {
+      return truncateInlineText(value, 150);
+    }
+
+    try {
+      return truncateInlineText(JSON.stringify(value), 150);
+    } catch (_error) {
+      return truncateInlineText(String(value), 150);
+    }
+  }
+
+  function utf8ByteLength(value) {
+    const text = String(value || '');
+    if (typeof TextEncoder !== 'undefined') {
+      return new TextEncoder().encode(text).length;
+    }
+    return unescape(encodeURIComponent(text)).length;
+  }
+
+  function textLineCount(value) {
+    const text = String(value || '');
+    return text ? text.split(/\r?\n/).length : 0;
+  }
+
+  function truncateTextPreview(value, maxChars) {
+    const text = String(value || '');
+    const limit = Math.max(0, Number(maxChars) || 0);
+    if (!limit || text.length <= limit) {
+      return { text, truncated: false, omittedChars: 0 };
+    }
+    return {
+      text: text.slice(0, limit),
+      truncated: true,
+      omittedChars: text.length - limit
+    };
+  }
+
+  function heavyToolKeysForSegment(segment) {
+    if (isWriteToolSegment(segment)) {
+      return HEAVY_TOOL_ARGUMENT_KEYS.write;
+    }
+    if (isEditToolSegment(segment)) {
+      return HEAVY_TOOL_ARGUMENT_KEYS.edit;
+    }
+    if (isSandboxToolSegment(segment)) {
+      return HEAVY_TOOL_ARGUMENT_KEYS.bash;
+    }
+    return [];
+  }
+
+  function toolIdentityText(segment) {
+    const safeSegment = segment && typeof segment === 'object' ? segment : {};
+    return [
+      safeSegment.alias,
+      safeSegment.serverId,
+      safeSegment.serverName,
+      safeSegment.toolId,
+      safeSegment.toolName
+    ].join(' ').toLowerCase();
+  }
+
+  function isSandboxToolSegment(segment) {
+    return /sandbox|python|bash|shell|exec|code|deep[-_\s]?think|container/.test(toolIdentityText(segment));
+  }
+
+  function parseSandboxResult(segment) {
+    const rawResult = segment && segment.result !== null && segment.result !== undefined
+      ? String(segment.result)
+      : '';
+    if (!rawResult) {
+      return {
+        ok: null,
+        exitCode: null,
+        stdout: '',
+        stderr: '',
+        raw: ''
+      };
+    }
+
+    try {
+      const parsed = JSON.parse(rawResult);
+      const envelope = parsed && typeof parsed === 'object' ? parsed : {};
+      const result = envelope.result && typeof envelope.result === 'object' ? envelope.result : envelope;
+      const error = envelope.error && typeof envelope.error === 'object' ? envelope.error : null;
+      return {
+        ok: envelope.ok === undefined ? null : !!envelope.ok,
+        exitCode: result.exit_code !== undefined && result.exit_code !== null ? result.exit_code : null,
+        stdout: result.stdout !== undefined && result.stdout !== null ? String(result.stdout) : '',
+        stderr: result.stderr !== undefined && result.stderr !== null
+          ? String(result.stderr)
+          : (error && error.message ? String(error.message) : ''),
+        raw: rawResult
+      };
+    } catch (_error) {
+      return {
+        ok: null,
+        exitCode: null,
+        stdout: rawResult,
+        stderr: '',
+        raw: rawResult
+      };
+    }
+  }
+
+  function sandboxInputText(segment) {
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    const command = args.command || args.cmd || args.code || args.input || '';
+    const stdin = args.stdin !== undefined && args.stdin !== null ? String(args.stdin) : '';
+    if (stdin) {
+      return `${command}\n\n${stdin}`;
+    }
+    return String(command || '');
+  }
+
+  function sandboxInputPreviewText(segment) {
+    const preview = truncateTextPreview(sandboxInputText(segment), SANDBOX_INPUT_PREVIEW_CHARS);
+    if (!preview.truncated) {
+      return preview.text;
+    }
+    return `${preview.text}\n\n... ${preview.omittedChars} more characters omitted`;
+  }
+
+  function sandboxLanguage(segment) {
+    const identity = toolIdentityText(segment);
+    if (/python/.test(identity)) {
+      return 'python';
+    }
+    if (/bash|shell|exec|sandbox|container/.test(identity)) {
+      return 'bash';
+    }
+    return 'plaintext';
+  }
+
+  function renderSandboxStreamBlock(label, content, streamClass, language) {
+    const text = String(content || '');
+    if (!text) {
+      return '';
+    }
+
+    const safeLanguage = String(language || 'plaintext').replace(/[^a-z0-9_-]/gi, '') || 'plaintext';
+    return `
+      <div class="msg-sandbox-section ${streamClass}">
+        <div class="msg-sandbox-section-label">${escHtml(label)}</div>
+        <pre class="msg-sandbox-pre msg-code-block language-${safeLanguage}" data-language="${escapeAttributeValue(safeLanguage)}"><code>${highlightCode(text, safeLanguage)}</code></pre>
+      </div>
+    `;
+  }
+
+  function sandboxStatusClass(segment, result) {
+    if (result && (result.ok === false || (result.exitCode !== null && result.exitCode !== undefined && Number(result.exitCode) !== 0))) {
+      return ' is-error';
+    }
+    return toolStatusClass(segment);
+  }
+
+  function renderSandboxImageToolBlock(segment, toolSegmentIndex) {
+    const image = imageResultFromSegment(segment);
+    if (!image) {
+      return '';
+    }
+
+    const status = toolStatusText(segment);
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-tool-segment-index="${toolSegmentIndex}"` : '';
+    const path = String(image.path || reasoningToolDetail(segment) || '').trim();
+    const mime = String(image.mime || (image.preview && image.preview.mime_type) || '').trim();
+    const src = sandboxImageDataUrl(image);
+    const width = Number(image.width);
+    const height = Number(image.height);
+    const hasDimensions = Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
+    const metaParts = [
+      hasDimensions ? `${Math.round(width)}x${Math.round(height)}` : '',
+      mime,
+      formatByteSize(image.size_bytes)
+    ].filter(Boolean);
+    const title = path ? `Viewed ${path}` : 'Viewed image';
+    const altText = path ? `Image preview for ${path}` : 'Image preview';
+    const preview = image.preview && typeof image.preview === 'object' ? image.preview : {};
+    const previewUnavailableClass = src ? '' : ' is-preview-unavailable';
+    const previewWithheldClass = preview.type === 'text_placeholder' || (image.vision_gate && image.vision_gate.allowed === false)
+      ? ' is-preview-withheld'
+      : '';
+    const imageLoadState = src ? (sandboxImageLoadStateBySrc.get(src) || '') : '';
+    const imageLoadedClass = src && (loadedSandboxImageSrcs.has(src) || imageLoadState === 'loaded') ? ' is-loaded' : '';
+    const imageErrorClass = imageLoadState === 'error' ? ' is-load-error' : '';
+    const imageHtml = src
+      ? `<div class="msg-sandbox-image-loader" aria-hidden="true"></div><img class="msg-sandbox-image" src="${escapeAttributeValue(src)}" alt="${escapeAttributeValue(altText)}" loading="lazy" data-sandbox-image-src="${escapeAttributeValue(src)}">`
+      : '<div class="msg-sandbox-image-empty">Preview unavailable</div>';
+
+    return `
+      <div class="msg-sandbox-card msg-sandbox-image-card${previewUnavailableClass}${previewWithheldClass}${toolStatusClass(segment)}"${dataIndex}>
+        <div class="msg-sandbox-head">
+          ${icons.TOOL_IMAGE_VIEW_ICON || icons.TOOL_BASH_ICON || '<span class="msg-reasoning-tool-icon is-sandbox" aria-hidden="true">S</span>'}
+          <span class="msg-sandbox-title">Image</span>
+          <span class="msg-sandbox-detail">${escHtml(title)}</span>
+          <span class="msg-reasoning-tool-status">${escHtml(status)}</span>
+        </div>
+        <div class="msg-sandbox-image-frame${src ? ' is-loading' : ''}${imageLoadedClass}${imageErrorClass}">${imageHtml}</div>
+        ${metaParts.length ? `<div class="msg-sandbox-image-meta">${escHtml(metaParts.join(' В· '))}</div>` : ''}
+      </div>
+    `;
+  }
+
+  function renderSandboxToolBlock(segment, toolSegmentIndex) {
+    const status = toolStatusText(segment);
+    const detail = reasoningToolDetail(segment);
+    const result = parseSandboxResult(segment);
+    const language = sandboxLanguage(segment);
+    const inputText = sandboxInputPreviewText(segment) || detail;
+    const hasResult = segment.result !== null && segment.result !== undefined;
+    const outputText = result.stdout || (!hasResult ? 'Running...' : '');
+    const exitCodeText = result.exitCode !== null && result.exitCode !== undefined ? `exit ${result.exitCode}` : status;
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-tool-segment-index="${toolSegmentIndex}"` : '';
+    const stderrHtml = renderSandboxStreamBlock('stderr', result.stderr, 'is-stderr', 'plaintext');
+    const stdoutHtml = renderSandboxStreamBlock('stdout', outputText, 'is-stdout', 'plaintext');
+
+    if (result.ok !== false && isImageViewToolSegment(segment)) {
+      const imageHtml = renderSandboxImageToolBlock(segment, toolSegmentIndex);
+      if (imageHtml) {
+        return imageHtml;
+      }
+    }
+
+    return `
+      <div class="msg-sandbox-card${sandboxStatusClass(segment, result)}"${dataIndex}>
+        <div class="msg-sandbox-head">
+          ${icons.TOOL_BASH_ICON || '<span class="msg-reasoning-tool-icon is-sandbox" aria-hidden="true">S</span>'}
+          <span class="msg-sandbox-title">Sandbox</span>
+          ${detail ? `<span class="msg-sandbox-detail">${escHtml(detail)}</span>` : ''}
+          <span class="msg-reasoning-tool-status">${escHtml(exitCodeText)}</span>
+        </div>
+        ${renderSandboxStreamBlock('stdin', inputText, 'is-stdin', language)}
+        ${stdoutHtml || stderrHtml ? `${stdoutHtml}${stderrHtml}` : renderSandboxStreamBlock('stdout', 'No output.', 'is-stdout is-empty', 'plaintext')}
+      </div>
+    `;
+  }
+
+  function rememberLoadedSandboxImages($root) {
+    const root = $root && $root.length ? $root : dom.$messagesInner;
+    root.find('.msg-sandbox-image-frame.is-loaded .msg-sandbox-image[data-sandbox-image-src]').each(function rememberImage() {
+      const src = String(this.getAttribute('data-sandbox-image-src') || '');
+      if (src) {
+        loadedSandboxImageSrcs.add(src);
+        sandboxImageLoadStateBySrc.set(src, 'loaded');
+      }
+    });
+  }
+
+  function syncSandboxImageFramesForSrc(src) {
+    const normalizedSrc = String(src || '').trim();
+    if (!normalizedSrc) {
+      return;
+    }
+
+    const stateValue = sandboxImageLoadStateBySrc.get(normalizedSrc) || '';
+    if (!stateValue) {
+      return;
+    }
+
+    const $roots = dom.$messagesInner.add($('#reasoningDrawerBody'));
+    $roots.find('.msg-sandbox-image[data-sandbox-image-src]').each(function syncFrame() {
+      const imageSrc = String(this.getAttribute('data-sandbox-image-src') || this.currentSrc || this.src || '');
+      if (imageSrc !== normalizedSrc) {
+        return;
+      }
+
+      const frame = this.closest('.msg-sandbox-image-frame');
+      if (!frame) {
+        return;
+      }
+
+      if (stateValue === 'loaded') {
+        frame.classList.add('is-loaded');
+        frame.classList.remove('is-load-error');
+      } else if (stateValue === 'error') {
+        frame.classList.add('is-load-error');
+      }
+    });
+  }
+
+  function ensureSandboxImagePreload(src) {
+    const normalizedSrc = String(src || '').trim();
+    if (!normalizedSrc) {
+      return;
+    }
+
+    const knownState = sandboxImageLoadStateBySrc.get(normalizedSrc);
+    if (knownState === 'loading' || knownState === 'loaded' || knownState === 'error') {
+      return;
+    }
+
+    sandboxImageLoadStateBySrc.set(normalizedSrc, 'loading');
+    const preloadImage = new window.Image();
+    preloadImage.onload = function onPreloadLoad() {
+      loadedSandboxImageSrcs.add(normalizedSrc);
+      sandboxImageLoadStateBySrc.set(normalizedSrc, 'loaded');
+      syncSandboxImageFramesForSrc(normalizedSrc);
+    };
+    preloadImage.onerror = function onPreloadError() {
+      sandboxImageLoadStateBySrc.set(normalizedSrc, 'error');
+      syncSandboxImageFramesForSrc(normalizedSrc);
+    };
+    preloadImage.src = normalizedSrc;
+  }
+
+  function markSandboxImageLoaded(imageEl) {
+    if (!imageEl) {
+      return;
+    }
+    const src = String(imageEl.getAttribute('data-sandbox-image-src') || imageEl.currentSrc || imageEl.src || '');
+    if (src) {
+      loadedSandboxImageSrcs.add(src);
+      sandboxImageLoadStateBySrc.set(src, 'loaded');
+    }
+    const frame = imageEl.closest('.msg-sandbox-image-frame');
+    if (frame) {
+      frame.classList.add('is-loaded');
+      frame.classList.remove('is-load-error');
+    }
+  }
+
+  function markSandboxImageError(imageEl) {
+    const src = String((imageEl && imageEl.getAttribute && imageEl.getAttribute('data-sandbox-image-src')) || (imageEl && imageEl.currentSrc) || (imageEl && imageEl.src) || '');
+    if (src) {
+      sandboxImageLoadStateBySrc.set(src, 'error');
+    }
+    const frame = imageEl && imageEl.closest ? imageEl.closest('.msg-sandbox-image-frame') : null;
+    if (frame) {
+      frame.classList.add('is-load-error');
+    }
+  }
+
+  function hydrateSandboxImages($root) {
+    const root = $root && $root.length ? $root : dom.$messagesInner;
+    root.find('.msg-sandbox-image[data-sandbox-image-src]').each(function hydrateImage() {
+      const imageEl = this;
+      const src = String(imageEl.getAttribute('data-sandbox-image-src') || imageEl.currentSrc || imageEl.src || '');
+      const stateValue = src ? (sandboxImageLoadStateBySrc.get(src) || '') : '';
+      if (stateValue === 'loaded') {
+        markSandboxImageLoaded(imageEl);
+        return;
+      }
+      if (stateValue === 'error') {
+        markSandboxImageError(imageEl);
+        return;
+      }
+      if (src && loadedSandboxImageSrcs.has(src)) {
+        markSandboxImageLoaded(imageEl);
+        return;
+      }
+      if (src) {
+        ensureSandboxImagePreload(src);
+      }
+      if (imageEl.complete && imageEl.naturalWidth > 0) {
+        markSandboxImageLoaded(imageEl);
+        return;
+      }
+      if (imageEl.dataset.sandboxLoadBound === '1') {
+        return;
+      }
+      imageEl.dataset.sandboxLoadBound = '1';
+      imageEl.addEventListener('load', function onSandboxImageLoad() {
+        markSandboxImageLoaded(imageEl);
+      }, { once: true });
+      imageEl.addEventListener('error', function onSandboxImageError() {
+        markSandboxImageError(imageEl);
+      }, { once: true });
+    });
+  }
+
+  function hydrateSharedImageCards($root) {
+    const root = $root && $root.length ? $root : dom.$messagesInner;
+    root.find('.msg-shared-image').each(function hydrateSharedImage() {
+      const imageEl = this;
+      if (imageEl.dataset.sharedImageHydrated === '1') {
+        return;
+      }
+      imageEl.dataset.sharedImageHydrated = '1';
+
+      const applyDimensions = function applyDimensions() {
+        const card = imageEl.closest('.msg-shared-image-card');
+        const details = card ? card.querySelector('.msg-shared-image-details') : null;
+        const width = Number(imageEl.naturalWidth);
+        const height = Number(imageEl.naturalHeight);
+        if (!details || !Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+          return;
+        }
+        const base = String(details.dataset.sharedImageDetails || details.textContent || '').trim();
+        const dimensionText = `${Math.round(width)}x${Math.round(height)}`;
+        if (base.includes(dimensionText)) {
+          return;
+        }
+        details.textContent = base ? `${base} / ${dimensionText}` : dimensionText;
+      };
+
+      if (imageEl.complete) {
+        applyDimensions();
+      } else {
+        imageEl.addEventListener('load', applyDimensions, { once: true });
+      }
+    });
+  }
+
+  function toolDisplayName(segment) {
+    if (isSearchToolSegment(segment)) {
+      return 'Search';
+    }
+    if (isReadPageToolSegment(segment)) {
+      return 'Read page';
+    }
+    if (isSharedFileToolSegment(segment)) {
+      return 'Shared file';
+    }
+    if (isImageViewToolSegment(segment)) {
+      return 'Image';
+    }
+    if (isSandboxToolSegment(segment)) {
+      return 'Sandbox';
+    }
+
+    return String(segment.toolName || segment.toolId || segment.alias || 'Tool').trim();
+  }
+
+  function toolStatusText(segment) {
+    const rawStatus = segment.toolUi && segment.toolUi.status ? String(segment.toolUi.status).trim().toLowerCase() : '';
+    if (rawStatus === 'error' || rawStatus === 'timeout') {
+      return rawStatus === 'timeout' ? 'Timeout' : 'Error';
+    }
+    return segment.result !== null && segment.result !== undefined ? 'Done' : 'Running';
+  }
+
+  function toolStatusClass(segment) {
+    const status = toolStatusText(segment).toLowerCase();
+    if (status === 'error' || status === 'timeout') {
+      return ' is-error';
+    }
+    if (status === 'running') {
+      return ' is-pending';
+    }
+    return ' is-done';
+  }
+
+  function reasoningToolDetail(segment) {
+    if (isSearchToolSegment(segment)) {
+      return searchQueryFromSegment(segment) || 'sources';
+    }
+
+    if (isReadPageToolSegment(segment)) {
+      const sources = readPageSourcesFromSegment(segment);
+      if (sources.length > 0) {
+        return sources
+          .map(function sourceLabel(source) { return source.display_domain || source.domain || source.url || ''; })
+          .filter(Boolean)
+          .slice(0, 2)
+          .join(', ');
+      }
+      return 'source page';
+    }
+
+    if (isSharedFileToolSegment(segment)) {
+      const file = sharedFileFromSegment(segment);
+      const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+      return String((file && file.filename) || args.filename || args.path || args.file || 'file').trim();
+    }
+
+    if (isImageViewToolSegment(segment)) {
+      const result = imageResultFromSegment(segment);
+      const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+      return String((result && result.path) || args.path || args.file || args.filename || 'image').trim();
+    }
+
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    const heavyKeys = new Set(heavyToolKeysForSegment(segment));
+    const preferredKeys = ['query', 'q', 'url', 'urls', 'path', 'file', 'filename', 'command', 'cmd', 'code', 'prompt', 'input'];
+    for (let index = 0; index < preferredKeys.length; index += 1) {
+      const key = preferredKeys[index];
+      if (heavyKeys.has(key)) {
+        continue;
+      }
+      if (args[key] !== undefined && args[key] !== null && String(args[key]).trim() !== '') {
+        return compactToolValue(args[key]);
+      }
+    }
+
+    const keys = Object.keys(args).filter(function keepKey(key) {
+      return !heavyKeys.has(key) && args[key] !== undefined && args[key] !== null && String(args[key]).trim() !== '';
+    });
+    return keys.slice(0, 2).map(function formatArg(key) {
+      return `${key}: ${compactToolValue(args[key])}`;
+    }).join(' · ');
+  }
+
+  function toolIconHtml(segment) {
+    if (isSearchToolSegment(segment) || isReadPageToolSegment(segment)) {
+      return icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON || '';
+    }
+    if (isSharedFileToolSegment(segment)) {
+      return DOWNLOAD_FILE_ICON;
+    }
+    if (isWriteToolSegment(segment)) {
+      return icons.TOOL_CODE_EXEC_ICON || icons.TOOL_BASH_ICON || '';
+    }
+    if (isEditToolSegment(segment)) {
+      return icons.TOOL_CODE_EXEC_ICON || icons.TOOL_BASH_ICON || '';
+    }
+    if (isImageViewToolSegment(segment)) {
+      return icons.TOOL_CODE_EXEC_ICON || icons.TOOL_BASH_ICON || '';
+    }
+    if (isSandboxToolSegment(segment)) {
+      return icons.TOOL_CODE_EXEC_ICON || icons.TOOL_BASH_ICON || '';
+    }
+    return '';
+  }
+
+  function renderReasoningToolRow(segment, toolSegmentIndex) {
+    const name = toolDisplayName(segment);
+    const detail = reasoningToolDetail(segment);
+    const status = toolStatusText(segment);
+    const iconHtml = toolIconHtml(segment);
+    const initial = name.charAt(0).toUpperCase() || 'T';
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-tool-segment-index="${toolSegmentIndex}"` : '';
+
+    return `
+      <div class="msg-reasoning-tool-row${toolStatusClass(segment)}"${dataIndex}>
+        ${iconHtml || `<span class="msg-reasoning-tool-icon" aria-hidden="true">${escHtml(initial)}</span>`}
+        <span class="msg-reasoning-tool-main">
+          <span class="msg-reasoning-tool-name">${escHtml(name)}</span>
+          ${detail ? `<span class="msg-reasoning-tool-detail">${escHtml(detail)}</span>` : ''}
+        </span>
+        <span class="msg-reasoning-tool-status">${escHtml(status)}</span>
+      </div>
+    `;
+  }
+
+  function renderReasoningToolItem(item) {
+    const segment = item && item.segment ? item.segment : item;
+    const toolIndex = item && Number.isInteger(item.toolIndex) ? item.toolIndex : undefined;
+    if (!segment) {
+      return '';
+    }
+
+    if (isSearchToolSegment(segment)) {
+      return renderSearchToolCard(segment, toolIndex, { compactLabel: true, hideIcon: false, expanded: !!item.expanded });
+    }
+    if (isReadPageToolSegment(segment)) {
+      return renderReadPageToolCard([{ segment, index: toolIndex }]);
+    }
+    if (isSharedFileToolSegment(segment)) {
+      return renderSharedFileCard(segment);
+    }
+    if (isCompressionContextSegment(segment)) {
+      return renderCompressionContextCard(segment, toolIndex);
+    }
+    if (isWriteToolSegment(segment)) {
+      return renderWriteToolCard(segment, toolIndex, { expanded: !!item.expanded });
+    }
+    if (isEditToolSegment(segment)) {
+      return renderEditToolCard(segment, toolIndex, { expanded: !!item.expanded });
+    }
+    if (isSandboxToolSegment(segment)) {
+      return renderSandboxToolBlock(segment, toolIndex);
+    }
+    return renderReasoningToolRow(segment, toolIndex);
+  }
+
+  function reasoningToolStepTitle(segment) {
+    if (isSearchToolSegment(segment)) {
+      return toolStatusText(segment) === 'Done' ? 'Searched sources' : 'Searching sources';
+    }
+    if (isReadPageToolSegment(segment)) {
+      return 'Reading source page';
+    }
+    if (isSharedFileToolSegment(segment)) {
+      const file = sharedFileFromSegment(segment);
+      return file && file.filename ? `Shared ${file.filename}` : 'Shared file';
+    }
+    if (isWriteToolSegment(segment)) {
+      const path = writePathFromSegment(segment);
+      return path ? `Writing ${path}` : 'Writing file';
+    }
+    if (isEditToolSegment(segment)) {
+      const result = parseToolResultObject(segment);
+      const path = editPathFromSegment(segment, result);
+      return path ? `Editing ${path}` : 'Editing file';
+    }
+    if (isImageViewToolSegment(segment)) {
+      const result = imageResultFromSegment(segment);
+      const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+      const path = String((result && result.path) || args.path || '').trim();
+      return path ? `Viewing ${path}` : 'Viewing image';
+    }
+    if (isSandboxToolSegment(segment)) {
+      return 'Running sandbox command';
+    }
+    return toolDisplayName(segment);
+  }
+
+  function reasoningToggleLabel() {
+    return 'Thought';
+  }
+
+  function hasThoughtSegments(segments) {
+    return (Array.isArray(segments) ? segments : []).some(function hasThought(segment) {
+      return segment && segment.type === 'thought';
+    });
+  }
+
+  function hasReasoningMarker(rawText) {
+    return /<\/?(?:think|thinking|reasoning|analysis)>/i.test(String(rawText || ''));
+  }
+
+  function shouldUseReasoningShell($msgRow, segments, rawText, renderOptions) {
+    const options = renderOptions || {};
+    const rawHasReasoningMarker = hasReasoningMarker(rawText);
+    const segmentHasThoughts = hasThoughtSegments(segments);
+    const trustedSegmentThoughts = segmentHasThoughts && options.trustThoughtSegments !== false;
+    const sawReasoning = trustedSegmentThoughts || rawHasReasoningMarker;
+    if (sawReasoning) {
+      $msgRow.data('sawReasoning', true);
+    }
+
+    return !!options.reasoningMode
+      || !!$msgRow.data('reasoningModeEnabled')
+      || !!$msgRow.data('sawReasoning')
+      || rawHasReasoningMarker
+      || trustedSegmentThoughts;
+  }
+
+  function hasClosedReasoning(rawText) {
+    return /<\/(?:think|thinking|reasoning|analysis)>/i.test(String(rawText || ''));
+  }
+
+  function splitLongReasoningSentence(sentence, targetLength) {
+    const words = String(sentence || '').trim().split(/\s+/).filter(Boolean);
+    const chunks = [];
+    let current = '';
+
+    words.forEach(function addWord(word) {
+      const next = current ? `${current} ${word}` : word;
+      if (current && next.length > targetLength) {
+        chunks.push(current);
+        current = word;
+        return;
+      }
+      current = next;
+    });
+
+    if (current) {
+      chunks.push(current);
+    }
+    return chunks;
+  }
+
+  function splitReasoningText(content) {
+    const normalized = String(content || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+      return [];
+    }
+
+    const sentenceParts = normalized.match(/[^.!?…]+[.!?…]+["')\]]*|[^.!?…]+$/g) || [normalized];
+    const chunks = [];
+    let current = '';
+
+    sentenceParts.forEach(function addSentence(part) {
+      const sentence = String(part || '').trim();
+      if (!sentence) {
+        return;
+      }
+
+      if (sentence.length > REASONING_CHUNK_MAX_CHARS) {
+        if (current) {
+          chunks.push(current);
+          current = '';
+        }
+        splitLongReasoningSentence(sentence, REASONING_CHUNK_TARGET_CHARS).forEach(function pushLongChunk(chunk) {
+          if (chunk) {
+            chunks.push(chunk);
+          }
+        });
+        return;
+      }
+
+      const next = current ? `${current} ${sentence}` : sentence;
+      if (current && next.length > REASONING_CHUNK_MAX_CHARS) {
+        chunks.push(current);
+        current = sentence;
+        return;
+      }
+
+      current = next;
+    });
+
+    if (current) {
+      chunks.push(current);
+    }
+
+    return chunks.length > 0 ? chunks : [normalized];
+  }
+
+  function renderReasoningThoughtText(content) {
+    const text = String(content || '').trim();
+    if (!text) {
+      return '';
+    }
+    return `<div class="msg-reasoning-text">${escHtml(text)}</div>`;
+  }
+
+  function renderPendingToolCallPlaceholder() {
+    return `
+      <div class="msg-tool-pending-card" aria-live="polite">
+        <span class="msg-tool-pending-icon" aria-hidden="true"></span>
+        <span class="msg-tool-pending-main">
+          <span class="msg-tool-pending-title">Preparing tool call</span>
+          <span class="msg-tool-pending-detail">Tool input is being formed</span>
+        </span>
+        <span class="msg-tool-pending-dot" aria-hidden="true"></span>
+      </div>
+    `;
+  }
+
+  function renderReasoningGroup(items, thoughtIndex, isExpanded, toggleLabel, options) {
+    const safeItems = Array.isArray(items) ? items : [];
+    const groupOptions = options || {};
+    const thoughtCount = safeItems.filter(function countThoughts(item) { return item && item.type === 'thought'; }).length;
+    const toolCount = safeItems.filter(function countTools(item) {
+      return item && (item.type === 'tool' || item.type === 'tool_pending');
+    }).length;
+    const summaryParts = [];
+    if (thoughtCount > 1) {
+      summaryParts.push(`${thoughtCount} thoughts`);
+    }
+    if (toolCount > 0) {
+      summaryParts.push(`${toolCount} tool ${toolCount === 1 ? 'call' : 'calls'}`);
+    }
+
+    // Tool-only group (no reasoning): normally render tool cards inline.
+    // When reasoning is active, keep them in the same collapsed shell.
+    if (thoughtCount === 0 && !groupOptions.forceWrapper) {
+      const toolsHtml = safeItems.map(function renderToolOnlyItem(item) {
+        if (!item) {
+          return '';
+        }
+        if (item.type === 'tool') {
+          return renderReasoningToolItem(item);
+        }
+        if (item.type === 'tool_pending') {
+          return renderPendingToolCallPlaceholder();
+        }
+        return '';
+      }).join('');
+      return `<div class="msg-tool-only-group">${toolsHtml}</div>`;
+    }
+
+    const renderItems = safeItems;
+    const contentHtml = renderItems.map(function renderReasoningItem(item) {
+      if (!item) {
+        return '';
+      }
+      if (item.type === 'tool_pending') {
+        return `
+          <div class="msg-reasoning-step msg-reasoning-step--tool is-pending">
+            <div class="msg-reasoning-step-dot" aria-hidden="true"></div>
+            <div class="msg-reasoning-step-body">
+              <div class="msg-reasoning-step-title">
+                <span>Preparing tool call</span>
+                <span class="msg-reasoning-step-status">Pending</span>
+              </div>
+              ${renderPendingToolCallPlaceholder()}
+            </div>
+          </div>
+        `;
+      }
+      if (item.type === 'tool') {
+        const segment = item && item.segment ? item.segment : item;
+        const title = reasoningToolStepTitle(segment || {});
+        const status = toolStatusText(segment || {});
+        const iconHtml = toolIconHtml(segment || {});
+        const hideStepTitle = isWriteToolSegment(segment || {}) || isEditToolSegment(segment || {});
+        return `
+          <div class="msg-reasoning-step msg-reasoning-step--tool${toolStatusClass(segment || {})}">
+            <div class="msg-reasoning-step-dot" aria-hidden="true">${iconHtml}</div>
+            <div class="msg-reasoning-step-body">
+              <div class="msg-reasoning-step-title">
+                ${hideStepTitle ? '' : `<span>${escHtml(title)}</span>`}
+                <span class="msg-reasoning-step-status">${escHtml(status)}</span>
+              </div>
+              ${renderReasoningToolItem(item)}
+            </div>
+          </div>
+        `;
+      }
+      return `
+        <div class="msg-reasoning-step">
+          <div class="msg-reasoning-step-dot" aria-hidden="true"></div>
+          <div class="msg-reasoning-step-body">
+            ${renderReasoningThoughtText(item.content || '')}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="msg-thoughts-wrapper msg-reasoning-wrapper${isExpanded ? ' expanded' : ''}" data-thought-index="${thoughtIndex}">
+        <button type="button" class="msg-thoughts-toggle msg-reasoning-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}">
+          <span class="msg-reasoning-title">${escHtml(toggleLabel || 'Thought')}</span>
+          ${summaryParts.length ? `<span class="msg-reasoning-summary">${escHtml(summaryParts.join(' · '))}</span>` : ''}
+        </button>
+        <div class="msg-thoughts-content msg-reasoning-content" style="display:${isExpanded ? 'block' : 'none'};">${contentHtml}</div>
+      </div>
+    `;
+  }
+
+  function renderThoughtBlock(content, thoughtIndex, isExpanded) {
+    return `
+      <div class="msg-thoughts-wrapper msg-reasoning-wrapper${isExpanded ? ' expanded' : ''}" data-thought-index="${thoughtIndex}">
+        <button type="button" class="msg-thoughts-toggle msg-reasoning-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}">
+          <span class="msg-reasoning-title">Thought</span>
+        </button>
+        <div class="msg-thoughts-content msg-reasoning-content" style="display:${isExpanded ? 'block' : 'none'};">${renderReasoningThoughtText(content)}</div>
+      </div>
+    `;
+  }
+
+  function createActivityBlock(key, innerHtml) {
+    const safeKey = String(key || 'block');
+    return {
+      key: safeKey,
+      html: `<div class="msg-activity-block" data-activity-key="${escapeAttributeValue(safeKey)}">${innerHtml}</div>`
+    };
+  }
+
+  // Return a stable identity key for an element so the morpher can match it
+  // across re-renders without destroying the DOM node.
+  function getElementMorphKey(el) {
+    if (!el || el.nodeType !== 1) {
+      return null;
+    }
+    const searchKey = el.classList.contains('msg-search-card')
+      ? el.getAttribute('data-search-key')
+      : null;
+    if (searchKey) {
+      return 'search:' + searchKey;
+    }
+    const writeIdx = el.getAttribute('data-write-segment-index');
+    if (writeIdx !== null) {
+      return 'write:' + writeIdx;
+    }
+    const editIdx = el.getAttribute('data-edit-segment-index');
+    if (editIdx !== null) {
+      return 'edit:' + editIdx;
+    }
+    const toolIdx = el.getAttribute('data-tool-segment-index');
+    if (toolIdx !== null) {
+      return 'tool:' + toolIdx;
+    }
+    const reasoningCardIdx = el.getAttribute('data-reasoning-card-index');
+    if (reasoningCardIdx !== null && el.classList.contains('msg-reasoning-thought-card')) {
+      return 'reasoning-card:' + reasoningCardIdx;
+    }
+    if (el.classList.contains('msg-tool-pending-card')) {
+      return 'tool-pending';
+    }
+    const activityKey = el.getAttribute('data-activity-key');
+    if (activityKey) {
+      return 'activity:' + activityKey;
+    }
+    // Structural singletons keyed by class so their DOM identity is preserved
+    // and CSS transitions (e.g. search extra-chips) are not interrupted.
+    if (el.classList.contains('msg-search-extra-chips')) {
+      return 'search-extra-chips';
+    }
+    if (el.classList.contains('msg-search-chips')) {
+      return 'search-chips';
+    }
+    if (el.classList.contains('msg-write-preview')) {
+      return 'write-preview';
+    }
+    if (el.classList.contains('msg-edit-preview')) {
+      return 'edit-preview';
+    }
+    return null;
+  }
+
+  // Copy attributes from toEl onto fromEl without touching fromEl's identity.
+  function syncElementAttrs(fromEl, toEl) {
+    const toAttrs = toEl.attributes;
+    for (let i = 0; i < toAttrs.length; i += 1) {
+      const { name, value } = toAttrs[i];
+      if (fromEl.getAttribute(name) !== value) {
+        fromEl.setAttribute(name, value);
+      }
+    }
+    for (let i = fromEl.attributes.length - 1; i >= 0; i -= 1) {
+      const name = fromEl.attributes[i].name;
+      if (!toEl.hasAttribute(name)) {
+        fromEl.removeAttribute(name);
+      }
+    }
+  }
+
+  // Recursively morph fromEl's attributes and children to match toEl while
+  // keeping matched DOM nodes alive so CSS transitions are not interrupted.
+  function morphDomNode(fromEl, toEl) {
+    if (fromEl.nodeType === 3 && toEl.nodeType === 3) {
+      if (fromEl.nodeValue !== toEl.nodeValue) {
+        fromEl.nodeValue = toEl.nodeValue;
+      }
+      return fromEl;
+    }
+    if (fromEl.nodeType !== 1 || fromEl.nodeName !== toEl.nodeName) {
+      const replacement = toEl.cloneNode(true);
+      if (fromEl.parentNode) {
+        fromEl.parentNode.replaceChild(replacement, fromEl);
+      }
+      return replacement;
+    }
+    syncElementAttrs(fromEl, toEl);
+    morphDomChildren(fromEl, toEl);
+    return fromEl;
+  }
+
+  // Reconcile fromParent's children against toParent's children, reusing
+  // existing DOM nodes that share a morph key and matching unkeyed nodes by
+  // tag name when possible.
+  function morphDomChildren(fromParent, toParent) {
+    const toChildren = Array.from(toParent.childNodes);
+    const fromByKey = new Map();
+    const fromUnkeyed = [];
+
+    Array.from(fromParent.childNodes).forEach(function catalogFromChild(child) {
+      const k = child.nodeType === 1 ? getElementMorphKey(child) : null;
+      if (k) {
+        fromByKey.set(k, child);
+      } else {
+        fromUnkeyed.push(child);
+      }
+    });
+
+    let unkeyedIdx = 0;
+    const targetNodes = [];
+
+    toChildren.forEach(function processToChild(toChild) {
+      const toKey = toChild.nodeType === 1 ? getElementMorphKey(toChild) : null;
+      if (toKey && fromByKey.has(toKey)) {
+        const fromChild = fromByKey.get(toKey);
+        fromByKey.delete(toKey);
+        targetNodes.push(morphDomNode(fromChild, toChild));
+        return;
+      }
+      const candidate = fromUnkeyed[unkeyedIdx];
+      if (candidate && candidate.nodeName === toChild.nodeName) {
+        unkeyedIdx += 1;
+        targetNodes.push(morphDomNode(candidate, toChild));
+        return;
+      }
+      targetNodes.push(toChild.cloneNode(true));
+    });
+
+    let referenceNode = fromParent.firstChild;
+    targetNodes.forEach(function placeTargetNode(node) {
+      if (node === referenceNode) {
+        referenceNode = referenceNode.nextSibling;
+        return;
+      }
+      fromParent.insertBefore(node, referenceNode);
+    });
+
+    const targetSet = new Set(targetNodes);
+    Array.from(fromParent.childNodes).forEach(function removeUnexpectedNode(node) {
+      if (!targetSet.has(node)) {
+        fromParent.removeChild(node);
+      }
+    });
+  }
+
+  function applyActivityBlocks($stream, blocks) {
+    const safeBlocks = Array.isArray(blocks) ? blocks : [];
+    const streamEl = $stream[0];
+    if (!streamEl) {
+      return;
+    }
+
+    // Build a keyed map of existing blocks for O(1) lookup.
+    const existingByKey = new Map();
+    $stream.children('.msg-activity-block[data-activity-key]').each(function () {
+      existingByKey.set($(this).attr('data-activity-key'), this);
+    });
+
+    const targetNodes = [];
+
+    safeBlocks.forEach(function processBlock(block) {
+      const existing = existingByKey.get(block.key);
+      if (existing) {
+        existingByKey.delete(block.key);
+        if ($(existing).data('activityHtml') !== block.html) {
+          // Morph in-place so CSS transitions on child elements survive.
+          const $newBlock = $(block.html);
+          morphDomChildren(existing, $newBlock[0]);
+          syncElementAttrs(existing, $newBlock[0]);
+          $(existing).data('activityHtml', block.html);
+        }
+        targetNodes.push(existing);
+      } else {
+        const $block = $(block.html);
+        $block.data('activityHtml', block.html);
+        targetNodes.push($block[0]);
+      }
+    });
+
+    // Remove blocks no longer in the list.
+    existingByKey.forEach(function (el) {
+      el.parentNode && el.parentNode.removeChild(el);
+    });
+
+    // Restore order without detaching nodes that are already in the right
+    // position; active CSS transitions survive across stream render frames.
+    let referenceNode = streamEl.firstChild;
+    targetNodes.forEach(function placeTargetNode(node) {
+      if (node === referenceNode) {
+        referenceNode = referenceNode.nextSibling;
+        return;
+      }
+      streamEl.insertBefore(node, referenceNode);
+    });
+
+    const targetSet = new Set(targetNodes);
+    Array.from(streamEl.childNodes).forEach(function removeUnexpectedNode(node) {
+      if (!targetSet.has(node)) {
+        streamEl.removeChild(node);
+      }
+    });
+    hydrateSandboxImages($stream);
+    hydrateSharedImageCards($stream);
+  }
+
   function renderActivityTimeline($msgRow, segments, options) {
     const renderOptions = options || {};
     const useMarkdown = renderOptions.markdown !== false;
+    const hideTextSegments = renderOptions.hideTextSegments === true;
+    const suppressSharedFileToolRows = renderOptions.reasoningMode !== true;
     const $stream = $msgRow.find('.msg-activity-stream');
     const $bubble = $msgRow.find('.msg-bubble');
+    rememberLoadedSandboxImages($msgRow);
+    const activeDrawerRow = $activeReasoningMessageRow && $activeReasoningMessageRow[0];
+    const activeWrapperRow = $activeReasoningWrapper ? $activeReasoningWrapper.closest('.msg')[0] : null;
+    const shouldSyncOpenDrawer = $('#reasoningDrawer').hasClass('is-open')
+      && (activeDrawerRow === $msgRow[0] || activeWrapperRow === $msgRow[0]);
+    const activeReasoningIndex = shouldSyncOpenDrawer
+      ? String($activeReasoningIndex || ($activeReasoningWrapper ? $activeReasoningWrapper.attr('data-thought-index') : '') || '')
+      : '';
 
     if (!$stream.length) {
       return;
     }
 
-    if (!Array.isArray(segments) || segments.length === 0) {
-      $stream.hide().empty();
-      $bubble.html('');
-      $msgRow.removeAttr('data-expanded-thoughts');
-      $msgRow.removeData('toolSegments');
-      return;
+    let renderSegments = Array.isArray(segments) ? segments.slice() : [];
+    if (renderOptions.trustThoughtSegments === false) {
+      renderSegments = renderSegments.filter(function removeUntrustedThought(segment) {
+        return !(segment && segment.type === 'thought');
+      });
+    }
+    const forceReasoningShell = shouldUseReasoningShell(
+      $msgRow,
+      renderSegments,
+      renderOptions.rawText || '',
+      renderOptions
+    );
+    const pendingToolInReasoning = !!renderOptions.pendingTool && forceReasoningShell;
+
+    if (pendingToolInReasoning) {
+      renderSegments.push({ type: 'tool_pending' });
     }
 
+    if (renderSegments.length === 0) {
+      if (!renderOptions.pendingTool) {
+        $stream.hide().empty();
+        $bubble.html('');
+        $msgRow.removeAttr('data-expanded-thoughts');
+        $msgRow.removeAttr('data-expanded-searches');
+        $msgRow.removeAttr('data-expanded-search-keys');
+        $msgRow.removeData('expandedSearchKeys');
+        $msgRow.removeAttr('data-expanded-writes');
+        $msgRow.removeAttr('data-expanded-edits');
+        $msgRow.removeData('toolSegments');
+        return;
+      }
+      renderSegments = [];
+    }
+
+    segments = renderSegments;
+
     const expandedThoughts = getExpandedThoughtIndices($msgRow);
+    const expandedSearches = getExpandedSearchIndices($msgRow);
+    const expandedSearchKeys = getExpandedSearchKeys($msgRow);
+    const expandedWrites = getExpandedWriteIndices($msgRow);
+    const expandedEdits = getExpandedEditIndices($msgRow);
     let thoughtIndex = -1;
     let toolSegmentIndex = 0;
+    const citationRegistry = {};
     const toolSegments = segments.filter(function onlyToolSegments(segment) {
       return segment.type === 'tool';
     });
+    const lastToolSegmentIndex = segments.reduce(function findLastToolIndex(lastIndex, segment, index) {
+      return segment && segment.type === 'tool' ? index : lastIndex;
+    }, -1);
+    let reasoningGroupIndex = -1;
+    const thoughtToggleLabel = reasoningToggleLabel($msgRow);
 
-    const html = segments.map(function renderSegment(segment) {
-      if (segment.type === 'thought') {
-        thoughtIndex += 1;
-        const isExpanded = expandedThoughts.has(thoughtIndex);
-
-        return `
-          <div class="msg-thoughts-wrapper${isExpanded ? ' expanded' : ''}" data-thought-index="${thoughtIndex}">
-            <div class="msg-thoughts-toggle">Thought Process</div>
-            <div class="msg-thoughts-content" style="display:${isExpanded ? 'block' : 'none'};">${escHtml(segment.content)}</div>
-          </div>
-        `;
+    const blocks = [];
+    function pushBlock(key, html) {
+      if (!html || !String(html).trim()) {
+        return;
       }
+      blocks.push(createActivityBlock(key, html));
+    }
 
-      if (segment.type === 'tool') {
-        const label = escHtml(segment.toolName || segment.alias || segment.toolId || 'Tool');
-        const badge = escHtml(segment.serverName || segment.serverId || 'server');
-        const hasResult = segment.result !== null && segment.result !== undefined;
-        const statusDot = hasResult
-          ? '<span class="msg-tool-call-dot msg-tool-call-dot--done"></span>'
-          : '<span class="msg-tool-call-dot msg-tool-call-dot--pending"></span>';
-
-        return `
-          <div class="msg-tool-call-card" data-tool-segment-index="${toolSegmentIndex++}">
-            <div class="msg-tool-call-main">
-              ${statusDot}
-              <div class="msg-tool-call-name">${label}</div>
-            </div>
-            <div class="msg-tool-call-badge">${badge}</div>
-          </div>
-        `;
-      }
-
-      return `
-        <div class="msg-stream-text">
-          <div class="markdown-body${useMarkdown ? '' : ' is-streaming'}">${useMarkdown ? renderMarkdownSegment(segment.content) : renderPlainTextSegment(segment.content)}</div>
+    function pushTextSegmentBlock(segment, segmentIndex) {
+      const liveClass = renderOptions.streaming === true ? ' is-live' : '';
+      pushBlock(
+        `text-${segmentIndex}`,
+        `
+        <div class="msg-stream-text${liveClass}">
+          <div class="markdown-body${useMarkdown ? '' : ' is-streaming'}">${useMarkdown ? renderMarkdownSegment(segment.content, citationRegistry) : renderPlainTextSegment(segment.content)}</div>
         </div>
-      `;
-    }).join('');
+      `
+      );
+    }
+
+    if (forceReasoningShell) {
+      const reasoningItems = [];
+      let activeToolSegmentIndex = 0;
+      const lastActivitySegmentIndex = segments.reduce(function findLastActivityIndex(lastIndex, segment, index) {
+        return segment
+          && (segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending')
+          ? index
+          : lastIndex;
+      }, -1);
+      const finalReasoningAnchorTextIndex = segments.reduce(function findReasoningAnchor(lastIndex, segment, index) {
+        if (hideTextSegments || index >= lastActivitySegmentIndex || !segment) {
+          return lastIndex;
+        }
+        return segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending'
+          ? lastIndex
+          : index;
+      }, -1);
+      const reasoningAnchorTextIndex = finalReasoningAnchorTextIndex;
+      const isStreamingTextAfterReasoning = renderOptions.streaming === true
+        && lastActivitySegmentIndex >= 0
+        && segments.slice(lastActivitySegmentIndex + 1).some(function hasTrailingText(segment) {
+          return segment
+            && segment.type !== 'thought'
+            && segment.type !== 'tool'
+            && segment.type !== 'tool_pending'
+            && String(segment.content || '').trim();
+        });
+
+      function renderActiveReasoningBlock() {
+        return renderReasoningGroup(
+          reasoningItems,
+          0,
+          expandedThoughts.has(0),
+          thoughtToggleLabel,
+          { forceWrapper: true }
+        );
+      }
+
+      segments.forEach(function collectReasoningItem(segment) {
+        if (!segment) {
+          return;
+        }
+
+        if (segment.type === 'thought') {
+          reasoningItems.push(segment);
+          return;
+        }
+
+        if (segment.type === 'tool_pending') {
+          reasoningItems.push({ type: 'tool_pending' });
+          return;
+        }
+
+        if (segment.type === 'tool') {
+          const currentToolIndex = activeToolSegmentIndex;
+          if (isSearchToolSegment(segment)) {
+            addSearchSourcesToCitationRegistry(citationRegistry, segment);
+          }
+          reasoningItems.push({
+            type: 'tool',
+            segment,
+            toolIndex: currentToolIndex,
+            expanded: isSearchToolSegment(segment)
+              ? expandedSearches.has(currentToolIndex)
+              : (isWriteToolSegment(segment)
+                ? expandedWrites.has(currentToolIndex)
+                : (isEditToolSegment(segment) ? expandedEdits.has(currentToolIndex) : false))
+          });
+          activeToolSegmentIndex += 1;
+        }
+      });
+
+      if (reasoningItems.length > 0 && reasoningAnchorTextIndex === -1 && !isStreamingTextAfterReasoning) {
+        pushBlock('reasoning-active', renderActiveReasoningBlock());
+      }
+
+      for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+        const segment = segments[segmentIndex];
+        if (!segment) {
+          continue;
+        }
+
+        if (segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending') {
+          continue;
+        }
+
+        if (!hideTextSegments) {
+          pushTextSegmentBlock(segment, segmentIndex);
+        }
+
+        if (segmentIndex === reasoningAnchorTextIndex && reasoningItems.length > 0 && !isStreamingTextAfterReasoning) {
+          pushBlock('reasoning-active', renderActiveReasoningBlock());
+        }
+      }
+
+      const pinnedSharedCards = collectPinnedSharedFileCards(segments);
+      if (pinnedSharedCards.length) {
+        pushBlock(
+          'shared-files-pinned',
+          `<div class="msg-tool-only-group msg-tool-only-group--shared-files">${pinnedSharedCards.join('')}</div>`
+        );
+      }
+
+      $bubble.empty();
+      applyActivityBlocks($stream, blocks);
+      $stream.css('display', 'flex');
+      setExpandedThoughtIndices($msgRow, expandedThoughts);
+      setExpandedSearchIndices($msgRow, expandedSearches);
+      setExpandedSearchKeys($msgRow, expandedSearchKeys);
+      setExpandedWriteIndices($msgRow, expandedWrites);
+      setExpandedEditIndices($msgRow, expandedEdits);
+      $msgRow.data('toolSegments', toolSegments);
+
+      if (shouldSyncOpenDrawer) {
+        const $nextActiveWrapper = $msgRow
+          .find('.msg-thoughts-wrapper, .msg-reasoning-wrapper')
+          .filter(function matchActiveReasoningWrapper() {
+            return String($(this).attr('data-thought-index') || '') === '0';
+          })
+          .first();
+
+        if ($nextActiveWrapper.length) {
+          $activeReasoningWrapper = $nextActiveWrapper;
+          $activeReasoningMessageRow = $msgRow;
+          $activeReasoningIndex = '0';
+          $nextActiveWrapper.addClass('is-active');
+          $nextActiveWrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'true');
+          syncReasoningDrawerFromWrapper($nextActiveWrapper);
+        } else if (!isStreamingTextAfterReasoning) {
+          closeReasoningDrawer();
+        }
+      }
+      return;
+    }
+
+    for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+      const segment = segments[segmentIndex];
+
+      if (segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending') {
+        const groupStartIndex = segmentIndex;
+        const groupItems = [];
+        reasoningGroupIndex += 1;
+
+        while (
+          segmentIndex < segments.length
+          && (
+            segments[segmentIndex].type === 'thought'
+            || segments[segmentIndex].type === 'tool'
+            || segments[segmentIndex].type === 'tool_pending'
+          )
+        ) {
+          const groupSegment = segments[segmentIndex];
+          if (groupSegment.type === 'thought') {
+            thoughtIndex += 1;
+            groupItems.push(groupSegment);
+          } else if (groupSegment.type === 'tool_pending') {
+            groupItems.push({ type: 'tool_pending' });
+          } else {
+            if (suppressSharedFileToolRows && isSharedFileToolSegment(groupSegment)) {
+              segmentIndex += 1;
+              continue;
+            }
+            const currentToolIndex = toolSegmentIndex;
+            if (isSearchToolSegment(groupSegment)) {
+              addSearchSourcesToCitationRegistry(citationRegistry, groupSegment);
+            }
+            groupItems.push({
+              type: 'tool',
+              segment: groupSegment,
+              toolIndex: currentToolIndex,
+              expanded: isSearchToolSegment(groupSegment)
+                ? expandedSearches.has(currentToolIndex)
+                : (isWriteToolSegment(groupSegment)
+                  ? expandedWrites.has(currentToolIndex)
+                  : (isEditToolSegment(groupSegment) ? expandedEdits.has(currentToolIndex) : false))
+            });
+            toolSegmentIndex += 1;
+          }
+          segmentIndex += 1;
+        }
+
+        segmentIndex -= 1;
+        if (
+          groupItems.some(function hasToolItem(item) {
+            return item && (item.type === 'tool' || item.type === 'tool_pending');
+          })
+          || groupStartIndex > lastToolSegmentIndex
+          || forceReasoningShell
+        ) {
+          pushBlock(
+            `reasoning-${reasoningGroupIndex}`,
+            renderReasoningGroup(
+              groupItems,
+              reasoningGroupIndex,
+              expandedThoughts.has(reasoningGroupIndex),
+              thoughtToggleLabel,
+              { forceWrapper: forceReasoningShell }
+            )
+          );
+        }
+        continue;
+      }
+
+      if (hideTextSegments) {
+        continue;
+      }
+
+      pushTextSegmentBlock(segment, segmentIndex);
+    }
+
+    if (renderOptions.pendingTool && !pendingToolInReasoning) {
+      pushBlock('tool-pending', renderPendingToolCallPlaceholder());
+    }
+
+    const pinnedSharedCards = collectPinnedSharedFileCards(segments);
+    if (pinnedSharedCards.length) {
+      pushBlock(
+        'shared-files-pinned',
+        `<div class="msg-tool-only-group msg-tool-only-group--shared-files">${pinnedSharedCards.join('')}</div>`
+      );
+    }
 
     $bubble.empty();
-    $stream.html(html).show();
+    applyActivityBlocks($stream, blocks);
+    $stream.css('display', 'flex');
     setExpandedThoughtIndices($msgRow, expandedThoughts);
+    setExpandedSearchIndices($msgRow, expandedSearches);
+    setExpandedSearchKeys($msgRow, expandedSearchKeys);
+    setExpandedWriteIndices($msgRow, expandedWrites);
+    setExpandedEditIndices($msgRow, expandedEdits);
     $msgRow.data('toolSegments', toolSegments);
+
+    if (shouldSyncOpenDrawer) {
+      const $nextActiveWrapper = $msgRow
+        .find('.msg-thoughts-wrapper, .msg-reasoning-wrapper')
+        .filter(function matchActiveReasoningWrapper() {
+          return String($(this).attr('data-thought-index') || '') === activeReasoningIndex;
+        })
+        .first();
+
+      if ($nextActiveWrapper.length) {
+        $activeReasoningWrapper = $nextActiveWrapper;
+        $activeReasoningMessageRow = $msgRow;
+        $activeReasoningIndex = activeReasoningIndex;
+        $nextActiveWrapper.addClass('is-active');
+        $nextActiveWrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'true');
+        syncReasoningDrawerFromWrapper($nextActiveWrapper);
+      } else {
+        closeReasoningDrawer();
+      }
+    }
+  }
+
+  function searchSegmentCount(segments) {
+    return (Array.isArray(segments) ? segments : []).filter(function onlySearchSegment(segment) {
+      return segment && segment.type === 'tool' && isSearchToolSegment(segment);
+    }).length;
+  }
+
+  function clearSearchBatchHold($msgRow) {
+    const holdState = $msgRow.data('searchBatchHoldState');
+    if (holdState && holdState.timer) {
+      window.clearTimeout(holdState.timer);
+    }
+
+    $msgRow.removeData('searchBatchHoldState');
+    $msgRow.removeData('searchBatchHoldRaw');
+  }
+
+  function clearPreToolTextHold($msgRow) {
+    const holdState = $msgRow.data('preToolTextHoldState');
+    if (holdState && holdState.timer) {
+      window.clearTimeout(holdState.timer);
+    }
+
+    $msgRow.removeData('preToolTextHoldState');
+    $msgRow.removeData('preToolTextHoldRaw');
+  }
+
+  function shouldHoldPreToolText($msgRow, parsed, rawText) {
+    const segments = Array.isArray(parsed && parsed.segments) ? parsed.segments : [];
+    if (!segments.length || segments.some(function hasTool(segment) { return segment && segment.type === 'tool'; })) {
+      clearPreToolTextHold($msgRow);
+      return false;
+    }
+
+    const hasRenderableText = segments.some(function hasTextLikeSegment(segment) {
+      return segment
+        && (segment.type === 'text' || segment.type === 'thought')
+        && String(segment.content || '').trim();
+    });
+    if (!hasRenderableText) {
+      clearPreToolTextHold($msgRow);
+      return false;
+    }
+
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const holdState = $msgRow.data('preToolTextHoldState') || {};
+    if (!holdState.startedAt) {
+      holdState.startedAt = now;
+    }
+    if (holdState.released) {
+      return false;
+    }
+
+    const remaining = PRE_TOOL_TEXT_HOLD_MS - (now - holdState.startedAt);
+    $msgRow.data('preToolTextHoldRaw', rawText);
+
+    if (remaining <= 0) {
+      holdState.released = true;
+      if (holdState.timer) {
+        window.clearTimeout(holdState.timer);
+        holdState.timer = null;
+      }
+      $msgRow.data('preToolTextHoldState', holdState);
+      return false;
+    }
+
+    if (holdState.timer) {
+      window.clearTimeout(holdState.timer);
+    }
+    holdState.timer = window.setTimeout(function renderHeldPreToolText() {
+      const latestRaw = $msgRow.data('preToolTextHoldRaw');
+      const latestState = $msgRow.data('preToolTextHoldState') || {};
+      latestState.timer = null;
+      latestState.released = true;
+      $msgRow.data('preToolTextHoldState', latestState);
+      renderMessageStream($msgRow, latestRaw || rawText);
+    }, Math.max(0, remaining + 16));
+    $msgRow.data('preToolTextHoldState', holdState);
+    return true;
+  }
+
+  function shouldHoldStreamingSearchBatch($msgRow, parsed, rawText) {
+    const count = searchSegmentCount(parsed.segments);
+    if (count === 0) {
+      clearSearchBatchHold($msgRow);
+      return false;
+    }
+
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const holdState = $msgRow.data('searchBatchHoldState') || {};
+    if (holdState.count !== count) {
+      holdState.count = count;
+      holdState.changedAt = now;
+    }
+    if (!holdState.changedAt) {
+      holdState.changedAt = now;
+    }
+
+    const holdMs = count <= 1 ? SEARCH_BATCH_FIRST_CALL_HOLD_MS : SEARCH_BATCH_MULTI_CALL_SETTLE_MS;
+    const remaining = holdMs - (now - holdState.changedAt);
+    $msgRow.data('searchBatchHoldRaw', rawText);
+
+    if (remaining <= 0) {
+      if (holdState.timer) {
+        window.clearTimeout(holdState.timer);
+        holdState.timer = null;
+      }
+      $msgRow.data('searchBatchHoldState', holdState);
+      return false;
+    }
+
+    if (holdState.timer) {
+      window.clearTimeout(holdState.timer);
+    }
+    holdState.timer = window.setTimeout(function renderHeldSearchBatch() {
+      const latestRaw = $msgRow.data('searchBatchHoldRaw');
+      const latestState = $msgRow.data('searchBatchHoldState') || {};
+      latestState.timer = null;
+      $msgRow.data('searchBatchHoldState', latestState);
+      renderMessageStream($msgRow, latestRaw || rawText);
+    }, Math.max(0, remaining + 16));
+    $msgRow.data('searchBatchHoldState', holdState);
+    return true;
   }
 
   // Parse and render one assistant transcript string.
   function renderMessageHtml($msgRow, rawText) {
+    clearSearchBatchHold($msgRow);
+    clearPreToolTextHold($msgRow);
     const parsed = parseMessageTimeline(rawText);
-    renderActivityTimeline($msgRow, parsed.segments);
+    renderActivityTimeline($msgRow, parsed.segments, { rawText });
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
 
   // Parse and render one assistant transcript during active streaming.
   function renderMessageStream($msgRow, rawText) {
-    const parsed = parseMessageTimeline(rawText);
-    renderActivityTimeline($msgRow, parsed.segments, { markdown: false });
+    const partialMarker = trailingPartialActivityMarkerInfo(rawText);
+    const safeRawText = partialMarker ? stripTrailingPartialActivityMarker(rawText) : rawText;
+    const hasOpenTool = hasOpenToolPayload(safeRawText);
+    const hasPartialToolMarker = !!(partialMarker && partialMarker.isTool);
+    const renderRawText = hasOpenTool ? stripOpenToolPayload(safeRawText) : safeRawText;
+    const parsed = parseMessageTimeline(renderRawText);
+    const hasPendingToolPayload = hasOpenTool || hasPartialToolMarker;
+
+    if (hasPendingToolPayload) {
+      clearSearchBatchHold($msgRow);
+      clearPreToolTextHold($msgRow);
+      renderActivityTimeline($msgRow, parsed.segments, {
+        markdown: false,
+        pendingTool: true,
+        rawText: renderRawText,
+        streaming: true
+      });
+      $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
+      return;
+    }
+
+    if (hasThoughtSegments(parsed.segments) && !$msgRow.data('responseStartedAt')) {
+      $msgRow.data('responseStartedAt', Date.now());
+    }
+    if (shouldHoldPreToolText($msgRow, parsed, rawText)) {
+      $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
+      return;
+    }
+    if (shouldHoldStreamingSearchBatch($msgRow, parsed, rawText)) {
+      $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
+      return;
+    }
+
+    renderActivityTimeline($msgRow, parsed.segments, { rawText: renderRawText, streaming: true });
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
 
   // Open the inspector for a delegated tool-card click.
+  function sourceMessageRowForActivityCard($card) {
+    const $row = $card.closest('.msg');
+    if ($row.length) {
+      return $row;
+    }
+
+    const $drawerBody = $card.closest('#reasoningDrawerBody');
+    if ($drawerBody.length) {
+      const $storedRow = $drawerBody.data('messageRow');
+      if ($storedRow && $storedRow.length) {
+        return $storedRow;
+      }
+      if ($activeReasoningMessageRow && $activeReasoningMessageRow.length) {
+        return $activeReasoningMessageRow;
+      }
+    }
+
+    return $();
+  }
+
   function openToolInspectorFromCard($card) {
     const index = parseInt($card.attr('data-tool-segment-index') || '-1', 10);
     if (!Number.isInteger(index) || index < 0) {
       return;
     }
 
-    const toolSegments = $card.closest('.msg').data('toolSegments') || [];
+    const $message = $card.closest('.msg');
+    let toolSegments = $message.length ? ($message.data('toolSegments') || []) : [];
+    if (!toolSegments.length) {
+      const $drawerBody = $card.closest('#reasoningDrawerBody');
+      toolSegments = ($drawerBody.length ? $drawerBody.data('toolSegments') : null) || $('#reasoningDrawerBody').data('toolSegments') || [];
+    }
+
     const segment = toolSegments[index];
     if (segment) {
       toolInspector.open(segment);
     }
+  }
+
+  function toggleSearchSources($button) {
+    const $card = $button.closest('.msg-search-card');
+    const $row = sourceMessageRowForActivityCard($card);
+    const expanded = !$card.hasClass('is-expanded');
+    const moreCount = parseInt($button.attr('data-search-more-count') || '0', 10) || 0;
+    const cardIndex = parseInt($card.attr('data-tool-segment-index') || '-1', 10);
+    const expandedSearches = getExpandedSearchIndices($row);
+
+    if (Number.isInteger(cardIndex) && cardIndex >= 0) {
+      if (expanded) {
+        expandedSearches.add(cardIndex);
+      } else {
+        expandedSearches.delete(cardIndex);
+      }
+      setExpandedSearchIndices($row, expandedSearches);
+    }
+
+    $card.toggleClass('is-expanded', expanded);
+    $card.find('.msg-search-chip--more').attr('aria-expanded', expanded ? 'true' : 'false');
+    $card.find('.msg-search-chip--more-collapsed .msg-search-chip-domain').text(`${MORE_LABEL} ${moreCount}`);
+    $card.find('.msg-search-chip--more-expanded .msg-search-chip-domain').text(HIDE_LABEL);
+  }
+
+  function toggleWriteCard($card) {
+    const $row = sourceMessageRowForActivityCard($card);
+    const cardIndex = parseInt($card.attr('data-write-segment-index') || '-1', 10);
+    const expandedWrites = getExpandedWriteIndices($row);
+    const willExpand = !$card.hasClass('is-expanded');
+
+    if (Number.isInteger(cardIndex) && cardIndex >= 0) {
+      if (willExpand) {
+        expandedWrites.add(cardIndex);
+      } else {
+        expandedWrites.delete(cardIndex);
+      }
+      setExpandedWriteIndices($row, expandedWrites);
+    }
+
+    // Update the existing card element in-place so the DOM node stays alive
+    // and the next stream render (which also reads data-expanded-writes) agrees.
+    $card.toggleClass('is-expanded', willExpand).attr('aria-expanded', willExpand ? 'true' : 'false');
+
+    // Swap the preview content between collapsed and expanded line counts
+    // by morphing the preview element directly.
+    const toolSegments = $row.data('toolSegments') || $('#reasoningDrawerBody').data('toolSegments') || [];
+    const segment = toolSegments[cardIndex];
+    if (segment) {
+      const $preview = $card.find('.msg-write-preview');
+      const $newCard = $(renderWriteToolCard(segment, cardIndex, { expanded: willExpand }));
+      const $newPreview = $newCard.find('.msg-write-preview');
+      if ($preview.length && $newPreview.length) {
+        morphDomChildren($preview[0], $newPreview[0]);
+      }
+    }
+  }
+
+  function toggleEditCard($card) {
+    const $row = sourceMessageRowForActivityCard($card);
+    const cardIndex = parseInt($card.attr('data-edit-segment-index') || '-1', 10);
+    const expandedEdits = getExpandedEditIndices($row);
+    const willExpand = !$card.hasClass('is-expanded');
+
+    if (Number.isInteger(cardIndex) && cardIndex >= 0) {
+      if (willExpand) {
+        expandedEdits.add(cardIndex);
+      } else {
+        expandedEdits.delete(cardIndex);
+      }
+      setExpandedEditIndices($row, expandedEdits);
+    }
+
+    $card.toggleClass('is-expanded', willExpand).attr('aria-expanded', willExpand ? 'true' : 'false');
+
+    const toolSegments = $row.data('toolSegments') || $('#reasoningDrawerBody').data('toolSegments') || [];
+    const segment = toolSegments[cardIndex];
+    if (segment) {
+      const $preview = $card.find('.msg-edit-preview');
+      const $newCard = $(renderEditToolCard(segment, cardIndex, { expanded: willExpand }));
+      const $newPreview = $newCard.find('.msg-edit-preview');
+      if ($preview.length && $newPreview.length) {
+        morphDomChildren($preview[0], $newPreview[0]);
+      }
+    }
+  }
+
+  function toggleCompressionContext($button) {
+    const $card = $button.closest('.msg-compression-context');
+    const $json = $card.find('.msg-compression-context-json').first();
+    const isOpen = $json.is(':visible');
+    $json.toggle(!isOpen);
+    $button.text(isOpen ? 'Compressed context active' : 'Hide compressed context');
+  }
+
+  function startWritePreviewPan(event, $preview) {
+    if (event.button !== 1) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const preview = $preview[0];
+    if (!preview) {
+      return;
+    }
+
+    const existingStop = $preview.data('writePreviewPanStop');
+    if (typeof existingStop === 'function') {
+      existingStop();
+      return;
+    }
+
+    const anchorX = event.clientX;
+    let currentX = event.clientX;
+    let animationFrame = null;
+    let isActive = true;
+    let hasMoved = false;
+    const startTime = Date.now();
+    $preview.addClass('is-middle-panning');
+
+    function scrollFrame() {
+      if (!isActive) {
+        return;
+      }
+
+      const distance = currentX - anchorX;
+      if (Math.abs(distance) > 4) {
+        preview.scrollLeft += distance * 0.18;
+      }
+
+      animationFrame = window.requestAnimationFrame(scrollFrame);
+    }
+
+    function onMouseMove(moveEvent) {
+      moveEvent.preventDefault();
+      currentX = moveEvent.clientX;
+      if (Math.abs(currentX - anchorX) > 4) {
+        hasMoved = true;
+      }
+    }
+
+    function stopPan() {
+      isActive = false;
+      if (animationFrame !== null) {
+        window.cancelAnimationFrame(animationFrame);
+        animationFrame = null;
+      }
+      $preview.removeClass('is-middle-panning');
+      $preview.removeData('writePreviewPanStop');
+      $(document).off('.writePreviewPan');
+    }
+
+    function onMouseUp(upEvent) {
+      if (upEvent.button !== 1) {
+        return;
+      }
+
+      const isQuickClick = !hasMoved && Date.now() - startTime < 260;
+      if (!isQuickClick) {
+        stopPan();
+      }
+    }
+
+    $(document).on('mousemove.writePreviewPan', onMouseMove);
+    $(document).on('mouseup.writePreviewPan', onMouseUp);
+    $(document).on('blur.writePreviewPan', stopPan);
+    $(document).on('mousedown.writePreviewPan', function onNextMiddleDown(nextEvent) {
+      if (nextEvent.target !== preview && !$(nextEvent.target).closest(preview).length) {
+        nextEvent.preventDefault();
+        stopPan();
+      }
+    });
+    $preview.data('writePreviewPanStop', stopPan);
+    animationFrame = window.requestAnimationFrame(scrollFrame);
   }
 
 
@@ -361,26 +4109,51 @@ export function createMessagesUi(context, dependencies) {
 
     let attachmentsHtml = '';
 
+    const normalizedActivitySegments = Array.isArray(viewOptions.activitySegments)
+      ? normalizeTrailingSharedFileShorthandSegments(viewOptions.activitySegments)
+      : [];
+
+    if (!isUser && isCompressionOnlyActivitySegments(normalizedActivitySegments)) {
+      const markerHtml = normalizedActivitySegments
+        .map(function renderMarker(segment, index) {
+          return renderCompressionContextCard(segment, index);
+        })
+        .join('');
+      return $(`
+        <div class="msg msg-compression-marker" data-message-key="${escapeAttributeValue(messageKey)}"${messageId ? ` data-message-id="${messageId}"` : ''}>
+          <div class="msg-compression-marker-body">${markerHtml}</div>
+        </div>
+      `);
+    }
+
     if (isUser && attachments && attachments.length > 0) {
       const imageHtml = attachments
         .filter(function onlyImages(attachment) {
-          return typeof attachment === 'string' || attachment.kind === 'image';
+          return typeof attachment === 'string'
+            || attachment.kind === 'image'
+            || (attachment.displayKind || attachment.display_kind) === 'image';
         })
         .map(function renderImage(attachment) {
           const normalizedAttachment = attachmentUi.normalizeAttachment(attachment);
-          const src = normalizedAttachment ? normalizedAttachment.dataUrl : '';
+          const src = normalizedAttachment ? (normalizedAttachment.dataUrl || normalizedAttachment.previewDataUrl) : '';
+          if (!src) {
+            return '';
+          }
           return `<img src="${src}" alt="Attached image">`;
         }).join('');
 
       const fileHtml = attachments
         .filter(function onlyFiles(attachment) {
-          return typeof attachment !== 'string' && attachment.kind === 'file';
+          return typeof attachment !== 'string'
+            && attachment.kind === 'file'
+            && (attachment.displayKind || attachment.display_kind) !== 'image';
         })
         .map(function renderFile(attachment) {
+          const meta = attachment.typeLabel || attachment.type_label || attachment.mimeType || attachment.mime_type || 'File';
           return `
             <div class="msg-file-chip">
               <div class="msg-file-name">${escHtml(attachment.name || 'File')}</div>
-              <div class="msg-file-meta">${escHtml(attachment.mimeType || attachment.mime_type || 'application/octet-stream')}</div>
+              <div class="msg-file-meta">${escHtml(meta)}</div>
             </div>
           `;
         }).join('');
@@ -412,9 +4185,13 @@ export function createMessagesUi(context, dependencies) {
         .attr('data-raw', text)
         .append($('<span>').text(text));
       $bubble.data('attachments', attachments || []);
-    } else if (Array.isArray(viewOptions.activitySegments) && viewOptions.activitySegments.length > 0) {
+    } else if (normalizedActivitySegments.length > 0) {
       $row.find('.msg-bubble').attr('data-raw', text);
-      renderActivityTimeline($row, viewOptions.activitySegments);
+      renderActivityTimeline($row, normalizedActivitySegments, {
+        rawText: text,
+        reasoningMode: viewOptions.reasoningMode === true,
+        trustThoughtSegments: viewOptions.reasoningMode === true || hasReasoningMarker(text)
+      });
     } else {
       renderMessageHtml($row, text);
     }
@@ -484,6 +4261,7 @@ export function createMessagesUi(context, dependencies) {
   // Append a temporary assistant typing row.
   function appendTyping(timestamp) {
     const timeStr = timeNow(timestamp);
+    const startedAt = timestamp ? new Date(timestamp).getTime() : Date.now();
     const $row = $(`
       <div class="msg assistant">
         <div class="msg-avatar">A</div>
@@ -504,6 +4282,7 @@ export function createMessagesUi(context, dependencies) {
       </div>
     `);
 
+    $row.data('responseStartedAt', Number.isFinite(startedAt) ? startedAt : Date.now());
     dom.$messagesInner.append($row);
     return $row;
   }
@@ -555,60 +4334,238 @@ export function createMessagesUi(context, dependencies) {
     fallbackCopy(text, onCopied);
   }
 
-
-  // Thought UI.
-  // Toggle one collapsible thought block.
-  function toggleThoughtSection($toggle) {
-    const $wrapper = $toggle.closest('.msg-thoughts-wrapper');
-    const $row = $toggle.closest('.msg');
-    const $content = $wrapper.find('.msg-thoughts-content');
-    const thoughtIndex = parseInt($wrapper.attr('data-thought-index') || '-1', 10);
-    const expandedThoughts = getExpandedThoughtIndices($row);
-    const willExpand = !$wrapper.hasClass('expanded');
-
-    if (Number.isInteger(thoughtIndex) && thoughtIndex >= 0) {
-      if (willExpand) {
-        expandedThoughts.add(thoughtIndex);
-      } else {
-        expandedThoughts.delete(thoughtIndex);
-      }
-
-      setExpandedThoughtIndices($row, expandedThoughts);
+  function copyCodeBlock($button) {
+    const $btn = $button || $();
+    const $code = $btn.closest('.md-code-card').find('pre code').first();
+    const text = $code.text();
+    if (!$code.length) {
+      return;
     }
 
-    $wrapper.toggleClass('expanded', willExpand);
-    $content.stop(true, true)[willExpand ? 'slideDown' : 'slideUp'](160);
+    function onCopied() {
+      const originalHtml = $btn.html();
+      $btn.addClass('is-copied').html(icons.COPIED_ICON);
+      setTimeout(function restoreIcon() {
+        $btn.removeClass('is-copied').html(originalHtml);
+      }, 1200);
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(onCopied).catch(function fallback() {
+        fallbackCopy(text, onCopied);
+      });
+      return;
+    }
+
+    fallbackCopy(text, onCopied);
+  }
+
+
+  // Reasoning drawer state.
+  let $activeReasoningWrapper = null;
+  let $activeReasoningMessageRow = null;
+  let $activeReasoningIndex = '';
+  const REASONING_DRAWER_DEFAULT_WIDTH = 340;
+  const REASONING_DRAWER_MIN_WIDTH = 300;
+  const REASONING_DRAWER_MAX_WIDTH = 720;
+  const REASONING_DRAWER_CLOSE_WIDTH = 220;
+
+  function reasoningDrawerMaxWidth() {
+    return Math.max(
+      REASONING_DRAWER_MIN_WIDTH,
+      Math.min(REASONING_DRAWER_MAX_WIDTH, Math.floor(window.innerWidth * 0.82))
+    );
+  }
+
+  function setReasoningDrawerWidth(width) {
+    const clamped = Math.max(
+      REASONING_DRAWER_MIN_WIDTH,
+      Math.min(reasoningDrawerMaxWidth(), Math.round(Number(width) || REASONING_DRAWER_DEFAULT_WIDTH))
+    );
+    $('#reasoningDrawer').css('--reasoning-drawer-width', `${clamped}px`);
+  }
+
+  function resetReasoningDrawerWidth() {
+    setReasoningDrawerWidth(REASONING_DRAWER_DEFAULT_WIDTH);
+  }
+
+  function syncReasoningDrawerFromWrapper($wrapper) {
+    const $drawer = $('#reasoningDrawer');
+    const $body = $('#reasoningDrawerBody');
+    const $summary = $('#reasoningDrawerSummary');
+
+    if (!$drawer.hasClass('is-open') || !$body.length) {
+      return;
+    }
+
+    const $content = $wrapper.find('.msg-thoughts-content, .msg-reasoning-content').first();
+    const summaryText = $wrapper.find('.msg-reasoning-summary').text().trim();
+    const bodyEl = $body[0];
+    const isNearBottom = bodyEl ? bodyEl.scrollHeight - bodyEl.clientHeight <= bodyEl.scrollTop + 50 : false;
+    const nextBodyHtml = `<div class="msg-reasoning-content">${$content.html() || ''}</div>`;
+    $summary.text(summaryText);
+
+    if (bodyEl) {
+      const template = document.createElement('template');
+      template.innerHTML = nextBodyHtml;
+      morphDomChildren(bodyEl, template.content);
+    } else {
+      $body.html(nextBodyHtml);
+    }
+
+    $body
+      .data('messageRow', $wrapper.closest('.msg'))
+      .data('toolSegments', $wrapper.closest('.msg').data('toolSegments') || []);
+    if (isNearBottom && bodyEl) {
+      bodyEl.scrollTop = bodyEl.scrollHeight;
+    }
+  }
+
+  function openReasoningDrawer($wrapper) {
+    const $drawer = $('#reasoningDrawer');
+    const $backdrop = $('#reasoningDrawerBackdrop');
+
+    if (!$drawer.length) {
+      return;
+    }
+
+    resetReasoningDrawerWidth();
+
+    // Deactivate previously active pill.
+    if ($activeReasoningWrapper && $activeReasoningWrapper[0] !== $wrapper[0]) {
+      $activeReasoningWrapper.removeClass('is-active');
+      $activeReasoningWrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'false');
+    }
+
+    // If clicking the same pill while open, close the drawer.
+    if ($activeReasoningWrapper && $activeReasoningWrapper[0] === $wrapper[0] && $drawer.hasClass('is-open')) {
+      closeReasoningDrawer();
+      return;
+    }
+
+    $activeReasoningWrapper = $wrapper;
+    $activeReasoningMessageRow = $wrapper.closest('.msg');
+    $activeReasoningIndex = String($wrapper.attr('data-thought-index') || '');
+    $wrapper.addClass('is-active');
+    $wrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'true');
+
+    $drawer.addClass('is-open');
+    $backdrop.addClass('is-visible');
+    syncReasoningDrawerFromWrapper($wrapper);
+  }
+
+  function closeReasoningDrawer() {
+    const $drawer = $('#reasoningDrawer');
+    const $backdrop = $('#reasoningDrawerBackdrop');
+
+    $drawer.removeClass('is-open is-resizing');
+    $backdrop.removeClass('is-visible');
+    $('body').removeClass('is-resizing-reasoning-drawer');
+
+    if ($activeReasoningWrapper) {
+      $activeReasoningWrapper.removeClass('is-active');
+      $activeReasoningWrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'false');
+      $activeReasoningWrapper = null;
+    }
+    $activeReasoningMessageRow = null;
+    $activeReasoningIndex = '';
+
+    // Clear body after transition.
+    setTimeout(function clearDrawerBody() {
+      if (!$drawer.hasClass('is-open')) {
+        $('#reasoningDrawerBody').empty().removeData('toolSegments').removeData('messageRow');
+      }
+    }, 250);
+  }
+
+  function bindReasoningDrawerResize() {
+    const $handle = $('#reasoningDrawerResizeHandle');
+    if (!$handle.length) {
+      return;
+    }
+
+    $handle.on('pointerdown', function onReasoningResizeStart(event) {
+      const $drawer = $('#reasoningDrawer');
+      if (!$drawer.hasClass('is-open')) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      let shouldClose = false;
+      $drawer.addClass('is-resizing');
+      $('body').addClass('is-resizing-reasoning-drawer');
+
+      function widthFromPointer(pointerEvent) {
+        return window.innerWidth - pointerEvent.clientX;
+      }
+
+      function onMove(moveEvent) {
+        const nextWidth = widthFromPointer(moveEvent);
+        shouldClose = nextWidth <= REASONING_DRAWER_CLOSE_WIDTH;
+        if (!shouldClose) {
+          setReasoningDrawerWidth(nextWidth);
+        }
+      }
+
+      function onEnd() {
+        $(document).off('.reasoningDrawerResize');
+        $drawer.removeClass('is-resizing');
+        $('body').removeClass('is-resizing-reasoning-drawer');
+        if (shouldClose) {
+          closeReasoningDrawer();
+        }
+      }
+
+      $(document)
+        .on('pointermove.reasoningDrawerResize', onMove)
+        .on('pointerup.reasoningDrawerResize pointercancel.reasoningDrawerResize', onEnd);
+    });
+  }
+
+  // Thought UI.
+  function toggleThoughtSection($toggle) {
+    const $wrapper = $toggle.closest('.msg-thoughts-wrapper, .msg-reasoning-wrapper');
+    openReasoningDrawer($wrapper);
   }
 
 
   // Markdown configuration.
-  // Configure marked + highlight.js when both libraries are available.
+  // Code highlighting is applied after sanitization when code cards are built.
   function configureMarkdown() {
-    if (typeof marked === 'undefined' || typeof hljs === 'undefined') {
+    if (typeof marked === 'undefined') {
       return;
     }
 
     marked.setOptions({
-      highlight(code, lang) {
-        const language = hljs.getLanguage(lang) ? lang : 'plaintext';
-        return hljs.highlight(code, { language }).value;
-      },
       breaks: true
     });
   }
 
+  bindReasoningDrawerResize();
+
   return {
     appendMessage,
     appendMessages,
+    appendCompressionPending,
     appendTyping,
     configureMarkdown,
+    copyCodeBlock,
     copyMessage,
     openToolInspectorFromCard,
     renderMessageHtml,
     renderMessageStream,
+    removeCompressionPending,
     scrollBottom,
     setQueuedMessageState,
+    toggleSearchSources,
+    toggleEditCard,
+    toggleCompressionContext,
+    toggleWriteCard,
+    startWritePreviewPan,
     toggleThoughtSection,
+    closeReasoningDrawer,
     updateRegenButtons,
     updateSendButtons
   };

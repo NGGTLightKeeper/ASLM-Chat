@@ -29,6 +29,7 @@ import random
 import re
 import sqlite3
 import sys
+import tempfile
 import time
 from pathlib import Path
 import threading
@@ -99,6 +100,8 @@ except ImportError:
 
 _RETRYABLE_ERRORS = ("ssl", "eof", "connect", "connection", "timeout", "reset", "broken pipe")
 _HARD_FAILURE_ERRORS = ("403", "forbidden")
+_OPERATOR_TOKEN_RE = re.compile(r"(?<!\S)(?:-?site:[^\s]+|inurl:[^\s]+|intitle:[^\s]+|filetype:[^\s]+|(?:OR|\|))(?=\s|$)", re.IGNORECASE)
+_LEXICAL_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-]{2,}|[А-Яа-яЁё0-9_\-]{2,}")
 
 # ---------------------------------------------------------------------------
 # Hedged-request constants
@@ -171,6 +174,78 @@ _TIMELIMIT_TTL: dict[str, int] = {
     "m": 7_200,  # month → 2 hr
     "y": 21_600, # year  → 6 hr
 }
+_PARTIAL_BUFFER_LOCK = Lock()
+
+
+def _serialise_results(results: list[SearchResult]) -> list[dict]:
+    return [
+        {
+            "url": r.url,
+            "title": r.title,
+            "snippet": r.snippet,
+            "engine": r.engine,
+            "trust_tier": r.trust_tier,
+            "score": float(r.score or 0.0),
+            "method_hint": r.method_hint,
+            "published_date": r.published_date,
+            "pdf_url": r.pdf_url,
+        }
+        for r in results
+    ]
+
+
+def _write_partial_results(path: str | None, results: list[SearchResult]) -> None:
+    if not path or not results:
+        return
+    try:
+        with _PARTIAL_BUFFER_LOCK:
+            target = Path(path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            existing: list[dict] = []
+            if target.exists():
+                with contextlib.suppress(Exception):
+                    payload = json.loads(target.read_text(encoding="utf-8"))
+                    existing = list(payload.get("results") or [])
+
+            merged: list[dict] = []
+            seen_urls: set[str] = set()
+            for item in [*existing, *_serialise_results(results)]:
+                url = str(item.get("url") or "").strip()
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                merged.append(item)
+
+            tmp = target.with_suffix(target.suffix + ".tmp")
+            payload = {
+                "ok": True,
+                "partial": True,
+                "ts": time.time(),
+                "results": merged,
+            }
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(target)
+    except Exception as exc:
+        logger.debug("ddgs partial buffer write failed path=%r err=%s", path, exc)
+
+
+def _read_partial_results(path: str | None) -> list[SearchResult]:
+    if not path:
+        return []
+    try:
+        target = Path(path)
+        if not target.exists():
+            return []
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        results = _deserialize_results(payload.get("results") or [])
+        for result in results:
+            result.method_hint = "|".join(
+                part for part in [result.method_hint, "partial_timeout"] if part
+            )
+        return results
+    except Exception as exc:
+        logger.debug("ddgs partial buffer read failed path=%r err=%s", path, exc)
+        return []
 
 
 def _timelimit_cache_ttl(timelimit: Optional[str], base_ttl: int) -> int:
@@ -331,9 +406,11 @@ class DDGSClient:
             )
 
     def _cache_key(self, query: str, **kwargs: object) -> str:
-        from core.cache.query_normalizer import normalize_query_key
+        from core.cache.query_normalizer import normalize_exact_query_key, normalize_query_key
         normalized = normalize_query_key(query)
+        exact = normalize_exact_query_key(query)
         raw = f"{normalized}|{json.dumps(kwargs, sort_keys=True)}"
+        raw = f"{exact}|{raw}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     def _cache_get(self, key: str) -> Optional[list]:
@@ -370,6 +447,31 @@ class DDGSClient:
         if len(query) > 100:
             query = " ".join(query.split()[:10])
         return query[:120]
+
+    @staticmethod
+    def _degraded_query_variants(query: str) -> list[str]:
+        """Return progressively simpler query variants for zero-result fallback."""
+        base = " ".join(str(query or "").split()).strip()
+        if not base:
+            return []
+        variants: list[str] = []
+
+        def add_variant(value: str) -> None:
+            candidate = " ".join(str(value or "").split()).strip()
+            if candidate and candidate != base and candidate not in variants:
+                variants.append(candidate)
+
+        unquoted = re.sub(r"[\"'`]+", " ", base)
+        add_variant(unquoted)
+        no_ops = _OPERATOR_TOKEN_RE.sub(" ", unquoted)
+        no_ops = re.sub(r"(?<!\S)-[^\s]+", " ", no_ops)
+        add_variant(no_ops)
+
+        lexical = _LEXICAL_TOKEN_RE.findall(no_ops)
+        if lexical:
+            add_variant(" ".join(lexical[:4]))
+            add_variant(" ".join(lexical[:2]))
+        return variants
 
     def search_sync(
         self,
@@ -503,6 +605,7 @@ class DDGSClient:
         lang: str = "en",
         timelimit: Optional[str] = None,
         hedge_count: int = 2,
+        partial_buffer_path: str | None = None,
     ) -> list[SearchResult]:
         """Try engines via router until one returns results.
 
@@ -521,7 +624,15 @@ class DDGSClient:
             for backend in BACKEND_SITE_QUERY:
                 results = self.search_to_results(query, max_results, backend=backend, timelimit=timelimit)
                 if results:
+                    _write_partial_results(partial_buffer_path, results)
                     return results
+            for variant in self._degraded_query_variants(query):
+                for backend in BACKEND_FALLBACK:
+                    results = self.search_to_results(variant, max_results, backend=backend, timelimit=None)
+                    if results:
+                        logger.info("ddgs fallback hit (site query) variant=%r backend=%s", variant, backend)
+                        _write_partial_results(partial_buffer_path, results)
+                        return results
             return []
 
         # Non-English queries — run backends in parallel and take the first
@@ -566,6 +677,7 @@ class DDGSClient:
                     try:
                         res = fut.result()
                         if res:
+                            _write_partial_results(partial_buffer_path, res)
                             result = res
                             break
                     except Exception as _e:
@@ -573,7 +685,22 @@ class DDGSClient:
             except TimeoutError:
                 logger.debug("multilingual parallel search timed out after %ss", self.timeout)
                 # no pool.shutdown anymore
-            return result
+            if result:
+                return result
+            for variant in self._degraded_query_variants(query):
+                for backend in BACKEND_FALLBACK:
+                    degraded = self.search_to_results(
+                        variant,
+                        max_results,
+                        backend=backend,
+                        region="wt-wt",
+                        timelimit=None,
+                    )
+                    if degraded:
+                        logger.info("ddgs fallback hit (multilingual) variant=%r backend=%s", variant, backend)
+                        _write_partial_results(partial_buffer_path, degraded)
+                        return degraded
+            return []
 
         # General queries — router-driven hedged search.
         #
@@ -655,6 +782,8 @@ class DDGSClient:
                     timelimit=timelimit,
                     cache_ttl=ttl,
                 )
+                if res:
+                    _write_partial_results(partial_buffer_path, res)
             except Exception as _e:
                 logger.debug("hedged search engine=%s failed: %s", engine, _e)
                 res = []
@@ -701,7 +830,24 @@ class DDGSClient:
             stop.set()
             # no pool.shutdown anymore
 
-        return hedged_result
+        if hedged_result:
+            _write_partial_results(partial_buffer_path, hedged_result)
+            return hedged_result
+
+        for variant in self._degraded_query_variants(query):
+            for backend in BACKEND_FALLBACK:
+                degraded = self.search_to_results(
+                    variant,
+                    max_results,
+                    backend=backend,
+                    region="wt-wt",
+                    timelimit=None,
+                )
+                if degraded:
+                    logger.info("ddgs fallback hit variant=%r backend=%s", variant, backend)
+                    _write_partial_results(partial_buffer_path, degraded)
+                    return degraded
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -782,6 +928,8 @@ async def async_ddgs_search(
     use_subprocess: Optional[bool] = None,
     worker_timeout: Optional[float] = None,
     hedge_count: int = 2,
+    engine_timeout: Optional[int] = None,
+    max_retries: Optional[int] = None,
 ) -> list[SearchResult]:
     """Run DDGS search for asyncio callers with optional hard-kill subprocess.
 
@@ -796,6 +944,14 @@ async def async_ddgs_search(
     worker_timeout = DDGS_WORKER_TIMEOUT if worker_timeout is None else worker_timeout
 
     if use_subprocess and _WORKER_SCRIPT.exists():
+        partial_buffer_path: str | None = None
+        with tempfile.NamedTemporaryFile(
+            prefix="ddgs_partial_",
+            suffix=".json",
+            delete=False,
+        ) as partial_buffer:
+            partial_buffer_path = partial_buffer.name
+
         request_payload = {
             "query": query,
             "max_results": max_results,
@@ -809,8 +965,9 @@ async def async_ddgs_search(
             "cache_ttl": int(client.cache_ttl),
             "proxy_cooldown": int(client._proxy_cooldown),
             "request_delay": [float(client.request_delay[0]), float(client.request_delay[1])],
-            "timeout": int(client.timeout),
-            "max_retries": int(client.max_retries),
+            "timeout": int(engine_timeout if engine_timeout is not None else client.timeout),
+            "max_retries": int(max_retries if max_retries is not None else client.max_retries),
+            "partial_buffer_path": partial_buffer_path,
         }
 
         proc: Optional[asyncio.subprocess.Process] = None
@@ -828,6 +985,13 @@ async def async_ddgs_search(
             )
 
         except asyncio.TimeoutError:
+            partial_results = _read_partial_results(partial_buffer_path)
+            if partial_results:
+                logger.warning(
+                    "DDGS worker timeout after %.1fs for query=%r; returning %d partial result(s)",
+                    worker_timeout, _query_preview(query), len(partial_results),
+                )
+                return partial_results
             logger.warning(
                 "DDGS worker timeout after %.1fs for query=%r",
                 worker_timeout, _query_preview(query),
@@ -857,6 +1021,11 @@ async def async_ddgs_search(
                     proc.kill()
                 with contextlib.suppress(Exception):
                     await asyncio.wait_for(proc.wait(), timeout=3.0)
+            if partial_buffer_path:
+                with contextlib.suppress(Exception):
+                    Path(partial_buffer_path).unlink()
+                with contextlib.suppress(Exception):
+                    Path(partial_buffer_path + ".tmp").unlink()
 
         # --- Parse result ---
         if proc.returncode not in (0, None):

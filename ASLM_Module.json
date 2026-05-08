@@ -3,7 +3,7 @@
     "id": "aslm-chat",
     "name": "ASLM Chat",
     "description": "ASLM Chat Module",
-    "version": "0.5.0.27",
+    "version": "0.6.0.31",
     "author": "NGGT-ASLM",
     "type": "ui",
     "hasPage": true,
@@ -19,6 +19,7 @@
         "branch": "main",
         "preserve": [
             "Data/downloads_bridge_cache",
+            "Data/venvs",
             "Settings/settings.json",
             "db.sqlite3"
         ],
@@ -67,7 +68,7 @@
             "name": "UI Server Port",
             "description": "Port the UI server listens on",
             "type": "port",
-            "default": 30000,
+            "default": 20000,
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key ui-port",
             "setExec": "main.py set_setting --key ui-port --value {value}"
@@ -77,7 +78,7 @@
             "name": "API Server Port",
             "description": "Port the UI server listens on",
             "type": "port",
-            "default": 30001,
+            "default": 20001,
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key api-port",
             "setExec": "main.py set_setting --key api-port --value {value}"

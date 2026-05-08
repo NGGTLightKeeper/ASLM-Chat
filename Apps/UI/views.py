@@ -6,19 +6,35 @@ import base64
 import binascii
 import copy
 import hashlib
+import ipaddress
 import json
 import logging
 import mimetypes
 import os
 import re
+import socket
 import subprocess
+import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
-from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
+from django.http import FileResponse, HttpResponse, JsonResponse, StreamingHttpResponse
+from django.utils import timezone
 from django.views.generic import TemplateView
+
+try:
+    import requests
+except Exception:  # pragma: no cover - optional dependency guard.
+    requests = None
+
+try:
+    from bs4 import BeautifulSoup
+except Exception:  # pragma: no cover - optional dependency guard.
+    BeautifulSoup = None
 
 from API import llm_api, mcp as tool_registry
 from API import ollama as ollama_api
@@ -47,9 +63,26 @@ from Apps.Data.models import (
     MessageImage,
     OllamaPreset,
 )
+from Apps.UI.upload_storage import load_upload_manifest, model_upload_payload, save_upload_to_sandbox
 from Settings import settings
 
 logger = logging.getLogger(__name__)
+
+TOOLS_PATH = settings.BASE_DIR / "Tools"
+if str(TOOLS_PATH) not in sys.path:
+    sys.path.insert(0, str(TOOLS_PATH))
+
+from context_compression.history_compressor import (  # noqa: E402
+    build_structured_history_summary,
+    decide_compression,
+    fit_summary_text,
+    resolve_context_window_tokens,
+)
+
+DEFAULT_SYSTEM_PROMPT_PATH = settings.BASE_DIR / "SYSTEM_PROMPT.md"
+_default_system_prompt_lock = threading.RLock()
+_default_system_prompt_mtime_ns: int | None = None
+_default_system_prompt_cache = ""
 
 THINK_PARAM_NAMES = {"think", "thinking", "reasoning"}
 THINK_LEVEL_PARAM_NAMES = {"think_level", "thinking_level", "reasoning_effort"}
@@ -82,6 +115,372 @@ TEXT_ATTACHMENT_EXTENSIONS = {
     ".tfvars", ".toml", ".ts", ".tsv", ".tsx", ".twig", ".txt", ".vb", ".vbs", ".vue",
     ".vtt", ".xhtml", ".xml", ".xsd", ".xsl", ".yaml", ".yml", ".zsh",
 }
+
+
+# Read the project-level system prompt file.
+def _read_default_system_prompt() -> str:
+    """Return the root SYSTEM_PROMPT.md content, reloading it when changed."""
+
+    global _default_system_prompt_cache, _default_system_prompt_mtime_ns
+
+    try:
+        mtime_ns = DEFAULT_SYSTEM_PROMPT_PATH.stat().st_mtime_ns
+    except OSError:
+        mtime_ns = None
+
+    with _default_system_prompt_lock:
+        if mtime_ns == _default_system_prompt_mtime_ns:
+            return _default_system_prompt_cache
+
+        prompt = ""
+        if mtime_ns is not None:
+            try:
+                prompt = DEFAULT_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+            except OSError:
+                logger.exception("Failed to read default system prompt from %s", DEFAULT_SYSTEM_PROMPT_PATH)
+                prompt = ""
+
+        _default_system_prompt_mtime_ns = mtime_ns
+        _default_system_prompt_cache = prompt
+        return prompt
+
+
+# Build dynamic runtime context injected into every system prompt.
+def _build_runtime_context() -> str:
+    from datetime import datetime
+    now = datetime.now()
+    return f"Today is {now.strftime('%A, %Y-%m-%d')}."
+
+
+def _normalize_favicon_domain(value: str) -> str:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return ""
+
+    if not re.match(r"^https?://", raw_value, flags=re.IGNORECASE):
+        raw_value = f"https://{raw_value}"
+
+    parsed = urlparse(raw_value)
+    host = (parsed.hostname or "").strip().rstrip(".")
+    if not host:
+        return ""
+
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return ""
+
+    host = host.lower()
+    if len(host) > 253 or not re.match(r"^[a-z0-9.-]+$", host):
+        return ""
+    if host in {"localhost", "localhost.localdomain"}:
+        return ""
+
+    return host
+
+
+def _is_public_favicon_host(host: str) -> bool:
+    try:
+        addresses = socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address[4][0])
+        except ValueError:
+            return False
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            return False
+
+    return bool(addresses)
+
+
+def _favicon_url_is_safe(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    return _is_public_favicon_host(parsed.hostname)
+
+
+def _favicon_content_type(response: Any, content: bytes) -> str:
+    content_type = str(response.headers.get("content-type", "") or "").split(";")[0].strip().lower()
+    if content_type in FAVICON_IMAGE_TYPES:
+        return content_type
+
+    probe = content[:256].lstrip()
+    if content.startswith(b"\x00\x00\x01\x00"):
+        return "image/x-icon"
+    if content.startswith(b"\x89PNG"):
+        return "image/png"
+    if content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if probe.startswith(b"<svg") or b"<svg" in probe[:80]:
+        return "image/svg+xml"
+    if content.startswith(b"RIFF") and b"WEBP" in content[:16]:
+        return "image/webp"
+    if content.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+
+    return ""
+
+
+def _favicon_safe_get(session: Any, url: str, *, stream: bool = False) -> Any | None:
+    current_url = url
+    for _redirect_index in range(5):
+        if not _favicon_url_is_safe(current_url):
+            return None
+
+        try:
+            response = session.get(current_url, timeout=(3, 7), allow_redirects=False, stream=stream)
+        except Exception:
+            return None
+
+        if response.status_code not in {301, 302, 303, 307, 308}:
+            return response
+
+        location = response.headers.get("location", "")
+        response.close()
+        if not location:
+            return None
+        current_url = urljoin(current_url, location)
+
+    return None
+
+
+def _fetch_favicon_candidate(session: Any, url: str) -> tuple[str, bytes] | None:
+    response = _favicon_safe_get(session, url, stream=True)
+    if response is None:
+        return None
+
+    try:
+        final_url = str(response.url or url)
+        if response.status_code >= 400 or not _favicon_url_is_safe(final_url):
+            return None
+
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in response.iter_content(chunk_size=16384):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > FAVICON_MAX_BYTES:
+                return None
+            chunks.append(chunk)
+
+        content = b"".join(chunks)
+        content_type = _favicon_content_type(response, content)
+        if not content_type:
+            return None
+        return content_type, content
+    finally:
+        response.close()
+
+
+def _score_favicon_candidate(candidate: dict[str, str]) -> int:
+    rel = candidate.get("rel", "")
+    sizes = candidate.get("sizes", "")
+    href = candidate.get("href", "")
+    score = 0
+
+    if "apple-touch-icon" in rel:
+        score += 30
+    if rel == "icon" or "shortcut icon" in rel:
+        score += 25
+    if href.lower().endswith(".svg"):
+        score += 20
+    if href.lower().endswith(".png"):
+        score += 15
+    if href.lower().endswith(".ico"):
+        score += 5
+
+    match = re.search(r"(\d+)x(\d+)", sizes)
+    if match:
+        score += min(int(match.group(1)), 256)
+
+    return score
+
+
+def _collect_favicon_candidates(session: Any, base_url: str) -> list[dict[str, str]]:
+    candidates: list[dict[str, str]] = []
+    final_url = base_url
+
+    if not _favicon_url_is_safe(base_url):
+        return candidates
+
+    try:
+        response = _favicon_safe_get(session, base_url)
+    except Exception:
+        response = None
+
+    if response is not None:
+        try:
+            final_url = str(response.url or base_url)
+            if response.status_code < 400 and _favicon_url_is_safe(final_url):
+                html = response.text[:400000]
+                if BeautifulSoup is not None:
+                    soup = BeautifulSoup(html, "html.parser")
+                    for tag in soup.find_all("link"):
+                        rels = tag.get("rel") or []
+                        rel = " ".join(rels).lower() if isinstance(rels, list) else str(rels).lower()
+                        if any(icon_rel in rel for icon_rel in FAVICON_ICON_RELS):
+                            href = tag.get("href")
+                            if href:
+                                candidates.append({
+                                    "href": urljoin(final_url, href),
+                                    "rel": rel,
+                                    "sizes": str(tag.get("sizes", "") or ""),
+                                })
+
+                    manifest_tag = soup.find("link", rel=lambda value: value and "manifest" in str(value).lower())
+                    manifest_href = manifest_tag.get("href") if manifest_tag else ""
+                    if manifest_href:
+                        manifest_url = urljoin(final_url, manifest_href)
+                        if _favicon_url_is_safe(manifest_url):
+                            manifest_response = None
+                            try:
+                                manifest_response = _favicon_safe_get(session, manifest_url)
+                                if manifest_response is None or manifest_response.status_code >= 400:
+                                    manifest = {}
+                                else:
+                                    manifest = manifest_response.json()
+                            except Exception:
+                                manifest = {}
+                            finally:
+                                if manifest_response is not None:
+                                    manifest_response.close()
+                            for icon in manifest.get("icons", []) if isinstance(manifest, dict) else []:
+                                src = icon.get("src") if isinstance(icon, dict) else ""
+                                if src:
+                                    candidates.append({
+                                        "href": urljoin(manifest_url, src),
+                                        "rel": "manifest-icon",
+                                        "sizes": str(icon.get("sizes", "") or ""),
+                                    })
+        finally:
+            response.close()
+
+    parsed = urlparse(final_url)
+    if parsed.scheme and parsed.netloc:
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        for path in FAVICON_ROOT_FALLBACKS:
+            candidates.append({"href": urljoin(origin, path), "rel": "root-fallback", "sizes": ""})
+
+    return sorted(candidates, key=_score_favicon_candidate, reverse=True)
+
+
+def _resolve_favicon_content(domain: str) -> tuple[str, bytes] | None:
+    if requests is None:
+        return None
+    if not domain or not _is_public_favicon_host(domain):
+        return None
+
+    base_url = f"https://{domain}/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; ASLM-FaviconResolver/1.0)",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/*;q=0.8,*/*;q=0.5",
+    }
+
+    with requests.Session() as session:
+        session.headers.update(headers)
+        seen: set[str] = set()
+        for candidate in _collect_favicon_candidates(session, base_url):
+            href = candidate.get("href", "")
+            if not href or href in seen:
+                continue
+            seen.add(href)
+
+            resolved = _fetch_favicon_candidate(session, href)
+            if resolved:
+                return resolved
+
+        for fallback_url in (
+            f"https://www.google.com/s2/favicons?domain={domain}&sz=128",
+            f"https://icons.duckduckgo.com/ip3/{domain}.ico",
+        ):
+            resolved = _fetch_favicon_candidate(session, fallback_url)
+            if resolved:
+                return resolved
+
+    return None
+
+
+def _favicon_cache_paths(domain: str) -> tuple[Path, Path]:
+    key = hashlib.sha256(domain.encode("utf-8")).hexdigest()
+    return FAVICON_CACHE_DIR / f"{key}.bin", FAVICON_CACHE_DIR / f"{key}.json"
+
+
+def _read_favicon_disk_cache(domain: str, now: float) -> tuple[str, bytes] | None:
+    content_path, meta_path = _favicon_cache_paths(domain)
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if float(meta.get("expires_at", 0) or 0) <= now:
+            return None
+        content_type = str(meta.get("content_type", "") or "").strip()
+        if content_type not in FAVICON_IMAGE_TYPES:
+            return None
+        content = content_path.read_bytes()
+    except Exception:
+        return None
+
+    if not content or len(content) > FAVICON_MAX_BYTES:
+        return None
+    return content_type, content
+
+
+def _write_favicon_disk_cache(domain: str, content_type: str, content: bytes, expires_at: float) -> None:
+    if not content or len(content) > FAVICON_MAX_BYTES:
+        return
+
+    try:
+        FAVICON_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        content_path, meta_path = _favicon_cache_paths(domain)
+        content_path.write_bytes(content)
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "domain": domain,
+                    "content_type": content_type,
+                    "expires_at": expires_at,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        logger.debug("Failed to write favicon disk cache for %s", domain, exc_info=True)
+
+
+# Merge the project prompt with per-request user instructions.
+def _compose_system_prompt(user_system_prompt: str) -> str:
+    """Build the system prompt sent to the model for one request."""
+
+    parts: list[str] = []
+
+    default_prompt = _read_default_system_prompt()
+    if default_prompt:
+        parts.append(default_prompt)
+
+    runtime_context = _build_runtime_context()
+    if runtime_context:
+        parts.append(runtime_context)
+
+    user_prompt = str(user_system_prompt or "").strip()
+    if user_prompt:
+        parts.append(f"Additional instructions:\n{user_prompt}")
+
+    return "\n\n".join(parts)
 TEXT_ATTACHMENT_FILENAMES = {
     ".bash_profile",
     ".bashrc",
@@ -123,9 +522,15 @@ ATTACHMENT_TEXT_CHAR_LIMIT = 24000
 LLM_HISTORY_MAX_MESSAGES = 40
 LLM_HISTORY_MIN_MESSAGES = 8
 LLM_HISTORY_DEFAULT_CHAR_BUDGET = 48000
-LLM_HISTORY_MAX_CHAR_BUDGET = 160000
+LLM_HISTORY_COMPRESSION_TRIGGER_RATIO = 0.80
+LLM_HISTORY_COMPRESSION_MAX_CHARS = 90000
+LLM_HISTORY_COMPRESSION_MAX_LINES = 120
+LLM_HISTORY_COMPRESSION_MAX_ITEMS = 120
+LLM_HISTORY_COMPRESSION_RECENT_USER_MESSAGES = 5
+LLM_HISTORY_COMPRESSION_DIRECTIVE_MESSAGES = 20
 MODEL_INFO_CACHE_TTL_SECONDS = 300
 MODEL_LIST_CACHE_TTL_SECONDS = 45
+MODEL_RUNTIME_METADATA_PATH = settings.BASE_DIR / "Tools" / "model_runtime_metadata.json"
 LLM_CONTROL_TOKEN_PATTERNS = (
     re.compile(
         r"<\|start\|>\s*(?:assistant|user|system)?\s*(?:<\|channel\|>\s*(?:final|analysis|commentary))?\s*(?:<\|message\|>)?",
@@ -146,6 +551,39 @@ _model_list_cache: dict[tuple[str, str, str], tuple[float, list[str]]] = {}
 _tool_server_cache: dict[tuple[str, str, str, str], tuple[float, list[dict[str, Any]]]] = {}
 _active_model_lock = threading.RLock()
 _active_model_by_engine: dict[str, str] = {}
+_chat_usage_lock = threading.RLock()
+_chat_usage_by_chat_id: dict[str, dict[str, Any]] = {}
+_favicon_cache_lock = threading.RLock()
+_favicon_cache: dict[str, tuple[float, str, bytes]] = {}
+_generation_state_lock = threading.RLock()
+_active_generation_id_by_engine: dict[str, str] = {}
+FAVICON_CACHE_DIR = settings.BASE_DIR / "Data" / "favicon_cache"
+FAVICON_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
+FAVICON_NEGATIVE_CACHE_TTL_SECONDS = 60 * 60
+FAVICON_MAX_BYTES = 384 * 1024
+FAVICON_IMAGE_TYPES = {
+    "image/x-icon",
+    "image/vnd.microsoft.icon",
+    "image/png",
+    "image/jpeg",
+    "image/svg+xml",
+    "image/webp",
+    "image/gif",
+}
+FAVICON_ICON_RELS = {
+    "icon",
+    "shortcut icon",
+    "apple-touch-icon",
+    "apple-touch-icon-precomposed",
+    "mask-icon",
+    "fluid-icon",
+}
+FAVICON_ROOT_FALLBACKS = (
+    "/favicon.ico",
+    "/favicon.png",
+    "/apple-touch-icon.png",
+    "/apple-touch-icon-precomposed.png",
+)
 
 CONTEXT_WINDOW_KEYS = (
     "num_ctx",
@@ -831,6 +1269,107 @@ def _build_file_attachment_prompt_block(attachment: dict[str, Any]) -> str:
     )
 
 
+def _selected_tools_include_sandbox(selected_tool_servers: list[dict[str, Any]]) -> bool:
+    """Return whether the resolved tool selection includes sandbox access."""
+
+    return any(str(server.get("id") or "").strip() == "sandbox" for server in selected_tool_servers)
+
+
+def _normalize_uploaded_file_ids(data: dict[str, Any]) -> list[str]:
+    """Return uploaded file ids referenced by a chat request."""
+
+    raw_values: list[Any] = []
+    for key in ("uploaded_file_ids", "uploaded_files", "file_ids"):
+        value = data.get(key)
+        if isinstance(value, list):
+            raw_values.extend(value)
+        elif value:
+            raw_values.append(value)
+
+    for attachment in data.get("attachments", []) or []:
+        if isinstance(attachment, dict):
+            file_id = attachment.get("file_id")
+            if file_id:
+                raw_values.append(file_id)
+
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for raw_value in raw_values:
+        if isinstance(raw_value, dict):
+            raw_value = raw_value.get("file_id") or raw_value.get("id")
+        file_id = str(raw_value or "").strip()
+        if file_id and file_id not in seen:
+            seen.add(file_id)
+            normalized.append(file_id)
+    return normalized
+
+
+def _load_model_upload_manifests(file_ids: list[str], *, sandbox_enabled: bool) -> list[dict[str, Any]]:
+    """Load model-facing upload manifests for the selected tool state."""
+
+    manifests: list[dict[str, Any]] = []
+    for file_id in file_ids:
+        manifest = load_upload_manifest(file_id)
+        if manifest:
+            manifests.append(model_upload_payload(manifest, sandbox_enabled=sandbox_enabled))
+    return manifests
+
+
+def _build_uploaded_file_prompt_block(manifest: dict[str, Any]) -> str:
+    """Serialize one uploaded file manifest into private model context."""
+
+    name = str(manifest.get("name") or "file").strip() or "file"
+    mime = str(manifest.get("mime") or "application/octet-stream").strip()
+    size_bytes = int(manifest.get("size_bytes") or 0)
+    lines = [
+        f"[Uploaded file: {name}]",
+        f"File ID: {manifest.get('file_id') or ''}",
+        f"MIME: {mime}",
+        f"Size: {size_bytes} bytes",
+    ]
+
+    sandbox_path = manifest.get("sandbox_path")
+    if sandbox_path:
+        lines.append(f"Sandbox path: {sandbox_path}")
+
+    archive_tree = manifest.get("archive_tree")
+    if isinstance(archive_tree, list) and archive_tree:
+        lines.append(
+            "Archive preview (file names read from the compressed archive; "
+            "the archive has not been extracted):"
+        )
+        lines.extend(f"- {item}" for item in archive_tree[:250])
+
+    table_preview = str(manifest.get("table_preview") or "").strip()
+    if table_preview:
+        lines.append(f"Table preview:\n{table_preview}")
+
+    text_preview = str(manifest.get("text_preview") or "").strip()
+    if text_preview:
+        lines.append(f"Text preview:\n{text_preview}")
+    elif not sandbox_path:
+        lines.append("Readable content is not available for this model request.")
+
+    lines.append("[/Uploaded file]")
+    return "\n".join(lines)
+
+
+def _apply_uploaded_file_manifests_to_llm_entry(
+    entry: dict[str, Any],
+    manifests: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Attach uploaded file manifests to the current user entry."""
+
+    blocks = [_build_uploaded_file_prompt_block(manifest) for manifest in manifests if manifest]
+    if not blocks:
+        return entry
+
+    content = str(entry.get("content") or "").strip()
+    upload_context = "\n\n".join(blocks)
+    entry["content"] = f"{content}\n\n{upload_context}".strip() if content else upload_context
+    return entry
+
+
 # Attach images and file context to one outbound LLM message.
 def _apply_attachments_to_llm_entry(entry: dict[str, Any], attachments: list[dict[str, Any]]) -> dict[str, Any]:
     """Attach images and file context to one outbound LLM message."""
@@ -1030,6 +1569,13 @@ def _normalize_transcript_entries(raw_entries: Any) -> list[dict[str, Any]]:
         if not isinstance(raw_entry, dict):
             continue
         role = str(raw_entry.get("role", "") or "").strip().lower()
+        if not role and (
+            raw_entry.get("alias")
+            or raw_entry.get("tool_id")
+            or raw_entry.get("tool_name")
+            or raw_entry.get("tool_display_name")
+        ):
+            role = "tool"
         if role not in {"assistant", "tool"}:
             continue
 
@@ -1055,6 +1601,12 @@ def _normalize_transcript_entries(raw_entries: Any) -> list[dict[str, Any]]:
             arguments = raw_entry.get("arguments")
             if isinstance(arguments, dict):
                 entry["arguments"] = arguments
+            tool_ui = raw_entry.get("tool_ui")
+            if isinstance(tool_ui, dict):
+                entry["tool_ui"] = tool_ui
+            structured_content = raw_entry.get("structured_content")
+            if isinstance(structured_content, dict):
+                entry["structured_content"] = structured_content
         entries.append(entry)
 
     return entries
@@ -1072,6 +1624,11 @@ def _build_llm_history_entries(message: Message) -> list[dict[str, Any]]:
     if transcript_entries:
         llm_entries: list[dict[str, Any]] = []
         for entry in transcript_entries:
+            if entry["role"] == "tool" and str(entry.get("alias") or "") == "context_compression_summary":
+                summary_content = str(entry.get("content") or "").strip()
+                if summary_content:
+                    llm_entries.append({"role": "system", "content": summary_content})
+                continue
             payload = {
                 "role": entry["role"],
                 "content": entry.get("content", ""),
@@ -1099,6 +1656,32 @@ def _build_llm_history_entries(message: Message) -> list[dict[str, Any]]:
     return [{"role": "assistant", "content": stripped_content}]
 
 
+def _message_has_context_compression_summary(message: Message) -> bool:
+    """Return whether one stored assistant message represents a compression marker."""
+
+    if getattr(message, "role", "") != "assistant":
+        return False
+    for entry in _normalize_transcript_entries(getattr(message, "llm_transcript", None)):
+        if entry.get("role") == "tool" and str(entry.get("alias") or "") == "context_compression_summary":
+            return bool(str(entry.get("content") or "").strip())
+    return False
+
+
+def _build_context_compression_source_entries(history_records: list[Message]) -> list[dict[str, Any]]:
+    """Build chronological non-compression entries represented by a new boundary."""
+
+    boundary_records: list[Message] = []
+    for historical_message in history_records:
+        if _message_has_context_compression_summary(historical_message):
+            break
+        boundary_records.append(historical_message)
+
+    entries: list[dict[str, Any]] = []
+    for historical_message in reversed(boundary_records):
+        entries.extend(_build_llm_history_entries(historical_message))
+    return entries
+
+
 # Build activity segments
 def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
     """Build frontend activity segments from the stored machine transcript."""
@@ -1107,14 +1690,21 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
     if not transcript_entries:
         return []
 
-    # Index tool results by alias for quick lookup (alias = server__tool_id).
-    tool_results: dict[str, str] = {}
+    # Index tool results by alias while preserving order. Some runtimes can
+    # emit repeated aliases (for example "sandbox__share_file__0" for several
+    # different files in one answer), so a simple dict overwrite would keep
+    # only the last file after reload.
+    tool_results: dict[str, list[dict[str, Any]]] = {}
     for entry in transcript_entries:
         if entry.get("role") == "tool":
             # Prefer the full alias stored by _build_tool_message, fall back to tool_id/name.
             alias = str(entry.get("alias") or entry.get("tool_id") or entry.get("name") or "")
             if alias:
-                tool_results[alias] = str(entry.get("content") or "")
+                tool_results.setdefault(alias, []).append({
+                    "content": str(entry.get("content") or ""),
+                    "toolUi": entry.get("tool_ui") if isinstance(entry.get("tool_ui"), dict) else None,
+                    "structuredContent": entry.get("structured_content") if isinstance(entry.get("structured_content"), dict) else None,
+                })
 
     segments: list[dict[str, Any]] = []
     for entry in transcript_entries:
@@ -1128,20 +1718,42 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
             continue
 
         seg_alias = str(entry.get("alias") or entry.get("tool_id", entry.get("name", "")) or "")
-        segments.append(
-            {
-                "type": "tool",
-                "alias": seg_alias,
-                "serverId": str(entry.get("server_id", "") or ""),
-                "serverName": str(entry.get("server_name", "") or ""),
-                "toolId": str(entry.get("tool_id", entry.get("name", "")) or ""),
-                "toolName": str(entry.get("tool_display_name", entry.get("tool_name", entry.get("name", ""))) or ""),
-                "arguments": entry.get("arguments") if isinstance(entry.get("arguments"), dict) else {},
-                "result": tool_results.get(seg_alias, None),
+        payload_queue = tool_results.get(seg_alias) or []
+        if payload_queue:
+            result_payload = payload_queue.pop(0)
+        else:
+            result_payload = {
+                "content": str(entry.get("content") or ""),
+                "toolUi": entry.get("tool_ui") if isinstance(entry.get("tool_ui"), dict) else None,
+                "structuredContent": entry.get("structured_content") if isinstance(entry.get("structured_content"), dict) else None,
             }
-        )
+        segment = {
+            "type": "tool",
+            "alias": seg_alias,
+            "serverId": str(entry.get("server_id", "") or ""),
+            "serverName": str(entry.get("server_name", "") or ""),
+            "toolId": str(entry.get("tool_id", entry.get("name", "")) or ""),
+            "toolName": str(entry.get("tool_display_name", entry.get("tool_name", entry.get("name", ""))) or ""),
+            "arguments": entry.get("arguments") if isinstance(entry.get("arguments"), dict) else {},
+            "result": result_payload.get("content") if isinstance(result_payload, dict) else None,
+        }
+        if isinstance(result_payload, dict):
+            if isinstance(result_payload.get("toolUi"), dict):
+                segment["toolUi"] = result_payload["toolUi"]
+            if isinstance(result_payload.get("structuredContent"), dict):
+                segment["structuredContent"] = result_payload["structuredContent"]
+        segments.append(segment)
 
     return segments
+
+
+def _message_has_reasoning_segments(message: Message) -> bool:
+    """Return whether the stored transcript contains model reasoning."""
+
+    return any(
+        entry.get("role") == "assistant" and str(entry.get("thinking", "") or "").strip()
+        for entry in _normalize_transcript_entries(message.llm_transcript)
+    )
 
 
 # Serialize message
@@ -1157,6 +1769,7 @@ def _serialize_message(message: Message, *, include_attachment_data: bool = True
     activity_segments = _build_activity_segments(message)
     if activity_segments:
         payload["activity_segments"] = activity_segments
+        payload["reasoning_mode"] = _message_has_reasoning_segments(message)
     attachments = _get_message_attachments(message, include_data=include_attachment_data)
     if attachments:
         payload["attachments"] = attachments
@@ -1198,11 +1811,42 @@ def _serialize_tool_call_marker(tool_event: dict[str, Any]) -> str:
 
 
 # Serialize tool result marker
-def _serialize_tool_result_marker(alias: str, content: str) -> str:
+def _serialize_tool_result_marker(
+    alias: str,
+    content: str,
+    *,
+    tool_ui: dict[str, Any] | None = None,
+    structured_content: dict[str, Any] | None = None,
+) -> str:
     """Encode a tool result into an inline marker so the frontend can show _out_."""
 
     payload = {"alias": alias, "content": content}
+    if isinstance(tool_ui, dict):
+        payload["tool_ui"] = tool_ui
+    if isinstance(structured_content, dict):
+        payload["structured_content"] = structured_content
     return f'<tool_result>{json.dumps(payload, ensure_ascii=False)}</tool_result>'
+
+
+def _serialize_context_compression_marker(compression_event: dict[str, Any]) -> str:
+    """Encode a context-compression boundary without pretending it is a model tool."""
+
+    payload = {
+        "alias": str(compression_event.get("alias") or "context_compression_summary").strip(),
+        "server_id": str(compression_event.get("server_id") or "system").strip(),
+        "server_name": str(compression_event.get("server_name") or "System").strip(),
+        "tool_id": str(compression_event.get("tool_id") or "context_compression_summary").strip(),
+        "tool_name": str(compression_event.get("tool_display_name") or compression_event.get("tool_name") or "Context Compression").strip(),
+        "arguments": compression_event.get("arguments") if isinstance(compression_event.get("arguments"), dict) else {},
+        "content": str(compression_event.get("content") or ""),
+    }
+    tool_ui = compression_event.get("tool_ui")
+    if isinstance(tool_ui, dict):
+        payload["tool_ui"] = tool_ui
+    structured_content = compression_event.get("structured_content")
+    if isinstance(structured_content, dict):
+        payload["structured_content"] = structured_content
+    return f'<context_compression>{json.dumps(payload, ensure_ascii=False)}</context_compression>'
 
 
 # Extract Ollama model info
@@ -1435,6 +2079,7 @@ def _build_fallback_model_info_payload(engine: str, model_name: str) -> dict[str
     payload["available_tool_servers"] = []
     payload["model"] = model_name
     payload["engine"] = engine
+    payload["metadata_fallback"] = True
     return payload
 
 
@@ -1449,6 +2094,13 @@ def _build_model_info_payload(
 
     cached_payload = _get_cached_model_info(engine, model_name)
     if cached_payload is not None:
+        _sync_runtime_model_metadata(
+            engine,
+            model_name,
+            cached_payload,
+            source="model_info_cache",
+            route="/api/model_info/",
+        )
         return cached_payload
 
     try:
@@ -1480,7 +2132,15 @@ def _build_model_info_payload(
     )
     payload["model"] = model_name
     payload["engine"] = engine
-    return _set_cached_model_info(engine, model_name, payload)
+    cached_payload = _set_cached_model_info(engine, model_name, payload)
+    _sync_runtime_model_metadata(
+        engine,
+        model_name,
+        cached_payload,
+        source="model_info",
+        route="/api/model_info/",
+    )
+    return cached_payload
 
 
 # Build a stable engine label for API payloads.
@@ -1562,6 +2222,155 @@ def _build_inference_info_payload(
             "model": model_source,
         },
     }
+
+
+def _runtime_metadata_source(name: str, route: str, port_setting: str) -> dict[str, Any]:
+    """Describe one local metadata source without freezing dynamic ports."""
+
+    return {
+        "name": name,
+        "type": "local_http_route",
+        "route": route,
+        "host": "127.0.0.1",
+        "port_setting": port_setting,
+        "port_sources": [
+            "ASLM_Module.json settings[].value/default",
+            "Settings/settings.json",
+            "environment override when available",
+        ],
+    }
+
+
+def _read_runtime_metadata_file() -> dict[str, Any]:
+    try:
+        with MODEL_RUNTIME_METADATA_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_runtime_metadata_file(payload: dict[str, Any]) -> None:
+    MODEL_RUNTIME_METADATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = MODEL_RUNTIME_METADATA_PATH.with_suffix(".json.tmp")
+    with temp_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    os.replace(temp_path, MODEL_RUNTIME_METADATA_PATH)
+
+
+def _sync_runtime_model_metadata(
+    engine: str,
+    model_name: str,
+    model_info_payload: dict[str, Any],
+    *,
+    source: str,
+    route: str,
+) -> None:
+    """Persist active model metadata for local tools in real time."""
+
+    if not engine or not model_name or not isinstance(model_info_payload, dict):
+        return
+    if model_info_payload.get("metadata_fallback"):
+        return
+
+    defaults = model_info_payload.get("defaults", {})
+    if not isinstance(defaults, dict):
+        defaults = {}
+    runtime_limits = model_info_payload.get("runtime_limits", {})
+    if not isinstance(runtime_limits, dict):
+        runtime_limits = {}
+
+    model_context_limit = _coerce_positive_int(model_info_payload.get("context_length"))
+    context_window = _first_positive_int(defaults, CONTEXT_WINDOW_KEYS) or model_context_limit
+    max_output_tokens = _first_positive_int(defaults, OUTPUT_TOKEN_KEYS)
+    output_token_limit = (
+        _first_positive_int(runtime_limits, OUTPUT_TOKEN_KEYS)
+        or _coerce_positive_int(model_info_payload.get("output_token_limit"))
+    )
+
+    payload = _read_runtime_metadata_file()
+    models = payload.get("models", {})
+    if not isinstance(models, dict):
+        models = {}
+
+    model_key = f"{engine}:{model_name}"
+    existing = models.get(model_key, {})
+    runtime = existing.get("runtime", {}) if isinstance(existing, dict) else {}
+    if not isinstance(runtime, dict):
+        runtime = {}
+
+    sources = [
+        {
+            **_runtime_metadata_source("ASLM model info", route, "ui-port"),
+            "notes": "ASLM-normalized active model metadata written during model selection or generation.",
+        }
+    ]
+    if settings.is_ollama_engine(engine):
+        sources.extend(
+            [
+                {
+                    **_runtime_metadata_source("Ollama loaded models", "/api/ps", "ollama-service_port"),
+                    "notes": "Provider runtime source for loaded model state and loaded context_length.",
+                },
+                {
+                    **_runtime_metadata_source("Ollama model metadata", "/api/show", "ollama-service_port"),
+                    "notes": "Provider model metadata source for capabilities and model limits.",
+                },
+            ]
+        )
+
+    models[model_key] = {
+        "engine": engine,
+        "model": model_name,
+        "capabilities": {
+            "vision": bool(model_info_payload.get("supports_vision", False)),
+            "tools": bool(model_info_payload.get("supports_tool_calling", False)),
+            "thinking": bool(model_info_payload.get("supports_thinking", False)),
+            "files": bool(model_info_payload.get("supports_files", False)),
+        },
+        "limits": {
+            "context_window": context_window,
+            "model_context_limit": model_context_limit,
+            "max_output_tokens": max_output_tokens,
+            "output_token_limit": output_token_limit,
+        },
+        "runtime": runtime,
+        "sources": sources,
+    }
+
+    payload.update(
+        {
+            "schema_version": 1,
+            "_comment": (
+                "Runtime model metadata consumed by local tools. Ports are dynamic; "
+                "resolve local_http_route sources through ASLM_Module.json and Settings/settings.json."
+            ),
+            "updated_at": timezone.now().replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "active": {
+                "engine": engine,
+                "engine_label": _get_engine_label(engine),
+                "model": model_name,
+                "source": source,
+                "primary_source": {
+                    **_runtime_metadata_source("ASLM model info", route, "ui-port"),
+                    "fields": [
+                        "engine",
+                        "model",
+                        "supports_vision",
+                        "context_length",
+                        "defaults",
+                    ],
+                },
+            },
+            "models": models,
+        }
+    )
+
+    try:
+        _write_runtime_metadata_file(payload)
+    except OSError as exc:
+        logger.debug("Failed to write runtime model metadata: %s", exc)
 
 
 # Read JSON body
@@ -1660,19 +2469,14 @@ def _store_message_attachments(message_record: Message, attachments: list[dict[s
 def _resolve_history_char_budget(model_info_payload: dict[str, Any] | None) -> int:
     """Return an approximate character budget for replayed chat history."""
 
-    if not isinstance(model_info_payload, dict):
-        return LLM_HISTORY_DEFAULT_CHAR_BUDGET
-
-    try:
-        context_length = int(model_info_payload.get("context_length") or 0)
-    except (TypeError, ValueError):
-        context_length = 0
-
+    context_length = _context_window_tokens_from_model_info(model_info_payload)
     if context_length <= 0:
         return LLM_HISTORY_DEFAULT_CHAR_BUDGET
 
-    # Approximate one token as a few characters and leave room for the answer.
-    return max(16000, min(context_length * 3, LLM_HISTORY_MAX_CHAR_BUDGET))
+    # Approximate one token as a few characters. Do not clamp large-context
+    # models to the legacy local budget; compression should follow the model's
+    # real context window.
+    return max(16000, context_length * 3)
 
 
 # Estimate the prompt cost of one normalized LLM entry.
@@ -1694,14 +2498,405 @@ def _estimate_llm_entry_chars(entry: dict[str, Any]) -> int:
     return cost
 
 
+def _estimate_tokens_from_chars(char_count: int) -> int:
+    """Approximate token count from UTF-8 character count."""
+
+    try:
+        chars = max(0, int(char_count))
+    except (TypeError, ValueError):
+        chars = 0
+    if chars <= 0:
+        return 0
+    # Backward-compatible fallback for legacy call sites.
+    return max(1, int(round(chars / 2.4)))
+
+
+def _model_chars_per_token_hint(
+    *,
+    model_info_payload: dict[str, Any] | None,
+    active_engine: str,
+    active_model: str,
+) -> float:
+    """Return one base chars/token hint from model family and engine metadata."""
+
+    model_name = str(active_model or (model_info_payload or {}).get("model") or "").strip().lower()
+    engine_name = str(active_engine or "").strip().lower()
+
+    # Conservative defaults that are still closer to real behavior than a fixed
+    # chars/1.5 estimate. Lower value => more tokens estimated.
+    base_ratio = 2.4
+    if "qwen" in model_name:
+        base_ratio = 2.0
+    elif "deepseek" in model_name:
+        base_ratio = 2.2
+    elif "llama" in model_name or "mistral" in model_name or "mixtral" in model_name:
+        base_ratio = 2.7
+    elif "gemma" in model_name:
+        base_ratio = 2.5
+    elif "gpt" in model_name or "o3" in model_name or "o4" in model_name:
+        base_ratio = 2.8
+
+    if engine_name in {"google-genai", "google_genai", "gemini"}:
+        base_ratio = min(base_ratio + 0.2, 3.0)
+    return base_ratio
+
+
+def _estimate_tokens_adaptive(
+    *,
+    char_count: int,
+    model_info_payload: dict[str, Any] | None,
+    active_engine: str,
+    active_model: str,
+    observed_chars_per_token: float | None = None,
+) -> int:
+    """Estimate tokens using model hints + optional observed prompt telemetry."""
+
+    try:
+        chars = max(0, int(char_count))
+    except (TypeError, ValueError):
+        chars = 0
+    if chars <= 0:
+        return 0
+
+    base_ratio = _model_chars_per_token_hint(
+        model_info_payload=model_info_payload,
+        active_engine=active_engine,
+        active_model=active_model,
+    )
+    if isinstance(observed_chars_per_token, (int, float)) and observed_chars_per_token > 0:
+        # Blend toward observed runtime behavior per chat/model.
+        base_ratio = (base_ratio * 0.35) + (float(observed_chars_per_token) * 0.65)
+
+    # Keep estimator sane and stable across outlier payloads.
+    ratio = max(1.4, min(4.0, base_ratio))
+    return max(1, int(round(chars / ratio)))
+
+
+def _context_window_tokens_from_model_info(model_info_payload: dict[str, Any] | None) -> int:
+    if not isinstance(model_info_payload, dict):
+        return 0
+
+    defaults = model_info_payload.get("defaults", {})
+    if isinstance(defaults, dict):
+        from_defaults = _first_positive_int(defaults, CONTEXT_WINDOW_KEYS)
+        if from_defaults:
+            return from_defaults
+
+    limits = model_info_payload.get("limits", {})
+    if isinstance(limits, dict):
+        current_limit = _first_positive_int(limits, ("context_window", "contextWindow", "num_ctx"))
+        if current_limit:
+            return current_limit
+
+    direct_current = _first_positive_int(
+        model_info_payload,
+        ("context_window", "contextWindow", "num_ctx", "input_token_limit", "inputTokenLimit"),
+    )
+    if direct_current:
+        return direct_current
+
+    direct_max = _coerce_positive_int(model_info_payload.get("context_length"))
+    if direct_max:
+        return direct_max
+    return 0
+
+
+def _estimate_context_usage(
+    *,
+    chat: Chat | None,
+    system_prompt: str,
+    draft_text: str,
+    model_info_payload: dict[str, Any] | None,
+    active_engine: str = "",
+    active_model: str = "",
+) -> dict[str, Any]:
+    """Estimate current context usage for UI telemetry."""
+
+    context_window_tokens = resolve_context_window_tokens(
+        model_info_payload,
+        runtime_metadata_path=MODEL_RUNTIME_METADATA_PATH,
+        active_engine=active_engine,
+        active_model=active_model,
+    )
+    if context_window_tokens <= 0:
+        context_window_tokens = _context_window_tokens_from_model_info(model_info_payload)
+    if context_window_tokens <= 0:
+        context_window_tokens = 32768
+
+    used_chars = len(str(system_prompt or ""))
+    compressed_context_active = False
+    observed_chars_per_token: float | None = None
+    if chat is not None:
+        history_qs = (
+            chat.messages
+            .prefetch_related("attachments", "images")
+            .order_by("-created_at", "-id")[:LLM_HISTORY_MAX_MESSAGES]
+        )
+        for historical_message in history_qs:
+            entries = _build_llm_history_entries(historical_message)
+            used_chars += sum(_estimate_llm_entry_chars(entry) for entry in entries)
+            if _message_has_context_compression_summary(historical_message):
+                compressed_context_active = True
+                break
+        with _chat_usage_lock:
+            observed = dict(_chat_usage_by_chat_id.get(str(chat.id), {}))
+        raw_ratio = observed.get("observed_chars_per_token")
+        if isinstance(raw_ratio, (int, float)) and raw_ratio > 0:
+            observed_chars_per_token = float(raw_ratio)
+
+    if draft_text:
+        used_chars += len(str(draft_text))
+
+    base_chars_per_token = _model_chars_per_token_hint(
+        model_info_payload=model_info_payload,
+        active_engine=active_engine,
+        active_model=active_model,
+    )
+    effective_chars_per_token = (
+        ((base_chars_per_token * 0.35) + (observed_chars_per_token * 0.65))
+        if isinstance(observed_chars_per_token, (int, float)) and observed_chars_per_token > 0
+        else base_chars_per_token
+    )
+    estimated_used_tokens = _estimate_tokens_adaptive(
+        char_count=used_chars,
+        model_info_payload=model_info_payload,
+        active_engine=active_engine,
+        active_model=active_model,
+        observed_chars_per_token=observed_chars_per_token,
+    )
+    ratio = min(1.0, (estimated_used_tokens / max(1, context_window_tokens)))
+
+    return {
+        "context_window_tokens": context_window_tokens,
+        "estimated_used_tokens": estimated_used_tokens,
+        "estimated_used_chars": used_chars,
+        "ratio": ratio,
+        "compressed_context_active": compressed_context_active,
+        "base_chars_per_token": float(base_chars_per_token),
+        "effective_chars_per_token": float(max(1.4, min(4.0, effective_chars_per_token))),
+        "observed_chars_per_token": float(observed_chars_per_token) if isinstance(observed_chars_per_token, (int, float)) and observed_chars_per_token > 0 else None,
+    }
+
+
+def _build_manual_compression_event(
+    *,
+    chat: Chat,
+    system_prompt: str,
+    engine: str,
+    model_name: str,
+    model_info_payload: dict[str, Any] | None,
+    force: bool,
+) -> dict[str, Any] | None:
+    """Build one compression event payload for manual/auto UI-triggered compression."""
+
+    history_budget = _resolve_history_char_budget(model_info_payload)
+    runtime_context_tokens = resolve_context_window_tokens(
+        model_info_payload,
+        runtime_metadata_path=MODEL_RUNTIME_METADATA_PATH,
+        active_engine=engine,
+        active_model=model_name,
+    )
+    if runtime_context_tokens > 0:
+        runtime_budget = max(12000, runtime_context_tokens * 3)
+        history_budget = min(history_budget, runtime_budget)
+
+    used_history_chars = len(str(system_prompt or ""))
+    selected_history: list[list[dict[str, Any]]] = []
+    overflow_entries: list[dict[str, Any]] = []
+    history_records = list(
+        chat.messages
+        .prefetch_related("attachments", "images")
+        .order_by("-created_at", "-id")[:LLM_HISTORY_MAX_MESSAGES]
+    )
+    for index, historical_message in enumerate(history_records):
+        entries = _build_llm_history_entries(historical_message)
+        if not entries:
+            continue
+        entry_cost = sum(_estimate_llm_entry_chars(entry) for entry in entries)
+        if (
+            selected_history
+            and len(selected_history) >= LLM_HISTORY_MIN_MESSAGES
+            and used_history_chars + entry_cost > history_budget
+        ):
+            overflow_entries.extend(entries)
+            for older_message in history_records[index + 1:]:
+                if _message_has_context_compression_summary(older_message):
+                    overflow_entries.extend(_build_llm_history_entries(older_message))
+                    break
+                overflow_entries.extend(_build_llm_history_entries(older_message))
+            break
+        selected_history.append(entries)
+        used_history_chars += entry_cost
+        if _message_has_context_compression_summary(historical_message):
+            break
+
+    if force and not overflow_entries and len(history_records) > 1:
+        keep_recent_count = min(LLM_HISTORY_MIN_MESSAGES, max(1, len(history_records) - 1))
+        for older_message in history_records[keep_recent_count:]:
+            entries = _build_llm_history_entries(older_message)
+            if entries:
+                overflow_entries.extend(entries)
+            if _message_has_context_compression_summary(older_message):
+                break
+
+    compression = decide_compression(
+        used_history_chars=used_history_chars,
+        history_budget_chars=history_budget,
+        model_info_payload=model_info_payload,
+        runtime_metadata_path=MODEL_RUNTIME_METADATA_PATH,
+        active_engine=engine,
+        active_model=model_name,
+        debug_force_4k=False,
+        trigger_ratio=LLM_HISTORY_COMPRESSION_TRIGGER_RATIO,
+    )
+    summary_entries = _build_context_compression_source_entries(history_records)
+    if force and not overflow_entries:
+        overflow_entries = list(summary_entries)
+    if force and not summary_entries:
+        return None
+    should_compress = bool(overflow_entries) and (compression.enabled or force)
+    if not should_compress:
+        return None
+
+    recent_user_messages = [
+        _strip_llm_control_tokens(str(message.content or "")).strip()[:1200]
+        for message in chat.messages.filter(role="user").order_by("-created_at", "-id")[:LLM_HISTORY_COMPRESSION_RECENT_USER_MESSAGES]
+        if str(message.content or "").strip()
+    ]
+    direct_user_directives = _collect_direct_user_directives(chat, exclude_message_id=0)
+    try:
+        summary_text, summary_payload = build_structured_history_summary(
+            overflow_entries=summary_entries,
+            recent_user_messages=recent_user_messages,
+            direct_user_directives=direct_user_directives,
+            summarize_with_model=lambda prompt_messages: _generate_history_summary_with_model(
+                engine=engine,
+                model_name=model_name,
+                prompt_messages=prompt_messages,
+                model_info_payload=model_info_payload,
+            ),
+            max_overflow_entries=LLM_HISTORY_COMPRESSION_MAX_ITEMS,
+        )
+    except Exception:
+        summary_text, summary_payload = build_structured_history_summary(
+            overflow_entries=summary_entries,
+            recent_user_messages=recent_user_messages,
+            direct_user_directives=direct_user_directives,
+            summarize_with_model=None,
+            max_overflow_entries=LLM_HISTORY_COMPRESSION_MAX_ITEMS,
+        )
+
+    summary_text, summary_payload = fit_summary_text(summary_payload, LLM_HISTORY_COMPRESSION_MAX_CHARS)
+    return {
+        "role": "tool",
+        "alias": "context_compression_summary",
+        "name": "context_compression_summary",
+        "tool_name": "context_compression_summary",
+        "tool_id": "context_compression_summary",
+        "tool_display_name": "Context Compression",
+        "server_id": "system",
+        "server_name": "System",
+        "arguments": {
+            "reason": compression.reason,
+            "history_budget_chars": history_budget,
+            "used_history_chars": used_history_chars,
+            "context_window_tokens": compression.context_window_tokens,
+            "force": bool(force),
+        },
+        "content": summary_text,
+        "tool_ui": {
+            "status": "done",
+            "label": "Context compressed",
+            "kind": "context_compression",
+        },
+        "structured_content": {
+            "kind": "context_compression",
+            "summary": summary_payload,
+        },
+    }
+
+
+def _collect_recent_user_messages(chat: Chat, exclude_message_id: int) -> list[str]:
+    messages = (
+        chat.messages
+        .filter(role="user")
+        .exclude(id=exclude_message_id)
+        .order_by("-created_at", "-id")[:LLM_HISTORY_COMPRESSION_RECENT_USER_MESSAGES]
+    )
+    result: list[str] = []
+    for message in messages:
+        text = _strip_llm_control_tokens(str(message.content or "")).strip()
+        if text:
+            result.append(text[:1200])
+    return result
+
+
+def _collect_direct_user_directives(chat: Chat, exclude_message_id: int) -> list[str]:
+    messages = (
+        chat.messages
+        .filter(role="user")
+        .exclude(id=exclude_message_id)
+        .order_by("-created_at", "-id")[:LLM_HISTORY_COMPRESSION_DIRECTIVE_MESSAGES]
+    )
+    directives: list[str] = []
+    directive_markers = (
+        "сделай", "не ", "убери", "добавь", "исправь", "проверь", "ограничь", "верни", "перепиши",
+        "do ", "don't", "remove", "add ", "fix ", "check ", "limit ", "return ", "rewrite ",
+    )
+    for message in messages:
+        text = _strip_llm_control_tokens(str(message.content or "")).strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if any(marker in lowered for marker in directive_markers):
+            directives.append(text[:1200])
+    return directives[:32]
+
+
+def _generate_history_summary_with_model(
+    *,
+    engine: str,
+    model_name: str,
+    prompt_messages: list[dict[str, str]],
+    model_info_payload: dict[str, Any] | None = None,
+) -> str:
+    """Generate one non-streamed summary payload with the active model."""
+
+    options = {
+        "temperature": 0.0,
+        "max_tokens": 8192,
+    }
+    chunks = llm_api.generate(
+        engine=engine,
+        model_name=model_name,
+        messages=prompt_messages,
+        stream=False,
+        options=options,
+        think=False,
+        think_param_name=str((model_info_payload or {}).get("think_param_name", "think") or "think"),
+        think_level_param_name=str((model_info_payload or {}).get("think_level_param_name", "reasoning_effort") or "reasoning_effort"),
+    )
+    parts: list[str] = []
+    for chunk in chunks:
+        thinking_part, text_part = _extract_stream_message_parts(chunk)
+        if text_part:
+            parts.append(text_part)
+        elif isinstance(chunk, str):
+            parts.append(chunk)
+    return _strip_llm_control_tokens("".join(parts)).strip()
+
+
 # Build LLM message history
 def _build_chat_history(
     chat: Chat,
     user_message_record: Message,
     user_message: str,
     system_prompt: str,
+    engine: str,
+    model_name: str,
     model_info_payload: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+    upload_manifests: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Build the message history sent to the selected backend."""
 
     llm_messages: list[dict[str, Any]] = []
@@ -1709,15 +2904,28 @@ def _build_chat_history(
         llm_messages.append({"role": "system", "content": system_prompt})
 
     history_budget = _resolve_history_char_budget(model_info_payload)
+    debug_force_4k = str(os.getenv("ASLM_DEBUG_CONTEXT_COMPRESSION_4K", "")).strip().lower() in {"1", "true", "yes", "on"}
+    runtime_context_tokens = resolve_context_window_tokens(
+        model_info_payload,
+        runtime_metadata_path=MODEL_RUNTIME_METADATA_PATH,
+        active_engine=engine,
+        active_model=model_name,
+    )
+    if debug_force_4k:
+        runtime_context_tokens = 4096
+    if runtime_context_tokens > 0:
+        runtime_budget = max(12000, runtime_context_tokens * 3)
+        history_budget = min(history_budget, runtime_budget)
     used_history_chars = 0
     selected_history: list[list[dict[str, Any]]] = []
-    history_qs = (
+    overflow_entries: list[dict[str, Any]] = []
+    history_records = list((
         chat.messages
         .exclude(id=user_message_record.id)
         .prefetch_related("attachments", "images")
         .order_by("-created_at", "-id")[:LLM_HISTORY_MAX_MESSAGES]
-    )
-    for historical_message in history_qs:
+    ))
+    for index, historical_message in enumerate(history_records):
         entries = _build_llm_history_entries(historical_message)
         if not entries:
             continue
@@ -1728,19 +2936,110 @@ def _build_chat_history(
             and len(selected_history) >= LLM_HISTORY_MIN_MESSAGES
             and used_history_chars + entry_cost > history_budget
         ):
+            # Collect the current and older entries for compression.
+            overflow_entries.extend(entries)
+            for older_message in history_records[index + 1:]:
+                if _message_has_context_compression_summary(older_message):
+                    overflow_entries.extend(_build_llm_history_entries(older_message))
+                    break
+                overflow_entries.extend(_build_llm_history_entries(older_message))
             break
 
         selected_history.append(entries)
         used_history_chars += entry_cost
+        if _message_has_context_compression_summary(historical_message):
+            break
+
+    compression = decide_compression(
+        used_history_chars=used_history_chars,
+        history_budget_chars=history_budget,
+        model_info_payload=model_info_payload,
+        runtime_metadata_path=MODEL_RUNTIME_METADATA_PATH,
+        active_engine=engine,
+        active_model=model_name,
+        debug_force_4k=debug_force_4k,
+        trigger_ratio=LLM_HISTORY_COMPRESSION_TRIGGER_RATIO,
+    )
+    compression_event: dict[str, Any] | None = None
+    if overflow_entries and compression.enabled:
+        summary_entries = _build_context_compression_source_entries(history_records)
+        if not summary_entries:
+            overflow_entries = []
+        else:
+            overflow_entries = summary_entries
+    if overflow_entries and compression.enabled:
+        recent_user_messages = _collect_recent_user_messages(chat, user_message_record.id)
+        direct_user_directives = _collect_direct_user_directives(chat, user_message_record.id)
+        try:
+            summary_text, _summary_payload = build_structured_history_summary(
+                overflow_entries=overflow_entries,
+                recent_user_messages=recent_user_messages,
+                direct_user_directives=direct_user_directives,
+                summarize_with_model=lambda prompt_messages: _generate_history_summary_with_model(
+                    engine=engine,
+                    model_name=model_name,
+                    prompt_messages=prompt_messages,
+                    model_info_payload=model_info_payload,
+                ),
+                max_overflow_entries=LLM_HISTORY_COMPRESSION_MAX_ITEMS,
+            )
+        except Exception as exc:
+            logger.warning("History compression summary failed: %s", exc)
+            summary_text, _summary_payload = build_structured_history_summary(
+                overflow_entries=overflow_entries,
+                recent_user_messages=recent_user_messages,
+                direct_user_directives=direct_user_directives,
+                summarize_with_model=None,
+                max_overflow_entries=LLM_HISTORY_COMPRESSION_MAX_ITEMS,
+            )
+
+        if summary_text:
+            summary_text, _summary_payload = fit_summary_text(_summary_payload, LLM_HISTORY_COMPRESSION_MAX_CHARS)
+            llm_messages.append({"role": "system", "content": summary_text})
+            compression_event = {
+                "role": "tool",
+                "alias": "context_compression_summary",
+                "name": "context_compression_summary",
+                "tool_name": "context_compression_summary",
+                "tool_id": "context_compression_summary",
+                "tool_display_name": "Context Compression",
+                "server_id": "system",
+                "server_name": "System",
+                "arguments": {
+                    "reason": compression.reason,
+                    "history_budget_chars": history_budget,
+                    "used_history_chars": used_history_chars,
+                    "context_window_tokens": compression.context_window_tokens,
+                },
+                "content": summary_text,
+                "tool_ui": {
+                    "status": "done",
+                    "label": "Context compressed",
+                    "kind": "context_compression",
+                },
+                "structured_content": {
+                    "kind": "context_compression",
+                    "summary": _summary_payload,
+                },
+            }
+            logger.info(
+                "History compression applied: engine=%s model=%s %s debug_force_4k=%s",
+                engine,
+                model_name,
+                compression.reason,
+                debug_force_4k,
+            )
 
     for entries in reversed(selected_history):
         llm_messages.extend(entries)
 
     current_entry: dict[str, Any] = {"role": "user", "content": user_message}
     current_attachments = _get_message_attachments(user_message_record)
-    llm_messages.append(_apply_attachments_to_llm_entry(current_entry, current_attachments))
+    current_entry = _apply_attachments_to_llm_entry(current_entry, current_attachments)
+    current_entry = _apply_uploaded_file_manifests_to_llm_entry(current_entry, upload_manifests or [])
+    llm_messages.append(current_entry)
 
-    return llm_messages
+    return llm_messages, compression_event
 
 # Split generation options
 def _split_generation_options(
@@ -1819,17 +3118,30 @@ def _build_generate_kwargs(
     return generate_kwargs
 
 # Stream and save assistant response
-def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, Any]):
+def _stream_chat_response(
+    chat: Chat,
+    engine: str,
+    generate_kwargs: dict[str, Any],
+    assistant_message_record: Message,
+    generation_id: str,
+    compression_event: dict[str, Any] | None = None,
+):
     """Stream visible content and persist the machine transcript."""
 
     visible_parts: list[str] = []
     thinking_parts: list[str] = []
     transcript_entries: list[dict[str, Any]] = []
+    usage_snapshot: dict[str, Any] = {}
     is_thinking = False
     failed = False
     started_at = time.perf_counter()
     model_name = str(generate_kwargs.get("model_name", "") or "")
     llm_messages = generate_kwargs.get("messages", [])
+    prompt_chars_estimate = sum(
+        _estimate_llm_entry_chars(entry)
+        for entry in llm_messages
+        if isinstance(entry, dict)
+    ) if isinstance(llm_messages, list) else 0
     image_count = _count_request_images(llm_messages if isinstance(llm_messages, list) else [])
     selected_tool_server_ids = generate_kwargs.get("tool_server_ids", []) or []
     raw_options = generate_kwargs.get("options", {})
@@ -1853,6 +3165,12 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
         )
 
     try:
+        with _generation_state_lock:
+            _active_generation_id_by_engine[str(engine)] = str(generation_id or "")
+        if isinstance(compression_event, dict):
+            transcript_entries.append(compression_event)
+            yield _serialize_context_compression_marker(compression_event)
+
         llm_api.prepare_runtime(engine)
         response_iterator = llm_api.generate(**generate_kwargs)
         for chunk in response_iterator:
@@ -1861,6 +3179,9 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
             if isinstance(chunk, dict) and chunk.get("transcript_message"):
                 transcript_message = chunk["transcript_message"]
                 if isinstance(transcript_message, dict):
+                    if not emit_thinking and transcript_message.get("thinking"):
+                        transcript_message = {**transcript_message}
+                        transcript_message.pop("thinking", None)
                     transcript_entries.append(transcript_message)
                 continue
 
@@ -1870,7 +3191,31 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
                     transcript_entries.append(tool_message)
                     alias = str(tool_message.get("alias") or tool_message.get("tool_id") or tool_message.get("name") or "")
                     content = str(tool_message.get("content") or "")
-                    yield _serialize_tool_result_marker(alias, content)
+                    tool_ui = tool_message.get("tool_ui") if isinstance(tool_message.get("tool_ui"), dict) else None
+                    structured_content = (
+                        tool_message.get("structured_content")
+                        if isinstance(tool_message.get("structured_content"), dict)
+                        else None
+                    )
+                    yield _serialize_tool_result_marker(
+                        alias,
+                        content,
+                        tool_ui=tool_ui,
+                        structured_content=structured_content,
+                    )
+                continue
+
+            if isinstance(chunk, dict) and isinstance(chunk.get("tool_events"), list):
+                if is_thinking:
+                    is_thinking = False
+                    yield "\n</think>\n"
+                markers = [
+                    _serialize_tool_call_marker(tool_event)
+                    for tool_event in chunk["tool_events"]
+                    if isinstance(tool_event, dict)
+                ]
+                if markers:
+                    yield "".join(markers)
                 continue
 
             # Tool events are sent as inline markers for the frontend.
@@ -1880,6 +3225,36 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
                     yield "\n</think>\n"
                 yield _serialize_tool_call_marker(chunk["tool_event"])
                 continue
+
+            if isinstance(chunk, dict):
+                prompt_tokens = _coerce_positive_int(
+                    chunk.get("prompt_eval_count")
+                    or chunk.get("prompt_tokens")
+                    or chunk.get("input_tokens")
+                )
+                completion_tokens = _coerce_positive_int(
+                    chunk.get("eval_count")
+                    or chunk.get("completion_tokens")
+                    or chunk.get("output_tokens")
+                )
+                total_tokens = _coerce_positive_int(
+                    chunk.get("total_tokens")
+                )
+                usage = chunk.get("usage")
+                if isinstance(usage, dict):
+                    prompt_tokens = prompt_tokens or _coerce_positive_int(
+                        usage.get("prompt_tokens") or usage.get("input_tokens")
+                    )
+                    completion_tokens = completion_tokens or _coerce_positive_int(
+                        usage.get("completion_tokens") or usage.get("output_tokens")
+                    )
+                    total_tokens = total_tokens or _coerce_positive_int(usage.get("total_tokens"))
+                if prompt_tokens is not None:
+                    usage_snapshot["prompt_tokens"] = int(prompt_tokens)
+                if completion_tokens is not None:
+                    usage_snapshot["completion_tokens"] = int(completion_tokens)
+                if total_tokens is not None:
+                    usage_snapshot["total_tokens"] = int(total_tokens)
 
             thinking_part, text_part = _extract_stream_message_parts(chunk)
 
@@ -1910,25 +3285,70 @@ def _stream_chat_response(chat: Chat, engine: str, generate_kwargs: dict[str, An
             yield "\n</think>\n"
         yield f"\n[Error during generation: {formatted_error}]"
     finally:
+        with _generation_state_lock:
+            active_id = str(_active_generation_id_by_engine.get(str(engine)) or "")
+            if active_id == str(generation_id or ""):
+                _active_generation_id_by_engine.pop(str(engine), None)
         if is_thinking:
             yield "\n</think>\n"
 
         visible_content = _strip_llm_control_tokens("".join(visible_parts)).strip()
         thinking_content = _strip_llm_control_tokens("".join(thinking_parts)).strip()
+        transcript_assistant_visible_parts: list[str] = []
+        transcript_has_renderable_payload = False
+        for entry in transcript_entries:
+            if not isinstance(entry, dict):
+                continue
+            role = str(entry.get("role") or "").lower()
+            content = _strip_llm_control_tokens(str(entry.get("content") or "")).strip()
+            thinking = _strip_llm_control_tokens(str(entry.get("thinking") or "")).strip()
+            if role == "assistant":
+                if content:
+                    transcript_assistant_visible_parts.append(content)
+                    transcript_has_renderable_payload = True
+                if thinking:
+                    transcript_has_renderable_payload = True
+            elif role == "tool":
+                alias = str(entry.get("alias") or entry.get("tool_id") or "").strip().lower()
+                # Compression markers alone should not become an "empty model reply".
+                if alias and alias != "context_compression_summary":
+                    transcript_has_renderable_payload = True
+                elif content and not alias:
+                    transcript_has_renderable_payload = True
+
+        if not visible_content and transcript_assistant_visible_parts:
+            visible_content = _strip_llm_control_tokens("".join(transcript_assistant_visible_parts)).strip()
+
         if not transcript_entries and (visible_content or thinking_content):
             synthesized_entry: dict[str, Any] = {"role": "assistant", "content": visible_content}
             if thinking_content:
                 synthesized_entry["thinking"] = thinking_content
             transcript_entries.append(synthesized_entry)
-        if visible_content or transcript_entries:
-            Message.objects.create(
-                chat=chat,
-                role="assistant",
-                content=visible_content,
-                llm_transcript=transcript_entries,
-            )
+
+        should_persist_message = bool(visible_content or transcript_has_renderable_payload)
+        if should_persist_message:
+            assistant_message_record.content = visible_content
+            assistant_message_record.llm_transcript = transcript_entries
+            assistant_message_record.save(update_fields=["content", "llm_transcript"])
+            # Bump chat ordering so sidebar reflects the latest activity.
+            Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
+        else:
+            # Nothing was generated; drop the empty placeholder we pre-created.
+            assistant_message_record.delete()
 
         duration_seconds = time.perf_counter() - started_at
+        if usage_snapshot:
+            prompt_tokens_observed = _coerce_positive_int(usage_snapshot.get("prompt_tokens"))
+            if prompt_tokens_observed and prompt_chars_estimate > 0:
+                usage_snapshot["prompt_chars_estimate"] = int(prompt_chars_estimate)
+                usage_snapshot["observed_chars_per_token"] = float(prompt_chars_estimate / max(1, prompt_tokens_observed))
+            with _chat_usage_lock:
+                _chat_usage_by_chat_id[str(chat.id)] = {
+                    **usage_snapshot,
+                    "engine": engine,
+                    "model": model_name,
+                    "updated_at": timezone.now().isoformat(),
+                }
         _print_runtime_event(
             "Chat completed: "
             f"engine={engine}, "
@@ -1957,6 +3377,43 @@ class MainView(TemplateView):
 
 # Chat session APIs.
 
+# Store uploaded files and return UI-facing file cards.
+def upload_files_api(request):
+    """Accept arbitrary user files and store private manifests for model use."""
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    uploaded_files = request.FILES.getlist("files") or request.FILES.getlist("file")
+    if not uploaded_files:
+        return JsonResponse({"error": "No files uploaded"}, status=400)
+
+    scope = request.POST.get("chat_id") or request.POST.get("scope") or "pending"
+    model_supports_vision = str(request.POST.get("supports_vision", "")).lower() in {"1", "true", "yes"}
+    public_files: list[dict[str, Any]] = []
+    for uploaded_file in uploaded_files:
+        try:
+            _manifest, public_payload = save_upload_to_sandbox(
+                uploaded_file,
+                scope=scope,
+                model_supports_vision=model_supports_vision,
+            )
+            public_files.append(public_payload)
+        except Exception as exc:
+            logger.exception("Failed to store uploaded file")
+            public_files.append({
+                "file_id": "",
+                "name": str(getattr(uploaded_file, "name", "") or "uploaded-file"),
+                "size_bytes": int(getattr(uploaded_file, "size", 0) or 0),
+                "status": "error",
+                "display_kind": "file",
+                "type_label": "Upload failed",
+                "error": str(exc),
+            })
+
+    return JsonResponse({"files": public_files})
+
+
 # Handle a chat generation request.
 def chat_api(request):
     """Handle chat generation requests and stream assistant output."""
@@ -1970,10 +3427,11 @@ def chat_api(request):
         # Read request payload and validate required inputs.
         user_message = data.get("message", "")
         model_name = data.get("model", "")
-        system_prompt = data.get("system_prompt", "")
+        system_prompt = _compose_system_prompt(data.get("system_prompt", ""))
         options = data.get("options", {}) or {}
         chat_id = data.get("chat_id", "")
         attachments = _normalize_request_attachments(data)
+        uploaded_file_ids = _normalize_uploaded_file_ids(data)
         engine = _get_active_engine(data.get("engine"))
         raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
         if isinstance(raw_tool_ids, str):
@@ -1982,21 +3440,44 @@ def chat_api(request):
 
         if not model_name:
             return JsonResponse({"error": "Missing model parameter"}, status=400)
-        if not user_message and not attachments:
+        if not user_message and not attachments and not uploaded_file_ids:
             return JsonResponse({"error": "Missing message or attachments"}, status=400)
 
         _remember_active_model(engine, model_name)
         selected_tool_servers = _resolve_tool_servers(engine, model_name, tool_server_ids)
-        if engine in {"lms", "openai", "google-genai"} or (settings.is_ollama_engine(engine) and selected_tool_servers):
-            model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
-        else:
-            model_info_payload = _build_fallback_model_info_payload(engine, model_name)
+        model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
+        _sync_runtime_model_metadata(
+            engine,
+            model_name,
+            model_info_payload,
+            source="generation",
+            route="/api/chat/",
+        )
+        has_image_attachments = any(
+            attachment.get("kind") == MessageAttachmentKind.IMAGE
+            for attachment in attachments
+            if isinstance(attachment, dict)
+        )
+        vision_supported = bool(model_info_payload.get("supports_vision", False))
+        vision_source = str(model_info_payload.get("supports_vision_source") or "").strip().lower()
+        if has_image_attachments and not vision_supported and vision_source == "explicit_false":
+            return JsonResponse(
+                {
+                    "error": (
+                        f"Model '{model_name}' does not support image input on '{engine}'. "
+                        "Choose a vision-capable model."
+                    )
+                },
+                status=400,
+            )
         _validate_tool_server_support(
             engine,
             model_name,
             [server["id"] for server in selected_tool_servers],
             payload=model_info_payload,
         )
+        sandbox_enabled = _selected_tools_include_sandbox(selected_tool_servers)
+        upload_manifests = _load_model_upload_manifests(uploaded_file_ids, sandbox_enabled=sandbox_enabled)
 
         # Reuse the existing chat when provided, otherwise create a new one.
         try:
@@ -2017,14 +3498,27 @@ def chat_api(request):
             content=user_message,
         )
         _store_message_attachments(user_message_record, attachments)
+        Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
+
+        # Pre-create the assistant row so the client knows its ID up front
+        # and can target it for delete/regenerate without waiting for reload.
+        assistant_message_record = Message.objects.create(
+            chat=chat,
+            role="assistant",
+            content="",
+            llm_transcript=[],
+        )
 
         # Rebuild the message history expected by the selected backend.
-        llm_messages = _build_chat_history(
+        llm_messages, compression_event = _build_chat_history(
             chat,
             user_message_record,
             user_message,
             system_prompt,
+            engine,
+            model_name,
             model_info_payload,
+            upload_manifests,
         )
 
         # Split generic options from thinking-specific controls.
@@ -2069,12 +3563,23 @@ def chat_api(request):
             ),
         )
 
+        generation_id = uuid.uuid4().hex
         response = StreamingHttpResponse(
-            _stream_chat_response(chat, engine, generate_kwargs),
+            _stream_chat_response(
+                chat,
+                engine,
+                generate_kwargs,
+                assistant_message_record,
+                generation_id,
+                compression_event=compression_event,
+            ),
             content_type="text/plain; charset=utf-8",
         )
         response["X-Chat-ID"] = str(chat.id)
         response["X-LLM-Engine"] = engine
+        response["X-User-Message-ID"] = str(user_message_record.id)
+        response["X-Assistant-Message-ID"] = str(assistant_message_record.id)
+        response["X-Generation-ID"] = generation_id
         return response
 
     except ValueError as exc:
@@ -2086,6 +3591,119 @@ def chat_api(request):
 
 # Message and chat management APIs.
 
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _shared_file_allowed_roots() -> list[Path]:
+    roots = [
+        settings.BASE_DIR,
+        settings.BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox",
+        Path.home() / "Downloads",
+    ]
+
+    sandbox_host_workspace = os.getenv("SANDBOX_HOST_WORKSPACE", "").strip()
+    sandbox_default_task_dir = os.getenv("SANDBOX_DEFAULT_TASK_DIR", "_sandbox").strip() or "_sandbox"
+    if sandbox_host_workspace:
+        roots.append(Path(sandbox_host_workspace) / sandbox_default_task_dir)
+
+    normalized: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        try:
+            resolved = root.resolve()
+        except OSError:
+            continue
+        key = str(resolved).lower()
+        if key not in seen:
+            normalized.append(resolved)
+            seen.add(key)
+    return normalized
+
+
+def _resolve_shared_file_path(raw_path: str) -> Path:
+    cleaned = str(raw_path or "").strip().strip('"')
+    if not cleaned or "\x00" in cleaned:
+        raise ValueError("Missing shared file path.")
+
+    raw = Path(cleaned)
+    allowed_roots = _shared_file_allowed_roots()
+    sandbox_root = settings.BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox"
+    normalized_cleaned = cleaned.replace("\\", "/").strip("/")
+    normalized_parts = [part for part in normalized_cleaned.split("/") if part not in {"", "."}]
+    mapped_parts = normalized_parts
+
+    if normalized_parts and normalized_parts[0] in {"workspace", "mnt", "home"}:
+        if len(normalized_parts) >= 2 and normalized_parts[0] == "workspace" and normalized_parts[1] == "_sandbox":
+            mapped_parts = normalized_parts[2:]
+        elif len(normalized_parts) >= 2 and normalized_parts[0] == "mnt" and normalized_parts[1] == "data":
+            mapped_parts = normalized_parts[2:]
+        elif len(normalized_parts) >= 2 and normalized_parts[0] == "home" and normalized_parts[1] == "sandbox":
+            mapped_parts = normalized_parts[2:]
+
+    if mapped_parts and mapped_parts[0] == "_sandbox":
+        mapped_parts = mapped_parts[1:]
+
+    if mapped_parts and mapped_parts[0].lower() == "user":
+        mapped_relative = Path(*mapped_parts)
+    else:
+        mapped_relative = Path("User") / Path(*mapped_parts) if mapped_parts else Path("User")
+
+    candidate_set: list[Path] = []
+    seen: set[str] = set()
+
+    def push_candidate(path: Path) -> None:
+        key = str(path).lower()
+        if key not in seen:
+            seen.add(key)
+            candidate_set.append(path)
+
+    if raw.is_absolute():
+        push_candidate(raw)
+    push_candidate(settings.BASE_DIR / cleaned)
+    push_candidate(sandbox_root / cleaned)
+    push_candidate(sandbox_root / mapped_relative)
+
+    for candidate in candidate_set:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if not resolved.is_file():
+            continue
+        if any(_path_is_within(resolved, root) for root in allowed_roots):
+            return resolved
+
+    raise FileNotFoundError("Shared file not found or not allowed.")
+
+
+def shared_file_download_api(request):
+    """Download a model-shared local file after validating its workspace path."""
+
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        target = _resolve_shared_file_path(request.GET.get("path", ""))
+        safe_name = re.sub(r'["\\\r\n]', "_", Path(request.GET.get("name") or target.name).name or "download")
+        mime_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        response = FileResponse(target.open("rb"), content_type=mime_type)
+        response["Cache-Control"] = "private, max-age=300"
+        response["Content-Disposition"] = f'attachment; filename="{safe_name}"'
+        return response
+    except FileNotFoundError:
+        return JsonResponse({"error": "Shared file not found"}, status=404)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Failed to download shared file")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
 # Abort active generation.
 def abort_generation_api(request):
     """Immediately signal the active LLM generation to stop."""
@@ -2094,7 +3712,15 @@ def abort_generation_api(request):
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
     try:
-        llm_api.abort_generation(_get_active_engine())
+        data = _read_json_request_body(request)
+        engine = _get_active_engine(data.get("engine"))
+        generation_id = str(data.get("generation_id") or "").strip()
+        if generation_id:
+            with _generation_state_lock:
+                active_id = str(_active_generation_id_by_engine.get(str(engine)) or "")
+            if not active_id or active_id != generation_id:
+                return JsonResponse({"ok": True, "ignored": True, "reason": "generation_mismatch"})
+        llm_api.abort_generation(engine)
         return JsonResponse({"ok": True})
     except Exception as exc:
         logger.exception("Failed to abort generation")
@@ -2190,6 +3816,160 @@ def delete_last_assistant_api(request, chat_id):
         return JsonResponse({"error": "Chat not found"}, status=404)
     except Exception as exc:
         logger.exception("Failed to delete last assistant message for chat %s", chat_id)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Regenerate the assistant reply for an existing user message without duplicating it.
+def regenerate_chat_api(request, chat_id):
+    """Re-run generation against an existing user message in the chat."""
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+
+        model_name = data.get("model", "")
+        system_prompt = _compose_system_prompt(data.get("system_prompt", ""))
+        options = data.get("options", {}) or {}
+        engine = _get_active_engine(data.get("engine"))
+        raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
+        if isinstance(raw_tool_ids, str):
+            raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
+        tool_server_ids = [str(s).strip() for s in raw_tool_ids if str(s).strip()]
+
+        if not model_name:
+            return JsonResponse({"error": "Missing model parameter"}, status=400)
+
+        try:
+            chat = Chat.objects.get(id=chat_id)
+        except Chat.DoesNotExist:
+            return JsonResponse({"error": "Chat not found"}, status=404)
+
+        target_id = data.get("user_message_id")
+        ordered = list(chat.messages.order_by("created_at", "id"))
+        if target_id:
+            user_message_record = next(
+                (m for m in ordered if m.role == "user" and str(m.id) == str(target_id)),
+                None,
+            )
+        else:
+            user_message_record = next((m for m in reversed(ordered) if m.role == "user"), None)
+
+        if user_message_record is None:
+            return JsonResponse({"error": "No user message to regenerate"}, status=400)
+
+        # Drop every message that came after the targeted user turn — including
+        # the assistant reply we are about to replace.
+        for message in ordered:
+            if message.created_at > user_message_record.created_at or (
+                message.created_at == user_message_record.created_at and message.id > user_message_record.id
+            ):
+                message.delete()
+
+        _remember_active_model(engine, model_name)
+        selected_tool_servers = _resolve_tool_servers(engine, model_name, tool_server_ids)
+        model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
+        _sync_runtime_model_metadata(
+            engine,
+            model_name,
+            model_info_payload,
+            source="regeneration",
+            route="/api/chat/regenerate/",
+        )
+        _validate_tool_server_support(
+            engine,
+            model_name,
+            [server["id"] for server in selected_tool_servers],
+            payload=model_info_payload,
+        )
+
+        import json as _json
+        active_slug = _json.dumps([s["id"] for s in selected_tool_servers], ensure_ascii=False)
+        if chat.active_tool_slug != active_slug:
+            chat.active_tool_slug = active_slug
+            chat.save(update_fields=["active_tool_slug", "updated_at"])
+
+        llm_messages, compression_event = _build_chat_history(
+            chat,
+            user_message_record,
+            user_message_record.content,
+            system_prompt,
+            engine,
+            model_name,
+            model_info_payload,
+        )
+
+        think_value, think_level_value, clean_options = _split_generation_options(
+            options,
+            think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
+            think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
+        )
+
+        generate_kwargs = _build_generate_kwargs(
+            engine,
+            model_name,
+            llm_messages,
+            think_value,
+            think_level_value,
+            clean_options,
+            chat,
+            selected_tool_servers,
+            think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
+            think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
+            sync_operation_defaults=(
+                {
+                    **(
+                        model_info_payload.get("defaults", {})
+                        if isinstance(model_info_payload.get("defaults"), dict)
+                        else {}
+                    ),
+                    **(
+                        {str(model_info_payload.get("think_param_name")): think_value}
+                        if engine == "lms" and think_value is not None and str(model_info_payload.get("think_param_name", "")).startswith("ext.")
+                        else {}
+                    ),
+                    **(
+                        {str(model_info_payload.get("think_level_param_name")): think_level_value}
+                        if engine == "lms" and think_level_value is not None and str(model_info_payload.get("think_level_param_name", "")).startswith("ext.")
+                        else {}
+                    ),
+                }
+                if engine == "lms"
+                else {}
+            ),
+        )
+
+        assistant_message_record = Message.objects.create(
+            chat=chat,
+            role="assistant",
+            content="",
+            llm_transcript=[],
+        )
+
+        generation_id = uuid.uuid4().hex
+        response = StreamingHttpResponse(
+            _stream_chat_response(
+                chat,
+                engine,
+                generate_kwargs,
+                assistant_message_record,
+                generation_id,
+                compression_event=compression_event,
+            ),
+            content_type="text/plain; charset=utf-8",
+        )
+        response["X-Chat-ID"] = str(chat.id)
+        response["X-LLM-Engine"] = engine
+        response["X-User-Message-ID"] = str(user_message_record.id)
+        response["X-Assistant-Message-ID"] = str(assistant_message_record.id)
+        response["X-Generation-ID"] = generation_id
+        return response
+
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Unhandled exception in regenerate_chat_api")
         return JsonResponse({"error": str(exc)}, status=500)
 
 
@@ -2356,6 +4136,13 @@ def get_inference_info_api(request):
         if model_source == "request":
             _remember_active_model(engine, model_name)
         payload = _build_inference_info_payload(engine, model_name, model_info_payload, model_source)
+        _sync_runtime_model_metadata(
+            engine,
+            model_name,
+            model_info_payload,
+            source=model_source,
+            route="/api/inference_info/",
+        )
         _print_runtime_event(
             "Inference info loaded: "
             f"engine={engine}, "
@@ -2408,6 +4195,51 @@ def get_tools_api(request):
     return JsonResponse({"tool_servers": servers, "servers": servers, "tools": servers})
 
 
+def favicon_api(request):
+    """Resolve and proxy a stable favicon for a search result domain."""
+
+    def image_response(content_type: str, content: bytes) -> HttpResponse:
+        response = HttpResponse(content, content_type=content_type)
+        response["Cache-Control"] = "public, max-age=604800"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    domain = _normalize_favicon_domain(request.GET.get("domain") or request.GET.get("url") or "")
+    if not domain:
+        return JsonResponse({"error": "Domain is required"}, status=400)
+
+    now = time.time()
+    with _favicon_cache_lock:
+        cached = _favicon_cache.get(domain)
+        if cached and cached[0] > now:
+            content_type, content = cached[1], cached[2]
+            if content:
+                return image_response(content_type, content)
+            return HttpResponse(status=404)
+
+        disk_cached = _read_favicon_disk_cache(domain, now)
+        if disk_cached:
+            content_type, content = disk_cached
+            _favicon_cache[domain] = (now + FAVICON_CACHE_TTL_SECONDS, content_type, content)
+            return image_response(content_type, content)
+
+    resolved = _resolve_favicon_content(domain)
+    with _favicon_cache_lock:
+        if resolved:
+            content_type, content = resolved
+            expires_at = now + FAVICON_CACHE_TTL_SECONDS
+            _favicon_cache[domain] = (expires_at, content_type, content)
+            _write_favicon_disk_cache(domain, content_type, content, expires_at)
+            return image_response(content_type, content)
+
+        _favicon_cache[domain] = (now + FAVICON_NEGATIVE_CACHE_TTL_SECONDS, "", b"")
+
+    return HttpResponse(status=404)
+
+
 # Preset APIs.
 
 # Return Ollama preset metadata.
@@ -2425,6 +4257,114 @@ def get_ollama_presets_api(request):
         return JsonResponse(get_ollama_preset_payload(model_name))
     except Exception as exc:
         logger.exception("Error getting Ollama presets for %s", model_name)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def get_context_usage_api(request):
+    """Return estimated/observed context usage for the current chat and model."""
+
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        engine = _get_active_engine(request.GET.get("engine"))
+        model_name = str(request.GET.get("model") or _get_remembered_active_model(engine) or "").strip()
+        chat_id = str(request.GET.get("chat_id") or "").strip()
+        draft_text = str(request.GET.get("draft") or "")
+        system_prompt = _compose_system_prompt(str(request.GET.get("system_prompt") or ""))
+
+        model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
+        chat: Chat | None = None
+        if chat_id:
+            try:
+                chat = Chat.objects.get(id=chat_id)
+            except Chat.DoesNotExist:
+                chat = None
+
+        estimate = _estimate_context_usage(
+            chat=chat,
+            system_prompt=system_prompt,
+            draft_text=draft_text,
+            model_info_payload=model_info_payload,
+            active_engine=engine,
+            active_model=model_name,
+        )
+        with _chat_usage_lock:
+            observed = dict(_chat_usage_by_chat_id.get(chat_id, {})) if chat_id else {}
+
+        response_payload = {
+            "engine": engine,
+            "model": model_name,
+            "chat_id": chat_id,
+            "context_window_tokens": estimate["context_window_tokens"],
+            "estimated_used_tokens": estimate["estimated_used_tokens"],
+            "estimated_used_chars": estimate["estimated_used_chars"],
+            "ratio": estimate["ratio"],
+            "threshold_ratio": LLM_HISTORY_COMPRESSION_TRIGGER_RATIO,
+            "compressed_context_active": bool(estimate.get("compressed_context_active")),
+            "observed_usage": observed,
+            "token_estimator": {
+                "mode": "adaptive",
+                "base_chars_per_token": estimate.get("base_chars_per_token"),
+                "effective_chars_per_token": estimate.get("effective_chars_per_token"),
+                "chat_observed_chars_per_token": estimate.get("observed_chars_per_token"),
+                "observed_chars_per_token": observed.get("observed_chars_per_token"),
+                "prompt_chars_estimate": observed.get("prompt_chars_estimate"),
+            },
+        }
+        return JsonResponse(response_payload)
+    except Exception as exc:
+        logger.exception("Failed to build context usage payload")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+def context_compress_api(request):
+    """Force or opportunistically run context compression and persist a timeline marker."""
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        engine = _get_active_engine(data.get("engine"))
+        model_name = str(data.get("model") or _get_remembered_active_model(engine) or "").strip()
+        chat_id = str(data.get("chat_id") or "").strip()
+        if not chat_id:
+            return JsonResponse({"ok": True, "applied": False, "reason": "missing_chat_id"})
+        force = bool(data.get("force"))
+        system_prompt = _compose_system_prompt(str(data.get("system_prompt") or ""))
+
+        try:
+            chat = Chat.objects.get(id=chat_id)
+        except Chat.DoesNotExist:
+            return JsonResponse({"ok": True, "applied": False, "reason": "chat_not_found"})
+
+        model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
+        event = _build_manual_compression_event(
+            chat=chat,
+            system_prompt=system_prompt,
+            engine=engine,
+            model_name=model_name,
+            model_info_payload=model_info_payload,
+            force=force,
+        )
+        if not event:
+            return JsonResponse({"ok": True, "applied": False, "reason": "below_threshold"})
+
+        message = Message.objects.create(
+            chat=chat,
+            role="assistant",
+            content="",
+            llm_transcript=[event],
+        )
+        Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
+        return JsonResponse({
+            "ok": True,
+            "applied": True,
+            "message": _serialize_message(message, include_attachment_data=False),
+        })
+    except Exception as exc:
+        logger.exception("Failed to run context compression")
         return JsonResponse({"error": str(exc)}, status=500)
 
 
@@ -2723,6 +4663,29 @@ def runtime_settings_api(request):
     previous_engine = settings.get_llm_engine()
     next_engine = previous_engine
 
+    def _is_masked_api_key(value: str) -> bool:
+        """Return whether the payload looks like a masked placeholder, not a real key."""
+
+        raw = str(value or "")
+        stripped = raw.strip()
+        if not stripped:
+            return False
+
+        # Password placeholders often arrive as repeated mask glyphs.
+        if all(char in {"*", "•", "●", "∙", "·", "◦"} for char in stripped):
+            return True
+
+        lowered = stripped.lower()
+        if lowered in {
+            "stored api key",
+            "stored api key.",
+            "stored key",
+            "use saved key",
+        }:
+            return True
+
+        return False
+
     # Persist only known settings and normalize engine-specific values.
     for raw_key, raw_value in data.items():
         if raw_key not in allowed_keys:
@@ -2733,6 +4696,9 @@ def runtime_settings_api(request):
             next_engine = value
         else:
             value = str(raw_value or "").strip()
+            if raw_key in {"openai_api_key", "google_genai_api_key"} and _is_masked_api_key(value):
+                # Ignore UI mask placeholders so they never overwrite real keys.
+                continue
 
         settings.set(raw_key, value)
 

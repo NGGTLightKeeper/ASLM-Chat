@@ -14,9 +14,11 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from Settings import settings as runtime_settings
 
@@ -33,6 +35,21 @@ _SERVER_CACHE_SIGNATURE: tuple[tuple[str, int], ...] | None = None
 _SERVER_CACHE: dict[str, dict[str, Any]] = {}
 _WORKER_SESSION_LOCK = threading.Lock()
 _WORKER_SESSIONS: dict[str, "ExternalWorkerSession"] = {}
+_SEARCH_IO_LOG_LOCK = threading.Lock()
+_SEARCH_IO_LOG_PATH = TOOLS_DIR / "mcp-web-search" / "logs" / "model_search_io.json"
+_TOOL_COOLDOWN_SECONDS = 30.0
+_TOOL_COOLDOWN_LOCK = threading.Lock()
+_TOOL_COOLDOWNS: dict[str, float] = {}
+TOOL_CALL_QUOTAS = {
+    "web_search": 15,
+    "read_page": 10,
+}
+TOOL_BLOCK_FINAL_PROMPT = (
+    "Tool loop guard: repeated tool calls were blocked because they duplicate recent work, "
+    "hit a quota, or are in cooldown. Do not call tools again. Use the evidence already "
+    "present in the conversation and answer the user now. If the collected evidence is "
+    "insufficient for a claim, say that clearly instead of searching again."
+)
 
 
 # Build a clean environment for one isolated Python venv.
@@ -43,6 +60,8 @@ def _venv_subprocess_env(python_path: Path) -> dict[str, str]:
     venv_path = python_path.parent.parent
     env["VIRTUAL_ENV"] = str(venv_path)
     env["PATH"] = str(python_path.parent) + os.pathsep + env.get("PATH", "")
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     env.pop("PYTHONHOME", None)
     return env
 
@@ -68,6 +87,8 @@ class ExternalWorkerSession:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(self.server_file.parent),
             env=_venv_subprocess_env(self.python_path),
             bufsize=1,
@@ -77,31 +98,39 @@ class ExternalWorkerSession:
         """Send one request to the worker process and return its result."""
 
         with self.lock:
-            self._start()
-            assert self.process is not None
-            assert self.process.stdin is not None
-            assert self.process.stdout is not None
-
             request_payload = {
                 "operation": operation,
                 "payload": payload or {},
             }
-            try:
-                self.process.stdin.write(json.dumps(request_payload, ensure_ascii=False) + "\n")
-                self.process.stdin.flush()
-                raw_response = self.process.stdout.readline()
-            except (BrokenPipeError, OSError):
-                self.close()
+
+            raw_response = ""
+            last_error: Exception | None = None
+            for attempt in range(2):
                 self._start()
                 assert self.process is not None
                 assert self.process.stdin is not None
                 assert self.process.stdout is not None
-                self.process.stdin.write(json.dumps(request_payload, ensure_ascii=False) + "\n")
-                self.process.stdin.flush()
-                raw_response = self.process.stdout.readline()
+
+                try:
+                    self.process.stdin.write(json.dumps(request_payload, ensure_ascii=False) + "\n")
+                    self.process.stdin.flush()
+                    raw_response = self.process.stdout.readline()
+                except (BrokenPipeError, OSError) as exc:
+                    last_error = exc
+                    raw_response = ""
+
+                if raw_response:
+                    break
+
+                self.close()
+                if attempt == 0:
+                    logger.warning("Tool worker stopped before response; restarting once for %s", self.server_file)
+                    continue
 
             if not raw_response:
                 self.close()
+                if last_error is not None:
+                    raise RuntimeError(f"Tool worker stopped for {self.server_file}: {last_error}")
                 raise RuntimeError(f"Tool worker stopped for {self.server_file}.")
 
             try:
@@ -216,6 +245,318 @@ def _summarize_tool_context(context: dict[str, Any]) -> str:
                 parts.append(f"{key}={value}")
 
     return ", ".join(parts) if parts else "none"
+
+
+def _quota_tool_id(tool_event: dict[str, Any] | None) -> str:
+    """Return the canonical tool id used for per-response quotas."""
+
+    if not isinstance(tool_event, dict):
+        return ""
+    tool_id = _slugify(str(tool_event.get("tool_id") or ""))
+    alias = _slugify(str(tool_event.get("alias") or ""))
+    for quota_tool_id in TOOL_CALL_QUOTAS:
+        if tool_id == quota_tool_id or alias == quota_tool_id or alias.endswith(f"__{quota_tool_id}"):
+            return quota_tool_id
+    return ""
+
+
+def _write_search_io_event(event: dict[str, Any]) -> None:
+    """Append complete model/search tool IO as a readable JSON array."""
+
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        **dict(event or {}),
+    }
+    record = _without_duplicate_preview(record)
+    try:
+        _SEARCH_IO_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _SEARCH_IO_LOG_LOCK:
+            entries: list[Any] = []
+            if _SEARCH_IO_LOG_PATH.exists():
+                try:
+                    loaded = json.loads(_SEARCH_IO_LOG_PATH.read_text(encoding="utf-8") or "[]")
+                    if isinstance(loaded, list):
+                        entries = loaded
+                except Exception:
+                    entries = []
+            entries.append(record)
+            _SEARCH_IO_LOG_PATH.write_text(
+                json.dumps(entries, ensure_ascii=False, default=str, indent=2),
+                encoding="utf-8",
+            )
+    except Exception:
+        logger.debug("Failed to write search IO JSON event.", exc_info=True)
+
+
+def _without_duplicate_preview(value: Any) -> Any:
+    """Remove preview fields from diagnostics when they exactly duplicate snippet."""
+
+    if isinstance(value, list):
+        return [_without_duplicate_preview(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    cleaned = {
+        key: _without_duplicate_preview(item)
+        for key, item in value.items()
+    }
+    snippet = cleaned.get("snippet")
+    preview = cleaned.get("preview")
+    if isinstance(snippet, str) and isinstance(preview, str) and snippet == preview:
+        cleaned.pop("preview", None)
+    return cleaned
+
+
+def log_search_tool_io(
+    phase: str,
+    tool_event: dict[str, Any] | None,
+    arguments: Any = None,
+    context: dict[str, Any] | None = None,
+    result: Any = None,
+    error: Any = None,
+    elapsed_seconds: float | None = None,
+) -> None:
+    """Log exactly what search/read-page tools receive from and return to the model."""
+
+    quota_tool_id = _quota_tool_id(tool_event)
+    if not quota_tool_id:
+        return
+    _write_search_io_event(
+        {
+            "layer": "api_tool_bridge",
+            "phase": phase,
+            "tool_id": quota_tool_id,
+            "tool_event": tool_event or {},
+            "context": context or {},
+            "arguments": arguments,
+            "result": result,
+            "error": str(error) if error is not None else None,
+            "elapsed_seconds": elapsed_seconds,
+        }
+    )
+
+
+def consume_tool_quota(tool_event: dict[str, Any] | None, counters: dict[str, int]) -> str | None:
+    """Increment one quota counter and return an error message if the call is over limit."""
+
+    quota_tool_id = _quota_tool_id(tool_event)
+    if not quota_tool_id:
+        return None
+
+    limit = TOOL_CALL_QUOTAS[quota_tool_id]
+    current = int(counters.get(quota_tool_id, 0) or 0)
+    if current >= limit:
+        display_name = str((tool_event or {}).get("tool_name") or quota_tool_id).strip() or quota_tool_id
+        return (
+            f"Tool quota exceeded: {display_name} can be used at most {limit} times "
+            "in one assistant response. Stop calling this tool and answer with the evidence already collected."
+        )
+
+    counters[quota_tool_id] = current + 1
+    return None
+
+
+def is_blocking_tool_result(result: Any) -> bool:
+    """Return whether a tool result is a guardrail/block message, not fresh evidence."""
+
+    text = str(result or "").strip()
+    return text.startswith(
+        (
+            "Duplicate tool call blocked:",
+            "Duplicate web_search blocked:",
+            "Duplicate read_page blocked:",
+            "Tool quota exceeded:",
+        )
+    )
+
+
+def forced_final_prompt_after_tool_blocks() -> str:
+    """Return the instruction used when the tool loop must stop retrying tools."""
+
+    return TOOL_BLOCK_FINAL_PROMPT
+
+
+def _canonical_tool_arguments(value: Any) -> Any:
+    """Return a stable representation for duplicate tool-call detection."""
+
+    if isinstance(value, str):
+        text = re.sub(r"\s+", " ", value).strip()
+        if text and text[0] in "[{":
+            try:
+                return _canonical_tool_arguments(json.loads(text))
+            except Exception:
+                return text
+        return text
+    if isinstance(value, dict):
+        return {
+            str(key): _canonical_tool_arguments(value[key])
+            for key in sorted(value.keys(), key=str)
+        }
+    if isinstance(value, list):
+        return [_canonical_tool_arguments(item) for item in value]
+    return value
+
+
+def consume_duplicate_tool_call(
+    tool_event: dict[str, Any] | None,
+    arguments: dict[str, Any] | None,
+    seen_signatures: set[str],
+) -> str | None:
+    """Return an error message when the same quota-controlled tool call repeats."""
+
+    quota_tool_id = _quota_tool_id(tool_event)
+    if not quota_tool_id:
+        return None
+
+    canonical_args = _canonical_tool_arguments(arguments or {})
+    try:
+        args_key = json.dumps(canonical_args, ensure_ascii=False, sort_keys=True, default=str)
+    except TypeError:
+        args_key = str(canonical_args)
+    signature = f"{quota_tool_id}:{args_key}"
+
+    if signature in seen_signatures:
+        display_name = str((tool_event or {}).get("tool_name") or quota_tool_id).strip() or quota_tool_id
+        return (
+            f"Duplicate tool call blocked: {display_name} was already called with the same arguments "
+            "in this assistant response. Do not retry identical searches or page reads; use the existing result."
+        )
+
+    seen_signatures.add(signature)
+    return None
+
+
+def _read_page_urls(arguments: dict[str, Any] | None) -> list[str]:
+    if not isinstance(arguments, dict):
+        return []
+    raw_url = arguments.get("url", "")
+    if isinstance(raw_url, str):
+        text = raw_url.strip()
+        if text and text[0] == "[":
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    raw_url = parsed
+                else:
+                    raw_url = text
+            except Exception:
+                raw_url = text
+        else:
+            raw_url = text
+    if isinstance(raw_url, list):
+        return [str(item).strip() for item in raw_url if str(item or "").strip()]
+    return [str(raw_url).strip()] if str(raw_url or "").strip() else []
+
+
+def _normalize_read_page_url(url: str) -> str:
+    text = re.sub(r"\s+", " ", str(url or "").strip())
+    if not text:
+        return ""
+    try:
+        parsed = urlsplit(text)
+    except Exception:
+        return text.lower()
+    if not parsed.scheme or not parsed.netloc:
+        return text.rstrip("/").lower()
+    scheme = parsed.scheme.lower()
+    netloc = parsed.netloc.lower()
+    path = parsed.path or ""
+    if path != "/":
+        path = path.rstrip("/")
+    return urlunsplit((scheme, netloc, path, parsed.query, ""))
+
+
+def _normalize_cooldown_value(value: Any) -> Any:
+    canonical = _canonical_tool_arguments(value)
+    if isinstance(canonical, str):
+        return re.sub(r"\s+", " ", canonical).strip().lower()
+    if isinstance(canonical, dict):
+        return {
+            str(key): _normalize_cooldown_value(canonical[key])
+            for key in sorted(canonical.keys(), key=str)
+        }
+    if isinstance(canonical, list):
+        return [_normalize_cooldown_value(item) for item in canonical]
+    return canonical
+
+
+def _tool_cooldown_keys(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> list[tuple[str, str]]:
+    tool_id = _quota_tool_id(tool_event)
+    if tool_id == "read_page":
+        urls = [_normalize_read_page_url(url) for url in _read_page_urls(arguments)]
+        return [
+            (f"{tool_id}:url:{url}", url)
+            for url in dict.fromkeys(url for url in urls if url)
+        ]
+    if tool_id == "web_search":
+        canonical = _normalize_cooldown_value(arguments or {})
+        try:
+            key = json.dumps(canonical, ensure_ascii=False, sort_keys=True, default=str)
+        except TypeError:
+            key = str(canonical)
+        label = _preview_jsonish(canonical, limit=220)
+        return [(f"{tool_id}:args:{key}", label)] if key and key != "{}" else []
+    return []
+
+
+def _tool_cooldown_message(tool_id: str, entries: list[tuple[str, int]]) -> str:
+    display = "web_search" if tool_id == "web_search" else "read_page"
+    thing = "query" if tool_id == "web_search" else "URL"
+    lines = [
+        f"Duplicate {display} blocked: this {thing} was already used in the last 30 seconds.",
+        f"Do not call {display} for it again right now; use the content already returned by the previous tool result.",
+        "Repeated calls waste tool calls and add no new evidence.",
+        "",
+        "Cooldown entries:",
+    ]
+    for label, remaining in entries:
+        lines.append(f"- {label} ({remaining}s remaining)")
+    return "\n".join(lines)
+
+
+def consume_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> str | None:
+    """Block repeated search/read-page calls within a short cooldown window."""
+
+    tool_id = _quota_tool_id(tool_event)
+    entries = _tool_cooldown_keys(tool_event, arguments)
+    if not tool_id or not entries:
+        return None
+
+    now = time.monotonic()
+    with _TOOL_COOLDOWN_LOCK:
+        expired = [key for key, expires_at in _TOOL_COOLDOWNS.items() if expires_at <= now]
+        for key in expired:
+            _TOOL_COOLDOWNS.pop(key, None)
+
+        duplicate_entries: list[tuple[str, int]] = []
+        for key, label in entries:
+            expires_at = _TOOL_COOLDOWNS.get(key)
+            if expires_at and expires_at > now:
+                duplicate_entries.append((label, max(1, int(round(expires_at - now)))))
+
+    if len(duplicate_entries) == len(entries):
+        return _tool_cooldown_message(tool_id, duplicate_entries)
+    return None
+
+
+def remember_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> None:
+    """Mark search/read-page calls as recently used."""
+
+    entries = _tool_cooldown_keys(tool_event, arguments)
+    if not entries:
+        return
+    expires_at = time.monotonic() + _TOOL_COOLDOWN_SECONDS
+    with _TOOL_COOLDOWN_LOCK:
+        for key, _label in entries:
+            _TOOL_COOLDOWNS[key] = expires_at
+
+
+def consume_read_page_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> str | None:
+    return consume_tool_cooldown(tool_event, arguments)
+
+
+def remember_read_page_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> None:
+    remember_tool_cooldown(tool_event, arguments)
 
 
 
@@ -399,6 +740,8 @@ def _run_worker(
         input=request_payload,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=str(server_file.parent),
         env=_venv_subprocess_env(python_path),
         check=False,
@@ -832,10 +1175,139 @@ def _serialize_tool_result(result: Any) -> str:
     if isinstance(result, str):
         return result
 
+    shared_file = _extract_shared_file_payload(result)
+    if shared_file is not None:
+        filename = str(shared_file.get("filename") or shared_file.get("name") or shared_file.get("path") or "file")
+        return str(shared_file.get("model_context") or f"Shared file ready for download: {filename}")
+
+    if isinstance(result, dict) and isinstance(result.get("model_context"), str):
+        return result["model_context"]
+
     if isinstance(result, (dict, list, tuple, int, float, bool)):
         return json.dumps(result, ensure_ascii=False, indent=2)
 
     return str(result)
+
+
+def _extract_shared_file_payload(result: Any) -> dict[str, Any] | None:
+    """Return a normalized shared-file payload from direct or sandbox-wrapped results."""
+
+    if not isinstance(result, dict):
+        return None
+
+    candidate: Any = result
+    if result.get("tool") == "share_file" and isinstance(result.get("result"), dict):
+        candidate = result["result"]
+    elif result.get("kind") != "shared_file" and isinstance(result.get("file"), dict):
+        candidate = result["file"]
+
+    if not isinstance(candidate, dict) or candidate.get("kind") != "shared_file":
+        return None
+
+    path = str(candidate.get("path") or candidate.get("file") or "").strip()
+    if not path:
+        return None
+
+    filename = str(
+        candidate.get("filename")
+        or candidate.get("name")
+        or Path(path).name
+        or "download"
+    )
+    payload = dict(candidate)
+    payload["kind"] = "shared_file"
+    payload["path"] = path
+    payload["filename"] = filename
+    return payload
+
+
+def _extract_structured_tool_result(result: Any) -> dict[str, Any] | None:
+    """Return frontend metadata for rich structured tool results."""
+
+    if not isinstance(result, dict):
+        return None
+    shared_file = _extract_shared_file_payload(result)
+    if shared_file is not None:
+        return {
+            "kind": "shared_file",
+            "file": shared_file,
+            "ui": {
+                "kind": "shared_file",
+                "status": "done",
+                "file": shared_file,
+            },
+        }
+    if not isinstance(result.get("model_context"), str):
+        return None
+    if not isinstance(result.get("ui"), dict) and not isinstance(result.get("sources"), list):
+        return None
+    return result
+
+
+def split_tool_result_payload(content: Any) -> tuple[str, dict[str, Any]]:
+    """Split one tool result into model-visible text and UI-only metadata."""
+
+    if isinstance(content, dict) and "_image_b64" in content:
+        return f"[Image: {content.get('_path', 'image')}]", _image_tool_result_extras(content)
+
+    structured = _extract_structured_tool_result(content)
+    if isinstance(structured, dict):
+        extras: dict[str, Any] = {"structured_content": structured}
+        ui_payload = structured.get("ui")
+        if isinstance(ui_payload, dict):
+            extras["tool_ui"] = ui_payload
+        return _serialize_tool_result(content), extras
+
+    if isinstance(content, dict) and "_tool_result_content" in content:
+        extras: dict[str, Any] = {}
+        wrapped_structured = content.get("_tool_result_structured")
+        if isinstance(wrapped_structured, dict):
+            extras["structured_content"] = wrapped_structured
+            ui_payload = wrapped_structured.get("ui")
+            if isinstance(ui_payload, dict):
+                extras["tool_ui"] = ui_payload
+        return str(content.get("_tool_result_content") or ""), extras
+
+    return _serialize_tool_result(content), {}
+
+
+def _image_tool_result_extras(content: dict[str, Any]) -> dict[str, Any]:
+    """Build UI-only metadata for an inline image tool result."""
+
+    data_base64 = content.get("_image_b64")
+    if not data_base64:
+        return {}
+
+    mime_type = str(content.get("_mime_type") or "image/png").strip().lower()
+    if not mime_type or mime_type == "image":
+        mime_type = "image/png"
+    elif "/" not in mime_type:
+        mime_type = f"image/{mime_type}"
+    payload: dict[str, Any] = {
+        "path": content.get("_path", ""),
+        "kind": "image",
+        "mime": mime_type,
+        "preview": {
+            "type": "inline_base64",
+            "mime_type": mime_type,
+            "data_base64": data_base64,
+        },
+    }
+    for source_key, target_key in (
+        ("_size_bytes", "size_bytes"),
+        ("_width", "width"),
+        ("_height", "height"),
+    ):
+        value = content.get(source_key)
+        if value is not None:
+            payload[target_key] = value
+
+    return {
+        "structured_content": payload,
+        "tool_ui": {
+            "image": payload,
+        },
+    }
 
 
 # Extract one inline image payload.
@@ -861,6 +1333,9 @@ def _extract_inline_image_payload(result: Any) -> dict[str, Any] | None:
         "_image_b64": data_base64,
         "_mime_type": preview.get("mime_type", payload.get("mime", "image/png")),
         "_path": payload.get("path", ""),
+        "_size_bytes": payload.get("size_bytes"),
+        "_width": payload.get("width"),
+        "_height": payload.get("height"),
     }
 
 # Execute one local tool.
@@ -908,16 +1383,32 @@ def call_ollama_tool(
     try:
         if server_definition.get("external"):
             worker_context = json.loads(json.dumps(call_context, ensure_ascii=False, default=str))
-            result = _run_worker(
-                Path(server_definition["server_file"]),
-                "call",
-                {
-                    "tool_id": tool_definition["id"],
-                    "arguments": call_arguments,
-                    "context": worker_context,
-                },
-                persistent=True,
-            )
+            worker_payload = {
+                "tool_id": tool_definition["id"],
+                "arguments": call_arguments,
+                "context": worker_context,
+            }
+            server_file = Path(server_definition["server_file"])
+            try:
+                result = _run_worker(
+                    server_file,
+                    "call",
+                    worker_payload,
+                    persistent=True,
+                )
+            except RuntimeError as worker_exc:
+                if "Tool worker stopped" not in str(worker_exc):
+                    raise
+                logger.warning(
+                    "Persistent tool worker stopped for %s; retrying call in one-shot mode.",
+                    server_file,
+                )
+                result = _run_worker(
+                    server_file,
+                    "call",
+                    worker_payload,
+                    persistent=False,
+                )
         else:
             handler = server_definition["tool_handlers"].get(tool_definition["id"])
             if handler is None:
@@ -965,6 +1456,12 @@ def call_ollama_tool(
                 f"took={time.perf_counter() - started_at:.2f}s, "
                 f"result={_summarize_tool_result(result)}"
             )
+        structured_result = _extract_structured_tool_result(result)
+        if structured_result is not None:
+            return {
+                "_tool_result_content": _serialize_tool_result(result),
+                "_tool_result_structured": structured_result,
+            }
         return _serialize_tool_result(result)
     except Exception as exc:
         logger.exception("Tool execution failed for %s.%s", server_definition["id"], tool_definition["id"])

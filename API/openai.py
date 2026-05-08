@@ -97,6 +97,14 @@ DIRECT_OPTION_KEYS = {
     "user",
     "verbosity",
 }
+OBJECT_REASONING_ENDPOINT_HOSTS = {
+    "openrouter.ai",
+}
+REASONING_EFFORT_KEYS = {
+    "reasoning_effort",
+    "think_level",
+    "thinking_level",
+}
 DEFAULT_CONTAINER_KEYS = {
     "defaults",
     "default_parameters",
@@ -771,6 +779,100 @@ def _extract_context_length(raw_model: dict[str, Any]) -> int:
 
 
 
+# Normalize provider-specific request controls.
+# Match one endpoint host.
+def _endpoint_host_matches(hostname: str, expected_host: str) -> bool:
+    """Return whether one hostname is the expected host or its subdomain."""
+
+    normalized_hostname = str(hostname or "").strip().lower()
+    normalized_expected = str(expected_host or "").strip().lower()
+    return normalized_hostname == normalized_expected or normalized_hostname.endswith(f".{normalized_expected}")
+
+
+# Resolve reasoning parameter shape.
+def _uses_object_reasoning_controls(base_url: Any = None) -> bool:
+    """Return whether the configured endpoint expects object-shaped reasoning controls."""
+
+    configured_base_url = str(base_url if base_url is not None else settings.get_engine_url("openai") or "").strip()
+    if not configured_base_url:
+        return False
+
+    try:
+        parsed = urllib.parse.urlsplit(configured_base_url)
+    except ValueError:
+        return False
+
+    hostname = parsed.hostname or ""
+    return any(_endpoint_host_matches(hostname, expected_host) for expected_host in OBJECT_REASONING_ENDPOINT_HOSTS)
+
+
+# Normalize one reasoning scalar.
+def _coerce_reasoning_control_object(value: Any, effort: Any = None) -> dict[str, Any]:
+    """Convert scalar reasoning controls into the object shape used by some providers."""
+
+    if isinstance(value, dict):
+        normalized = dict(value)
+        if effort is not None and normalized.get("enabled") is not False:
+            normalized.setdefault("effort", effort)
+        return normalized
+
+    if isinstance(value, bool):
+        if value and effort is not None:
+            return {"effort": effort}
+        return {"enabled": value}
+
+    if value is None:
+        return {"effort": effort} if effort is not None else {}
+
+    normalized_value = str(value).strip().lower()
+    if normalized_value in {"true", "1", "yes", "on", "enabled"}:
+        return {"effort": effort} if effort is not None else {"enabled": True}
+    if normalized_value in {"false", "0", "no", "off", "disabled"}:
+        return {"enabled": False}
+
+    return {"effort": value}
+
+
+# Normalize request options for reasoning controls.
+def _normalize_reasoning_request_options(
+    direct_options: dict[str, Any],
+    extra_body: dict[str, Any],
+    *,
+    base_url: Any = None,
+) -> None:
+    """Normalize reasoning controls in-place for the configured compatible endpoint."""
+
+    if not _uses_object_reasoning_controls(base_url):
+        return
+
+    effort_value = None
+    for options in (direct_options, extra_body):
+        for key in list(options.keys()):
+            if _normalize_key_name(key) not in REASONING_EFFORT_KEYS:
+                continue
+            if effort_value is None:
+                effort_value = options.get(key)
+            options.pop(key, None)
+
+    reasoning_value = None
+    has_reasoning_value = False
+    for options in (direct_options, extra_body):
+        if "reasoning" not in options:
+            continue
+        if not has_reasoning_value:
+            reasoning_value = options.get("reasoning")
+            has_reasoning_value = True
+        options.pop("reasoning", None)
+
+    reasoning_object = _coerce_reasoning_control_object(
+        reasoning_value if has_reasoning_value else None,
+        effort=effort_value,
+    )
+    cleaned_reasoning = _clean_nested_config(reasoning_object)
+    if isinstance(cleaned_reasoning, dict) and cleaned_reasoning:
+        extra_body["reasoning"] = cleaned_reasoning
+
+
 # Load companion metadata.
 # Collect companion metadata roots.
 def _iter_companion_metadata_roots() -> list[str]:
@@ -1172,6 +1274,11 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
         if role == "assistant" and message.get("tool_calls"):
             entry["tool_calls"] = message["tool_calls"]
 
+        if role == "assistant" and message.get("thinking"):
+            # Forward stored thinking from previous turns so reasoning models
+            # retain their own chain-of-thought across multi-turn conversations.
+            entry["thinking"] = message["thinking"]
+
         payload.append(entry)
 
     return payload
@@ -1211,6 +1318,8 @@ def _build_openai_request_options(
         target_options = direct_options if normalized_level_key in DIRECT_OPTION_KEYS else extra_body
         target_options.setdefault(normalized_level_key, think_level)
 
+    _normalize_reasoning_request_options(direct_options, extra_body)
+
     if extra_body:
         merged_extra_body = dict(direct_options.get("extra_body", {}) or {})
         merged_extra_body.update(extra_body)
@@ -1249,12 +1358,14 @@ def _build_tool_message(
 ) -> dict[str, Any]:
     """Build a tool message payload for the OpenAI-compatible conversation."""
 
+    model_content, tool_extras = tool_registry.split_tool_result_payload(content)
     payload: dict[str, Any] = {
         "role": "tool",
         "tool_call_id": tool_call_id,
         "name": tool_name,
-        "content": content if isinstance(content, str) else str(content),
+        "content": model_content,
     }
+    payload.update(tool_extras)
 
     if tool_event:
         payload.update(
@@ -1563,6 +1674,9 @@ def _run_tool_loop(
         return
 
     conversation = conversation if conversation is not None else _build_openai_messages(messages)
+    tool_quota_counters: dict[str, int] = {}
+    seen_tool_signatures: set[str] = set()
+    consecutive_blocked_tool_results = 0
 
     for round_index in range(MAX_TOOL_ROUNDS):
         # Each round lets the model either finish or request another batch of
@@ -1602,10 +1716,12 @@ def _run_tool_loop(
 
         yield {"transcript_message": assistant_message}
 
-        for tool_call_index, tool_call in enumerate(tool_calls, start=1):
-            tool_event = _build_tool_event(tool_lookup, tool_call)
-            yield {"tool_event": tool_event}
+        tool_events = [_build_tool_event(tool_lookup, tool_call) for tool_call in tool_calls]
+        for _i, _ev in enumerate(tool_events):
+            _ev["alias"] = f"{_ev['alias']}__{_i}"
+        yield {"tool_events": tool_events}
 
+        for tool_call_index, (tool_call, tool_event) in enumerate(zip(tool_calls, tool_events), start=1):
             call_context = dict(tool_context or {})
             call_context.update(
                 {
@@ -1617,15 +1733,46 @@ def _run_tool_loop(
                     "tool_round_index": round_index + 1,
                 }
             )
-
-            tool_result = tool_registry.call_ollama_tool(
-                tool_lookup,
-                tool_call["name"],
-                tool_call.get("arguments") or {},
+            tool_registry.log_search_tool_io(
+                "request",
+                tool_event,
+                arguments=tool_call.get("arguments") or {},
                 context=call_context,
             )
-            if isinstance(tool_result, dict) and "_image_b64" in tool_result:
-                tool_result = f"[Image: {tool_result.get('_path', 'image')}]"
+
+            tool_cooldown_error = tool_registry.consume_tool_cooldown(
+                tool_event,
+                tool_call.get("arguments") or {},
+            )
+            if tool_cooldown_error is not None:
+                tool_result = tool_cooldown_error
+            else:
+                duplicate_error = tool_registry.consume_duplicate_tool_call(
+                    tool_event,
+                    tool_call.get("arguments") or {},
+                    seen_tool_signatures,
+                )
+                if duplicate_error is not None:
+                    tool_result = duplicate_error
+                else:
+                    quota_error = tool_registry.consume_tool_quota(tool_event, tool_quota_counters)
+                    if quota_error is not None:
+                        tool_result = quota_error
+                    else:
+                        tool_result = tool_registry.call_ollama_tool(
+                            tool_lookup,
+                            tool_call["name"],
+                            tool_call.get("arguments") or {},
+                            context=call_context,
+                        )
+                        tool_registry.remember_tool_cooldown(
+                            tool_event,
+                            tool_call.get("arguments") or {},
+                        )
+            if tool_registry.is_blocking_tool_result(tool_result):
+                consecutive_blocked_tool_results += 1
+            else:
+                consecutive_blocked_tool_results = 0
 
             tool_message = _build_tool_message(
                 tool_call["name"],
@@ -1635,14 +1782,39 @@ def _run_tool_loop(
             )
             # Feed the tool result back as a standard tool-role message so the
             # next model round can continue from the resolved state.
-            conversation.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "content": tool_message["content"],
-                }
+            conversation_tool_message = {
+                "role": "tool",
+                "tool_call_id": tool_call["id"],
+                "content": tool_message["content"],
+            }
+            conversation.append(conversation_tool_message)
+            tool_registry.log_search_tool_io(
+                "response",
+                tool_event,
+                arguments=tool_call.get("arguments") or {},
+                context=call_context,
+                result=conversation_tool_message,
             )
             yield {"tool_result": dict(tool_message)}
+
+        if consecutive_blocked_tool_results >= 2:
+            conversation.append(
+                {
+                    "role": "user",
+                    "content": tool_registry.forced_final_prompt_after_tool_blocks(),
+                }
+            )
+            assistant_message = yield from _yield_stream_round(
+                _stream_openai_round(
+                    client,
+                    model_name,
+                    conversation,
+                    options,
+                    stream=stream,
+                )
+            )
+            yield {"transcript_message": assistant_message}
+            return
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
 
@@ -1864,3 +2036,4 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
         raise
     finally:
         _close_client(client)
+

@@ -11,3 +11,4 @@
 pytest-cache-files-*/
 .claude
 zip
+model_runtime_metadata.json

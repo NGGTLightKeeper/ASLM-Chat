@@ -30,12 +30,12 @@ import logging
 import re
 import secrets
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from core.models.search import SearchResult
+from core.models.search import SearchResult, SearchRichResult, SearchSource
 from core.config import load_search_config
 from core.fetch.ddgs_client import async_ddgs_search
 from core.fetch.academic_fetcher import AcademicFetcher
@@ -54,7 +54,13 @@ from core.registry.domain_reputation import get_reputation_store, domain_from_ur
 from core.registry.domain_registry import get_registry
 from core.fetch.antibot import is_antibot
 from core.fetch.stackexchange_fetcher import fetch_stackexchange_question, is_stackexchange_question_url
-from core.fetch.url_utils import normalize_url
+from core.fetch.url_utils import (
+    UnsafeFetchUrl,
+    max_safe_redirects,
+    normalize_url,
+    validate_public_fetch_url,
+    validate_redirect_target,
+)
 from core.fetch.thread_pool import io_pool as _io_pool
 from core.cache.source_cache import SourceCache
 from core.cache.query_normalizer import QUERY_STOPWORDS as _QUERY_STOPWORDS
@@ -72,6 +78,10 @@ _PDF_PREVIEW_OUTPUT_CHARS = 3_000          # densified output target
 
 _CACHE_PATH = Path(__file__).resolve().parent.parent / "_cache" / "source_cache.db"
 _cache = SourceCache(str(_CACHE_PATH))
+
+
+def _is_redirect_status(status_code: int) -> bool:
+    return status_code in {301, 302, 303, 307, 308}
 
 # Persistent HTTP connector — reused across preview-fetch batches to avoid
 # rebuilding connection pools on every search call.
@@ -101,33 +111,68 @@ async def shutdown_web_search() -> None:
         _http_connector = None
 
 
+async def _aiohttp_get_text_checked(
+    session,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    content_tokens: tuple[str, ...] = ("html", "xml", "text"),
+) -> str | None:
+    """Fetch text with SSRF checks before the request and after each redirect."""
+    current_url = validate_public_fetch_url(url)
+    for _ in range(max_safe_redirects() + 1):
+        async with session.get(current_url, allow_redirects=False, headers=headers) as resp:
+            if _is_redirect_status(resp.status):
+                current_url = validate_redirect_target(current_url, resp.headers.get("location", ""))
+                continue
+            if resp.status >= 400:
+                return None
+            content_type = (resp.headers.get("Content-Type") or "").lower()
+            if content_type and all(token not in content_type for token in content_tokens):
+                return None
+            return await resp.text(errors="replace")
+    return None
+
+
+def _curl_get_text_checked(
+    url: str,
+    *,
+    timeout: int,
+    headers: dict[str, str],
+    content_tokens: tuple[str, ...] = ("html", "xml", "text"),
+) -> str | None:
+    """curl_cffi text fetch with the same redirect-by-redirect SSRF checks."""
+    from curl_cffi import requests as cffi_req
+
+    current_url = validate_public_fetch_url(url)
+    for _ in range(max_safe_redirects() + 1):
+        r = cffi_req.get(
+            current_url,
+            impersonate="chrome124",
+            timeout=timeout,
+            headers=headers,
+            allow_redirects=False,
+        )
+        if _is_redirect_status(int(r.status_code)):
+            current_url = validate_redirect_target(current_url, r.headers.get("location", ""))
+            continue
+        if r.status_code >= 400:
+            return None
+        content_type = (r.headers.get("Content-Type") or r.headers.get("content-type") or "").lower()
+        if content_type and all(token not in content_type for token in content_tokens):
+            return None
+        return r.text
+    return None
 logger = logging.getLogger("services.web_search")
 trace_logger = logging.getLogger("trace.web_search")
 
-_DEFAULT_PREVIEW_FETCH_TIMEOUT = 6.0
-_DEFAULT_PREVIEW_TOTAL_TIMEOUT = 12.0
-
-_BOT_MIMIC_USER_AGENTS: tuple[str, ...] = (
-    "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)",
-    "TelegramBot (like TwitterBot)",
-    "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
-)
-_BOT_MIMIC_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
-_BOT_MIMIC_OG_TITLE_RE = re.compile(
-    r'<meta\s+(?:property|name)=["\']og:title["\']\s+content=["\'](.*?)["\']',
-    re.IGNORECASE,
-)
-_BOT_MIMIC_OG_DESC_RE = re.compile(
-    r'<meta\s+(?:property|name)=["\']og:description["\']\s+content=["\'](.*?)["\']',
-    re.IGNORECASE,
-)
-_BOT_MIMIC_DESC_RE = re.compile(
-    r'<meta\s+(?:property|name)=["\']description["\']\s+content=["\'](.*?)["\']',
-    re.IGNORECASE,
-)
-_BOT_MIMIC_TAG_RE = re.compile(r"<[^>]+>")
-_BOT_MIMIC_SPACE_RE = re.compile(r"\s+")
-
+_SEARCH_EFFORT_VALUES = {"low", "medium", "high"}
+_SEARCH_EFFORT_ALIASES = {
+    "": "medium",
+    "normal": "medium",
+    "default": "medium",
+    "standard": "medium",
+}
 
 # ---------------------------------------------------------------------------
 # URL utilities (inlined from legacy engine.py, no external deps)
@@ -229,6 +274,24 @@ def _stricter_timelimit(a: Optional[str], b: Optional[str]) -> Optional[str]:
     if b is None:
         return a
     return a if _TIMELIMIT_ORDER.get(a, 99) <= _TIMELIMIT_ORDER.get(b, 99) else b
+
+
+def _has_historical_year_anchor(query: str) -> bool:
+    """Return True when a query explicitly anchors itself to an older year."""
+    raw_years = re.findall(r'\b((?:19|20)\d{2})\b', query or "")
+    if not raw_years:
+        return False
+
+    import datetime as _dt
+    this_year = _dt.date.today().year
+    return min(int(year) for year in raw_years) < this_year - 1
+
+
+def _resolve_auto_timelimit(query: str) -> Optional[str]:
+    """Combine query-type freshness with explicit historical-year intent."""
+    if _has_historical_year_anchor(query):
+        return None
+    return _auto_timelimit(infer_query_types(query))
 
 
 def _year_hint_timelimit(
@@ -608,9 +671,16 @@ _MEDICAL_HINTS = frozenset({
     "medicine", "medication", "drug", "dose", "dosage",
     "diagnosis", "therapy", "syndrome", "cancer", "diabetes",
     "infection", "vaccine", "surgery", "doctor", "physician", "health",
+    "medical", "clinical", "clinical trial", "clinical trials", "biotechnology",
+    "biotech", "crispr", "gene therapy", "gene editing", "implant", "implants",
+    "neuralink", "brain-computer", "brain computer",
     # Russian / Ukrainian
     "симптом", "болезнь", "лечение", "препарат", "диагноз", "здоровье",
     "симптом", "хвороба", "лікування", "препарат", "діагноз",
+    "медицинские", "медицина", "рак", "вакцины", "вакцина",
+    "генная терапия", "биотехнологии", "биотехнология", "редактирование генов",
+    "клинические испытания", "нейроинтерфейс", "нейроинтерфейсы",
+    "имплантат", "имплантаты", "мозг-компьютер", "мозг компьютер",
     # German / Dutch
     "symptom", "krankheit", "behandlung", "medikament", "diagnose", "therapie", "arzt",
     "ziekte", "behandeling", "medicijn", "gezondheid", "dokter",
@@ -636,6 +706,190 @@ _MEDICAL_HINTS = frozenset({
     "σύμπτωμα", "ασθένεια", "θεραπεία", "υγεία",
     "อาการ", "โรค", "การรักษา", "ยา", "สุขภาพ",
 })
+
+# ---------------------------------------------------------------------------
+# Query quality gate — SEO spam words & word-count ceiling
+# ---------------------------------------------------------------------------
+
+#: Words that signal a "keyword-stuffed" SEO-style query rather than a real
+#: information need.  If any of these appear in the query the tool rejects it
+#: and asks the model to reformulate.  Intentionally multilingual to stay
+#: consistent with the other _*_HINTS sets above.
+_SEO_SPAM_WORDS: frozenset[str] = frozenset({
+    # ── English ──────────────────────────────────────────────────────────────
+    "best", "top", "ultimate", "perfect", "amazing", "awesome", "incredible",
+    "outstanding", "excellent", "great", "good", "fantastic", "wonderful",
+    "most popular", "highly rated", "top-rated", "top rated", "number one",
+    "#1", "must-have", "must have", "must-know", "must know",
+    "comprehensive", "complete guide", "definitive", "essential",
+    "everything you need", "all you need", "you need to know",
+    "how to", "what is", "what are", "why is", "why are",
+    "reviewed", "reviews", "review", "rated", "rankings", "ranked",
+    "compared", "comparison", "versus", "vs",
+    # ── Russian / Ukrainian ──────────────────────────────────────────────────
+    "лучший", "лучшая", "лучшее", "лучшие",
+    "топ", "рейтинг", "рейтинги", "популярный", "популярная",
+    "обзор", "обзоры", "сравнение", "всё что нужно",
+    "как выбрать", "что такое", "зачем нужен",
+    "найлучший", "найкращий", "найкраща", "найкращі",
+    "рейтинг", "огляд", "огляди",
+    # ── German / Dutch ───────────────────────────────────────────────────────
+    "beste", "besten", "top", "bewertung", "bewertungen",
+    "vergleich", "vollständig", "ultimativ", "empfehlung",
+    "wie man", "was ist",
+    "beste", "top", "beoordeling", "vergelijking", "aanbeveling",
+    # ── French ───────────────────────────────────────────────────────────────
+    "meilleur", "meilleure", "meilleurs", "meilleures",
+    "top", "classement", "comparatif", "avis", "guide complet",
+    "comment", "qu'est-ce que",
+    # ── Spanish / Portuguese ─────────────────────────────────────────────────
+    "mejor", "mejores", "top", "clasificación", "comparativa",
+    "reseña", "reseñas", "guía completa", "cómo", "qué es",
+    "melhor", "melhores", "classificação", "análise", "guia completo",
+    "como", "o que é",
+    # ── Italian ──────────────────────────────────────────────────────────────
+    "migliore", "migliori", "top", "classifica", "confronto",
+    "recensione", "recensioni", "guida completa", "come", "che cos'è",
+    # ── Polish ───────────────────────────────────────────────────────────────
+    "najlepszy", "najlepsza", "najlepsze", "ranking",
+    "porównanie", "recenzja", "recenzje", "jak", "co to jest",
+    # ── Turkish ──────────────────────────────────────────────────────────────
+    "en iyi", "en iyi", "sıralama", "karşılaştırma",
+    "inceleme", "rehber", "nasıl", "nedir",
+    # ── Arabic / Hebrew / Persian ────────────────────────────────────────────
+    "أفضل", "الأفضل", "تقييم", "مقارنة", "مراجعة", "دليل شامل",
+    "הטוב ביותר", "הטובים ביותר", "דירוג", "השוואה", "ביקורת",
+    "بهترین", "برترین", "رتبه‌بندی", "مقایسه", "بررسی",
+    # ── Chinese / Japanese / Korean ──────────────────────────────────────────
+    "最好", "最佳", "排名", "比较", "评测", "全面指南", "如何", "什么是",
+    "最高", "ランキング", "比較", "レビュー", "ガイド", "方法", "とは",
+    "최고", "최상", "랭킹", "비교", "리뷰", "가이드", "방법", "이란",
+    # ── Hindi / Greek / Thai ─────────────────────────────────────────────────
+    "सबसे अच्छा", "शीर्ष", "रैंकिंग", "तुलना", "समीक्षा",
+    "καλύτερο", "κορυφαίο", "κατάταξη", "σύγκριση", "αξιολόγηση",
+    "ดีที่สุด", "อันดับ", "เปรียบเทียบ", "รีวิว", "คู่มือ",
+})
+
+_NATURAL_INTENT_WORDS: frozenset[str] = frozenset({
+    "how to", "what is", "what are", "why is", "why are",
+    "review", "reviews", "comparison", "compared", "versus", "vs",
+})
+_SEO_SPAM_WORDS = frozenset(word for word in _SEO_SPAM_WORDS if word not in _NATURAL_INTENT_WORDS)
+
+#: Hard ceiling for content tokens (non-operator words) in a search query.
+#: This should only catch sentence-sized keyword dumps, not ordinary focused
+#: technical or academic queries.
+_QUERY_MAX_TOKENS: int = 18
+
+#: Regex matching tokens that are search operators, not content words.
+#: These are excluded from the word-count ceiling check.
+#:
+#: Covered patterns (case-insensitive on the lowercased string):
+#:   site:foo.com           — include-domain operator
+#:   -site:foo.com          — exclude-domain operator
+#:   -foo.com               — short exclude alias (leading dash + no space)
+#:   +word                  — forced-include prefix
+#:   OR / AND / NOT         — boolean connectors
+#:   "quoted phrase"        — the entire quoted phrase counts as ONE content token
+_OPERATOR_TOKEN_RE = re.compile(
+    r"""
+    ".*?"                       # quoted phrase  (consume fully; counted separately)
+    | -?site:\S+                # site: / -site: operator
+    | -[a-z0-9][\w.\-]*\.[a-z]{2,}  # -domain.tld short exclude (-wikipedia.org)
+    | \+\S+                     # +forced-include token
+    | \bor\b | \band\b | \bnot\b     # boolean connectors
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def _count_content_tokens(query: str) -> int:
+    """Count only the *content* words in a query, ignoring search operators.
+
+    Operators stripped before counting:
+      ``site:`` / ``-site:`` / ``-domain.tld`` / ``+word`` / ``OR`` / ``AND`` / ``NOT``
+
+    Quoted phrases (``"foo bar"``) count as **one** content token, because they
+    represent a single search signal despite containing multiple words.
+
+    Examples::
+
+        "asyncio TaskGroup site:github.com"          → 2  (asyncio, taskgroup)
+        '"torch.compile" issues Python 3.12'         → 4  ("torch.compile", issues, python, 3.12)
+        'H3N2 treatment site:who.int OR site:pubmed' → 2  (h3n2, treatment)
+        'QUIC bypass -site:wikipedia.org'            → 2  (quic, bypass)
+    """
+    q = query.strip().lower()
+
+    # Phase 1 — consume and count quoted phrases as single tokens, then remove them.
+    quotes = _OPERATOR_TOKEN_RE.findall(q)
+    quoted_count = sum(1 for t in quotes if t.startswith('"'))
+
+    # Phase 2 — strip ALL operator tokens (including quoted phrases) from the string.
+    remainder = _OPERATOR_TOKEN_RE.sub("", q).strip()
+
+    # Phase 3 — count remaining whitespace-delimited content words.
+    content_words = [t for t in remainder.split() if t]
+    return len(content_words) + quoted_count
+
+
+#: The rejection message returned to the model when validation fails.
+_QUERY_REJECTION_SPAM: str = (
+    "BAD_QUERY: This query contains SEO filler words (e.g. 'best', 'top', "
+    "'ultimate', 'amazing', etc.) that reduce search quality. "
+    "Please reformulate it keeping only the essential keywords."
+)
+_QUERY_REJECTION_TOO_LONG: str = (
+    f"BAD_QUERY: This query contains more than {_QUERY_MAX_TOKENS} content words "
+    f"(search operators like site:, -site:, OR, quoted phrases do not count). "
+    f"Web search works best with 1\u2013{_QUERY_MAX_TOKENS} precise keywords. "
+    "Please reformulate it keeping only the most specific terms."
+)
+
+
+def _contains_spam_keyword(query: str, keyword: str) -> bool:
+    """Return whether a banned keyword appears as a real word or phrase."""
+
+    keyword = str(keyword or "").strip().lower()
+    if not keyword:
+        return False
+
+    if re.search(r"\w", keyword, flags=re.UNICODE):
+        return re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", query, flags=re.UNICODE) is not None
+
+    # Scripts without word boundaries still need substring matching.
+    return keyword in query
+
+
+def validate_search_query(query: str) -> str | None:
+    """Validate a search query for quality before sending it to the engine.
+
+    Returns ``None`` when the query passes all checks, or a plain-English
+    rejection message (starting with ``BAD_QUERY:``) that the caller should
+    return directly to the model so it can reformulate.
+
+    Checks (in order):
+      1. SEO spam words — multilingual blocklist applied to content tokens only.
+      2. Content-word ceiling — more than ``_QUERY_MAX_TOKENS`` non-operator
+         words is treated as a keyword-pile / sentence query.
+         Operators (site:, -site:, OR, quoted phrases) are excluded from count.
+    """
+    if not query or not query.strip():
+        return None  # empty queries are handled elsewhere
+
+    q_lower = query.strip().lower()
+
+    # Check 1: SEO spam words as whole keywords, not substrings.
+    spam_hit = {p for p in _SEO_SPAM_WORDS if _contains_spam_keyword(q_lower, p)}
+    if spam_hit:
+        return _QUERY_REJECTION_SPAM
+
+    # ── Check 2: Content-word ceiling (operators excluded) ────────────────
+    if _count_content_tokens(query) > _QUERY_MAX_TOKENS:
+        return _QUERY_REJECTION_TOO_LONG
+
+    return None
+
 
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 _TEXT_SIG_RE = re.compile(r"[\W_]+", re.UNICODE)
@@ -1069,147 +1323,12 @@ def _content_quality_signal(payload: PreviewPayload, result: SearchResult, query
     )
 
 
-def _bot_mimic_applies(query_types: list[str], cfg) -> bool:
-    mode = str(getattr(cfg.search, "bot_mimic_mode", "off") or "off").strip().lower()
-    if mode not in {"fallback", "always"}:
-        return False
-    allowed = list(getattr(cfg.search, "bot_mimic_for_query_types", []) or [])
-    return not allowed or any(qt in allowed for qt in query_types)
-
-
-def _bot_mimic_candidate_indices(
-    results: list[SearchResult],
-    triage: list[TriageResult],
-    *,
-    mode: str,
-    top_k: int,
-) -> list[int]:
-    if top_k <= 0:
-        return []
-
-    registry = get_registry()
-    selected: list[int] = []
-    for idx, (result, tr) in enumerate(zip(results, triage)):
-        if tr.skip:
-            continue
-        if mode == "fallback":
-            try:
-                if not registry.lookup(result.url).try_preview_bot:
-                    continue
-            except Exception as exc:
-                logger.debug("domain registry lookup failed for %s: %s", result.url, exc)
-                continue
-        selected.append(idx)
-        if len(selected) >= top_k:
-            break
-    return selected
-
-
-def _bot_mimic_extract_fields(url: str, raw_html: str) -> tuple[str, str]:
-    title_match = _BOT_MIMIC_TITLE_RE.search(raw_html or "")
-    og_title_match = _BOT_MIMIC_OG_TITLE_RE.search(raw_html or "")
-    og_desc_match = _BOT_MIMIC_OG_DESC_RE.search(raw_html or "")
-    desc_match = _BOT_MIMIC_DESC_RE.search(raw_html or "")
-
-    title = html_lib.unescape((og_title_match or title_match).group(1)).strip() if (og_title_match or title_match) else ""
-    snippet = ""
-    for match in (og_desc_match, desc_match):
-        if match:
-            snippet = html_lib.unescape(match.group(1)).strip()
-            break
-
-    if not snippet:
-        try:
-            markdown = normalize_page(url, raw_html)
-        except Exception:
-            markdown = _BOT_MIMIC_TAG_RE.sub(" ", raw_html or "")
-        snippet = _BOT_MIMIC_SPACE_RE.sub(" ", markdown or "").strip(" -|")
-
-    return title[:200].strip(), snippet[:800].strip()
-
-
-async def _bot_mimic_fetch_one(
-    session,
-    url: str,
-    *,
-    timeout: float,
-) -> tuple[str, str] | None:
-    headers_base = {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-    for user_agent in _BOT_MIMIC_USER_AGENTS:
-        headers = dict(headers_base)
-        headers["User-Agent"] = user_agent
-        try:
-            async with session.get(url, allow_redirects=True, headers=headers) as resp:
-                if resp.status >= 400:
-                    continue
-                content_type = (resp.headers.get("Content-Type") or "").lower()
-                if content_type and all(token not in content_type for token in ("html", "xml", "text")):
-                    continue
-                raw_html = await asyncio.wait_for(resp.text(errors="replace"), timeout=timeout)
-        except Exception:
-            continue
-
-        if not raw_html or is_antibot(raw_html):
-            continue
-
-        title, snippet = _bot_mimic_extract_fields(url, raw_html)
-        if title or snippet:
-            return title, snippet
-    return None
-
-
-async def _bot_mimic_enrich_results(
-    results: list[SearchResult],
-    triage: list[TriageResult],
-    *,
-    query_types: list[str],
-    cfg,
-    deadline: float | None = None,
-) -> dict[int, tuple[str, str]]:
-    if not _bot_mimic_applies(query_types, cfg):
-        return {}
-
-    mode = str(getattr(cfg.search, "bot_mimic_mode", "off") or "off").strip().lower()
-    top_k = int(getattr(cfg.search, "bot_mimic_top_k", 0) or 0)
-    timeout = float(getattr(cfg.search, "bot_mimic_timeout_seconds", 0.8) or 0.8)
-    indices = _bot_mimic_candidate_indices(results, triage, mode=mode, top_k=top_k)
-    if not indices:
-        return {}
-
-    if deadline is not None:
-        remaining = max(0.0, deadline - asyncio.get_running_loop().time() - 0.2)
-        if remaining < 0.2:
-            return {}
-        timeout = min(timeout, remaining)
-
-    import aiohttp
-
-    connector = await _get_http_connector(max(1, min(len(indices), 4)))
-    client_timeout = aiohttp.ClientTimeout(total=max(0.2, timeout))
-    async with aiohttp.ClientSession(timeout=client_timeout, connector=connector, connector_owner=False) as session:
-        tasks = [asyncio.create_task(_bot_mimic_fetch_one(session, results[idx].url, timeout=timeout)) for idx in indices]
-        fetched = await asyncio.gather(*tasks, return_exceptions=True)
-
-    enriched: dict[int, tuple[str, str]] = {}
-    for idx, payload in zip(indices, fetched):
-        if isinstance(payload, Exception) or not payload:
-            continue
-        title, snippet = payload
-        if title or snippet:
-            enriched[idx] = (title, snippet)
-    return enriched
-
-
 # ---------------------------------------------------------------------------
 # Preview fetching
 # ---------------------------------------------------------------------------
 
 from core.fetch.constants import DEFAULT_UA as _UA
 _PREFETCH_MAX_URLS: int = 5   # cap on background prefetch targets per search
-_PREFETCH_FETCH_TIMEOUT: float = 8.0
 # Limit concurrent background prefetch tasks to avoid socket exhaustion under burst load.
 _PREFETCH_SEMAPHORE: Optional[asyncio.Semaphore] = None
 
@@ -1233,7 +1352,15 @@ async def _prefetch_urls_background(urls: list[str], req_id: str = "-") -> None:
     """
     import aiohttp as _aiohttp
 
-    to_fetch = [u for u in urls if not _cache.is_fresh(u)]
+    to_fetch: list[str] = []
+    for url in urls:
+        try:
+            validate_public_fetch_url(url)
+        except UnsafeFetchUrl as exc:
+            _trace(req_id, "prefetch.blocked", url=url, reason=str(exc))
+            continue
+        if not _cache.is_fresh(url):
+            to_fetch.append(url)
     if not to_fetch:
         return
 
@@ -1247,25 +1374,25 @@ async def _prefetch_urls_background(urls: list[str], req_id: str = "-") -> None:
     async with sem:
         try:
             connector = await _get_http_connector(concurrency=len(to_fetch) + 2)
-            timeout = _aiohttp.ClientTimeout(total=_PREFETCH_FETCH_TIMEOUT)
+            timeout = _aiohttp.ClientTimeout(total=float(load_search_config().search.prefetch_fetch_timeout))
             async with _aiohttp.ClientSession(
                 connector=connector, connector_owner=False,
                 timeout=timeout, headers={"User-Agent": _UA},
             ) as session:
                 for url in to_fetch:
                     try:
-                        async with session.get(url, allow_redirects=True) as resp:
-                            if resp.status >= 400:
-                                continue
-                            ct = (resp.headers.get("Content-Type") or "").lower()
-                            if ct and all(m not in ct for m in ("html", "text")):
-                                continue
-                            raw_html = await resp.text(errors="replace")
-                            if raw_html and not is_antibot(raw_html):
-                                clean_text = normalize_page(url, raw_html, "")
-                                if clean_text:
-                                    _cache.cache_page(url, "", clean_text=clean_text)
-                                    _trace(req_id, "prefetch.cached", url=url)
+                        raw_html = await _aiohttp_get_text_checked(
+                            session,
+                            url,
+                            content_tokens=("html", "text"),
+                        )
+                        if raw_html and not is_antibot(raw_html):
+                            clean_text = normalize_page(url, raw_html, "")
+                            if clean_text:
+                                _cache.cache_page(url, "", clean_text=clean_text)
+                                _trace(req_id, "prefetch.cached", url=url)
+                    except UnsafeFetchUrl as _e:
+                        _trace(req_id, "prefetch.blocked", url=url, reason=str(_e))
                     except Exception as _e:
                         logger.debug("prefetch fetch failed for %s: %s", url, _e)
         except Exception as _e:
@@ -1290,46 +1417,68 @@ async def _fetch_pdf_preview(
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     )
+    search_cfg = load_search_config().search
 
     def _fetch_bytes() -> bytes:
         # httpx streaming with size guard
         try:
             import httpx
+            current_url = validate_public_fetch_url(url)
             with httpx.Client(
                 headers={"User-Agent": _UA_PDF, "Accept": "application/pdf,*/*;q=0.8"},
-                timeout=20.0,
-                follow_redirects=True,
+                timeout=float(search_cfg.pdf_preview_fetch_timeout),
+                follow_redirects=False,
                 verify=True,
             ) as client:
-                with client.stream("GET", url) as r:
-                    try:
-                        content_length = int(r.headers.get("content-length", "0") or "0")
-                    except ValueError:
-                        content_length = 0
-                    if content_length > _PDF_PREVIEW_MAX_BYTES:
-                        return b""
-                    chunks: list[bytes] = []
-                    total = 0
-                    for chunk in r.iter_bytes():
-                        total += len(chunk)
-                        if total > _PDF_PREVIEW_MAX_BYTES:
+                for _ in range(max_safe_redirects() + 1):
+                    with client.stream("GET", current_url) as r:
+                        if _is_redirect_status(r.status_code):
+                            current_url = validate_redirect_target(current_url, r.headers.get("location", ""))
+                            continue
+                        try:
+                            content_length = int(r.headers.get("content-length", "0") or "0")
+                        except ValueError:
+                            content_length = 0
+                        if content_length > _PDF_PREVIEW_MAX_BYTES:
                             return b""
-                        chunks.append(chunk)
-                    data = b"".join(chunks)
-                    if 200 <= r.status_code < 400 and looks_like_pdf_bytes(data):
-                        return data
+                        chunks: list[bytes] = []
+                        total = 0
+                        for chunk in r.iter_bytes():
+                            total += len(chunk)
+                            if total > _PDF_PREVIEW_MAX_BYTES:
+                                return b""
+                            chunks.append(chunk)
+                        data = b"".join(chunks)
+                        if 200 <= r.status_code < 400 and looks_like_pdf_bytes(data):
+                            return data
+                        return b""
+        except UnsafeFetchUrl as _e:
+            logger.warning("blocked unsafe pdf preview url=%r reason=%s", url, _e)
+            return b""
         except Exception as _e:
             logger.debug("pdf httpx fetch failed for %s: %s", url, _e)
         # curl_cffi fallback
         try:
             from curl_cffi import requests as cffi_req
-            r = cffi_req.get(
-                url, impersonate="chrome124", timeout=20,
-                headers={"User-Agent": _UA_PDF, "Accept": "application/pdf,*/*;q=0.8"},
-            )
+            current_url = validate_public_fetch_url(url)
+            for _ in range(max_safe_redirects() + 1):
+                r = cffi_req.get(
+                    current_url, impersonate="chrome124", timeout=float(search_cfg.pdf_preview_fetch_timeout),
+                    headers={"User-Agent": _UA_PDF, "Accept": "application/pdf,*/*;q=0.8"},
+                    allow_redirects=False,
+                )
+                if _is_redirect_status(int(r.status_code)):
+                    current_url = validate_redirect_target(current_url, r.headers.get("location", ""))
+                    continue
+                break
+            else:
+                return b""
             data = bytes(r.content or b"")
             if 200 <= r.status_code < 400 and len(data) <= _PDF_PREVIEW_MAX_BYTES and looks_like_pdf_bytes(data):
                 return data
+        except UnsafeFetchUrl as _e:
+            logger.warning("blocked unsafe pdf preview curl url=%r reason=%s", url, _e)
+            return b""
         except Exception as _e:
             logger.debug("pdf curl_cffi fetch failed for %s: %s", url, _e)
         return b""
@@ -1349,7 +1498,7 @@ async def _fetch_pdf_preview(
     try:
         text = await asyncio.wait_for(
             loop.run_in_executor(_io_pool,_extract_and_densify),
-            timeout=15.0,
+            timeout=float(search_cfg.pdf_preview_extract_timeout),
         )
     except Exception as _e:
         logger.debug("pdf extract failed for %s: %s", url, _e)
@@ -1372,7 +1521,7 @@ async def _fetch_preview_one(
     sem: asyncio.Semaphore,
     loop,
     policy: str = "cheap",
-    fetch_timeout: float = 8.0,
+    fetch_timeout: float | None = None,
     req_id: str = "-",
 ) -> PreviewPayload:
     """Fetch one page preview.
@@ -1382,8 +1531,16 @@ async def _fetch_preview_one(
                       non-antibot response wins, loser is cancelled.
     """
     async with sem:
+        if fetch_timeout is None:
+            fetch_timeout = float(load_search_config().search.preview_fetch_timeout)
         url = result.url
         t0 = time.perf_counter()
+        try:
+            validate_public_fetch_url(url)
+        except UnsafeFetchUrl as exc:
+            logger.warning("blocked unsafe preview candidate url=%r reason=%s", url, exc)
+            _trace(req_id, "preview_fetch.blocked", url=url, reason=str(exc))
+            return PreviewPayload()
 
         # PDF fast-path: skip HTML fetch entirely, download bytes and densify
         if looks_like_pdf_url(url):
@@ -1435,24 +1592,26 @@ async def _fetch_preview_one(
 
         async def _aiohttp() -> str | None:
             try:
-                async with session.get(url, allow_redirects=True) as resp:
-                    if resp.status >= 400:
-                        return None
-                    ct = (resp.headers.get("Content-Type") or "").lower()
-                    if ct and all(m not in ct for m in ("html", "xml", "text")):
-                        return None
-                    text = await resp.text(errors="replace")
-                    return text if text and not is_antibot(text) else None
+                text = await _aiohttp_get_text_checked(session, url)
+                return text if text and not is_antibot(text) else None
+            except UnsafeFetchUrl as exc:
+                logger.warning("blocked unsafe preview url=%r reason=%s", url, exc)
+                return None
             except Exception:
                 return None
 
         async def _curl() -> str | None:
             def _sync() -> str | None:
                 try:
-                    from curl_cffi import requests as cffi_req
-                    r = cffi_req.get(url, impersonate="chrome124", timeout=12, headers={"User-Agent": _UA})
-                    text = r.text
+                    text = _curl_get_text_checked(
+                        url,
+                        timeout=int(load_search_config().search.preview_curl_timeout),
+                        headers={"User-Agent": _UA},
+                    )
                     return text if text and not is_antibot(text) else None
+                except UnsafeFetchUrl as exc:
+                    logger.warning("blocked unsafe preview curl url=%r reason=%s", url, exc)
+                    return None
                 except Exception:
                     return None
             return await loop.run_in_executor(_io_pool,_sync)
@@ -1566,7 +1725,7 @@ async def _fetch_previews(
         warm_t0 = time.perf_counter()
         await asyncio.wait_for(
             loop.run_in_executor(_io_pool,lambda: warm_preview_models(preview_settings)),
-            timeout=10.0,
+            timeout=float(load_search_config().search.preview_model_warm_timeout),
         )
         _trace(req_id, "preview_batch.warm_done", elapsed=round(time.perf_counter() - warm_t0, 3))
     except Exception:
@@ -1702,6 +1861,48 @@ def _get_output_profile(query_types: list[str]) -> _OutputProfile:
                                 _DEFAULT_OUTPUT_PROFILE)
 
 
+def _normalize_search_effort(effort: str | None) -> str:
+    value = str(effort or "").strip().lower()
+    value = _SEARCH_EFFORT_ALIASES.get(value, value)
+    return value if value in _SEARCH_EFFORT_VALUES else "medium"
+
+
+def _is_low_effort(opts: WebSearchOptions) -> bool:
+    return _normalize_search_effort(opts.effort) == "low"
+
+
+def _scale_output_profile(profile: _OutputProfile, multiplier: int) -> _OutputProfile:
+    scaled = replace(profile)
+    scaled.max_results = max(1, int(profile.max_results) * multiplier)
+    scaled.preview_fetch_limit = max(0, int(profile.preview_fetch_limit) * multiplier)
+    scaled.unparsed_bonus = max(0, int(profile.unparsed_bonus) * multiplier)
+    return scaled
+
+
+def _apply_effort_to_output_profile(profile: _OutputProfile, opts: WebSearchOptions) -> _OutputProfile:
+    effort = _normalize_search_effort(opts.effort)
+    if effort == "low":
+        low = replace(profile)
+        low.max_results = min(low.max_results, opts.max_results)
+        low.preview_fetch_limit = 0
+        low.unparsed_bonus = 0
+        return low
+    if effort == "high":
+        return _scale_output_profile(profile, max(1, int(opts.effort_multiplier)))
+    return profile
+
+
+def _enforce_effort_after_adaptation(profile: _OutputProfile, opts: WebSearchOptions) -> _OutputProfile:
+    if _normalize_search_effort(opts.effort) == "low":
+        return _apply_effort_to_output_profile(profile, opts)
+    return profile
+
+
+def _effective_output_limit(profile: _OutputProfile, opts: WebSearchOptions) -> int:
+    """Return the final model-visible result cap for this query."""
+    return max(1, min(int(profile.max_results), int(opts.max_results)))
+
+
 def _adapt_output_profile(
     results: list[SearchResult],
     triage: list[TriageResult],
@@ -1793,13 +1994,22 @@ def _adapt_output_profile(
         return base_profile, meta
 
     growth = 2 if primary == "technical" else 1
-    profile.max_results = min(max(profile.max_results, base_profile.max_results) + growth, 10)
+    profile.max_results = max(
+        base_profile.max_results,
+        min(max(profile.max_results, base_profile.max_results) + growth, 10),
+    )
     if payloads is None:
-        profile.preview_fetch_limit = min(
-            max(profile.preview_fetch_limit, base_profile.preview_fetch_limit) + 1,
-            7,
+        profile.preview_fetch_limit = max(
+            base_profile.preview_fetch_limit,
+            min(
+                max(profile.preview_fetch_limit, base_profile.preview_fetch_limit) + 1,
+                7,
+            ),
         )
-    profile.unparsed_bonus = min(max(profile.unparsed_bonus, base_profile.unparsed_bonus) + 1, 3)
+    profile.unparsed_bonus = max(
+        base_profile.unparsed_bonus,
+        min(max(profile.unparsed_bonus, base_profile.unparsed_bonus) + 1, 3),
+    )
     profile.min_score_unparsed = max(0.20, min(profile.min_score_unparsed, base_profile.min_score_unparsed) - 0.05)
 
     meta.update(
@@ -1879,6 +2089,176 @@ def _display_text(text: str, limit: int) -> str:
     if not compact:
         return ""
     return compact[:limit].rstrip(" ,;:|-")
+
+
+def _semantic_duplicate_ratio(a: str, b: str) -> float:
+    """Cheap semantic-ish duplicate score for snippet/preview de-duping.
+
+    Uses normalized token overlap plus character similarity. This catches exact
+    copies and near-copies without pulling embedding models into the response
+    formatting path.
+    """
+    left = " ".join((a or "").lower().split())
+    right = " ".join((b or "").lower().split())
+    if not left or not right:
+        return 0.0
+    if left == right:
+        return 1.0
+
+    left_tokens = set(re.findall(r"\w+", left, flags=re.UNICODE))
+    right_tokens = set(re.findall(r"\w+", right, flags=re.UNICODE))
+    token_jaccard = 0.0
+    if left_tokens and right_tokens:
+        token_jaccard = len(left_tokens & right_tokens) / max(1, len(left_tokens | right_tokens))
+
+    from difflib import SequenceMatcher
+    char_ratio = SequenceMatcher(None, left, right).ratio()
+    return max(token_jaccard, char_ratio)
+
+
+def _dedupe_preview_against_snippet(snippet: str, preview: str, threshold: float = 0.92) -> str:
+    if not preview:
+        return ""
+    if not snippet:
+        return preview
+    return "" if _semantic_duplicate_ratio(snippet, preview) >= threshold else preview
+
+
+def _source_domain(url: str) -> str:
+    host = urlparse(url or "").netloc.lower()
+    if "@" in host:
+        host = host.rsplit("@", 1)[-1]
+    if ":" in host:
+        host = host.split(":", 1)[0]
+    return host.removeprefix("www.")
+
+
+def _display_domain(domain: str) -> str:
+    parts = [p for p in (domain or "").split(".") if p]
+    if len(parts) >= 2:
+        label = parts[-2]
+    elif parts:
+        label = parts[0]
+    else:
+        return ""
+    return label.replace("-", " ").title()
+
+
+def _favicon_url(domain: str) -> str:
+    return f"https://icons.duckduckgo.com/ip3/{domain}.ico" if domain else ""
+
+
+def _source_from_result(
+    result: SearchResult,
+    rank: int,
+    *,
+    source_id: str | None = None,
+    score: float | None = None,
+    preview: str = "",
+    snippet_limit: int = 600,
+    preview_limit: int = 1600,
+) -> SearchSource:
+    domain = _source_domain(result.url)
+    snippet_text = _display_text(result.snippet or "", snippet_limit)
+    preview_text = _display_text(preview or "", preview_limit)
+    preview_text = _dedupe_preview_against_snippet(snippet_text, preview_text)
+    return SearchSource(
+        id=source_id or f"source-{rank}",
+        rank=rank,
+        title=(result.title or "").strip(),
+        url=(result.url or "").strip(),
+        domain=domain,
+        display_domain=_display_domain(domain) or domain,
+        favicon_url=_favicon_url(domain),
+        snippet=snippet_text,
+        preview=preview_text,
+        published_date=_normalize_date(result.published_date) or (result.published_date or ""),
+        engine=result.engine or "",
+        trust_tier=result.trust_tier or "?",
+        score=round(float(score if score is not None else result.score or 0.0), 4),
+        pdf_url=_infer_pdf_url(result),
+    )
+
+
+def _build_model_context(
+    query: str,
+    sources: list[SearchSource],
+    total_char_budget: int = 0,
+) -> str:
+    lines: list[str] = [
+        f"Search results for: {query}",
+        "",
+        "Citation rules:",
+        "- Cite search evidence only with the exact citation handles listed below, for example [cabc-1].",
+        "- Put the citation handle immediately after the sentence or bullet it supports.",
+        "- Use a handle only when that source's Title, Preview, or Content explicitly supports the claim.",
+        "- Do not cite a source because its domain or title merely looks related.",
+        "- Do not reuse handles from other searches or earlier tool calls unless they appear in this exact source list.",
+        "- Do not invent, renumber, shorten, translate, or combine citation handles.",
+        "- Do not write bare domain names, URLs, or source numbers as citations when a handle is available.",
+        "- If no listed source supports a claim, say that the search did not confirm it or omit the claim.",
+        "- Prefer parsed Content over search-engine Preview. Treat Preview-only sources as weaker evidence.",
+        "- The UI renders valid citation handles as compact source chips.",
+        "",
+        "Sources:",
+    ]
+    total_chars = len("\n".join(lines))
+    for source in sources:
+        before_len = len(lines)
+        lines.append(f"Citation handle: [{source.id}]")
+        evidence_kind = "parsed_content" if source.preview and source.preview != source.snippet else "search_preview_only"
+        lines.append(f"Evidence kind: {evidence_kind}")
+        lines.append(f"Title: {source.title}")
+        lines.append(f"Domain: {source.domain}")
+        lines.append(f"URL: {source.url}")
+        if source.published_date:
+            lines.append(f"Date: {source.published_date}")
+        excerpt = source.preview or source.snippet
+        if excerpt:
+            label = "Content" if source.preview and source.preview != source.snippet else "Preview"
+            lines.append(f"{label}: {excerpt}")
+        lines.append("")
+        block = "\n".join(lines[before_len:])
+        if total_char_budget and total_chars + len(block) > total_char_budget:
+            del lines[before_len:]
+            lines.append("[...additional source context omitted: context budget reached]")
+            break
+        total_chars += len(block)
+    return "\n".join(lines).strip()
+
+
+def _citation_source_id(search_id: str, rank: int) -> str:
+    compact = re.sub(r"[^a-z0-9]+", "", (search_id or "").lower())
+    compact = compact.removeprefix("srch")
+    namespace = (compact[:3] or "src").ljust(3, "0")
+    return f"c{namespace}-{rank}"
+
+
+def _build_compact_ui(query: str, sources: list[SearchSource], limit: int = 3) -> dict[str, object]:
+    visible = sources[: max(0, limit)]
+    return {
+        "label": f"Searching for {query}",
+        "source_chips": [
+            {
+                "source_id": source.id,
+                "domain": source.domain,
+                "display_domain": source.domain,
+                "favicon_url": source.favicon_url,
+            }
+            for source in visible
+        ],
+        "more_count": max(0, len(sources) - len(visible)),
+    }
+
+
+def _rich_result_to_dict(result: SearchRichResult) -> dict[str, object]:
+    return {
+        "query": result.query,
+        "search_id": result.search_id,
+        "sources": [asdict(source) for source in result.sources],
+        "model_context": result.model_context,
+        "ui": result.ui,
+    }
 
 
 _ISO_DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
@@ -1970,10 +2350,9 @@ def _format_results(
     # -- Result selection: depth-first vs breadth-first ----------------------
     #
     # depth-first (unparsed_bonus > 0):
-    #   Take top (max_results − bonus) parsed results first, then append up to
-    #   `bonus` unparsed results that still score above the threshold.
-    #   This ensures the model sees rich content for technical/medical queries
-    #   without being padded with low-quality stubs.
+    #   Take up to max_results parsed results first. Only when parsed results
+    #   are insufficient, append unparsed results that still score above the
+    #   threshold. The bonus is a backfill allowance, not a reserved quota.
     #
     # breadth-first (unparsed_bonus == 0):
     #   Just take top max_results by score — volume beats depth for news/forum.
@@ -1981,13 +2360,14 @@ def _format_results(
     if output_profile.unparsed_bonus > 0:
         parsed   = [(s, i, r, p) for s, i, r, p in scored if p.text]
         unparsed = [(s, i, r, p) for s, i, r, p in scored if not p.text]
-        parsed_take = max(0, max_results - output_profile.unparsed_bonus)
-        selected = parsed[:parsed_take]
+        selected = parsed[:max_results]
+        backfill_limit = min(output_profile.unparsed_bonus, max(0, max_results - len(selected)))
         for item in unparsed:
-            if len(selected) - parsed_take >= output_profile.unparsed_bonus:
+            if backfill_limit <= 0:
                 break
             if item[0] >= output_profile.min_score_unparsed:
                 selected.append(item)
+                backfill_limit -= 1
         selected.sort(key=lambda x: (-x[0], x[1]))
         final = selected[:max_results]
     else:
@@ -2041,6 +2421,64 @@ def _format_results(
     return "\n".join(lines).strip()
 
 
+def _select_output_sources(
+    results: list[SearchResult],
+    payloads: list[PreviewPayload],
+    query: str,
+    *,
+    query_profile: _QueryProfile,
+    output_profile: _OutputProfile,
+    query_type: str = "general",
+    query_types: list[str] | None = None,
+    rep_store=None,
+    max_results_override: int | None = None,
+) -> list[tuple[SearchResult, PreviewPayload]]:
+    """Select rich sources parsed-first while preserving the requested volume."""
+
+    max_results = max_results_override if max_results_override is not None else output_profile.max_results
+    _qtypes = query_types if query_types else [query_type]
+    scored: list[tuple[float, int, SearchResult, PreviewPayload]] = []
+    for idx, (result, payload) in enumerate(zip(results, payloads)):
+        score = _result_score(
+            result,
+            payload,
+            index=idx,
+            total=len(results),
+            query=query,
+            profile=query_profile,
+            query_type=_qtypes[0],
+            rep_store=rep_store,
+        )
+        scored.append((score, idx, result, payload))
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    if output_profile.unparsed_bonus > 0:
+        parsed = [(s, i, r, p) for s, i, r, p in scored if p.text]
+        unparsed = [(s, i, r, p) for s, i, r, p in scored if not p.text]
+        selected = parsed[:max_results]
+        backfill_limit = min(output_profile.unparsed_bonus, max(0, max_results - len(selected)))
+        for item in unparsed:
+            if backfill_limit <= 0:
+                break
+            if item[0] >= output_profile.min_score_unparsed:
+                selected.append(item)
+                backfill_limit -= 1
+        if len(selected) < max_results:
+            selected_indexes = {item[1] for item in selected}
+            for item in unparsed:
+                if len(selected) >= max_results:
+                    break
+                if item[1] not in selected_indexes:
+                    selected.append(item)
+                    selected_indexes.add(item[1])
+        selected.sort(key=lambda x: (-x[0], x[1]))
+        final = selected[:max_results]
+    else:
+        final = scored[:max_results]
+
+    return [(result, payload) for _, _, result, payload in final]
+
+
 # ---------------------------------------------------------------------------
 # WebSearchService
 # ---------------------------------------------------------------------------
@@ -2049,10 +2487,20 @@ def _format_results(
 class WebSearchOptions:
     max_results: int = 10
     fetch_previews: bool = True
+    total_context_budget: Optional[int] = None
+    candidate_pool_multiplier: Optional[int] = None
+    ddgs_hedge_count: Optional[int] = None
+    ddgs_worker_timeout: Optional[float] = None
+    ddgs_engine_timeout: Optional[int] = None
+    ddgs_max_retries: Optional[int] = None
+    use_hosted_engines: bool = True
+    use_fast_academic: bool = True
     concurrency: int = 4
     fetch_timeout: float = 6.0
     total_timeout: float = 12.0
     timelimit: Optional[str] = None   # DDGS time filter: "d", "w", "m", "y"
+    effort: str = "medium"
+    effort_multiplier: int = 1
 
 
 class WebSearchService:
@@ -2078,15 +2526,27 @@ class WebSearchService:
         req_id: str = "-",
     ) -> tuple[list[SearchResult], list]:
         """Shared provider fetch → merge → dedup → triage. Returns (deduped, triage)."""
-        pool_multiplier = max(1, int(self._cfg.search.candidate_pool_multiplier))
+        pool_multiplier = max(
+            1,
+            int(
+                opts.candidate_pool_multiplier
+                if opts.candidate_pool_multiplier is not None
+                else self._cfg.search.candidate_pool_multiplier
+            ),
+        )
         buffer = max(0, int(self._cfg.search.result_buffer_size))
         fetch_max = out_profile.max_results + buffer
 
-        hosted_engines = available_hosted_engines()
-        use_fast_academic = bool({"academic", "medical"} & set(query_types))
+        hosted_engines = available_hosted_engines() if opts.use_hosted_engines else []
+        use_fast_academic = opts.use_fast_academic and bool({"academic", "medical"} & set(query_types))
         n_hosted = len(hosted_engines)
         ddgs_multiplier = max(1, pool_multiplier - n_hosted)
-        ddgs_hedge = max(1, 2 - n_hosted)
+        ddgs_hedge = max(
+            1,
+            int(opts.ddgs_hedge_count)
+            if opts.ddgs_hedge_count is not None
+            else max(1, 2 - n_hosted),
+        )
         hosted_max = fetch_max
         academic_max = min(fetch_max, 8)
 
@@ -2104,6 +2564,9 @@ class WebSearchService:
                 lang=lang,
                 timelimit=opts.timelimit,
                 hedge_count=ddgs_hedge,
+                worker_timeout=opts.ddgs_worker_timeout,
+                engine_timeout=opts.ddgs_engine_timeout,
+                max_retries=opts.ddgs_max_retries,
             )
         )
         hosted_tasks: dict[str, asyncio.Task] = {
@@ -2165,19 +2628,128 @@ class WebSearchService:
         triage = _triage_results(deduped, query) if deduped else []
         return deduped, triage
 
+    @staticmethod
+    def _fallback_query_variants(query: str) -> list[str]:
+        """Build progressively simpler query variants for zero-result fallback."""
+        base = " ".join(str(query or "").split()).strip()
+        if not base:
+            return []
+
+        variants: list[str] = []
+
+        def add_variant(value: str) -> None:
+            normalized = " ".join(str(value or "").split()).strip()
+            if normalized and normalized != base and normalized not in variants:
+                variants.append(normalized)
+
+        # 1) Remove quotes that can over-constrain DDGS.
+        unquoted = re.sub(r"[\"'`]+", " ", base)
+        add_variant(unquoted)
+
+        # 2) Strip search operators and site constraints for an open fallback.
+        no_ops = re.sub(r"(?<!\S)-?site:[^\s]+", " ", unquoted, flags=re.IGNORECASE)
+        no_ops = re.sub(r"(?<!\S)(?:OR|\|)(?=\s|$)", " ", no_ops, flags=re.IGNORECASE)
+        no_ops = re.sub(r"(?<!\S)-[^\s]+", " ", no_ops)
+        add_variant(no_ops)
+
+        # 3) Keep only core lexical terms (cap length to improve recall).
+        core_terms = re.findall(r"[A-Za-z0-9_\-]{2,}|[А-Яа-яЁё0-9_\-]{2,}", no_ops)
+        if core_terms:
+            add_variant(" ".join(core_terms[:4]))
+            add_variant(" ".join(core_terms[:3]))
+
+        return variants
+
+    async def _run_with_zero_result_fallback(
+        self,
+        *,
+        provider_query: str,
+        analysis_query: str,
+        query_types: list[str],
+        out_profile: _OutputProfile,
+        opts: WebSearchOptions,
+        req_id: str,
+    ) -> tuple[list[SearchResult], list[_TriageResult], str]:
+        """Run search pipeline and retry with degraded query variants if empty."""
+        lang = infer_query_language(analysis_query)
+        query_type = query_types[0] if query_types else "general"
+        deduped, triage = await self._run_search_pipeline(
+            provider_query,
+            lang,
+            query_types,
+            query_type,
+            out_profile,
+            opts,
+            req_id,
+        )
+        if deduped:
+            return deduped, triage, analysis_query
+        if _is_low_effort(opts):
+            return [], [], analysis_query
+
+        fallback_opts = replace(
+            opts,
+            max_results=max(5, min(int(opts.max_results), int(self._cfg.effort.zero_result_fallback_max_results))),
+            candidate_pool_multiplier=int(self._cfg.effort.zero_result_fallback_candidate_pool_multiplier),
+            ddgs_hedge_count=int(self._cfg.effort.low_ddgs_hedge_count),
+            ddgs_worker_timeout=min(
+                float(opts.ddgs_worker_timeout or self._cfg.effort.medium_ddgs_worker_timeout),
+                float(self._cfg.effort.zero_result_fallback_ddgs_worker_timeout),
+            ),
+            ddgs_engine_timeout=min(
+                int(opts.ddgs_engine_timeout or self._cfg.search.ddgs_engine_timeout),
+                int(self._cfg.effort.zero_result_fallback_ddgs_engine_timeout),
+            ),
+            ddgs_max_retries=int(self._cfg.effort.zero_result_fallback_ddgs_max_retries),
+            fetch_previews=False,
+            use_fast_academic=False,
+            effort="medium",
+            effort_multiplier=1,
+        )
+        fallback_profile = _apply_effort_to_output_profile(_get_output_profile(query_types), fallback_opts)
+
+        for index, variant in enumerate(self._fallback_query_variants(analysis_query), start=1):
+            variant_lang = infer_query_language(variant)
+            variant_types = infer_query_types(variant)
+            variant_type = variant_types[0] if variant_types else query_type
+            variant_profile = _apply_effort_to_output_profile(_get_output_profile(variant_types), fallback_opts)
+            _trace(
+                req_id,
+                "search.fallback.try",
+                index=index,
+                variant=variant,
+                ddgs_worker_timeout=fallback_opts.ddgs_worker_timeout,
+                candidate_pool_multiplier=fallback_opts.candidate_pool_multiplier,
+            )
+            deduped, triage = await self._run_search_pipeline(
+                variant,
+                variant_lang,
+                variant_types,
+                variant_type,
+                variant_profile or fallback_profile,
+                fallback_opts,
+                req_id,
+            )
+            if deduped:
+                _trace(req_id, "search.fallback.hit", index=index, variant=variant, count=len(deduped))
+                return deduped, triage, variant
+
+        return [], [], analysis_query
+
     async def search(self, query: str, deadline: float | None = None) -> str:
         """Run web search and return formatted text result."""
         opts = self._opts
         req_id = _make_request_id()
         overall_t0 = time.perf_counter()
         original_query = query
-        pool_multiplier = max(1, int(self._cfg.search.candidate_pool_multiplier))
-        preview_fetch_limit = max(1, int(self._cfg.search.preview_fetch_limit))
         snippet_char_budget = max(600, int(self._cfg.search.max_snippet_chars))
         preview_char_budget = max(
             int(self._cfg.search.preview_max_chars),
             int(self._cfg.search.max_snippet_chars),
         )
+        if _is_low_effort(opts):
+            snippet_char_budget = 320
+            preview_char_budget = 320
         constraints = parse_domain_constraints(query)
         analysis_query = constraints.clean_query or query
         analysis_query, _ = _apply_year_hint_policy(analysis_query, self._cfg.query)
@@ -2187,7 +2759,7 @@ class WebSearchService:
         query_types = infer_query_types(query)
         query_type = query_types[0]
         query_profile = _parse_query_profile(query)
-        out_profile = _get_output_profile(query_types)
+        out_profile = _apply_effort_to_output_profile(_get_output_profile(query_types), opts)
 
         # Per-type profile overrides config defaults for fetch depth and output count.
         # preview_fetch_limit: how many pages to scrape (depth-first types scrape more)
@@ -2217,9 +2789,15 @@ class WebSearchService:
             chosen_profile=f"{out_profile.max_results}/{out_profile.preview_fetch_limit}/{out_profile.unparsed_bonus}",
         )
 
-        deduped, triage = await self._run_search_pipeline(
-            provider_query, lang, query_types, query_type, out_profile, opts, req_id
+        deduped, triage, effective_query = await self._run_with_zero_result_fallback(
+            provider_query=provider_query,
+            analysis_query=query,
+            query_types=query_types,
+            out_profile=out_profile,
+            opts=opts,
+            req_id=req_id,
         )
+        query = effective_query
         if constraints.has_constraints:
             before = len(deduped)
             deduped = filter_results_by_domain_constraints(deduped, constraints)
@@ -2251,7 +2829,7 @@ class WebSearchService:
             query_types=query_types,
         )
         if adapted_profile != out_profile:
-            out_profile = adapted_profile
+            out_profile = _enforce_effort_after_adaptation(adapted_profile, opts)
             preview_fetch_limit = out_profile.preview_fetch_limit
             _trace(
                 req_id,
@@ -2305,7 +2883,11 @@ class WebSearchService:
                 preview_settings=preview_settings,
                 loop=loop,
                 policies=to_fetch_policies,
-                early_return_threshold=max(0, int(self._cfg.search.early_return_threshold)),
+                early_return_threshold=(
+                    0
+                    if _normalize_search_effort(opts.effort) == "high"
+                    else max(0, int(self._cfg.search.early_return_threshold))
+                ),
                 req_id=req_id,
                 deadline=deadline,
             )
@@ -2320,7 +2902,7 @@ class WebSearchService:
             payloads=payloads,
         )
         if adapted_post_profile != out_profile:
-            out_profile = adapted_post_profile
+            out_profile = _enforce_effort_after_adaptation(adapted_post_profile, opts)
             _trace(
                 req_id,
                 "profile.adapt.post",
@@ -2334,39 +2916,6 @@ class WebSearchService:
                 trigger_reason=";".join(list(post_meta.get("reasons", []))),
                 chosen_top_k=out_profile.max_results,
             )
-
-        enriched_regular = await _bot_mimic_enrich_results(
-            deduped,
-            triage,
-            query_types=query_types,
-            cfg=self._cfg,
-            deadline=deadline,
-        )
-        if enriched_regular:
-            _trace(
-                req_id,
-                "bot_mimic.regular",
-                trigger_reason="regular_rank_enrichment",
-                chosen_top_k=len(enriched_regular),
-                fallback_path="rank_only",
-            )
-            for idx, (title, snippet) in enriched_regular.items():
-                enriched_result = replace(
-                    deduped[idx],
-                    title=title or deduped[idx].title,
-                    snippet=snippet or deduped[idx].snippet,
-                )
-                enriched_tr = _triage_one_result(
-                    enriched_result,
-                    query,
-                    index=0,
-                    total=1,
-                )
-                triage[idx] = TriageResult(
-                    skip=triage[idx].skip and enriched_tr.skip,
-                    fetch_policy=enriched_tr.fetch_policy if enriched_tr.score > triage[idx].score else triage[idx].fetch_policy,
-                    score=max(triage[idx].score, enriched_tr.score),
-                )
 
         # -- Background prefetch of non-displayed buffer results --
         # Candidates: non-skipped results that didn't make the preview_fetch_limit
@@ -2398,7 +2947,11 @@ class WebSearchService:
             output_profile=out_profile,
             snippet_char_budget=snippet_char_budget,
             preview_char_budget=preview_char_budget,
-            total_char_budget=self._cfg.search.total_context_budget,
+            total_char_budget=(
+                opts.total_context_budget
+                if opts.total_context_budget is not None
+                else self._cfg.search.total_context_budget
+            ),
             query_type=query_type,
             query_types=query_types,
             rep_store=_rep_store,
@@ -2433,12 +2986,18 @@ class WebSearchService:
         lang = infer_query_language(query)
         query_types = infer_query_types(query)
         query_type = query_types[0]
-        out_profile = _get_output_profile(query_types)
+        out_profile = _apply_effort_to_output_profile(_get_output_profile(query_types), opts)
 
         req_id = _make_request_id()
-        deduped, triage = await self._run_search_pipeline(
-            provider_query, lang, query_types, query_type, out_profile, opts, req_id
+        deduped, triage, effective_query = await self._run_with_zero_result_fallback(
+            provider_query=provider_query,
+            analysis_query=query,
+            query_types=query_types,
+            out_profile=out_profile,
+            opts=opts,
+            req_id=req_id,
         )
+        query = effective_query
         if constraints.has_constraints:
             deduped = filter_results_by_domain_constraints(deduped, constraints)
             triage = _triage_results(deduped, query) if deduped else []
@@ -2452,7 +3011,7 @@ class WebSearchService:
             query_types=query_types,
         )
         if adapted_profile != out_profile:
-            out_profile = adapted_profile
+            out_profile = _enforce_effort_after_adaptation(adapted_profile, opts)
             _trace(
                 req_id,
                 "structured.profile.adapt",
@@ -2460,58 +3019,6 @@ class WebSearchService:
                 chosen_profile=f"{out_profile.max_results}/{out_profile.preview_fetch_limit}/{out_profile.unparsed_bonus}",
                 chosen_top_k=out_profile.max_results,
             )
-
-        enriched = await _bot_mimic_enrich_results(
-            deduped,
-            triage,
-            query_types=query_types,
-            cfg=self._cfg,
-            deadline=deadline,
-        )
-        if enriched:
-            _trace(
-                req_id,
-                "structured.bot_mimic",
-                trigger_reason="structured_rerank",
-                chosen_top_k=len(enriched),
-                fallback_path="triage_rerank",
-            )
-            try:
-                trust_reg = get_trust_registry()
-            except Exception as _e:
-                logger.debug("trust_registry unavailable during bot mimic rerank: %s", _e)
-                trust_reg = None
-            try:
-                rep_store = get_reputation_store()
-            except Exception as _e:
-                logger.debug("reputation_store unavailable during bot mimic rerank: %s", _e)
-                rep_store = None
-
-            rank_only = bool(getattr(self._cfg.search, "bot_mimic_only_for_rank_enrichment", True))
-            for idx, (title, snippet) in enriched.items():
-                enriched_result = replace(
-                    deduped[idx],
-                    title=title or deduped[idx].title,
-                    snippet=snippet or deduped[idx].snippet,
-                )
-                # Structured rerank should let enriched content compete on its
-                # own merits instead of being capped by the provider position.
-                enriched_tr = _triage_one_result(
-                    enriched_result,
-                    query,
-                    index=0,
-                    total=1,
-                    trust_reg=trust_reg,
-                    rep_store=rep_store,
-                )
-                triage[idx] = TriageResult(
-                    skip=triage[idx].skip and enriched_tr.skip,
-                    fetch_policy=enriched_tr.fetch_policy if enriched_tr.score > triage[idx].score else triage[idx].fetch_policy,
-                    score=max(triage[idx].score, enriched_tr.score),
-                )
-                if not rank_only:
-                    deduped[idx].title = enriched_result.title
-                    deduped[idx].snippet = enriched_result.snippet
 
         ranked: list[SearchResult] = []
         skipped: list[SearchResult] = []
@@ -2526,9 +3033,197 @@ class WebSearchService:
         ranked.sort(key=lambda r: (float(r.score or 0.0), len(r.snippet or "")), reverse=True)
         skipped.sort(key=lambda r: (float(r.score or 0.0), len(r.snippet or "")), reverse=True)
         combined = ranked + skipped
-        top_k = max(1, int(opts.max_results))
+        top_k = _effective_output_limit(out_profile, opts)
         _trace(req_id, "structured.done", chosen_top_k=top_k, skipped=len(skipped), ranked=len(ranked))
         return combined[:top_k]
+
+    async def search_rich(
+        self,
+        query: str,
+        deadline: float | None = None,
+    ) -> SearchRichResult:
+        """Run web search and return a UI/model friendly structured payload.
+
+        Mirrors search() pipeline step-for-step:
+          _run_search_pipeline → pre-fetch _adapt_output_profile (updates preview_fetch_limit)
+          → triage-aware to_fetch list → _fetch_previews → post-fetch _adapt_output_profile
+          → background prefetch
+        Skip/fetch_policy decisions from the triage system are fully honoured.
+        """
+        opts = self._opts
+        search_id = f"srch_{_make_request_id()}"
+
+        # --- 1. Query normalisation (mirrors search() / search_structured()) ---
+        constraints = parse_domain_constraints(query)
+        analysis_query = constraints.clean_query or query
+        analysis_query, _ = _apply_year_hint_policy(analysis_query, self._cfg.query)
+        provider_query = build_provider_query(query, constraints) or analysis_query
+        query = analysis_query
+        lang = infer_query_language(query)
+        query_types = infer_query_types(query)
+        query_type = query_types[0]
+        query_profile = _parse_query_profile(query)
+        out_profile = _apply_effort_to_output_profile(_get_output_profile(query_types), opts)
+        preview_fetch_limit = out_profile.preview_fetch_limit
+        req_id = search_id
+
+        # --- 2. Provider fetch → merge → dedup → triage ---
+        deduped, triage, effective_query = await self._run_with_zero_result_fallback(
+            provider_query=provider_query,
+            analysis_query=query,
+            query_types=query_types,
+            out_profile=out_profile,
+            opts=opts,
+            req_id=req_id,
+        )
+        query = effective_query
+        if constraints.has_constraints:
+            deduped = filter_results_by_domain_constraints(deduped, constraints)
+            triage = _triage_results(deduped, query) if deduped else []
+
+        if not deduped:
+            return SearchRichResult(
+                query=query,
+                search_id=search_id,
+                sources=[],
+                model_context=f"No results found for: {query}",
+                ui={"status": "done", "result_count": 0, "compact": _build_compact_ui(query, [])},
+            )
+
+        # --- 3. Pre-fetch adaptive profile (may update preview_fetch_limit) ---
+        adapted_profile, adapt_meta = _adapt_output_profile(
+            deduped, triage, out_profile, query_types=query_types,
+        )
+        if adapted_profile != out_profile:
+            out_profile = _enforce_effort_after_adaptation(adapted_profile, opts)
+            preview_fetch_limit = out_profile.preview_fetch_limit  # keep in sync!
+            _trace(
+                req_id, "rich.profile.adapt.pre",
+                trigger_reason=";".join(list(adapt_meta.get("reasons", []))),
+                chosen_profile=f"{out_profile.max_results}/{out_profile.preview_fetch_limit}/{out_profile.unparsed_bonus}",
+            )
+
+        skipped_count = sum(1 for t in triage if t.skip)
+        race_count = sum(1 for t in triage if not t.skip and t.fetch_policy == "race")
+        _trace(req_id, "rich.triage.done",
+               skipped=skipped_count, race=race_count,
+               cheap=len(triage) - skipped_count - race_count, total=len(triage))
+
+        # --- 4. Triage-aware fetch candidate list ---
+        # Only fetch pages where triage said skip=False, up to preview_fetch_limit.
+        to_fetch: list[SearchResult] = []
+        to_fetch_indices: list[int] = []
+        to_fetch_policies: list[str] = []
+        for i, (result, tr) in enumerate(zip(deduped, triage)):
+            if not tr.skip and len(to_fetch) < preview_fetch_limit:
+                to_fetch.append(result)
+                to_fetch_indices.append(i)
+                to_fetch_policies.append(tr.fetch_policy)
+        _trace(req_id, "rich.fetch_plan.done", to_fetch=len(to_fetch), policies=to_fetch_policies[:])
+
+        # --- 5. Preview fetching ---
+        loop = asyncio.get_running_loop()
+        payloads: list[PreviewPayload] = [PreviewPayload()] * len(deduped)
+
+        if to_fetch and opts.fetch_previews and self._cfg.search.auto_scrape_preview:
+            preview_settings = get_preview_settings(apply_hardware_profile=False)
+            fetched = await _fetch_previews(
+                to_fetch,
+                query=query,
+                concurrency=opts.concurrency,
+                fetch_timeout=opts.fetch_timeout,
+                total_timeout=opts.total_timeout,
+                preview_settings=preview_settings,
+                loop=loop,
+                policies=to_fetch_policies,
+                early_return_threshold=(
+                    0
+                    if _normalize_search_effort(opts.effort) == "high"
+                    else max(0, int(self._cfg.search.early_return_threshold))
+                ),
+                req_id=req_id,
+                deadline=deadline,
+            )
+            for i, payload in zip(to_fetch_indices, fetched):
+                payloads[i] = payload
+
+        # --- 6. Post-fetch adaptive profile ---
+        adapted_post, post_meta = _adapt_output_profile(
+            deduped, triage, out_profile, query_types=query_types, payloads=payloads,
+        )
+        if adapted_post != out_profile:
+            out_profile = _enforce_effort_after_adaptation(adapted_post, opts)
+            _trace(
+                req_id, "rich.profile.adapt.post",
+                trigger_reason=";".join(list(post_meta.get("reasons", []))),
+                parsed_count=post_meta.get("parsed_count"),
+                parse_ratio=post_meta.get("parse_ratio"),
+                chosen_profile=f"{out_profile.max_results}/{out_profile.preview_fetch_limit}/{out_profile.unparsed_bonus}",
+            )
+
+        # --- 7. Background prefetch (fire-and-forget, does not block response) ---
+        if opts.fetch_previews and self._cfg.search.auto_scrape_preview:
+            fetched_urls = {r.url for r in to_fetch}
+            prefetch_candidates = [
+                r.url
+                for r, tr in zip(deduped, triage)
+                if r.url not in fetched_urls and not tr.skip
+            ][:_PREFETCH_MAX_URLS]
+            if prefetch_candidates:
+                asyncio.create_task(
+                    _prefetch_urls_background(prefetch_candidates, req_id=req_id)
+                )
+                _trace(req_id, "rich.prefetch.scheduled", urls=len(prefetch_candidates))
+
+        # --- 9. Build sources and return ---
+        top_k = _effective_output_limit(out_profile, opts)
+        try:
+            _rep_store = get_reputation_store()
+        except Exception as _e:
+            logger.debug("reputation_store unavailable: %s", _e)
+            _rep_store = None
+
+        selected_sources = _select_output_sources(
+            deduped,
+            payloads,
+            query,
+            query_profile=query_profile,
+            output_profile=out_profile,
+            query_type=query_type,
+            query_types=query_types,
+            rep_store=_rep_store,
+            max_results_override=top_k,
+        )
+
+        sources = [
+            _source_from_result(
+                result,
+                rank,
+                source_id=_citation_source_id(search_id, rank),
+                score=result.score,
+                preview=payload.text,
+                snippet_limit=320 if _is_low_effort(opts) else 600,
+                preview_limit=320 if _is_low_effort(opts) else 1600,
+            )
+            for rank, (result, payload) in enumerate(selected_sources, 1)
+        ]
+        model_context = _build_model_context(
+            query,
+            sources,
+            total_char_budget=opts.total_context_budget or 0,
+        )
+        _trace(req_id, "rich.done", sources=len(sources))
+        return SearchRichResult(
+            query=query,
+            search_id=search_id,
+            sources=sources,
+            model_context=model_context,
+            ui={
+                "status": "done",
+                "result_count": len(sources),
+                "compact": _build_compact_ui(query, sources),
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2540,7 +3235,138 @@ class WebSearchService:
 # their finally blocks in async_ddgs_search(), aiohttp sessions are closed
 # by their async context managers, and executor threads run to natural
 # completion (they have internal timeouts so they won't hang indefinitely).
-_SEARCH_HARD_TIMEOUT: float = 20.0
+def _fallback_timeout_window(hard_timeout: float) -> float:
+    """Return a short timeout budget for degraded fallback attempts."""
+    effort_cfg = load_search_config().effort
+    try:
+        base = float(hard_timeout)
+    except (TypeError, ValueError):
+        base = effort_cfg.medium_hard_timeout
+    return max(
+        float(effort_cfg.timeout_fallback_min_window),
+        min(
+            float(effort_cfg.timeout_fallback_max_window),
+            base * float(effort_cfg.timeout_fallback_fraction),
+        ),
+    )
+
+
+def _format_timeout_fallback_text(query: str, results: list[SearchResult], limit: int = 5) -> str:
+    """Build a compact fallback response from snippet-only structured results."""
+    if not results:
+        return f"Search timed out with no fallback results for: {query}"
+    lines: list[str] = [
+        f"Search timed out. Returning fallback snippet results for: {query}",
+        "",
+    ]
+    for idx, item in enumerate(results[: max(1, limit)], 1):
+        title = (item.title or item.url or "Untitled source").strip()
+        domain = domain_from_url(item.url)
+        snippet = _display_text(item.snippet or "", 320)
+        lines.append(f"[{idx}] {title}")
+        if domain:
+            lines.append(f"Domain: {domain}")
+        if item.url:
+            lines.append(f"URL: {item.url}")
+        if snippet:
+            lines.append(f"Snippet: {snippet}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _timeout_fallback_rich_payload(query: str, results: list[SearchResult]) -> dict[str, object]:
+    search_id = f"srch_{_make_request_id()}"
+    fallback_sources = [
+        _source_from_result(
+            result,
+            rank,
+            source_id=_citation_source_id(search_id, rank),
+            score=result.score,
+            preview="",
+        )
+        for rank, result in enumerate(results, 1)
+    ]
+    model_context = _build_model_context(query, fallback_sources)
+    return {
+        "query": query,
+        "search_id": search_id,
+        "sources": [asdict(source) for source in fallback_sources],
+        "model_context": model_context,
+        "ui": {
+            "status": "done",
+            "result_count": len(fallback_sources),
+            "degraded": True,
+            "compact": _build_compact_ui(query, fallback_sources),
+        },
+    }
+
+
+def _effort_hard_timeout(effort: str, hard_timeout: float | None) -> float:
+    if hard_timeout is not None:
+        return float(hard_timeout)
+    effort_cfg = load_search_config().effort
+    if effort == "low":
+        return float(effort_cfg.low_hard_timeout)
+    if effort == "high":
+        return float(effort_cfg.high_hard_timeout)
+    return float(effort_cfg.medium_hard_timeout)
+
+
+def _build_effort_options(
+    cfg: object,
+    *,
+    effort: str | None,
+    max_results: int,
+    fetch_previews: bool,
+    timelimit: Optional[str],
+) -> WebSearchOptions:
+    resolved_effort = _normalize_search_effort(effort)
+    effort_cfg = cfg.effort
+    if resolved_effort == "low":
+        return WebSearchOptions(
+            max_results=max(1, min(int(max_results), int(effort_cfg.low_max_results))),
+            fetch_previews=False,
+            total_context_budget=int(effort_cfg.low_total_context_budget),
+            candidate_pool_multiplier=int(effort_cfg.low_candidate_pool_multiplier),
+            ddgs_hedge_count=int(effort_cfg.low_ddgs_hedge_count),
+            ddgs_worker_timeout=float(effort_cfg.low_ddgs_worker_timeout),
+            ddgs_engine_timeout=int(effort_cfg.low_ddgs_engine_timeout),
+            ddgs_max_retries=int(effort_cfg.low_ddgs_max_retries),
+            use_hosted_engines=False,
+            use_fast_academic=False,
+            fetch_timeout=float(effort_cfg.low_preview_fetch_timeout),
+            total_timeout=float(effort_cfg.low_preview_total_timeout),
+            timelimit=timelimit,
+            effort=resolved_effort,
+        )
+    if resolved_effort == "high":
+        multiplier = max(1, int(effort_cfg.high_multiplier))
+        return WebSearchOptions(
+            max_results=max(1, int(max_results)) * multiplier,
+            fetch_previews=fetch_previews,
+            total_context_budget=max(1, int(getattr(cfg.search, "total_context_budget", 40_000)))
+            * multiplier,
+            candidate_pool_multiplier=max(
+                1,
+                int(getattr(cfg.search, "candidate_pool_multiplier", 2))
+                * multiplier,
+            ),
+            ddgs_worker_timeout=float(effort_cfg.high_ddgs_worker_timeout),
+            fetch_timeout=float(effort_cfg.high_preview_fetch_timeout),
+            total_timeout=float(effort_cfg.high_preview_total_timeout),
+            timelimit=timelimit,
+            effort=resolved_effort,
+            effort_multiplier=multiplier,
+        )
+    return WebSearchOptions(
+        max_results=max_results,
+        fetch_previews=fetch_previews,
+        ddgs_worker_timeout=float(effort_cfg.medium_ddgs_worker_timeout),
+        fetch_timeout=float(effort_cfg.medium_preview_fetch_timeout),
+        total_timeout=float(effort_cfg.medium_preview_total_timeout),
+        timelimit=timelimit,
+        effort=resolved_effort,
+    )
 
 
 async def run_web_search(
@@ -2549,11 +3375,12 @@ async def run_web_search(
     fetch_previews: bool = True,
     timelimit: Optional[str] = None,
     time_range: Optional[str] = None,
-    hard_timeout: float = _SEARCH_HARD_TIMEOUT,
+    hard_timeout: float | None = None,
+    effort: str = "medium",
 ) -> str:
     """Convenience entry point for MCP adapter and CLI.
 
-    Enforces a hard_timeout (default 20s) over the entire search lifecycle.
+    Enforces the configured hard timeout over the entire search lifecycle.
     If exceeded, kills spawned subprocesses and returns a clean timeout message
     instead of raising — callers never see a hanging coroutine.
 
@@ -2567,8 +3394,8 @@ async def run_web_search(
     constraints = parse_domain_constraints(query)
     query_for_search = constraints.clean_query or query
     query_for_search, year_tl = _apply_year_hint_policy(query_for_search, cfg.query)
-    # Type-based timelimit: inferred from query classification.
-    type_tl = _auto_timelimit(infer_query_types(query_for_search))
+    # Type-based timelimit is disabled when the query explicitly anchors an older year.
+    type_tl = _resolve_auto_timelimit(query_for_search)
     # Use the more restrictive of the two signals.
     auto_timelimit = _stricter_timelimit(year_tl, type_tl)
     explicit_timelimit = (
@@ -2577,7 +3404,11 @@ async def run_web_search(
         or timelimit
     )
     resolved_timelimit = explicit_timelimit or auto_timelimit
-    opts = WebSearchOptions(
+    search_effort = _normalize_search_effort(effort)
+    effective_hard_timeout = _effort_hard_timeout(search_effort, hard_timeout)
+    opts = _build_effort_options(
+        cfg,
+        effort=search_effort,
         max_results=max_results,
         fetch_previews=fetch_previews,
         timelimit=resolved_timelimit,
@@ -2590,30 +3421,50 @@ async def run_web_search(
     )
     try:
         loop = asyncio.get_event_loop()
-        deadline = loop.time() + hard_timeout
-        return await asyncio.wait_for(service.search(query, deadline=deadline), timeout=hard_timeout)
+        deadline = loop.time() + effective_hard_timeout
+        return await asyncio.wait_for(
+            service.search(query, deadline=deadline),
+            timeout=effective_hard_timeout,
+        )
     except asyncio.TimeoutError:
         elapsed = round(time.perf_counter() - init_t0, 1)
         logger.warning(
             "web_search.hard_timeout query=%r elapsed=%.1fs limit=%.0fs",
-            query[:80], elapsed, hard_timeout,
+            query[:80], elapsed, effective_hard_timeout,
         )
-        return f"Search timed out after {elapsed}s (limit {hard_timeout:.0f}s) for: {query_for_search}"
+        if search_effort == "low":
+            return f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) for: {query_for_search}"
+        try:
+            fallback_results = await run_web_search_structured(
+                query=query,
+                max_results=max(3, min(max_results, 8)),
+                timelimit=timelimit,
+                hard_timeout=_fallback_timeout_window(effective_hard_timeout),
+                time_range=time_range,
+                effort="low",
+            )
+        except Exception as fallback_exc:
+            logger.warning("web_search.timeout_fallback_failed query=%r err=%s", query[:80], fallback_exc)
+            fallback_results = []
+        if fallback_results:
+            return _format_timeout_fallback_text(query_for_search, fallback_results, limit=max_results)
+        return f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) for: {query_for_search}"
 
 
 async def run_web_search_structured(
     query: str,
     max_results: int = 10,
     timelimit: Optional[str] = None,
-    hard_timeout: float = _SEARCH_HARD_TIMEOUT,
+    hard_timeout: float | None = None,
     time_range: Optional[str] = None,
+    effort: str = "medium",
 ) -> list[SearchResult]:
     """Structured counterpart to run_web_search for structured callers."""
     cfg = load_search_config()
     constraints = parse_domain_constraints(query)
     query_for_search = constraints.clean_query or query
     query_for_search, year_tl = _apply_year_hint_policy(query_for_search, cfg.query)
-    type_tl = _auto_timelimit(infer_query_types(query_for_search))
+    type_tl = _resolve_auto_timelimit(query_for_search)
     auto_timelimit = _stricter_timelimit(year_tl, type_tl)
     explicit_timelimit = (
         _normalize_time_range(time_range)
@@ -2621,22 +3472,121 @@ async def run_web_search_structured(
         or timelimit
     )
     resolved_timelimit = explicit_timelimit or auto_timelimit
-    opts = WebSearchOptions(
+    search_effort = _normalize_search_effort(effort)
+    effective_hard_timeout = _effort_hard_timeout(search_effort, hard_timeout)
+    opts = _build_effort_options(
+        cfg,
+        effort=search_effort,
         max_results=max_results,
         fetch_previews=False,
         timelimit=resolved_timelimit,
     )
     service = WebSearchService(options=opts)
     loop = asyncio.get_event_loop()
-    deadline = loop.time() + hard_timeout
+    deadline = loop.time() + effective_hard_timeout
     try:
         return await asyncio.wait_for(
             service.search_structured(query, deadline=deadline),
-            timeout=hard_timeout,
+            timeout=effective_hard_timeout,
         )
     except asyncio.TimeoutError:
         logger.warning(
             "web_search_structured.hard_timeout query=%r limit=%.0fs",
-            query[:80], hard_timeout,
+            query[:80], effective_hard_timeout,
         )
         return []
+
+
+async def run_web_search_rich(
+    query: str,
+    max_results: int = 10,
+    timelimit: Optional[str] = None,
+    hard_timeout: float | None = None,
+    time_range: Optional[str] = None,
+    effort: str = "medium",
+) -> dict[str, object]:
+    """Structured web-search payload for MCP structuredContent/UI clients."""
+    cfg = load_search_config()
+    constraints = parse_domain_constraints(query)
+    query_for_search = constraints.clean_query or query
+    query_for_search, year_tl = _apply_year_hint_policy(query_for_search, cfg.query)
+    type_tl = _resolve_auto_timelimit(query_for_search)
+    auto_timelimit = _stricter_timelimit(year_tl, type_tl)
+    explicit_timelimit = (
+        _normalize_time_range(time_range)
+        or _normalize_time_range(timelimit)
+        or timelimit
+    )
+    resolved_timelimit = explicit_timelimit or auto_timelimit
+    search_effort = _normalize_search_effort(effort)
+    effective_hard_timeout = _effort_hard_timeout(search_effort, hard_timeout)
+    opts = _build_effort_options(
+        cfg,
+        effort=search_effort,
+        max_results=max_results,
+        fetch_previews=True,
+        timelimit=resolved_timelimit,
+    )
+    service = WebSearchService(options=opts)
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + effective_hard_timeout
+    try:
+        rich = await asyncio.wait_for(
+            service.search_rich(query.strip(), deadline=deadline),
+            timeout=effective_hard_timeout,
+        )
+        return _rich_result_to_dict(rich)
+    except asyncio.TimeoutError:
+        logger.warning(
+            "web_search_rich.hard_timeout query=%r limit=%.0fs",
+            query[:80], effective_hard_timeout,
+        )
+        if search_effort == "low":
+            search_id = f"srch_{_make_request_id()}"
+            return {
+                "query": query_for_search,
+                "search_id": search_id,
+                "sources": [],
+                "model_context": f"Search timed out after {effective_hard_timeout:.0f}s for: {query_for_search}",
+                "ui": {
+                    "status": "timeout",
+                    "result_count": 0,
+                    "compact": {
+                        "label": f"Searching for {query_for_search}",
+                        "source_chips": [],
+                        "more_count": 0,
+                    },
+                },
+            }
+        fallback_results: list[SearchResult] = []
+        try:
+            fallback_results = await run_web_search_structured(
+                query=query,
+                max_results=max(3, min(max_results, 8)),
+                timelimit=timelimit,
+                hard_timeout=_fallback_timeout_window(effective_hard_timeout),
+                time_range=time_range,
+                effort="low",
+            )
+        except Exception as fallback_exc:
+            logger.warning("web_search_rich.timeout_fallback_failed query=%r err=%s", query[:80], fallback_exc)
+
+        if fallback_results:
+            return _timeout_fallback_rich_payload(query_for_search, fallback_results)
+
+        search_id = f"srch_{_make_request_id()}"
+        return {
+            "query": query_for_search,
+            "search_id": search_id,
+            "sources": [],
+            "model_context": f"Search timed out after {effective_hard_timeout:.0f}s for: {query_for_search}",
+            "ui": {
+                "status": "timeout",
+                "result_count": 0,
+                "compact": {
+                    "label": f"Searching for {query_for_search}",
+                    "source_chips": [],
+                    "more_count": 0,
+                },
+            },
+        }

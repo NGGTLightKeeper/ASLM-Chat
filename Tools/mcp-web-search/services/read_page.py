@@ -1,14 +1,14 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+﻿# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 """
 Read Page service.
 
 Fetch a single URL as clean markdown text. Supports:
-  - Standard HTTP fetch (httpx → curl_cffi)
+  - Standard HTTP fetch (httpx в†’ curl_cffi)
   - Reddit JSON endpoint
-  - YouTube transcript (yt-dlp → youtube-transcript-api)
+  - YouTube transcript (yt-dlp в†’ youtube-transcript-api)
   - Wayback Machine fallback
-  - page_normalizer for HTML → markdown conversion
+  - page_normalizer for HTML в†’ markdown conversion
 
 Replaces the scattered read_page logic from legacy src/engine.py.
 
@@ -31,10 +31,19 @@ from core.config import load_search_config
 from core.extract.page_normalizer import normalize_page
 from core.fetch.antibot import is_antibot
 from core.fetch.camoufox_fetcher import fetch_with_camoufox
-from core.fetch.url_utils import has_non_text_extension, is_non_text_content_type
+from core.fetch.url_utils import (
+    UnsafeFetchUrl,
+    has_non_text_extension,
+    is_non_text_content_type,
+    max_safe_redirects,
+    validate_public_fetch_url,
+    validate_redirect_target,
+)
 from core.registry.domain_registry import get_registry
 from custom_domains.amazon import fetch_amazon_snapshot
 from custom_domains.ebay import fetch_ebay_snapshot
+from custom_domains.github import fetch_github_page as _fetch_github_page
+from custom_domains.github import is_github_url as _is_github_url
 from custom_domains.dns_shop import camoufox_fetch_kwargs as _dns_camoufox_fetch_kwargs
 from custom_domains.dns_shop import dns_variant_urls as _dns_variant_urls
 from custom_domains.dns_shop import rewrite_read_page_url as _rewrite_read_page_url
@@ -55,6 +64,10 @@ from core.fetch.thread_pool import io_pool as _io_pool
 logger = logging.getLogger("services.read_page")
 trace_logger = logging.getLogger("trace.read_page")
 _READ_PAGE_STRATEGY_VERSION = "2026-04-followups-v1"
+
+
+def _is_redirect_status(status_code: int) -> bool:
+    return status_code in {301, 302, 303, 307, 308}
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +137,12 @@ def _is_weak_extraction(markdown: str, *, min_length: int) -> bool:
     return False
 
 
+def _truncate_markdown(markdown: str, max_chars: int) -> str:
+    if len(markdown) <= max_chars:
+        return markdown
+    return markdown[:max_chars].rsplit("\n", 1)[0] + "\n\n[...truncated]"
+
+
 # ---------------------------------------------------------------------------
 # YouTube transcript
 # ---------------------------------------------------------------------------
@@ -134,7 +153,7 @@ def _youtube_video_id(url: str) -> str | None:
 
 
 async def _fetch_youtube_transcript(url: str) -> str:
-    """Fetch YouTube transcript: youtube-transcript-api → yt-dlp fallback."""
+    """Fetch YouTube transcript: youtube-transcript-api в†’ yt-dlp fallback."""
     video_id = _youtube_video_id(url)
     if not video_id:
         return f"Error: Could not extract video ID from: {url}"
@@ -149,17 +168,20 @@ async def _fetch_youtube_transcript(url: str) -> str:
         except ImportError:
             return None
 
-        api = YouTubeTranscriptApi()
         PREFERRED = ["ru", "en", "uk", "de", "fr"]
 
         try:
-            transcript_list = api.list(video_id)
+            api = YouTubeTranscriptApi()
+            if hasattr(api, "list"):
+                transcript_list = api.list(video_id)
+            else:
+                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         except Exception as e:
             err = str(e)
             if "unavailable" in err.lower() or "no longer available" in err.lower():
                 return f"ERR:Video unavailable: {url}"
             logger.debug("youtube_transcript_api list() failed for %s: %s", url, e)
-            # Any other list error — fall through to yt-dlp
+            # Any other list error вЂ” fall through to yt-dlp
             return None
 
         # Try manual transcripts in preferred order
@@ -281,72 +303,116 @@ async def _fetch_youtube_transcript(url: str) -> str:
 # ---------------------------------------------------------------------------
 
 async def _fetch_httpx(url: str, timeout: float, tls_verify: bool = True) -> str | None:
+    """Fetch HTML with SSRF checks before the request and after each redirect."""
     try:
         import httpx
+
         if not tls_verify:
-            logger.warning("TLS verification disabled — MITM risk for %s", url)
+            logger.warning("TLS verification disabled - MITM risk for %s", url)
+        current_url = validate_public_fetch_url(url)
         async with httpx.AsyncClient(
             headers={"User-Agent": _UA, "Accept": "text/html,*/*;q=0.8"},
-            timeout=timeout, follow_redirects=True, verify=tls_verify,
+            timeout=timeout,
+            follow_redirects=False,
+            verify=tls_verify,
         ) as client:
-            r = await client.get(url)
+            for _ in range(max_safe_redirects() + 1):
+                r = await client.get(current_url)
+                if _is_redirect_status(r.status_code):
+                    current_url = validate_redirect_target(current_url, r.headers.get("location", ""))
+                    continue
+                break
+            else:
+                return None
             if 200 <= r.status_code < 400:
                 if is_non_text_content_type(r.headers.get("content-type", "")):
                     return None
                 text = r.text
                 return text if text and not is_antibot(text) else None
+    except UnsafeFetchUrl as exc:
+        logger.warning("blocked unsafe read_page fetch url=%r reason=%s", url, exc)
     except Exception:
         logger.debug("httpx fetch failed for %s", url, exc_info=True)
     return None
 
 
 async def _fetch_curl_cffi(url: str, timeout: int) -> str | None:
+    """curl_cffi fallback with the same redirect-by-redirect SSRF checks."""
     loop = asyncio.get_running_loop()
+
     def _sync() -> str | None:
         try:
             from curl_cffi import requests as cffi_req
-            r = cffi_req.get(url, impersonate="chrome124", timeout=timeout, headers={"User-Agent": _UA})
+
+            current_url = validate_public_fetch_url(url)
+            for _ in range(max_safe_redirects() + 1):
+                r = cffi_req.get(
+                    current_url,
+                    impersonate="chrome124",
+                    timeout=timeout,
+                    headers={"User-Agent": _UA},
+                    allow_redirects=False,
+                )
+                if _is_redirect_status(int(r.status_code)):
+                    current_url = validate_redirect_target(current_url, r.headers.get("location", ""))
+                    continue
+                break
+            else:
+                return None
             r.raise_for_status()
             if is_non_text_content_type(r.headers.get("content-type", "")):
                 return None
             text = r.text
             return text if text and not is_antibot(text) else None
+        except UnsafeFetchUrl as exc:
+            logger.warning("blocked unsafe read_page curl url=%r reason=%s", url, exc)
+            return None
         except Exception:
             logger.debug("curl_cffi fetch failed for %s", url, exc_info=True)
             return None
-    return await loop.run_in_executor(_io_pool,_sync)
+
+    return await loop.run_in_executor(_io_pool, _sync)
 
 
 async def _fetch_pdf_bytes(url: str, timeout: float, tls_verify: bool = True) -> bytes:
-    """Fetch PDF bytes with the shared PDF size ceiling."""
+    """Fetch PDF bytes with SSRF checks and the shared PDF size ceiling."""
     from core.extract.pdf_extractor import MAX_PDF_BYTES, looks_like_pdf_bytes
 
     try:
         import httpx
+
+        current_url = validate_public_fetch_url(url)
         headers = {"User-Agent": _UA, "Accept": "application/pdf,*/*;q=0.8"}
         async with httpx.AsyncClient(
             headers=headers,
             timeout=timeout,
-            follow_redirects=True,
+            follow_redirects=False,
             verify=tls_verify,
         ) as client:
-            async with client.stream("GET", url) as r:
-                try:
-                    content_length = int(r.headers.get("content-length", "0") or "0")
-                except ValueError:
-                    content_length = 0
-                if content_length > MAX_PDF_BYTES:
-                    return b""
-                chunks: list[bytes] = []
-                total = 0
-                async for chunk in r.aiter_bytes():
-                    total += len(chunk)
-                    if total > MAX_PDF_BYTES:
+            for _ in range(max_safe_redirects() + 1):
+                async with client.stream("GET", current_url) as r:
+                    if _is_redirect_status(r.status_code):
+                        current_url = validate_redirect_target(current_url, r.headers.get("location", ""))
+                        continue
+                    try:
+                        content_length = int(r.headers.get("content-length", "0") or "0")
+                    except ValueError:
+                        content_length = 0
+                    if content_length > MAX_PDF_BYTES:
                         return b""
-                    chunks.append(chunk)
-                data = b"".join(chunks)
-                if 200 <= r.status_code < 400 and looks_like_pdf_bytes(data):
-                    return data
+                    chunks: list[bytes] = []
+                    total = 0
+                    async for chunk in r.aiter_bytes():
+                        total += len(chunk)
+                        if total > MAX_PDF_BYTES:
+                            return b""
+                        chunks.append(chunk)
+                    data = b"".join(chunks)
+                    if 200 <= r.status_code < 400 and looks_like_pdf_bytes(data):
+                        return data
+                    return b""
+    except UnsafeFetchUrl as exc:
+        logger.warning("blocked unsafe read_page PDF url=%r reason=%s", url, exc)
     except Exception:
         logger.debug("httpx PDF fetch failed for %s", url, exc_info=True)
 
@@ -355,21 +421,34 @@ async def _fetch_pdf_bytes(url: str, timeout: float, tls_verify: bool = True) ->
     def _sync() -> bytes:
         try:
             from curl_cffi import requests as cffi_req
-            r = cffi_req.get(
-                url,
-                impersonate="chrome124",
-                timeout=int(timeout) + 3,
-                headers={"User-Agent": _UA, "Accept": "application/pdf,*/*;q=0.8"},
-            )
+
+            current_url = validate_public_fetch_url(url)
+            for _ in range(max_safe_redirects() + 1):
+                r = cffi_req.get(
+                    current_url,
+                    impersonate="chrome124",
+                    timeout=int(timeout) + 3,
+                    headers={"User-Agent": _UA, "Accept": "application/pdf,*/*;q=0.8"},
+                    allow_redirects=False,
+                )
+                if _is_redirect_status(int(r.status_code)):
+                    current_url = validate_redirect_target(current_url, r.headers.get("location", ""))
+                    continue
+                break
+            else:
+                return b""
             data = bytes(r.content or b"")
             if 200 <= r.status_code < 400 and len(data) <= MAX_PDF_BYTES and looks_like_pdf_bytes(data):
                 return data
+        except UnsafeFetchUrl as exc:
+            logger.warning("blocked unsafe read_page PDF curl url=%r reason=%s", url, exc)
+            return b""
         except Exception:
             logger.debug("curl_cffi PDF fetch failed for %s", url, exc_info=True)
             return b""
         return b""
 
-    return await loop.run_in_executor(_io_pool,_sync)
+    return await loop.run_in_executor(_io_pool, _sync)
 
 
 async def _read_pdf(url: str, timeout: float, tls_verify: bool, max_chars: int) -> str:
@@ -391,7 +470,7 @@ async def _read_pdf(url: str, timeout: float, tls_verify: bool, max_chars: int) 
 
 
 async def _fetch_race(url: str, timeout: float, tls_verify: bool = True) -> str | None:
-    """Race httpx vs curl_cffi — first non-antibot response wins, loser cancelled."""
+    """Race httpx vs curl_cffi вЂ” first non-antibot response wins, loser cancelled."""
     t_httpx = asyncio.create_task(_fetch_httpx(url, timeout, tls_verify=tls_verify))
     t_curl = asyncio.create_task(_fetch_curl_cffi(url, int(timeout) + 3))
     pending: set = {t_httpx, t_curl}
@@ -417,20 +496,31 @@ async def _fetch_race(url: str, timeout: float, tls_verify: bool = True) -> str 
 # ---------------------------------------------------------------------------
 
 async def _fetch_wayback(url: str, timeout: int = 30) -> str | None:
-    """Fetch a page via Wayback Machine as a last-resort fallback."""
+    """Fetch a Wayback snapshot, while still blocking unsafe original/redirect URLs."""
     from urllib.parse import quote as _quote
     loop = asyncio.get_running_loop()
 
     def _do() -> str | None:
         import requests as _req
+
+        try:
+            validate_public_fetch_url(url)
+        except UnsafeFetchUrl as exc:
+            logger.warning("blocked unsafe Wayback target url=%r reason=%s", url, exc)
+            return None
+
         cdx_url = (
             "https://web.archive.org/cdx/search/cdx"
             f"?url={_quote(url, safe='')}"
             "&output=json&limit=1&fl=timestamp,statuscode&filter=statuscode:200&fastLatest=true"
         )
         try:
-            cdx = _req.get(cdx_url, timeout=timeout,
-                           headers={"User-Agent": "Mozilla/5.0 (compatible; WaybackFetcher/1.0)"})
+            cdx = _req.get(
+                cdx_url,
+                timeout=timeout,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; WaybackFetcher/1.0)"},
+                allow_redirects=False,
+            )
             cdx.raise_for_status()
             rows = cdx.json()
         except Exception:
@@ -439,20 +529,34 @@ async def _fetch_wayback(url: str, timeout: int = 30) -> str | None:
         if not rows or len(rows) < 2:
             return None
         ts = rows[1][0]
-        snap_url = f"https://web.archive.org/web/{ts}id_/{url}"
+        current_url = f"https://web.archive.org/web/{ts}id_/{url}"
         try:
-            resp = _req.get(snap_url, timeout=timeout,
-                            headers={"User-Agent": "Mozilla/5.0 (compatible; WaybackFetcher/1.0)"},
-                            allow_redirects=True)
+            for _ in range(max_safe_redirects() + 1):
+                current_url = validate_public_fetch_url(current_url)
+                resp = _req.get(
+                    current_url,
+                    timeout=timeout,
+                    headers={"User-Agent": "Mozilla/5.0 (compatible; WaybackFetcher/1.0)"},
+                    allow_redirects=False,
+                )
+                if _is_redirect_status(int(resp.status_code)):
+                    current_url = validate_redirect_target(current_url, resp.headers.get("location", ""))
+                    continue
+                break
+            else:
+                return None
             resp.raise_for_status()
             if is_non_text_content_type(resp.headers.get("content-type", "")):
                 return None
             return resp.text
+        except UnsafeFetchUrl as exc:
+            logger.warning("blocked unsafe Wayback redirect url=%r reason=%s", url, exc)
+            return None
         except Exception:
             logger.debug("Wayback snapshot fetch failed for %s", url, exc_info=True)
             return None
 
-    return await loop.run_in_executor(_io_pool,_do)
+    return await loop.run_in_executor(_io_pool, _do)
 
 
 # ---------------------------------------------------------------------------
@@ -535,6 +639,11 @@ class ReadPageService:
         attempts: list[ReadPageVariantAttempt] = []
 
         logger.info("read_page url=%r fetch_url=%r", url, fetch_url)
+        try:
+            validate_public_fetch_url(fetch_url)
+        except UnsafeFetchUrl as exc:
+            logger.warning("blocked unsafe read_page url=%r fetch_url=%r reason=%s", url, fetch_url, exc)
+            return f"Error: URL blocked by SSRF protection: {url}", attempts
 
         if is_stackexchange_question_url(url):
             return await fetch_stackexchange_question(url, timeout=opts.timeout), attempts
@@ -564,6 +673,21 @@ class ReadPageService:
                 return await _fetch_reddit_json(url), attempts
             except Exception as exc:
                 logger.warning("Reddit fetch failed for %s: %s", url, exc)
+
+        if _is_github_url(url):
+            markdown = await _fetch_github_page(url, timeout=opts.timeout)
+            markdown = _truncate_markdown(markdown, opts.max_chars)
+            attempt = ReadPageVariantAttempt(
+                url=url,
+                variant="github_api",
+                fetch_method="github_api",
+                markdown_length=len(markdown or ""),
+                weak=markdown.lstrip().lower().startswith("error:"),
+                winner=True,
+            )
+            if collect_attempts:
+                attempts.append(attempt)
+            return markdown, attempts
 
         if _host(url) == "amazon.com":
             try:
@@ -738,8 +862,7 @@ class ReadPageService:
         if not markdown or len(markdown.strip()) < self._cfg.extraction.min_content_length:
             return f"Warning: Very little content extracted from: {url}\n\n{markdown}", attempts
 
-        if len(markdown) > opts.max_chars:
-            markdown = markdown[:opts.max_chars].rsplit("\n", 1)[0] + "\n\n[...truncated]"
+        markdown = _truncate_markdown(markdown, opts.max_chars)
 
         return markdown, attempts
 

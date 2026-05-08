@@ -43,16 +43,16 @@ class SearchSection:
     preview_fetch_limit: int = 10
     preview_fetch_timeout: float = 4.0   # per-URL fetch timeout (seconds)
     preview_total_timeout: float = 10.0  # per-URL race total timeout (seconds)
+    preview_model_warm_timeout: float = 10.0
+    preview_curl_timeout: float = 12.0
+    pdf_preview_fetch_timeout: float = 20.0
+    pdf_preview_extract_timeout: float = 15.0
+    prefetch_fetch_timeout: float = 8.0
     max_snippet_chars: int = 2_000
     preview_min_chars: int = 600
     preview_max_chars: int = 4_000
     total_context_budget: int = 40_000  # max chars in total search output (0 = no limit)
     early_return_threshold: int = 0     # cancel remaining fetches after N good previews (0 = disabled)
-    bot_mimic_mode: str = "off"         # off | fallback | always
-    bot_mimic_top_k: int = 6
-    bot_mimic_timeout_seconds: float = 0.8
-    bot_mimic_for_query_types: list[str] = field(default_factory=list)
-    bot_mimic_only_for_rank_enrichment: bool = True
     enable_gliner: bool = False
     gliner_trigger_min_score: float = 0.18
 
@@ -94,11 +94,43 @@ class QuerySection:
 
 
 @dataclass
+class EffortSection:
+    low_hard_timeout: float = 9.0
+    medium_hard_timeout: float = 20.0
+    high_hard_timeout: float = 60.0
+    low_max_results: int = 5
+    high_multiplier: int = 3
+    low_total_context_budget: int = 6_000
+    low_candidate_pool_multiplier: int = 1
+    low_ddgs_hedge_count: int = 1
+    low_ddgs_worker_timeout: float = 8.0
+    medium_ddgs_worker_timeout: float = 10.0
+    high_ddgs_worker_timeout: float = 18.0
+    low_ddgs_engine_timeout: int = 5
+    low_ddgs_max_retries: int = 1
+    low_preview_fetch_timeout: float = 2.0
+    low_preview_total_timeout: float = 4.0
+    medium_preview_fetch_timeout: float = 6.0
+    medium_preview_total_timeout: float = 12.0
+    high_preview_fetch_timeout: float = 18.0
+    high_preview_total_timeout: float = 36.0
+    zero_result_fallback_max_results: int = 10
+    zero_result_fallback_candidate_pool_multiplier: int = 1
+    zero_result_fallback_ddgs_worker_timeout: float = 8.0
+    zero_result_fallback_ddgs_engine_timeout: int = 5
+    zero_result_fallback_ddgs_max_retries: int = 1
+    timeout_fallback_min_window: float = 3.0
+    timeout_fallback_max_window: float = 8.0
+    timeout_fallback_fraction: float = 0.4
+
+
+@dataclass
 class SearchConfig:
     search: SearchSection = field(default_factory=SearchSection)
     extraction: ExtractionSection = field(default_factory=ExtractionSection)
     cache: CacheSection = field(default_factory=CacheSection)
     query: QuerySection = field(default_factory=QuerySection)
+    effort: "EffortSection" = field(default_factory=lambda: EffortSection())
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +178,7 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
     e = raw.get("extraction", {})
     c = raw.get("cache", {})
     q = raw.get("query", {})
+    effort = raw.get("effort", {})
 
     config = SearchConfig(
         search=SearchSection(
@@ -157,20 +190,16 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             batch_query_limit=int(s.get("batch_query_limit", 10)),
             total_context_budget=int(s.get("total_context_budget", 40_000)),
             early_return_threshold=int(s.get("early_return_threshold", 0)),
-            bot_mimic_mode=str(s.get("bot_mimic_mode", "off")).strip().lower() or "off",
-            bot_mimic_top_k=max(0, int(s.get("bot_mimic_top_k", 6))),
-            bot_mimic_timeout_seconds=max(0.1, float(s.get("bot_mimic_timeout_seconds", 0.8))),
-            bot_mimic_for_query_types=[
-                str(item).strip().lower()
-                for item in (s.get("bot_mimic_for_query_types") or [])
-                if str(item).strip()
-            ],
-            bot_mimic_only_for_rank_enrichment=bool(s.get("bot_mimic_only_for_rank_enrichment", True)),
             candidate_pool_multiplier=int(s.get("candidate_pool_multiplier", 2)),
             auto_scrape_preview=bool(s.get("auto_scrape_preview", True)),
             preview_fetch_limit=int(s.get("preview_fetch_limit", 10)),
             preview_fetch_timeout=float(s.get("preview_fetch_timeout", 4.0)),
             preview_total_timeout=float(s.get("preview_total_timeout", 10.0)),
+            preview_model_warm_timeout=float(s.get("preview_model_warm_timeout", 10.0)),
+            preview_curl_timeout=float(s.get("preview_curl_timeout", 12.0)),
+            pdf_preview_fetch_timeout=float(s.get("pdf_preview_fetch_timeout", 20.0)),
+            pdf_preview_extract_timeout=float(s.get("pdf_preview_extract_timeout", 15.0)),
+            prefetch_fetch_timeout=float(s.get("prefetch_fetch_timeout", 8.0)),
             max_snippet_chars=int(s.get("max_snippet_chars", raw.get("max_snippet_chars", 2_000))),
             preview_min_chars=int(s.get("preview_min_chars", 600)),
             preview_max_chars=int(s.get("preview_max_chars", 4_000)),
@@ -191,6 +220,43 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             year_hint_current=_optional_string(q.get("year_hint_current", _MISSING), "m"),
             year_hint_prev=_optional_string(q.get("year_hint_prev", _MISSING), "y"),
             year_hint_older=_optional_string(q.get("year_hint_older", _MISSING), None),
+        ),
+        effort=EffortSection(
+            low_hard_timeout=float(effort.get("low_hard_timeout", 9.0)),
+            medium_hard_timeout=float(effort.get("medium_hard_timeout", 20.0)),
+            high_hard_timeout=float(effort.get("high_hard_timeout", 60.0)),
+            low_max_results=int(effort.get("low_max_results", 5)),
+            high_multiplier=int(effort.get("high_multiplier", 3)),
+            low_total_context_budget=int(effort.get("low_total_context_budget", 6_000)),
+            low_candidate_pool_multiplier=int(effort.get("low_candidate_pool_multiplier", 1)),
+            low_ddgs_hedge_count=int(effort.get("low_ddgs_hedge_count", 1)),
+            low_ddgs_worker_timeout=float(effort.get("low_ddgs_worker_timeout", 8.0)),
+            medium_ddgs_worker_timeout=float(effort.get("medium_ddgs_worker_timeout", 10.0)),
+            high_ddgs_worker_timeout=float(effort.get("high_ddgs_worker_timeout", 18.0)),
+            low_ddgs_engine_timeout=int(effort.get("low_ddgs_engine_timeout", 5)),
+            low_ddgs_max_retries=int(effort.get("low_ddgs_max_retries", 1)),
+            low_preview_fetch_timeout=float(effort.get("low_preview_fetch_timeout", 2.0)),
+            low_preview_total_timeout=float(effort.get("low_preview_total_timeout", 4.0)),
+            medium_preview_fetch_timeout=float(effort.get("medium_preview_fetch_timeout", 6.0)),
+            medium_preview_total_timeout=float(effort.get("medium_preview_total_timeout", 12.0)),
+            high_preview_fetch_timeout=float(effort.get("high_preview_fetch_timeout", 18.0)),
+            high_preview_total_timeout=float(effort.get("high_preview_total_timeout", 36.0)),
+            zero_result_fallback_max_results=int(effort.get("zero_result_fallback_max_results", 10)),
+            zero_result_fallback_candidate_pool_multiplier=int(
+                effort.get("zero_result_fallback_candidate_pool_multiplier", 1)
+            ),
+            zero_result_fallback_ddgs_worker_timeout=float(
+                effort.get("zero_result_fallback_ddgs_worker_timeout", 8.0)
+            ),
+            zero_result_fallback_ddgs_engine_timeout=int(
+                effort.get("zero_result_fallback_ddgs_engine_timeout", 5)
+            ),
+            zero_result_fallback_ddgs_max_retries=int(
+                effort.get("zero_result_fallback_ddgs_max_retries", 1)
+            ),
+            timeout_fallback_min_window=float(effort.get("timeout_fallback_min_window", 3.0)),
+            timeout_fallback_max_window=float(effort.get("timeout_fallback_max_window", 8.0)),
+            timeout_fallback_fraction=float(effort.get("timeout_fallback_fraction", 0.4)),
         ),
     )
 

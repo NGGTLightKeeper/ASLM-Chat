@@ -25,7 +25,7 @@
                     <h1>How can I help?</h1>
                     <div class="input-area welcome-input">
                         <div class="input-wrapper" id="inputWrapper">
-                            <input type="file" id="imageInput" multiple style="display:none;">
+                            <input type="file" id="imageInput" multiple accept="*/*" style="display:none;">
                             <div class="image-preview-grid" id="imagePreviewStrip" style="display:none;"></div>
                             <textarea class="chat-input" id="chatInput" placeholder="Message ASLM..." rows="1"></textarea>
                             <div class="input-bottom-bar">
@@ -50,6 +50,10 @@
                                     </div>
                                 </div>
                                 <div class="input-bottom-right">
+                                    <button class="context-usage-indicator" id="contextUsageBtn" type="button" title="Context usage" aria-label="Context usage">
+                                        <span class="context-usage-dot"></span>
+                                        <span class="context-usage-text">--%</span>
+                                    </button>
                                     <button class="send-btn" id="sendBtn" disabled aria-label="Send Message">
                                         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
                                             <use href="{% static 'img/ui/send.svg' %}#icon"></use>
@@ -66,7 +70,7 @@
         {# Sticky composer for active chats. #}
         <div class="input-area conversation-input" id="conversationInput" style="display:none;">
             <div class="input-wrapper" id="inputWrapperConv">
-                <input type="file" id="imageInputConv" multiple style="display:none;">
+                <input type="file" id="imageInputConv" multiple accept="*/*" style="display:none;">
                 <div class="image-preview-grid" id="imagePreviewStripConv" style="display:none;"></div>
                 <textarea class="chat-input" id="chatInputConv" placeholder="Message ASLM..." rows="1"></textarea>
                 <div class="input-bottom-bar">
@@ -95,6 +99,10 @@
                         </div>
                     </div>
                     <div class="input-bottom-right">
+                        <button class="context-usage-indicator" id="contextUsageBtnConv" type="button" title="Context usage" aria-label="Context usage">
+                            <span class="context-usage-dot"></span>
+                            <span class="context-usage-text">--%</span>
+                        </button>
                         <button class="send-btn" id="sendBtnConv" disabled aria-label="Send Message">
                             <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
                                 <use href="{% static 'img/ui/send.svg' %}#icon"></use>
@@ -107,9 +115,29 @@
     </main>
 
     {# Runtime settings sidebar. #}
+    {# Reasoning side drawer. #}
+    <div class="reasoning-drawer" id="reasoningDrawer" aria-label="Reasoning panel" role="dialog" aria-modal="false">
+        <div class="reasoning-drawer-resize-handle" id="reasoningDrawerResizeHandle" aria-hidden="true"></div>
+        <div class="reasoning-drawer-header">
+            <div class="reasoning-drawer-header-left">
+                <span class="reasoning-drawer-icon" aria-hidden="true"></span>
+                <span class="reasoning-drawer-title">Reasoning</span>
+                <span class="reasoning-drawer-summary" id="reasoningDrawerSummary"></span>
+            </div>
+            <button class="reasoning-drawer-close" id="reasoningDrawerClose" type="button" aria-label="Close reasoning panel">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/x.svg' %}#icon"></use></svg>
+            </button>
+        </div>
+        <div class="reasoning-drawer-body" id="reasoningDrawerBody"></div>
+    </div>
+    <div class="reasoning-drawer-backdrop" id="reasoningDrawerBackdrop"></div>
+
     <aside class="sidebar sidebar-right" id="sidebarRight">
         <div class="sidebar-header">
             <span class="logo-name">Model Settings</span>
+            <button class="sidebar-collapse-btn" id="sidebarRightToggle" type="button" title="Collapse settings" aria-label="Collapse settings" aria-expanded="true">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/arrow-left.svg' %}#icon"></use></svg>
+            </button>
         </div>
 
         <div class="settings-panel">
@@ -294,5 +322,5 @@
 {{ runtime_settings|json_script:"runtimeSettingsData" }}
 {{ engine_options|json_script:"engineOptionsData" }}
 {{ available_tool_servers|json_script:"availableToolServersData" }}
-<script type="module" src="{% static 'js/main/main.js' %}?v=20260412a"></script>
+<script type="module" src="{% static 'js/main/main.js' %}"></script>
 {% endblock %}

@@ -1,6 +1,11 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-from urllib.parse import parse_qsl, urlparse, urlunparse, urlencode
+from __future__ import annotations
+
+import ipaddress
+import os
+import socket
+from urllib.parse import parse_qsl, urljoin, urlparse, urlunparse, urlencode
 
 _TRACKING_PARAMS = frozenset({
     "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
@@ -85,3 +90,107 @@ def is_non_text_content_type(content_type: str) -> bool:
     if any(ctype.startswith(prefix) for prefix in _NON_TEXT_CONTENT_PREFIXES):
         return True
     return ctype in _NON_TEXT_CONTENT_TYPES
+
+
+_FETCH_SCHEMES = frozenset({"http", "https"})
+_INTERNAL_HOSTS = frozenset({
+    "localhost",
+    "localhost.localdomain",
+    "metadata",
+    "metadata.google.internal",
+})
+_INTERNAL_SUFFIXES = (
+    ".localhost",
+    ".local",
+    ".internal",
+    ".lan",
+    ".home",
+    ".corp",
+    ".intranet",
+)
+_MAX_REDIRECTS = 5
+
+
+class UnsafeFetchUrl(ValueError):
+    """Raised when a URL points at an SSRF-sensitive target."""
+
+
+def _private_fetch_allowed() -> bool:
+    return os.environ.get("ASLM_WEB_ALLOW_PRIVATE_NET", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _host_is_ip_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+        return True
+    except ValueError:
+        return False
+
+
+def _is_blocked_ip(ip_text: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(ip_text)
+    except ValueError:
+        return True
+    return not ip.is_global
+
+
+def _resolve_host_ips(host: str) -> set[str]:
+    try:
+        return {
+            info[4][0]
+            for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+            if info and info[4]
+        }
+    except OSError as exc:
+        raise UnsafeFetchUrl(f"could not resolve host {host!r}: {exc}") from exc
+
+
+def validate_public_fetch_url(url: str, *, allow_private: bool | None = None) -> str:
+    """Validate a URL before an LLM-controlled web fetch.
+
+    By default this allows only public HTTP(S) destinations.  It blocks file-like
+    schemes, localhost/private/link-local/metadata targets, internal-looking DNS
+    names, and any hostname that resolves to a non-global IP address.
+    """
+    allow_private = _private_fetch_allowed() if allow_private is None else allow_private
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme.lower() not in _FETCH_SCHEMES:
+        raise UnsafeFetchUrl("only http and https URLs are allowed")
+
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
+    if not host:
+        raise UnsafeFetchUrl("URL host is empty")
+
+    if allow_private:
+        return url
+
+    if host in _INTERNAL_HOSTS or any(host.endswith(suffix) for suffix in _INTERNAL_SUFFIXES):
+        raise UnsafeFetchUrl(f"blocked internal host {host!r}")
+
+    if not _host_is_ip_literal(host) and "." not in host:
+        raise UnsafeFetchUrl(f"blocked single-label host {host!r}")
+
+    ips = {host.strip("[]")} if _host_is_ip_literal(host) else _resolve_host_ips(host)
+    blocked = sorted(ip for ip in ips if _is_blocked_ip(ip))
+    if blocked:
+        raise UnsafeFetchUrl(f"blocked non-public address for {host!r}: {', '.join(blocked[:3])}")
+
+    return url
+
+
+def validate_redirect_target(current_url: str, location: str, *, allow_private: bool | None = None) -> str:
+    """Resolve and validate one redirect Location header."""
+    if not location:
+        raise UnsafeFetchUrl("redirect without Location header")
+    next_url = urljoin(current_url, location)
+    return validate_public_fetch_url(next_url, allow_private=allow_private)
+
+
+def max_safe_redirects() -> int:
+    return _MAX_REDIRECTS

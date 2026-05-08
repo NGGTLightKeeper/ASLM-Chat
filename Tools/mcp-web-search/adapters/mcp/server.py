@@ -9,16 +9,25 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
+from mcp.types import CallToolResult, TextContent
 from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel
 
 from adapters.mcp.logging_setup import setup_logging
 from adapters.mcp.tool_descriptions import (
     READ_PAGE_TOOL_DESCRIPTION,
     WEB_SEARCH_TOOL_DESCRIPTION,
 )
+from adapters.mcp.search_io_logger import write_search_io_event
+from adapters.mcp.search_query_contract import (
+    WebSearchQuery,
+    coerce_search_effort,
+    coerce_search_query,
+)
 from core.config import load_search_config
-from services import run_read_page, run_web_search
+from services import run_read_page, run_web_search_rich
 from services.web_search import shutdown_web_search
 
 try:
@@ -48,6 +57,66 @@ _BATCH_QUERY_LIMIT = max(1, int(_CFG.search.batch_query_limit))
 _RESULT_BLOCK_SPLIT_RE = re.compile(r"\n\s*\n(?=\[\d+\])")
 _KEEPALIVE_INTERVAL_SEC = 5.0
 _KEEPALIVE_SEND_TIMEOUT_SEC = 1.5
+
+
+class SearchSourceOutput(BaseModel):
+    id: str
+    rank: int
+    title: str
+    url: str
+    domain: str
+    display_domain: str
+    favicon_url: str
+    snippet: str
+    preview: str = ""
+    published_date: str = ""
+    engine: str = ""
+    trust_tier: str = "?"
+    score: float = 0.0
+    pdf_url: str = ""
+
+
+class SearchSourceChipOutput(BaseModel):
+    source_id: str
+    domain: str
+    display_domain: str
+    favicon_url: str
+
+
+class SearchCompactUiOutput(BaseModel):
+    label: str
+    source_chips: list[SearchSourceChipOutput]
+    more_count: int = 0
+
+
+class SearchUiOutput(BaseModel):
+    status: str
+    result_count: int
+    compact: SearchCompactUiOutput | None = None
+
+
+class SearchRichOutput(BaseModel):
+    query: str
+    search_id: str
+    sources: list[SearchSourceOutput]
+    model_context: str
+    ui: SearchUiOutput
+
+
+class ReadPageSourceOutput(BaseModel):
+    rank: int
+    url: str
+    domain: str
+    display_domain: str
+    favicon_url: str
+    ok: bool = True
+
+
+class ReadPageUiOutput(BaseModel):
+    kind: str = "read_page"
+    status: str
+    result_count: int
+    sources: list[ReadPageSourceOutput]
 
 
 async def _keepalive(context: FastMCPContext | dict[str, Any] | None, message: str, coro):
@@ -116,6 +185,21 @@ async def _keepalive(context: FastMCPContext | dict[str, Any] | None, message: s
             await ping_task
 
 
+async def _report_progress(
+    context: FastMCPContext | dict[str, Any] | None,
+    progress: float,
+    total: float,
+    message: str,
+) -> None:
+    if context is None or isinstance(context, dict):
+        return
+    report = getattr(context, "report_progress", None)
+    if report is None:
+        return
+    with contextlib.suppress(Exception):
+        await report(progress, total, message)
+
+
 def _split_search_result_blocks(text: str) -> list[str]:
     normalized = (text or "").replace("\r\n", "\n").strip()
     if not normalized:
@@ -123,53 +207,150 @@ def _split_search_result_blocks(text: str) -> list[str]:
     return [part.strip() for part in _RESULT_BLOCK_SPLIT_RE.split(normalized) if part.strip()]
 
 
-async def web_search(
-    query: str | list[str],
-    context: FastMCPContext | dict[str, Any] | None = None,
-) -> list[str]:
-    logger.info(
-        "mcp.web_search.start batch=%s query_preview=%r",
-        isinstance(query, list),
-        query[:2] if isinstance(query, list) else str(query)[:160],
-    )
-    if isinstance(query, list):
-        queries = [q.strip() for q in query if isinstance(q, str) and q.strip()]
-        if not queries:
-            return ["Error: No queries provided."]
-        try:
-            tasks = [
-                run_web_search(
-                    q,
-                    max_results=_WEB_SEARCH_RESULT_LIMIT,
-                    fetch_previews=True,
-                )
-                for q in queries[:_BATCH_QUERY_LIMIT]
-            ]
-            results = await _keepalive(context, "searching...", asyncio.gather(*tasks))
-            blocks: list[str] = []
-            for result in results:
-                blocks.extend(_split_search_result_blocks(result))
-            logger.info("mcp.web_search.done batch=True queries=%d blocks=%d", len(queries), len(blocks))
-            return blocks
-        except Exception:
-            logger.exception("mcp.web_search.failed batch=True queries=%d", len(queries))
-            raise
+def _source_domain(url: str) -> str:
+    host = urlparse(url or "").netloc.lower()
+    if "@" in host:
+        host = host.rsplit("@", 1)[-1]
+    if ":" in host:
+        host = host.split(":", 1)[0]
+    return host.removeprefix("www.")
 
+
+def _display_domain(domain: str) -> str:
+    parts = [part for part in (domain or "").split(".") if part]
+    if len(parts) >= 2:
+        label = parts[-2]
+    elif parts:
+        label = parts[0]
+    else:
+        return ""
+    return label.replace("-", " ").title()
+
+
+def _favicon_url(domain: str) -> str:
+    return f"https://icons.duckduckgo.com/ip3/{domain}.ico" if domain else ""
+
+
+def _read_page_source(url: str, rank: int, result_text: str = "") -> dict[str, object]:
+    domain = _source_domain(url)
+    ok = not str(result_text or "").lstrip().lower().startswith("error:")
+    return {
+        "rank": rank,
+        "url": (url or "").strip(),
+        "domain": domain,
+        "display_domain": _display_domain(domain) or domain,
+        "favicon_url": _favicon_url(domain),
+        "ok": ok,
+    }
+
+
+def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, object]:
+    sources = [
+        _read_page_source(url, index, results[index - 1] if index - 1 < len(results) else "")
+        for index, url in enumerate(urls, 1)
+    ]
+    ok_count = sum(1 for source in sources if bool(source.get("ok")))
+    payload = {
+        "query": ", ".join(urls),
+        "sources": sources,
+        "model_context": "\n\n".join(str(result or "") for result in results).strip(),
+        "ui": {
+            "kind": "read_page",
+            "status": "done" if ok_count == len(sources) else ("partial" if ok_count else "error"),
+            "result_count": len(sources),
+            "sources": sources,
+        },
+    }
+    ReadPageUiOutput.model_validate(payload["ui"])
+    return payload
+
+
+async def web_search(
+    query: WebSearchQuery,
+    effort: str = "medium",
+    context: FastMCPContext | dict[str, Any] | None = None,
+) -> CallToolResult:
+    started_at = time.perf_counter()
+    query_text = coerce_search_query(query)
+    search_effort = coerce_search_effort(query if effort == "medium" else effort)
+    write_search_io_event(
+        {
+            "layer": "fastmcp_adapter",
+            "phase": "web_search.coerced",
+            "tool_id": "web_search",
+            "raw_query": query,
+            "coerced_query": query_text,
+            "effort": search_effort,
+        }
+    )
+    if not query_text:
+        payload = {
+            "query": "",
+            "search_id": "srch_empty",
+            "sources": [],
+            "model_context": "Error: No query provided.",
+            "ui": {
+                "status": "error",
+                "result_count": 0,
+                "compact": {
+                    "label": "Search failed",
+                    "source_chips": [],
+                    "more_count": 0,
+                },
+            },
+        }
+        SearchRichOutput.model_validate(payload)
+        write_search_io_event(
+            {
+                "layer": "fastmcp_adapter",
+                "phase": "web_search.result",
+                "tool_id": "web_search",
+                "coerced_query": query_text,
+                "result": payload,
+                "elapsed_seconds": time.perf_counter() - started_at,
+            }
+        )
+        return CallToolResult(
+            content=[TextContent(type="text", text=payload["model_context"])],
+            structuredContent=payload,
+            isError=True,
+        )
+
+    logger.info("mcp.web_search.start query_preview=%r", query_text[:160])
+    await _report_progress(context, 0, 100, "search_started")
     try:
-        result = await _keepalive(
+        payload = await _keepalive(
             context,
             "searching...",
-            run_web_search(
-                query.strip(),
+            run_web_search_rich(
+                query_text,
                 max_results=_WEB_SEARCH_RESULT_LIMIT,
-                fetch_previews=True,
+                effort=search_effort,
             ),
         )
-        blocks = _split_search_result_blocks(result)
-        logger.info("mcp.web_search.done batch=False blocks=%d", len(blocks))
-        return blocks
+        await _report_progress(context, 100, 100, "search_done")
+        logger.info(
+            "mcp.web_search.done sources=%d search_id=%s",
+            len(payload.get("sources", [])) if isinstance(payload, dict) else 0,
+            payload.get("search_id") if isinstance(payload, dict) else None,
+        )
+        SearchRichOutput.model_validate(payload)
+        write_search_io_event(
+            {
+                "layer": "fastmcp_adapter",
+                "phase": "web_search.result",
+                "tool_id": "web_search",
+                "coerced_query": query_text,
+                "result": payload,
+                "elapsed_seconds": time.perf_counter() - started_at,
+            }
+        )
+        return CallToolResult(
+            content=[TextContent(type="text", text=str(payload.get("model_context", "")))],
+            structuredContent=payload,
+        )
     except Exception:
-        logger.exception("mcp.web_search.failed batch=False query_preview=%r", str(query)[:160])
+        logger.exception("mcp.web_search.failed query_preview=%r", query_text[:160])
         raise
 
 
@@ -180,24 +361,79 @@ web_search = mcp.tool()(web_search)
 async def read_page(
     url: str | list[str],
     context: FastMCPContext | dict[str, Any] | None = None,
-) -> list[str]:
+) -> CallToolResult:
     logger.info(
         "mcp.read_page.start batch=%s url_preview=%r",
         isinstance(url, list),
         url[:2] if isinstance(url, list) else str(url)[:160],
     )
+    started_at = time.perf_counter()
+    write_search_io_event(
+        {
+            "layer": "fastmcp_adapter",
+            "phase": "read_page.request",
+            "tool_id": "read_page",
+            "url": url,
+        }
+    )
     if isinstance(url, list):
         urls = [u.strip() for u in url if isinstance(u, str) and u.strip()]
         if not urls:
-            return ["Error: No URLs provided."]
+            payload = _read_page_payload([], ["Error: No URLs provided."])
+            write_search_io_event(
+                {
+                    "layer": "fastmcp_adapter",
+                    "phase": "read_page.result",
+                    "tool_id": "read_page",
+                    "urls": [],
+                    "result": payload,
+                    "elapsed_seconds": time.perf_counter() - started_at,
+                }
+            )
+            return CallToolResult(
+                content=[TextContent(type="text", text=str(payload["model_context"]))],
+                structuredContent=payload,
+                isError=True,
+            )
         tasks = [run_read_page(u) for u in urls[:_BATCH_QUERY_LIMIT]]
         results = await _keepalive(context, "reading...", asyncio.gather(*tasks))
         logger.info("mcp.read_page.done batch=True urls=%d", len(urls))
-        return results
+        payload = _read_page_payload(urls[:_BATCH_QUERY_LIMIT], results)
+        write_search_io_event(
+            {
+                "layer": "fastmcp_adapter",
+                "phase": "read_page.result",
+                "tool_id": "read_page",
+                "urls": urls[:_BATCH_QUERY_LIMIT],
+                "result": payload,
+                "elapsed_seconds": time.perf_counter() - started_at,
+            }
+        )
+        return CallToolResult(
+            content=[TextContent(type="text", text=str(payload["model_context"]))],
+            structuredContent=payload,
+            isError=payload["ui"]["status"] == "error",
+        )
 
-    result = await _keepalive(context, "reading...", run_read_page(url.strip()))
+    url_text = url.strip()
+    result = await _keepalive(context, "reading...", run_read_page(url_text))
     logger.info("mcp.read_page.done batch=False")
-    return [result]
+    payload = _read_page_payload([url_text], [result])
+    write_search_io_event(
+        {
+            "layer": "fastmcp_adapter",
+            "phase": "read_page.result",
+            "tool_id": "read_page",
+            "urls": [url_text],
+            "result": payload,
+            "elapsed_seconds": time.perf_counter() - started_at,
+        }
+    )
+    return CallToolResult(
+        content=[TextContent(type="text", text=str(payload["model_context"]))],
+        structuredContent=payload,
+        isError=payload["ui"]["status"] == "error",
+    )
 
 
 read_page.__doc__ = READ_PAGE_TOOL_DESCRIPTION

@@ -1,6 +1,6 @@
-// Copyright NGGT.LightKeeper. All Rights Reserved.
+﻿// Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { deleteJson, getCsrfToken, getJson, patchJson } from './api.js';
+import { deleteJson, getCsrfToken, getJson, patchJson, postJson } from './api.js';
 
 // Chat controller.
 // Create the chat workflow controller for sending, loading, and mutating chats.
@@ -13,6 +13,12 @@ export function createChatController(context, dependencies) {
     parametersUi
   } = dependencies;
   const { dom, state } = context;
+  let contextUsageTimer = null;
+  let contextAutoCompressionAt = 0;
+  let contextCompressionInFlight = false;
+  let activeGenerationId = '';
+  let hideCompressedIndicator = false;
+  let clearCompressedIndicatorAfterNextAssistant = false;
 
   // Chat lifecycle helpers.
   // Build a short title from the first user prompt.
@@ -34,10 +40,182 @@ export function createChatController(context, dependencies) {
     dom.$chatInput.val('').css('height', 'auto').focus();
     dom.$chatInputConv.val('').css('height', 'auto');
     state.currentChatId = null;
+    hideCompressedIndicator = false;
+    clearCompressedIndicatorAfterNextAssistant = false;
     historyUi.clearActiveChat();
     dom.$messagesArea.show();
     attachmentUi.clearPendingAttachments();
     messagesUi.updateSendButtons();
+    refreshContextUsageNow();
+  }
+
+  function contextUsageButtons() {
+    return [dom.$contextUsageBtn, dom.$contextUsageBtnConv].filter(function keep($el) {
+      return $el && $el.length;
+    });
+  }
+
+  function setContextUsageUi(payload) {
+    const ratio = Math.max(0, Math.min(1, Number(payload && payload.ratio) || 0));
+    const percent = Math.round(ratio * 100);
+    const used = Number(payload && payload.estimated_used_tokens) || 0;
+    const windowTokens = Number(payload && payload.context_window_tokens) || 0;
+    const observed = payload && payload.observed_usage && typeof payload.observed_usage === 'object'
+      ? payload.observed_usage
+      : {};
+    state.contextUsage = payload || {};
+    if (contextCompressionInFlight) {
+      contextUsageButtons().forEach(function updateBusy($btn) {
+        $btn
+          .removeClass('is-warn is-danger is-compressed')
+          .addClass('is-compressing')
+          .attr('title', 'Compressing context now. The model is building a structured summary.');
+        $btn.find('.context-usage-text').text('compressing...');
+      });
+      return;
+    }
+    const observedPrompt = Number(observed.prompt_tokens || 0) || 0;
+    const estimator = payload && payload.token_estimator && typeof payload.token_estimator === 'object'
+      ? payload.token_estimator
+      : {};
+    const baseCharsPerToken = Number(estimator.base_chars_per_token || 0);
+    const effectiveCharsPerToken = Number(estimator.effective_chars_per_token || 0);
+    const observedCharsPerToken = Number(
+      estimator.chat_observed_chars_per_token || estimator.observed_chars_per_token || 0
+    );
+    const compressedActive = payload && payload.compressed_context_active === true;
+    const showCompressedIndicator = compressedActive && !hideCompressedIndicator;
+    const compressionNote = showCompressedIndicator
+      ? ' Compressed context is active; older turns are represented by a structured summary.'
+      : ' Compression is not active for this chat yet.';
+    let title = observedPrompt > 0
+      ? `Context: ~${used.toLocaleString()} / ${windowTokens.toLocaleString()} tokens (${percent}%). Last observed prompt: ${observedPrompt.toLocaleString()} tokens.`
+      : `Context: ~${used.toLocaleString()} / ${windowTokens.toLocaleString()} tokens (${percent}%).`;
+    if (baseCharsPerToken > 0 || effectiveCharsPerToken > 0 || observedCharsPerToken > 0) {
+      const parts = [];
+      if (baseCharsPerToken > 0) {
+        parts.push(`base chars/token: ${baseCharsPerToken.toFixed(2)}`);
+      }
+      if (effectiveCharsPerToken > 0) {
+        parts.push(`effective chars/token: ${effectiveCharsPerToken.toFixed(2)}`);
+      }
+      if (observedCharsPerToken > 0) {
+        parts.push(`observed chars/token: ${observedCharsPerToken.toFixed(2)}`);
+      }
+      if (parts.length) {
+        title += ` Token estimator (${parts.join(', ')}).`;
+      }
+    }
+
+    contextUsageButtons().forEach(function updateOne($btn) {
+      $btn.removeClass('is-warn is-danger is-compressed is-compressing');
+      if (ratio >= 0.9) {
+        $btn.addClass('is-danger');
+      } else if (ratio >= 0.75) {
+        $btn.addClass('is-warn');
+      }
+      if (showCompressedIndicator) {
+        $btn.addClass('is-compressed');
+      }
+      $btn.attr('title', `${title}${compressionNote}`);
+      $btn.find('.context-usage-text').text(showCompressedIndicator ? `${percent}% / compressed` : `${percent}%`);
+    });
+  }
+
+  function setContextCompressionBusy(isBusy) {
+    contextCompressionInFlight = !!isBusy;
+    if (contextCompressionInFlight) {
+      contextUsageButtons().forEach(function updateBusy($btn) {
+        $btn
+          .removeClass('is-warn is-danger is-compressed')
+          .addClass('is-compressing')
+          .attr('title', 'Compressing context now. The model is building a structured summary.');
+        $btn.find('.context-usage-text').text('compressing...');
+      });
+      return;
+    }
+    setContextUsageUi(state.contextUsage || {});
+  }
+
+  async function refreshContextUsageNow() {
+    try {
+      const payload = await getJson(`/api/context_usage/?engine=${encodeURIComponent(engineManager.getActiveEngine())}&model=${encodeURIComponent(engineManager.getSelectedModelName() || '')}&chat_id=${encodeURIComponent(state.currentChatId || '')}&draft=${encodeURIComponent(String(dom.$chatInput.val() || dom.$chatInputConv.val() || ''))}`);
+      setContextUsageUi(payload || {});
+    } catch (_error) {
+      // keep silent for UI telemetry failures
+    }
+  }
+
+  async function triggerContextCompression(force) {
+    if (!state.currentChatId) {
+      return { applied: false };
+    }
+    const $pendingRow = messagesUi.appendCompressionPending();
+    setContextCompressionBusy(true);
+    try {
+      const payload = await postJson('/api/context_compress/', {
+        engine: engineManager.getActiveEngine(),
+        model: engineManager.getSelectedModelName() || '',
+        chat_id: state.currentChatId,
+        system_prompt: String(dom.$systemPrompt && dom.$systemPrompt.length ? dom.$systemPrompt.val() : ''),
+        force: !!force
+      });
+      messagesUi.removeCompressionPending($pendingRow);
+      if (payload && payload.applied && payload.message) {
+        hideCompressedIndicator = false;
+        clearCompressedIndicatorAfterNextAssistant = true;
+        const message = payload.message;
+        messagesUi.appendMessage(
+          message.role,
+          message.content || '',
+          (message.attachments || message.images || []).map(attachmentUi.normalizeAttachment).filter(Boolean),
+          message.created_at,
+          {
+            activitySegments: Array.isArray(message.activity_segments) ? message.activity_segments : [],
+            reasoningMode: message.reasoning_mode === true,
+            messageId: message.id
+          }
+        );
+      }
+      await refreshContextUsageNow();
+      return payload || { applied: false };
+    } catch (error) {
+      messagesUi.removeCompressionPending($pendingRow);
+      throw error;
+    } finally {
+      setContextCompressionBusy(false);
+    }
+  }
+
+  async function maybeAutoCompressContextBeforeSend() {
+    const usage = state.contextUsage && typeof state.contextUsage === 'object' ? state.contextUsage : {};
+    const ratio = Number(usage.ratio || 0);
+    const threshold = Number(usage.threshold_ratio || 0.8);
+    const shouldCompress = ratio >= Math.max(0.8, threshold);
+    if (!shouldCompress) {
+      return;
+    }
+    const now = Date.now();
+    if (now - contextAutoCompressionAt < 20000) {
+      return;
+    }
+    contextAutoCompressionAt = now;
+    try {
+      await triggerContextCompression(false);
+      await refreshContextUsageNow();
+    } catch (_error) {
+      // ignore compression failures in send path
+    }
+  }
+
+  function scheduleContextUsageRefresh() {
+    if (contextUsageTimer !== null) {
+      window.clearTimeout(contextUsageTimer);
+    }
+    contextUsageTimer = window.setTimeout(function run() {
+      contextUsageTimer = null;
+      refreshContextUsageNow();
+    }, 250);
   }
 
   // Normalize pending attachments into the request-safe shape.
@@ -56,6 +234,9 @@ export function createChatController(context, dependencies) {
       if (!resolved || !resolved.base64) {
         continue;
       }
+      if (resolved.fileId && resolved.kind !== 'image') {
+        continue;
+      }
 
       payloads.push({
         kind: resolved.kind,
@@ -67,6 +248,22 @@ export function createChatController(context, dependencies) {
     }
 
     return payloads;
+  }
+
+  function collectUploadedFileIds(attachments) {
+    const ids = [];
+    const seen = new Set();
+
+    (attachments || []).forEach(function collectId(attachment) {
+      const normalized = attachmentUi.normalizeAttachment(attachment);
+      const fileId = normalized ? String(normalized.fileId || '').trim() : '';
+      if (fileId && !seen.has(fileId)) {
+        seen.add(fileId);
+        ids.push(fileId);
+      }
+    });
+
+    return ids;
   }
 
 
@@ -102,26 +299,44 @@ export function createChatController(context, dependencies) {
 
       request.model = selectedModel;
 
+      const isRegenerate = !!request.regenerate;
+      const targetChatId = request.chatId || state.currentChatId;
+
       const payload = {
         engine: request.engine,
-        message: request.text,
         model: selectedModel,
         system_prompt: request.systemPrompt,
-        chat_id: request.chatId || state.currentChatId,
         options: request.options || {}
       };
+
+      if (!isRegenerate) {
+        payload.message = request.text;
+        payload.chat_id = targetChatId;
+      } else if (request.userMessageId) {
+        payload.user_message_id = request.userMessageId;
+      }
 
       if (request.toolServerIds && request.toolServerIds.length > 0) {
         payload.tool_server_ids = request.toolServerIds;
       }
 
-      const attachmentPayloads = await buildAttachmentPayloads(request.attachments);
-      if (attachmentPayloads.length > 0) {
-        payload.attachments = attachmentPayloads;
+      if (!isRegenerate) {
+        const attachmentPayloads = await buildAttachmentPayloads(request.attachments);
+        if (attachmentPayloads.length > 0) {
+          payload.attachments = attachmentPayloads;
+        }
+        const uploadedFileIds = collectUploadedFileIds(request.attachments);
+        if (uploadedFileIds.length > 0) {
+          payload.uploaded_file_ids = uploadedFileIds;
+        }
       }
 
+      const url = isRegenerate
+        ? `/api/chat/${targetChatId}/regenerate/`
+        : '/api/chat/';
+
       state.currentAbortController = new AbortController();
-      const response = await fetch('/api/chat/', {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -142,6 +357,18 @@ export function createChatController(context, dependencies) {
         }
 
         return;
+      }
+
+      // Stamp backend message IDs on the DOM so delete/regenerate target the
+      // real DB rows instead of falling back to DOM-only removal.
+      const userMessageId = response.headers.get('X-User-Message-ID');
+      const assistantMessageId = response.headers.get('X-Assistant-Message-ID');
+      activeGenerationId = String(response.headers.get('X-Generation-ID') || '').trim();
+      if (userMessageId && request.$userRow && request.$userRow.length) {
+        request.$userRow.attr('data-message-id', userMessageId);
+      }
+      if (assistantMessageId && $msgRow && $msgRow.length) {
+        $msgRow.attr('data-message-id', assistantMessageId);
       }
 
       // The backend can create a chat lazily. When that happens, patch the
@@ -257,6 +484,12 @@ export function createChatController(context, dependencies) {
           fullText += chunk;
           scheduleStreamRender();
         }
+        // Flush decoder tail so split multibyte UTF-8 chars
+        // are not dropped at the end of the stream.
+        const tail = decoder.decode();
+        if (tail) {
+          fullText += tail;
+        }
       } catch (readError) {
         if (readError.name !== 'AbortError') {
           throw readError;
@@ -276,6 +509,7 @@ export function createChatController(context, dependencies) {
       }
     } finally {
       state.currentAbortController = null;
+      activeGenerationId = '';
     }
   }
 
@@ -295,6 +529,7 @@ export function createChatController(context, dependencies) {
     messagesUi.updateSendButtons();
 
     const $assistantRow = messagesUi.appendTyping();
+    $assistantRow.data('reasoningModeEnabled', !!request.reasoningModeEnabled);
     messagesUi.scrollBottom();
 
     try {
@@ -307,6 +542,11 @@ export function createChatController(context, dependencies) {
       messagesUi.updateRegenButtons();
       state.isChatGenerating = false;
       messagesUi.updateSendButtons();
+      if (clearCompressedIndicatorAfterNextAssistant) {
+        hideCompressedIndicator = true;
+        clearCompressedIndicatorAfterNextAssistant = false;
+        refreshContextUsageNow();
+      }
 
       if (state.chatRequestQueue.length > 0) {
         processChatQueue();
@@ -316,8 +556,51 @@ export function createChatController(context, dependencies) {
 
 
   // Request building.
+  // Return whether one thinking option value means reasoning should be shown.
+  function isReasoningOptionEnabled(value) {
+    if (value === undefined || value === null) {
+      return false;
+    }
+
+    if (typeof value === 'boolean') {
+      return value;
+    }
+
+    const normalized = String(value).trim().toLowerCase();
+    return !!normalized && !['false', '0', 'off', 'no', 'none', 'disabled'].includes(normalized);
+  }
+
+  // Snapshot whether the current request is expected to produce reasoning.
+  // The assistant row receives this before the first stream chunk, so early
+  // tool events render inside the reasoning shell immediately.
+  function requestWantsReasoning(options) {
+    if (!state.thinkState.supported) {
+      return false;
+    }
+
+    const safeOptions = options && typeof options === 'object' ? options : {};
+
+    if (state.thinkState.levelSupported) {
+      if (Object.prototype.hasOwnProperty.call(safeOptions, state.thinkState.levelParamName)) {
+        return isReasoningOptionEnabled(safeOptions[state.thinkState.levelParamName]);
+      }
+      return isReasoningOptionEnabled(state.thinkState.level);
+    }
+
+    if (state.thinkState.toggleSupported) {
+      if (Object.prototype.hasOwnProperty.call(safeOptions, state.thinkState.paramName)) {
+        return isReasoningOptionEnabled(safeOptions[state.thinkState.paramName]);
+      }
+      return !!state.thinkState.enabled;
+    }
+
+    return false;
+  }
+
   // Snapshot the current UI state into one queued chat request.
   function buildQueuedRequest(text, attachmentsToSend) {
+    const options = parametersUi.collectOptionsPayload();
+
     return {
       id: `queued-${++state.queuedMessageCounter}`,
       text,
@@ -325,17 +608,31 @@ export function createChatController(context, dependencies) {
       engine: engineManager.getActiveEngine(),
       preferredModel: engineManager.getSelectedModelName(),
       systemPrompt: dom.$systemPrompt.val(),
-      options: parametersUi.collectOptionsPayload(),
+      options,
+      reasoningModeEnabled: requestWantsReasoning(options),
       toolServerIds: state.toolState.supported ? parametersUi.getSelectedToolServerIds() : [],
       chatId: state.currentChatId
     };
   }
 
   // Queue one user message for generation.
-  function sendMessage(text, $input) {
+  async function sendMessage(text, $input) {
     if (!text && state.attachmentState.pending.length === 0) {
       return;
     }
+    if (state.attachmentState.pending.some(function isBlocked(attachment) {
+      return attachment && (attachment.status === 'uploading' || attachment.status === 'error');
+    })) {
+      return;
+    }
+    if (state.contextUsage && state.contextUsage.compressed_context_active === true) {
+      // UI rule: compression highlight is one-shot. Once the user sends the
+      // next message, return the indicator to normal immediately.
+      hideCompressedIndicator = true;
+      clearCompressedIndicatorAfterNextAssistant = false;
+      setContextUsageUi(state.contextUsage || {});
+    }
+    await maybeAutoCompressContextBeforeSend();
 
     const attachmentsToSend = clonePendingAttachments(state.attachmentState.pending);
     const queued = state.isChatGenerating || state.chatRequestQueue.length > 0;
@@ -355,6 +652,7 @@ export function createChatController(context, dependencies) {
     $input.val('').css('height', 'auto');
     attachmentUi.clearPendingAttachments();
     messagesUi.updateSendButtons();
+    refreshContextUsageNow();
 
     state.chatRequestQueue.push(request);
     processChatQueue();
@@ -371,80 +669,62 @@ export function createChatController(context, dependencies) {
 
     fetch('/api/chat/abort/', {
       method: 'POST',
-      headers: { 'X-CSRFToken': getCsrfToken() }
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrfToken()
+      },
+      body: JSON.stringify({
+        engine: engineManager.getActiveEngine(),
+        generation_id: activeGenerationId || ''
+      })
     }).catch(function ignoreAbortError() {});
   }
 
-  // Queue a follow-up regeneration request.
-  function queueRegenerationRequest(text, attachments) {
-    const request = buildQueuedRequest(text, attachments);
-    request.$userRow = { length: 0 };
+  // Queue a regeneration request that targets an existing user message in the chat.
+  function queueRegenerationRequest($userRow, $assistantRow) {
+    const request = buildQueuedRequest('', []);
+    request.regenerate = true;
     request.chatId = state.currentChatId;
+    request.userMessageId = $userRow && $userRow.length ? $userRow.attr('data-message-id') : null;
+    request.$userRow = $userRow && $userRow.length ? $userRow : { length: 0 };
+    request.$existingAssistantRow = $assistantRow && $assistantRow.length ? $assistantRow : null;
     state.chatRequestQueue.push(request);
     processChatQueue();
   }
 
 
   // Regeneration helpers.
-  // Delete the last assistant response and queue it again.
-  async function doRegenerate() {
-    if (!state.currentChatId) {
-      return;
-    }
-
-    try {
-      const data = await deleteJson(`/api/chat/${state.currentChatId}/last/`);
-      if (!data.ok) {
-        return;
-      }
-
-      const $assistantMessages = dom.$messagesInner.find('.msg.assistant');
-      if ($assistantMessages.length) {
-        $assistantMessages.last().remove();
-      }
-
-      messagesUi.updateSendButtons();
-
-      if (!data.user_message) {
-        return;
-      }
-
-      const text = data.user_message.content || '';
-      const attachments = (data.user_message.attachments || [])
-        .map(attachmentUi.normalizeAttachment)
-        .filter(Boolean);
-
-      queueRegenerationRequest(text, attachments);
-    } catch (error) {
-      console.error('Failed to delete last assistant message', error);
-    }
-  }
-
   // Regenerate the most recent assistant response.
   function regenerateLastResponse() {
     if (!state.currentChatId) {
       return;
     }
 
+    function startRegen() {
+      const $lastUser = dom.$messagesInner.find('.msg.user').last();
+      const $lastAssistant = dom.$messagesInner.find('.msg.assistant').last();
+      if (!$lastUser.length) {
+        return;
+      }
+      if ($lastAssistant.length) {
+        $lastAssistant.remove();
+      }
+      messagesUi.updateSendButtons();
+      queueRegenerationRequest($lastUser, null);
+    }
+
     if (state.isChatGenerating) {
       abortGeneration();
-      setTimeout(function regenerateAfterAbort() {
-        doRegenerate();
-      }, 300);
+      setTimeout(startRegen, 300);
       return;
     }
 
-    doRegenerate();
+    startRegen();
   }
 
   // Regenerate the assistant response attached to one user row.
-  async function regenerateFromUserMessage($userMsg) {
+  function regenerateFromUserMessage($userMsg) {
     if (!state.currentChatId || state.isChatGenerating) {
-      return;
-    }
-
-    const userText = $userMsg.find('.msg-bubble').attr('data-raw') || $userMsg.find('.msg-bubble').text();
-    if (!userText.trim()) {
       return;
     }
 
@@ -453,43 +733,9 @@ export function createChatController(context, dependencies) {
       return;
     }
 
-    const assistantMessageId = $nextAssistant.data('message-id');
-
-    // Remove the rendered assistant row and rebuild the request from the
-    // original user message stored in the DOM.
-    function doUserRegen() {
-      $nextAssistant.remove();
-      messagesUi.updateRegenButtons();
-
-      let userAttachments = [];
-
-      try {
-        const $bubble = $userMsg.find('.msg-bubble');
-        const storedAttachments = $bubble.data('attachments');
-        userAttachments = Array.isArray(storedAttachments)
-          ? storedAttachments
-          : JSON.parse($bubble.attr('data-attachments') || '[]');
-      } catch (_error) {
-        userAttachments = [];
-      }
-
-      queueRegenerationRequest(userText, userAttachments);
-    }
-
-    if (assistantMessageId) {
-      try {
-        const data = await deleteJson(`/api/message/${assistantMessageId}/delete/`);
-        if (data.ok) {
-          doUserRegen();
-        }
-      } catch (error) {
-        console.error('Failed to delete assistant message for regen', assistantMessageId, error);
-      }
-
-      return;
-    }
-
-    doUserRegen();
+    $nextAssistant.remove();
+    messagesUi.updateRegenButtons();
+    queueRegenerationRequest($userMsg, null);
   }
 
 
@@ -500,6 +746,7 @@ export function createChatController(context, dependencies) {
       this.style.height = 'auto';
       this.style.height = `${Math.min(this.scrollHeight, 200)}px`;
       messagesUi.updateSendButtons();
+      scheduleContextUsageRefresh();
     });
 
     $input.on('keydown', function onKeyDown(event) {
@@ -507,19 +754,19 @@ export function createChatController(context, dependencies) {
         event.preventDefault();
 
         if (!$button.prop('disabled')) {
-          sendMessage($input.val().trim(), $input);
+          void sendMessage($input.val().trim(), $input);
         }
       }
     });
 
     $button.on('click', function onClick() {
-      if (state.isChatGenerating && state.currentAbortController) {
+      if ($button.hasClass('stop-btn') && state.isChatGenerating && state.currentAbortController) {
         abortGeneration();
         return;
       }
 
       if (!$button.prop('disabled')) {
-        sendMessage($input.val().trim(), $input);
+        void sendMessage($input.val().trim(), $input);
       }
     });
   }
@@ -539,6 +786,8 @@ export function createChatController(context, dependencies) {
       }
 
       state.currentChatId = chatId;
+      hideCompressedIndicator = false;
+      clearCompressedIndicatorAfterNextAssistant = false;
       historyUi.setActiveChat(chatId);
       parametersUi.applySelectedToolServerIds(data.active_tool_server_ids || []);
 
@@ -563,12 +812,14 @@ export function createChatController(context, dependencies) {
           timestamp: message.created_at,
           options: {
             activitySegments: Array.isArray(message.activity_segments) ? message.activity_segments : [],
+            reasoningMode: message.reasoning_mode === true,
             messageId: message.id
           }
         };
       });
 
       messagesUi.appendMessages(storedMessages);
+      refreshContextUsageNow();
     } catch (error) {
       console.error('Failed to load chat history:', error);
     }
@@ -671,6 +922,9 @@ export function createChatController(context, dependencies) {
     renameActiveMenuChat,
     sendMessage,
     startNewChat,
-    wireInput
+    wireInput,
+    refreshContextUsageNow,
+    triggerContextCompression
   };
 }
+

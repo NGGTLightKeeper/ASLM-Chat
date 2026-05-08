@@ -46,15 +46,57 @@ def _set_process_title() -> None:
 
 
 def _cleanup_orphaned_job_dirs() -> None:
-    """Remove .sandbox_jobs dirs left from previous supervisor sessions."""
+    """Kill and remove job dirs left from previous supervisor sessions."""
+    import os
+    import signal
     import shutil
-    from sandbox.workspace import task_root
-    jobs_root = task_root() / ".sandbox_jobs"
+
+    from sandbox.exec import job_root
+
+    jobs_root = job_root()
+    if jobs_root.is_symlink():
+        jobs_root.unlink(missing_ok=True)
+        jobs_root.mkdir(parents=True, exist_ok=True)
+        return
     if not jobs_root.exists():
         return
     for entry in jobs_root.iterdir():
-        if entry.is_dir():
-            shutil.rmtree(entry, ignore_errors=True)
+        if entry.is_symlink():
+            entry.unlink(missing_ok=True)
+            continue
+        if not entry.is_dir():
+            continue
+        pgid_path = entry / "pgid"
+        pid_path = entry / "pid"
+        for path in (pgid_path, pid_path):
+            try:
+                target_id = int(path.read_text(encoding="utf-8").strip())
+            except Exception:
+                continue
+            try:
+                if path.name == "pgid":
+                    os.killpg(target_id, signal.SIGTERM)
+                else:
+                    os.kill(target_id, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                pass
+        for path in (pgid_path, pid_path):
+            try:
+                target_id = int(path.read_text(encoding="utf-8").strip())
+            except Exception:
+                continue
+            try:
+                if path.name == "pgid":
+                    os.killpg(target_id, signal.SIGKILL)
+                else:
+                    os.kill(target_id, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                pass
+        shutil.rmtree(entry, ignore_errors=True)
 
 
 def main() -> None:

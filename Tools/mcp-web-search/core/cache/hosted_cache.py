@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Optional
 
 from core.models.search import SearchResult
-from core.cache.query_normalizer import normalize_query_key
+from core.cache.query_normalizer import normalize_exact_query_key, normalize_query_key
 
 logger = logging.getLogger("core.cache.hosted_cache")
 
@@ -154,7 +154,8 @@ class HostedSearchCache:
     def make_key(provider: str, query: str, timelimit: Optional[str]) -> str:
         """Deterministic cache key — independent of which API key was used."""
         normalized = normalize_query_key(query)
-        raw = f"{provider}:{normalized}|{timelimit or ''}"
+        exact = normalize_exact_query_key(query)
+        raw = f"{provider}:{exact}|{normalized}|{timelimit or ''}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     # ------------------------------------------------------------------ get

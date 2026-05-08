@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import tempfile
 import textwrap
+import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, SimpleTestCase, TestCase
 from django.urls import reverse
 
@@ -42,17 +45,29 @@ from Apps.Data.models import (
     MessageImage,
     OllamaPreset,
 )
+from Apps.UI import upload_storage
+from Apps.UI.file_manifests import (
+    TEXT_PREVIEW_CHAR_LIMIT,
+    build_uploaded_file_manifest,
+    normalize_upload_name,
+)
+from Apps.UI.upload_storage import display_kind_for_upload
 from Apps.UI.views import (
+    _build_activity_segments,
     _build_chat_title,
     _build_model_info_payload,
+    _build_uploaded_file_prompt_block,
     _clear_model_metadata_caches,
     _extract_attachment_text,
     _extract_ollama_model_info,
     _extract_model_name,
     _format_runtime_error,
+    _load_model_upload_manifests,
     _normalize_request_attachments,
+    _normalize_uploaded_file_ids,
     _parse_active_tool_slugs,
     _serialize_attachment_record,
+    _selected_tools_include_sandbox,
     _strip_llm_control_tokens,
 )
 
@@ -244,6 +259,374 @@ class AttachmentExtractionTests(TestCase):
         payload = _serialize_attachment_record(attachment)
 
         self.assertEqual(_extract_attachment_text(payload), "Cached text")
+
+
+# Uploaded file manifest tests.
+
+# Cover the standalone manifest builder used by the upload layer.
+class UploadedFileManifestTests(SimpleTestCase):
+    """Cover safe file manifest generation."""
+
+    # Test text files expose bounded previews instead of unbounded content.
+    def test_text_manifest_uses_bounded_preview(self):
+        content = ("hello\n" * (TEXT_PREVIEW_CHAR_LIMIT // 6 + 100)).encode("utf-8")
+
+        manifest = build_uploaded_file_manifest(
+            content,
+            name="notes.md",
+            mime="text/markdown",
+            sandbox_path="/workspace/_sandbox/User/chat/file__notes.md",
+            file_id="file-1",
+        )
+
+        self.assertEqual(manifest.file_id, "file-1")
+        self.assertEqual(manifest.name, "notes.md")
+        self.assertEqual(manifest.mime, "text/markdown")
+        self.assertTrue(manifest.text_available)
+        self.assertTrue(manifest.text_truncated)
+        self.assertLessEqual(len(manifest.text_preview or ""), TEXT_PREVIEW_CHAR_LIMIT + 20)
+        self.assertEqual(manifest.sandbox_path, "/workspace/_sandbox/User/chat/file__notes.md")
+        self.assertIn("sandbox", manifest.recommended_tools)
+        self.assertIn("file_search", manifest.recommended_tools)
+
+    # Test binary-looking files do not get decoded through permissive encodings.
+    def test_binary_manifest_does_not_expose_text_preview(self):
+        payload = b"MZ\x00\x00\x03\x00" + bytes(range(32)) * 8
+
+        manifest = build_uploaded_file_manifest(
+            payload,
+            name="tool.exe",
+            mime="application/octet-stream",
+            sandbox_path="/workspace/_sandbox/User/chat/file__tool.exe",
+        )
+
+        self.assertFalse(manifest.text_available)
+        self.assertIsNone(manifest.text_preview)
+        self.assertIsNone(manifest.text_total_chars)
+        self.assertEqual(manifest.archive_tree, None)
+        self.assertEqual(manifest.recommended_tools, ["sandbox"])
+
+    # Test uploaded names are reduced to safe basenames.
+    def test_upload_name_is_normalized_to_basename(self):
+        self.assertEqual(normalize_upload_name("../secrets/.env"), ".env")
+        self.assertEqual(normalize_upload_name(r"..\..\report.pdf"), "report.pdf")
+
+    # Test zip files include a bounded archive tree without unpacking.
+    def test_zip_manifest_includes_archive_tree(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("docs/readme.txt", "hello")
+            archive.writestr("src/app.py", "print('ok')")
+
+        manifest = build_uploaded_file_manifest(
+            buffer.getvalue(),
+            name="bundle.zip",
+            mime="application/zip",
+            sandbox_path="/workspace/_sandbox/User/chat/file__bundle.zip",
+        )
+
+        self.assertEqual(manifest.archive_tree, ["docs/readme.txt", "src/app.py"])
+        self.assertIn("archive", manifest.recommended_tools)
+
+    # Test PDF files with a text layer expose a model-readable preview.
+    def test_pdf_manifest_extracts_text_layer(self):
+        import fitz
+
+        document = fitz.open()
+        page = document.new_page()
+        page.insert_text((72, 72), "PDF upload text layer")
+        payload = document.tobytes()
+        document.close()
+
+        manifest = build_uploaded_file_manifest(
+            payload,
+            name="statement.pdf",
+            mime="application/pdf",
+        )
+
+        self.assertTrue(manifest.text_available)
+        self.assertIn("PDF upload text layer", manifest.text_preview or "")
+
+    # Test docx files expose text from their document XML.
+    def test_docx_manifest_extracts_document_xml_text(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr(
+                "word/document.xml",
+                """
+                <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                  <w:body><w:p><w:r><w:t>Word upload text</w:t></w:r></w:p></w:body>
+                </w:document>
+                """,
+            )
+
+        manifest = build_uploaded_file_manifest(
+            buffer.getvalue(),
+            name="report.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        self.assertTrue(manifest.text_available)
+        self.assertIn("Word upload text", manifest.text_preview or "")
+
+    # Test pptx files expose slide text from their slide XML.
+    def test_pptx_manifest_extracts_slide_text(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr(
+                "ppt/slides/slide1.xml",
+                """
+                <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                       xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+                  <p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>Slide upload text</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld>
+                </p:sld>
+                """,
+            )
+
+        manifest = build_uploaded_file_manifest(
+            buffer.getvalue(),
+            name="slides.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        )
+
+        self.assertTrue(manifest.text_available)
+        self.assertIn("Slide 1: Slide upload text", manifest.text_preview or "")
+
+    # Test xlsx files expose a small table preview from worksheet XML.
+    def test_xlsx_manifest_extracts_sheet_text(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr(
+                "xl/sharedStrings.xml",
+                """
+                <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                  <si><t>Name</t></si><si><t>Alice</t></si>
+                </sst>
+                """,
+            )
+            archive.writestr(
+                "xl/worksheets/sheet1.xml",
+                """
+                <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                  <sheetData>
+                    <row><c t="s"><v>0</v></c><c><v>42</v></c></row>
+                    <row><c t="s"><v>1</v></c><c><v>7</v></c></row>
+                  </sheetData>
+                </worksheet>
+                """,
+            )
+
+        manifest = build_uploaded_file_manifest(
+            buffer.getvalue(),
+            name="sheet.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        self.assertTrue(manifest.text_available)
+        self.assertIn("Name | 42", manifest.text_preview or "")
+        self.assertIn("Alice | 7", manifest.table_preview or "")
+
+    # Test non-vision image uploads keep metadata and sandbox access only.
+    def test_non_vision_image_manifest_keeps_sandbox_without_text(self):
+        manifest = build_uploaded_file_manifest(
+            b"\x89PNG\r\n\x1a\n",
+            name="photo.png",
+            mime="image/png",
+            sandbox_path="/workspace/_sandbox/User/chat/file__photo.png",
+            model_supports_vision=False,
+        )
+
+        self.assertFalse(manifest.vision_available)
+        self.assertFalse(manifest.text_available)
+        self.assertEqual(manifest.sandbox_path, "/workspace/_sandbox/User/chat/file__photo.png")
+        self.assertEqual(manifest.recommended_tools, ["sandbox"])
+
+
+# Upload API tests.
+
+# Cover the public upload contract without exposing model-only manifests.
+class UploadFilesApiTests(SimpleTestCase):
+    """Cover the user-facing upload API payload."""
+
+    # Isolate sandbox writes in a temporary directory.
+    def setUp(self):
+        super().setUp()
+        self._upload_root_context = tempfile.TemporaryDirectory()
+        self.upload_root = Path(self._upload_root_context.name)
+        self.upload_root_patch = patch.object(upload_storage, "USER_UPLOAD_ROOT", self.upload_root)
+        self.upload_root_patch.start()
+
+    # Clean up the temporary sandbox.
+    def tearDown(self):
+        self.upload_root_patch.stop()
+        self._upload_root_context.cleanup()
+        super().tearDown()
+
+    # Test the upload API returns only card-safe fields while storing a private manifest.
+    def test_upload_api_returns_public_file_card_payload_only(self):
+        upload = SimpleUploadedFile("notes.txt", b"Hello from upload", content_type="text/plain")
+
+        response = self.client.post(reverse("uploads_api"), {"files": [upload], "scope": "chat-1"})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload["files"]), 1)
+        public_file = payload["files"][0]
+        self.assertEqual(public_file["name"], "notes.txt")
+        self.assertEqual(public_file["status"], "ready")
+        self.assertEqual(public_file["display_kind"], "text")
+        self.assertEqual(public_file["type_label"], "Text file")
+        self.assertNotIn("sha256", public_file)
+        self.assertNotIn("sandbox_path", public_file)
+        self.assertNotIn("text_preview", public_file)
+
+        sidecars = list(self.upload_root.glob("chat-1/*.manifest.json"))
+        self.assertEqual(len(sidecars), 1)
+        private_manifest = json.loads(sidecars[0].read_text(encoding="utf-8"))
+        self.assertEqual(private_manifest["text_preview"], "Hello from upload")
+        self.assertTrue(private_manifest["sandbox_path"].startswith("/workspace/_sandbox/User/chat-1/"))
+
+    # Test archive uploads get a simple English card label.
+    def test_upload_api_labels_zip_archive_for_card(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("readme.txt", "hello")
+        upload = SimpleUploadedFile("bundle.zip", buffer.getvalue(), content_type="application/zip")
+
+        response = self.client.post(reverse("uploads_api"), {"files": [upload]})
+
+        self.assertEqual(response.status_code, 200)
+        public_file = response.json()["files"][0]
+        self.assertEqual(public_file["display_kind"], "archive")
+        self.assertEqual(public_file["type_label"], "ZIP archive")
+
+    # Test unusual extensions are accepted and routed as generic files.
+    def test_upload_api_accepts_unknown_extension_as_generic_file(self):
+        upload = SimpleUploadedFile(
+            "sample.abc",
+            b"custom binary-ish payload",
+            content_type="application/x-abc",
+        )
+
+        response = self.client.post(reverse("uploads_api"), {"files": [upload], "scope": "chat-abc"})
+
+        self.assertEqual(response.status_code, 200)
+        public_file = response.json()["files"][0]
+        self.assertEqual(public_file["name"], "sample.abc")
+        self.assertEqual(public_file["status"], "ready")
+        self.assertEqual(public_file["display_kind"], "file")
+        self.assertEqual(public_file["type_label"], "File")
+
+        sidecars = list(self.upload_root.glob("chat-abc/*.manifest.json"))
+        self.assertEqual(len(sidecars), 1)
+        private_manifest = json.loads(sidecars[0].read_text(encoding="utf-8"))
+        self.assertEqual(private_manifest["name"], "sample.abc")
+        self.assertEqual(private_manifest["mime"], "application/x-abc")
+        self.assertFalse(private_manifest["text_available"])
+        self.assertTrue(private_manifest["sandbox_path"].startswith("/workspace/_sandbox/User/chat-abc/"))
+
+    # Test empty upload requests fail before returning a card payload.
+    def test_upload_api_requires_files(self):
+        response = self.client.post(reverse("uploads_api"), {})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "No files uploaded")
+
+    # Test model-facing upload manifests do not expose sandbox paths unless selected.
+    def test_model_upload_manifest_respects_sandbox_selection(self):
+        upload = SimpleUploadedFile("notes.txt", b"Hello from upload", content_type="text/plain")
+        response = self.client.post(reverse("uploads_api"), {"files": [upload], "scope": "chat-1"})
+        file_id = response.json()["files"][0]["file_id"]
+
+        without_sandbox = _load_model_upload_manifests([file_id], sandbox_enabled=False)[0]
+        with_sandbox = _load_model_upload_manifests([file_id], sandbox_enabled=True)[0]
+
+        self.assertIsNone(without_sandbox["sandbox_path"])
+        self.assertNotIn("sandbox", without_sandbox["recommended_tools"])
+        self.assertTrue(with_sandbox["sandbox_path"].startswith("/workspace/_sandbox/User/chat-1/"))
+        self.assertIn("sandbox", with_sandbox["recommended_tools"])
+
+    # Test the private prompt block only includes sandbox path when allowed.
+    def test_uploaded_file_prompt_block_hides_disabled_sandbox_path(self):
+        manifest = {
+            "file_id": "file-1",
+            "name": "notes.txt",
+            "mime": "text/plain",
+            "size_bytes": 5,
+            "sandbox_path": None,
+            "text_preview": "Hello",
+            "archive_tree": None,
+            "table_preview": None,
+        }
+
+        block = _build_uploaded_file_prompt_block(manifest)
+
+        self.assertIn("[Uploaded file: notes.txt]", block)
+        self.assertIn("Text preview:\nHello", block)
+        self.assertNotIn("Sandbox path:", block)
+
+    def test_uploaded_archive_prompt_block_says_preview_not_extracted(self):
+        manifest = {
+            "file_id": "file-zip",
+            "name": "bundle.zip",
+            "mime": "application/zip",
+            "size_bytes": 123,
+            "sandbox_path": "/workspace/_sandbox/User/chat/file__bundle.zip",
+            "text_preview": None,
+            "archive_tree": ["bundle/", "bundle/manage.py"],
+            "table_preview": None,
+        }
+
+        block = _build_uploaded_file_prompt_block(manifest)
+
+        self.assertIn("Archive preview", block)
+        self.assertIn("has not been extracted", block)
+        self.assertNotIn("Archive tree:", block)
+        self.assertIn("- bundle/manage.py", block)
+
+    # Test upload file ids can be read from current and future request shapes.
+    def test_uploaded_file_ids_are_normalized_from_request_shapes(self):
+        self.assertEqual(
+            _normalize_uploaded_file_ids({
+                "uploaded_file_ids": ["a", "b", "a"],
+                "attachments": [{"file_id": "c"}, {"name": "legacy.txt"}],
+            }),
+            ["a", "b", "c"],
+        )
+
+    # Test sandbox state is derived only from resolved tool servers.
+    def test_selected_tools_include_sandbox_only_when_resolved(self):
+        self.assertTrue(_selected_tools_include_sandbox([{"id": "sandbox"}]))
+        self.assertFalse(_selected_tools_include_sandbox([{"id": "other"}]))
+        self.assertFalse(_selected_tools_include_sandbox([]))
+
+
+# Upload routing tests.
+
+# Cover file type classification used by public upload cards.
+class UploadRoutingTests(SimpleTestCase):
+    """Cover upload display routing for common and unusual files."""
+
+    # Test routing common file types to stable card labels.
+    def test_display_kind_routes_known_file_types(self):
+        cases = [
+            ("photo.png", "image/png", ("image", "Image")),
+            ("notes.md", "text/markdown", ("text", "Text file")),
+            ("script.py", "text/x-python", ("code", "Code file")),
+            ("report.pdf", "application/pdf", ("document", "PDF document")),
+            ("sheet.csv", "text/csv", ("table", "CSV table")),
+            ("bundle.zip", "application/zip", ("archive", "ZIP archive")),
+            ("slides.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", ("presentation", "PowerPoint presentation")),
+        ]
+
+        for name, mime, expected in cases:
+            with self.subTest(name=name):
+                self.assertEqual(display_kind_for_upload(name, mime), expected)
+
+    # Test unknown extensions fall back to generic File, not rejection.
+    def test_display_kind_routes_unknown_extension_to_file(self):
+        self.assertEqual(display_kind_for_upload("mystery.abc", "application/x-abc"), ("file", "File"))
+        self.assertEqual(display_kind_for_upload("no-extension", "application/octet-stream"), ("file", "File"))
 
 
 # View and runtime mapping tests.
@@ -608,6 +991,110 @@ class GoogleGenAiAdapterTests(SimpleTestCase):
     def tearDown(self):
         google_genai_api._reset_runtime_caches()
         super().tearDown()
+
+    # Test Gemini function-call replay preserves thought signatures.
+    def test_function_call_history_preserves_thought_signature(self):
+        raw_part = {
+            "thought_signature": b"signature-bytes",
+            "function_call": {
+                "name": "web_search",
+                "args": {"query": "latest ai news"},
+            },
+        }
+
+        history_part = google_genai_api._build_google_history_part(raw_part, include_text=False)
+        replay_parts = google_genai_api._normalize_google_request_parts([history_part])
+
+        self.assertEqual(history_part["function_call"]["name"], "web_search")
+        self.assertIn("thought_signature", history_part)
+        self.assertEqual(replay_parts[0]["thought_signature"], b"signature-bytes")
+        self.assertEqual(replay_parts[0]["function_call"]["name"], "web_search")
+        self.assertEqual(replay_parts[0]["function_call"]["args"], {"query": "latest ai news"})
+
+    # Test fallback function-call reconstruction is skipped for preserved Gemini parts.
+    def test_preserved_function_call_parts_avoid_unsigned_duplicate(self):
+        preserved_parts = [
+            {
+                "thought_signature": "c2lnbmF0dXJlLWJ5dGVz",
+                "function_call": {
+                    "name": "web_search",
+                    "args": {"query": "latest ai news"},
+                },
+            }
+        ]
+
+        self.assertTrue(google_genai_api._history_parts_have_function_call(preserved_parts))
+        content = google_genai_api._assistant_message_to_content(
+            {
+                "role": "assistant",
+                "content": "",
+                "google_parts": preserved_parts,
+                "tool_calls": [
+                    {
+                        "id": "call_1_web_search",
+                        "type": "function",
+                        "function": {
+                            "name": "web_search",
+                            "arguments": json.dumps({"query": "latest ai news"}),
+                        },
+                    }
+                ],
+            }
+        )
+
+        function_call_parts = [
+            part for part in content["parts"] if isinstance(part.get("function_call"), dict)
+        ]
+        self.assertEqual(len(function_call_parts), 1)
+        self.assertEqual(function_call_parts[0]["thought_signature"], b"signature-bytes")
+
+    # Test legacy unsigned Gemini tool-call transcript is not replayed.
+    def test_unsigned_legacy_function_call_history_is_skipped(self):
+        _system_instruction, contents = google_genai_api._build_google_contents(
+            [
+                {"role": "user", "content": "Search this"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "google_parts": [
+                        {
+                            "function_call": {
+                                "name": "web_search",
+                                "args": {"query": "latest ai news"},
+                            }
+                        }
+                    ],
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "web_search",
+                                "arguments": json.dumps({"query": "latest ai news"}),
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "name": "web_search", "content": "{\"result\": \"ok\"}"},
+                {"role": "user", "content": "Continue"},
+            ]
+        )
+
+        self.assertEqual(contents[0], {"role": "user", "parts": [{"text": "Search this"}]})
+        self.assertEqual(contents[-1], {"role": "user", "parts": [{"text": "Continue"}]})
+        self.assertFalse(
+            any(
+                isinstance(part.get("function_call"), dict)
+                for content in contents
+                for part in content.get("parts", [])
+            )
+        )
+        self.assertFalse(
+            any(
+                isinstance(part.get("function_response"), dict)
+                for content in contents
+                for part in content.get("parts", [])
+            )
+        )
 
     # Test get models filters out non generate content models.
     @patch("API.google_genai._close_client")
@@ -1041,6 +1528,76 @@ class ViewFormattingTests(SimpleTestCase):
         self.assertEqual(_parse_active_tool_slugs('["time_suite", "", "browser"]'), ["time_suite", "browser"])
         self.assertEqual(_parse_active_tool_slugs("time_suite"), ["time_suite"])
         self.assertEqual(_parse_active_tool_slugs(""), [])
+
+    # Test shared files keep their UI render payload after tool result splitting.
+    def test_shared_file_tool_result_keeps_ui_metadata(self):
+        payload = {
+            "kind": "shared_file",
+            "path": "/workspace/_sandbox/wave_graph.svg",
+            "filename": "wave_graph.svg",
+            "mime_type": "image/svg+xml",
+            "size_bytes": 123,
+            "render": {
+                "type": "image",
+                "mime_type": "image/svg+xml",
+                "preview": {"kind": "base64", "data": "abc"},
+            },
+        }
+
+        model_text, extras = tool_registry.split_tool_result_payload(payload)
+
+        self.assertEqual(model_text, "Shared file ready for download: wave_graph.svg")
+        self.assertEqual(extras["structured_content"]["kind"], "shared_file")
+        self.assertEqual(extras["structured_content"]["file"]["render"]["type"], "image")
+        self.assertEqual(extras["tool_ui"]["kind"], "shared_file")
+
+    # Test repeated tool aliases preserve all shared files in activity segments.
+    def test_build_activity_segments_keeps_repeated_share_file_aliases(self):
+        class _MessageStub:
+            llm_transcript = [
+                {
+                    "role": "tool",
+                    "alias": "sandbox__share_file__0",
+                    "tool_id": "share_file",
+                    "tool_display_name": "Share File",
+                    "arguments": {"path": "a.txt", "filename": "a.txt"},
+                    "content": "Shared file ready for download: a.txt",
+                    "structured_content": {
+                        "kind": "shared_file",
+                        "file": {"kind": "shared_file", "path": "a.txt", "filename": "a.txt"},
+                    },
+                    "tool_ui": {
+                        "kind": "shared_file",
+                        "status": "done",
+                        "file": {"kind": "shared_file", "path": "a.txt", "filename": "a.txt"},
+                    },
+                },
+                {
+                    "role": "tool",
+                    "alias": "sandbox__share_file__0",
+                    "tool_id": "share_file",
+                    "tool_display_name": "Share File",
+                    "arguments": {"path": "b.txt", "filename": "b.txt"},
+                    "content": "Shared file ready for download: b.txt",
+                    "structured_content": {
+                        "kind": "shared_file",
+                        "file": {"kind": "shared_file", "path": "b.txt", "filename": "b.txt"},
+                    },
+                    "tool_ui": {
+                        "kind": "shared_file",
+                        "status": "done",
+                        "file": {"kind": "shared_file", "path": "b.txt", "filename": "b.txt"},
+                    },
+                },
+            ]
+
+        segments = _build_activity_segments(_MessageStub())
+        files = [
+            (segment.get("structuredContent") or {}).get("file", {}).get("filename")
+            for segment in segments
+            if segment.get("type") == "tool"
+        ]
+        self.assertEqual(files, ["a.txt", "b.txt"])
 
 
 # Model metadata cache tests.
@@ -2288,3 +2845,94 @@ class LmsPresetApiTests(TestCase):
         self.assertEqual(deleted.status_code, 400)
         self.assertIn("default preset", renamed.json()["error"])
         self.assertIn("default preset", deleted.json()["error"])
+
+
+# Verify the three critical fixes: message IDs in headers, no user duplication
+# on regenerate, and chat.updated_at bumped on every mutation.
+class MessageIdAndRegenerateTests(ToolRegistryTestMixin, TestCase):
+    """Verify message IDs are returned and regenerate does not duplicate user messages."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+
+    # chat_api must return X-User-Message-ID and X-Assistant-Message-ID headers
+    # so the frontend can stamp fresh rows without waiting for a page reload.
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_api_returns_message_id_headers(self, _mock_engine, mock_generate, _mock_runtime):
+        mock_generate.return_value = [{"message": {"content": "Hi"}}]
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"Hello","model":"llama3"}',
+            content_type="application/json",
+        )
+        b"".join(response.streaming_content)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.has_header("X-User-Message-ID"), "X-User-Message-ID header missing")
+        self.assertTrue(response.has_header("X-Assistant-Message-ID"), "X-Assistant-Message-ID header missing")
+
+        user_id = int(response["X-User-Message-ID"])
+        assistant_id = int(response["X-Assistant-Message-ID"])
+        self.assertTrue(Message.objects.filter(id=user_id, role="user").exists())
+        self.assertTrue(Message.objects.filter(id=assistant_id, role="assistant").exists())
+
+    # After a normal send + regenerate the chat must contain exactly one user
+    # message — not two copies of the same prompt.
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_regenerate_does_not_duplicate_user_message(self, _mock_engine, mock_generate, _mock_runtime):
+        mock_generate.return_value = [{"message": {"content": "Answer"}}]
+
+        r1 = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"hello","model":"llama3"}',
+            content_type="application/json",
+        )
+        b"".join(r1.streaming_content)
+        chat_id = r1["X-Chat-ID"]
+
+        self.assertEqual(Message.objects.filter(chat__id=chat_id, role="user").count(), 1)
+
+        mock_generate.return_value = [{"message": {"content": "New answer"}}]
+        r2 = self.client.post(
+            reverse("regenerate_chat_api", args=[chat_id]),
+            data='{"model":"llama3"}',
+            content_type="application/json",
+        )
+        b"".join(r2.streaming_content)
+
+        self.assertEqual(r2.status_code, 200)
+        user_count = Message.objects.filter(chat__id=chat_id, role="user").count()
+        self.assertEqual(user_count, 1, f"Expected 1 user message after regenerate, got {user_count}")
+        assistant_count = Message.objects.filter(chat__id=chat_id, role="assistant").count()
+        self.assertEqual(assistant_count, 1, f"Expected 1 assistant message after regenerate, got {assistant_count}")
+
+    # chat.updated_at must be bumped when messages are added so the sidebar
+    # sort order stays correct.
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_updated_at_is_bumped_after_generation(self, _mock_engine, mock_generate, _mock_runtime):
+        import time
+
+        mock_generate.return_value = [{"message": {"content": "Hi"}}]
+
+        chat = Chat.objects.create(title="Test")
+        ts_before = chat.updated_at
+
+        time.sleep(0.05)
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data=f'{{"message":"Hi","model":"llama3","chat_id":"{chat.id}"}}',
+            content_type="application/json",
+        )
+        b"".join(response.streaming_content)
+
+        chat.refresh_from_db()
+        self.assertGreater(chat.updated_at, ts_before, "chat.updated_at was not bumped after generation")

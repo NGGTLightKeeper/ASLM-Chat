@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper. All Rights Reserved.
+﻿# Copyright NGGT.LightKeeper. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -401,6 +401,7 @@ def _build_tool_message(
 
     if isinstance(content, dict) and "_image_b64" in content:
         image_path = content.get("_path", "image")
+        _model_content, tool_extras = tool_registry.split_tool_result_payload(content)
         payload = {
             "role": "tool",
             "name": tool_name,
@@ -408,13 +409,16 @@ def _build_tool_message(
             "content": f"[Image: {image_path}]",
             "images": [content["_image_b64"]],
         }
+        payload.update(tool_extras)
     else:
+        model_content, tool_extras = tool_registry.split_tool_result_payload(content)
         payload = {
             "role": "tool",
             "name": tool_name,
             "tool_name": tool_name,
-            "content": content if isinstance(content, str) else str(content),
+            "content": model_content,
         }
+        payload.update(tool_extras)
 
     if tool_event:
         payload.update(
@@ -554,6 +558,9 @@ def _run_tool_loop(
             _print_runtime_event(f"Tool loop base options: {_preview_jsonish(base_kwargs, limit=320)}")
 
     conversation = [dict(message) for message in messages]
+    tool_quota_counters: dict[str, int] = {}
+    seen_tool_signatures: set[str] = set()
+    consecutive_blocked_tool_results = 0
 
     for round_index in range(MAX_TOOL_ROUNDS):
         round_started_at = time.perf_counter()
@@ -595,10 +602,12 @@ def _run_tool_loop(
                     f"Tool round payload: {_preview_jsonish(tool_calls, limit=420)}"
                 )
 
-        for tool_call_index, tool_call in enumerate(tool_calls, start=1):
-            tool_event = _build_tool_event(tool_lookup, tool_call)
-            yield {"tool_event": tool_event}
+        tool_events = [_build_tool_event(tool_lookup, tool_call) for tool_call in tool_calls]
+        for _i, _ev in enumerate(tool_events):
+            _ev["alias"] = f"{_ev['alias']}__{_i}"
+        yield {"tool_events": tool_events}
 
+        for tool_call_index, (tool_call, tool_event) in enumerate(zip(tool_calls, tool_events), start=1):
             if _is_debug_logging_enabled():
                 _print_runtime_event(
                     "Tool dispatched: "
@@ -620,20 +629,66 @@ def _run_tool_loop(
                     "tool_round_index": round_index + 1,
                 }
             )
-
-            tool_result = tool_registry.call_ollama_tool(
-                tool_lookup,
-                tool_call["name"],
-                tool_call.get("arguments") or {},
+            tool_registry.log_search_tool_io(
+                "request",
+                tool_event,
+                arguments=tool_call.get("arguments") or {},
                 context=call_context,
             )
+
+            tool_cooldown_error = tool_registry.consume_tool_cooldown(
+                tool_event,
+                tool_call.get("arguments") or {},
+            )
+            if tool_cooldown_error is not None:
+                tool_result = tool_cooldown_error
+            else:
+                duplicate_error = tool_registry.consume_duplicate_tool_call(
+                    tool_event,
+                    tool_call.get("arguments") or {},
+                    seen_tool_signatures,
+                )
+                if duplicate_error is not None:
+                    tool_result = duplicate_error
+                else:
+                    quota_error = tool_registry.consume_tool_quota(tool_event, tool_quota_counters)
+                    if quota_error is not None:
+                        tool_result = quota_error
+                    else:
+                        tool_result = tool_registry.call_ollama_tool(
+                            tool_lookup,
+                            tool_call["name"],
+                            tool_call.get("arguments") or {},
+                            context=call_context,
+                        )
+                        tool_registry.remember_tool_cooldown(
+                            tool_event,
+                            tool_call.get("arguments") or {},
+                        )
+            if tool_registry.is_blocking_tool_result(tool_result):
+                consecutive_blocked_tool_results += 1
+            else:
+                consecutive_blocked_tool_results = 0
             tool_message = _build_tool_message(tool_call["name"], tool_result, tool_event)
 
-            # Append the full tool payload to the conversation, but trim heavy
-            # image data from the UI event to avoid streaming base64 blobs.
-            conversation.append(tool_message)
+            # Feed only model-supported fields back into Ollama; UI metadata
+            # stays on the streamed tool event below.
+            conversation_tool_message = {
+                key: value
+                for key, value in tool_message.items()
+                if key not in {"structured_content", "tool_ui"}
+            }
+            conversation.append(conversation_tool_message)
+            tool_registry.log_search_tool_io(
+                "response",
+                tool_event,
+                arguments=tool_call.get("arguments") or {},
+                context=call_context,
+                result=conversation_tool_message,
+            )
 
-            # Strip images from the UI event to avoid streaming megabytes of base64.
+            # Strip the model-facing images field; UI-only preview metadata stays
+            # on tool_ui/structured_content for rendering the inspected image.
             ui_tool_message = {k: v for k, v in tool_message.items() if k != "images"}
             if "images" in tool_message:
                 ui_tool_message["content"] = tool_message.get("content", "[image]")
@@ -649,6 +704,19 @@ def _run_tool_loop(
                     f"chars={len(str(result_content or ''))}"
                 )
             yield {"tool_result": ui_tool_message}
+
+        if consecutive_blocked_tool_results >= 2:
+            conversation.append(
+                {
+                    "role": "user",
+                    "content": tool_registry.forced_final_prompt_after_tool_blocks(),
+                }
+            )
+            assistant_message = yield from _yield_stream_round(
+                _stream_round(client, model_name, conversation, base_kwargs)
+            )
+            yield {"transcript_message": assistant_message}
+            return
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
 
@@ -693,3 +761,4 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any) -> 
     except Exception as exc:
         logger.error("[Ollama API] Error generating response from %s: %s", model_name, exc)
         raise
+
