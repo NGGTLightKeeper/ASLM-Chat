@@ -21,6 +21,7 @@ import csv
 from pathlib import Path
 from typing import Any, Callable
 
+from sandbox.cleanup import sandbox_tool_activity
 from sandbox.config import (
     DEFAULT_TASK_DIR,
     DEFAULT_TIMEOUT,
@@ -736,9 +737,10 @@ def handle_tool(
         return error_response("sandbox", "unknown_tool", f"Unknown sandbox tool: {tool_id}")
 
     try:
-        if tool_id == "bash":
-            return handler(arguments or {}, context, progress_callback=progress_callback)
-        return handler(arguments or {}, context)
+        with sandbox_tool_activity():
+            if tool_id == "bash":
+                return handler(arguments or {}, context, progress_callback=progress_callback)
+            return handler(arguments or {}, context)
     except Exception as exc:
         return exception_response(tool_id, exc)
 
