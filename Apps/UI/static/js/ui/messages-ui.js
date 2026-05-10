@@ -154,20 +154,26 @@ export function createMessagesUi(context, dependencies) {
     return best;
   }
 
-  function appendLatexHtml(fragment, latexSource, displayMode) {
+  function renderLatexSourceToHtml(latexSource, displayMode) {
     if (typeof katex === 'undefined' || !katex.renderToString) {
-      fragment.appendChild(document.createTextNode(latexSource));
-      return;
+      return escHtml(latexSource);
     }
-    const rendered = katex.renderToString(latexSource, {
+    return katex.renderToString(latexSource, {
       displayMode: !!displayMode,
       throwOnError: false,
       strict: 'ignore',
       trust: false,
       output: 'htmlAndMathml'
     });
+  }
+
+  function appendLatexHtml(fragment, latexSource, displayMode) {
+    if (typeof katex === 'undefined' || !katex.renderToString) {
+      fragment.appendChild(document.createTextNode(latexSource));
+      return;
+    }
     const template = document.createElement('template');
-    template.innerHTML = rendered;
+    template.innerHTML = renderLatexSourceToHtml(latexSource, displayMode);
     fragment.appendChild(template.content);
   }
 
@@ -238,6 +244,74 @@ export function createMessagesUi(context, dependencies) {
     return template.innerHTML;
   }
 
+  function looksLikeLatexSource(source) {
+    const text = String(source || '').trim();
+    if (!text) {
+      return false;
+    }
+    return /\\(?:boxed|mathrm|frac|sqrt|cdot|times|longrightarrow|rightarrow|left|right|text|begin|end|sum|int|alpha|beta|gamma|delta|Delta|Omega)\b/.test(text)
+      || (/\\/.test(text) && /[_^]\{?[\w()+\-]+/.test(text));
+  }
+
+  function normalizeLooseDisplayLatex(source) {
+    return String(source || '')
+      .replace(/(^|\n)[ \t]*\\\[\s*\n?([\s\S]*?)\n?[ \t]*\\\](?=\n|$)/g, function normalizeEscapedLatexBlock(match, prefix, body) {
+        const latexSource = String(body || '').trim();
+        if (!looksLikeLatexSource(latexSource)) {
+          return match;
+        }
+        return `${prefix}$$\n${latexSource}\n$$`;
+      })
+      .replace(/(^|\n)[ \t]*\[\s*\n([\s\S]*?)\n[ \t]*\](?=\n|$)/g, function normalizeLatexBlock(match, prefix, body) {
+      const latexSource = String(body || '').trim();
+      if (!looksLikeLatexSource(latexSource)) {
+        return match;
+      }
+      return `${prefix}$$\n${latexSource}\n$$`;
+    });
+  }
+
+  function extractLatexBlocks(source) {
+    const blocks = [];
+    const text = String(source || '')
+      .replace(/(^|\n)[ \t]*\$\$\s*\n?([\s\S]*?)\n?[ \t]*\$\$(?=\n|$)/g, function extractDisplayLatexBlock(match, prefix, body) {
+        const latexSource = String(body || '').trim();
+        if (!looksLikeLatexSource(latexSource)) {
+          return match;
+        }
+        const token = `ASLMLATEXDISPLAY${blocks.length}TOKEN`;
+        blocks.push({ token, latexSource, displayMode: true });
+        return `${prefix}\n\n${token}\n\n`;
+      })
+      .replace(/\\\(([\s\S]*?)\\\)/g, function extractInlineLatexBlock(match, body) {
+        const latexSource = String(body || '').trim();
+        if (!looksLikeLatexSource(latexSource)) {
+          return match;
+        }
+        const token = `ASLMLATEXINLINE${blocks.length}TOKEN`;
+        blocks.push({ token, latexSource, displayMode: false });
+        return token;
+      });
+    return { text, blocks };
+  }
+
+  function restoreLatexPlaceholders(html, blocks) {
+    let result = String(html || '');
+    (blocks || []).forEach(function restoreLatexBlock(block) {
+      const token = String(block.token || '');
+      if (!token) {
+        return;
+      }
+      const rendered = renderLatexSourceToHtml(block.latexSource || '', block.displayMode !== false);
+      result = result
+        .split(`<p>${token}</p>`)
+        .join(rendered)
+        .split(token)
+        .join(rendered);
+    });
+    return result;
+  }
+
   function markdownCodeLanguage(codeEl) {
     const classNames = String((codeEl && codeEl.className) || '');
     const match = classNames.match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)
@@ -295,15 +369,23 @@ export function createMessagesUi(context, dependencies) {
   // Render one visible text segment as sanitized HTML.
   function renderMarkdownSegment(content, citationSources) {
     const hasCitationSources = citationSources && typeof citationSources === 'object' && Object.keys(citationSources).length > 0;
-    const normalizedContent = normalizeCitationSpacing(normalizeCitationBrackets(content));
+    const normalizedContent = normalizeLooseDisplayLatex(normalizeCitationSpacing(normalizeCitationBrackets(content)));
     const visibleContent = hasCitationSources
       ? normalizedContent
       : normalizedContent.replace(/\s*\[(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3}-\d+)\]/gi, '');
+    const latexBlocks = extractLatexBlocks(visibleContent);
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
-      return enhanceMarkdownCodeBlocks(renderLatexInHtml(decorateCitationsInHtml(escHtml(visibleContent), citationSources)));
+      const fallbackHtml = restoreLatexPlaceholders(
+        decorateCitationsInHtml(escHtml(latexBlocks.text), citationSources),
+        latexBlocks.blocks
+      );
+      return enhanceMarkdownCodeBlocks(renderLatexInHtml(fallbackHtml));
     }
 
-    const html = decorateCitationsInHtml(DOMPurify.sanitize(marked.parse(visibleContent)), citationSources);
+    const html = restoreLatexPlaceholders(
+      decorateCitationsInHtml(DOMPurify.sanitize(marked.parse(latexBlocks.text)), citationSources),
+      latexBlocks.blocks
+    );
     return enhanceMarkdownCodeBlocks(renderLatexInHtml(html));
   }
 
