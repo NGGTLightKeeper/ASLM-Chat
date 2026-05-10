@@ -44,7 +44,6 @@ from custom_domains.amazon import fetch_amazon_snapshot
 from custom_domains.ebay import fetch_ebay_snapshot
 from custom_domains.github import fetch_github_page as _fetch_github_page
 from custom_domains.github import is_github_url as _is_github_url
-from custom_domains.dns_shop import camoufox_fetch_kwargs as _dns_camoufox_fetch_kwargs
 from custom_domains.dns_shop import dns_variant_urls as _dns_variant_urls
 from custom_domains.dns_shop import rewrite_read_page_url as _rewrite_read_page_url
 from custom_domains.reddit import fetch_reddit_json as _fetch_reddit_json
@@ -592,29 +591,34 @@ class ReadPageService:
             max_chars=cfg.extraction.max_page_chars,
         )
 
+    async def _fetch_camoufox_raw_html(self, url: str, opts: ReadPageOptions) -> str | None:
+        """Fetch raw HTML through Camoufox within read_page's global deadline."""
+
+        camoufox_kwargs: dict[str, object] = {
+            "wait_sec": 4.0,
+            "timeout_sec": min(float(opts.timeout), 20.0),
+            "process_timeout": min(max(float(opts.timeout) + 5.0, 10.0), 25.0),
+            "warmup_count": 0,
+            "normalize": False,
+        }
+        camoufox_result = await fetch_with_camoufox(
+            url,
+            **camoufox_kwargs,
+        )
+        raw_html = camoufox_result.html if camoufox_result.success else None
+        if not raw_html:
+            detail = camoufox_result.error or "unknown browser fetch failure"
+            logger.warning("Camoufox read_page fetch failed for %s: %s", url, detail)
+            return None
+        return raw_html
+
     async def _fetch_raw_html(self, url: str, opts: ReadPageOptions, original_url: str) -> str | None:
         if self._registry.needs_camoufox(url):
-            camoufox_kwargs: dict[str, object] = {
-                "wait_sec": 4.0,
-                "timeout_sec": opts.timeout,
-                "process_timeout": opts.timeout + 15.0,
-                "warmup_count": 0,
-                "normalize": False,
-            }
-            if _host(url) == "dns-shop.ru":
-                camoufox_kwargs.update(_dns_camoufox_fetch_kwargs(url, opts.timeout))
-            camoufox_result = await fetch_with_camoufox(
-                url,
-                **camoufox_kwargs,
-            )
-            raw_html = camoufox_result.html if camoufox_result.success else None
-            if not raw_html:
-                detail = camoufox_result.error or "unknown browser fetch failure"
-                logger.warning("Camoufox read_page fetch failed for %s: %s", url, detail)
-                return None
-            return raw_html
+            return await self._fetch_camoufox_raw_html(url, opts)
 
         raw_html = await _fetch_race(url, timeout=opts.timeout, tls_verify=self._cfg.search.tls_verify)
+        if not raw_html:
+            raw_html = await self._fetch_camoufox_raw_html(url, opts)
         if not raw_html and opts.use_wayback_fallback:
             raw_html = await _fetch_wayback(url, timeout=30)
         return raw_html
@@ -869,7 +873,7 @@ class ReadPageService:
     async def read(self, url: str) -> str:
         """Fetch a URL and return its content as clean markdown."""
         url = url.strip()
-        deadline = max(self._opts.timeout * 3, 60.0)
+        deadline = max(float(self._opts.timeout), 30.0)
         try:
             markdown, _ = await asyncio.wait_for(
                 self._read(url, collect_attempts=False),
