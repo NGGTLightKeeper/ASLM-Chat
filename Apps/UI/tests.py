@@ -56,9 +56,11 @@ from Apps.UI.views import (
     _build_activity_segments,
     _build_chat_title,
     _build_model_info_payload,
+    _build_uploaded_file_context_entry,
     _build_uploaded_file_prompt_block,
     _clear_model_metadata_caches,
     _extract_attachment_text,
+    _extract_uploaded_file_ids_from_message,
     _extract_ollama_model_info,
     _extract_model_name,
     _format_runtime_error,
@@ -452,13 +454,19 @@ class UploadFilesApiTests(SimpleTestCase):
     def setUp(self):
         super().setUp()
         self._upload_root_context = tempfile.TemporaryDirectory()
+        self._manifest_root_context = tempfile.TemporaryDirectory()
         self.upload_root = Path(self._upload_root_context.name)
+        self.manifest_root = Path(self._manifest_root_context.name)
         self.upload_root_patch = patch.object(upload_storage, "USER_UPLOAD_ROOT", self.upload_root)
+        self.manifest_root_patch = patch.object(upload_storage, "USER_FILE_MANIFEST_ROOT", self.manifest_root)
         self.upload_root_patch.start()
+        self.manifest_root_patch.start()
 
     # Clean up the temporary sandbox.
     def tearDown(self):
+        self.manifest_root_patch.stop()
         self.upload_root_patch.stop()
+        self._manifest_root_context.cleanup()
         self._upload_root_context.cleanup()
         super().tearDown()
 
@@ -480,11 +488,15 @@ class UploadFilesApiTests(SimpleTestCase):
         self.assertNotIn("sandbox_path", public_file)
         self.assertNotIn("text_preview", public_file)
 
-        sidecars = list(self.upload_root.glob("chat-1/*.manifest.json"))
-        self.assertEqual(len(sidecars), 1)
-        private_manifest = json.loads(sidecars[0].read_text(encoding="utf-8"))
+        self.assertEqual(list(self.upload_root.glob("chat-1/*.manifest.json")), [])
+        self.assertEqual(list(self.upload_root.glob("pending/*.manifest.json")), [])
+        manifests = list(self.manifest_root.glob("*/*.manifest.json"))
+        self.assertEqual(len(manifests), 1)
+        private_manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+        self.assertEqual(manifests[0].name, f"{public_file['file_id']}.manifest.json")
         self.assertEqual(private_manifest["text_preview"], "Hello from upload")
-        self.assertTrue(private_manifest["sandbox_path"].startswith("/workspace/_sandbox/User/chat-1/"))
+        self.assertEqual(manifests[0].parent.name, private_manifest["sha256"])
+        self.assertTrue(private_manifest["sandbox_path"].startswith(f"/workspace/_sandbox/User/{private_manifest['sha256']}/"))
 
     # Test archive uploads get a simple English card label.
     def test_upload_api_labels_zip_archive_for_card(self):
@@ -517,13 +529,16 @@ class UploadFilesApiTests(SimpleTestCase):
         self.assertEqual(public_file["display_kind"], "file")
         self.assertEqual(public_file["type_label"], "File")
 
-        sidecars = list(self.upload_root.glob("chat-abc/*.manifest.json"))
-        self.assertEqual(len(sidecars), 1)
-        private_manifest = json.loads(sidecars[0].read_text(encoding="utf-8"))
+        self.assertEqual(list(self.upload_root.glob("chat-abc/*.manifest.json")), [])
+        self.assertEqual(list(self.upload_root.glob("pending/*.manifest.json")), [])
+        manifests = list(self.manifest_root.glob("*/*.manifest.json"))
+        self.assertEqual(len(manifests), 1)
+        private_manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+        self.assertEqual(manifests[0].parent.name, private_manifest["sha256"])
         self.assertEqual(private_manifest["name"], "sample.abc")
         self.assertEqual(private_manifest["mime"], "application/x-abc")
         self.assertFalse(private_manifest["text_available"])
-        self.assertTrue(private_manifest["sandbox_path"].startswith("/workspace/_sandbox/User/chat-abc/"))
+        self.assertTrue(private_manifest["sandbox_path"].startswith(f"/workspace/_sandbox/User/{private_manifest['sha256']}/"))
 
     # Test empty upload requests fail before returning a card payload.
     def test_upload_api_requires_files(self):
@@ -543,7 +558,7 @@ class UploadFilesApiTests(SimpleTestCase):
 
         self.assertIsNone(without_sandbox["sandbox_path"])
         self.assertNotIn("sandbox", without_sandbox["recommended_tools"])
-        self.assertTrue(with_sandbox["sandbox_path"].startswith("/workspace/_sandbox/User/chat-1/"))
+        self.assertTrue(with_sandbox["sandbox_path"].startswith(f"/workspace/_sandbox/User/{with_sandbox['sha256']}/"))
         self.assertIn("sandbox", with_sandbox["recommended_tools"])
 
     # Test the private prompt block only includes sandbox path when allowed.
@@ -593,6 +608,14 @@ class UploadFilesApiTests(SimpleTestCase):
             }),
             ["a", "b", "c"],
         )
+
+    # Test upload ids can be persisted on a user message for regenerate/history replay.
+    def test_uploaded_file_context_entry_round_trips_file_ids(self):
+        entry = _build_uploaded_file_context_entry(["file-1", "file-2", "file-1"])
+        message = Message(role="user", content="read this", llm_transcript=[entry])
+
+        self.assertEqual(entry["type"], "uploaded_file_context")
+        self.assertEqual(_extract_uploaded_file_ids_from_message(message), ["file-1", "file-2"])
 
     # Test sandbox state is derived only from resolved tool servers.
     def test_selected_tools_include_sandbox_only_when_resolved(self):

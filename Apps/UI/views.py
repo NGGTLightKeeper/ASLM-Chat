@@ -584,6 +584,7 @@ FAVICON_ROOT_FALLBACKS = (
     "/apple-touch-icon.png",
     "/apple-touch-icon-precomposed.png",
 )
+UPLOADED_FILE_CONTEXT_ENTRY_TYPE = "uploaded_file_context"
 
 CONTEXT_WINDOW_KEYS = (
     "num_ctx",
@@ -1315,6 +1316,80 @@ def _load_model_upload_manifests(file_ids: list[str], *, sandbox_enabled: bool) 
     return manifests
 
 
+def _upload_manifest_file_ids(manifests: list[dict[str, Any]]) -> list[str]:
+    """Return stable file ids from loaded upload manifests."""
+
+    seen: set[str] = set()
+    file_ids: list[str] = []
+    for manifest in manifests or []:
+        file_id = str((manifest or {}).get("file_id") or "").strip()
+        if file_id and file_id not in seen:
+            seen.add(file_id)
+            file_ids.append(file_id)
+    return file_ids
+
+
+def _build_uploaded_file_context_entry(file_ids: list[str]) -> dict[str, Any] | None:
+    """Build a stored user-message entry that keeps upload context replayable."""
+
+    normalized_ids = []
+    seen: set[str] = set()
+    for file_id in file_ids or []:
+        clean_id = str(file_id or "").strip()
+        if clean_id and clean_id not in seen:
+            seen.add(clean_id)
+            normalized_ids.append(clean_id)
+    if not normalized_ids:
+        return None
+    return {
+        "type": UPLOADED_FILE_CONTEXT_ENTRY_TYPE,
+        "uploaded_file_ids": normalized_ids,
+    }
+
+
+def _extract_uploaded_file_ids_from_message(message: Message) -> list[str]:
+    """Return upload ids persisted on a user message."""
+
+    raw_entries = getattr(message, "llm_transcript", None)
+    if not isinstance(raw_entries, list):
+        return []
+
+    seen: set[str] = set()
+    file_ids: list[str] = []
+    for raw_entry in raw_entries:
+        if not isinstance(raw_entry, dict):
+            continue
+        entry_type = str(raw_entry.get("type") or raw_entry.get("kind") or "").strip()
+        if entry_type != UPLOADED_FILE_CONTEXT_ENTRY_TYPE:
+            continue
+
+        raw_values: list[Any] = []
+        for key in ("uploaded_file_ids", "uploaded_files", "file_ids"):
+            value = raw_entry.get(key)
+            if isinstance(value, list):
+                raw_values.extend(value)
+            elif value:
+                raw_values.append(value)
+
+        for raw_value in raw_values:
+            if isinstance(raw_value, dict):
+                raw_value = raw_value.get("file_id") or raw_value.get("id")
+            file_id = str(raw_value or "").strip()
+            if file_id and file_id not in seen:
+                seen.add(file_id)
+                file_ids.append(file_id)
+    return file_ids
+
+
+def _load_message_upload_manifests(message: Message, *, sandbox_enabled: bool) -> list[dict[str, Any]]:
+    """Load persisted upload manifests for one stored user message."""
+
+    return _load_model_upload_manifests(
+        _extract_uploaded_file_ids_from_message(message),
+        sandbox_enabled=sandbox_enabled,
+    )
+
+
 def _build_uploaded_file_prompt_block(manifest: dict[str, Any]) -> str:
     """Serialize one uploaded file manifest into private model context."""
 
@@ -1613,12 +1688,17 @@ def _normalize_transcript_entries(raw_entries: Any) -> list[dict[str, Any]]:
 
 
 # Build LLM history entries
-def _build_llm_history_entries(message: Message) -> list[dict[str, Any]]:
+def _build_llm_history_entries(message: Message, *, sandbox_enabled: bool = False) -> list[dict[str, Any]]:
     """Convert one stored message into the message list expected by the LLM backend."""
 
     if message.role != "assistant":
         payload = {"role": message.role, "content": message.content}
-        return [_apply_attachments_to_llm_entry(payload, _get_message_attachments(message))]
+        payload = _apply_attachments_to_llm_entry(payload, _get_message_attachments(message))
+        payload = _apply_uploaded_file_manifests_to_llm_entry(
+            payload,
+            _load_message_upload_manifests(message, sandbox_enabled=sandbox_enabled),
+        )
+        return [payload]
 
     transcript_entries = _normalize_transcript_entries(message.llm_transcript)
     if transcript_entries:
@@ -1667,7 +1747,11 @@ def _message_has_context_compression_summary(message: Message) -> bool:
     return False
 
 
-def _build_context_compression_source_entries(history_records: list[Message]) -> list[dict[str, Any]]:
+def _build_context_compression_source_entries(
+    history_records: list[Message],
+    *,
+    sandbox_enabled: bool = False,
+) -> list[dict[str, Any]]:
     """Build chronological non-compression entries represented by a new boundary."""
 
     boundary_records: list[Message] = []
@@ -1678,7 +1762,7 @@ def _build_context_compression_source_entries(history_records: list[Message]) ->
 
     entries: list[dict[str, Any]] = []
     for historical_message in reversed(boundary_records):
-        entries.extend(_build_llm_history_entries(historical_message))
+        entries.extend(_build_llm_history_entries(historical_message, sandbox_enabled=sandbox_enabled))
     return entries
 
 
@@ -2896,6 +2980,7 @@ def _build_chat_history(
     model_name: str,
     model_info_payload: dict[str, Any] | None = None,
     upload_manifests: list[dict[str, Any]] | None = None,
+    sandbox_enabled: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Build the message history sent to the selected backend."""
 
@@ -2926,7 +3011,7 @@ def _build_chat_history(
         .order_by("-created_at", "-id")[:LLM_HISTORY_MAX_MESSAGES]
     ))
     for index, historical_message in enumerate(history_records):
-        entries = _build_llm_history_entries(historical_message)
+        entries = _build_llm_history_entries(historical_message, sandbox_enabled=sandbox_enabled)
         if not entries:
             continue
 
@@ -2940,9 +3025,9 @@ def _build_chat_history(
             overflow_entries.extend(entries)
             for older_message in history_records[index + 1:]:
                 if _message_has_context_compression_summary(older_message):
-                    overflow_entries.extend(_build_llm_history_entries(older_message))
+                    overflow_entries.extend(_build_llm_history_entries(older_message, sandbox_enabled=sandbox_enabled))
                     break
-                overflow_entries.extend(_build_llm_history_entries(older_message))
+                overflow_entries.extend(_build_llm_history_entries(older_message, sandbox_enabled=sandbox_enabled))
             break
 
         selected_history.append(entries)
@@ -2962,7 +3047,10 @@ def _build_chat_history(
     )
     compression_event: dict[str, Any] | None = None
     if overflow_entries and compression.enabled:
-        summary_entries = _build_context_compression_source_entries(history_records)
+        summary_entries = _build_context_compression_source_entries(
+            history_records,
+            sandbox_enabled=sandbox_enabled,
+        )
         if not summary_entries:
             overflow_entries = []
         else:
@@ -3036,7 +3124,12 @@ def _build_chat_history(
     current_entry: dict[str, Any] = {"role": "user", "content": user_message}
     current_attachments = _get_message_attachments(user_message_record)
     current_entry = _apply_attachments_to_llm_entry(current_entry, current_attachments)
-    current_entry = _apply_uploaded_file_manifests_to_llm_entry(current_entry, upload_manifests or [])
+    current_upload_manifests = (
+        upload_manifests
+        if upload_manifests is not None
+        else _load_message_upload_manifests(user_message_record, sandbox_enabled=sandbox_enabled)
+    )
+    current_entry = _apply_uploaded_file_manifests_to_llm_entry(current_entry, current_upload_manifests or [])
     llm_messages.append(current_entry)
 
     return llm_messages, compression_event
@@ -3479,9 +3572,12 @@ def chat_api(request):
         sandbox_enabled = _selected_tools_include_sandbox(selected_tool_servers)
         upload_manifests = _load_model_upload_manifests(uploaded_file_ids, sandbox_enabled=sandbox_enabled)
 
+        persisted_upload_file_ids = _upload_manifest_file_ids(upload_manifests)
+        upload_context_entry = _build_uploaded_file_context_entry(persisted_upload_file_ids)
+
         # Reuse the existing chat when provided, otherwise create a new one.
         try:
-            chat = _resolve_chat(chat_id, user_message, attachments)
+            chat = _resolve_chat(chat_id, user_message, attachments or upload_manifests)
         except LookupError as exc:
             return JsonResponse({"error": str(exc)}, status=404)
 
@@ -3496,6 +3592,7 @@ def chat_api(request):
             chat=chat,
             role="user",
             content=user_message,
+            llm_transcript=[upload_context_entry] if upload_context_entry else [],
         )
         _store_message_attachments(user_message_record, attachments)
         Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
@@ -3519,6 +3616,7 @@ def chat_api(request):
             model_name,
             model_info_payload,
             upload_manifests,
+            sandbox_enabled=sandbox_enabled,
         )
 
         # Split generic options from thinking-specific controls.
@@ -3883,6 +3981,7 @@ def regenerate_chat_api(request, chat_id):
             [server["id"] for server in selected_tool_servers],
             payload=model_info_payload,
         )
+        sandbox_enabled = _selected_tools_include_sandbox(selected_tool_servers)
 
         import json as _json
         active_slug = _json.dumps([s["id"] for s in selected_tool_servers], ensure_ascii=False)
@@ -3898,6 +3997,7 @@ def regenerate_chat_api(request, chat_id):
             engine,
             model_name,
             model_info_payload,
+            sandbox_enabled=sandbox_enabled,
         )
 
         think_value, think_level_value, clean_options = _split_generation_options(
