@@ -76,6 +76,9 @@ export function bindEventHandlers(context, dependencies) {
 
   $(document).on('click', '#contextUsageBtn, #contextUsageBtnConv', function onContextUsageClick(event) {
     event.preventDefault();
+    if ($(this).prop('disabled') || state.isChatGenerating) {
+      return;
+    }
     chatController.triggerContextCompression(true).catch(function onContextCompressionError(error) {
       console.error('Failed to compress context:', error);
     });

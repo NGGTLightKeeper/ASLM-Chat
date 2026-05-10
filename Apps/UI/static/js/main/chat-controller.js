@@ -13,7 +13,10 @@ export function createChatController(context, dependencies) {
     parametersUi
   } = dependencies;
   const { dom, state } = context;
+  const contextUsagePollIntervalMs = 2000;
   let contextUsageTimer = null;
+  let contextUsagePollTimer = null;
+  let contextUsageRefreshPromise = null;
   let contextAutoCompressionAt = 0;
   let contextCompressionInFlight = false;
   let activeGenerationId = '';
@@ -55,6 +58,16 @@ export function createChatController(context, dependencies) {
     });
   }
 
+  function syncContextCompressionButtons() {
+    const disabled = !!state.isChatGenerating || contextCompressionInFlight;
+    contextUsageButtons().forEach(function syncButton($btn) {
+      $btn
+        .prop('disabled', disabled)
+        .toggleClass('is-disabled', disabled)
+        .attr('aria-disabled', disabled ? 'true' : 'false');
+    });
+  }
+
   function setContextUsageUi(payload) {
     const ratio = Math.max(0, Math.min(1, Number(payload && payload.ratio) || 0));
     const percent = Math.round(ratio * 100);
@@ -72,6 +85,7 @@ export function createChatController(context, dependencies) {
           .attr('title', 'Compressing context now. The model is building a structured summary.');
         $btn.find('.context-usage-text').text('compressing...');
       });
+      syncContextCompressionButtons();
       return;
     }
     const observedPrompt = Number(observed.prompt_tokens || 0) || 0;
@@ -120,6 +134,7 @@ export function createChatController(context, dependencies) {
       $btn.attr('title', `${title}${compressionNote}`);
       $btn.find('.context-usage-text').text(showCompressedIndicator ? `${percent}% / compressed` : `${percent}%`);
     });
+    syncContextCompressionButtons();
   }
 
   function setContextCompressionBusy(isBusy) {
@@ -132,24 +147,67 @@ export function createChatController(context, dependencies) {
           .attr('title', 'Compressing context now. The model is building a structured summary.');
         $btn.find('.context-usage-text').text('compressing...');
       });
+      syncContextCompressionButtons();
       return;
     }
     setContextUsageUi(state.contextUsage || {});
   }
 
-  async function refreshContextUsageNow() {
-    try {
-      const payload = await getJson(`/api/context_usage/?engine=${encodeURIComponent(engineManager.getActiveEngine())}&model=${encodeURIComponent(engineManager.getSelectedModelName() || '')}&chat_id=${encodeURIComponent(state.currentChatId || '')}&draft=${encodeURIComponent(String(dom.$chatInput.val() || dom.$chatInputConv.val() || ''))}`);
+  function getContextUsageDraftText(overrideText) {
+    if (overrideText !== undefined && overrideText !== null) {
+      return String(overrideText || '');
+    }
+    const activeInput = dom.$chatInputConv && dom.$chatInputConv.is(':visible')
+      ? dom.$chatInputConv
+      : dom.$chatInput;
+    return String(activeInput && activeInput.length ? activeInput.val() : '');
+  }
+
+  async function refreshContextUsageNow(options) {
+    const refreshOptions = options || {};
+    if (contextUsageRefreshPromise && !refreshOptions.force) {
+      return contextUsageRefreshPromise;
+    }
+
+    const requestPromise = (async function refreshUsage() {
+      const draftText = getContextUsageDraftText(refreshOptions.draftText);
+      const systemPrompt = String(dom.$systemPrompt && dom.$systemPrompt.length ? dom.$systemPrompt.val() : '');
+      const payload = await getJson(`/api/context_usage/?engine=${encodeURIComponent(engineManager.getActiveEngine())}&model=${encodeURIComponent(engineManager.getSelectedModelName() || '')}&chat_id=${encodeURIComponent(state.currentChatId || '')}&draft=${encodeURIComponent(draftText)}&system_prompt=${encodeURIComponent(systemPrompt)}`);
       setContextUsageUi(payload || {});
+      return payload || {};
+    })();
+    contextUsageRefreshPromise = requestPromise;
+
+    try {
+      return await requestPromise;
     } catch (_error) {
       // keep silent for UI telemetry failures
+      return state.contextUsage || {};
+    } finally {
+      if (contextUsageRefreshPromise === requestPromise) {
+        contextUsageRefreshPromise = null;
+      }
     }
   }
 
+  function startContextUsagePolling() {
+    if (contextUsagePollTimer !== null) {
+      return;
+    }
+
+    contextUsagePollTimer = window.setInterval(function pollContextUsage() {
+      refreshContextUsageNow().catch(function ignoreContextUsagePollError() {});
+    }, contextUsagePollIntervalMs);
+  }
+
   async function triggerContextCompression(force) {
+    if (state.isChatGenerating || contextCompressionInFlight) {
+      return { applied: false, reason: 'busy' };
+    }
     if (!state.currentChatId) {
       return { applied: false };
     }
+    const draftText = getContextUsageDraftText();
     const $pendingRow = messagesUi.appendCompressionPending();
     setContextCompressionBusy(true);
     try {
@@ -158,6 +216,7 @@ export function createChatController(context, dependencies) {
         model: engineManager.getSelectedModelName() || '',
         chat_id: state.currentChatId,
         system_prompt: String(dom.$systemPrompt && dom.$systemPrompt.length ? dom.$systemPrompt.val() : ''),
+        draft: draftText,
         force: !!force
       });
       messagesUi.removeCompressionPending($pendingRow);
@@ -177,7 +236,7 @@ export function createChatController(context, dependencies) {
           }
         );
       }
-      await refreshContextUsageNow();
+      await refreshContextUsageNow({ autoCompress: false });
       return payload || { applied: false };
     } catch (error) {
       messagesUi.removeCompressionPending($pendingRow);
@@ -187,8 +246,14 @@ export function createChatController(context, dependencies) {
     }
   }
 
-  async function maybeAutoCompressContextBeforeSend() {
-    const usage = state.contextUsage && typeof state.contextUsage === 'object' ? state.contextUsage : {};
+  async function maybeAutoCompressContextBeforeSend(draftText) {
+    const freshUsage = await refreshContextUsageNow({
+      draftText,
+      force: true
+    });
+    const usage = freshUsage && typeof freshUsage === 'object'
+      ? freshUsage
+      : (state.contextUsage && typeof state.contextUsage === 'object' ? state.contextUsage : {});
     const ratio = Number(usage.ratio || 0);
     const threshold = Number(usage.threshold_ratio || 0.8);
     const shouldCompress = ratio >= Math.max(0.8, threshold);
@@ -202,7 +267,7 @@ export function createChatController(context, dependencies) {
     contextAutoCompressionAt = now;
     try {
       await triggerContextCompression(false);
-      await refreshContextUsageNow();
+      await refreshContextUsageNow({ autoCompress: false });
     } catch (_error) {
       // ignore compression failures in send path
     }
@@ -315,6 +380,9 @@ export function createChatController(context, dependencies) {
       } else if (request.userMessageId) {
         payload.user_message_id = request.userMessageId;
       }
+      if (isRegenerate && request.preserveContextCompression) {
+        payload.preserve_context_compression = true;
+      }
 
       if (request.toolServerIds && request.toolServerIds.length > 0) {
         payload.tool_server_ids = request.toolServerIds;
@@ -366,6 +434,7 @@ export function createChatController(context, dependencies) {
       activeGenerationId = String(response.headers.get('X-Generation-ID') || '').trim();
       if (userMessageId && request.$userRow && request.$userRow.length) {
         request.$userRow.attr('data-message-id', userMessageId);
+        request.userMessageId = userMessageId;
       }
       if (assistantMessageId && $msgRow && $msgRow.length) {
         $msgRow.attr('data-message-id', assistantMessageId);
@@ -503,6 +572,9 @@ export function createChatController(context, dependencies) {
         }
         reader.releaseLock();
       }
+      return {
+        restartAfterCompression: /"restart_generation"\s*:\s*true/.test(fullText)
+      };
     } catch (error) {
       if (error.name !== 'AbortError') {
         $bubbleContent.html(`[Error: failed to connect to server - ${error.message}]`);
@@ -511,6 +583,7 @@ export function createChatController(context, dependencies) {
       state.currentAbortController = null;
       activeGenerationId = '';
     }
+    return { restartAfterCompression: false };
   }
 
   // Process the next queued request if generation is idle.
@@ -527,13 +600,23 @@ export function createChatController(context, dependencies) {
     state.isChatGenerating = true;
     messagesUi.setQueuedMessageState(request.$userRow, false);
     messagesUi.updateSendButtons();
+    syncContextCompressionButtons();
 
     const $assistantRow = messagesUi.appendTyping();
     $assistantRow.data('reasoningModeEnabled', !!request.reasoningModeEnabled);
     messagesUi.scrollBottom();
 
     try {
-      await streamChat(request, $assistantRow);
+      const streamResult = await streamChat(request, $assistantRow);
+      if (streamResult && streamResult.restartAfterCompression && request.$userRow && request.$userRow.length) {
+        const continuationRequest = buildQueuedRequest('', []);
+        continuationRequest.regenerate = true;
+        continuationRequest.preserveContextCompression = true;
+        continuationRequest.chatId = state.currentChatId;
+        continuationRequest.userMessageId = request.userMessageId || request.$userRow.attr('data-message-id') || null;
+        continuationRequest.$userRow = request.$userRow;
+        state.chatRequestQueue.unshift(continuationRequest);
+      }
     } finally {
       if ($assistantRow.find('.msg-actions').length === 0) {
         $assistantRow.find('.msg-body').append(context.icons.buildMessageActionsHtml());
@@ -542,6 +625,7 @@ export function createChatController(context, dependencies) {
       messagesUi.updateRegenButtons();
       state.isChatGenerating = false;
       messagesUi.updateSendButtons();
+      syncContextCompressionButtons();
       if (clearCompressedIndicatorAfterNextAssistant) {
         hideCompressedIndicator = true;
         clearCompressedIndicatorAfterNextAssistant = false;
@@ -632,7 +716,7 @@ export function createChatController(context, dependencies) {
       clearCompressedIndicatorAfterNextAssistant = false;
       setContextUsageUi(state.contextUsage || {});
     }
-    await maybeAutoCompressContextBeforeSend();
+    await maybeAutoCompressContextBeforeSend(text);
 
     const attachmentsToSend = clonePendingAttachments(state.attachmentState.pending);
     const queued = state.isChatGenerating || state.chatRequestQueue.length > 0;
@@ -666,6 +750,7 @@ export function createChatController(context, dependencies) {
 
     state.isChatGenerating = false;
     messagesUi.updateSendButtons();
+    syncContextCompressionButtons();
 
     fetch('/api/chat/abort/', {
       method: 'POST',
@@ -924,6 +1009,7 @@ export function createChatController(context, dependencies) {
     startNewChat,
     wireInput,
     refreshContextUsageNow,
+    startContextUsagePolling,
     triggerContextCompression
   };
 }

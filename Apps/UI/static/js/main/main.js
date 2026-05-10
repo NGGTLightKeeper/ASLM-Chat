@@ -54,6 +54,7 @@ $(function initChatApp() {
   chatController.wireInput(context.dom.$chatInputConv, context.dom.$sendBtnConv);
   messagesUi.updateSendButtons();
   chatController.refreshContextUsageNow();
+  chatController.startContextUsagePolling();
 
   // Restore a preloaded chat when the page was opened on /chat/<id>/.
   const preloadChatId = context.dom.$body.data('preload-chat');

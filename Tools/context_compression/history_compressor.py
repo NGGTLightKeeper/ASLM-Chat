@@ -235,7 +235,7 @@ def _clean_memory_text(text: str) -> str:
 def _entry_memory_text(entry: dict[str, Any], max_chars: int = MEMORY_ENTRY_MAX_CHARS) -> str:
     role = str(entry.get("role") or "unknown").lower()
     content = _clean_memory_text(str(entry.get("content") or ""))
-    thinking = _clean_memory_text(str(entry.get("thinking") or ""))
+    thinking = "" if role == "assistant" else _clean_memory_text(str(entry.get("thinking") or ""))
     raw = "\n".join(part for part in (content, thinking) if part).strip()
     if not raw:
         return f"{role}:"
@@ -374,6 +374,50 @@ def _sanitize_semantic_items(
             text = text[:max_chars].rstrip() + "..."
         cleaned.append(text)
     return _dedupe_strings(cleaned, limit=limit)
+
+
+def _looks_like_reasoning_fragment(text: str) -> bool:
+    lowered = re.sub(r"\s+", " ", str(text or "").strip().lower())
+    if not lowered:
+        return False
+    reasoning_starts = (
+        "we need",
+        "now ",
+        "wait ",
+        "check ",
+        "let's ",
+        "i need",
+        "need to ",
+        "maybe ",
+        "probably ",
+    )
+    return lowered.startswith(reasoning_starts) or lowered.endswith("...")
+
+
+def _sanitize_open_tasks(values: list[Any], *, limit: int = 12) -> list[str]:
+    tasks: list[str] = []
+    for value in values:
+        text = _clean_memory_text(str(value or ""))
+        if not text:
+            continue
+        if _looks_like_reasoning_fragment(text):
+            continue
+        lowered = text.lower()
+        if any(marker in lowered for marker in ("wait we", "now combine", "check balancing", "we need to")):
+            continue
+        if len(text) > ANALYTIC_ENTRY_MAX_CHARS:
+            text = text[:ANALYTIC_ENTRY_MAX_CHARS].rstrip() + "..."
+        tasks.append(text)
+    return _dedupe_strings(tasks, limit=limit)
+
+
+def _fallback_open_task_from_goal(goal: str) -> str:
+    clean_goal = _clean_memory_text(str(goal or "")).strip()
+    if not clean_goal:
+        return ""
+    if len(clean_goal) > 180:
+        clean_goal = clean_goal[:180].rstrip() + "..."
+    return f"Check the current result and complete the remaining user goal requirements: {clean_goal}"
 
 
 def _dedupe_strings(values: list[str], *, limit: int = 64) -> list[str]:
@@ -641,7 +685,7 @@ def _deterministic_memory_payload(
     for entry in overflow_entries:
         role = str(entry.get("role") or "").strip().lower()
         content = _strip_control_tokens(str(entry.get("content") or ""))
-        thinking = _strip_control_tokens(str(entry.get("thinking") or ""))
+        thinking = "" if role == "assistant" else _strip_control_tokens(str(entry.get("thinking") or ""))
         text = "\n".join(part for part in (content, thinking) if part).strip()
         if not text:
             continue
@@ -668,9 +712,9 @@ def _deterministic_memory_payload(
                 continue
             if any(marker in lowered for marker in ("i chose", "chosen", "selected", "decided", "because", "best", "recommended", "recommendation", "top-", "therefore")):
                 decisions.append(line[:420])
-            if (
+            if role == "user" and (
                 lowered.startswith(("todo", "next:", "next step", "open task"))
-                or any(marker in lowered for marker in ("need to", "needs to", "still need", "remaining task"))
+                or any(marker in lowered for marker in ("need you to", "still need", "remaining task"))
             ):
                 open_tasks.append(line[:360])
             if "risk_flags" not in lowered and any(marker in lowered for marker in ("risk", "danger", "problem", "bug", "blocked")):
@@ -703,10 +747,15 @@ def _deterministic_memory_payload(
     if not key_facts:
         key_facts = _heuristic_key_facts(overflow_entries, recent_user_messages, direct_user_directives)
     work_summary = _deterministic_work_summary(overflow_entries, recent_user_messages, direct_user_directives)
+    sanitized_open_tasks = _sanitize_open_tasks(open_tasks, limit=12)
+    if not sanitized_open_tasks and latest_user:
+        fallback_task = _fallback_open_task_from_goal(latest_user)
+        if fallback_task:
+            sanitized_open_tasks = [fallback_task]
     reflection_summary = _deterministic_reflection_summary(
         key_facts=key_facts,
         risk_flags=risk_flags,
-        open_tasks=open_tasks,
+        open_tasks=sanitized_open_tasks,
         work_summary=work_summary,
     )
     return {
@@ -722,7 +771,7 @@ def _deterministic_memory_payload(
             "urls": _dedupe_strings(urls, limit=24),
             "tools_used": _dedupe_strings(tools_used, limit=32),
         },
-        "open_tasks": _sanitize_semantic_items(open_tasks, limit=12, max_chars=ANALYTIC_ENTRY_MAX_CHARS),
+        "open_tasks": sanitized_open_tasks,
         "risk_flags": _sanitize_semantic_items(risk_flags, limit=12, max_chars=ANALYTIC_ENTRY_MAX_CHARS),
         "source_memory": _sanitize_semantic_items(source_memory, limit=96, max_chars=MEMORY_ENTRY_MAX_CHARS, allow_tool_memory=True),
     }
@@ -761,6 +810,13 @@ def _merge_summary_payload(model_payload: dict[str, Any], deterministic: dict[st
     for key, (limit, max_chars, allow_tool_memory) in semantic_limits.items():
         values = merged.get(key) if isinstance(merged.get(key), list) else []
         fallback = deterministic.get(key) if isinstance(deterministic.get(key), list) else []
+        if key == "open_tasks":
+            merged[key] = _sanitize_open_tasks([*values, *fallback], limit=limit)
+            if not merged[key]:
+                fallback_task = _fallback_open_task_from_goal(str(merged.get("current_focus") or merged.get("session_goal") or ""))
+                if fallback_task:
+                    merged[key] = [fallback_task]
+            continue
         merged[key] = _sanitize_semantic_items(
             [*values, *fallback],
             limit=limit,
@@ -985,9 +1041,12 @@ def build_structured_history_summary(
                     "- work_summary must be a detailed narrative block (multi-sentence, chronological) describing what happened in the dialogue, which tools were used, what failed, what was fixed, and what remains.\n"
                     "- reflection_summary must be a concise analytical reflection: what is reliable, what is uncertain, key risks, and the best next-step strategy.\n"
                     "- Fill each field by semantics, not by keyword matching.\n"
+                    "- Treat assistant reasoning/thinking as unreliable scratchpad; do not copy it into open_tasks, key_facts, or risk_flags unless the final visible answer or user explicitly confirms it.\n"
                     "- key_facts must contain task parameters and extracted domain facts only; never copy user messages verbatim into key_facts.\n"
                     "- decisions_and_rationale must contain only actual decisions plus why they were made; leave it empty if no decision exists.\n"
-                    "- open_tasks must contain only unfinished user goals or concrete next actions; leave it empty if none exist.\n"
+                    "- open_tasks must contain model-generated next actions, not copied reasoning. If the latest user goal is not explicitly confirmed complete by the user, write at least one concrete verification or continuation task.\n"
+                    "- Leave open_tasks empty only when the user explicitly confirmed the goal is complete or there is truly no actionable next step.\n"
+                    "- Never put partial thought fragments in open_tasks (examples: \"We need...\", \"Now combine...\", \"Wait...\", \"Check balancing...\").\n"
                     "- risk_flags must contain only warnings that affect future work; leave it empty if none exist.\n"
                     "- Do not put raw search snippets, citation instructions, terminal logs, tool JSON, diffs, or page dumps into any field.\n"
                     "- source_memory must preserve curated detailed excerpts from important user/assistant turns only; never store entries beginning with tool:.\n"

@@ -528,6 +528,8 @@ LLM_HISTORY_COMPRESSION_MAX_LINES = 120
 LLM_HISTORY_COMPRESSION_MAX_ITEMS = 120
 LLM_HISTORY_COMPRESSION_RECENT_USER_MESSAGES = 5
 LLM_HISTORY_COMPRESSION_DIRECTIVE_MESSAGES = 20
+STREAMING_ASSISTANT_SNAPSHOT_INTERVAL_SECONDS = 1.0
+STREAMING_ASSISTANT_SNAPSHOT_MIN_CHAR_DELTA = 256
 MODEL_INFO_CACHE_TTL_SECONDS = 300
 MODEL_LIST_CACHE_TTL_SECONDS = 45
 MODEL_RUNTIME_METADATA_PATH = settings.BASE_DIR / "Tools" / "model_runtime_metadata.json"
@@ -557,6 +559,7 @@ _favicon_cache_lock = threading.RLock()
 _favicon_cache: dict[str, tuple[float, str, bytes]] = {}
 _generation_state_lock = threading.RLock()
 _active_generation_id_by_engine: dict[str, str] = {}
+_active_generation_id_by_chat_id: dict[str, str] = {}
 FAVICON_CACHE_DIR = settings.BASE_DIR / "Data" / "favicon_cache"
 FAVICON_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 FAVICON_NEGATIVE_CACHE_TTL_SECONDS = 60 * 60
@@ -1879,6 +1882,45 @@ def _extract_stream_message_parts(chunk: Any) -> tuple[str, str]:
     return _strip_llm_control_tokens(str(thinking_part)), _strip_llm_control_tokens(str(text_part))
 
 
+def _copy_transcript_entries_for_storage(transcript_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return transcript entries safe to persist while a response is streaming."""
+
+    entries: list[dict[str, Any]] = []
+    for entry in transcript_entries:
+        if isinstance(entry, dict):
+            entries.append(copy.deepcopy(entry))
+    return entries
+
+
+def _build_streaming_assistant_transcript(
+    transcript_entries: list[dict[str, Any]],
+    *,
+    visible_content: str,
+    thinking_content: str,
+) -> list[dict[str, Any]]:
+    """Overlay streamed assistant text onto machine transcript entries."""
+
+    entries = _copy_transcript_entries_for_storage(transcript_entries)
+    has_assistant_content = False
+    has_assistant_thinking = False
+    for entry in entries:
+        if str(entry.get("role") or "").strip().lower() != "assistant":
+            continue
+        if _strip_llm_control_tokens(str(entry.get("content") or "")).strip():
+            has_assistant_content = True
+        if _strip_llm_control_tokens(str(entry.get("thinking") or "")).strip():
+            has_assistant_thinking = True
+
+    buffered_entry: dict[str, Any] = {"role": "assistant", "content": ""}
+    if visible_content and not has_assistant_content:
+        buffered_entry["content"] = visible_content
+    if thinking_content and not has_assistant_thinking:
+        buffered_entry["thinking"] = thinking_content
+    if buffered_entry.get("content") or buffered_entry.get("thinking"):
+        entries.append(buffered_entry)
+    return entries
+
+
 # Serialize tool marker
 def _serialize_tool_call_marker(tool_event: dict[str, Any]) -> str:
     """Encode a tool invocation into an inline marker understood by the frontend."""
@@ -2550,17 +2592,25 @@ def _store_message_attachments(message_record: Message, attachments: list[dict[s
 
 
 # Resolve a bounded history budget from model metadata.
-def _resolve_history_char_budget(model_info_payload: dict[str, Any] | None) -> int:
+def _resolve_history_char_budget(
+    model_info_payload: dict[str, Any] | None,
+    *,
+    active_engine: str = "",
+    active_model: str = "",
+    observed_chars_per_token: float | None = None,
+) -> int:
     """Return an approximate character budget for replayed chat history."""
 
     context_length = _context_window_tokens_from_model_info(model_info_payload)
-    if context_length <= 0:
-        return LLM_HISTORY_DEFAULT_CHAR_BUDGET
-
-    # Approximate one token as a few characters. Do not clamp large-context
-    # models to the legacy local budget; compression should follow the model's
-    # real context window.
-    return max(16000, context_length * 3)
+    return _history_char_budget_from_context_window(
+        context_length,
+        model_info_payload=model_info_payload,
+        active_engine=active_engine,
+        active_model=active_model,
+        observed_chars_per_token=observed_chars_per_token,
+        minimum_chars=16000,
+        fallback_chars=LLM_HISTORY_DEFAULT_CHAR_BUDGET,
+    )
 
 
 # Estimate the prompt cost of one normalized LLM entry.
@@ -2625,6 +2675,53 @@ def _model_chars_per_token_hint(
     return base_ratio
 
 
+def _effective_chars_per_token_hint(
+    *,
+    model_info_payload: dict[str, Any] | None,
+    active_engine: str,
+    active_model: str,
+    observed_chars_per_token: float | None = None,
+) -> float:
+    """Return the chars/token ratio shared by usage telemetry and compression."""
+
+    base_ratio = _model_chars_per_token_hint(
+        model_info_payload=model_info_payload,
+        active_engine=active_engine,
+        active_model=active_model,
+    )
+    if isinstance(observed_chars_per_token, (int, float)) and observed_chars_per_token > 0:
+        base_ratio = (base_ratio * 0.35) + (float(observed_chars_per_token) * 0.65)
+    return float(max(1.4, min(4.0, base_ratio)))
+
+
+def _history_char_budget_from_context_window(
+    context_window_tokens: int,
+    *,
+    model_info_payload: dict[str, Any] | None,
+    active_engine: str,
+    active_model: str,
+    observed_chars_per_token: float | None = None,
+    minimum_chars: int = 16000,
+    fallback_chars: int = LLM_HISTORY_DEFAULT_CHAR_BUDGET,
+) -> int:
+    """Convert a token context window into the same char budget the UI estimates."""
+
+    try:
+        tokens = max(0, int(context_window_tokens))
+    except (TypeError, ValueError):
+        tokens = 0
+    if tokens <= 0:
+        return fallback_chars
+
+    chars_per_token = _effective_chars_per_token_hint(
+        model_info_payload=model_info_payload,
+        active_engine=active_engine,
+        active_model=active_model,
+        observed_chars_per_token=observed_chars_per_token,
+    )
+    return max(int(minimum_chars), int(tokens * chars_per_token))
+
+
 def _estimate_tokens_adaptive(
     *,
     char_count: int,
@@ -2642,18 +2739,15 @@ def _estimate_tokens_adaptive(
     if chars <= 0:
         return 0
 
-    base_ratio = _model_chars_per_token_hint(
+    base_ratio = _effective_chars_per_token_hint(
         model_info_payload=model_info_payload,
         active_engine=active_engine,
         active_model=active_model,
+        observed_chars_per_token=observed_chars_per_token,
     )
-    if isinstance(observed_chars_per_token, (int, float)) and observed_chars_per_token > 0:
-        # Blend toward observed runtime behavior per chat/model.
-        base_ratio = (base_ratio * 0.35) + (float(observed_chars_per_token) * 0.65)
 
     # Keep estimator sane and stable across outlier payloads.
-    ratio = max(1.4, min(4.0, base_ratio))
-    return max(1, int(round(chars / ratio)))
+    return max(1, int(round(chars / base_ratio)))
 
 
 def _context_window_tokens_from_model_info(model_info_payload: dict[str, Any] | None) -> int:
@@ -2736,10 +2830,11 @@ def _estimate_context_usage(
         active_engine=active_engine,
         active_model=active_model,
     )
-    effective_chars_per_token = (
-        ((base_chars_per_token * 0.35) + (observed_chars_per_token * 0.65))
-        if isinstance(observed_chars_per_token, (int, float)) and observed_chars_per_token > 0
-        else base_chars_per_token
+    effective_chars_per_token = _effective_chars_per_token_hint(
+        model_info_payload=model_info_payload,
+        active_engine=active_engine,
+        active_model=active_model,
+        observed_chars_per_token=observed_chars_per_token,
     )
     estimated_used_tokens = _estimate_tokens_adaptive(
         char_count=used_chars,
@@ -2757,7 +2852,7 @@ def _estimate_context_usage(
         "ratio": ratio,
         "compressed_context_active": compressed_context_active,
         "base_chars_per_token": float(base_chars_per_token),
-        "effective_chars_per_token": float(max(1.4, min(4.0, effective_chars_per_token))),
+        "effective_chars_per_token": float(effective_chars_per_token),
         "observed_chars_per_token": float(observed_chars_per_token) if isinstance(observed_chars_per_token, (int, float)) and observed_chars_per_token > 0 else None,
     }
 
@@ -2770,10 +2865,25 @@ def _build_manual_compression_event(
     model_name: str,
     model_info_payload: dict[str, Any] | None,
     force: bool,
+    draft_text: str = "",
+    exclude_message_ids: set[int | str] | None = None,
+    summarize_with_model_enabled: bool = True,
 ) -> dict[str, Any] | None:
     """Build one compression event payload for manual/auto UI-triggered compression."""
 
-    history_budget = _resolve_history_char_budget(model_info_payload)
+    observed_chars_per_token: float | None = None
+    with _chat_usage_lock:
+        observed = dict(_chat_usage_by_chat_id.get(str(chat.id), {}))
+    raw_observed_chars_per_token = observed.get("observed_chars_per_token")
+    if isinstance(raw_observed_chars_per_token, (int, float)) and raw_observed_chars_per_token > 0:
+        observed_chars_per_token = float(raw_observed_chars_per_token)
+
+    history_budget = _resolve_history_char_budget(
+        model_info_payload,
+        active_engine=engine,
+        active_model=model_name,
+        observed_chars_per_token=observed_chars_per_token,
+    )
     runtime_context_tokens = resolve_context_window_tokens(
         model_info_payload,
         runtime_metadata_path=MODEL_RUNTIME_METADATA_PATH,
@@ -2781,17 +2891,29 @@ def _build_manual_compression_event(
         active_model=model_name,
     )
     if runtime_context_tokens > 0:
-        runtime_budget = max(12000, runtime_context_tokens * 3)
+        runtime_budget = _history_char_budget_from_context_window(
+            runtime_context_tokens,
+            model_info_payload=model_info_payload,
+            active_engine=engine,
+            active_model=model_name,
+            observed_chars_per_token=observed_chars_per_token,
+            minimum_chars=12000,
+            fallback_chars=history_budget,
+        )
         history_budget = min(history_budget, runtime_budget)
 
-    used_history_chars = len(str(system_prompt or ""))
+    used_history_chars = len(str(system_prompt or "")) + len(str(draft_text or ""))
     selected_history: list[list[dict[str, Any]]] = []
     overflow_entries: list[dict[str, Any]] = []
-    history_records = list(
-        chat.messages
-        .prefetch_related("attachments", "images")
-        .order_by("-created_at", "-id")[:LLM_HISTORY_MAX_MESSAGES]
-    )
+    history_qs = chat.messages.prefetch_related("attachments", "images")
+    excluded_ids = {
+        str(value)
+        for value in (exclude_message_ids or set())
+        if value is not None and str(value).strip()
+    }
+    if excluded_ids:
+        history_qs = history_qs.exclude(id__in=excluded_ids)
+    history_records = list(history_qs.order_by("-created_at", "-id")[:LLM_HISTORY_MAX_MESSAGES])
     for index, historical_message in enumerate(history_records):
         entries = _build_llm_history_entries(historical_message)
         if not entries:
@@ -2833,7 +2955,18 @@ def _build_manual_compression_event(
         debug_force_4k=False,
         trigger_ratio=LLM_HISTORY_COMPRESSION_TRIGGER_RATIO,
     )
+    if (force or compression.enabled) and not overflow_entries and len(history_records) > 1:
+        keep_recent_count = min(LLM_HISTORY_MIN_MESSAGES, max(1, len(history_records) - 1))
+        for older_message in history_records[keep_recent_count:]:
+            entries = _build_llm_history_entries(older_message)
+            if entries:
+                overflow_entries.extend(entries)
+            if _message_has_context_compression_summary(older_message):
+                break
+
     summary_entries = _build_context_compression_source_entries(history_records)
+    if compression.enabled and not overflow_entries and summary_entries:
+        overflow_entries = list(summary_entries)
     if force and not overflow_entries:
         overflow_entries = list(summary_entries)
     if force and not summary_entries:
@@ -2848,17 +2981,21 @@ def _build_manual_compression_event(
         if str(message.content or "").strip()
     ]
     direct_user_directives = _collect_direct_user_directives(chat, exclude_message_id=0)
+    summarize_with_model_callback = None
+    if summarize_with_model_enabled:
+        summarize_with_model_callback = lambda prompt_messages: _generate_history_summary_with_model(
+            engine=engine,
+            model_name=model_name,
+            prompt_messages=prompt_messages,
+            model_info_payload=model_info_payload,
+        )
+
     try:
         summary_text, summary_payload = build_structured_history_summary(
             overflow_entries=summary_entries,
             recent_user_messages=recent_user_messages,
             direct_user_directives=direct_user_directives,
-            summarize_with_model=lambda prompt_messages: _generate_history_summary_with_model(
-                engine=engine,
-                model_name=model_name,
-                prompt_messages=prompt_messages,
-                model_info_payload=model_info_payload,
-            ),
+            summarize_with_model=summarize_with_model_callback,
             max_overflow_entries=LLM_HISTORY_COMPRESSION_MAX_ITEMS,
         )
     except Exception:
@@ -2988,7 +3125,19 @@ def _build_chat_history(
     if system_prompt:
         llm_messages.append({"role": "system", "content": system_prompt})
 
-    history_budget = _resolve_history_char_budget(model_info_payload)
+    observed_chars_per_token: float | None = None
+    with _chat_usage_lock:
+        observed = dict(_chat_usage_by_chat_id.get(str(chat.id), {}))
+    raw_observed_chars_per_token = observed.get("observed_chars_per_token")
+    if isinstance(raw_observed_chars_per_token, (int, float)) and raw_observed_chars_per_token > 0:
+        observed_chars_per_token = float(raw_observed_chars_per_token)
+
+    history_budget = _resolve_history_char_budget(
+        model_info_payload,
+        active_engine=engine,
+        active_model=model_name,
+        observed_chars_per_token=observed_chars_per_token,
+    )
     debug_force_4k = str(os.getenv("ASLM_DEBUG_CONTEXT_COMPRESSION_4K", "")).strip().lower() in {"1", "true", "yes", "on"}
     runtime_context_tokens = resolve_context_window_tokens(
         model_info_payload,
@@ -2999,9 +3148,27 @@ def _build_chat_history(
     if debug_force_4k:
         runtime_context_tokens = 4096
     if runtime_context_tokens > 0:
-        runtime_budget = max(12000, runtime_context_tokens * 3)
+        runtime_budget = _history_char_budget_from_context_window(
+            runtime_context_tokens,
+            model_info_payload=model_info_payload,
+            active_engine=engine,
+            active_model=model_name,
+            observed_chars_per_token=observed_chars_per_token,
+            minimum_chars=12000,
+            fallback_chars=history_budget,
+        )
         history_budget = min(history_budget, runtime_budget)
-    used_history_chars = 0
+    current_entry: dict[str, Any] = {"role": "user", "content": user_message}
+    current_attachments = _get_message_attachments(user_message_record)
+    current_entry = _apply_attachments_to_llm_entry(current_entry, current_attachments)
+    current_upload_manifests = (
+        upload_manifests
+        if upload_manifests is not None
+        else _load_message_upload_manifests(user_message_record, sandbox_enabled=sandbox_enabled)
+    )
+    current_entry = _apply_uploaded_file_manifests_to_llm_entry(current_entry, current_upload_manifests or [])
+
+    used_history_chars = len(str(system_prompt or "")) + _estimate_llm_entry_chars(current_entry)
     selected_history: list[list[dict[str, Any]]] = []
     overflow_entries: list[dict[str, Any]] = []
     history_records = list((
@@ -3046,15 +3213,18 @@ def _build_chat_history(
         trigger_ratio=LLM_HISTORY_COMPRESSION_TRIGGER_RATIO,
     )
     compression_event: dict[str, Any] | None = None
+    summary_entries = _build_context_compression_source_entries(
+        history_records,
+        sandbox_enabled=sandbox_enabled,
+    )
     if overflow_entries and compression.enabled:
-        summary_entries = _build_context_compression_source_entries(
-            history_records,
-            sandbox_enabled=sandbox_enabled,
-        )
         if not summary_entries:
             overflow_entries = []
         else:
             overflow_entries = summary_entries
+    if compression.enabled and not overflow_entries and summary_entries:
+        overflow_entries = list(summary_entries)
+        selected_history = []
     if overflow_entries and compression.enabled:
         recent_user_messages = _collect_recent_user_messages(chat, user_message_record.id)
         direct_user_directives = _collect_direct_user_directives(chat, user_message_record.id)
@@ -3121,15 +3291,6 @@ def _build_chat_history(
     for entries in reversed(selected_history):
         llm_messages.extend(entries)
 
-    current_entry: dict[str, Any] = {"role": "user", "content": user_message}
-    current_attachments = _get_message_attachments(user_message_record)
-    current_entry = _apply_attachments_to_llm_entry(current_entry, current_attachments)
-    current_upload_manifests = (
-        upload_manifests
-        if upload_manifests is not None
-        else _load_message_upload_manifests(user_message_record, sandbox_enabled=sandbox_enabled)
-    )
-    current_entry = _apply_uploaded_file_manifests_to_llm_entry(current_entry, current_upload_manifests or [])
     llm_messages.append(current_entry)
 
     return llm_messages, compression_event
@@ -3218,6 +3379,9 @@ def _stream_chat_response(
     assistant_message_record: Message,
     generation_id: str,
     compression_event: dict[str, Any] | None = None,
+    model_info_payload: dict[str, Any] | None = None,
+    system_prompt: str = "",
+    current_user_message_id: int | str | None = None,
 ):
     """Stream visible content and persist the machine transcript."""
 
@@ -3227,6 +3391,7 @@ def _stream_chat_response(
     usage_snapshot: dict[str, Any] = {}
     is_thinking = False
     failed = False
+    restart_after_stream_compression = False
     started_at = time.perf_counter()
     model_name = str(generate_kwargs.get("model_name", "") or "")
     llm_messages = generate_kwargs.get("messages", [])
@@ -3240,6 +3405,119 @@ def _stream_chat_response(
     raw_options = generate_kwargs.get("options", {})
     raw_think_value = generate_kwargs.get("think")
     emit_thinking = raw_think_value is not False and str(raw_think_value).strip().lower() not in {"false", "0", "off", "no"}
+    last_snapshot_at = 0.0
+    last_snapshot_chars = 0
+    stream_compression_applied = isinstance(compression_event, dict)
+
+    def current_stream_context_text() -> str:
+        """Return current in-flight assistant text for compression estimates."""
+
+        parts = [
+            _strip_llm_control_tokens("".join(thinking_parts)).strip(),
+            _strip_llm_control_tokens("".join(visible_parts)).strip(),
+        ]
+        for entry in transcript_entries:
+            if not isinstance(entry, dict):
+                continue
+            role = str(entry.get("role") or "").strip().lower()
+            if role == "assistant":
+                parts.append(_strip_llm_control_tokens(str(entry.get("thinking") or "")).strip())
+                parts.append(_strip_llm_control_tokens(str(entry.get("content") or "")).strip())
+            elif role == "tool" and str(entry.get("alias") or "") != "context_compression_summary":
+                parts.append(_strip_llm_control_tokens(str(entry.get("content") or "")).strip())
+        return "\n".join(part for part in parts if part)
+
+    def persist_stream_snapshot(*, force: bool = False) -> None:
+        """Persist the in-flight assistant buffer so reloads/compression see it."""
+
+        nonlocal last_snapshot_at, last_snapshot_chars
+
+        visible_content = _strip_llm_control_tokens("".join(visible_parts)).strip()
+        thinking_content = _strip_llm_control_tokens("".join(thinking_parts)).strip()
+        transcript_snapshot = _build_streaming_assistant_transcript(
+            transcript_entries,
+            visible_content=visible_content,
+            thinking_content=thinking_content,
+        )
+        snapshot_chars = len(visible_content) + len(thinking_content) + sum(
+            len(str(entry.get("content") or "")) + len(str(entry.get("thinking") or ""))
+            for entry in transcript_snapshot
+            if isinstance(entry, dict)
+        )
+        if not snapshot_chars:
+            return
+
+        now = time.perf_counter()
+        if (
+            not force
+            and last_snapshot_chars > 0
+            and now - last_snapshot_at < STREAMING_ASSISTANT_SNAPSHOT_INTERVAL_SECONDS
+            and snapshot_chars - last_snapshot_chars < STREAMING_ASSISTANT_SNAPSHOT_MIN_CHAR_DELTA
+        ):
+            return
+
+        try:
+            assistant_message_record.content = visible_content
+            assistant_message_record.llm_transcript = transcript_snapshot
+            assistant_message_record.save(update_fields=["content", "llm_transcript"])
+            Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
+            last_snapshot_at = now
+            last_snapshot_chars = snapshot_chars
+        except Exception:
+            logger.exception("Failed to persist streaming assistant snapshot")
+
+    def maybe_apply_stream_context_compression(trigger: str, extra_context_text: str = "") -> str:
+        """Build and persist one automatic compression marker at safe stream points."""
+
+        nonlocal restart_after_stream_compression, stream_compression_applied
+
+        if stream_compression_applied:
+            return ""
+
+        draft_text = "\n".join(
+            part
+            for part in (
+                current_stream_context_text(),
+                _strip_llm_control_tokens(str(extra_context_text or "")).strip(),
+            )
+            if part
+        )
+
+        excluded_message_ids: set[int | str] = {assistant_message_record.id}
+        if current_user_message_id is not None:
+            excluded_message_ids.add(current_user_message_id)
+        event = _build_manual_compression_event(
+            chat=chat,
+            system_prompt=system_prompt,
+            draft_text=draft_text,
+            engine=engine,
+            model_name=model_name,
+            model_info_payload=model_info_payload,
+            force=False,
+            exclude_message_ids=excluded_message_ids,
+            summarize_with_model_enabled=False,
+        )
+        if not event:
+            return ""
+
+        arguments = event.get("arguments")
+        if isinstance(arguments, dict):
+            arguments["auto_trigger"] = trigger
+            arguments["streaming"] = True
+            arguments["restart_generation"] = True
+        Message.objects.create(
+            chat=chat,
+            role="assistant",
+            content="",
+            llm_transcript=[event],
+        )
+        stream_compression_applied = True
+        try:
+            llm_api.abort_generation(engine)
+        except Exception:
+            logger.exception("Failed to abort generation after streaming compression")
+        restart_after_stream_compression = True
+        return _serialize_context_compression_marker(event)
 
     _print_runtime_event(
         "Chat started: "
@@ -3260,8 +3538,10 @@ def _stream_chat_response(
     try:
         with _generation_state_lock:
             _active_generation_id_by_engine[str(engine)] = str(generation_id or "")
+            _active_generation_id_by_chat_id[str(chat.id)] = str(generation_id or "")
         if isinstance(compression_event, dict):
             transcript_entries.append(compression_event)
+            persist_stream_snapshot(force=True)
             yield _serialize_context_compression_marker(compression_event)
 
         llm_api.prepare_runtime(engine)
@@ -3272,16 +3552,34 @@ def _stream_chat_response(
             if isinstance(chunk, dict) and chunk.get("transcript_message"):
                 transcript_message = chunk["transcript_message"]
                 if isinstance(transcript_message, dict):
+                    transcript_thinking = _strip_llm_control_tokens(str(transcript_message.get("thinking") or "")).strip()
                     if not emit_thinking and transcript_message.get("thinking"):
                         transcript_message = {**transcript_message}
                         transcript_message.pop("thinking", None)
                     transcript_entries.append(transcript_message)
+                    persist_stream_snapshot()
+                    transcript_trigger = ""
+                    transcript_trigger_context = transcript_thinking
+                    if transcript_thinking:
+                        transcript_trigger = "reasoning"
+                    elif transcript_message.get("tool_calls"):
+                        transcript_trigger = "tool_call"
+                        transcript_trigger_context = json.dumps(transcript_message.get("tool_calls"), ensure_ascii=False)
+                    if transcript_trigger:
+                        compression_marker = maybe_apply_stream_context_compression(
+                            transcript_trigger,
+                            extra_context_text=transcript_trigger_context,
+                        )
+                        if compression_marker:
+                            yield compression_marker
+                            break
                 continue
 
             if isinstance(chunk, dict) and chunk.get("tool_result"):
                 tool_message = chunk["tool_result"]
                 if isinstance(tool_message, dict):
                     transcript_entries.append(tool_message)
+                    persist_stream_snapshot()
                     alias = str(tool_message.get("alias") or tool_message.get("tool_id") or tool_message.get("name") or "")
                     content = str(tool_message.get("content") or "")
                     tool_ui = tool_message.get("tool_ui") if isinstance(tool_message.get("tool_ui"), dict) else None
@@ -3296,6 +3594,10 @@ def _stream_chat_response(
                         tool_ui=tool_ui,
                         structured_content=structured_content,
                     )
+                    compression_marker = maybe_apply_stream_context_compression("tool_result")
+                    if compression_marker:
+                        yield compression_marker
+                        break
                 continue
 
             if isinstance(chunk, dict) and isinstance(chunk.get("tool_events"), list):
@@ -3309,6 +3611,13 @@ def _stream_chat_response(
                 ]
                 if markers:
                     yield "".join(markers)
+                compression_marker = maybe_apply_stream_context_compression(
+                    "tool_call",
+                    extra_context_text=json.dumps(chunk["tool_events"], ensure_ascii=False),
+                )
+                if compression_marker:
+                    yield compression_marker
+                    break
                 continue
 
             # Tool events are sent as inline markers for the frontend.
@@ -3317,6 +3626,13 @@ def _stream_chat_response(
                     is_thinking = False
                     yield "\n</think>\n"
                 yield _serialize_tool_call_marker(chunk["tool_event"])
+                compression_marker = maybe_apply_stream_context_compression(
+                    "tool_call",
+                    extra_context_text=json.dumps(chunk["tool_event"], ensure_ascii=False),
+                )
+                if compression_marker:
+                    yield compression_marker
+                    break
                 continue
 
             if isinstance(chunk, dict):
@@ -3355,10 +3671,24 @@ def _stream_chat_response(
             if thinking_part:
                 if emit_thinking:
                     thinking_parts.append(thinking_part)
+                    persist_stream_snapshot()
                     if not is_thinking:
                         is_thinking = True
                         yield "<think>\n"
                     yield thinking_part
+                compression_marker = maybe_apply_stream_context_compression(
+                    "reasoning",
+                    extra_context_text="" if emit_thinking else thinking_part,
+                )
+                if compression_marker:
+                    if is_thinking:
+                        is_thinking = False
+                        yield "\n</think>\n"
+                    yield compression_marker
+                    break
+
+            if restart_after_stream_compression:
+                break
 
             # Visible text is streamed and stored separately.
             if text_part:
@@ -3366,6 +3696,7 @@ def _stream_chat_response(
                     is_thinking = False
                     yield "\n</think>\n"
                 visible_parts.append(text_part)
+                persist_stream_snapshot()
                 yield text_part
     except Exception as exc:
         failed = True
@@ -3382,6 +3713,9 @@ def _stream_chat_response(
             active_id = str(_active_generation_id_by_engine.get(str(engine)) or "")
             if active_id == str(generation_id or ""):
                 _active_generation_id_by_engine.pop(str(engine), None)
+            chat_active_id = str(_active_generation_id_by_chat_id.get(str(chat.id)) or "")
+            if chat_active_id == str(generation_id or ""):
+                _active_generation_id_by_chat_id.pop(str(chat.id), None)
         if is_thinking:
             yield "\n</think>\n"
 
@@ -3412,13 +3746,13 @@ def _stream_chat_response(
         if not visible_content and transcript_assistant_visible_parts:
             visible_content = _strip_llm_control_tokens("".join(transcript_assistant_visible_parts)).strip()
 
-        if not transcript_entries and (visible_content or thinking_content):
-            synthesized_entry: dict[str, Any] = {"role": "assistant", "content": visible_content}
-            if thinking_content:
-                synthesized_entry["thinking"] = thinking_content
-            transcript_entries.append(synthesized_entry)
+        transcript_entries = _build_streaming_assistant_transcript(
+            transcript_entries,
+            visible_content=visible_content,
+            thinking_content=thinking_content,
+        )
 
-        should_persist_message = bool(visible_content or transcript_has_renderable_payload)
+        should_persist_message = bool(visible_content or thinking_content or transcript_has_renderable_payload)
         if should_persist_message:
             assistant_message_record.content = visible_content
             assistant_message_record.llm_transcript = transcript_entries
@@ -3670,6 +4004,9 @@ def chat_api(request):
                 assistant_message_record,
                 generation_id,
                 compression_event=compression_event,
+                model_info_payload=model_info_payload,
+                system_prompt=system_prompt,
+                current_user_message_id=user_message_record.id,
             ),
             content_type="text/plain; charset=utf-8",
         )
@@ -3959,10 +4296,13 @@ def regenerate_chat_api(request, chat_id):
 
         # Drop every message that came after the targeted user turn — including
         # the assistant reply we are about to replace.
+        preserve_context_compression = bool(data.get("preserve_context_compression"))
         for message in ordered:
             if message.created_at > user_message_record.created_at or (
                 message.created_at == user_message_record.created_at and message.id > user_message_record.id
             ):
+                if preserve_context_compression and _message_has_context_compression_summary(message):
+                    continue
                 message.delete()
 
         _remember_active_model(engine, model_name)
@@ -4056,6 +4396,9 @@ def regenerate_chat_api(request, chat_id):
                 assistant_message_record,
                 generation_id,
                 compression_event=compression_event,
+                model_info_payload=model_info_payload,
+                system_prompt=system_prompt,
+                current_user_message_id=user_message_record.id,
             ),
             content_type="text/plain; charset=utf-8",
         )
@@ -4433,16 +4776,27 @@ def context_compress_api(request):
             return JsonResponse({"ok": True, "applied": False, "reason": "missing_chat_id"})
         force = bool(data.get("force"))
         system_prompt = _compose_system_prompt(str(data.get("system_prompt") or ""))
+        draft_text = str(data.get("draft") or data.get("draft_text") or "")
 
         try:
             chat = Chat.objects.get(id=chat_id)
         except Chat.DoesNotExist:
             return JsonResponse({"ok": True, "applied": False, "reason": "chat_not_found"})
 
+        with _generation_state_lock:
+            active_generation_id = str(_active_generation_id_by_chat_id.get(str(chat.id)) or "")
+        if active_generation_id:
+            return JsonResponse({
+                "ok": True,
+                "applied": False,
+                "reason": "generation_active",
+            }, status=409)
+
         model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
         event = _build_manual_compression_event(
             chat=chat,
             system_prompt=system_prompt,
+            draft_text=draft_text,
             engine=engine,
             model_name=model_name,
             model_info_payload=model_info_payload,
