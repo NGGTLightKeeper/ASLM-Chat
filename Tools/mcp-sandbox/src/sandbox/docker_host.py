@@ -82,12 +82,41 @@ REQUIRED_IMAGE_LABEL_VALUE = "container-v2"
 SUPERVISOR_PONG = "sandbox-supervisor-pong-v2"
 LEGACY_UPLOAD_MODEL_ROOT = "/mnt/data/User"
 UPLOAD_MODEL_ROOT = f"{MODEL_WORKSPACE_CONTAINER.rstrip('/')}/User"
+DEFAULT_DOCKER_JOB_ROOT = "/workspace/.sandbox_jobs"
 
 
 def _rewrite_legacy_upload_paths(command: str) -> str:
     """Keep old model-facing upload paths usable in plain bash commands."""
 
     return str(command or "").replace(LEGACY_UPLOAD_MODEL_ROOT, UPLOAD_MODEL_ROOT)
+
+
+def _resolve_docker_job_root() -> str:
+    """Pick a container-writable root for background spool files."""
+    configured = (
+        os.getenv("SANDBOX_CONTAINER_JOB_ROOT", "").strip()
+        or os.getenv("SANDBOX_JOB_ROOT", "").strip()
+    )
+    if configured.startswith("/"):
+        return configured.rstrip("/") or "/"
+    return DEFAULT_DOCKER_JOB_ROOT
+
+
+def _docker_job_root_candidates() -> list[str]:
+    """Return ordered job-root candidates for docker background jobs."""
+    configured = _resolve_docker_job_root()
+    candidates = [
+        configured,
+        "/workspace/.sandbox_jobs",
+        "/tmp/mcp-sandbox-jobs",
+        "/dev/shm/mcp-sandbox-jobs",
+        "$HOME/.sandbox_jobs",
+    ]
+    unique: list[str] = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    return unique
 
 
 # ── Subprocess helpers ───────────────────────────────────────────────
@@ -1280,22 +1309,37 @@ def _exec_bash_docker_background(
 ) -> dict:
     start_time = time.time()
     job_id = _new_background_job_id()
-    job_dir = f"/tmp/_sandbox_jobs/{job_id}"
-    quoted_job_dir = shlex.quote(job_dir)
+    job_dir: str | None = None
+    candidate_roots = " ".join(shlex.quote(item) for item in _docker_job_root_candidates())
+    command_quoted = shlex.quote(command)
     wrapper = (
-        f"bash -lc {shlex.quote(command)}; "
-        f"code=$?; echo $code > {quoted_job_dir}/exit_code; "
-        f"echo done > {quoted_job_dir}/status"
+        f"bash -lc {command_quoted}; "
+        "code=$?; "
+        "echo $code > \"$job_dir/exit_code\"; "
+        "echo done > \"$job_dir/status\""
     )
     setup_script = (
-        f"mkdir -p {quoted_job_dir}; "
-        f": > {quoted_job_dir}/stdout; "
-        f": > {quoted_job_dir}/stderr; "
-        f"echo running > {quoted_job_dir}/status; "
+        f"job_root=''; "
+        f"for candidate in {candidate_roots}; do "
+        f"  candidate=$(eval echo \"$candidate\"); "
+        f"  if mkdir -p \"$candidate\" >/dev/null 2>&1 && [ -w \"$candidate\" ]; then "
+        f"    job_root=\"$candidate\"; break; "
+        f"  fi; "
+        f"done; "
+        f"if [ -z \"$job_root\" ]; then "
+        f"  echo 'Failed to find writable background job root.' >&2; exit 1; "
+        f"fi; "
+        f"job_dir=\"$job_root/{job_id}\"; "
+        f"mkdir -p \"$job_dir\"; "
+        f": > \"$job_dir/stdout\"; "
+        f": > \"$job_dir/stderr\"; "
+        f"echo running > \"$job_dir/status\"; "
+        f"export job_dir; "
         f"nohup bash -lc {shlex.quote(wrapper)} "
-        f"> {quoted_job_dir}/stdout 2> {quoted_job_dir}/stderr < /dev/null & "
-        f"echo $! > {quoted_job_dir}/pid; "
-        f"cat {quoted_job_dir}/pid"
+        f"> \"$job_dir/stdout\" 2> \"$job_dir/stderr\" < /dev/null & "
+        f"echo \"$job_dir\"; "
+        f"echo $! > \"$job_dir/pid\"; "
+        f"cat \"$job_dir/pid\""
     )
     setup = _docker_exec_shell(
         setup_script,
@@ -1314,8 +1358,13 @@ def _exec_bash_docker_background(
             "cwd": normalize_model_relative_path(cwd),
         }
 
+    setup_lines = [line.strip() for line in setup.stdout.splitlines() if line.strip()]
+    if setup_lines:
+        maybe_job_dir = setup_lines[0]
+        if "/" in maybe_job_dir:
+            job_dir = maybe_job_dir
     try:
-        pid = int(setup.stdout.strip().splitlines()[-1])
+        pid = int(setup_lines[-1])
     except (ValueError, IndexError):
         pid = None
 
@@ -1324,7 +1373,7 @@ def _exec_bash_docker_background(
         cwd=normalize_model_relative_path(cwd),
         runtime="docker",
         pid=pid,
-        container_job_dir=job_dir,
+        container_job_dir=job_dir or f"{_resolve_docker_job_root()}/{job_id}",
         job_id=job_id,
     )
 
