@@ -70,37 +70,11 @@
             ]
         },
         {
-            "id": "mcp-deep-think",
-            "path": "Data/venvs/tools/mcp-deep-think",
-            "tool": "mcp-deep-think",
-            "packages": [
-                "ddgs==9.10.0",
-                "duckduckgo-search==7.0.2",
-                "httpx==0.28.1",
-                "mcp==1.26.0",
-                "ollama==0.6.1",
-                "pydantic==2.11.7",
-                "requests==2.32.3",
-                "tenacity==9.0.0",
-                "youtube-transcript-api==1.2.4",
-                "yt-dlp==2026.3.3"
-            ]
-        },
-        {
             "id": "mcp-sandbox",
             "path": "Data/venvs/tools/mcp-sandbox",
             "tool": "mcp-sandbox",
             "packages": [
                 "mcp==1.26.0"
-            ]
-        },
-        {
-            "id": "mcp-guide-db",
-            "path": "Data/venvs/tools/mcp-guide-db",
-            "tool": "mcp-guide-db",
-            "packages": [
-                "mcp==1.26.0",
-                "pyyaml==6.0.2"
             ]
         }
     ]
