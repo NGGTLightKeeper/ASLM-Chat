@@ -379,6 +379,88 @@ export function createAttachmentsUi(context) {
     });
   }
 
+  function clipboardImageName(mimeType, index) {
+    const normalizedMime = String(mimeType || '').toLowerCase();
+    const extensionByMime = {
+      'image/avif': 'avif',
+      'image/bmp': 'bmp',
+      'image/gif': 'gif',
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/webp': 'webp'
+    };
+    const extension = extensionByMime[normalizedMime] || 'png';
+    return `pasted-image-${Date.now()}-${index + 1}.${extension}`;
+  }
+
+  function normalizeClipboardImageFile(file, index) {
+    if (!file || !isImageFile(file)) {
+      return null;
+    }
+
+    if (file.name) {
+      return file;
+    }
+
+    try {
+      return new File([file], clipboardImageName(file.type, index), {
+        type: file.type || 'image/png',
+        lastModified: Date.now()
+      });
+    } catch (_error) {
+      return file;
+    }
+  }
+
+  function collectClipboardImageFiles(clipboardData) {
+    const files = [];
+    const seen = new Set();
+
+    function addFile(file) {
+      const normalizedFile = normalizeClipboardImageFile(file, files.length);
+      if (!normalizedFile) {
+        return;
+      }
+      const key = [
+        normalizedFile.name || '',
+        normalizedFile.type || '',
+        normalizedFile.size || 0,
+        normalizedFile.lastModified || 0
+      ].join('|');
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      files.push(normalizedFile);
+    }
+
+    Array.from((clipboardData && clipboardData.items) || []).forEach(function collectItem(item) {
+      if (!item || String(item.kind || '').toLowerCase() !== 'file') {
+        return;
+      }
+      if (!String(item.type || '').toLowerCase().startsWith('image/')) {
+        return;
+      }
+      addFile(item.getAsFile && item.getAsFile());
+    });
+
+    if (!files.length) {
+      Array.from((clipboardData && clipboardData.files) || []).forEach(addFile);
+    }
+
+    return files;
+  }
+
+  function handleClipboardPaste(clipboardData) {
+    const files = collectClipboardImageFiles(clipboardData);
+    if (!files.length) {
+      return false;
+    }
+
+    queueFiles(files);
+    return true;
+  }
+
   // Read selected files and queue them for the next request.
   function handleFileInput(event) {
     queueFiles(event.target.files || []);
@@ -394,6 +476,7 @@ export function createAttachmentsUi(context) {
     clearPendingAttachments,
     handleDroppedFiles,
     handleFileInput,
+    handleClipboardPaste,
     normalizeAttachment,
     rebuildPreviewStrips,
     removePendingAttachment,

@@ -1693,6 +1693,8 @@
 .msg.user .msg-bubble {
   background: var(--surface-tertiary);
   border-bottom-right-radius: 4px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .msg.assistant .msg-bubble {

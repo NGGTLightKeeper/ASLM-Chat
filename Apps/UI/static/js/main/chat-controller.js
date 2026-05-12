@@ -22,6 +22,8 @@ export function createChatController(context, dependencies) {
   let activeGenerationId = '';
   let hideCompressedIndicator = false;
   let clearCompressedIndicatorAfterNextAssistant = false;
+  let sendCooldownUntil = 0;
+  const sendCooldownMs = 1500;
 
   // Chat lifecycle helpers.
   // Build a short title from the first user prompt.
@@ -701,7 +703,12 @@ export function createChatController(context, dependencies) {
 
   // Queue one user message for generation.
   async function sendMessage(text, $input) {
-    if (!text && state.attachmentState.pending.length === 0) {
+    if (Date.now() < sendCooldownUntil) {
+      return;
+    }
+    const rawText = String(text || '');
+    const messageText = rawText.trim() ? rawText : '';
+    if (!messageText && state.attachmentState.pending.length === 0) {
       return;
     }
     if (state.attachmentState.pending.some(function isBlocked(attachment) {
@@ -709,6 +716,8 @@ export function createChatController(context, dependencies) {
     })) {
       return;
     }
+
+    sendCooldownUntil = Date.now() + sendCooldownMs;
     if (state.contextUsage && state.contextUsage.compressed_context_active === true) {
       // UI rule: compression highlight is one-shot. Once the user sends the
       // next message, return the indicator to normal immediately.
@@ -716,7 +725,7 @@ export function createChatController(context, dependencies) {
       clearCompressedIndicatorAfterNextAssistant = false;
       setContextUsageUi(state.contextUsage || {});
     }
-    await maybeAutoCompressContextBeforeSend(text);
+    await maybeAutoCompressContextBeforeSend(messageText);
 
     const attachmentsToSend = clonePendingAttachments(state.attachmentState.pending);
     const queued = state.isChatGenerating || state.chatRequestQueue.length > 0;
@@ -727,8 +736,8 @@ export function createChatController(context, dependencies) {
       dom.$chatInputConv.val('').css('height', 'auto').focus();
     }
 
-    const request = buildQueuedRequest(text, attachmentsToSend);
-    request.$userRow = messagesUi.appendMessage('user', text, attachmentsToSend, null, {
+    const request = buildQueuedRequest(messageText, attachmentsToSend);
+    request.$userRow = messagesUi.appendMessage('user', messageText, attachmentsToSend, null, {
       queued,
       messageKey: request.id
     });
@@ -839,8 +848,17 @@ export function createChatController(context, dependencies) {
         event.preventDefault();
 
         if (!$button.prop('disabled')) {
-          void sendMessage($input.val().trim(), $input);
+          void sendMessage($input.val(), $input);
         }
+      }
+    });
+
+    $input.on('paste', function onPaste(event) {
+      const clipboardData = event.originalEvent && event.originalEvent.clipboardData
+        ? event.originalEvent.clipboardData
+        : event.clipboardData;
+      if (attachmentUi.handleClipboardPaste(clipboardData)) {
+        event.preventDefault();
       }
     });
 
@@ -851,7 +869,7 @@ export function createChatController(context, dependencies) {
       }
 
       if (!$button.prop('disabled')) {
-        void sendMessage($input.val().trim(), $input);
+        void sendMessage($input.val(), $input);
       }
     });
   }
