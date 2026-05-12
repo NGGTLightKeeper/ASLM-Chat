@@ -2329,6 +2329,7 @@ def _format_results(
             query=query, profile=query_profile,
             query_type=_qtypes[0], rep_store=rep_store,
         )
+        result.score = score
         scored.append((score, idx, result, payload))
 
         # Record content quality for domains that returned actual content.
@@ -2449,6 +2450,7 @@ def _select_output_sources(
             query_type=_qtypes[0],
             rep_store=rep_store,
         )
+        result.score = score
         scored.append((score, idx, result, payload))
 
     scored.sort(key=lambda x: (-x[0], x[1]))
