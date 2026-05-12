@@ -2998,7 +2998,8 @@ def _build_manual_compression_event(
             summarize_with_model=summarize_with_model_callback,
             max_overflow_entries=LLM_HISTORY_COMPRESSION_MAX_ITEMS,
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("History compression summary failed: %s", exc)
         summary_text, summary_payload = build_structured_history_summary(
             overflow_entries=summary_entries,
             recent_user_messages=recent_user_messages,
@@ -3053,25 +3054,7 @@ def _collect_recent_user_messages(chat: Chat, exclude_message_id: int) -> list[s
 
 
 def _collect_direct_user_directives(chat: Chat, exclude_message_id: int) -> list[str]:
-    messages = (
-        chat.messages
-        .filter(role="user")
-        .exclude(id=exclude_message_id)
-        .order_by("-created_at", "-id")[:LLM_HISTORY_COMPRESSION_DIRECTIVE_MESSAGES]
-    )
-    directives: list[str] = []
-    directive_markers = (
-        "сделай", "не ", "убери", "добавь", "исправь", "проверь", "ограничь", "верни", "перепиши",
-        "do ", "don't", "remove", "add ", "fix ", "check ", "limit ", "return ", "rewrite ",
-    )
-    for message in messages:
-        text = _strip_llm_control_tokens(str(message.content or "")).strip()
-        if not text:
-            continue
-        lowered = text.lower()
-        if any(marker in lowered for marker in directive_markers):
-            directives.append(text[:1200])
-    return directives[:32]
+    return []
 
 
 def _generate_history_summary_with_model(

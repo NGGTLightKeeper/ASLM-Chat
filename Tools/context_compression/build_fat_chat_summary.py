@@ -7,9 +7,10 @@ from context_compression.cache_chat_utils import collect_chat_entries, connect_c
 from context_compression.history_compressor import build_structured_history_summary
 
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-DB_PATH = ROOT_DIR / "db.sqlite3"
-OUT_PATH = ROOT_DIR / "Tools" / "context_compression" / "test" / "fat_chat_summary.json"
+TOOL_DB_PATH = Path(__file__).with_name("db.sqlite3")
+PROJECT_DB_PATH = Path(__file__).resolve().parents[2] / "db.sqlite3"
+DB_PATH = TOOL_DB_PATH if TOOL_DB_PATH.exists() else PROJECT_DB_PATH
+OUT_PATH = Path(__file__).with_name("test") / "fat_chat_summary.json"
 
 
 def main() -> None:
@@ -20,16 +21,10 @@ def main() -> None:
     fat = load_fattest_chat(conn)
     entries, recent_user_messages = collect_chat_entries(conn, fat["id"])
 
-    direct_user_directives = [
-        msg
-        for msg in recent_user_messages
-        if any(token in msg.lower() for token in ("сделай", "убери", "не ", "надо", "fix", "remove", "add", "do not"))
-    ]
-
     summary_text, payload = build_structured_history_summary(
         overflow_entries=entries,
         recent_user_messages=recent_user_messages,
-        direct_user_directives=direct_user_directives,
+        direct_user_directives=[],
         summarize_with_model=None,
         max_overflow_entries=120,
     )
