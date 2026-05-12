@@ -154,20 +154,26 @@ export function createMessagesUi(context, dependencies) {
     return best;
   }
 
-  function appendLatexHtml(fragment, latexSource, displayMode) {
+  function renderLatexSourceToHtml(latexSource, displayMode) {
     if (typeof katex === 'undefined' || !katex.renderToString) {
-      fragment.appendChild(document.createTextNode(latexSource));
-      return;
+      return escHtml(latexSource);
     }
-    const rendered = katex.renderToString(latexSource, {
+    return katex.renderToString(latexSource, {
       displayMode: !!displayMode,
       throwOnError: false,
       strict: 'ignore',
       trust: false,
       output: 'htmlAndMathml'
     });
+  }
+
+  function appendLatexHtml(fragment, latexSource, displayMode) {
+    if (typeof katex === 'undefined' || !katex.renderToString) {
+      fragment.appendChild(document.createTextNode(latexSource));
+      return;
+    }
     const template = document.createElement('template');
-    template.innerHTML = rendered;
+    template.innerHTML = renderLatexSourceToHtml(latexSource, displayMode);
     fragment.appendChild(template.content);
   }
 
@@ -238,6 +244,74 @@ export function createMessagesUi(context, dependencies) {
     return template.innerHTML;
   }
 
+  function looksLikeLatexSource(source) {
+    const text = String(source || '').trim();
+    if (!text) {
+      return false;
+    }
+    return /\\(?:boxed|mathrm|frac|sqrt|cdot|times|longrightarrow|rightarrow|left|right|text|begin|end|sum|int|alpha|beta|gamma|delta|Delta|Omega)\b/.test(text)
+      || (/\\/.test(text) && /[_^]\{?[\w()+\-]+/.test(text));
+  }
+
+  function normalizeLooseDisplayLatex(source) {
+    return String(source || '')
+      .replace(/(^|\n)[ \t]*\\\[\s*\n?([\s\S]*?)\n?[ \t]*\\\](?=\n|$)/g, function normalizeEscapedLatexBlock(match, prefix, body) {
+        const latexSource = String(body || '').trim();
+        if (!looksLikeLatexSource(latexSource)) {
+          return match;
+        }
+        return `${prefix}$$\n${latexSource}\n$$`;
+      })
+      .replace(/(^|\n)[ \t]*\[\s*\n([\s\S]*?)\n[ \t]*\](?=\n|$)/g, function normalizeLatexBlock(match, prefix, body) {
+      const latexSource = String(body || '').trim();
+      if (!looksLikeLatexSource(latexSource)) {
+        return match;
+      }
+      return `${prefix}$$\n${latexSource}\n$$`;
+    });
+  }
+
+  function extractLatexBlocks(source) {
+    const blocks = [];
+    const text = String(source || '')
+      .replace(/(^|\n)[ \t]*\$\$\s*\n?([\s\S]*?)\n?[ \t]*\$\$(?=\n|$)/g, function extractDisplayLatexBlock(match, prefix, body) {
+        const latexSource = String(body || '').trim();
+        if (!looksLikeLatexSource(latexSource)) {
+          return match;
+        }
+        const token = `ASLMLATEXDISPLAY${blocks.length}TOKEN`;
+        blocks.push({ token, latexSource, displayMode: true });
+        return `${prefix}\n\n${token}\n\n`;
+      })
+      .replace(/\\\(([\s\S]*?)\\\)/g, function extractInlineLatexBlock(match, body) {
+        const latexSource = String(body || '').trim();
+        if (!looksLikeLatexSource(latexSource)) {
+          return match;
+        }
+        const token = `ASLMLATEXINLINE${blocks.length}TOKEN`;
+        blocks.push({ token, latexSource, displayMode: false });
+        return token;
+      });
+    return { text, blocks };
+  }
+
+  function restoreLatexPlaceholders(html, blocks) {
+    let result = String(html || '');
+    (blocks || []).forEach(function restoreLatexBlock(block) {
+      const token = String(block.token || '');
+      if (!token) {
+        return;
+      }
+      const rendered = renderLatexSourceToHtml(block.latexSource || '', block.displayMode !== false);
+      result = result
+        .split(`<p>${token}</p>`)
+        .join(rendered)
+        .split(token)
+        .join(rendered);
+    });
+    return result;
+  }
+
   function markdownCodeLanguage(codeEl) {
     const classNames = String((codeEl && codeEl.className) || '');
     const match = classNames.match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)
@@ -295,15 +369,23 @@ export function createMessagesUi(context, dependencies) {
   // Render one visible text segment as sanitized HTML.
   function renderMarkdownSegment(content, citationSources) {
     const hasCitationSources = citationSources && typeof citationSources === 'object' && Object.keys(citationSources).length > 0;
-    const normalizedContent = normalizeCitationSpacing(normalizeCitationBrackets(content));
+    const normalizedContent = normalizeLooseDisplayLatex(normalizeCitationSpacing(normalizeCitationBrackets(content)));
     const visibleContent = hasCitationSources
       ? normalizedContent
-      : normalizedContent.replace(/\s*\[(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3}-\d+)\]/gi, '');
+      : normalizedContent.replace(/\s*\[(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,12}-\d+)\]/gi, '');
+    const latexBlocks = extractLatexBlocks(visibleContent);
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
-      return enhanceMarkdownCodeBlocks(renderLatexInHtml(decorateCitationsInHtml(escHtml(visibleContent), citationSources)));
+      const fallbackHtml = restoreLatexPlaceholders(
+        decorateCitationsInHtml(escHtml(latexBlocks.text), citationSources),
+        latexBlocks.blocks
+      );
+      return enhanceMarkdownCodeBlocks(renderLatexInHtml(fallbackHtml));
     }
 
-    const html = decorateCitationsInHtml(DOMPurify.sanitize(marked.parse(visibleContent)), citationSources);
+    const html = restoreLatexPlaceholders(
+      decorateCitationsInHtml(DOMPurify.sanitize(marked.parse(latexBlocks.text)), citationSources),
+      latexBlocks.blocks
+    );
     return enhanceMarkdownCodeBlocks(renderLatexInHtml(html));
   }
 
@@ -386,7 +468,48 @@ export function createMessagesUi(context, dependencies) {
   }
 
   function normalizeCitationId(value) {
-    return String(value || '').trim().toUpperCase();
+    return String(value || '').trim().replace(/^\[|\]$/g, '').toUpperCase();
+  }
+
+  function isCitationHandleId(value) {
+    return /^(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,12}-\d+)$/.test(normalizeCitationId(value));
+  }
+
+  function citationSourceForId(citationSources, sourceId) {
+    if (!citationSources || typeof citationSources !== 'object') {
+      return null;
+    }
+
+    const normalizedId = normalizeCitationId(sourceId);
+    return citationSources[normalizedId] || citationSources[sourceId] || citationSources[String(sourceId || '').toLowerCase()] || null;
+  }
+
+  function extractCitationIds(value, citationSources) {
+    const text = String(value || '');
+    const ids = [];
+    const seen = {};
+
+    function addId(candidate) {
+      const normalizedId = normalizeCitationId(String(candidate || '').replace(/^[^\w]+|[^\w-]+$/g, ''));
+      if (!normalizedId || seen[normalizedId]) {
+        return;
+      }
+      if (!isCitationHandleId(normalizedId) && !citationSourceForId(citationSources, normalizedId)) {
+        return;
+      }
+      seen[normalizedId] = true;
+      ids.push(normalizedId);
+    }
+
+    const broadHandlePattern = /\b(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,12}-\d+)\b/gi;
+    let match = broadHandlePattern.exec(text);
+    while (match) {
+      addId(match[0]);
+      match = broadHandlePattern.exec(text);
+    }
+
+    text.split(/[\s,;]+/).forEach(addId);
+    return ids;
   }
 
   function normalizeCitationBrackets(value) {
@@ -397,8 +520,8 @@ export function createMessagesUi(context, dependencies) {
 
   function normalizeCitationSpacing(value) {
     return String(value || '').replace(
-      /([^\s\[(])\[(S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3}-\d+)(\s*,\s*(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3}-\d+))*\]/gi,
-      '$1 [$2$3]'
+      /([^\s\[(])\[((?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,12}-\d+)(\s*,\s*(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,12}-\d+))*)\]/gi,
+      '$1 [$2]'
     );
   }
 
@@ -494,11 +617,15 @@ export function createMessagesUi(context, dependencies) {
     const safeSource = source && typeof source === 'object' ? source : {};
     const normalizedId = normalizeCitationId(sourceId || safeSource.id);
     const sourceUrl = safeExternalUrl(safeSource.url);
-    if (!normalizedId || !sourceUrl) {
+    if (!normalizedId) {
       return escHtml(`[${normalizedId || sourceId}]`);
     }
 
     const domain = sourceDisplayDomain(safeSource) || normalizedId;
+    if (!sourceUrl && domain === normalizedId) {
+      return escHtml(`[${normalizedId || sourceId}]`);
+    }
+
     const title = String(safeSource.title || domain || normalizedId).trim();
     const faviconUrl = sourceFaviconUrl(safeSource);
     const fallbackLetter = domain.charAt(0).toUpperCase();
@@ -506,12 +633,16 @@ export function createMessagesUi(context, dependencies) {
       ? `<img class="msg-citation-favicon" src="${escapeAttributeValue(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
       : '';
     const fallbackStyle = domainAccentStyle(domain, faviconUrl ? 'display:none;' : '');
+    const tagName = sourceUrl ? 'a' : 'span';
+    const linkAttrs = sourceUrl
+      ? ` href="${escapeAttributeValue(sourceUrl)}" target="_blank" rel="noopener noreferrer"`
+      : '';
 
     return `
-      <a class="msg-citation-chip" href="${escapeAttributeValue(sourceUrl)}" target="_blank" rel="noopener noreferrer" title="${escapeAttributeValue(title)}">
+      <${tagName} class="msg-citation-chip" title="${escapeAttributeValue(title)}"${linkAttrs}>
         ${faviconHtml}<span class="msg-citation-fallback" style="${escapeAttributeValue(fallbackStyle)}">${escHtml(fallbackLetter)}</span>
         <span class="msg-citation-domain">${escHtml(domain)}</span>
-      </a>
+      </${tagName}>
     `;
   }
 
@@ -522,7 +653,6 @@ export function createMessagesUi(context, dependencies) {
 
     const template = document.createElement('template');
     template.innerHTML = html;
-    const citationIdPattern = /(?:S\d+)|(?:source-(?:[a-z0-9]+-)?\d+)|(?:c[a-z0-9]{3}-\d+)/gi;
     const citationPattern = /\[\s*([^\]]+)\s*\]/gi;
     const ignoredTags = new Set(['A', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA']);
 
@@ -555,22 +685,13 @@ export function createMessagesUi(context, dependencies) {
         let match = citationPattern.exec(normalizedValue);
 
         while (match) {
-          const sourceIds = [];
           const inner = String(match[1] || '');
-          let idMatch = citationIdPattern.exec(inner);
-          while (idMatch) {
-            const normalizedId = normalizeCitationId(idMatch[0]);
-            if (normalizedId) {
-              sourceIds.push(normalizedId);
-            }
-            idMatch = citationIdPattern.exec(inner);
-          }
-          citationIdPattern.lastIndex = 0;
+          const sourceIds = extractCitationIds(inner, citationSources);
           if (match.index > lastIndex) {
             fragment.appendChild(document.createTextNode(normalizedValue.slice(lastIndex, match.index)));
           }
           sourceIds.forEach(function appendCitationById(sourceId, sourceIndex) {
-            const source = citationSources[sourceId];
+            const source = citationSourceForId(citationSources, sourceId);
             if (!source) {
               return;
             }
@@ -579,7 +700,7 @@ export function createMessagesUi(context, dependencies) {
             }
             appendChip(fragment, source, sourceId);
           });
-          if (!sourceIds.some(function hasRegisteredSource(sourceId) { return !!citationSources[sourceId]; })) {
+          if (!sourceIds.some(function hasRegisteredSource(sourceId) { return !!citationSourceForId(citationSources, sourceId); })) {
             fragment.appendChild(document.createTextNode(match[0]));
           }
           lastIndex = match.index + match[0].length;
@@ -1504,12 +1625,35 @@ export function createMessagesUi(context, dependencies) {
         return;
       }
 
-      const sourceId = normalizeCitationId(source.id || source.source_id);
-      if (!/^(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{3}-\d+)$/.test(sourceId)) {
-        return;
-      }
+      [
+        source.id,
+        source.source_id,
+        source.sourceId,
+        source.citation_id,
+        source.citationId,
+        source.citation_handle,
+        source.citationHandle,
+        source.handle
+      ].forEach(function registerSourceId(candidate) {
+        const sourceId = normalizeCitationId(candidate);
+        if (!isCitationHandleId(sourceId)) {
+          return;
+        }
 
-      registry[sourceId] = source;
+        const existing = registry[sourceId];
+        if (existing && safeExternalUrl(existing.url) && !safeExternalUrl(source.url)) {
+          return;
+        }
+        registry[sourceId] = source;
+      });
+    });
+  }
+
+  function addAllSearchSourcesToCitationRegistry(registry, segments) {
+    (Array.isArray(segments) ? segments : []).forEach(function registerSegmentSources(segment) {
+      if (segment && segment.type === 'tool' && isSearchToolSegment(segment)) {
+        addSearchSourcesToCitationRegistry(registry, segment);
+      }
     });
   }
 
@@ -3423,6 +3567,7 @@ export function createMessagesUi(context, dependencies) {
     let thoughtIndex = -1;
     let toolSegmentIndex = 0;
     const citationRegistry = {};
+    addAllSearchSourcesToCitationRegistry(citationRegistry, segments);
     const toolSegments = segments.filter(function onlyToolSegments(segment) {
       return segment.type === 'tool';
     });

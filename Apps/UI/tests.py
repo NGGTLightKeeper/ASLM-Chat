@@ -54,11 +54,14 @@ from Apps.UI.file_manifests import (
 from Apps.UI.upload_storage import display_kind_for_upload
 from Apps.UI.views import (
     _build_activity_segments,
+    _build_chat_history,
     _build_chat_title,
     _build_model_info_payload,
+    _build_uploaded_file_context_entry,
     _build_uploaded_file_prompt_block,
     _clear_model_metadata_caches,
     _extract_attachment_text,
+    _extract_uploaded_file_ids_from_message,
     _extract_ollama_model_info,
     _extract_model_name,
     _format_runtime_error,
@@ -66,8 +69,10 @@ from Apps.UI.views import (
     _normalize_request_attachments,
     _normalize_uploaded_file_ids,
     _parse_active_tool_slugs,
+    _resolve_history_char_budget,
     _serialize_attachment_record,
     _selected_tools_include_sandbox,
+    _stream_chat_response,
     _strip_llm_control_tokens,
 )
 
@@ -452,13 +457,19 @@ class UploadFilesApiTests(SimpleTestCase):
     def setUp(self):
         super().setUp()
         self._upload_root_context = tempfile.TemporaryDirectory()
+        self._manifest_root_context = tempfile.TemporaryDirectory()
         self.upload_root = Path(self._upload_root_context.name)
+        self.manifest_root = Path(self._manifest_root_context.name)
         self.upload_root_patch = patch.object(upload_storage, "USER_UPLOAD_ROOT", self.upload_root)
+        self.manifest_root_patch = patch.object(upload_storage, "USER_FILE_MANIFEST_ROOT", self.manifest_root)
         self.upload_root_patch.start()
+        self.manifest_root_patch.start()
 
     # Clean up the temporary sandbox.
     def tearDown(self):
+        self.manifest_root_patch.stop()
         self.upload_root_patch.stop()
+        self._manifest_root_context.cleanup()
         self._upload_root_context.cleanup()
         super().tearDown()
 
@@ -480,11 +491,15 @@ class UploadFilesApiTests(SimpleTestCase):
         self.assertNotIn("sandbox_path", public_file)
         self.assertNotIn("text_preview", public_file)
 
-        sidecars = list(self.upload_root.glob("chat-1/*.manifest.json"))
-        self.assertEqual(len(sidecars), 1)
-        private_manifest = json.loads(sidecars[0].read_text(encoding="utf-8"))
+        self.assertEqual(list(self.upload_root.glob("chat-1/*.manifest.json")), [])
+        self.assertEqual(list(self.upload_root.glob("pending/*.manifest.json")), [])
+        manifests = list(self.manifest_root.glob("*/*.manifest.json"))
+        self.assertEqual(len(manifests), 1)
+        private_manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+        self.assertEqual(manifests[0].name, f"{public_file['file_id']}.manifest.json")
         self.assertEqual(private_manifest["text_preview"], "Hello from upload")
-        self.assertTrue(private_manifest["sandbox_path"].startswith("/workspace/_sandbox/User/chat-1/"))
+        self.assertEqual(manifests[0].parent.name, private_manifest["sha256"])
+        self.assertTrue(private_manifest["sandbox_path"].startswith(f"/workspace/_sandbox/User/{private_manifest['sha256']}/"))
 
     # Test archive uploads get a simple English card label.
     def test_upload_api_labels_zip_archive_for_card(self):
@@ -517,13 +532,16 @@ class UploadFilesApiTests(SimpleTestCase):
         self.assertEqual(public_file["display_kind"], "file")
         self.assertEqual(public_file["type_label"], "File")
 
-        sidecars = list(self.upload_root.glob("chat-abc/*.manifest.json"))
-        self.assertEqual(len(sidecars), 1)
-        private_manifest = json.loads(sidecars[0].read_text(encoding="utf-8"))
+        self.assertEqual(list(self.upload_root.glob("chat-abc/*.manifest.json")), [])
+        self.assertEqual(list(self.upload_root.glob("pending/*.manifest.json")), [])
+        manifests = list(self.manifest_root.glob("*/*.manifest.json"))
+        self.assertEqual(len(manifests), 1)
+        private_manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+        self.assertEqual(manifests[0].parent.name, private_manifest["sha256"])
         self.assertEqual(private_manifest["name"], "sample.abc")
         self.assertEqual(private_manifest["mime"], "application/x-abc")
         self.assertFalse(private_manifest["text_available"])
-        self.assertTrue(private_manifest["sandbox_path"].startswith("/workspace/_sandbox/User/chat-abc/"))
+        self.assertTrue(private_manifest["sandbox_path"].startswith(f"/workspace/_sandbox/User/{private_manifest['sha256']}/"))
 
     # Test empty upload requests fail before returning a card payload.
     def test_upload_api_requires_files(self):
@@ -543,7 +561,7 @@ class UploadFilesApiTests(SimpleTestCase):
 
         self.assertIsNone(without_sandbox["sandbox_path"])
         self.assertNotIn("sandbox", without_sandbox["recommended_tools"])
-        self.assertTrue(with_sandbox["sandbox_path"].startswith("/workspace/_sandbox/User/chat-1/"))
+        self.assertTrue(with_sandbox["sandbox_path"].startswith(f"/workspace/_sandbox/User/{with_sandbox['sha256']}/"))
         self.assertIn("sandbox", with_sandbox["recommended_tools"])
 
     # Test the private prompt block only includes sandbox path when allowed.
@@ -593,6 +611,14 @@ class UploadFilesApiTests(SimpleTestCase):
             }),
             ["a", "b", "c"],
         )
+
+    # Test upload ids can be persisted on a user message for regenerate/history replay.
+    def test_uploaded_file_context_entry_round_trips_file_ids(self):
+        entry = _build_uploaded_file_context_entry(["file-1", "file-2", "file-1"])
+        message = Message(role="user", content="read this", llm_transcript=[entry])
+
+        self.assertEqual(entry["type"], "uploaded_file_context")
+        self.assertEqual(_extract_uploaded_file_ids_from_message(message), ["file-1", "file-2"])
 
     # Test sandbox state is derived only from resolved tool servers.
     def test_selected_tools_include_sandbox_only_when_resolved(self):
@@ -1633,6 +1659,35 @@ class ModelInfoCacheTests(TestCase):
         mock_get_model_settings.assert_called_once_with("openai", "gpt-test")
 
 
+class ContextCompressionBudgetTests(SimpleTestCase):
+    """Cover context compression threshold math."""
+
+    def test_history_budget_uses_same_model_token_estimator_as_usage_ui(self):
+        payload = {"context_length": 10000}
+
+        self.assertEqual(
+            _resolve_history_char_budget(payload, active_engine="lms", active_model="qwen3"),
+            20000,
+        )
+        self.assertEqual(
+            _resolve_history_char_budget(payload, active_engine="ollama-service", active_model="llama3"),
+            27000,
+        )
+
+    def test_history_budget_blends_observed_token_ratio(self):
+        payload = {"context_length": 10000}
+
+        self.assertEqual(
+            _resolve_history_char_budget(
+                payload,
+                active_engine="lms",
+                active_model="qwen3",
+                observed_chars_per_token=1.6,
+            ),
+            17400,
+        )
+
+
 # Exercise chat API basics without calling a real model backend.
 class ChatApiTests(ToolRegistryTestMixin, TestCase):
     """Exercise chat API basics without calling a real model backend."""
@@ -1808,6 +1863,218 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertIn('\"server_id\": \"time_suite\"', body)
         self.assertIn('\"tool_id\": \"time_now\"', body)
         self.assertIn('Done', body)
+
+    # Test chat API keeps reasoning-only output instead of deleting it on abort.
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_api_persists_reasoning_only_response(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+    ):
+        mock_generate.return_value = iter([
+            {"message": {"thinking": "Planning the answer."}},
+        ])
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"Hello","model":"llama3"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = b"".join(response.streaming_content).decode("utf-8")
+        self.assertIn("<think>\nPlanning the answer.", body)
+        assistant_message = Message.objects.filter(role="assistant").latest("created_at")
+        self.assertEqual(assistant_message.content, "")
+        self.assertEqual(assistant_message.llm_transcript[0]["role"], "assistant")
+        self.assertEqual(assistant_message.llm_transcript[0]["thinking"], "Planning the answer.")
+
+    # Test streamed reasoning is buffered before the full response completes.
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_api_buffers_reasoning_while_streaming(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+    ):
+        mock_generate.return_value = iter([
+            {"message": {"thinking": "Live reasoning buffer."}},
+            {"message": {"content": "Done"}},
+        ])
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data='{"message":"Hello","model":"llama3"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        stream = iter(response.streaming_content)
+        first_chunk = next(stream).decode("utf-8")
+        self.assertEqual(first_chunk, "<think>\n")
+        assistant_message = Message.objects.filter(role="assistant").latest("created_at")
+        self.assertEqual(assistant_message.llm_transcript[0]["thinking"], "Live reasoning buffer.")
+        b"".join(stream)
+
+    # Test streaming compression can run during reasoning without waiting for the next send.
+    @patch("Apps.UI.views._build_manual_compression_event")
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    def test_stream_chat_response_auto_compresses_at_reasoning_safe_point(
+        self,
+        mock_generate,
+        _mock_prepare_runtime,
+        mock_build_compression_event,
+    ):
+        chat = Chat.objects.create(title="Chat")
+        assistant_message = Message.objects.create(chat=chat, role="assistant", content="", llm_transcript=[])
+        compression_event = {
+            "role": "tool",
+            "alias": "context_compression_summary",
+            "name": "context_compression_summary",
+            "tool_name": "context_compression_summary",
+            "tool_id": "context_compression_summary",
+            "content": "Compressed history",
+            "arguments": {},
+        }
+        mock_build_compression_event.return_value = compression_event
+        mock_generate.return_value = iter([
+            {"message": {"thinking": "Live reasoning buffer."}},
+            {"message": {"content": "Done"}},
+        ])
+
+        body = "".join(_stream_chat_response(
+            chat,
+            "ollama-service",
+            {
+                "engine": "ollama-service",
+                "model_name": "llama3",
+                "messages": [],
+                "stream": True,
+            },
+            assistant_message,
+            "generation-1",
+            model_info_payload={},
+            system_prompt="System",
+        ))
+
+        self.assertIn("<context_compression>", body)
+        self.assertIn('"auto_trigger": "reasoning"', body)
+        self.assertIn('"restart_generation": true', body)
+        kwargs = mock_build_compression_event.call_args.kwargs
+        self.assertEqual(kwargs["draft_text"], "Live reasoning buffer.")
+        self.assertEqual(kwargs["exclude_message_ids"], {assistant_message.id})
+        self.assertFalse(kwargs["summarize_with_model_enabled"])
+        compression_message = (
+            Message.objects
+            .filter(role="assistant", llm_transcript__0__alias="context_compression_summary")
+            .latest("created_at")
+        )
+        self.assertNotEqual(compression_message.id, assistant_message.id)
+        self.assertEqual(compression_message.llm_transcript[0]["arguments"]["auto_trigger"], "reasoning")
+        self.assertTrue(compression_message.llm_transcript[0]["arguments"]["restart_generation"])
+
+    # Test streaming compression also checks the threshold when a tool call starts.
+    @patch("Apps.UI.views._build_manual_compression_event")
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    def test_stream_chat_response_auto_compresses_at_tool_call_safe_point(
+        self,
+        mock_generate,
+        _mock_prepare_runtime,
+        mock_build_compression_event,
+    ):
+        chat = Chat.objects.create(title="Chat")
+        assistant_message = Message.objects.create(chat=chat, role="assistant", content="", llm_transcript=[])
+        compression_event = {
+            "role": "tool",
+            "alias": "context_compression_summary",
+            "name": "context_compression_summary",
+            "tool_name": "context_compression_summary",
+            "tool_id": "context_compression_summary",
+            "content": "Compressed history",
+            "arguments": {},
+        }
+        mock_build_compression_event.return_value = compression_event
+        mock_generate.return_value = iter([
+            {
+                "tool_event": {
+                    "server_id": "time_suite",
+                    "server_name": "Time Suite",
+                    "tool_id": "time_now",
+                    "tool_name": "Current Time",
+                    "alias": "time_suite__time_now",
+                    "arguments": {"label": "now"},
+                },
+            },
+            {"message": {"content": "Done"}},
+        ])
+
+        body = "".join(_stream_chat_response(
+            chat,
+            "ollama-service",
+            {
+                "engine": "ollama-service",
+                "model_name": "llama3",
+                "messages": [],
+                "stream": True,
+            },
+            assistant_message,
+            "generation-1",
+            model_info_payload={},
+            system_prompt="System",
+        ))
+
+        self.assertIn("<context_compression>", body)
+        self.assertIn('"auto_trigger": "tool_call"', body)
+        kwargs = mock_build_compression_event.call_args.kwargs
+        self.assertIn("time_now", kwargs["draft_text"])
+        compression_message = (
+            Message.objects
+            .filter(role="assistant", llm_transcript__0__alias="context_compression_summary")
+            .latest("created_at")
+        )
+        self.assertEqual(compression_message.llm_transcript[0]["arguments"]["auto_trigger"], "tool_call")
+
+    # Test the server-side history builder uses the current prompt for the 80% trigger.
+    @patch("Apps.UI.views.build_structured_history_summary")
+    def test_build_chat_history_compresses_when_current_prompt_crosses_threshold(
+        self,
+        mock_build_summary,
+    ):
+        mock_build_summary.return_value = (
+            "Compressed prior history",
+            {"summary_version": 1, "work_summary": "Compressed prior history"},
+        )
+        chat = Chat.objects.create(title="Chat")
+        Message.objects.create(chat=chat, role="user", content="Older user context")
+        Message.objects.create(chat=chat, role="assistant", content="Older assistant context")
+        current_user = Message.objects.create(chat=chat, role="user", content="x" * 9800)
+
+        llm_messages, compression_event = _build_chat_history(
+            chat,
+            current_user,
+            current_user.content,
+            "system",
+            "lms",
+            "qwen3",
+            {"context_length": 4096, "defaults": {"num_ctx": 4096}},
+        )
+
+        self.assertIsNotNone(compression_event)
+        self.assertEqual(compression_event["arguments"]["context_window_tokens"], 4096)
+        self.assertGreaterEqual(
+            compression_event["arguments"]["used_history_chars"],
+            int(compression_event["arguments"]["history_budget_chars"] * 0.8),
+        )
+        self.assertEqual(llm_messages[0]["role"], "system")
+        self.assertIn("Compressed prior history", llm_messages[1]["content"])
+        self.assertEqual(llm_messages[-1]["content"], current_user.content)
 
     # Test chat API persists generic attachments and builds LM Studio messages.
     @patch("Apps.UI.views.llm_api.prepare_runtime")

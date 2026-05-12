@@ -55,6 +55,10 @@ from sandbox.config import (
     SUPERVISOR_VENV,
     SUPERVISOR_VENV_HOST,
     THREAD_LIMIT,
+    WORKSPACE_CLEANUP_ENABLED,
+    WORKSPACE_CLEANUP_IDLE_SECONDS,
+    WORKSPACE_CLEANUP_INTERVAL_SECONDS,
+    WORKSPACE_CLEANUP_RECYCLE_SECONDS,
     WINDOWS_DOCKER_DESKTOP_PATHS,
 )
 from sandbox.exec import (
@@ -78,12 +82,41 @@ REQUIRED_IMAGE_LABEL_VALUE = "container-v2"
 SUPERVISOR_PONG = "sandbox-supervisor-pong-v2"
 LEGACY_UPLOAD_MODEL_ROOT = "/mnt/data/User"
 UPLOAD_MODEL_ROOT = f"{MODEL_WORKSPACE_CONTAINER.rstrip('/')}/User"
+DEFAULT_DOCKER_JOB_ROOT = "/workspace/.sandbox_jobs"
 
 
 def _rewrite_legacy_upload_paths(command: str) -> str:
     """Keep old model-facing upload paths usable in plain bash commands."""
 
     return str(command or "").replace(LEGACY_UPLOAD_MODEL_ROOT, UPLOAD_MODEL_ROOT)
+
+
+def _resolve_docker_job_root() -> str:
+    """Pick a container-writable root for background spool files."""
+    configured = (
+        os.getenv("SANDBOX_CONTAINER_JOB_ROOT", "").strip()
+        or os.getenv("SANDBOX_JOB_ROOT", "").strip()
+    )
+    if configured.startswith("/"):
+        return configured.rstrip("/") or "/"
+    return DEFAULT_DOCKER_JOB_ROOT
+
+
+def _docker_job_root_candidates() -> list[str]:
+    """Return ordered job-root candidates for docker background jobs."""
+    configured = _resolve_docker_job_root()
+    candidates = [
+        configured,
+        "/workspace/.sandbox_jobs",
+        "/tmp/mcp-sandbox-jobs",
+        "/dev/shm/mcp-sandbox-jobs",
+        "$HOME/.sandbox_jobs",
+    ]
+    unique: list[str] = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    return unique
 
 
 # ── Subprocess helpers ───────────────────────────────────────────────
@@ -289,6 +322,10 @@ _CONFIG_TEMPLATE = """\
 
 # === Workspace ===
 #SANDBOX_DEFAULT_TASK_DIR=_sandbox
+#SANDBOX_WORKSPACE_CLEANUP_ENABLED=1
+#SANDBOX_WORKSPACE_CLEANUP_IDLE_SECONDS=5400
+#SANDBOX_WORKSPACE_CLEANUP_RECYCLE_SECONDS=10800
+#SANDBOX_WORKSPACE_CLEANUP_INTERVAL_SECONDS=5
 
 #SANDBOX_MAX_FILE_MAP_SYMBOLS=50
 
@@ -348,6 +385,7 @@ def _build_run_command(
         "-e", "SANDBOX_IN_CONTAINER=1",
         "-e", f"SANDBOX_COMMAND_USER={COMMAND_USER}",
         "-e", f"SANDBOX_HOST_WORKSPACE={CONTAINER_WORKSPACE}",
+        "-e", f"SANDBOX_DEFAULT_TASK_DIR={DEFAULT_TASK_DIR}",
         "-e", f"SANDBOX_SUPERVISOR_SRC={SUPERVISOR_SRC}",
         "-e", f"SANDBOX_SUPERVISOR_VENV={SUPERVISOR_VENV}",
         "-e", "PYTHONDONTWRITEBYTECODE=1",
@@ -365,6 +403,10 @@ def _build_run_command(
         "-e", f"SANDBOX_MAX_GREP_RESULTS={MAX_GREP_RESULTS}",
         "-e", f"SANDBOX_MAX_FILE_MAP_SYMBOLS={MAX_FILE_MAP_SYMBOLS}",
         "-e", f"SANDBOX_BACKGROUND_TIMEOUT_THRESHOLD={BACKGROUND_TIMEOUT_THRESHOLD}",
+        "-e", f"SANDBOX_WORKSPACE_CLEANUP_ENABLED={int(WORKSPACE_CLEANUP_ENABLED)}",
+        "-e", f"SANDBOX_WORKSPACE_CLEANUP_IDLE_SECONDS={WORKSPACE_CLEANUP_IDLE_SECONDS}",
+        "-e", f"SANDBOX_WORKSPACE_CLEANUP_RECYCLE_SECONDS={WORKSPACE_CLEANUP_RECYCLE_SECONDS}",
+        "-e", f"SANDBOX_WORKSPACE_CLEANUP_INTERVAL_SECONDS={WORKSPACE_CLEANUP_INTERVAL_SECONDS}",
         "-e", f"SANDBOX_NETWORK_LIMIT_MBIT={NETWORK_LIMIT_MBIT}",
         # Thread limits — propagated to ML libraries too.
         "-e", f"SANDBOX_THREAD_LIMIT={THREAD_LIMIT}",
@@ -396,6 +438,7 @@ def _ensure_container_running(
     retry_delay: float = 2.0,
 ) -> tuple[bool, str]:
     """Ensure the sandbox container is running — idempotent with retry."""
+    _ensure_sandbox_config()
     docker_ok, msg = _ensure_docker_running()
     if not docker_ok:
         return False, msg
@@ -651,7 +694,7 @@ def _run_snapshot_preflight() -> dict:
         return {"ok": False, "checks": checks}
 
     workspace_jobs = _docker_exec_shell(
-        "test ! -e /workspace/_sandbox/.sandbox_jobs",
+        f"test ! -e {shlex.quote(MODEL_WORKSPACE_CONTAINER)}/.sandbox_jobs",
         timeout=10,
     )
     add(
@@ -860,6 +903,7 @@ def _supervisor_exec_command(
         "-e", "SANDBOX_IN_CONTAINER=1",
         "-e", f"SANDBOX_COMMAND_USER={COMMAND_USER}",
         "-e", f"SANDBOX_HOST_WORKSPACE={CONTAINER_WORKSPACE}",
+        "-e", f"SANDBOX_DEFAULT_TASK_DIR={DEFAULT_TASK_DIR}",
         "-e", f"SANDBOX_SUPERVISOR_SRC={SUPERVISOR_SRC}",
         "-e", f"SANDBOX_SUPERVISOR_VENV={SUPERVISOR_VENV}",
         "-e", f"PYTHONPATH={SUPERVISOR_SRC}",
@@ -1155,9 +1199,15 @@ def pipe_to_container_supervisor(
 # Used when IN_CONTAINER=False. Will be removed after full migration.
 
 def _docker_exec_shell(
-    script: str, *, container_cwd: str | None = None, timeout: int = 30
+    script: str,
+    *,
+    container_cwd: str | None = None,
+    timeout: int = 30,
+    user: str | None = None,
 ):
     args = ["docker", "exec"]
+    if user:
+        args.extend(["-u", user])
     if container_cwd:
         args.extend(["-w", container_cwd])
     args.extend([CONTAINER_NAME, "bash", "-lc", script])
@@ -1259,24 +1309,44 @@ def _exec_bash_docker_background(
 ) -> dict:
     start_time = time.time()
     job_id = _new_background_job_id()
-    job_dir = f"/tmp/_sandbox_jobs/{job_id}"
-    quoted_job_dir = shlex.quote(job_dir)
+    job_dir: str | None = None
+    candidate_roots = " ".join(shlex.quote(item) for item in _docker_job_root_candidates())
+    command_quoted = shlex.quote(command)
     wrapper = (
-        f"bash -lc {shlex.quote(command)}; "
-        f"code=$?; echo $code > {quoted_job_dir}/exit_code; "
-        f"echo done > {quoted_job_dir}/status"
+        f"bash -lc {command_quoted}; "
+        "code=$?; "
+        "echo $code > \"$job_dir/exit_code\"; "
+        "echo done > \"$job_dir/status\""
     )
     setup_script = (
-        f"mkdir -p {quoted_job_dir}; "
-        f": > {quoted_job_dir}/stdout; "
-        f": > {quoted_job_dir}/stderr; "
-        f"echo running > {quoted_job_dir}/status; "
+        f"job_root=''; "
+        f"for candidate in {candidate_roots}; do "
+        f"  candidate=$(eval echo \"$candidate\"); "
+        f"  if mkdir -p \"$candidate\" >/dev/null 2>&1 && [ -w \"$candidate\" ]; then "
+        f"    job_root=\"$candidate\"; break; "
+        f"  fi; "
+        f"done; "
+        f"if [ -z \"$job_root\" ]; then "
+        f"  echo 'Failed to find writable background job root.' >&2; exit 1; "
+        f"fi; "
+        f"job_dir=\"$job_root/{job_id}\"; "
+        f"mkdir -p \"$job_dir\"; "
+        f": > \"$job_dir/stdout\"; "
+        f": > \"$job_dir/stderr\"; "
+        f"echo running > \"$job_dir/status\"; "
+        f"export job_dir; "
         f"nohup bash -lc {shlex.quote(wrapper)} "
-        f"> {quoted_job_dir}/stdout 2> {quoted_job_dir}/stderr < /dev/null & "
-        f"echo $! > {quoted_job_dir}/pid; "
-        f"cat {quoted_job_dir}/pid"
+        f"> \"$job_dir/stdout\" 2> \"$job_dir/stderr\" < /dev/null & "
+        f"echo \"$job_dir\"; "
+        f"echo $! > \"$job_dir/pid\"; "
+        f"cat \"$job_dir/pid\""
     )
-    setup = _docker_exec_shell(setup_script, container_cwd=container_cwd, timeout=30)
+    setup = _docker_exec_shell(
+        setup_script,
+        container_cwd=container_cwd,
+        timeout=30,
+        user=COMMAND_USER if COMMAND_USER and COMMAND_USER != "root" else None,
+    )
     if setup.returncode != 0:
         return {
             "exit_code": None,
@@ -1288,8 +1358,13 @@ def _exec_bash_docker_background(
             "cwd": normalize_model_relative_path(cwd),
         }
 
+    setup_lines = [line.strip() for line in setup.stdout.splitlines() if line.strip()]
+    if setup_lines:
+        maybe_job_dir = setup_lines[0]
+        if "/" in maybe_job_dir:
+            job_dir = maybe_job_dir
     try:
-        pid = int(setup.stdout.strip().splitlines()[-1])
+        pid = int(setup_lines[-1])
     except (ValueError, IndexError):
         pid = None
 
@@ -1298,7 +1373,7 @@ def _exec_bash_docker_background(
         cwd=normalize_model_relative_path(cwd),
         runtime="docker",
         pid=pid,
-        container_job_dir=job_dir,
+        container_job_dir=job_dir or f"{_resolve_docker_job_root()}/{job_id}",
         job_id=job_id,
     )
 
@@ -1399,13 +1474,16 @@ def _exec_bash_docker(
         )
 
     start_time = time.time()
-    exec_cmd = [
-        "docker", "exec", "-i",
+    exec_cmd = ["docker", "exec", "-i"]
+    if COMMAND_USER and COMMAND_USER != "root":
+        exec_cmd.extend(["-u", COMMAND_USER])
+    exec_cmd.extend([
         "-w", container_cwd,
         "-e", "PYTHONIOENCODING=utf-8",
         "-e", "LANG=C.UTF-8",
+        "-e", f"SANDBOX_DEFAULT_TASK_DIR={DEFAULT_TASK_DIR}",
         CONTAINER_NAME, "bash", "-lc", command,
-    ]
+    ])
 
     try:
         process = subprocess.Popen(

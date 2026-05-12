@@ -1085,9 +1085,21 @@
   animation: contextPulse 0.9s ease-in-out infinite;
 }
 
+.context-usage-indicator:disabled,
+.context-usage-indicator.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .context-usage-indicator:hover {
   border-color: var(--c-border-strong);
   color: var(--c-text);
+}
+
+.context-usage-indicator:disabled:hover,
+.context-usage-indicator.is-disabled:hover {
+  border-color: var(--c-border);
+  color: var(--c-text-muted);
 }
 
 @keyframes contextPulse {
@@ -1681,6 +1693,8 @@
 .msg.user .msg-bubble {
   background: var(--surface-tertiary);
   border-bottom-right-radius: 4px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .msg.assistant .msg-bubble {

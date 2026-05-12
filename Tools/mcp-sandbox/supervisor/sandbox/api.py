@@ -21,6 +21,7 @@ import csv
 from pathlib import Path
 from typing import Any, Callable
 
+from sandbox.cleanup import sandbox_tool_activity
 from sandbox.config import (
     DEFAULT_TASK_DIR,
     DEFAULT_TIMEOUT,
@@ -28,6 +29,7 @@ from sandbox.config import (
     MAX_CAT_LINE_THRESHOLD,
     MAX_IMAGE_PREVIEW_BYTES,
     MAX_READ_BYTES,
+    MODEL_WORKSPACE_CONTAINER,
 )
 from sandbox.container import (
     exec_bash,
@@ -81,7 +83,7 @@ CORE_TOOLS = [
             "a structured preview when the file is too large for safe raw output. "
             "Long stdout and stderr are capped independently and include an inline truncation marker. "
             "Returns exit_code, stdout, stderr, elapsed_ms, and cwd. "
-            "The default working directory '.' is the sandbox workspace root (/workspace/_sandbox/). "
+            f"The default working directory '.' is the sandbox workspace root ({MODEL_WORKSPACE_CONTAINER}/). "
             "write and edit are restricted to the workspace root only. "
             "PATHS: workspace files use plain relative paths ('script.py', 'subdir/file.py'); "
             "system/container files use absolute paths ('/etc/hosts', '/tmp/out.txt'). "
@@ -105,7 +107,7 @@ CORE_TOOLS = [
         "name": "Write File",
         "description": (
             "Create a new UTF-8 text file or fully overwrite an existing one. "
-            "Use plain relative paths for workspace files under /workspace/_sandbox; "
+            f"Use plain relative paths for workspace files under {MODEL_WORKSPACE_CONTAINER}; "
             "absolute Linux paths resolve inside the container, and Windows-style paths are rejected. "
             "Use write for new files and full rewrites; "
             "use edit for small surgical changes."
@@ -126,7 +128,7 @@ CORE_TOOLS = [
             "Edit a UTF-8 text file. "
             "match mode replaces exact old_str with new_str and fails on missing or ambiguous matches. "
             "lines mode replaces a 1-based line range such as '12:18' or inserts with '12:11'. "
-            "Use paths under /workspace/_sandbox; absolute Linux paths resolve inside the container."
+            f"Use paths under {MODEL_WORKSPACE_CONTAINER}; absolute Linux paths resolve inside the container."
         ),
         "parameters": {
             "type": "object",
@@ -160,7 +162,7 @@ CORE_TOOLS = [
             "Inspect an image file in the sandbox workspace. "
             "Returns path, mime type, byte size, detected width/height when available, "
             "and an inline base64 preview when include_preview=true and the file fits max_preview_bytes. "
-            "Use paths under /workspace/_sandbox; absolute Linux paths resolve inside the container."
+            f"Use paths under {MODEL_WORKSPACE_CONTAINER}; absolute Linux paths resolve inside the container."
         ),
         "parameters": {
             "type": "object",
@@ -178,7 +180,7 @@ CORE_TOOLS = [
         "description": (
             "Present an existing sandbox workspace file to the user as a downloadable file card. "
             "Use this after creating or exporting a file the user should receive. "
-            "Use paths under /workspace/_sandbox; absolute Linux paths resolve inside the container. "
+            f"Use paths under {MODEL_WORKSPACE_CONTAINER}; absolute Linux paths resolve inside the container. "
             "Returns kind='shared_file', path, filename, mime_type, size_bytes, a short model_context, "
             "and an optional render block for rich preview (images/SVG/GIF and tabular text files)."
         ),
@@ -735,9 +737,10 @@ def handle_tool(
         return error_response("sandbox", "unknown_tool", f"Unknown sandbox tool: {tool_id}")
 
     try:
-        if tool_id == "bash":
-            return handler(arguments or {}, context, progress_callback=progress_callback)
-        return handler(arguments or {}, context)
+        with sandbox_tool_activity():
+            if tool_id == "bash":
+                return handler(arguments or {}, context, progress_callback=progress_callback)
+            return handler(arguments or {}, context)
     except Exception as exc:
         return exception_response(tool_id, exc)
 

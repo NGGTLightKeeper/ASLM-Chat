@@ -30,6 +30,20 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 logger = logging.getLogger("core.cache.source_cache")
 
 
+_SQLITE_CORRUPTION_MARKERS = (
+    "database disk image is malformed",
+    "file is not a database",
+    "malformed database schema",
+)
+
+
+def _is_sqlite_corruption(exc: BaseException) -> bool:
+    if not isinstance(exc, sqlite3.DatabaseError):
+        return False
+    message = str(exc).lower()
+    return any(marker in message for marker in _SQLITE_CORRUPTION_MARKERS)
+
+
 # ---------------------------------------------------------------------------
 # URL helpers (inlined from legacy crawl_frontier to remove cross-deps)
 # ---------------------------------------------------------------------------
@@ -142,6 +156,7 @@ class SourceCache:
         self._default_ttl = default_ttl
         self._local = threading.local()
         self._write_lock = threading.Lock()
+        self._recovering_corrupt_db = False
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._init_db()
 
@@ -151,20 +166,77 @@ class SourceCache:
         """Return a per-thread persistent SQLite connection."""
         conn = getattr(self._local, "conn", None)
         if conn is None:
-            conn = sqlite3.connect(self._db_path, check_same_thread=False, timeout=10)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
-            self._local.conn = conn
+            conn = None
+            try:
+                conn = sqlite3.connect(self._db_path, check_same_thread=False, timeout=10)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=5000")
+                self._local.conn = conn
+            except sqlite3.DatabaseError:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                self._local.conn = None
+                raise
         return conn
 
+    def _close_thread_conn(self) -> None:
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._local.conn = None
+
+    def _recover_corrupt_db(self, exc: BaseException) -> bool:
+        """Quarantine a corrupt SQLite cache and recreate an empty one."""
+        if self._recovering_corrupt_db or not _is_sqlite_corruption(exc):
+            return False
+
+        logger.warning("source_cache: recovering corrupt sqlite cache %s: %s", self._db_path, exc)
+        self._recovering_corrupt_db = True
+        try:
+            self._close_thread_conn()
+            stamp = time.strftime("%Y%m%d%H%M%S")
+            for suffix in ("", "-wal", "-shm"):
+                path = f"{self._db_path}{suffix}"
+                if not os.path.exists(path):
+                    continue
+                dst = f"{path}.corrupt-{stamp}"
+                try:
+                    os.replace(path, dst)
+                    logger.warning("source_cache: quarantined corrupt cache file %s -> %s", path, dst)
+                except OSError as move_exc:
+                    logger.warning("source_cache: could not quarantine corrupt cache file %s: %s", path, move_exc)
+                    try:
+                        os.remove(path)
+                        logger.warning("source_cache: removed corrupt cache file %s", path)
+                    except OSError as remove_exc:
+                        logger.warning("source_cache: could not remove corrupt cache file %s: %s", path, remove_exc)
+            self._init_db()
+        except sqlite3.DatabaseError as recreate_exc:
+            logger.warning("source_cache: failed to recreate cache after corruption: %s", recreate_exc)
+            return False
+        finally:
+            self._recovering_corrupt_db = False
+        return True
+
     def _init_db(self) -> None:
-        conn = self._get_conn()
-        for stmt in _SCHEMA_SQL.strip().split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                conn.execute(stmt)
-        conn.commit()
+        try:
+            conn = self._get_conn()
+            for stmt in _SCHEMA_SQL.strip().split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    conn.execute(stmt)
+            conn.commit()
+        except sqlite3.DatabaseError as exc:
+            if self._recover_corrupt_db(exc):
+                return
+            raise
 
     # -- Public API ----------------------------------------------------------
 
@@ -201,7 +273,9 @@ class SourceCache:
                 """,
                 (query, cutoff, limit),
             ).fetchall()
-        except sqlite3.OperationalError as exc:
+        except sqlite3.DatabaseError as exc:
+            if self._recover_corrupt_db(exc):
+                return []
             logger.warning("FTS5 search failed for %r: %s", query, exc)
             return []
 
@@ -247,34 +321,39 @@ class SourceCache:
         chash = content_hash(clean_text) if clean_text else ""
         now = time.time()
 
-        with self._write_lock:
-            conn = self._get_conn()
-            # Wrap pages + FTS5 update in a single transaction so they
-            # can never desync if the process crashes mid-write.
-            with conn:
-                conn.execute(
-                    """
-                    INSERT INTO pages (url_hash, url, domain, title, clean_text, raw_html,
-                                       fetched_at, content_hash, status, char_count)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(url_hash) DO UPDATE SET
-                        title        = excluded.title,
-                        clean_text   = excluded.clean_text,
-                        raw_html     = excluded.raw_html,
-                        fetched_at   = excluded.fetched_at,
-                        content_hash = excluded.content_hash,
-                        status       = excluded.status,
-                        char_count   = excluded.char_count
-                    """,
-                    (uhash, canonicalize_url(url), domain, title, clean_text, raw_html,
-                     now, chash, status, len(clean_text)),
-                )
-                # Explicitly maintain FTS5 index (UPSERT does not fire triggers).
-                conn.execute("DELETE FROM pages_fts WHERE url_hash = ?", (uhash,))
-                conn.execute(
-                    "INSERT INTO pages_fts (url_hash, title, clean_text) VALUES (?, ?, ?)",
-                    (uhash, title, clean_text),
-                )
+        try:
+            with self._write_lock:
+                conn = self._get_conn()
+                # Wrap pages + FTS5 update in a single transaction so they
+                # can never desync if the process crashes mid-write.
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO pages (url_hash, url, domain, title, clean_text, raw_html,
+                                           fetched_at, content_hash, status, char_count)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(url_hash) DO UPDATE SET
+                            title        = excluded.title,
+                            clean_text   = excluded.clean_text,
+                            raw_html     = excluded.raw_html,
+                            fetched_at   = excluded.fetched_at,
+                            content_hash = excluded.content_hash,
+                            status       = excluded.status,
+                            char_count   = excluded.char_count
+                        """,
+                        (uhash, canonicalize_url(url), domain, title, clean_text, raw_html,
+                         now, chash, status, len(clean_text)),
+                    )
+                    # Explicitly maintain FTS5 index (UPSERT does not fire triggers).
+                    conn.execute("DELETE FROM pages_fts WHERE url_hash = ?", (uhash,))
+                    conn.execute(
+                        "INSERT INTO pages_fts (url_hash, title, clean_text) VALUES (?, ?, ?)",
+                        (uhash, title, clean_text),
+                    )
+        except sqlite3.DatabaseError as exc:
+            if self._recover_corrupt_db(exc):
+                return
+            logger.warning("source_cache: write failed url=%r: %s", url, exc)
 
     def get_cached(self, url: str) -> Optional[CachedPage]:
         """Return a cached page by URL, or None."""
@@ -285,9 +364,15 @@ class SourceCache:
             return None
 
         uhash = url_hash(url)
-        r = self._get_conn().execute(
-            "SELECT * FROM pages WHERE url_hash = ?", (uhash,)
-        ).fetchone()
+        try:
+            r = self._get_conn().execute(
+                "SELECT * FROM pages WHERE url_hash = ?", (uhash,)
+            ).fetchone()
+        except sqlite3.DatabaseError as exc:
+            if self._recover_corrupt_db(exc):
+                return None
+            logger.warning("source_cache: read failed url=%r: %s", url, exc)
+            return None
 
         if not r:
             return None
@@ -314,22 +399,33 @@ class SourceCache:
         ttl = max_age_sec or self._default_ttl
         cutoff = time.time() - ttl
 
-        r = self._get_conn().execute(
-            "SELECT fetched_at FROM pages WHERE url_hash = ? AND status = 'ok'",
-            (uhash,),
-        ).fetchone()
+        try:
+            r = self._get_conn().execute(
+                "SELECT fetched_at FROM pages WHERE url_hash = ? AND status = 'ok'",
+                (uhash,),
+            ).fetchone()
+        except sqlite3.DatabaseError as exc:
+            if self._recover_corrupt_db(exc):
+                return False
+            logger.warning("source_cache: freshness check failed url=%r: %s", url, exc)
+            return False
         return r is not None and r["fetched_at"] > cutoff
 
     def record_query_source(self, query: str, url: str, rank: int = 0) -> None:
         """Associate a query with a source URL (for stats and future ranking)."""
         uhash = url_hash(url)
-        with self._write_lock:
-            conn = self._get_conn()
-            with conn:
-                conn.execute(
-                    "INSERT INTO query_sources (query, url_hash, rank, found_at) VALUES (?, ?, ?, ?)",
-                    (query, uhash, rank, time.time()),
-                )
+        try:
+            with self._write_lock:
+                conn = self._get_conn()
+                with conn:
+                    conn.execute(
+                        "INSERT INTO query_sources (query, url_hash, rank, found_at) VALUES (?, ?, ?, ?)",
+                        (query, uhash, rank, time.time()),
+                    )
+        except sqlite3.DatabaseError as exc:
+            if self._recover_corrupt_db(exc):
+                return
+            logger.warning("source_cache: query source write failed query=%r url=%r: %s", query, url, exc)
 
     def page_count(self) -> int:
         """Return total number of cached pages."""

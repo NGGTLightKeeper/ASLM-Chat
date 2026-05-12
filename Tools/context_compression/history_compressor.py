@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-COMPRESSION_TARGET_MIN_CHARS = 60000
 COMPRESSION_ENTRY_MAX_CHARS = 2400
 ANALYTIC_ENTRY_MAX_CHARS = 360
 MEMORY_ENTRY_MAX_CHARS = 1200
@@ -30,25 +29,6 @@ RAW_TOOL_NOISE_MARKERS = (
     "put the citation handle",
     "search results for:",
 )
-FACT_NOISE_PREFIXES = (
-    "content:",
-    "preview:",
-    "title:",
-    "description:",
-    "snippet:",
-)
-AGGRESSIVE_MARKERS = (
-    "нахуя",
-    "блять",
-    "ебал",
-    "ебуч",
-    "пошевели извилинами",
-    "идиот",
-    "fucking",
-    "wtf",
-)
-
-
 @dataclass
 class CompressionDecision:
     enabled: bool
@@ -196,7 +176,7 @@ def _entry_text(entry: dict[str, Any], max_chars: int = COMPRESSION_ENTRY_MAX_CH
 
 
 def _is_noisy_url(url: str) -> bool:
-    raw = str(url or "").strip().rstrip(".,;:")
+    raw = str(url or "").strip().strip("\"'`<>").rstrip(".,;:)]}")
     if not raw:
         return True
     match = re.match(r"^https?://([^/?#]+)", raw, flags=re.IGNORECASE)
@@ -207,6 +187,22 @@ def _is_noisy_url(url: str) -> bool:
     if host.endswith(".bing.com"):
         return True
     return False
+
+
+def _clean_url(url: str) -> str:
+    raw = str(url or "").strip().strip("\"'`<>").rstrip(".,;:)]}")
+    if not raw or _is_noisy_url(raw):
+        return ""
+    return raw
+
+
+def _looks_like_web_host_path(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    if text.startswith(("http://", "https://", "//")):
+        return True
+    return bool(re.match(r"^(?:www\.)?[^/\\]+\.(?:com|org|net|ru|io|ai|dev|gov|edu|co|tv)(?:[/\\].*)?$", text))
 
 
 def _clean_memory_text(text: str) -> str:
@@ -235,7 +231,7 @@ def _clean_memory_text(text: str) -> str:
 def _entry_memory_text(entry: dict[str, Any], max_chars: int = MEMORY_ENTRY_MAX_CHARS) -> str:
     role = str(entry.get("role") or "unknown").lower()
     content = _clean_memory_text(str(entry.get("content") or ""))
-    thinking = _clean_memory_text(str(entry.get("thinking") or ""))
+    thinking = "" if role == "assistant" else _clean_memory_text(str(entry.get("thinking") or ""))
     raw = "\n".join(part for part in (content, thinking) if part).strip()
     if not raw:
         return f"{role}:"
@@ -376,6 +372,18 @@ def _sanitize_semantic_items(
     return _dedupe_strings(cleaned, limit=limit)
 
 
+def _sanitize_open_tasks(values: list[Any], *, limit: int = 12) -> list[str]:
+    tasks: list[str] = []
+    for value in values:
+        text = _clean_memory_text(str(value or ""))
+        if not text:
+            continue
+        if len(text) > ANALYTIC_ENTRY_MAX_CHARS:
+            text = text[:ANALYTIC_ENTRY_MAX_CHARS].rstrip() + "..."
+        tasks.append(text)
+    return _dedupe_strings(tasks, limit=limit)
+
+
 def _dedupe_strings(values: list[str], *, limit: int = 64) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
@@ -406,351 +414,108 @@ def _line_candidates(text: str) -> list[str]:
     return candidates
 
 
-def _normalize_key_fact(line: str) -> str:
-    text = _clean_memory_text(str(line or ""))
-    normalized = text.strip().strip("\"'`[]{}(),")
-    lowered = normalized.lower()
-    if lowered.startswith(FACT_NOISE_PREFIXES):
-        return ""
-    if any(lowered.startswith(f"{prefix}") for prefix in FACT_NOISE_PREFIXES):
-        return ""
-    if any(f'"{prefix}' in lowered for prefix in FACT_NOISE_PREFIXES):
-        return ""
-    if _looks_like_raw_tool_dump(text):
-        return ""
-    if len(normalized) > 280:
-        return ""
-    return normalized
+def _empty_summary_payload() -> dict[str, Any]:
+    return {
+        "summary_version": 1,
+        "session_goal": "",
+        "current_focus": "",
+        "work_summary": "",
+        "reflection_summary": "",
+        "recent_user_messages": [],
+        "key_facts": [],
+        "artifacts": {"files": [], "urls": [], "tools_used": []},
+        "open_tasks": [],
+        "risk_flags": [],
+        "source_memory": [],
+    }
 
 
-def _assistant_action_memory_text(text: str, max_chars: int = 240) -> str:
-    """Compress assistant output into one short action summary."""
-
-    cleaned = _clean_memory_text(text)
-    lowered = cleaned.lower()
-    actions: list[str] = []
-
-    if any(token in lowered for token in ("python", "script", ".py", "code", "bash", "terminal", "run")):
-        actions.append("Generated or executed code")
-    if any(token in lowered for token in ("pdf", ".pdf", "report")):
-        actions.append("Prepared PDF/report output")
-    if any(token in lowered for token in ("edit", "patched", "fixed", "исправ")):
-        actions.append("Applied code fixes")
-    if any(token in lowered for token in ("error", "traceback", "exception", "importerror", "module not found")):
-        actions.append("Investigated runtime errors")
-    if any(token in lowered for token in ("search", "source", "read page", "web")):
-        actions.append("Collected source evidence")
-
-    if not actions:
-        for line in _line_candidates(cleaned):
-            if len(line) < 24:
-                continue
-            summary = line[: max_chars - 4].rstrip()
-            return f"[{summary}]"
-        return "[Completed assistant step]"
-
-    deduped = _dedupe_strings(actions, limit=4)
-    summary = "; ".join(deduped)
-    if len(summary) > max_chars - 2:
-        summary = summary[: max_chars - 5].rstrip() + "..."
-    return f"[{summary}]"
-
-
-def _heuristic_key_facts(
+def _raw_context_payload(
     overflow_entries: list[dict[str, Any]],
     recent_user_messages: list[str],
-    direct_user_directives: list[str],
-) -> list[str]:
-    """Extract durable task facts without copying raw snippets."""
-
-    facts: list[str] = []
-    user_blob = " ".join([*recent_user_messages, *direct_user_directives]).strip()
-    user_blob_lower = user_blob.lower()
-    if user_blob:
-        if "фонар" in user_blob_lower or "flashlight" in user_blob_lower or "edc" in user_blob_lower:
-            facts.append("Task domain: miniature/EDC flashlights selection.")
-        if "pdf" in user_blob_lower or "отчет" in user_blob_lower or "report" in user_blob_lower:
-            facts.append("Required deliverable: generated PDF report.")
-        budget_match = re.search(r"(\d{3,5})\s*[-–]\s*(\d{3,5})", user_blob)
-        if budget_match:
-            facts.append(f"Budget constraint: {budget_match.group(1)}-{budget_match.group(2)}.")
-
-    all_text_parts: list[str] = []
-    for entry in overflow_entries:
-        role = str(entry.get("role") or "").strip().lower()
-        if role not in {"user", "assistant", "tool"}:
-            continue
-        content = _clean_memory_text(str(entry.get("content") or ""))
-        if content:
-            all_text_parts.append(content)
-    all_text = "\n".join(all_text_parts)
-
-    file_hits = _dedupe_strings(
-        re.findall(r"\b[\w./\\-]+\.(?:py|pdf|md|json)\b", all_text, flags=re.IGNORECASE),
-        limit=6,
-    )
-    for file_name in file_hits:
-        if file_name.lower().endswith(".py"):
-            facts.append(f"Code artifact mentioned: {file_name}.")
-        if file_name.lower().endswith(".pdf"):
-            facts.append(f"Output artifact mentioned: {file_name}.")
-
-    model_hits = _dedupe_strings(
-        re.findall(r"\b(?:Fenix|Olight|Nitecore|Acebeam|Wuben|Sofirn|Skilhunt|Thrunite)\s+[A-Za-z0-9\-]{1,24}", all_text),
-        limit=8,
-    )
-    if model_hits:
-        facts.append(f"Candidate models mentioned: {', '.join(model_hits[:6])}.")
-
-    return _dedupe_strings(facts, limit=24)
-
-
-def _deterministic_work_summary(
-    overflow_entries: list[dict[str, Any]],
-    recent_user_messages: list[str],
-    direct_user_directives: list[str],
-) -> str:
-    """Build a readable chronological summary when model output is unavailable."""
-
-    lines: list[str] = []
-    latest_user = next((msg for msg in recent_user_messages if str(msg or "").strip()), "")
-    if latest_user:
-        lines.append(f"Primary user goal: {latest_user[:260]}")
-
-    if direct_user_directives:
-        top_directives = _dedupe_strings([str(x) for x in direct_user_directives], limit=5)
-        if top_directives:
-            lines.append("Key user directives: " + "; ".join(top_directives))
-
-    tool_events: list[str] = []
-    assistant_actions: list[str] = []
-    errors: list[str] = []
-
-    def humanize_issue(tool_name: str, raw_text: str) -> str:
-        lowered_local = raw_text.lower()
-        if "bad_query" in lowered_local:
-            if "seo filler" in lowered_local:
-                return f"Tool issue ({tool_name}): query rejected due to SEO/filler wording."
-            if "more than 6 content words" in lowered_local:
-                return f"Tool issue ({tool_name}): query rejected for being too long/over-specified."
-            return f"Tool issue ({tool_name}): query rejected by quality guard (BAD_QUERY)."
-        if "timeout" in lowered_local:
-            return f"Tool issue ({tool_name}): request timed out."
-        if "duplicate" in lowered_local and "blocked" in lowered_local:
-            return f"Tool issue ({tool_name}): duplicate tool call was blocked."
-        if "mode='lines'" in lowered_local and "content" in lowered_local:
-            return f"Tool issue ({tool_name}): edit failed because required argument 'content' was missing for mode='lines'."
-        if "traceback" in lowered_local or "exception" in lowered_local or "error" in lowered_local:
-            return f"Tool issue ({tool_name}): runtime/tool error occurred and required retry or fix."
-        return f"Tool issue ({tool_name}): non-ideal tool response required follow-up handling."
-    for entry in overflow_entries:
-        role = str(entry.get("role") or "").strip().lower()
-        text = _clean_memory_text(str(entry.get("content") or ""))
-        if not text:
-            continue
-        lowered = text.lower()
-
-        if role == "tool":
-            tool_name = str(entry.get("tool_name") or entry.get("name") or entry.get("alias") or entry.get("tool_id") or "tool").strip()
-            lowered = text.lower()
-            status = ""
-            if "bad_query" in lowered:
-                status = "rejected low-quality query (BAD_QUERY)"
-            elif "duplicate" in lowered and "blocked" in lowered:
-                status = "blocked duplicate tool call"
-            elif "timeout" in lowered:
-                status = "timed out"
-            elif "citation handle" in lowered or "search results" in lowered:
-                status = "returned search results/previews"
-            elif "**site:**" in lowered or "**url:**" in lowered:
-                status = "read source page"
-            else:
-                status = "returned tool output"
-            tool_events.append(f"{tool_name}: {status}")
-            if any(token in lowered for token in ("error", "traceback", "exception", "timeout", "failed", "bad_query")):
-                errors.append(humanize_issue(tool_name, text))
-            continue
-
-        if role == "assistant":
-            assistant_actions.append(_assistant_action_memory_text(text, max_chars=220))
-            if any(token in lowered for token in ("error", "traceback", "exception", "failed", "importerror")):
-                errors.append(f"Assistant-reported issue: {text[:220]}")
-            continue
-
-        if role == "user" and any(token in lowered for token in AGGRESSIVE_MARKERS):
-            errors.append("User signaled high frustration; response speed and execution quality became critical.")
-
-    tool_events = _dedupe_strings(tool_events, limit=8)
-    assistant_actions = _dedupe_strings(assistant_actions, limit=8)
-    errors = _dedupe_strings(errors, limit=8)
-
-    if tool_events:
-        lines.append("Tool activity: " + " | ".join(tool_events))
-    if assistant_actions:
-        lines.append("Assistant actions: " + " -> ".join(assistant_actions))
-    if errors:
-        lines.append("Errors/risks observed: " + " | ".join(errors))
-
-    if not lines:
-        return "No reliable historical signal was available; summary fallback is minimal."
-    return "\n".join(lines)
-
-
-def _deterministic_reflection_summary(
     *,
-    key_facts: list[str],
-    risk_flags: list[str],
-    open_tasks: list[str],
-    work_summary: str,
-) -> str:
-    """Build a compact reflective context block for next-step reasoning."""
-
-    reflections: list[str] = []
-    if key_facts:
-        reflections.append("What is stable: core task constraints and artifacts are identified.")
-    if "bad_query" in work_summary.lower():
-        reflections.append("Search quality risk: prior queries triggered BAD_QUERY gates; keep future queries shorter and more specific.")
-    if any("frustrated" in str(flag).lower() or "aggressive" in str(flag).lower() for flag in risk_flags):
-        reflections.append("User state risk: high frustration means execution-first responses are required.")
-    if any("import" in str(flag).lower() or "runtime" in str(flag).lower() for flag in risk_flags):
-        reflections.append("Technical risk: runtime/import failures were observed and must be re-validated after edits.")
-    if open_tasks:
-        reflections.append("Outstanding work exists; next turn should prioritize unresolved tasks before expanding scope.")
-    else:
-        reflections.append("No explicit open tasks were extracted; verify completion criteria against user goal before concluding.")
-    return " ".join(reflections)
-
-
-def _deterministic_memory_payload(
-    overflow_entries: list[dict[str, Any]],
-    recent_user_messages: list[str],
-    direct_user_directives: list[str],
+    warning: str = "",
+    raw_model_output: str = "",
 ) -> dict[str, Any]:
     urls: list[str] = []
     files: list[str] = []
     tools_used: list[str] = []
-    key_facts: list[str] = []
-    decisions: list[str] = []
-    open_tasks: list[str] = []
-    risk_flags: list[str] = []
     source_memory: list[str] = []
 
     url_pattern = re.compile(r"https?://[^\s)>\]\"']+", flags=re.IGNORECASE)
-    file_pattern = re.compile(r"(?:[A-Za-z]:\\[^\n\r\t*?\"<>|]+|[\w./\\-]+\.(?:py|js|ts|json|md|txt|pdf|docx|xlsx|pptx|html|css))")
+    file_pattern = re.compile(r"(?:[A-Za-z]:\\[^\n\r\t*?\"<>|]+|[\w./\\-]+\.[A-Za-z0-9]{1,12})")
 
     for entry in overflow_entries:
         role = str(entry.get("role") or "").strip().lower()
         content = _strip_control_tokens(str(entry.get("content") or ""))
-        thinking = _strip_control_tokens(str(entry.get("thinking") or ""))
+        thinking = "" if role == "assistant" else _strip_control_tokens(str(entry.get("thinking") or ""))
         text = "\n".join(part for part in (content, thinking) if part).strip()
         if not text:
             continue
 
-        urls.extend(url for url in url_pattern.findall(text) if not _is_noisy_url(url))
-        files.extend(match.group(0).strip(".,;:") for match in file_pattern.finditer(text))
+        urls.extend(url for url in (_clean_url(url) for url in url_pattern.findall(text)) if url)
+        files.extend(
+            file_name
+            for file_name in (match.group(0).strip(".,;:`'\"") for match in file_pattern.finditer(text))
+            if file_name and not _looks_like_web_host_path(file_name)
+        )
 
         if role == "tool":
             tool_name = str(entry.get("tool_name") or entry.get("name") or entry.get("alias") or entry.get("tool_id") or "").strip()
             if tool_name:
                 tools_used.append(tool_name)
-            site_match = re.search(r"\*\*Site:\*\*\s*([^\n]+)", text)
-            title_match = re.search(r"^\s*#\s+(.+)$", text, flags=re.MULTILINE)
-            if site_match and title_match:
-                tools_used.append(f"read_source:{site_match.group(1).strip()}")
-
-        for line in _line_candidates(text):
-            lowered = line.lower()
-            if role == "tool":
-                if len(key_facts) < 48 and any(marker in lowered for marker in ("vless", "reality", "utls", "ech", "webtunnel", "tls", "xray", "sing-box", "vpn", "protocol")):
-                    fact = _normalize_key_fact(line)
-                    if fact:
-                        key_facts.append(fact)
-                continue
-            if any(marker in lowered for marker in ("i chose", "chosen", "selected", "decided", "because", "best", "recommended", "recommendation", "top-", "therefore")):
-                decisions.append(line[:420])
-            if (
-                lowered.startswith(("todo", "next:", "next step", "open task"))
-                or any(marker in lowered for marker in ("need to", "needs to", "still need", "remaining task"))
-            ):
-                open_tasks.append(line[:360])
-            if "risk_flags" not in lowered and any(marker in lowered for marker in ("risk", "danger", "problem", "bug", "blocked")):
-                risk_flags.append(line[:360])
-            if role == "user" and any(marker in lowered for marker in AGGRESSIVE_MARKERS):
-                risk_flags.append("User is highly frustrated/aggressive; prioritize concise execution-focused responses.")
-            if any(marker in lowered for marker in ("importerror", "reportlab", "cannot import name a4", "name 'a4'", "module not found")):
-                risk_flags.append("Import/runtime error detected in report generation pipeline; verify code fix before final output.")
-            if role in {"assistant", "tool"} and len(key_facts) < 48:
-                if any(marker in lowered for marker in ("vless", "reality", "utls", "ech", "webtunnel", "tls", "xray", "sing-box", "vpn", "protocol", "протокол")):
-                    fact = _normalize_key_fact(line)
-                    if fact:
-                        key_facts.append(fact)
 
         if role != "tool":
-            if role == "assistant":
-                source_line = f"assistant: {_assistant_action_memory_text(text)}"
-            elif role == "user":
-                user_line = _clean_memory_text(text)
-                if len(user_line) > 220:
-                    user_line = user_line[:220].rstrip() + "..."
-                source_line = f"user: {user_line}"
-            else:
-                source_line = _entry_memory_text(entry, max_chars=420)
-            normalized_source_line = str(source_line or "").strip()
-            if normalized_source_line and normalized_source_line.lower() != "assistant:":
-                source_memory.append(source_line)
+            memory_text = _entry_memory_text(entry, max_chars=MEMORY_ENTRY_MAX_CHARS)
+            if memory_text and memory_text.strip().lower() not in {"assistant:", "user:"}:
+                source_memory.append(memory_text)
 
     latest_user = next((msg for msg in recent_user_messages if str(msg or "").strip()), "")
-    if not key_facts:
-        key_facts = _heuristic_key_facts(overflow_entries, recent_user_messages, direct_user_directives)
-    work_summary = _deterministic_work_summary(overflow_entries, recent_user_messages, direct_user_directives)
-    reflection_summary = _deterministic_reflection_summary(
-        key_facts=key_facts,
-        risk_flags=risk_flags,
-        open_tasks=open_tasks,
-        work_summary=work_summary,
-    )
+    risk_flags = [warning] if warning else []
+    cleaned_raw_output = _clean_memory_text(raw_model_output)
+    if len(cleaned_raw_output) > 6000:
+        cleaned_raw_output = cleaned_raw_output[:6000].rstrip() + "..."
+    work_summary = f"{{{cleaned_raw_output}}}" if cleaned_raw_output else "Raw compressed context was preserved without semantic extraction."
     return {
         "summary_version": 1,
-        "session_goal": latest_user[:220],
-        "current_focus": latest_user[:220],
+        "session_goal": _clean_memory_text(latest_user)[:900],
+        "current_focus": _clean_memory_text(latest_user)[:900],
         "work_summary": work_summary,
-        "reflection_summary": reflection_summary,
+        "reflection_summary": "",
         "recent_user_messages": _dedupe_strings(recent_user_messages[:12], limit=12),
-        "key_facts": _dedupe_strings(key_facts, limit=48),
+        "key_facts": [],
         "artifacts": {
             "files": _dedupe_strings(files, limit=32),
             "urls": _dedupe_strings(urls, limit=24),
             "tools_used": _dedupe_strings(tools_used, limit=32),
         },
-        "open_tasks": _sanitize_semantic_items(open_tasks, limit=12, max_chars=ANALYTIC_ENTRY_MAX_CHARS),
-        "risk_flags": _sanitize_semantic_items(risk_flags, limit=12, max_chars=ANALYTIC_ENTRY_MAX_CHARS),
+        "open_tasks": [],
+        "risk_flags": _sanitize_semantic_items(risk_flags, limit=4, max_chars=ANALYTIC_ENTRY_MAX_CHARS),
         "source_memory": _sanitize_semantic_items(source_memory, limit=96, max_chars=MEMORY_ENTRY_MAX_CHARS, allow_tool_memory=True),
     }
 
 
-def _merge_summary_payload(model_payload: dict[str, Any], deterministic: dict[str, Any]) -> dict[str, Any]:
+def _sanitize_summary_payload(model_payload: dict[str, Any]) -> dict[str, Any]:
     merged = dict(model_payload) if isinstance(model_payload, dict) else {}
     merged["summary_version"] = 1
     merged.pop("history_highlights", None)
-    model_work_summary = _clean_memory_text(str(merged.get("work_summary") or ""))
-    deterministic_work_summary = _clean_memory_text(str(deterministic.get("work_summary") or ""))
-    if not model_work_summary:
-        merged["work_summary"] = deterministic_work_summary
-    else:
-        if len(model_work_summary) > 6000:
-            model_work_summary = model_work_summary[:6000].rstrip() + "..."
-        merged["work_summary"] = model_work_summary
-    model_reflection_summary = _clean_memory_text(str(merged.get("reflection_summary") or ""))
-    deterministic_reflection_summary = _clean_memory_text(str(deterministic.get("reflection_summary") or ""))
-    if not model_reflection_summary:
-        merged["reflection_summary"] = deterministic_reflection_summary
-    else:
-        if len(model_reflection_summary) > 2000:
-            model_reflection_summary = model_reflection_summary[:2000].rstrip() + "..."
-        merged["reflection_summary"] = model_reflection_summary
-    for key in ("session_goal", "current_focus"):
-        if not str(merged.get(key) or "").strip():
-            merged[key] = deterministic.get(key, "")
+
+    work_summary = _clean_memory_text(str(merged.get("work_summary") or ""))
+    if len(work_summary) > 6000:
+        work_summary = work_summary[:6000].rstrip() + "..."
+    merged["work_summary"] = work_summary
+
+    reflection_summary = _clean_memory_text(str(merged.get("reflection_summary") or ""))
+    if len(reflection_summary) > 2000:
+        reflection_summary = reflection_summary[:2000].rstrip() + "..."
+    merged["reflection_summary"] = reflection_summary
+
+    for key, max_chars in (("session_goal", 900), ("current_focus", 900)):
+        text = _clean_memory_text(str(merged.get(key) or ""))
+        if len(text) > max_chars:
+            text = text[:max_chars].rstrip() + "..."
+        merged[key] = text
+
     semantic_limits = {
         "recent_user_messages": (12, 900, False),
         "key_facts": (48, 420, False),
@@ -760,67 +525,52 @@ def _merge_summary_payload(model_payload: dict[str, Any], deterministic: dict[st
     }
     for key, (limit, max_chars, allow_tool_memory) in semantic_limits.items():
         values = merged.get(key) if isinstance(merged.get(key), list) else []
-        fallback = deterministic.get(key) if isinstance(deterministic.get(key), list) else []
+        if key == "open_tasks":
+            merged[key] = _sanitize_open_tasks(values, limit=limit)
+            continue
         merged[key] = _sanitize_semantic_items(
-            [*values, *fallback],
+            values,
             limit=limit,
             max_chars=max_chars,
             allow_tool_memory=allow_tool_memory,
         )
 
     artifacts = merged.get("artifacts") if isinstance(merged.get("artifacts"), dict) else {}
-    deterministic_artifacts = deterministic.get("artifacts") if isinstance(deterministic.get("artifacts"), dict) else {}
     merged["artifacts"] = {
-        "files": _dedupe_strings([*(artifacts.get("files") if isinstance(artifacts.get("files"), list) else []), *(deterministic_artifacts.get("files") or [])], limit=32),
-        "urls": _dedupe_strings([url for url in [*(artifacts.get("urls") if isinstance(artifacts.get("urls"), list) else []), *(deterministic_artifacts.get("urls") or [])] if not _is_noisy_url(url)], limit=24),
-        "tools_used": _dedupe_strings([*(artifacts.get("tools_used") if isinstance(artifacts.get("tools_used"), list) else []), *(deterministic_artifacts.get("tools_used") or [])], limit=32),
+        "files": _dedupe_strings([str(file_name) for file_name in (artifacts.get("files") if isinstance(artifacts.get("files"), list) else []) if not _looks_like_web_host_path(str(file_name))], limit=32),
+        "urls": _dedupe_strings([url for url in (_clean_url(str(url)) for url in (artifacts.get("urls") if isinstance(artifacts.get("urls"), list) else [])) if url], limit=24),
+        "tools_used": _dedupe_strings(artifacts.get("tools_used") if isinstance(artifacts.get("tools_used"), list) else [], limit=32),
+    }
+    return merged
+
+
+def _merge_model_summary_with_raw_context(model_payload: dict[str, Any], raw_payload: dict[str, Any]) -> dict[str, Any]:
+    merged = _sanitize_summary_payload(model_payload)
+
+    for key in ("recent_user_messages", "source_memory"):
+        max_chars = 900 if key == "recent_user_messages" else MEMORY_ENTRY_MAX_CHARS
+        limit = 12 if key == "recent_user_messages" else 96
+        values = merged.get(key) if isinstance(merged.get(key), list) else []
+        raw_values = raw_payload.get(key) if isinstance(raw_payload.get(key), list) else []
+        merged[key] = _sanitize_semantic_items(
+            [*values, *raw_values],
+            limit=limit,
+            max_chars=max_chars,
+            allow_tool_memory=(key == "source_memory"),
+        )
+
+    artifacts = merged.get("artifacts") if isinstance(merged.get("artifacts"), dict) else {}
+    raw_artifacts = raw_payload.get("artifacts") if isinstance(raw_payload.get("artifacts"), dict) else {}
+    merged["artifacts"] = {
+        "files": _dedupe_strings([str(file_name) for file_name in [*(artifacts.get("files") if isinstance(artifacts.get("files"), list) else []), *(raw_artifacts.get("files") or [])] if not _looks_like_web_host_path(str(file_name))], limit=32),
+        "urls": _dedupe_strings([url for url in (_clean_url(str(url)) for url in [*(artifacts.get("urls") if isinstance(artifacts.get("urls"), list) else []), *(raw_artifacts.get("urls") or [])]) if url], limit=24),
+        "tools_used": _dedupe_strings([*(artifacts.get("tools_used") if isinstance(artifacts.get("tools_used"), list) else []), *(raw_artifacts.get("tools_used") or [])], limit=32),
     }
     return merged
 
 
 def _summary_text_from_payload(payload: dict[str, Any]) -> str:
     return "[Conversation History Summary Base]\n" + json.dumps(payload, ensure_ascii=False, indent=2)
-
-
-def _expand_payload_to_target(
-    payload: dict[str, Any],
-    overflow_entries: list[dict[str, Any]],
-    *,
-    target_min_chars: int = COMPRESSION_TARGET_MIN_CHARS,
-) -> dict[str, Any]:
-    """Add detailed memory excerpts until the summary is useful, not tiny."""
-
-    expanded = dict(payload)
-    existing_source = expanded.get("source_memory") if isinstance(expanded.get("source_memory"), list) else []
-    source_memory = [str(item) for item in existing_source if str(item or "").strip()]
-    seen = {item.lower() for item in source_memory}
-
-    for entry in overflow_entries:
-        if len(_summary_text_from_payload({**expanded, "source_memory": source_memory})) >= target_min_chars:
-            break
-        role = str(entry.get("role") or "").strip().lower()
-        if role == "tool":
-            continue
-        raw_text = _clean_memory_text(str(entry.get("content") or ""))
-        if role == "assistant":
-            text = f"assistant: {_assistant_action_memory_text(raw_text)}"
-        elif role == "user":
-            user_line = raw_text[:220].rstrip() + "..." if len(raw_text) > 220 else raw_text
-            text = f"user: {user_line}" if user_line else ""
-        else:
-            text = _entry_memory_text(entry, max_chars=420)
-        if not text.strip():
-            continue
-        if _looks_like_raw_tool_dump(text):
-            continue
-        key = text.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        source_memory.append(text)
-
-    expanded["source_memory"] = source_memory
-    return expanded
 
 
 def fit_summary_text(summary_payload: dict[str, Any], max_chars: int) -> tuple[str, dict[str, Any]]:
@@ -921,12 +671,116 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _fallback_summary_payload(
-    overflow_entries: list[dict[str, Any]],
-    recent_user_messages: list[str],
-    direct_user_directives: list[str],
-) -> dict[str, Any]:
-    return _deterministic_memory_payload(overflow_entries, recent_user_messages, direct_user_directives)
+def _empty_markdown_value(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(text or "").strip().lower())
+    return normalized in {"", "none", "n/a", "na", "-", "(none)", "empty"}
+
+
+def _markdown_list_items(lines: list[str]) -> list[str]:
+    items: list[str] = []
+    for line in lines:
+        text = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s*", "", str(line or "")).strip()
+        if _empty_markdown_value(text):
+            continue
+        items.append(text)
+    return items
+
+
+def _markdown_block(lines: list[str]) -> str:
+    cleaned = [str(line or "").strip() for line in lines]
+    text = "\n".join(line for line in cleaned if not _empty_markdown_value(line)).strip()
+    return text
+
+
+def _normalize_markdown_heading(heading: str) -> str:
+    text = str(heading or "").strip().lower().strip("*_`:")
+    text = re.sub(r"[_-]+", " ", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+MARKDOWN_SECTION_HEADINGS = {
+    "session_goal": "Session Goal",
+    "current_focus": "Current Focus",
+    "work_summary": "Work Summary",
+    "reflection_summary": "Reflection Summary",
+    "recent_user_messages": "Recent User Messages",
+    "key_facts": "Key Facts",
+    "files": "Files",
+    "urls": "URLs",
+    "tools_used": "Tools Used",
+    "open_tasks": "Open Tasks",
+    "risk_flags": "Risk Flags",
+    "source_memory": "Source Memory",
+}
+
+
+NORMALIZED_MARKDOWN_SECTIONS = {}
+for field_name, heading in MARKDOWN_SECTION_HEADINGS.items():
+    NORMALIZED_MARKDOWN_SECTIONS[_normalize_markdown_heading(field_name)] = field_name
+    NORMALIZED_MARKDOWN_SECTIONS[_normalize_markdown_heading(heading)] = field_name
+
+
+def _canonical_markdown_section(heading: str) -> str:
+    return NORMALIZED_MARKDOWN_SECTIONS.get(_normalize_markdown_heading(heading), "")
+
+
+def _extract_markdown_summary(text: str) -> dict[str, Any] | None:
+    sections: dict[str, list[str]] = {}
+    current = ""
+    for raw_line in str(text or "").splitlines():
+        heading_match = re.match(r"^\s{0,3}#{1,4}\s+(.+?)\s*$", raw_line)
+        if heading_match:
+            current = _canonical_markdown_section(heading_match.group(1))
+            if current:
+                sections.setdefault(current, [])
+            continue
+        label_match = re.match(r"^\s*(?:[-*+]\s*)?(?:\*\*)?([A-Za-z0-9_ ][A-Za-z0-9_ /-]{1,80}?)(?::\*\*|\*\*:|:)\s*(.*)$", raw_line)
+        if label_match:
+            candidate = _canonical_markdown_section(label_match.group(1))
+            if candidate:
+                current = candidate
+                sections.setdefault(current, [])
+                inline_value = label_match.group(2).strip()
+                if inline_value:
+                    sections[current].append(inline_value)
+                continue
+        if current:
+            sections.setdefault(current, []).append(raw_line)
+
+    if not sections:
+        return None
+
+    def section(field_name: str) -> list[str]:
+        return sections.get(field_name, [])
+
+    payload = _empty_summary_payload()
+    payload["session_goal"] = _markdown_block(section("session_goal"))
+    payload["current_focus"] = _markdown_block(section("current_focus"))
+    payload["work_summary"] = _markdown_block(section("work_summary"))
+    payload["reflection_summary"] = _markdown_block(section("reflection_summary"))
+    payload["recent_user_messages"] = _markdown_list_items(section("recent_user_messages"))
+    payload["key_facts"] = _markdown_list_items(section("key_facts"))
+    payload["open_tasks"] = _markdown_list_items(section("open_tasks"))
+    payload["risk_flags"] = _markdown_list_items(section("risk_flags"))
+    payload["source_memory"] = _markdown_list_items(section("source_memory"))
+    payload["artifacts"] = {
+        "files": _markdown_list_items(section("files")),
+        "urls": _markdown_list_items(section("urls")),
+        "tools_used": _markdown_list_items(section("tools_used")),
+    }
+
+    has_semantic_content = any(
+        payload.get(key)
+        for key in ("session_goal", "current_focus", "work_summary", "reflection_summary", "recent_user_messages", "key_facts", "open_tasks", "risk_flags", "source_memory")
+    )
+    artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
+    has_artifacts = any(artifacts.get(key) for key in ("files", "urls", "tools_used"))
+    return payload if has_semantic_content or has_artifacts else None
+
+
+def _extract_summary_payload(text: str) -> dict[str, Any] | None:
+    return _extract_json_object(text) or _extract_markdown_summary(text)
 
 
 def build_structured_history_summary(
@@ -949,13 +803,15 @@ def build_structured_history_summary(
     transcript = "\n".join(transcript_lines)
 
     summary_payload: dict[str, Any] | None = None
+    raw_payload = _raw_context_payload(scoped_full, recent_user_messages)
+    model_text = ""
     if summarize_with_model is not None and transcript.strip():
         prompt_messages = [
             {
                 "role": "system",
                 "content": (
-                    "You compress chat history into a strict structured JSON knowledge base.\n"
-                    "Return JSON only. No markdown. No prose.\n"
+                    "You compress chat history into a fixed-section Markdown memory base.\n"
+                    "Return only the requested Markdown sections. Do not wrap the output in code fences.\n"
                     "Preserve concrete facts, paths, URLs, explicit user directives, tool outcomes, and open tasks.\n"
                     "Do not include apologies or filler.\n"
                     "Never copy raw tool calls, terminal logs, JSON tool payloads, diffs, tracebacks, citation boilerplate, or search-result lists into the output.\n"
@@ -965,29 +821,32 @@ def build_structured_history_summary(
             {
                 "role": "user",
                 "content": (
-                    "Build a structured history base using this schema:\n"
-                    "{\n"
-                    "  \"summary_version\": 1,\n"
-                    "  \"session_goal\": string,\n"
-                    "  \"current_focus\": string,\n"
-                    "  \"work_summary\": string,\n"
-                    "  \"reflection_summary\": string,\n"
-                    "  \"recent_user_messages\": string[],\n"
-                    "  \"key_facts\": string[],\n"
-                    "  \"artifacts\": {\"files\": string[], \"urls\": string[], \"tools_used\": string[]},\n"
-                    "  \"open_tasks\": string[],\n"
-                    "  \"risk_flags\": string[],\n"
-                    "  \"source_memory\": string[]\n"
-                    "}\n\n"
+                    "Build a structured history base using exactly these Markdown headings, in this order:\n"
+                    "## Session Goal\n"
+                    "## Current Focus\n"
+                    "## Work Summary\n"
+                    "## Reflection Summary\n"
+                    "## Recent User Messages\n"
+                    "## Key Facts\n"
+                    "## Files\n"
+                    "## URLs\n"
+                    "## Tools Used\n"
+                    "## Open Tasks\n"
+                    "## Risk Flags\n"
+                    "## Source Memory\n\n"
+                    "For list sections, use one '- ' bullet per item. For empty sections, write '- None'.\n\n"
                     "IMPORTANT:\n"
                     "- This is a large memory base, not a tiny summary.\n"
                     "- Be exhaustive about durable session state: user goal, constraints, completed actions, files changed, errors fixed, current answer facts, and remaining work.\n"
                     "- work_summary must be a detailed narrative block (multi-sentence, chronological) describing what happened in the dialogue, which tools were used, what failed, what was fixed, and what remains.\n"
                     "- reflection_summary must be a concise analytical reflection: what is reliable, what is uncertain, key risks, and the best next-step strategy.\n"
                     "- Fill each field by semantics, not by keyword matching.\n"
+                    "- Treat assistant reasoning/thinking as unreliable scratchpad; do not copy it into open_tasks, key_facts, or risk_flags unless the final visible answer or user explicitly confirms it.\n"
                     "- key_facts must contain task parameters and extracted domain facts only; never copy user messages verbatim into key_facts.\n"
                     "- decisions_and_rationale must contain only actual decisions plus why they were made; leave it empty if no decision exists.\n"
-                    "- open_tasks must contain only unfinished user goals or concrete next actions; leave it empty if none exist.\n"
+                    "- open_tasks must contain model-generated next actions, not copied reasoning. If the latest user goal is not explicitly confirmed complete by the user, write at least one concrete verification or continuation task.\n"
+                    "- Leave open_tasks empty only when the user explicitly confirmed the goal is complete or there is truly no actionable next step.\n"
+                    "- Never put partial thought fragments in open_tasks (examples: \"We need...\", \"Now combine...\", \"Wait...\", \"Check balancing...\").\n"
                     "- risk_flags must contain only warnings that affect future work; leave it empty if none exist.\n"
                     "- Do not put raw search snippets, citation instructions, terminal logs, tool JSON, diffs, or page dumps into any field.\n"
                     "- source_memory must preserve curated detailed excerpts from important user/assistant turns only; never store entries beginning with tool:.\n"
@@ -1004,16 +863,20 @@ def build_structured_history_summary(
             },
         ]
         model_text = summarize_with_model(prompt_messages)
-        summary_payload = _extract_json_object(model_text)
+        summary_payload = _extract_summary_payload(model_text)
 
-    deterministic_payload = _deterministic_memory_payload(scoped_full, recent_user_messages[:5], direct_user_directives)
     if not isinstance(summary_payload, dict):
-        summary_payload = deterministic_payload
+        warning = ""
+        if summarize_with_model is not None and transcript.strip():
+            if _clean_memory_text(model_text):
+                warning = "Model summary output could not be parsed; raw compressed context was preserved."
+            else:
+                warning = "No risks."
+        summary_payload = _raw_context_payload(scoped_full, recent_user_messages, warning=warning, raw_model_output=model_text)
     else:
-        summary_payload = _merge_summary_payload(summary_payload, deterministic_payload)
+        summary_payload = _merge_model_summary_with_raw_context(summary_payload, raw_payload)
 
     summary_payload.setdefault("summary_version", 1)
-    summary_payload = _expand_payload_to_target(summary_payload, scoped_full, target_min_chars=COMPRESSION_TARGET_MIN_CHARS)
     summary_text = _summary_text_from_payload(summary_payload)
     return summary_text, summary_payload
 

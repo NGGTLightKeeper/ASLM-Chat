@@ -7,7 +7,6 @@ Fetch a single URL as clean markdown text. Supports:
   - Standard HTTP fetch (httpx в†’ curl_cffi)
   - Reddit JSON endpoint
   - YouTube transcript (yt-dlp в†’ youtube-transcript-api)
-  - Wayback Machine fallback
   - page_normalizer for HTML в†’ markdown conversion
 
 Replaces the scattered read_page logic from legacy src/engine.py.
@@ -25,7 +24,7 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Optional
-from urllib.parse import parse_qsl, quote as _quote, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from core.config import load_search_config
 from core.extract.page_normalizer import normalize_page
@@ -44,7 +43,6 @@ from custom_domains.amazon import fetch_amazon_snapshot
 from custom_domains.ebay import fetch_ebay_snapshot
 from custom_domains.github import fetch_github_page as _fetch_github_page
 from custom_domains.github import is_github_url as _is_github_url
-from custom_domains.dns_shop import camoufox_fetch_kwargs as _dns_camoufox_fetch_kwargs
 from custom_domains.dns_shop import dns_variant_urls as _dns_variant_urls
 from custom_domains.dns_shop import rewrite_read_page_url as _rewrite_read_page_url
 from custom_domains.reddit import fetch_reddit_json as _fetch_reddit_json
@@ -492,81 +490,12 @@ async def _fetch_race(url: str, timeout: float, tls_verify: bool = True) -> str 
 
 
 # ---------------------------------------------------------------------------
-# Wayback Machine fallback
-# ---------------------------------------------------------------------------
-
-async def _fetch_wayback(url: str, timeout: int = 30) -> str | None:
-    """Fetch a Wayback snapshot, while still blocking unsafe original/redirect URLs."""
-    from urllib.parse import quote as _quote
-    loop = asyncio.get_running_loop()
-
-    def _do() -> str | None:
-        import requests as _req
-
-        try:
-            validate_public_fetch_url(url)
-        except UnsafeFetchUrl as exc:
-            logger.warning("blocked unsafe Wayback target url=%r reason=%s", url, exc)
-            return None
-
-        cdx_url = (
-            "https://web.archive.org/cdx/search/cdx"
-            f"?url={_quote(url, safe='')}"
-            "&output=json&limit=1&fl=timestamp,statuscode&filter=statuscode:200&fastLatest=true"
-        )
-        try:
-            cdx = _req.get(
-                cdx_url,
-                timeout=timeout,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; WaybackFetcher/1.0)"},
-                allow_redirects=False,
-            )
-            cdx.raise_for_status()
-            rows = cdx.json()
-        except Exception:
-            logger.debug("Wayback CDX lookup failed for %s", url, exc_info=True)
-            return None
-        if not rows or len(rows) < 2:
-            return None
-        ts = rows[1][0]
-        current_url = f"https://web.archive.org/web/{ts}id_/{url}"
-        try:
-            for _ in range(max_safe_redirects() + 1):
-                current_url = validate_public_fetch_url(current_url)
-                resp = _req.get(
-                    current_url,
-                    timeout=timeout,
-                    headers={"User-Agent": "Mozilla/5.0 (compatible; WaybackFetcher/1.0)"},
-                    allow_redirects=False,
-                )
-                if _is_redirect_status(int(resp.status_code)):
-                    current_url = validate_redirect_target(current_url, resp.headers.get("location", ""))
-                    continue
-                break
-            else:
-                return None
-            resp.raise_for_status()
-            if is_non_text_content_type(resp.headers.get("content-type", "")):
-                return None
-            return resp.text
-        except UnsafeFetchUrl as exc:
-            logger.warning("blocked unsafe Wayback redirect url=%r reason=%s", url, exc)
-            return None
-        except Exception:
-            logger.debug("Wayback snapshot fetch failed for %s", url, exc_info=True)
-            return None
-
-    return await loop.run_in_executor(_io_pool, _do)
-
-
-# ---------------------------------------------------------------------------
 # ReadPageService
 # ---------------------------------------------------------------------------
 
 @dataclass
 class ReadPageOptions:
     timeout: float = 20.0
-    use_wayback_fallback: bool = False
     max_chars: int = 20_000
 
 
@@ -592,31 +521,34 @@ class ReadPageService:
             max_chars=cfg.extraction.max_page_chars,
         )
 
+    async def _fetch_camoufox_raw_html(self, url: str, opts: ReadPageOptions) -> str | None:
+        """Fetch raw HTML through Camoufox within read_page's global deadline."""
+
+        camoufox_kwargs: dict[str, object] = {
+            "wait_sec": 4.0,
+            "timeout_sec": min(float(opts.timeout), 20.0),
+            "process_timeout": min(max(float(opts.timeout) + 5.0, 10.0), 25.0),
+            "warmup_count": 0,
+            "normalize": False,
+        }
+        camoufox_result = await fetch_with_camoufox(
+            url,
+            **camoufox_kwargs,
+        )
+        raw_html = camoufox_result.html if camoufox_result.success else None
+        if not raw_html:
+            detail = camoufox_result.error or "unknown browser fetch failure"
+            logger.warning("Camoufox read_page fetch failed for %s: %s", url, detail)
+            return None
+        return raw_html
+
     async def _fetch_raw_html(self, url: str, opts: ReadPageOptions, original_url: str) -> str | None:
         if self._registry.needs_camoufox(url):
-            camoufox_kwargs: dict[str, object] = {
-                "wait_sec": 4.0,
-                "timeout_sec": opts.timeout,
-                "process_timeout": opts.timeout + 15.0,
-                "warmup_count": 0,
-                "normalize": False,
-            }
-            if _host(url) == "dns-shop.ru":
-                camoufox_kwargs.update(_dns_camoufox_fetch_kwargs(url, opts.timeout))
-            camoufox_result = await fetch_with_camoufox(
-                url,
-                **camoufox_kwargs,
-            )
-            raw_html = camoufox_result.html if camoufox_result.success else None
-            if not raw_html:
-                detail = camoufox_result.error or "unknown browser fetch failure"
-                logger.warning("Camoufox read_page fetch failed for %s: %s", url, detail)
-                return None
-            return raw_html
+            return await self._fetch_camoufox_raw_html(url, opts)
 
         raw_html = await _fetch_race(url, timeout=opts.timeout, tls_verify=self._cfg.search.tls_verify)
-        if not raw_html and opts.use_wayback_fallback:
-            raw_html = await _fetch_wayback(url, timeout=30)
+        if not raw_html:
+            raw_html = await self._fetch_camoufox_raw_html(url, opts)
         return raw_html
 
     async def trace(self, url: str) -> list[ReadPageVariantAttempt]:
@@ -869,7 +801,7 @@ class ReadPageService:
     async def read(self, url: str) -> str:
         """Fetch a URL and return its content as clean markdown."""
         url = url.strip()
-        deadline = max(self._opts.timeout * 3, 60.0)
+        deadline = max(float(self._opts.timeout), 30.0)
         try:
             markdown, _ = await asyncio.wait_for(
                 self._read(url, collect_attempts=False),
@@ -888,13 +820,11 @@ class ReadPageService:
 async def run_read_page(
     url: str,
     timeout: float = 20.0,
-    use_wayback_fallback: bool = False,
     max_chars: int = 20_000,
 ) -> str:
     """Convenience entry point for MCP adapter and CLI."""
     opts = ReadPageOptions(
         timeout=timeout,
-        use_wayback_fallback=use_wayback_fallback,
         max_chars=max_chars,
     )
     service = ReadPageService(options=opts)

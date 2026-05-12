@@ -6,24 +6,6 @@ from urllib.parse import urlparse, urlunparse
 from custom_domains.retail_common import format_price_value, normalize_availability, strip_html_fragment
 
 
-def camoufox_fetch_kwargs(url: str, timeout_sec: float) -> dict[str, float | int | bool]:
-    wait_sec = 6.0
-    process_timeout = timeout_sec + 25.0
-    if url.endswith("/.xaml"):
-        wait_sec = 7.0
-        process_timeout = timeout_sec + 30.0
-    elif "/product/characteristics/" in url:
-        wait_sec = 5.0
-        process_timeout = timeout_sec + 25.0
-    return {
-        "wait_sec": wait_sec,
-        "timeout_sec": timeout_sec,
-        "process_timeout": process_timeout,
-        "warmup_count": 0,
-        "normalize": False,
-    }
-
-
 def _clean_dns_spec_text(text: str) -> str:
     cleaned = re.sub(r"\s+", " ", text or "").strip(" \t\r\n,;|")
     return cleaned[:120]

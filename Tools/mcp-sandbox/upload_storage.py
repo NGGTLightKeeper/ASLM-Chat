@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import uuid
 import hashlib
@@ -14,10 +15,49 @@ from Settings import settings
 from .file_manifests import UploadedFileManifest, build_uploaded_file_manifest, normalize_upload_name
 
 
-SANDBOX_ROOT = settings.BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox"
+MCP_SANDBOX_DIR = settings.BASE_DIR / "Tools" / "mcp-sandbox"
+
+
+def _load_sandbox_env(path: Path) -> dict[str, str]:
+    result: dict[str, str] = {}
+    try:
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            result[key.strip()] = value.strip()
+    except OSError:
+        pass
+    return result
+
+
+_SANDBOX_ENV = _load_sandbox_env(
+    Path(os.environ.get("SANDBOX_CONFIG_FILE") or MCP_SANDBOX_DIR / "sandbox.env")
+)
+
+
+def _sandbox_cfg(key: str, default: str) -> str:
+    return os.environ.get(key) or _SANDBOX_ENV.get(key) or default
+
+
+SANDBOX_HOST_WORKSPACE = Path(
+    _sandbox_cfg("SANDBOX_HOST_WORKSPACE", str(MCP_SANDBOX_DIR))
+).expanduser()
+SANDBOX_DEFAULT_TASK_DIR = _sandbox_cfg("SANDBOX_DEFAULT_TASK_DIR", "_sandbox").strip()
+SANDBOX_ROOT = (
+    SANDBOX_HOST_WORKSPACE / SANDBOX_DEFAULT_TASK_DIR
+    if SANDBOX_DEFAULT_TASK_DIR not in {"", "."}
+    else SANDBOX_HOST_WORKSPACE
+)
 USER_UPLOAD_ROOT = SANDBOX_ROOT / "User"
 USER_FILE_MANIFEST_ROOT = settings.BASE_DIR / "Tools" / "user_files"
-SANDBOX_MODEL_PREFIX = "/workspace/_sandbox/User"
+SANDBOX_MODEL_WORKSPACE = (
+    f"/workspace/{SANDBOX_DEFAULT_TASK_DIR}".replace("\\", "/")
+    if SANDBOX_DEFAULT_TASK_DIR not in {"", "."}
+    else "/workspace"
+)
+SANDBOX_MODEL_PREFIX = f"{SANDBOX_MODEL_WORKSPACE.rstrip('/')}/User"
 UPLOAD_MANIFEST_SUFFIX = ".manifest.json"
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 
