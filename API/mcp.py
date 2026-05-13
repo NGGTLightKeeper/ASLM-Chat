@@ -44,6 +44,7 @@ TOOL_CALL_QUOTAS = {
     "web_search": 15,
     "read_page": 10,
 }
+HIGH_EFFORT_WEB_SEARCH_QUOTA = 3
 TOOL_BLOCK_FINAL_PROMPT = (
     "Tool loop guard: repeated tool calls were blocked because they duplicate recent work, "
     "hit a quota, or are in cooldown. Do not call tools again. Use the evidence already "
@@ -260,6 +261,26 @@ def _quota_tool_id(tool_event: dict[str, Any] | None) -> str:
     return ""
 
 
+def _search_effort(arguments: dict[str, Any] | None) -> str:
+    """Return the normalized web-search effort value from tool arguments."""
+
+    if not isinstance(arguments, dict):
+        return ""
+
+    value = arguments.get("effort")
+    if value is None and isinstance(arguments.get("query"), dict):
+        value = arguments["query"].get("effort")
+    return str(value or "").strip().lower()
+
+
+def _tool_quota_limit(quota_tool_id: str, arguments: dict[str, Any] | None = None) -> int:
+    """Return the per-response quota for one tool call."""
+
+    if quota_tool_id == "web_search" and _search_effort(arguments) == "high":
+        return HIGH_EFFORT_WEB_SEARCH_QUOTA
+    return TOOL_CALL_QUOTAS[quota_tool_id]
+
+
 def _write_search_io_event(event: dict[str, Any]) -> None:
     """Append complete model/search tool IO as a readable JSON array."""
 
@@ -336,17 +357,26 @@ def log_search_tool_io(
     )
 
 
-def consume_tool_quota(tool_event: dict[str, Any] | None, counters: dict[str, int]) -> str | None:
+def consume_tool_quota(
+    tool_event: dict[str, Any] | None,
+    counters: dict[str, int],
+    arguments: dict[str, Any] | None = None,
+) -> str | None:
     """Increment one quota counter and return an error message if the call is over limit."""
 
     quota_tool_id = _quota_tool_id(tool_event)
     if not quota_tool_id:
         return None
 
-    limit = TOOL_CALL_QUOTAS[quota_tool_id]
+    limit = _tool_quota_limit(quota_tool_id, arguments)
     current = int(counters.get(quota_tool_id, 0) or 0)
     if current >= limit:
         display_name = str((tool_event or {}).get("tool_name") or quota_tool_id).strip() or quota_tool_id
+        if quota_tool_id == "web_search" and _search_effort(arguments) == "high":
+            return (
+                f"Tool quota exceeded: {display_name} high mode is unavailable "
+                "for the rest of this assistant response; use medium or low."
+            )
         return (
             f"Tool quota exceeded: {display_name} can be used at most {limit} times "
             "in one assistant response. Stop calling this tool and answer with the evidence already collected."

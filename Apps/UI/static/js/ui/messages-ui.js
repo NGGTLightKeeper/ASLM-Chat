@@ -1,6 +1,15 @@
-// Copyright NGGT.LightKeeper. All Rights Reserved.
+﻿// Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
+import {
+  addSegmentCitationSources,
+  addSegmentsCitationSources,
+  createCitationRegistry,
+  decorateCitationsInHtml as decorateCitationHandlesInHtml,
+  normalizeCitationBrackets as normalizeCitationHandleBrackets,
+  normalizeCitationSpacing as normalizeCitationHandleSpacing
+} from './citations-ui.js';
+import { bindCitationPreviewCards } from './citation-preview-ui.js';
 
 // Message UI.
 // Create helpers for rendering messages, activity timelines, and message actions.
@@ -368,22 +377,21 @@ export function createMessagesUi(context, dependencies) {
 
   // Render one visible text segment as sanitized HTML.
   function renderMarkdownSegment(content, citationSources) {
-    const hasCitationSources = citationSources && typeof citationSources === 'object' && Object.keys(citationSources).length > 0;
-    const normalizedContent = normalizeLooseDisplayLatex(normalizeCitationSpacing(normalizeCitationBrackets(content)));
-    const visibleContent = hasCitationSources
-      ? normalizedContent
-      : normalizedContent.replace(/\s*\[(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,12}-\d+)\]/gi, '');
+    const normalizedContent = normalizeLooseDisplayLatex(
+      normalizeCitationHandleSpacing(normalizeCitationHandleBrackets(content))
+    );
+    const visibleContent = normalizedContent;
     const latexBlocks = extractLatexBlocks(visibleContent);
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
       const fallbackHtml = restoreLatexPlaceholders(
-        decorateCitationsInHtml(escHtml(latexBlocks.text), citationSources),
+        decorateCitationHandlesInHtml(escHtml(latexBlocks.text), citationSources),
         latexBlocks.blocks
       );
       return enhanceMarkdownCodeBlocks(renderLatexInHtml(fallbackHtml));
     }
 
     const html = restoreLatexPlaceholders(
-      decorateCitationsInHtml(DOMPurify.sanitize(marked.parse(latexBlocks.text)), citationSources),
+      decorateCitationHandlesInHtml(DOMPurify.sanitize(marked.parse(latexBlocks.text)), citationSources),
       latexBlocks.blocks
     );
     return enhanceMarkdownCodeBlocks(renderLatexInHtml(html));
@@ -466,78 +474,7 @@ export function createMessagesUi(context, dependencies) {
       return escHtml(text);
     }
   }
-
-  function normalizeCitationId(value) {
-    return String(value || '').trim().replace(/^\[|\]$/g, '').toUpperCase();
-  }
-
-  function isCitationHandleId(value) {
-    return /^(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,12}-\d+)$/.test(normalizeCitationId(value));
-  }
-
-  function citationSourceForId(citationSources, sourceId) {
-    if (!citationSources || typeof citationSources !== 'object') {
-      return null;
-    }
-
-    const normalizedId = normalizeCitationId(sourceId);
-    return citationSources[normalizedId] || citationSources[sourceId] || citationSources[String(sourceId || '').toLowerCase()] || null;
-  }
-
-  function extractCitationIds(value, citationSources) {
-    const text = String(value || '');
-    const ids = [];
-    const seen = {};
-
-    function addId(candidate) {
-      const normalizedId = normalizeCitationId(String(candidate || '').replace(/^[^\w]+|[^\w-]+$/g, ''));
-      if (!normalizedId || seen[normalizedId]) {
-        return;
-      }
-      if (!isCitationHandleId(normalizedId) && !citationSourceForId(citationSources, normalizedId)) {
-        return;
-      }
-      seen[normalizedId] = true;
-      ids.push(normalizedId);
-    }
-
-    const broadHandlePattern = /\b(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,12}-\d+)\b/gi;
-    let match = broadHandlePattern.exec(text);
-    while (match) {
-      addId(match[0]);
-      match = broadHandlePattern.exec(text);
-    }
-
-    text.split(/[\s,;]+/).forEach(addId);
-    return ids;
-  }
-
-  function normalizeCitationBrackets(value) {
-    return String(value || '')
-      .replace(/[【［]/g, '[')
-      .replace(/[】］]/g, ']');
-  }
-
-  function normalizeCitationSpacing(value) {
-    return String(value || '').replace(
-      /([^\s\[(])\[((?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,12}-\d+)(\s*,\s*(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,12}-\d+))*)\]/gi,
-      '$1 [$2]'
-    );
-  }
-
-  function sourceDisplayDomain(source) {
-    const candidate = String(source.display_domain || source.domain || '').trim();
-    if (candidate) {
-      return candidate;
-    }
-
-    try {
-      return new URL(String(source.url || '')).hostname.replace(/^www\./i, '');
-    } catch (_error) {
-      return '';
-    }
-  }
-
+
   function safeExternalUrl(value) {
     const rawValue = String(value || '').trim();
     if (!rawValue) {
@@ -612,119 +549,7 @@ export function createMessagesUi(context, dependencies) {
     const base = `--msg-source-accent-bg: hsla(${hue}, 68%, 46%, 0.36); --msg-source-accent-fg: hsl(${hue}, 86%, 82%);`;
     return extraStyle ? `${base} ${extraStyle}` : base;
   }
-
-  function renderCitationChip(source, sourceId) {
-    const safeSource = source && typeof source === 'object' ? source : {};
-    const normalizedId = normalizeCitationId(sourceId || safeSource.id);
-    const sourceUrl = safeExternalUrl(safeSource.url);
-    if (!normalizedId) {
-      return escHtml(`[${normalizedId || sourceId}]`);
-    }
-
-    const domain = sourceDisplayDomain(safeSource) || normalizedId;
-    if (!sourceUrl && domain === normalizedId) {
-      return escHtml(`[${normalizedId || sourceId}]`);
-    }
-
-    const title = String(safeSource.title || domain || normalizedId).trim();
-    const faviconUrl = sourceFaviconUrl(safeSource);
-    const fallbackLetter = domain.charAt(0).toUpperCase();
-    const faviconHtml = faviconUrl
-      ? `<img class="msg-citation-favicon" src="${escapeAttributeValue(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
-      : '';
-    const fallbackStyle = domainAccentStyle(domain, faviconUrl ? 'display:none;' : '');
-    const tagName = sourceUrl ? 'a' : 'span';
-    const linkAttrs = sourceUrl
-      ? ` href="${escapeAttributeValue(sourceUrl)}" target="_blank" rel="noopener noreferrer"`
-      : '';
-
-    return `
-      <${tagName} class="msg-citation-chip" title="${escapeAttributeValue(title)}"${linkAttrs}>
-        ${faviconHtml}<span class="msg-citation-fallback" style="${escapeAttributeValue(fallbackStyle)}">${escHtml(fallbackLetter)}</span>
-        <span class="msg-citation-domain">${escHtml(domain)}</span>
-      </${tagName}>
-    `;
-  }
-
-  function decorateCitationsInHtml(html, citationSources) {
-    if (!citationSources || typeof citationSources !== 'object' || Object.keys(citationSources).length === 0) {
-      return html;
-    }
-
-    const template = document.createElement('template');
-    template.innerHTML = html;
-    const citationPattern = /\[\s*([^\]]+)\s*\]/gi;
-    const ignoredTags = new Set(['A', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA']);
-
-    function appendChip(fragment, source, sourceId) {
-      const chipTemplate = document.createElement('template');
-      chipTemplate.innerHTML = renderCitationChip(source, sourceId).trim();
-      fragment.appendChild(chipTemplate.content.cloneNode(true));
-    }
-
-    function walk(node) {
-      if (!node) {
-        return;
-      }
-
-      if (node.nodeType === Node.ELEMENT_NODE && ignoredTags.has(node.tagName)) {
-        return;
-      }
-
-      if (node.nodeType === Node.TEXT_NODE) {
-        const value = node.nodeValue || '';
-        const normalizedValue = normalizeCitationSpacing(normalizeCitationBrackets(value));
-        citationPattern.lastIndex = 0;
-        if (!citationPattern.test(normalizedValue)) {
-          return;
-        }
-
-        citationPattern.lastIndex = 0;
-        const fragment = document.createDocumentFragment();
-        let lastIndex = 0;
-        let match = citationPattern.exec(normalizedValue);
-
-        while (match) {
-          const inner = String(match[1] || '');
-          const sourceIds = extractCitationIds(inner, citationSources);
-          if (match.index > lastIndex) {
-            fragment.appendChild(document.createTextNode(normalizedValue.slice(lastIndex, match.index)));
-          }
-          sourceIds.forEach(function appendCitationById(sourceId, sourceIndex) {
-            const source = citationSourceForId(citationSources, sourceId);
-            if (!source) {
-              return;
-            }
-            if (sourceIndex > 0) {
-              fragment.appendChild(document.createTextNode(' '));
-            }
-            appendChip(fragment, source, sourceId);
-          });
-          if (!sourceIds.some(function hasRegisteredSource(sourceId) { return !!citationSourceForId(citationSources, sourceId); })) {
-            fragment.appendChild(document.createTextNode(match[0]));
-          }
-          lastIndex = match.index + match[0].length;
-          match = citationPattern.exec(normalizedValue);
-        }
-
-        if (lastIndex === 0) {
-          return;
-        }
-
-        if (lastIndex < normalizedValue.length) {
-          fragment.appendChild(document.createTextNode(normalizedValue.slice(lastIndex)));
-        }
-        node.parentNode.replaceChild(fragment, node);
-        return;
-      }
-
-      Array.from(node.childNodes).forEach(walk);
-    }
-
-    Array.from(template.content.childNodes).forEach(walk);
-    return template.innerHTML;
-  }
-
+
 
   // Activity parsing.
   // Parse model output into visible text, thoughts, and tool events.
@@ -1620,41 +1445,16 @@ export function createMessagesUi(context, dependencies) {
   }
 
   function addSearchSourcesToCitationRegistry(registry, segment) {
-    searchSourcesFromSegment(segment).forEach(function registerSource(source) {
-      if (!source || typeof source !== 'object') {
-        return;
-      }
-
-      [
-        source.id,
-        source.source_id,
-        source.sourceId,
-        source.citation_id,
-        source.citationId,
-        source.citation_handle,
-        source.citationHandle,
-        source.handle
-      ].forEach(function registerSourceId(candidate) {
-        const sourceId = normalizeCitationId(candidate);
-        if (!isCitationHandleId(sourceId)) {
-          return;
-        }
-
-        const existing = registry[sourceId];
-        if (existing && safeExternalUrl(existing.url) && !safeExternalUrl(source.url)) {
-          return;
-        }
-        registry[sourceId] = source;
-      });
-    });
+    addSegmentCitationSources(registry, segment);
   }
 
   function addAllSearchSourcesToCitationRegistry(registry, segments) {
-    (Array.isArray(segments) ? segments : []).forEach(function registerSegmentSources(segment) {
-      if (segment && segment.type === 'tool' && isSearchToolSegment(segment)) {
-        addSearchSourcesToCitationRegistry(registry, segment);
-      }
-    });
+    addSegmentsCitationSources(
+      registry,
+      (Array.isArray(segments) ? segments : []).filter(function onlySearchToolSegment(segment) {
+        return segment && segment.type === 'tool' && isSearchToolSegment(segment);
+      })
+    );
   }
 
   function renderSourceChip(chip) {
@@ -3566,7 +3366,7 @@ export function createMessagesUi(context, dependencies) {
     const expandedEdits = getExpandedEditIndices($msgRow);
     let thoughtIndex = -1;
     let toolSegmentIndex = 0;
-    const citationRegistry = {};
+    const citationRegistry = createCitationRegistry();
     addAllSearchSourcesToCitationRegistry(citationRegistry, segments);
     const toolSegments = segments.filter(function onlyToolSegments(segment) {
       return segment.type === 'tool';
@@ -4689,6 +4489,7 @@ export function createMessagesUi(context, dependencies) {
   }
 
   bindReasoningDrawerResize();
+  bindCitationPreviewCards(document);
 
   return {
     appendMessage,

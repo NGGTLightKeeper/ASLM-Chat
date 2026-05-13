@@ -140,6 +140,35 @@ class ToolRegistryTestMixin:
 
 # Model and adapter parsing tests.
 
+
+# Cover per-response tool quota guardrails.
+class ToolQuotaTests(SimpleTestCase):
+    """Cover search-effort quotas used by the shared tool bridge."""
+
+    # High-effort web search is expensive, so keep it bounded per response.
+    def test_high_effort_web_search_limits_to_three_calls(self):
+        tool_event = {"tool_id": "web_search", "tool_name": "Web search"}
+        counters: dict[str, int] = {}
+        arguments = {"query": "cheap coding model", "effort": "high"}
+
+        self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
+        self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
+        self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
+
+        error = tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments)
+        self.assertIsNotNone(error)
+        self.assertIn("high mode is unavailable", str(error))
+        self.assertIn("use medium or low", str(error))
+
+    # Lower-effort searches keep the existing broader budget.
+    def test_normal_web_search_keeps_default_quota(self):
+        tool_event = {"tool_id": "web_search", "tool_name": "Web search"}
+        counters: dict[str, int] = {}
+        arguments = {"query": "cheap coding model", "effort": "medium"}
+
+        for _index in range(4):
+            self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
+
 # Cover adapter-specific model list formats.
 class ModelNameExtractionTests(SimpleTestCase):
     """Cover adapter-specific model list formats."""
