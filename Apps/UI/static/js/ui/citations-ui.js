@@ -4,11 +4,61 @@ import { escHtml, escapeAttributeValue } from '../main/utils.js';
 
 const CITATION_ID_PATTERN = /^(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,16}-\d+)$/;
 const CITATION_SCAN_PATTERN = /\b(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,16}-\d+)\b/gi;
+const CITATION_INLINE_NOISE_PATTERN = /[\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g;
+const CITATION_HANDLE_SOURCE = String.raw`(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,16}-\d+)`;
+const CITATION_HANDLE_LIST_SOURCE = String.raw`${CITATION_HANDLE_SOURCE}(?:\s*,\s*${CITATION_HANDLE_SOURCE})*`;
+const CITATION_HANDLE_LIST_PATTERN = new RegExp(String.raw`^\s*${CITATION_HANDLE_LIST_SOURCE}\s*$`, 'i');
+const CITATION_BRACKET_SOURCE = String.raw`\[\s*${CITATION_HANDLE_LIST_SOURCE}\s*\]`;
+const CITATION_GAP_SOURCE = String.raw`[\s\u00a0\u1680\u180e\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*`;
+const CITATION_JUNK_CLASS_SOURCE = String.raw`.,;:!?(){}<>|/\\'"\-\u00ad\u058a\u05be\u1400\u1806\u2010-\u2015\u2053\u207b\u208b\u2212\u2796\u2e17\u2e1a\u2e3a-\u2e3b\u2e40\u2e5d\u30a0\ufe31-\ufe32\ufe58\ufe63\uff0d`;
+const CITATION_LEADING_JUNK_PATTERN = new RegExp(
+  String.raw`([^\s\[(])${CITATION_GAP_SOURCE}[${CITATION_JUNK_CLASS_SOURCE}]+${CITATION_GAP_SOURCE}(?=${CITATION_BRACKET_SOURCE})`,
+  'gi'
+);
+const CITATION_INTER_BLOCK_JUNK_PATTERN = new RegExp(
+  String.raw`(${CITATION_BRACKET_SOURCE})${CITATION_GAP_SOURCE}[${CITATION_JUNK_CLASS_SOURCE}]+${CITATION_GAP_SOURCE}(?=${CITATION_BRACKET_SOURCE})`,
+  'gi'
+);
+const CITATION_ATTACHED_PATTERN = new RegExp(String.raw`([^\s\[(])\[(${CITATION_HANDLE_LIST_SOURCE})\]`, 'gi');
 const CITATION_TITLE_MAX_CHARS = 180;
 const CITATION_PREVIEW_MAX_CHARS = 520;
 
+function isCitationDashCodePoint(codePoint) {
+  return codePoint === 0x002d
+    || codePoint === 0x00ad
+    || codePoint === 0x058a
+    || codePoint === 0x05be
+    || codePoint === 0x1400
+    || codePoint === 0x1806
+    || (codePoint >= 0x2010 && codePoint <= 0x2015)
+    || codePoint === 0x2053
+    || codePoint === 0x207b
+    || codePoint === 0x208b
+    || codePoint === 0x2212
+    || codePoint === 0x2796
+    || codePoint === 0x2e17
+    || codePoint === 0x2e1a
+    || (codePoint >= 0x2e3a && codePoint <= 0x2e3b)
+    || codePoint === 0x2e40
+    || codePoint === 0x2e5d
+    || codePoint === 0x30a0
+    || (codePoint >= 0xfe31 && codePoint <= 0xfe32)
+    || codePoint === 0xfe58
+    || codePoint === 0xfe63
+    || codePoint === 0xff0d
+    || codePoint === 0x10ead;
+}
+
+function normalizeCitationHandleGlyphs(value) {
+  return Array.from(String(value || '').replace(CITATION_INLINE_NOISE_PATTERN, ''))
+    .map(function normalizeCitationGlyph(character) {
+      return isCitationDashCodePoint(character.codePointAt(0)) ? '-' : character;
+    })
+    .join('');
+}
+
 export function normalizeCitationId(value) {
-  return String(value || '')
+  return normalizeCitationHandleGlyphs(value)
     .trim()
     .replace(/^\[|\]$/g, '')
     .replace(/[.,;:!?]+$/g, '')
@@ -20,14 +70,25 @@ export function isCitationHandleId(value) {
 }
 
 export function normalizeCitationBrackets(value) {
-  return String(value || '').replace(/[\u3010\uFF3B]/g, '[').replace(/[\u3011\uFF3D]/g, ']');
+  return String(value || '')
+    .replace(/[\u3010\uFF3B]/g, '[')
+    .replace(/[\u3011\uFF3D]/g, ']')
+    .replace(/\[([^\]]+)\]/g, function normalizeBracketedCitation(match, body) {
+      const normalizedBody = normalizeCitationHandleGlyphs(body);
+      return CITATION_HANDLE_LIST_PATTERN.test(normalizedBody)
+        ? `[${normalizedBody}]`
+        : match;
+    });
 }
 
 export function normalizeCitationSpacing(value) {
-  return String(value || '').replace(
-    /([^\s\[(])\[((?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,16}-\d+)(\s*,\s*(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,16}-\d+))*)\]/gi,
-    '$1 [$2]'
-  );
+  return String(value || '')
+    .replace(CITATION_INTER_BLOCK_JUNK_PATTERN, '$1 ')
+    .replace(CITATION_LEADING_JUNK_PATTERN, '$1 ')
+    .replace(
+      CITATION_ATTACHED_PATTERN,
+      '$1 [$2]'
+    );
 }
 
 export function createCitationRegistry() {
