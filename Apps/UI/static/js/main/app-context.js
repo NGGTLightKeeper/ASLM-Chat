@@ -94,7 +94,19 @@ export function createAppContext() {
     TOOL_EDIT_FILE_ICON: imageIcon(uiIconPaths.toolEditFile, 'msg-tool-svg-icon', ''),
     TOOL_SEARCH_ICON: imageIcon(uiIconPaths.toolSearch, 'msg-tool-svg-icon', ''),
     TOOL_IMAGE_VIEW_ICON: imageIcon(uiIconPaths.toolImageView, 'msg-tool-svg-icon', ''),
-    CHAT_ITEM_MENU_ICON: svgIcon(uiIconPaths.ellipsisVertical, 'width="14" height="14" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"')
+    CHAT_ITEM_MENU_ICON: svgIcon(uiIconPaths.ellipsisVertical, 'width="14" height="14" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
+    PLAY_ICON: svgIcon(uiIconPaths.play, 'width="20" height="20" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
+    PAUSE_ICON: svgIcon(uiIconPaths.pause, 'width="20" height="20" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
+    VOLUME_ICON: svgIcon(uiIconPaths.volume, 'width="18" height="18" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
+    VOLUME_MUTED_ICON: svgIcon(uiIconPaths.volumeMuted, 'width="18" height="18" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
+    FULLSCREEN_ICON: svgIcon(uiIconPaths.fullscreen, 'width="18" height="18" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
+    FULLSCREEN_EXIT_ICON: svgIcon(uiIconPaths.fullscreenExit, 'width="18" height="18" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
+    POPOUT_ICON: svgIcon(uiIconPaths.popout, 'width="18" height="18" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
+    DOCK_ICON: svgIcon(uiIconPaths.dock, 'width="18" height="18" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
+    DOWNLOAD_FILE_ICON: svgIcon(uiIconPaths.download, 'width="20" height="20" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
+    AUDIO_FILE_ICON: svgIcon(uiIconPaths.audio, 'width="20" height="20" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
+    VIDEO_FILE_ICON: svgIcon(uiIconPaths.video, 'width="20" height="20" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
+    CLOSE_ICON: svgIcon(uiIconPaths.removeAttachment, 'width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true"')
   };
 
   // Build the shared action buttons used by assistant and user rows.

@@ -572,6 +572,98 @@ class UploadFilesApiTests(SimpleTestCase):
         self.assertFalse(private_manifest["text_available"])
         self.assertTrue(private_manifest["sandbox_path"].startswith(f"/workspace/_sandbox/User/{private_manifest['sha256']}/"))
 
+    # Test the configured upload ceiling matches the advertised large-video contract.
+    def test_upload_limit_is_16_gb(self):
+        self.assertEqual(upload_storage.MAX_UPLOAD_BYTES, 16 * 1024 * 1024 * 1024)
+
+    # Test uploads beyond the inline manifest threshold are stored without full in-memory extraction.
+    def test_upload_api_uses_lightweight_manifest_after_inline_threshold(self):
+        upload = SimpleUploadedFile("clip.mp4", b"12345", content_type="video/mp4")
+
+        with patch.object(upload_storage, "INLINE_MANIFEST_MAX_BYTES", 4):
+            response = self.client.post(reverse("uploads_api"), {"files": [upload], "scope": "chat-video"})
+
+        self.assertEqual(response.status_code, 200)
+        public_file = response.json()["files"][0]
+        self.assertEqual(public_file["status"], "ready")
+        self.assertEqual(public_file["display_kind"], "video")
+        self.assertEqual(public_file["type_label"], "Video")
+
+        manifests = list(self.manifest_root.glob("*/*.manifest.json"))
+        self.assertEqual(len(manifests), 1)
+        private_manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+        self.assertEqual(private_manifest["name"], "clip.mp4")
+        self.assertEqual(private_manifest["mime"], "video/mp4")
+        self.assertEqual(private_manifest["size_bytes"], 5)
+        self.assertFalse(private_manifest["text_available"])
+        self.assertIsNone(private_manifest["text_preview"])
+        stored_files = [path for path in self.upload_root.glob("*/*") if path.is_file()]
+        self.assertEqual(len(stored_files), 1)
+        self.assertEqual(stored_files[0].read_bytes(), b"12345")
+
+    # Test oversize uploads are rejected before being stored.
+    def test_upload_api_reports_oversized_files(self):
+        upload = SimpleUploadedFile("too-big.mp4", b"12345", content_type="video/mp4")
+
+        with patch.object(upload_storage, "MAX_UPLOAD_BYTES", 4):
+            response = self.client.post(reverse("uploads_api"), {"files": [upload]})
+
+        self.assertEqual(response.status_code, 200)
+        public_file = response.json()["files"][0]
+        self.assertEqual(public_file["status"], "error")
+        self.assertIn("File is too large", public_file["error"])
+        self.assertEqual(list(self.manifest_root.glob("*/*.manifest.json")), [])
+
+    # Test media content endpoint supports suffix ranges needed by MP4 metadata reads.
+    def test_uploaded_file_content_supports_suffix_byte_range(self):
+        upload = SimpleUploadedFile("clip.mp4", b"0123456789", content_type="video/mp4")
+        upload_response = self.client.post(reverse("uploads_api"), {"files": [upload]})
+        content_url = upload_response.json()["files"][0]["content_url"]
+        stored_file = next(path for path in self.upload_root.glob("*/*") if path.is_file())
+
+        with patch("Apps.UI.views._resolve_uploaded_file_content_path", return_value=stored_file):
+            response = self.client.get(content_url, HTTP_RANGE="bytes=-4")
+
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response["Content-Range"], "bytes 6-9/10")
+        self.assertEqual(b"".join(response.streaming_content), b"6789")
+
+    # Test open-ended media ranges are chunked so playback can start without reading the rest of a large file.
+    def test_uploaded_file_content_chunks_open_ended_range(self):
+        upload = SimpleUploadedFile("clip.mp4", b"0123456789", content_type="video/mp4")
+        upload_response = self.client.post(reverse("uploads_api"), {"files": [upload]})
+        content_url = upload_response.json()["files"][0]["content_url"]
+        stored_file = next(path for path in self.upload_root.glob("*/*") if path.is_file())
+
+        with (
+            patch("Apps.UI.views.MEDIA_RANGE_CHUNK_BYTES", 4),
+            patch("Apps.UI.views._resolve_uploaded_file_content_path", return_value=stored_file),
+        ):
+            response = self.client.get(content_url, HTTP_RANGE="bytes=2-")
+
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response["Content-Range"], "bytes 2-5/10")
+        self.assertEqual(b"".join(response.streaming_content), b"2345")
+
+    # Test model-shared files use the same range streaming path as uploaded files.
+    def test_shared_file_download_supports_byte_range(self):
+        with tempfile.NamedTemporaryFile(delete=False) as handle:
+            handle.write(b"abcdefghij")
+            temp_path = Path(handle.name)
+        try:
+            with patch("Apps.UI.views._resolve_shared_file_path", return_value=temp_path):
+                response = self.client.get(
+                    reverse("shared_file_download_api"),
+                    {"path": str(temp_path), "preview": "1"},
+                    HTTP_RANGE="bytes=-3",
+                )
+
+            self.assertEqual(response.status_code, 206)
+            self.assertEqual(response["Content-Range"], "bytes 7-9/10")
+            self.assertEqual(b"".join(response.streaming_content), b"hij")
+        finally:
+            temp_path.unlink(missing_ok=True)
+
     # Test empty upload requests fail before returning a card payload.
     def test_upload_api_requires_files(self):
         response = self.client.post(reverse("uploads_api"), {})
@@ -671,6 +763,8 @@ class UploadRoutingTests(SimpleTestCase):
             ("report.pdf", "application/pdf", ("document", "PDF document")),
             ("sheet.csv", "text/csv", ("table", "CSV table")),
             ("bundle.zip", "application/zip", ("archive", "ZIP archive")),
+            ("voice_note.mp3", "audio/mpeg", ("audio", "Audio")),
+            ("demo_clip.mp4", "video/mp4", ("video", "Video")),
             ("slides.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", ("presentation", "PowerPoint presentation")),
         ]
 

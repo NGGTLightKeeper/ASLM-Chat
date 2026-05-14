@@ -154,16 +154,32 @@ def cmd_runserver(port: int, log: bool) -> None:
     if log:
         print(f"[ASLM-Chat] Starting server on port {port}...")
 
+    import socket
     from socketserver import ThreadingMixIn
     from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
+
+    # Large file uploads (video, audio) require a much longer socket timeout than
+    # the default 30 s used by http.server.BaseHTTPRequestHandler.  Without this,
+    # the connection is torn down mid-transfer and the browser shows "Upload failed".
+    _UPLOAD_SOCKET_TIMEOUT_SECONDS = 3600
 
     class ThreadedWSGIServer(ThreadingMixIn, WSGIServer):
         """Serve local UI requests concurrently."""
 
         daemon_threads = True
 
+        def get_request(self):
+            """Accept a connection and apply a generous timeout for large uploads."""
+            conn, addr = self.socket.accept()
+            conn.settimeout(_UPLOAD_SOCKET_TIMEOUT_SECONDS)
+            return conn, addr
+
     class QuietWSGIRequestHandler(WSGIRequestHandler):
         """Keep routine HTTP access logs out of the ASLM console."""
+
+        # Mirror the server-level timeout so BaseHTTPRequestHandler doesn't
+        # override it with a shorter value on its own.
+        timeout = _UPLOAD_SOCKET_TIMEOUT_SECONDS
 
         def log_message(self, format: str, *args) -> None:
             return

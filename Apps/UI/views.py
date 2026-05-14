@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper. All Rights Reserved.
+﻿# Copyright NGGT.LightKeeper. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ from Apps.Data.models import (
     MessageImage,
     OllamaPreset,
 )
-from Apps.UI.upload_storage import load_upload_manifest, model_upload_payload, save_upload_to_sandbox
+from Apps.UI.upload_storage import load_upload_manifest, model_upload_payload, public_upload_payload, save_upload_to_sandbox
 from Settings import settings
 
 logger = logging.getLogger(__name__)
@@ -1858,6 +1858,15 @@ def _serialize_message(message: Message, *, include_attachment_data: bool = True
         payload["activity_segments"] = activity_segments
         payload["reasoning_mode"] = _message_has_reasoning_segments(message)
     attachments = _get_message_attachments(message, include_data=include_attachment_data)
+    if message.role == "user":
+        for manifest in _load_message_upload_manifests(message, sandbox_enabled=True):
+            try:
+                uploaded_payload = public_upload_payload(manifest)
+            except Exception:
+                continue
+            if uploaded_payload:
+                uploaded_payload["kind"] = "file"
+                attachments.append(uploaded_payload)
     if attachments:
         payload["attachments"] = attachments
         payload["images"] = [
@@ -4099,20 +4108,164 @@ def _resolve_shared_file_path(raw_path: str) -> Path:
     raise FileNotFoundError("Shared file not found or not allowed.")
 
 
+def _resolve_uploaded_file_content_path(manifest: dict[str, Any]) -> Path:
+    """Return the local path for one uploaded file manifest."""
+
+    sandbox_path = str((manifest or {}).get("sandbox_path") or "").strip()
+    prefix = "/workspace/_sandbox/User/"
+    if not sandbox_path.startswith(prefix):
+        raise FileNotFoundError("Uploaded file content is not available")
+
+    relative = sandbox_path[len(prefix):].lstrip("/")
+    root = (settings.BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox" / "User").resolve()
+    target = (root / relative).resolve()
+    if root != target and root not in target.parents:
+        raise ValueError("Unsafe uploaded file path")
+    if not target.is_file():
+        raise FileNotFoundError("Uploaded file not found")
+    return target
+
+
+MEDIA_RANGE_CHUNK_BYTES = 64 * 1024 * 1024
+MEDIA_STREAM_READ_BYTES = 1024 * 1024
+
+
+def _range_not_satisfiable_response(file_size: int) -> HttpResponse:
+    resp = HttpResponse(status=416)
+    resp["Content-Range"] = "bytes */" + str(max(0, int(file_size or 0)))
+    resp["Accept-Ranges"] = "bytes"
+    return resp
+
+
+def _parse_single_byte_range(range_header: str, file_size: int) -> tuple[int, int] | None:
+    """Return one satisfiable byte range, including suffix ranges."""
+
+    if file_size <= 0:
+        return None
+    range_match = re.fullmatch(r"bytes=(\d*)-(\d*)", str(range_header or "").strip())
+    if not range_match:
+        return None
+
+    raw_start, raw_end = range_match.group(1), range_match.group(2)
+    if not raw_start and not raw_end:
+        return None
+
+    if not raw_start:
+        suffix_length = int(raw_end)
+        if suffix_length <= 0:
+            return None
+        start = max(file_size - suffix_length, 0)
+        end = file_size - 1
+        return start, end
+
+    start = int(raw_start)
+    if start >= file_size:
+        return None
+
+    if raw_end:
+        end = min(int(raw_end), file_size - 1)
+    else:
+        end = min(start + MEDIA_RANGE_CHUNK_BYTES - 1, file_size - 1)
+    if start > end:
+        return None
+    return start, end
+
+
+def _stream_local_file_response(
+    request,
+    target: Path,
+    *,
+    mime_type: str,
+    safe_name: str,
+    disposition: str = "inline",
+):
+    """Stream a local file with HTTP Range support for media playback."""
+
+    file_size = target.stat().st_size
+    range_header = request.META.get("HTTP_RANGE", "").strip()
+    is_head = request.method == "HEAD"
+
+    if range_header:
+        parsed_range = _parse_single_byte_range(range_header, file_size)
+        if parsed_range is None:
+            return _range_not_satisfiable_response(file_size)
+        start, end = parsed_range
+        chunk_size = end - start + 1
+        if is_head:
+            response = HttpResponse(status=206, content_type=mime_type)
+        else:
+            fh = target.open("rb")
+            fh.seek(start)
+
+            def _range_iter(fh, remaining):
+                try:
+                    while remaining > 0:
+                        data = fh.read(min(MEDIA_STREAM_READ_BYTES, remaining))
+                        if not data:
+                            break
+                        remaining -= len(data)
+                        yield data
+                finally:
+                    fh.close()
+
+            response = StreamingHttpResponse(_range_iter(fh, chunk_size), status=206, content_type=mime_type)
+        response["Content-Range"] = "bytes " + str(start) + "-" + str(end) + "/" + str(file_size)
+        response["Content-Length"] = str(chunk_size)
+    else:
+        if is_head:
+            response = HttpResponse(content_type=mime_type)
+        else:
+            response = FileResponse(target.open("rb"), content_type=mime_type)
+        response["Content-Length"] = str(file_size)
+
+    response["Accept-Ranges"] = "bytes"
+    response["Cache-Control"] = "private, max-age=300"
+    response["Content-Disposition"] = f'{disposition}; filename="{safe_name}"'
+    return response
+
+
+# Return uploaded file bytes on demand.
+def uploaded_file_content_api(request, file_id: str):
+    """Stream one uploaded file by id with HTTP Range support for media playback."""
+
+    if request.method not in {"GET", "HEAD"}:
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        manifest = load_upload_manifest(file_id)
+        if not manifest:
+            return JsonResponse({"error": "Uploaded file not found"}, status=404)
+        target = _resolve_uploaded_file_content_path(manifest)
+        safe_name = re.sub(r"[\"\\\r\n]", "_", Path(str(manifest.get("name") or target.name)).name or "download")
+        mime_type = str(manifest.get("mime") or mimetypes.guess_type(str(target))[0] or "application/octet-stream")
+        return _stream_local_file_response(request, target, mime_type=mime_type, safe_name=safe_name)
+    except FileNotFoundError:
+        return JsonResponse({"error": "Uploaded file not found"}, status=404)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Failed to stream uploaded file")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
 def shared_file_download_api(request):
     """Download a model-shared local file after validating its workspace path."""
 
-    if request.method != "GET":
+    if request.method not in {"GET", "HEAD"}:
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
     try:
         target = _resolve_shared_file_path(request.GET.get("path", ""))
         safe_name = re.sub(r'["\\\r\n]', "_", Path(request.GET.get("name") or target.name).name or "download")
         mime_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        response = FileResponse(target.open("rb"), content_type=mime_type)
-        response["Cache-Control"] = "private, max-age=300"
-        response["Content-Disposition"] = f'attachment; filename="{safe_name}"'
-        return response
+        disposition = "inline" if str(request.GET.get("preview") or "").lower() in {"1", "true", "yes"} else "attachment"
+        return _stream_local_file_response(
+            request,
+            target,
+            mime_type=mime_type,
+            safe_name=safe_name,
+            disposition=disposition,
+        )
     except FileNotFoundError:
         return JsonResponse({"error": "Shared file not found"}, status=404)
     except ValueError as exc:
@@ -4277,7 +4430,7 @@ def regenerate_chat_api(request, chat_id):
         if user_message_record is None:
             return JsonResponse({"error": "No user message to regenerate"}, status=400)
 
-        # Drop every message that came after the targeted user turn — including
+        # Drop every message that came after the targeted user turn вЂ” including
         # the assistant reply we are about to replace.
         preserve_context_compression = bool(data.get("preserve_context_compression"))
         for message in ordered:
@@ -5109,7 +5262,7 @@ def runtime_settings_api(request):
             return False
 
         # Password placeholders often arrive as repeated mask glyphs.
-        if all(char in {"*", "•", "●", "∙", "·", "◦"} for char in stripped):
+        if all(char in {"*", "вЂў", "в—Џ", "в€™", "В·", "в—¦"} for char in stripped):
             return True
 
         lowered = stripped.lower()

@@ -1,4 +1,4 @@
-﻿// Copyright NGGT.LightKeeper. All Rights Reserved.
+// Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
 import {
@@ -28,9 +28,22 @@ export function createMessagesUi(context, dependencies) {
   const SANDBOX_INPUT_PREVIEW_CHARS = 12000;
   const REASONING_CHUNK_TARGET_CHARS = 132;
   const REASONING_CHUNK_MAX_CHARS = 168;
-  const DOWNLOAD_FILE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="currentColor" aria-hidden="true"><path d="M480-320 280-520l56-58 104 104v-326h80v326l104-104 56 58-200 200ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z"/></svg>';
+  const DOWNLOAD_FILE_ICON = icons.DOWNLOAD_FILE_ICON || '';
+  const MEDIA_PLAY_ICON = icons.PLAY_ICON || '&#9658;';
+  const MEDIA_PAUSE_ICON = icons.PAUSE_ICON || '&#10073;&#10073;';
+  const MEDIA_VOLUME_ICON = icons.VOLUME_ICON || '';
+  const MEDIA_VOLUME_MUTED_ICON = icons.VOLUME_MUTED_ICON || MEDIA_VOLUME_ICON;
+  const MEDIA_FULLSCREEN_ICON = icons.FULLSCREEN_ICON || '';
+  const MEDIA_FULLSCREEN_EXIT_ICON = icons.FULLSCREEN_EXIT_ICON || MEDIA_FULLSCREEN_ICON;
+  const MEDIA_POPOUT_ICON = icons.POPOUT_ICON || '';
+  const MEDIA_DOCK_ICON = icons.DOCK_ICON || '';
+  const MEDIA_CLOSE_ICON = icons.CLOSE_ICON || '&times;';
+  const MEDIA_AUDIO_ICON = icons.AUDIO_FILE_ICON || '';
+  const MEDIA_VIDEO_ICON = icons.VIDEO_FILE_ICON || '';
   const loadedSandboxImageSrcs = new Set();
   const sandboxImageLoadStateBySrc = new Map();
+  const floatingMediaPlaceholders = new WeakMap();
+  const activeMediaFrameIds = new WeakMap();
   const HEAVY_TOOL_ARGUMENT_KEYS = {
     bash: ['stdin'],
     edit: ['content', 'new_str', 'old_str'],
@@ -474,7 +487,10 @@ export function createMessagesUi(context, dependencies) {
       return escHtml(text);
     }
   }
-
+
+
+
+
   function safeExternalUrl(value) {
     const rawValue = String(value || '').trim();
     if (!rawValue) {
@@ -549,7 +565,9 @@ export function createMessagesUi(context, dependencies) {
     const base = `--msg-source-accent-bg: hsla(${hue}, 68%, 46%, 0.36); --msg-source-accent-fg: hsl(${hue}, 86%, 82%);`;
     return extraStyle ? `${base} ${extraStyle}` : base;
   }
-
+
+
+
 
   // Activity parsing.
   // Parse model output into visible text, thoughts, and tool events.
@@ -1803,17 +1821,18 @@ export function createMessagesUi(context, dependencies) {
     }
 
     const path = asScalarText(file.path || file.file);
-    if (!path) {
+    const downloadUrl = asScalarText(file.download_url || file.downloadUrl || file.content_url || file.contentUrl || file.url);
+    if (!path && !downloadUrl) {
       return null;
     }
-    const filename = asScalarText(file.filename || file.name) || path.split(/[\\/]/).pop() || 'download';
+    const filename = asScalarText(file.filename || file.name) || String(path || downloadUrl).split(/[\\/]/).pop() || 'download';
     return {
       path,
       filename,
       mimeType: asScalarText(file.mime_type || file.mimeType || file.type),
       typeLabel: asScalarText(file.type_label || file.typeLabel || file.mime_type || file.mimeType) || 'File',
       sizeBytes: Number(file.size_bytes ?? file.sizeBytes ?? -1),
-      downloadUrl: asScalarText(file.download_url || file.downloadUrl),
+      downloadUrl,
       modelContext: asScalarText(file.model_context || file.modelContext),
       render: file.render && typeof file.render === 'object' ? file.render : null
     };
@@ -1920,15 +1939,24 @@ export function createMessagesUi(context, dependencies) {
       });
   }
 
-  function sharedFileDownloadUrl(file) {
+  function sharedFileDownloadUrl(file, options) {
     if (!file) {
       return '';
     }
     if (file.downloadUrl) {
       return file.downloadUrl;
     }
-    const query = `path=${encodeURIComponent(file.path)}&name=${encodeURIComponent(file.filename || 'download')}`;
-    return `/api/shared-file/download/?${query}`;
+    if (!file.path) {
+      return '';
+    }
+    const params = new URLSearchParams({
+      path: file.path,
+      name: file.filename || 'download'
+    });
+    if (options && options.preview) {
+      params.set('preview', '1');
+    }
+    return `/api/shared-file/download/?${params.toString()}`;
   }
 
   function sharedFileImageRender(file) {
@@ -1964,36 +1992,641 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
-  function renderSharedImageFileCard(file) {
-    const render = sharedFileImageRender(file);
-    if (!render) {
+  function normalizeAttachmentCardFile(file, options) {
+    const renderOptions = options || {};
+    if (!file) {
+      return null;
+    }
+    if (renderOptions.source === 'shared_file') {
+      return file;
+    }
+    return attachmentUi.normalizeAttachment(file);
+  }
+
+  function attachmentFilename(file) {
+    return String((file && (file.filename || file.name)) || 'File').trim() || 'File';
+  }
+
+  function attachmentMimeType(file) {
+    return String((file && (file.mimeType || file.mime_type || file.type)) || '').trim().toLowerCase();
+  }
+
+  function attachmentTypeLabel(file) {
+    const rawLabel = String((file && (file.typeLabel || file.type_label || file.mimeType || file.mime_type)) || '').trim();
+    if (rawLabel && rawLabel.toLowerCase() !== 'file') {
+      return rawLabel;
+    }
+    const displayKind = inferredAttachmentDisplayKind(file);
+    if (displayKind === 'audio') {
+      return 'Audio';
+    }
+    if (displayKind === 'video') {
+      return 'Video';
+    }
+    if (displayKind === 'image') {
+      return 'Image';
+    }
+    return rawLabel || 'File';
+  }
+
+  function attachmentSizeBytes(file) {
+    return Number(file && (file.sizeBytes ?? file.size_bytes ?? file.size ?? -1));
+  }
+
+  function attachmentSourceUrl(file, options) {
+    const renderOptions = options || {};
+    if (!file) {
       return '';
     }
-    const href = sharedFileDownloadUrl(file);
-    const width = Number(render.width);
-    const height = Number(render.height);
+    if (renderOptions.source === 'shared_file') {
+      return sharedFileDownloadUrl(file, { preview: true });
+    }
+    return String(file.dataUrl || file.previewDataUrl || file.contentUrl || '').trim();
+  }
+
+  function attachmentDownloadUrl(file, options) {
+    const renderOptions = options || {};
+    if (!file) {
+      return '';
+    }
+    if (renderOptions.source === 'shared_file') {
+      return sharedFileDownloadUrl(file);
+    }
+    return String(file.contentUrl || (!/^data:/i.test(file.dataUrl || '') ? file.dataUrl : '') || '').trim();
+  }
+
+  function attachmentDisplayKind(file) {
+    return String((file && (file.displayKind || file.display_kind || file.kind)) || '').trim().toLowerCase();
+  }
+
+  function isAudioAttachment(file) {
+    const mimeType = attachmentMimeType(file);
+    const filename = attachmentFilename(file).toLowerCase();
+    const displayKind = attachmentDisplayKind(file);
+    return displayKind === 'audio'
+      || mimeType.startsWith('audio/')
+      || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)$/i.test(filename);
+  }
+
+  function isVideoAttachment(file) {
+    const mimeType = attachmentMimeType(file);
+    const filename = attachmentFilename(file).toLowerCase();
+    const displayKind = attachmentDisplayKind(file);
+    return displayKind === 'video'
+      || mimeType.startsWith('video/')
+      || /\.(mp4|webm|mov|m4v|ogv|avi|mkv)$/i.test(filename);
+  }
+
+  function isImageAttachment(file) {
+    const mimeType = attachmentMimeType(file);
+    const filename = attachmentFilename(file).toLowerCase();
+    const displayKind = attachmentDisplayKind(file);
+    return displayKind === 'image'
+      || mimeType.startsWith('image/')
+      || /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i.test(filename);
+  }
+
+  function mediaMetaText(file) {
+    const typeLabel = attachmentTypeLabel(file);
+    const sizeText = formatByteSize(attachmentSizeBytes(file));
+    return [typeLabel, sizeText].filter(Boolean).join(' / ');
+  }
+
+  function renderAttachmentDownloadButton(file, options, className) {
+    const href = attachmentDownloadUrl(file, options);
+    if (!href) {
+      return '';
+    }
+    return `
+      <a class="${className || 'msg-media-download'}" href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(attachmentFilename(file))}" title="Download" aria-label="Download ${escapeAttributeValue(attachmentFilename(file))}">
+        ${DOWNLOAD_FILE_ICON}
+      </a>
+    `;
+  }
+
+  function renderImageAttachmentCard(file, options) {
+    const renderOptions = options || {};
+    const sharedRender = renderOptions.source === 'shared_file' ? sharedFileImageRender(file) : null;
+    const src = sharedRender ? sharedRender.src : attachmentSourceUrl(file, renderOptions);
+    if (!src) {
+      return renderGenericAttachmentCard(file, renderOptions);
+    }
+    const filename = attachmentFilename(file);
+    const width = Number(sharedRender && sharedRender.width);
+    const height = Number(sharedRender && sharedRender.height);
     const hasDimensions = Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
-    const metaParts = [
-      formatByteSize(file.sizeBytes),
+    const details = [
+      formatByteSize(attachmentSizeBytes(file)),
       hasDimensions ? `${Math.round(width)}x${Math.round(height)}` : '',
-      render.mimeType || file.typeLabel
-    ].filter(Boolean);
-    const altText = file.filename ? `Preview for ${file.filename}` : 'Shared image preview';
+      (sharedRender && sharedRender.mimeType) || attachmentTypeLabel(file)
+    ].filter(Boolean).join(' / ');
+    const href = attachmentDownloadUrl(file, renderOptions) || src;
+    const tagName = href ? 'a' : 'span';
+    const hrefAttr = href ? ` href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(filename)}"` : '';
 
     return `
-      <a class="msg-shared-image-card" href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(file.filename)}">
+      <${tagName} class="msg-attachment-card msg-image-card${renderOptions.source === 'shared_file' ? ' msg-shared-image-card' : ''}"${hrefAttr}>
         <span class="msg-shared-image-preview">
-          <img class="msg-shared-image" src="${escapeAttributeValue(render.src)}" alt="${escapeAttributeValue(altText)}" loading="lazy">
+          <img class="msg-shared-image" src="${escapeAttributeValue(src)}" alt="${escapeAttributeValue(filename ? `Preview for ${filename}` : 'Attached image')}" loading="lazy">
         </span>
         <span class="msg-shared-image-footer">
           <span class="msg-shared-image-meta">
-            <span class="msg-shared-image-name">${escHtml(file.filename)}</span>
-            <span class="msg-shared-image-details" data-shared-image-details="${escapeAttributeValue(metaParts.join(' / '))}">${escHtml(metaParts.join(' / '))}</span>
+            <span class="msg-shared-image-name">${escHtml(filename)}</span>
+            <span class="msg-shared-image-details">${escHtml(details)}</span>
           </span>
-          <span class="msg-shared-image-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>
+          ${href ? `<span class="msg-shared-image-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>` : ''}
         </span>
-      </a>
+      </${tagName}>
     `;
+  }
+
+  function renderGenericAttachmentCard(file, options) {
+    const renderOptions = options || {};
+    const filename = attachmentFilename(file);
+    const href = attachmentDownloadUrl(file, renderOptions);
+    const tagName = href ? 'a' : 'div';
+    const hrefAttr = href ? ` href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(filename)}"` : '';
+    const badgeLabel = inferredAttachmentDisplayKind(file).toUpperCase();
+
+    return `
+      <${tagName} class="msg-file-chip msg-attachment-card msg-shared-file-card"${hrefAttr}>
+        <span class="msg-shared-file-badge" aria-hidden="true">${escHtml(badgeLabel.slice(0, 6) || 'FILE')}</span>
+        <span class="msg-shared-file-main">
+          <span class="msg-file-name">${escHtml(filename)}</span>
+          <span class="msg-file-meta">${escHtml(mediaMetaText(file))}</span>
+        </span>
+        ${href ? `<span class="msg-shared-file-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>` : ''}
+      </${tagName}>
+    `;
+  }
+
+  function inferredAttachmentDisplayKind(file) {
+    let displayKind = attachmentDisplayKind(file);
+    if (!displayKind || displayKind === 'file') {
+      if (isAudioAttachment(file)) {
+        displayKind = 'audio';
+      } else if (isVideoAttachment(file)) {
+        displayKind = 'video';
+      } else if (isImageAttachment(file)) {
+        displayKind = 'image';
+      } else {
+        displayKind = 'file';
+      }
+    }
+    return displayKind;
+  }
+
+  function renderUserUploadAttachmentChip(file) {
+    const filename = attachmentFilename(file);
+    const badgeLabel = inferredAttachmentDisplayKind(file).toUpperCase();
+
+    return `
+      <div class="msg-upload-file-chip msg-attachment-card">
+        <span class="msg-upload-file-badge" aria-hidden="true">${escHtml(badgeLabel.slice(0, 6) || 'FILE')}</span>
+        <span class="msg-upload-file-main">
+          <span class="msg-upload-file-name">${escHtml(filename)}</span>
+          <span class="msg-upload-file-meta">${escHtml(mediaMetaText(file))}</span>
+        </span>
+      </div>
+    `;
+  }
+
+  function renderAudioAttachmentCard(file, options) {
+    const renderOptions = options || {};
+    const src = attachmentSourceUrl(file, renderOptions);
+    const filename = attachmentFilename(file);
+    const disabledClass = src ? '' : ' is-unavailable';
+
+    return `
+      <div class="msg-attachment-card msg-media-card msg-audio-card${disabledClass}" data-media-card data-media-type="audio">
+        ${src ? `<audio class="msg-media-native" preload="metadata" src="${escapeAttributeValue(src)}"></audio>` : ''}
+        <div class="msg-audio-control">
+          <button class="msg-media-play-btn" type="button" data-media-action="toggle" aria-label="Play audio"${src ? '' : ' disabled'}>
+            ${MEDIA_PLAY_ICON}
+          </button>
+        </div>
+        <div class="msg-media-main">
+          <div class="msg-media-kicker">
+            <span class="msg-media-type-pill">AUDIO</span>
+          </div>
+          <div class="msg-media-name">${escHtml(filename)}</div>
+          <div class="msg-media-meta">${escHtml(mediaMetaText(file))}</div>
+          <div class="msg-audio-progress-row">
+            <span class="msg-media-time msg-audio-time" data-media-time>0:00 / --:--</span>
+            <input class="msg-media-range" type="range" min="0" max="1000" value="0" step="1" data-media-action="seek" aria-label="Audio progress"${src ? '' : ' disabled'}>
+          </div>
+        </div>
+        ${renderAttachmentDownloadButton(file, renderOptions, 'msg-media-download')}
+      </div>
+    `;
+  }
+
+  function renderVideoAttachmentCard(file, options) {
+    const renderOptions = options || {};
+    const src = attachmentSourceUrl(file, renderOptions);
+    const filename = attachmentFilename(file);
+    const disabledClass = src ? '' : ' is-unavailable';
+
+    return `
+      <div class="msg-attachment-card msg-media-card msg-video-card${disabledClass}" data-media-card data-media-type="video">
+        <div class="msg-video-viewport">
+          ${src ? `<video class="msg-media-native" preload="metadata" src="${escapeAttributeValue(src)}"></video>` : '<div class="msg-video-empty">Video preview unavailable</div>'}
+          <button class="msg-video-center-play" type="button" data-media-action="toggle" aria-label="Play video"${src ? '' : ' disabled'}>
+            ${MEDIA_PLAY_ICON}
+          </button>
+          <div class="msg-video-controls">
+            <button class="msg-media-icon-btn" type="button" data-media-action="toggle" aria-label="Play video"${src ? '' : ' disabled'}>${MEDIA_PLAY_ICON}</button>
+            <span class="msg-media-time" data-media-current>0:00</span>
+            <input class="msg-media-range" type="range" min="0" max="1000" value="0" step="1" data-media-action="seek" aria-label="Video progress"${src ? '' : ' disabled'}>
+            <span class="msg-media-time" data-media-duration>--:--</span>
+            <button class="msg-media-icon-btn" type="button" data-media-action="mute" aria-label="Mute video"${src ? '' : ' disabled'}>${MEDIA_VOLUME_ICON}</button>
+            <button class="msg-media-icon-btn" type="button" data-media-action="fullscreen" aria-label="Fullscreen"${src ? '' : ' disabled'}>${MEDIA_FULLSCREEN_ICON}</button>
+            <button class="msg-media-icon-btn msg-media-popout-btn" type="button" data-media-action="popout" aria-label="Open mini player"${src ? '' : ' disabled'}>${MEDIA_POPOUT_ICON}</button>
+            <button class="msg-media-icon-btn msg-media-dock-btn" type="button" data-media-action="dock" aria-label="Return to message">${MEDIA_DOCK_ICON}</button>
+            <button class="msg-media-icon-btn msg-media-close-btn" type="button" data-media-action="close-floating" aria-label="Close mini player">${MEDIA_CLOSE_ICON}</button>
+          </div>
+        </div>
+        <div class="msg-media-info">
+          <span class="msg-media-type-badge" aria-hidden="true">${MEDIA_VIDEO_ICON || 'VIDEO'}</span>
+          <span class="msg-media-copy">
+            <span class="msg-media-name">${escHtml(filename)}</span>
+            <span class="msg-media-meta">${escHtml(mediaMetaText(file))}</span>
+          </span>
+          ${renderAttachmentDownloadButton(file, renderOptions, 'msg-media-download')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderAttachmentCard(file, options) {
+    const renderOptions = options || {};
+    const normalized = normalizeAttachmentCardFile(file, renderOptions);
+    if (!normalized) {
+      return '';
+    }
+    if (renderOptions.source === 'upload' && renderOptions.side === 'user') {
+      return renderUserUploadAttachmentChip(normalized);
+    }
+    if (isAudioAttachment(normalized)) {
+      return renderAudioAttachmentCard(normalized, renderOptions);
+    }
+    if (isVideoAttachment(normalized)) {
+      return renderVideoAttachmentCard(normalized, renderOptions);
+    }
+    if (isImageAttachment(normalized)) {
+      return renderImageAttachmentCard(normalized, renderOptions);
+    }
+    return renderGenericAttachmentCard(normalized, renderOptions);
+  }
+
+  function renderMessageAttachments(attachments, options) {
+    const cards = (attachments || [])
+      .map(function renderOneAttachment(attachment) {
+        return renderAttachmentCard(attachment, options);
+      })
+      .filter(function hasCard(card) {
+        return !!String(card || '').trim();
+      });
+    if (!cards.length) {
+      return '';
+    }
+    return `<div class="msg-attachments msg-attachments--${escapeAttributeValue((options && options.side) || 'message')}">${cards.join('')}</div>`;
+  }
+
+  function formatMediaTime(seconds) {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value < 0) {
+      return '--:--';
+    }
+    const whole = Math.floor(value);
+    const minutes = Math.floor(whole / 60);
+    const remainingSeconds = whole % 60;
+    return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+  }
+
+  function mediaElementFromCard(card) {
+    return card ? card.querySelector('audio, video') : null;
+  }
+
+  function bufferedProgressPercent(media, duration, progressPercent) {
+    const buffered = media && media.buffered;
+    if (!buffered || !Number.isFinite(duration) || duration <= 0) {
+      return progressPercent;
+    }
+
+    let bufferedEnd = 0;
+    const currentTime = Number(media.currentTime) || 0;
+    for (let index = 0; index < buffered.length; index += 1) {
+      const start = buffered.start(index);
+      const end = buffered.end(index);
+      if (start <= currentTime && currentTime <= end) {
+        bufferedEnd = Math.max(bufferedEnd, end);
+      } else {
+        bufferedEnd = Math.max(bufferedEnd, end);
+      }
+    }
+    return Math.max(progressPercent, Math.min(100, (bufferedEnd / duration) * 100));
+  }
+
+  function stopMediaFrameSync(card) {
+    const frameId = activeMediaFrameIds.get(card);
+    if (frameId) {
+      window.cancelAnimationFrame(frameId);
+      activeMediaFrameIds.delete(card);
+    }
+  }
+
+  function startMediaFrameSync(card) {
+    if (!card || activeMediaFrameIds.has(card)) {
+      return;
+    }
+
+    function syncFrame() {
+      const media = mediaElementFromCard(card);
+      syncMediaCard(card);
+      if (media && !media.paused && !media.ended) {
+        activeMediaFrameIds.set(card, window.requestAnimationFrame(syncFrame));
+      } else {
+        activeMediaFrameIds.delete(card);
+      }
+    }
+
+    activeMediaFrameIds.set(card, window.requestAnimationFrame(syncFrame));
+  }
+
+  function syncMediaCard(card) {
+    const media = mediaElementFromCard(card);
+    if (!card || !media) {
+      return;
+    }
+    const isPlaying = !media.paused && !media.ended;
+    const duration = Number(media.duration);
+    const currentTime = Number(media.currentTime);
+    const hasDuration = Number.isFinite(duration) && duration > 0;
+    const progressValue = hasDuration ? Math.max(0, Math.min(1000, Math.round((currentTime / duration) * 1000))) : 0;
+    const progressPercent = progressValue / 10;
+    const bufferedPercent = bufferedProgressPercent(media, duration, progressPercent);
+    const playIcon = isPlaying ? MEDIA_PAUSE_ICON : MEDIA_PLAY_ICON;
+
+    card.classList.toggle('is-playing', isPlaying);
+    card.style.setProperty('--media-progress', `${progressPercent}%`);
+    card.style.setProperty('--media-buffered', `${bufferedPercent}%`);
+    card.querySelectorAll('[data-media-action="toggle"]').forEach(function syncToggle(button) {
+      button.innerHTML = playIcon;
+      button.setAttribute('aria-label', isPlaying ? 'Pause media' : 'Play media');
+    });
+    card.querySelectorAll('[data-media-action="mute"]').forEach(function syncMute(button) {
+      button.innerHTML = media.muted || media.volume === 0 ? MEDIA_VOLUME_MUTED_ICON : MEDIA_VOLUME_ICON;
+      button.setAttribute('aria-label', media.muted || media.volume === 0 ? 'Unmute media' : 'Mute media');
+    });
+    card.querySelectorAll('[data-media-action="seek"]').forEach(function syncRange(range) {
+      if (document.activeElement !== range) {
+        range.value = String(progressValue);
+      }
+      range.disabled = !hasDuration;
+    });
+    card.querySelectorAll('[data-media-current]').forEach(function syncCurrent(node) {
+      node.textContent = formatMediaTime(currentTime);
+    });
+    card.querySelectorAll('[data-media-duration]').forEach(function syncDuration(node) {
+      node.textContent = formatMediaTime(duration);
+    });
+    card.querySelectorAll('[data-media-time]').forEach(function syncCombined(node) {
+      node.textContent = `${formatMediaTime(currentTime)} / ${formatMediaTime(duration)}`;
+    });
+    syncFullscreenControls(card);
+  }
+
+  function previewMediaSeek(card, value) {
+    const media = mediaElementFromCard(card);
+    const duration = Number(media && media.duration);
+    if (!card || !Number.isFinite(duration) || duration <= 0) {
+      return;
+    }
+    const progressValue = Math.max(0, Math.min(1000, Number(value) || 0));
+    const progressPercent = progressValue / 10;
+    const seekTime = (progressValue / 1000) * duration;
+    card.style.setProperty('--media-progress', `${progressPercent}%`);
+    card.style.setProperty('--media-buffered', `${bufferedProgressPercent(media, duration, progressPercent)}%`);
+    card.querySelectorAll('[data-media-current]').forEach(function syncCurrent(node) {
+      node.textContent = formatMediaTime(seekTime);
+    });
+    card.querySelectorAll('[data-media-time]').forEach(function syncCombined(node) {
+      node.textContent = `${formatMediaTime(seekTime)} / ${formatMediaTime(duration)}`;
+    });
+  }
+
+  function forcePauseMedia(card, media) {
+    if (!card || !media) {
+      return;
+    }
+    card._mediaWantsPaused = true;
+    stopMediaFrameSync(card);
+    media.pause();
+    syncMediaCard(card);
+  }
+
+  function forcePlayMedia(card, media) {
+    if (!card || !media) {
+      return;
+    }
+    card._mediaWantsPaused = false;
+    const playResult = media.play();
+    if (playResult && typeof playResult.then === 'function') {
+      playResult
+        .then(function afterPlay() {
+          if (!card._mediaWantsPaused && !media.paused && !media.ended) {
+            startMediaFrameSync(card);
+          }
+        })
+        .catch(function ignorePlayError() {
+          syncMediaCard(card);
+        });
+    } else {
+      startMediaFrameSync(card);
+    }
+    syncMediaCard(card);
+  }
+
+  function toggleMediaCard(card) {
+    const media = mediaElementFromCard(card);
+    if (!media) {
+      return;
+    }
+    if (media.paused || media.ended) {
+      forcePlayMedia(card, media);
+    } else {
+      forcePauseMedia(card, media);
+    }
+  }
+
+  function commitMediaSeek(range) {
+    const card = range && range.closest('[data-media-card]');
+    const media = mediaElementFromCard(card);
+    if (!media || !Number.isFinite(media.duration) || media.duration <= 0) {
+      return;
+    }
+    const shouldResume = !card._mediaWantsPaused && !media.paused && !media.ended;
+    media.currentTime = (Number(range.value) / 1000) * media.duration;
+    if (shouldResume) {
+      forcePlayMedia(card, media);
+    } else {
+      syncMediaCard(card);
+    }
+  }
+
+  function syncFullscreenControls(card) {
+    if (!card) {
+      return;
+    }
+    const viewport = card.querySelector('.msg-video-viewport');
+    const isFullscreen = !!viewport && document.fullscreenElement === viewport;
+    card.classList.toggle('is-fullscreen', isFullscreen);
+    card.querySelectorAll('[data-media-action="fullscreen"]').forEach(function syncFullscreen(button) {
+      button.innerHTML = isFullscreen ? MEDIA_FULLSCREEN_EXIT_ICON : MEDIA_FULLSCREEN_ICON;
+      button.setAttribute('aria-label', isFullscreen ? 'Exit fullscreen' : 'Fullscreen');
+      button.setAttribute('title', isFullscreen ? 'Exit fullscreen' : 'Fullscreen');
+    });
+  }
+
+  function ensureFloatingMediaRoot() {
+    let root = document.getElementById('floating-media-root');
+    if (!root) {
+      root = document.createElement('div');
+      root.id = 'floating-media-root';
+      document.body.appendChild(root);
+    }
+    return root;
+  }
+
+  function openFloatingVideoCard(card) {
+    if (!card || card.classList.contains('is-floating')) {
+      return;
+    }
+    const placeholder = document.createElement('div');
+    placeholder.className = 'video-inline-placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+    placeholder.style.height = `${Math.max(96, Math.round(card.getBoundingClientRect().height || 0))}px`;
+    card.replaceWith(placeholder);
+    floatingMediaPlaceholders.set(card, placeholder);
+    ensureFloatingMediaRoot().appendChild(card);
+    card.classList.add('is-floating');
+  }
+
+  function dockFloatingVideoCard(card) {
+    if (!card || !card.classList.contains('is-floating')) {
+      return;
+    }
+    const placeholder = floatingMediaPlaceholders.get(card);
+    if (placeholder && placeholder.parentNode) {
+      placeholder.replaceWith(card);
+    } else {
+      dom.$messagesInner.append(card);
+    }
+    floatingMediaPlaceholders.delete(card);
+    card.classList.remove('is-floating');
+  }
+
+  function closeFloatingVideoCard(card) {
+    const media = mediaElementFromCard(card);
+    forcePauseMedia(card, media);
+    dockFloatingVideoCard(card);
+  }
+
+  function bindAttachmentMediaEvents() {
+    $(document)
+      .on('click.mediaAttachments', '[data-media-card] [data-media-action="toggle"]', function onMediaToggle(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        const card = this.closest('[data-media-card]');
+        toggleMediaCard(card);
+      })
+      .on('input.mediaAttachments', '[data-media-card] [data-media-action="seek"]', function onMediaSeekPreview() {
+        previewMediaSeek(this.closest('[data-media-card]'), this.value);
+      })
+      .on('change.mediaAttachments', '[data-media-card] [data-media-action="seek"]', function onMediaSeek() {
+        commitMediaSeek(this);
+      })
+      .on('pointerup.mediaAttachments', '[data-media-card] [data-media-action="seek"]', function onMediaSeekPointerUp() {
+        commitMediaSeek(this);
+      })
+      .on('keydown.mediaAttachments', '[data-media-card] [data-media-action="seek"]', function onMediaSeekKey(event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          commitMediaSeek(this);
+        }
+      })
+      .on('click.mediaAttachments', '[data-media-card] [data-media-action="mute"]', function onMediaMute(event) {
+        event.preventDefault();
+        const card = this.closest('[data-media-card]');
+        const media = mediaElementFromCard(card);
+        if (!media) {
+          return;
+        }
+        media.muted = !media.muted;
+        syncMediaCard(card);
+      })
+      .on('click.mediaAttachments', '[data-media-card] [data-media-action="fullscreen"]', function onMediaFullscreen(event) {
+        event.preventDefault();
+        const card = this.closest('[data-media-card]');
+        const target = card && card.querySelector('.msg-video-viewport');
+        if (!target) {
+          return;
+        }
+        if (document.fullscreenElement === target && document.exitFullscreen) {
+          document.exitFullscreen().catch(function ignoreFullscreenExitError() {});
+          return;
+        }
+        if (target.requestFullscreen) {
+          target.requestFullscreen()
+            .then(function afterFullscreen() { syncFullscreenControls(card); })
+            .catch(function ignoreFullscreenError() {});
+        }
+      })
+      .on('click.mediaAttachments', '[data-media-card] [data-media-action="popout"]', function onMediaPopout(event) {
+        event.preventDefault();
+        openFloatingVideoCard(this.closest('.msg-video-card'));
+      })
+      .on('click.mediaAttachments', '[data-media-card] [data-media-action="dock"]', function onMediaDock(event) {
+        event.preventDefault();
+        dockFloatingVideoCard(this.closest('.msg-video-card'));
+      })
+      .on('click.mediaAttachments', '[data-media-card] [data-media-action="close-floating"]', function onMediaClose(event) {
+        event.preventDefault();
+        closeFloatingVideoCard(this.closest('.msg-video-card'));
+      })
+      .on('loadedmetadata.mediaAttachments progress.mediaAttachments canplay.mediaAttachments waiting.mediaAttachments seeking.mediaAttachments seeked.mediaAttachments play.mediaAttachments pause.mediaAttachments volumechange.mediaAttachments ended.mediaAttachments', '[data-media-card] audio, [data-media-card] video', function onMediaStateChange(event) {
+        const card = this.closest('[data-media-card]');
+        if (event.type === 'play') {
+          card._mediaWantsPaused = false;
+          startMediaFrameSync(card);
+        } else if (event.type === 'pause' || event.type === 'ended') {
+          card._mediaWantsPaused = true;
+          stopMediaFrameSync(card);
+        }
+        syncMediaCard(card);
+      })
+      .on('timeupdate.mediaAttachments', '[data-media-card] audio, [data-media-card] video', function onMediaTimeUpdate() {
+        // Throttle progress updates to one repaint per animation frame per card
+        // to avoid hammering conic-gradient / CSS custom-property recalculations.
+        const card = this.closest('[data-media-card]');
+        if (!card || card._rafPending) { return; }
+        card._rafPending = true;
+        requestAnimationFrame(function rafSync() {
+          card._rafPending = false;
+          syncMediaCard(card);
+        });
+      });
+    document.addEventListener('fullscreenchange', function onMediaFullscreenChange() {
+      document.querySelectorAll('[data-media-card]').forEach(syncFullscreenControls);
+    });
+  }
+
+  function renderSharedImageFileCard(file) {
+    return renderAttachmentCard(file, {
+      side: 'assistant',
+      source: 'shared_file',
+      mode: 'message'
+    });
   }
 
   function renderSharedFileCard(segment) {
@@ -2009,26 +2642,11 @@ export function createMessagesUi(context, dependencies) {
       return renderReasoningToolRow(segment);
     }
 
-    const sizeText = formatByteSize(normalized.sizeBytes);
-    const metaParts = [normalized.typeLabel];
-    if (sizeText) {
-      metaParts.push(sizeText);
-    }
-    const href = sharedFileDownloadUrl(normalized);
-    const renderedImageCard = renderSharedImageFileCard(normalized);
-    if (renderedImageCard) {
-      return renderedImageCard;
-    }
-    return `
-      <a class="msg-file-chip msg-shared-file-card" href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(normalized.filename)}">
-        <span class="msg-shared-file-badge" aria-hidden="true">FILE</span>
-        <span class="msg-shared-file-main">
-          <span class="msg-file-name">${escHtml(normalized.filename)}</span>
-          <span class="msg-file-meta">${escHtml(metaParts.filter(Boolean).join(' · '))}</span>
-        </span>
-        <span class="msg-shared-file-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>
-      </a>
-    `;
+    return renderAttachmentCard(normalized, {
+      side: 'assistant',
+      source: 'shared_file',
+      mode: 'message'
+    });
   }
 
   function collectPinnedSharedFileCards(segments) {
@@ -4072,42 +4690,14 @@ export function createMessagesUi(context, dependencies) {
     }
 
     if (isUser && attachments && attachments.length > 0) {
-      const imageHtml = attachments
-        .filter(function onlyImages(attachment) {
-          return typeof attachment === 'string'
-            || attachment.kind === 'image'
-            || (attachment.displayKind || attachment.display_kind) === 'image';
-        })
-        .map(function renderImage(attachment) {
-          const normalizedAttachment = attachmentUi.normalizeAttachment(attachment);
-          const src = normalizedAttachment ? (normalizedAttachment.dataUrl || normalizedAttachment.previewDataUrl) : '';
-          if (!src) {
-            return '';
-          }
-          return `<img src="${src}" alt="Attached image">`;
-        }).join('');
-
-      const fileHtml = attachments
-        .filter(function onlyFiles(attachment) {
-          return typeof attachment !== 'string'
-            && attachment.kind === 'file'
-            && (attachment.displayKind || attachment.display_kind) !== 'image';
-        })
-        .map(function renderFile(attachment) {
-          const meta = attachment.typeLabel || attachment.type_label || attachment.mimeType || attachment.mime_type || 'File';
-          return `
-            <div class="msg-file-chip">
-              <div class="msg-file-name">${escHtml(attachment.name || 'File')}</div>
-              <div class="msg-file-meta">${escHtml(meta)}</div>
-            </div>
-          `;
-        }).join('');
-
-      attachmentsHtml = `
-        ${imageHtml ? `<div class="msg-images">${imageHtml}</div>` : ''}
-        ${fileHtml ? `<div class="msg-files">${fileHtml}</div>` : ''}
-      `;
+      attachmentsHtml = renderMessageAttachments(attachments, {
+        side: 'user',
+        source: 'upload',
+        mode: 'message'
+      });
     }
+
+    const userBubbleAttachmentClass = isUser && attachmentsHtml ? ' msg-bubble--attachments' : '';
 
     const $row = $(`
       <div class="msg ${role}${viewOptions.queued ? ' is-queued' : ''}" data-message-key="${escapeAttributeValue(messageKey)}"${messageId ? ` data-message-id="${messageId}"` : ''}>
@@ -4119,16 +4709,25 @@ export function createMessagesUi(context, dependencies) {
             ${queuedBadge}
           </div>
           ${!isUser ? '<div class="msg-activity-stream" style="display:none;"></div>' : ''}
-          <div class="msg-bubble">${attachmentsHtml}</div>
+          <div class="msg-bubble${userBubbleAttachmentClass}">${attachmentsHtml}</div>
           ${icons.buildMessageActionsHtml()}
         </div>
       </div>
     `);
 
     if (isUser) {
-      const $bubble = $row.find('.msg-bubble')
-        .attr('data-raw', text)
-        .append($('<span>').text(text));
+      const $bubble = $row.find('.msg-bubble').attr('data-raw', text);
+      const hasAttachmentCards = !!attachmentsHtml;
+      if (hasAttachmentCards) {
+        const body = String(text ?? '');
+        if (body.length > 0) {
+          $bubble.append(
+            $('<div class="msg-bubble-caption"></div>').append($('<span>').text(text))
+          );
+        }
+      } else {
+        $bubble.append($('<span>').text(text));
+      }
       $bubble.data('attachments', attachments || []);
     } else if (normalizedActivitySegments.length > 0) {
       $row.find('.msg-bubble').attr('data-raw', text);
@@ -4489,6 +5088,7 @@ export function createMessagesUi(context, dependencies) {
   }
 
   bindReasoningDrawerResize();
+  bindAttachmentMediaEvents();
   bindCitationPreviewCards(document);
 
   return {

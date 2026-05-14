@@ -15,6 +15,7 @@ urlpatterns = [
     # Chat APIs.
     path("api/chat/", views.chat_api, name="chat_api"),
     path("api/uploads/", views.upload_files_api, name="uploads_api"),
+    path("api/uploads/<str:file_id>/content/", views.uploaded_file_content_api, name="uploaded_file_content_api"),
     path("api/chat/abort/", views.abort_generation_api, name="abort_generation_api"),
     path("api/chat/<uuid:chat_id>/", views.load_chat_api, name="load_chat_api"),
     path("api/chat/<uuid:chat_id>/last/", views.delete_last_assistant_api, name="delete_last_assistant_api"),
