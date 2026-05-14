@@ -71,6 +71,7 @@ class FetchResult:
     success: bool = False
     html: str = ""
     text: str = ""           # normalised text (populated after normalisation)
+    inner_text: str = ""     # raw DOM innerText, populated for SPA fallback
     title: str = ""
     method: str = "camoufox"
     error: str = ""
@@ -207,6 +208,7 @@ async def fetch_with_camoufox(
         )
 
     raw_html: str = data.get("html", "")
+    inner_text: str = data.get("inner_text", "")
     title: str = data.get("title", "")
 
     if not raw_html or len(raw_html) < 200:
@@ -242,6 +244,7 @@ async def fetch_with_camoufox(
         success=True,
         html=raw_html,
         text=clean_text,
+        inner_text=inner_text,
         title=title,
         method="camoufox",
         duration_sec=duration,

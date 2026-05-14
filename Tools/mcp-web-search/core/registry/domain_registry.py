@@ -30,6 +30,7 @@ class DomainInfo:
     notes: str = ""
     response_time_ms: Optional[int] = None  # measured p95 latency from bench_domains.py
     try_preview_bot: bool = False  # try social-media bot UA probe (Telegrambot, WhatsApp, etc.)
+    parsing_mode: str = ""  # "" | "nextjs_rsc"
 
 # Access strategy models.
 # Resolved access strategy record.
@@ -124,6 +125,7 @@ class DomainRegistry:
                     notes=entry.get("notes") or "",
                     response_time_ms=int(v) if (v := entry.get("response_time_ms")) is not None else None,
                     try_preview_bot=bool(entry.get("try_preview_bot", False)),
+                    parsing_mode=str(entry.get("parsing_mode") or "").strip().lower(),
                 )
                 if not info.topics:
                     info.topics = ["general"]
@@ -187,6 +189,7 @@ class DomainRegistry:
             notes=static_info.notes,
             response_time_ms=static_info.response_time_ms,
             try_preview_bot=static_info.try_preview_bot,
+            parsing_mode=static_info.parsing_mode,
         )
 
     # Lookup helpers.
@@ -246,6 +249,11 @@ class DomainRegistry:
         """Return whether the domain specifically prefers Camoufox."""
 
         return self.lookup(url_or_domain).method == "camoufox"
+
+    def prefers_nextjs_rsc(self, url_or_domain: str) -> bool:
+        """Return whether the domain prefers direct Next.js RSC extraction."""
+
+        return self.lookup(url_or_domain).parsing_mode == "nextjs_rsc"
 
     # Reporting helpers.
     def summary(self) -> Dict[str, List[str]]:

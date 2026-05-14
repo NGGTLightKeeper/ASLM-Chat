@@ -64,10 +64,17 @@ if str(_ROOT) not in sys.path:
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
-def _ok(html: str, url: str, title: str) -> None:
+def _ok(html: str, url: str, title: str, inner_text: str = "") -> None:
     sys.stdout.write(
         json.dumps(
-            {"ok": True, "html": html, "url": url, "title": title, "method": "camoufox"},
+            {
+                "ok": True,
+                "html": html,
+                "url": url,
+                "title": title,
+                "method": "camoufox",
+                "inner_text": inner_text,
+            },
             ensure_ascii=False,
         )
         + "\n"
@@ -232,9 +239,15 @@ async def _fetch(payload: dict) -> None:
             await page.goto(
                 url,
                 timeout=int(timeout_sec * 1000),
-                wait_until="domcontentloaded",
+                wait_until="load",
             )
-            await asyncio.sleep(wait_sec)
+            try:
+                await page.wait_for_function(
+                    "document.body.innerText.trim().length > 500",
+                    timeout=int(wait_sec * 1000),
+                )
+            except Exception:
+                await asyncio.sleep(min(wait_sec, 2.0))
             await _human_scroll(page)
 
             html = await page.content()
@@ -242,8 +255,14 @@ async def _fetch(payload: dict) -> None:
                 _fail(f"empty page content from {url}")
                 return
 
+            inner_text = ""
+            try:
+                inner_text = await page.evaluate("document.body.innerText") or ""
+            except Exception:
+                pass
+
             title = _extract_title(html)
-            _ok(html=html, url=url, title=title)
+            _ok(html=html, url=url, title=title, inner_text=inner_text)
 
     except asyncio.TimeoutError:
         _fail(f"timeout after {timeout_sec:.0f}s for {url}")
