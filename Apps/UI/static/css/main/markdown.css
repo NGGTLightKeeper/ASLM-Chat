@@ -170,6 +170,107 @@
   background: transparent;
 }
 
+.markdown-body .md-mermaid-card {
+  overflow: hidden;
+  margin: 0 0 16px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  background: var(--surface-secondary);
+}
+
+.markdown-body .md-mermaid-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  padding: 9px 14px 8px 18px;
+  border-bottom: 1px solid var(--c-border);
+  color: var(--c-text);
+}
+
+.markdown-body .md-mermaid-canvas {
+  min-height: 120px;
+  overflow-x: auto;
+  padding: 18px;
+  background: color-mix(in srgb, var(--surface-secondary) 88%, #ffffff 12%);
+}
+
+.markdown-body .md-mermaid-canvas:empty {
+  display: none;
+}
+
+.markdown-body .md-mermaid-canvas svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.markdown-body .md-mermaid-katex-foreign {
+  overflow: visible;
+  pointer-events: none;
+}
+
+.markdown-body .md-mermaid-katex-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--c-text);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+}
+
+.markdown-body .md-mermaid-katex-label .katex {
+  color: inherit !important;
+  font-size: 1em;
+}
+
+.markdown-body .md-mermaid-katex-label .katex * {
+  color: inherit !important;
+}
+
+.markdown-body .md-mermaid-status {
+  padding: 14px 18px;
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-1);
+}
+
+.markdown-body .md-mermaid-card[data-mermaid-state="rendered"] .md-mermaid-status,
+.markdown-body .md-mermaid-card[data-mermaid-state="rendered"] .md-mermaid-source,
+.markdown-body .md-mermaid-card[data-mermaid-state="pending"] .md-mermaid-source,
+.markdown-body .md-mermaid-card[data-mermaid-state="rendering"] .md-mermaid-source {
+  display: none;
+}
+
+.markdown-body .md-mermaid-card[data-mermaid-state="error"] .md-mermaid-status,
+.markdown-body .md-mermaid-card[data-mermaid-state="unavailable"] .md-mermaid-status {
+  color: var(--c-danger);
+}
+
+.markdown-body .md-mermaid-source {
+  margin: 0;
+  padding: 14px 18px 18px;
+  border: 0;
+  border-top: 1px solid var(--c-border);
+  border-radius: 0;
+  background: #111314;
+}
+
+.markdown-body .md-mermaid-source code {
+  display: block;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  white-space: pre;
+}
+
 .markdown-body a {
   color: var(--c-link);
 }

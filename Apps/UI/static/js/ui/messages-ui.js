@@ -65,6 +65,7 @@ export function createMessagesUi(context, dependencies) {
     '<analysis>',
     '</analysis>'
   ];
+  let mermaidRenderSeq = 0;
 
   // Composer state.
   // Sync both send buttons with the current generation and attachment state.
@@ -334,19 +335,24 @@ export function createMessagesUi(context, dependencies) {
     return result;
   }
 
-  function markdownCodeLanguage(codeEl) {
+  function markdownRawCodeLanguage(codeEl) {
     const classNames = String((codeEl && codeEl.className) || '');
     const match = classNames.match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)
       || classNames.match(/(?:^|\s)lang-([a-z0-9_+#.-]+)/i);
-    const normalized = normalizeHighlightLanguage(match ? match[1] : '');
+    return String(match ? match[1] : '').trim().toLowerCase();
+  }
+
+  function markdownCodeLanguage(codeEl) {
+    const normalized = normalizeHighlightLanguage(markdownRawCodeLanguage(codeEl));
     return normalized === 'plaintext' ? 'Code' : normalized.toUpperCase();
   }
 
   function markdownCodeHighlightLanguage(codeEl) {
-    const classNames = String((codeEl && codeEl.className) || '');
-    const match = classNames.match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)
-      || classNames.match(/(?:^|\s)lang-([a-z0-9_+#.-]+)/i);
-    return normalizeHighlightLanguage(match ? match[1] : '');
+    return normalizeHighlightLanguage(markdownRawCodeLanguage(codeEl));
+  }
+
+  function isMermaidCodeLanguage(codeEl) {
+    return markdownRawCodeLanguage(codeEl) === 'mermaid';
   }
 
   function enhanceMarkdownCodeBlocks(html) {
@@ -358,7 +364,41 @@ export function createMessagesUi(context, dependencies) {
     template.innerHTML = String(html || '');
     template.content.querySelectorAll('pre > code').forEach(function wrapMarkdownCodeBlock(codeEl) {
       const preEl = codeEl.parentElement;
-      if (!preEl || preEl.closest('.md-code-card')) {
+      if (!preEl || preEl.closest('.md-code-card, .md-mermaid-card')) {
+        return;
+      }
+
+      if (isMermaidCodeLanguage(codeEl)) {
+        const source = codeEl.textContent || '';
+        const cardEl = document.createElement('div');
+        cardEl.className = 'md-mermaid-card';
+        cardEl.dataset.mermaidState = 'pending';
+
+        const headerEl = document.createElement('div');
+        headerEl.className = 'md-mermaid-head';
+        headerEl.innerHTML = `
+          <span class="md-code-lang">
+            <span class="md-code-icon" aria-hidden="true">&lt;&gt;</span>
+            <span>MERMAID</span>
+          </span>
+          <button type="button" class="md-code-copy-btn" title="Copy diagram source" aria-label="Copy diagram source">${icons.COPY_MESSAGE_ICON}</button>
+        `;
+
+        const canvasEl = document.createElement('div');
+        canvasEl.className = 'md-mermaid-canvas';
+        canvasEl.setAttribute('role', 'img');
+
+        const statusEl = document.createElement('div');
+        statusEl.className = 'md-mermaid-status';
+        statusEl.textContent = 'Rendering diagram...';
+
+        preEl.classList.add('md-mermaid-source');
+        preEl.parentNode.insertBefore(cardEl, preEl);
+        cardEl.appendChild(headerEl);
+        cardEl.appendChild(canvasEl);
+        cardEl.appendChild(statusEl);
+        cardEl.appendChild(preEl);
+        codeEl.textContent = source;
         return;
       }
 
@@ -3289,6 +3329,279 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  function sanitizeMermaidSvg(svg) {
+    if (typeof DOMPurify !== 'undefined' && DOMPurify.sanitize) {
+      return DOMPurify.sanitize(String(svg || ''), {
+        USE_PROFILES: { svg: true, svgFilters: true }
+      });
+    }
+    return String(svg || '');
+  }
+
+  function parseCssColorToRgb(value) {
+    const color = String(value || '').trim().toLowerCase();
+    if (!color || color === 'none' || color === 'transparent') {
+      return null;
+    }
+
+    const hex = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+      const raw = hex[1];
+      const expanded = raw.length === 3
+        ? raw.split('').map(function expandHex(part) { return part + part; }).join('')
+        : raw;
+      return {
+        r: parseInt(expanded.slice(0, 2), 16),
+        g: parseInt(expanded.slice(2, 4), 16),
+        b: parseInt(expanded.slice(4, 6), 16)
+      };
+    }
+
+    const rgb = color.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+    if (rgb) {
+      return {
+        r: Number(rgb[1]),
+        g: Number(rgb[2]),
+        b: Number(rgb[3])
+      };
+    }
+
+    return null;
+  }
+
+  function relativeLuminance(rgb) {
+    if (!rgb) {
+      return 0;
+    }
+    const channels = [rgb.r, rgb.g, rgb.b].map(function normalizeChannel(value) {
+      const channel = Math.max(0, Math.min(255, Number(value) || 0)) / 255;
+      return channel <= 0.03928
+        ? channel / 12.92
+        : Math.pow((channel + 0.055) / 1.055, 2.4);
+    });
+    return (0.2126 * channels[0]) + (0.7152 * channels[1]) + (0.0722 * channels[2]);
+  }
+
+  function contrastRatio(firstRgb, secondRgb) {
+    const first = relativeLuminance(firstRgb);
+    const second = relativeLuminance(secondRgb);
+    const lighter = Math.max(first, second);
+    const darker = Math.min(first, second);
+    return (lighter + 0.05) / (darker + 0.05);
+  }
+
+  function getSvgShapeFill(shapeEl) {
+    if (!shapeEl) {
+      return null;
+    }
+    const computedFill = typeof window !== 'undefined' && window.getComputedStyle
+      ? window.getComputedStyle(shapeEl).fill
+      : '';
+    return parseCssColorToRgb(computedFill)
+      || parseCssColorToRgb(shapeEl.getAttribute('fill'))
+      || parseCssColorToRgb((shapeEl.getAttribute('style') || '').match(/fill\s*:\s*([^;]+)/i)?.[1]);
+  }
+
+  function applyMermaidLabelContrast(svgRoot) {
+    if (!svgRoot || !svgRoot.querySelectorAll) {
+      return;
+    }
+
+    svgRoot.querySelectorAll('g.node').forEach(function applyNodeLabelContrast(nodeEl) {
+      const shapeEl = nodeEl.querySelector('rect, polygon, circle, ellipse, path');
+      const fill = getSvgShapeFill(shapeEl);
+      if (!fill) {
+        return;
+      }
+
+      const darkText = { r: 32, g: 35, b: 38 };
+      const lightText = { r: 244, g: 245, b: 246 };
+      const textColor = contrastRatio(fill, darkText) >= contrastRatio(fill, lightText) ? '#202326' : '#f4f5f6';
+      nodeEl.querySelectorAll('text, tspan').forEach(function applySvgTextColor(textEl) {
+        textEl.setAttribute('fill', textColor);
+        textEl.style.fill = textColor;
+      });
+      nodeEl.querySelectorAll('.nodeLabel, .md-mermaid-katex-label').forEach(function applyHtmlTextColor(labelEl) {
+        labelEl.style.color = textColor;
+      });
+    });
+  }
+
+  function renderMermaidLatexLabels(svgRoot) {
+    if (!svgRoot || !svgRoot.querySelectorAll || typeof document === 'undefined') {
+      return;
+    }
+
+    svgRoot.querySelectorAll('text').forEach(function replaceLatexSvgText(textEl) {
+      const source = String(textEl.textContent || '').trim();
+      if (!source || !/(?:\$|\\\[|\\\()/.test(source) || textEl.closest('foreignObject')) {
+        return;
+      }
+
+      let bbox = null;
+      try {
+        bbox = textEl.getBBox();
+      } catch (error) {
+        bbox = null;
+      }
+      if (!bbox || !Number.isFinite(bbox.x) || !Number.isFinite(bbox.y)) {
+        return;
+      }
+
+      const parentEl = textEl.parentNode;
+      if (!parentEl) {
+        return;
+      }
+
+      const textAnchor = String(textEl.getAttribute('text-anchor') || '').toLowerCase();
+      const width = Math.max(bbox.width + 40, 80);
+      const height = Math.max(bbox.height + 18, 30);
+      const centerX = bbox.x + (bbox.width / 2);
+      let x = centerX - (width / 2);
+      if (textAnchor === 'start') {
+        x = bbox.x - 8;
+      } else if (textAnchor === 'end') {
+        x = bbox.x + bbox.width - width + 8;
+      }
+
+      const foreignObject = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+      foreignObject.classList.add('md-mermaid-katex-foreign');
+      foreignObject.setAttribute('x', String(x));
+      foreignObject.setAttribute('y', String(bbox.y - 8));
+      foreignObject.setAttribute('width', String(width));
+      foreignObject.setAttribute('height', String(height));
+      foreignObject.setAttribute('requiredExtensions', 'http://www.w3.org/1999/xhtml');
+
+      const labelEl = document.createElement('div');
+      labelEl.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+      labelEl.className = 'md-mermaid-katex-label';
+      labelEl.innerHTML = renderLatexInHtml(escHtml(source));
+
+      foreignObject.appendChild(labelEl);
+      parentEl.insertBefore(foreignObject, textEl.nextSibling);
+      textEl.setAttribute('aria-hidden', 'true');
+      textEl.style.display = 'none';
+    });
+  }
+
+  function enhanceMermaidSvg(canvasEl) {
+    if (!canvasEl || !canvasEl.querySelector) {
+      return;
+    }
+    const svgRoot = canvasEl.querySelector('svg');
+    if (!svgRoot) {
+      return;
+    }
+    renderMermaidLatexLabels(svgRoot);
+    applyMermaidLabelContrast(svgRoot);
+  }
+
+  function getMermaidRenderer() {
+    if (typeof window !== 'undefined' && window.mermaid) {
+      return window.mermaid;
+    }
+    if (typeof globalThis !== 'undefined' && globalThis.mermaid) {
+      return globalThis.mermaid;
+    }
+    return null;
+  }
+
+  function configureMermaid() {
+    const mermaidApi = getMermaidRenderer();
+    if (!mermaidApi || !mermaidApi.initialize) {
+      return;
+    }
+    mermaidApi.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: 'base',
+      flowchart: {
+        htmlLabels: false
+      },
+      themeVariables: {
+        background: 'transparent',
+        mainBkg: '#202326',
+        primaryColor: '#202326',
+        primaryTextColor: '#f4f5f6',
+        primaryBorderColor: '#5f6b76',
+        nodeTextColor: '#f4f5f6',
+        labelTextColor: '#f4f5f6',
+        edgeLabelBackground: '#343638',
+        lineColor: '#8fa3b8',
+        secondaryColor: '#253241',
+        tertiaryColor: '#17201b',
+        fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif'
+      }
+    });
+  }
+
+  function hydrateMermaidDiagrams($root) {
+    const root = $root && $root.length ? $root : dom.$messagesInner;
+    root.find('.md-mermaid-card').each(function hydrateMermaidCard() {
+      const cardEl = this;
+      if (cardEl.dataset.mermaidState === 'rendered' || cardEl.dataset.mermaidState === 'rendering') {
+        return;
+      }
+
+      const canvasEl = cardEl.querySelector('.md-mermaid-canvas');
+      const sourceEl = cardEl.querySelector('.md-mermaid-source code');
+      const statusEl = cardEl.querySelector('.md-mermaid-status');
+      const source = sourceEl ? String(sourceEl.textContent || '').trim() : '';
+      if (!canvasEl || !source) {
+        cardEl.dataset.mermaidState = 'error';
+        if (statusEl) {
+          statusEl.textContent = 'Mermaid diagram source is empty.';
+        }
+        return;
+      }
+
+      const mermaidApi = getMermaidRenderer();
+      if (!mermaidApi || !mermaidApi.render) {
+        cardEl.dataset.mermaidState = 'unavailable';
+        if (statusEl) {
+          statusEl.textContent = 'Mermaid renderer is unavailable.';
+        }
+        return;
+      }
+
+      const renderToken = `mermaid-${Date.now()}-${++mermaidRenderSeq}`;
+      cardEl.dataset.mermaidState = 'rendering';
+      cardEl.dataset.mermaidRenderToken = renderToken;
+      if (statusEl) {
+        statusEl.textContent = 'Rendering diagram...';
+      }
+
+      Promise.resolve(mermaidApi.render(`aslm-${renderToken}`, source))
+        .then(function onMermaidRendered(result) {
+          if (cardEl.dataset.mermaidRenderToken !== renderToken) {
+            return;
+          }
+          const svg = result && result.svg ? result.svg : '';
+          if (!svg) {
+            throw new Error('Mermaid returned an empty SVG.');
+          }
+          canvasEl.innerHTML = sanitizeMermaidSvg(svg);
+          enhanceMermaidSvg(canvasEl);
+          if (result && typeof result.bindFunctions === 'function') {
+            result.bindFunctions(canvasEl);
+          }
+          cardEl.dataset.mermaidState = 'rendered';
+          if (statusEl) {
+            statusEl.textContent = '';
+          }
+        })
+        .catch(function onMermaidError(error) {
+          if (cardEl.dataset.mermaidRenderToken !== renderToken) {
+            return;
+          }
+          cardEl.dataset.mermaidState = 'error';
+          if (statusEl) {
+            statusEl.textContent = `Could not render Mermaid diagram: ${error && error.message ? error.message : 'syntax error'}`;
+          }
+        });
+    });
+  }
+
   function toolDisplayName(segment) {
     if (isSearchToolSegment(segment)) {
       return 'Search';
@@ -4127,6 +4440,9 @@ export function createMessagesUi(context, dependencies) {
       setExpandedWriteIndices($msgRow, expandedWrites);
       setExpandedEditIndices($msgRow, expandedEdits);
       $msgRow.data('toolSegments', toolSegments);
+      if (renderOptions.streaming !== true) {
+        hydrateMermaidDiagrams($stream);
+      }
 
       if (shouldSyncOpenDrawer) {
         const $nextActiveWrapper = $msgRow
@@ -4246,6 +4562,9 @@ export function createMessagesUi(context, dependencies) {
     setExpandedWriteIndices($msgRow, expandedWrites);
     setExpandedEditIndices($msgRow, expandedEdits);
     $msgRow.data('toolSegments', toolSegments);
+    if (renderOptions.streaming !== true) {
+      hydrateMermaidDiagrams($stream);
+    }
 
     if (shouldSyncOpenDrawer) {
       const $nextActiveWrapper = $msgRow
@@ -4880,7 +5199,8 @@ export function createMessagesUi(context, dependencies) {
 
   function copyCodeBlock($button) {
     const $btn = $button || $();
-    const $code = $btn.closest('.md-code-card').find('pre code').first();
+    const $card = $btn.closest('.md-code-card, .md-mermaid-card');
+    const $code = $card.find('pre code').first();
     const text = $code.text();
     if (!$code.length) {
       return;
@@ -4960,6 +5280,7 @@ export function createMessagesUi(context, dependencies) {
     $body
       .data('messageRow', $wrapper.closest('.msg'))
       .data('toolSegments', $wrapper.closest('.msg').data('toolSegments') || []);
+    hydrateMermaidDiagrams($body);
     if (isNearBottom && bodyEl) {
       bodyEl.scrollTop = bodyEl.scrollHeight;
     }
@@ -5079,12 +5400,15 @@ export function createMessagesUi(context, dependencies) {
   // Code highlighting is applied after sanitization when code cards are built.
   function configureMarkdown() {
     if (typeof marked === 'undefined') {
+      configureMermaid();
       return;
     }
 
     marked.setOptions({
       breaks: true
     });
+
+    configureMermaid();
   }
 
   bindReasoningDrawerResize();
