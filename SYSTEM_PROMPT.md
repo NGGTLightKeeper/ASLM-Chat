@@ -16,6 +16,10 @@ Web-search query quality rules:
 - If a previous query was rejected or returned poor signal, rewrite semantically (new anchor terms), not trivial rewording.
 - Avoid retry loops: never repeat an identical or near-identical failed query.
 
+Citation rules:
+- Cite only source handles available in the current answer/tool result context.
+- Do not reuse, quote, or continue citation handles from previous assistant messages; old handles are not available to the renderer and may be stripped instead of becoming links.
+
 Sandbox agent behavior rules:
 - Treat stderr as a signal, not an automatic failure. Many tools print warnings to stderr while still succeeding.
 - First evaluate completion status via exit code and produced artifacts/output; only then decide whether to retry.

@@ -355,6 +355,41 @@ export function createMessagesUi(context, dependencies) {
     return markdownRawCodeLanguage(codeEl) === 'mermaid';
   }
 
+  function safeMarkdownUrl(value) {
+    try {
+      const parsed = new URL(String(value || '').trim());
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  function linkifyInlineCodeUrls(template) {
+    template.content.querySelectorAll('code').forEach(function linkifyInlineCodeUrl(codeEl) {
+      if (codeEl.closest('pre, a')) {
+        return;
+      }
+
+      const rawText = String(codeEl.textContent || '').trim();
+      if (!rawText || /\s/.test(rawText)) {
+        return;
+      }
+
+      const url = safeMarkdownUrl(rawText);
+      if (!url) {
+        return;
+      }
+
+      const linkEl = document.createElement('a');
+      linkEl.className = 'md-inline-code-link';
+      linkEl.href = url;
+      linkEl.target = '_blank';
+      linkEl.rel = 'noopener noreferrer';
+      codeEl.parentNode.insertBefore(linkEl, codeEl);
+      linkEl.appendChild(codeEl);
+    });
+  }
+
   function enhanceMarkdownCodeBlocks(html) {
     if (typeof document === 'undefined' || !html) {
       return html;
@@ -362,6 +397,7 @@ export function createMessagesUi(context, dependencies) {
 
     const template = document.createElement('template');
     template.innerHTML = String(html || '');
+    linkifyInlineCodeUrls(template);
     template.content.querySelectorAll('pre > code').forEach(function wrapMarkdownCodeBlock(codeEl) {
       const preEl = codeEl.parentElement;
       if (!preEl || preEl.closest('.md-code-card, .md-mermaid-card')) {

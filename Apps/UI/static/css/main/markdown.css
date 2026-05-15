@@ -275,6 +275,15 @@
   color: var(--c-link);
 }
 
+.markdown-body a.md-inline-code-link {
+  text-decoration: none;
+}
+
+.markdown-body a.md-inline-code-link:hover,
+.markdown-body a.md-inline-code-link:focus-visible {
+  text-decoration: underline;
+}
+
 .markdown-body a:hover {
   text-decoration: underline;
 }
