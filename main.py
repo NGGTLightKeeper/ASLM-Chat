@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -261,6 +262,37 @@ def cmd_set_setting(key: str, value: str) -> None:
     set(key, parsed_value)
     print(f"[ASLM-Chat] Setting '{key}' updated to {parsed_value}")
 
+
+def cmd_apply_aslm_host_theme(theme_file: str) -> None:
+    """Apply a JSON theme snapshot written by ASLM (temp file path in ``--file``)."""
+
+    from pathlib import Path
+
+    from Settings.host_theme import save_host_theme_payload
+
+    path = Path(theme_file)
+    if not path.is_file():
+        print(f"Error: theme file not found: {theme_file}")
+        sys.exit(1)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"Error: could not read theme file: {exc}")
+        sys.exit(1)
+    # .NET may write UTF-8 with BOM; json.loads rejects a leading U+FEFF unless stripped.
+    raw = raw.lstrip("\ufeff").strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"Error: invalid JSON in theme file: {exc}")
+        sys.exit(1)
+    if not isinstance(data, dict):
+        print("Error: host theme JSON must be an object.")
+        sys.exit(1)
+    save_host_theme_payload(data)
+    print("[ASLM-Chat] Host theme snapshot updated.")
+
+
 # Start local engine service
 def maybe_start_local_engine_service(log: bool) -> None:
     """Start the active local engine service when the current adapter needs it."""
@@ -315,6 +347,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--app", type=str, default=None, help="App name for makemigrations")
     parser.add_argument("--key", type=str, default=None, help="Setting key for get_setting/set_setting")
     parser.add_argument("--value", type=str, default=None, help="Setting value for set_setting")
+    parser.add_argument(
+        "--file",
+        type=str,
+        default=None,
+        help="Path to JSON payload for apply_aslm_host_theme",
+    )
     parser.add_argument("--log", action="store_true", help="Enable verbose output")
     return parser
 
@@ -322,7 +360,12 @@ def _build_parser() -> argparse.ArgumentParser:
 def _maybe_print_banner(command: str) -> None:
     """Print technical module data once for interactive commands."""
 
-    if not os.environ.get("RUN_MAIN") and command not in {"get_setting", "set_setting", "downloads_bridge"}:
+    if not os.environ.get("RUN_MAIN") and command not in {
+        "get_setting",
+        "set_setting",
+        "downloads_bridge",
+        "apply_aslm_host_theme",
+    }:
         from Settings.console import PrintTechData
 
         PrintTechData().PTD_Print()
@@ -388,6 +431,12 @@ def main() -> None:
                 print("Error: --key and --value arguments are required.")
                 sys.exit(1)
             cmd_set_setting(args.key, args.value)
+
+        case "apply_aslm_host_theme":
+            if not args.file:
+                print("Error: --file argument is required.")
+                sys.exit(1)
+            cmd_apply_aslm_host_theme(args.file)
 
         case "downloads_bridge":
             cmd_downloads_bridge()

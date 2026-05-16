@@ -84,6 +84,14 @@
             "setExec": "main.py set_setting --key api-port --value {value}"
         },
         {
+            "key": "aslm-host-theme",
+            "name": "ASLM host theme",
+            "description": "Theme snapshot from the host ASLM app; applied on each module start. Managed only by ASLM.",
+            "type": "theme",
+            "engine": "python-runtime",
+            "setExec": "main.py apply_aslm_host_theme --file {value}"
+        },
+        {
             "key": "console_log_level",
             "name": "Console Log Level",
             "description": "How much runtime detail ASLM-Chat prints into the ASLM console.",
