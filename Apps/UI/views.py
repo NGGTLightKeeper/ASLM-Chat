@@ -3359,6 +3359,8 @@ def _build_generate_kwargs(
             "model_name": model_name,
             "module_dir": str(settings.BASE_DIR),
             "project_dir": str(settings.BASE_DIR),
+            "selected_tool_server_ids": [s["id"] for s in selected_tool_servers],
+            "sandbox_enabled": _selected_tools_include_sandbox(selected_tool_servers),
         }
 
     return generate_kwargs
@@ -4430,7 +4432,7 @@ def regenerate_chat_api(request, chat_id):
         if user_message_record is None:
             return JsonResponse({"error": "No user message to regenerate"}, status=400)
 
-        # Drop every message that came after the targeted user turn вЂ” including
+        # Drop every message that came after the targeted user turn, including
         # the assistant reply we are about to replace.
         preserve_context_compression = bool(data.get("preserve_context_compression"))
         for message in ordered:
@@ -5262,7 +5264,7 @@ def runtime_settings_api(request):
             return False
 
         # Password placeholders often arrive as repeated mask glyphs.
-        if all(char in {"*", "вЂў", "в—Џ", "в€™", "В·", "в—¦"} for char in stripped):
+        if all(char in {"*", "\u2022", "\u25cf", "\u2219", "\u00b7", "\u25e6"} for char in stripped):
             return True
 
         lowered = stripped.lower()
@@ -5297,6 +5299,263 @@ def runtime_settings_api(request):
     _clear_model_metadata_caches()
 
     return JsonResponse(_build_runtime_settings_payload())
+
+
+# Browser portal control APIs.
+
+_frame404_burst_log_count = 0
+_frame404_burst_log_last_ts = 0.0
+
+
+def _browser_portal_roots() -> list[Path]:
+    return [
+        settings.BASE_DIR / "Data" / "runtime" / "browser_portal",
+    ]
+
+
+def _browser_portal_debug_log_path(root: Path | None = None) -> Path:
+    return (root or _browser_portal_roots()[0]) / "debug.jsonl"
+
+
+def _browser_portal_debug_safe(value: Any, *, depth: int = 0) -> Any:
+    if depth > 4:
+        return repr(value)[:4000]
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    if isinstance(value, str):
+        return value[:4000]
+    if isinstance(value, dict):
+        return {
+            str(key)[:200]: _browser_portal_debug_safe(child, depth=depth + 1)
+            for key, child in value.items()
+            if str(key) not in {"data_base64", "preview"}
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_browser_portal_debug_safe(child, depth=depth + 1) for child in list(value)[:50]]
+    return repr(value)[:4000]
+
+
+def _browser_portal_http_event_body_for_log(data: dict[str, Any] | None) -> dict[str, Any]:
+    """Compact portal POST body for debug.jsonl (typing floods the log otherwise)."""
+
+    if not isinstance(data, dict):
+        return {}
+    event_type = str(data.get("type") or "").strip().lower()
+    slim: dict[str, Any] = {}
+    for key in ("id", "created_at", "type", "version", "session_id"):
+        if key in data:
+            slim[key] = data[key]
+    client_meta = data.get("client_meta")
+    if isinstance(client_meta, dict):
+        slim["client_meta_keys"] = list(client_meta.keys())[:40]
+    if event_type == "type":
+        text = data.get("text")
+        slim["text_len"] = len(text) if isinstance(text, str) else 0
+    elif event_type == "key":
+        slim["key"] = str(data.get("key") or "")[:120]
+    else:
+        for key in ("x", "y", "delta_x", "delta_y", "viewport_width", "viewport_height"):
+            if key in data:
+                slim[key] = data[key]
+    return slim
+
+
+def _write_browser_portal_debug_event(root: Path | None, event: str, **fields: Any) -> None:
+    """Browser portal debug logging is intentionally disabled."""
+
+    return None
+
+
+def _read_browser_portal_state_from(root: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads((root / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _is_active_browser_portal_state(payload: dict[str, Any]) -> bool:
+    if str(payload.get("status") or "").lower() != "waiting":
+        return False
+    try:
+        updated_at = float(payload.get("updated_at") or 0)
+        timeout_seconds = float(payload.get("timeout_seconds") or 45)
+        deadline_at = float(payload.get("deadline_at") or 0)
+    except (TypeError, ValueError):
+        return False
+    if deadline_at > 0:
+        return time.time() <= deadline_at + 10
+    return updated_at > 0 and time.time() <= updated_at + timeout_seconds + 10
+
+
+def _active_browser_portal_root() -> Path | None:
+    candidates: list[tuple[float, Path]] = []
+    for root in _browser_portal_roots():
+        payload = _read_browser_portal_state_from(root)
+        if payload and _is_active_browser_portal_state(payload):
+            try:
+                candidates.append((float(payload.get("updated_at") or 0), root))
+            except (TypeError, ValueError):
+                continue
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
+def _browser_portal_state_path() -> Path:
+    root = _active_browser_portal_root()
+    if root is None:
+        return _browser_portal_roots()[0] / "state.json"
+    return root / "state.json"
+
+
+def _browser_portal_events_dir() -> Path:
+    root = _active_browser_portal_root()
+    if root is None:
+        return _browser_portal_roots()[0] / "events"
+    return root / "events"
+
+
+def _read_browser_portal_state() -> dict[str, Any]:
+    root = _active_browser_portal_root()
+    if root is None:
+        return {"ok": False, "error": "No active browser_wait_for_user session is available."}
+    payload = _read_browser_portal_state_from(root)
+    return payload if payload else {"ok": False, "error": "Invalid browser portal state."}
+
+
+def browser_portal_frame_api(request):
+    """Return the latest frame published by browser_wait_for_user."""
+
+    global _frame404_burst_log_count, _frame404_burst_log_last_ts
+
+    if request.method != "GET":
+        _write_browser_portal_debug_event(None, "frame_rejected_method", method=request.method)
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+    payload = _read_browser_portal_state()
+    status = 200 if payload.get("ok") else 404
+    if status == 200:
+        _frame404_burst_log_count = 0
+    if status != 200:
+        should_log_frame = True
+        if status == 404:
+            now_ts = time.time()
+            _frame404_burst_log_count += 1
+            if _frame404_burst_log_count <= 8:
+                should_log_frame = True
+            elif now_ts - _frame404_burst_log_last_ts >= 5.0:
+                _frame404_burst_log_last_ts = now_ts
+                should_log_frame = True
+            else:
+                should_log_frame = False
+        if should_log_frame:
+            _write_browser_portal_debug_event(
+                _active_browser_portal_root(),
+                "frame_response",
+                status_code=status,
+                payload_status=payload.get("status"),
+                session_id=payload.get("session_id"),
+                ok=payload.get("ok"),
+                error=payload.get("error"),
+                has_frame=isinstance(payload.get("frame"), dict),
+                url=payload.get("url"),
+            )
+    return JsonResponse(payload, status=status)
+
+
+def browser_portal_event_api(request):
+    """Queue one human portal event for the active browser_wait_for_user loop."""
+
+    if request.method != "POST":
+        _write_browser_portal_debug_event(None, "event_rejected_method", method=request.method)
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+    except ValueError as exc:
+        _write_browser_portal_debug_event(None, "event_rejected_invalid_json", error=str(exc))
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    event_type = str(data.get("type") or "").strip().lower()
+    _write_browser_portal_debug_event(
+        _active_browser_portal_root(),
+        "event_received",
+        event_type=event_type,
+        payload=_browser_portal_http_event_body_for_log(data),
+        request_path=request.path,
+    )
+    if event_type not in {"click", "scroll", "key", "type", "finish", "click_ref"}:
+        _write_browser_portal_debug_event(None, "event_rejected_unsupported_type", event_type=event_type, payload=_browser_portal_http_event_body_for_log(data))
+        return JsonResponse({"error": "Unsupported browser portal event type."}, status=400)
+
+    active_root = _active_browser_portal_root()
+    if active_root is None:
+        _write_browser_portal_debug_event(None, "event_rejected_no_active_session", event_type=event_type, payload=_browser_portal_http_event_body_for_log(data))
+        return JsonResponse({"error": "No active browser_wait_for_user session is available."}, status=409)
+
+    active_state = _read_browser_portal_state_from(active_root) or {}
+    active_session_id = str(active_state.get("session_id") or "").strip()
+    requested_session_id = str(data.get("session_id") or "").strip()
+    if requested_session_id and active_session_id and requested_session_id != active_session_id:
+        _write_browser_portal_debug_event(
+            active_root,
+            "event_rejected_session_mismatch",
+            event_type=event_type,
+            requested_session_id=requested_session_id,
+            active_session_id=active_session_id,
+            payload=_browser_portal_http_event_body_for_log(data),
+        )
+        return JsonResponse({"error": "This browser_wait_for_user session is no longer active."}, status=409)
+
+    events_dir = active_root / "events"
+    events_dir.mkdir(parents=True, exist_ok=True)
+    event_id = uuid.uuid4().hex
+    event_payload = {
+        "id": event_id,
+        "created_at": time.time(),
+        **data,
+        "type": event_type,
+    }
+    if active_session_id:
+        event_payload["session_id"] = active_session_id
+    event_path = events_dir / f"event_{int(time.time() * 1000)}_{event_id}.json"
+    event_path.write_text(json.dumps(event_payload, ensure_ascii=False), encoding="utf-8")
+    _write_browser_portal_debug_event(
+        active_root,
+        "event_written",
+        event_id=event_id,
+        event_type=event_type,
+        event_path=str(event_path),
+        active_session_id=active_session_id,
+        requested_session_id=requested_session_id,
+        payload=_browser_portal_http_event_body_for_log(event_payload),
+    )
+
+    if event_type == "finish":
+        payload = {
+            **active_state,
+            "ok": True,
+            "status": "done",
+            "updated_at": time.time(),
+            "version": int(time.time() * 1000),
+        }
+    else:
+        payload = _read_browser_portal_state()
+    if not payload.get("ok"):
+        payload = {"ok": True, "event_id": event_id, "queued": True}
+    else:
+        payload = {**payload, "event_id": event_id, "queued": True}
+    _write_browser_portal_debug_event(
+        active_root,
+        "event_response",
+        event_id=event_id,
+        event_type=event_type,
+        queued=True,
+        response_status=payload.get("status"),
+        response_session_id=payload.get("session_id"),
+    )
+    return JsonResponse(payload)
 
 
 # Additional page views.

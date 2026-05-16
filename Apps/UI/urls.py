@@ -36,6 +36,8 @@ urlpatterns = [
     # Tool discovery APIs.
     path("api/tools/", views.get_tools_api, name="tools_api"),
     path("api/favicon/", views.favicon_api, name="favicon_api"),
+    path("api/browser_portal/frame/", views.browser_portal_frame_api, name="browser_portal_frame_api"),
+    path("api/browser_portal/event/", views.browser_portal_event_api, name="browser_portal_event_api"),
 
     # Ollama preset APIs.
     path("api/ollama_presets/", views.get_ollama_presets_api, name="ollama_presets_api"),

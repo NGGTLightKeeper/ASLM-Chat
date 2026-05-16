@@ -9,6 +9,7 @@ import inspect
 import json
 import re
 import sys
+import threading
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -21,6 +22,62 @@ if str(BASE_DIR) not in sys.path:
 SERVER_DISPATCHER_NAMES = ("call_tool", "run_tool", "execute_tool", "execute")
 SERVER_METADATA_NAMES = ("MCP_SERVER", "SERVER")
 TOOL_HANDLER_NAMES = ("TOOL_HANDLERS", "TOOL_EXECUTORS")
+
+
+class AsyncCallableRunner:
+    """Run async tool handlers on one persistent event loop."""
+
+    def __init__(self) -> None:
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._ready = threading.Event()
+        self._lock = threading.Lock()
+
+    def _thread_main(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._loop = loop
+        self._ready.set()
+        try:
+            loop.run_forever()
+        finally:
+            loop.close()
+
+    def ensure_started(self) -> None:
+        if self._thread is not None and self._thread.is_alive() and self._loop is not None:
+            return
+
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive() and self._loop is not None:
+                return
+
+            self._ready.clear()
+            self._thread = threading.Thread(
+                target=self._thread_main,
+                name="aslm-tool-worker-async-runner",
+                daemon=True,
+            )
+            self._thread.start()
+            self._ready.wait()
+
+    def run(self, coro: Any) -> Any:
+        self.ensure_started()
+        assert self._loop is not None
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result()
+
+    def close(self) -> None:
+        loop = self._loop
+        thread = self._thread
+        self._loop = None
+        self._thread = None
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=3)
+
+
+_ASYNC_CALLABLE_RUNNER = AsyncCallableRunner()
 
 
 # Normalize public identifiers.
@@ -158,7 +215,7 @@ def _execute_callable(callable_fn, *args: Any) -> Any:
     """Execute sync and async callables."""
 
     if inspect.iscoroutinefunction(callable_fn):
-        return asyncio.run(callable_fn(*args))
+        return _ASYNC_CALLABLE_RUNNER.run(callable_fn(*args))
     return callable_fn(*args)
 
 
@@ -277,28 +334,31 @@ def serve(server_file: Path) -> int:
     """Run a persistent worker process for stateful tool servers."""
 
     output = sys.stdout
-    for raw_line in sys.stdin:
-        raw_line = raw_line.strip()
-        if not raw_line:
-            continue
+    try:
+        for raw_line in sys.stdin:
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
 
-        try:
-            request = json.loads(raw_line)
-        except json.JSONDecodeError as exc:
-            ok, payload = False, f"JSONDecodeError: {exc}"
-        else:
-            if not isinstance(request, dict):
-                ok, payload = False, "Worker request must be a JSON object."
+            try:
+                request = json.loads(raw_line)
+            except json.JSONDecodeError as exc:
+                ok, payload = False, f"JSONDecodeError: {exc}"
             else:
-                operation = str(request.get("operation") or "").strip().lower()
-                request_payload = request.get("payload")
-                if not isinstance(request_payload, dict):
-                    request_payload = {}
-                with contextlib.redirect_stdout(sys.stderr):
-                    ok, payload = _execute_request(operation, server_file, request_payload)
+                if not isinstance(request, dict):
+                    ok, payload = False, "Worker request must be a JSON object."
+                else:
+                    operation = str(request.get("operation") or "").strip().lower()
+                    request_payload = request.get("payload")
+                    if not isinstance(request_payload, dict):
+                        request_payload = {}
+                    with contextlib.redirect_stdout(sys.stderr):
+                        ok, payload = _execute_request(operation, server_file, request_payload)
 
-        key = "result" if ok else "error"
-        print(json.dumps({"ok": ok, key: _to_jsonable(payload)}, ensure_ascii=False), file=output, flush=True)
+            key = "result" if ok else "error"
+            print(json.dumps({"ok": ok, key: _to_jsonable(payload)}, ensure_ascii=False), file=output, flush=True)
+    finally:
+        _ASYNC_CALLABLE_RUNNER.close()
 
     return 0
 

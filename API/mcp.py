@@ -35,6 +35,8 @@ _SERVER_CACHE_SIGNATURE: tuple[tuple[str, int], ...] | None = None
 _SERVER_CACHE: dict[str, dict[str, Any]] = {}
 _WORKER_SESSION_LOCK = threading.Lock()
 _WORKER_SESSIONS: dict[str, "ExternalWorkerSession"] = {}
+_ASYNC_CALLABLE_RUNNER: "AsyncCallableRunner | None" = None
+_ASYNC_CALLABLE_RUNNER_LOCK = threading.Lock()
 _SEARCH_IO_LOG_LOCK = threading.Lock()
 _SEARCH_IO_LOG_PATH = TOOLS_DIR / "mcp-web-search" / "logs" / "model_search_io.json"
 _TOOL_COOLDOWN_SECONDS = 30.0
@@ -51,6 +53,73 @@ TOOL_BLOCK_FINAL_PROMPT = (
     "present in the conversation and answer the user now. If the collected evidence is "
     "insufficient for a claim, say that clearly instead of searching again."
 )
+
+
+class AsyncCallableRunner:
+    """Run async tool handlers on one persistent event loop.
+
+    Some tool handlers keep asyncio subprocess transports between calls. On
+    Windows those transports are tied to the event loop that created them, so
+    using a fresh asyncio.run() per tool call can leave a live process with a
+    closed Proactor pipe.
+    """
+
+    def __init__(self) -> None:
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._ready = threading.Event()
+        self._lock = threading.Lock()
+
+    def _thread_main(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._loop = loop
+        self._ready.set()
+        try:
+            loop.run_forever()
+        finally:
+            loop.close()
+
+    def ensure_started(self) -> None:
+        if self._thread is not None and self._thread.is_alive() and self._loop is not None:
+            return
+
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive() and self._loop is not None:
+                return
+
+            self._ready.clear()
+            self._thread = threading.Thread(
+                target=self._thread_main,
+                name="aslm-async-tool-runner",
+                daemon=True,
+            )
+            self._thread.start()
+            self._ready.wait()
+
+    def run(self, coro: Any) -> Any:
+        self.ensure_started()
+        assert self._loop is not None
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result()
+
+    def close(self) -> None:
+        loop = self._loop
+        thread = self._thread
+        self._loop = None
+        self._thread = None
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=3)
+
+
+def _get_async_callable_runner() -> AsyncCallableRunner:
+    global _ASYNC_CALLABLE_RUNNER
+    with _ASYNC_CALLABLE_RUNNER_LOCK:
+        if _ASYNC_CALLABLE_RUNNER is None:
+            _ASYNC_CALLABLE_RUNNER = AsyncCallableRunner()
+        return _ASYNC_CALLABLE_RUNNER
 
 
 # Build a clean environment for one isolated Python venv.
@@ -724,6 +793,13 @@ def close_external_workers() -> None:
     for session in sessions:
         session.close()
 
+    global _ASYNC_CALLABLE_RUNNER
+    with _ASYNC_CALLABLE_RUNNER_LOCK:
+        runner = _ASYNC_CALLABLE_RUNNER
+        _ASYNC_CALLABLE_RUNNER = None
+    if runner is not None:
+        runner.close()
+
 
 atexit.register(close_external_workers)
 
@@ -1163,7 +1239,7 @@ def _execute_callable(callable_fn, *args: Any) -> Any:
     """Execute sync and async callables behind one shared helper."""
 
     if inspect.iscoroutinefunction(callable_fn):
-        return asyncio.run(_run_async_callable(callable_fn, *args))
+        return _get_async_callable_runner().run(_run_async_callable(callable_fn, *args))
 
     return _run_sync_callable(callable_fn, *args)
 

@@ -1,6 +1,7 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { createAttachmentsUi } from '../ui/attachments-ui.js';
+import { createBrowserPortalUi } from '../ui/browser-portal-ui.js';
 import { createChatHistoryUi } from '../ui/chat-history-ui.js';
 import { createMessagesUi } from '../ui/messages-ui.js';
 import { createParametersUi } from '../ui/parameters-ui.js';
@@ -16,10 +17,12 @@ $(function initChatApp() {
   const context = createAppContext();
 
   const toolInspector = createToolInspector(context);
+  const browserPortalUi = createBrowserPortalUi(context);
   const attachmentsUi = createAttachmentsUi(context);
   const parametersUi = createParametersUi(context);
   const messagesUi = createMessagesUi(context, {
     attachmentUi: attachmentsUi,
+    browserPortalUi,
     toolInspector
   });
 

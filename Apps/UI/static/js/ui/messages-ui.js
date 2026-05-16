@@ -14,7 +14,7 @@ import { bindCitationPreviewCards } from './citation-preview-ui.js';
 // Message UI.
 // Create helpers for rendering messages, activity timelines, and message actions.
 export function createMessagesUi(context, dependencies) {
-  const { attachmentUi, toolInspector } = dependencies;
+  const { attachmentUi, browserPortalUi, toolInspector } = dependencies;
   const { dom, icons, state } = context;
   const MORE_LABEL = 'More';
   const HIDE_LABEL = 'Hide';
@@ -4120,6 +4120,27 @@ export function createMessagesUi(context, dependencies) {
 
   // Copy attributes from toEl onto fromEl without touching fromEl's identity.
   function syncElementAttrs(fromEl, toEl) {
+    const preserveBrowserPortalClientAttrs =
+      fromEl.nodeType === 1
+      && toEl.nodeType === 1
+      && fromEl.classList.contains('browser-portal')
+      && toEl.classList.contains('browser-portal');
+    const preservedBrowserPortal = {};
+    if (preserveBrowserPortalClientAttrs) {
+      [
+        'data-browser-portal-timer-started',
+        'data-browser-portal-hydrated',
+        'data-browser-session-id',
+        'data-browser-wait-started-at',
+        'data-browser-wait-deadline-at',
+        'data-browser-wait-elapsed'
+      ].forEach(function copyAttr(name) {
+        const value = fromEl.getAttribute(name);
+        if (value !== null && value !== '') {
+          preservedBrowserPortal[name] = value;
+        }
+      });
+    }
     const toAttrs = toEl.attributes;
     for (let i = 0; i < toAttrs.length; i += 1) {
       const { name, value } = toAttrs[i];
@@ -4132,6 +4153,11 @@ export function createMessagesUi(context, dependencies) {
       if (!toEl.hasAttribute(name)) {
         fromEl.removeAttribute(name);
       }
+    }
+    if (preserveBrowserPortalClientAttrs) {
+      Object.keys(preservedBrowserPortal).forEach(function restoreAttr(name) {
+        fromEl.setAttribute(name, preservedBrowserPortal[name]);
+      });
     }
   }
 
@@ -4268,6 +4294,9 @@ export function createMessagesUi(context, dependencies) {
     });
     hydrateSandboxImages($stream);
     hydrateSharedImageCards($stream);
+    if (browserPortalUi && typeof browserPortalUi.hydrate === 'function') {
+      browserPortalUi.hydrate($stream);
+    }
   }
 
   function renderActivityTimeline($msgRow, segments, options) {
@@ -4322,6 +4351,10 @@ export function createMessagesUi(context, dependencies) {
         return;
       }
       renderSegments = [];
+    }
+
+    if (browserPortalUi && typeof browserPortalUi.enhanceSegments === 'function') {
+      renderSegments = browserPortalUi.enhanceSegments(renderSegments, renderOptions);
     }
 
     segments = renderSegments;
@@ -4407,6 +4440,10 @@ export function createMessagesUi(context, dependencies) {
           return;
         }
 
+        if (segment.type === 'browser_portal') {
+          return;
+        }
+
         if (segment.type === 'thought') {
           reasoningItems.push(segment);
           return;
@@ -4447,6 +4484,14 @@ export function createMessagesUi(context, dependencies) {
         }
 
         if (segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending') {
+          continue;
+        }
+
+        if (segment.type === 'browser_portal') {
+          pushBlock(segment.key || `browser-portal-${segmentIndex}`, segment.html);
+          if (segmentIndex === reasoningAnchorTextIndex && reasoningItems.length > 0 && !isStreamingTextAfterReasoning) {
+            pushBlock('reasoning-active', renderActiveReasoningBlock());
+          }
           continue;
         }
 
@@ -4504,6 +4549,11 @@ export function createMessagesUi(context, dependencies) {
 
     for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
       const segment = segments[segmentIndex];
+
+      if (segment && segment.type === 'browser_portal') {
+        pushBlock(segment.key || `browser-portal-${segmentIndex}`, segment.html);
+        continue;
+      }
 
       if (segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending') {
         const groupStartIndex = segmentIndex;
