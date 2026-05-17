@@ -1939,6 +1939,84 @@ def _normalize_search_effort(effort: str | None) -> str:
     return value if value in _SEARCH_EFFORT_VALUES else "medium"
 
 
+@dataclass(frozen=True)
+class _QueryQualityDecision:
+    effort: str
+    filler_hits: tuple[str, ...] = ()
+    original_effort: str = "medium"
+
+    @property
+    def downgraded(self) -> bool:
+        return bool(self.filler_hits) and self.effort != self.original_effort
+
+
+def _filler_low_effort_hits(query: str, qcfg: object) -> tuple[str, ...]:
+    if not bool(getattr(qcfg, "filler_low_effort_enabled", False)):
+        return ()
+
+    scan_text = _spam_scan_text(query)
+    for phrase in getattr(qcfg, "filler_low_effort_exempt_phrases", ()) or ():
+        if _contains_spam_keyword(scan_text, str(phrase)):
+            return ()
+
+    terms = getattr(qcfg, "filler_low_effort_terms", ()) or ()
+    hits = sorted({term for term in terms if _contains_spam_keyword(scan_text, str(term))})
+    min_hits = max(1, int(getattr(qcfg, "filler_low_effort_min_hits", 1) or 1))
+    return tuple(hits) if len(hits) >= min_hits else ()
+
+
+def _apply_query_quality_effort_policy(query: str, effort: str, qcfg: object) -> _QueryQualityDecision:
+    original_effort = _normalize_search_effort(effort)
+    hits = _filler_low_effort_hits(query, qcfg)
+    if not hits:
+        return _QueryQualityDecision(effort=original_effort, original_effort=original_effort)
+
+    target = _normalize_search_effort(getattr(qcfg, "filler_low_effort_target", "low"))
+    return _QueryQualityDecision(effort=target, filler_hits=hits, original_effort=original_effort)
+
+
+def _query_quality_notice(decision: _QueryQualityDecision) -> str:
+    if not decision.downgraded:
+        return ""
+    shown = ", ".join(f"'{hit}'" for hit in decision.filler_hits[:5])
+    if len(decision.filler_hits) > 5:
+        shown += ", ..."
+    return (
+        f"Query quality note: filler-like wording detected ({shown}); "
+        f"search ran with effort='{decision.effort}' instead of "
+        f"effort='{decision.original_effort}'."
+    )
+
+
+def _apply_query_quality_notice_text(text: str, decision: _QueryQualityDecision, qcfg: object) -> str:
+    if not bool(getattr(qcfg, "filler_low_effort_notice", True)):
+        return text
+    notice = _query_quality_notice(decision)
+    return f"{notice}\n\n{text}" if notice else text
+
+
+def _apply_query_quality_notice_payload(
+    payload: dict[str, object],
+    decision: _QueryQualityDecision,
+    qcfg: object,
+) -> dict[str, object]:
+    if not bool(getattr(qcfg, "filler_low_effort_notice", True)):
+        return payload
+    notice = _query_quality_notice(decision)
+    if not notice:
+        return payload
+    patched = dict(payload)
+    model_context = str(patched.get("model_context", "") or "")
+    patched["model_context"] = f"{notice}\n\n{model_context}" if model_context else notice
+    patched["query_quality"] = {
+        "filler_low_effort_applied": True,
+        "filler_hits": list(decision.filler_hits),
+        "original_effort": decision.original_effort,
+        "effective_effort": decision.effort,
+    }
+    return patched
+
+
 def _is_low_effort(opts: WebSearchOptions) -> bool:
     return _normalize_search_effort(opts.effort) == "low"
 
@@ -3375,6 +3453,24 @@ def _timeout_fallback_rich_payload(query: str, results: list[SearchResult]) -> d
     }
 
 
+def _rejected_search_payload(query: str, rejection: str) -> dict[str, object]:
+    return {
+        "query": query,
+        "search_id": f"rejected_{_make_request_id()}",
+        "sources": [],
+        "model_context": rejection,
+        "ui": {
+            "status": "rejected",
+            "result_count": 0,
+            "compact": {
+                "label": f"Query rejected: {query}",
+                "source_chips": [],
+                "more_count": 0,
+            },
+        },
+    }
+
+
 def _effort_hard_timeout(effort: str, hard_timeout: float | None) -> float:
     if hard_timeout is not None:
         return float(hard_timeout)
@@ -3468,6 +3564,9 @@ async def run_web_search(
     constraints = parse_domain_constraints(query)
     query_for_search = constraints.clean_query or query
     query_for_search, year_tl = _apply_year_hint_policy(query_for_search, cfg.query)
+    rejection = validate_search_query(query_for_search)
+    if rejection:
+        return rejection
     # Type-based timelimit is disabled when the query explicitly anchors an older year.
     type_tl = _resolve_auto_timelimit(query_for_search)
     # Use the more restrictive of the two signals.
@@ -3478,7 +3577,8 @@ async def run_web_search(
         or timelimit
     )
     resolved_timelimit = explicit_timelimit or auto_timelimit
-    search_effort = _normalize_search_effort(effort)
+    quality_decision = _apply_query_quality_effort_policy(query_for_search, effort, cfg.query_quality)
+    search_effort = quality_decision.effort
     effective_hard_timeout = _effort_hard_timeout(search_effort, hard_timeout)
     opts = _build_effort_options(
         cfg,
@@ -3496,10 +3596,11 @@ async def run_web_search(
     try:
         loop = asyncio.get_event_loop()
         deadline = loop.time() + effective_hard_timeout
-        return await asyncio.wait_for(
+        result_text = await asyncio.wait_for(
             service.search(query, deadline=deadline),
             timeout=effective_hard_timeout,
         )
+        return _apply_query_quality_notice_text(result_text, quality_decision, cfg.query_quality)
     except asyncio.TimeoutError:
         elapsed = round(time.perf_counter() - init_t0, 1)
         logger.warning(
@@ -3507,7 +3608,8 @@ async def run_web_search(
             query[:80], elapsed, effective_hard_timeout,
         )
         if search_effort == "low":
-            return f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) for: {query_for_search}"
+            timeout_text = f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) for: {query_for_search}"
+            return _apply_query_quality_notice_text(timeout_text, quality_decision, cfg.query_quality)
         try:
             fallback_results = await run_web_search_structured(
                 query=query,
@@ -3521,8 +3623,10 @@ async def run_web_search(
             logger.warning("web_search.timeout_fallback_failed query=%r err=%s", query[:80], fallback_exc)
             fallback_results = []
         if fallback_results:
-            return _format_timeout_fallback_text(query_for_search, fallback_results, limit=max_results)
-        return f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) for: {query_for_search}"
+            fallback_text = _format_timeout_fallback_text(query_for_search, fallback_results, limit=max_results)
+            return _apply_query_quality_notice_text(fallback_text, quality_decision, cfg.query_quality)
+        timeout_text = f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) for: {query_for_search}"
+        return _apply_query_quality_notice_text(timeout_text, quality_decision, cfg.query_quality)
 
 
 async def run_web_search_structured(
@@ -3538,6 +3642,9 @@ async def run_web_search_structured(
     constraints = parse_domain_constraints(query)
     query_for_search = constraints.clean_query or query
     query_for_search, year_tl = _apply_year_hint_policy(query_for_search, cfg.query)
+    rejection = validate_search_query(query_for_search)
+    if rejection:
+        return []
     type_tl = _resolve_auto_timelimit(query_for_search)
     auto_timelimit = _stricter_timelimit(year_tl, type_tl)
     explicit_timelimit = (
@@ -3546,7 +3653,8 @@ async def run_web_search_structured(
         or timelimit
     )
     resolved_timelimit = explicit_timelimit or auto_timelimit
-    search_effort = _normalize_search_effort(effort)
+    quality_decision = _apply_query_quality_effort_policy(query_for_search, effort, cfg.query_quality)
+    search_effort = quality_decision.effort
     effective_hard_timeout = _effort_hard_timeout(search_effort, hard_timeout)
     opts = _build_effort_options(
         cfg,
@@ -3584,6 +3692,9 @@ async def run_web_search_rich(
     constraints = parse_domain_constraints(query)
     query_for_search = constraints.clean_query or query
     query_for_search, year_tl = _apply_year_hint_policy(query_for_search, cfg.query)
+    rejection = validate_search_query(query_for_search)
+    if rejection:
+        return _rejected_search_payload(query_for_search, rejection)
     type_tl = _resolve_auto_timelimit(query_for_search)
     auto_timelimit = _stricter_timelimit(year_tl, type_tl)
     explicit_timelimit = (
@@ -3592,7 +3703,8 @@ async def run_web_search_rich(
         or timelimit
     )
     resolved_timelimit = explicit_timelimit or auto_timelimit
-    search_effort = _normalize_search_effort(effort)
+    quality_decision = _apply_query_quality_effort_policy(query_for_search, effort, cfg.query_quality)
+    search_effort = quality_decision.effort
     effective_hard_timeout = _effort_hard_timeout(search_effort, hard_timeout)
     opts = _build_effort_options(
         cfg,
@@ -3609,7 +3721,11 @@ async def run_web_search_rich(
             service.search_rich(query.strip(), deadline=deadline),
             timeout=effective_hard_timeout,
         )
-        return _rich_result_to_dict(rich)
+        return _apply_query_quality_notice_payload(
+            _rich_result_to_dict(rich),
+            quality_decision,
+            cfg.query_quality,
+        )
     except asyncio.TimeoutError:
         logger.warning(
             "web_search_rich.hard_timeout query=%r limit=%.0fs",
@@ -3617,7 +3733,7 @@ async def run_web_search_rich(
         )
         if search_effort == "low":
             search_id = f"srch_{_make_request_id()}"
-            return {
+            payload = {
                 "query": query_for_search,
                 "search_id": search_id,
                 "sources": [],
@@ -3632,6 +3748,7 @@ async def run_web_search_rich(
                     },
                 },
             }
+            return _apply_query_quality_notice_payload(payload, quality_decision, cfg.query_quality)
         fallback_results: list[SearchResult] = []
         try:
             fallback_results = await run_web_search_structured(
@@ -3646,10 +3763,14 @@ async def run_web_search_rich(
             logger.warning("web_search_rich.timeout_fallback_failed query=%r err=%s", query[:80], fallback_exc)
 
         if fallback_results:
-            return _timeout_fallback_rich_payload(query_for_search, fallback_results)
+            return _apply_query_quality_notice_payload(
+                _timeout_fallback_rich_payload(query_for_search, fallback_results),
+                quality_decision,
+                cfg.query_quality,
+            )
 
         search_id = f"srch_{_make_request_id()}"
-        return {
+        payload = {
             "query": query_for_search,
             "search_id": search_id,
             "sources": [],
@@ -3664,3 +3785,4 @@ async def run_web_search_rich(
                 },
             },
         }
+        return _apply_query_quality_notice_payload(payload, quality_decision, cfg.query_quality)

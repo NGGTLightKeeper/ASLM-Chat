@@ -93,6 +93,244 @@ class QuerySection:
     year_hint_older: Optional[str] = None  # year < last year  → no restriction
 
 
+_DEFAULT_FILLER_LOW_EFFORT_TERMS: tuple[str, ...] = (
+    "authoritative",
+    "all the requirements",
+    "best",
+    "complete",
+    "comprehensive",
+    "critical",
+    "definitive",
+    "essential",
+    "exhaustive",
+    "expert",
+    "flawless",
+    "full",
+    "ideal",
+    "important",
+    "in-depth",
+    "optimal",
+    "perfect",
+    "premier",
+    "superior",
+    "thorough",
+    "ultimate",
+    "unrivaled",
+    "advanced",
+    "breakthrough",
+    "effortless",
+    "elite",
+    "exceptional",
+    "exclusive",
+    "extraordinary",
+    "game-changing",
+    "groundbreaking",
+    "leading",
+    "notable",
+    "powerful",
+    "proven",
+    "remarkable",
+    "reliable",
+    "robust",
+    "seamless",
+    "top-tier",
+    "world-class",
+    "beste",
+    "bester",
+    "bestes",
+    "besten",
+    "vollständig",
+    "vollständige",
+    "vollständiger",
+    "ultimativ",
+    "ultimative",
+    "wichtig",
+    "wichtige",
+    "wichtigste",
+    "meilleur",
+    "meilleure",
+    "meilleurs",
+    "meilleures",
+    "complet",
+    "complète",
+    "complets",
+    "complètes",
+    "ultime",
+    "important",
+    "importante",
+    "mejor",
+    "mejores",
+    "completo",
+    "completa",
+    "completos",
+    "completas",
+    "definitivo",
+    "definitiva",
+    "perfecto",
+    "perfecta",
+    "perfectos",
+    "perfectas",
+    "importante",
+    "importantes",
+    "melhor",
+    "melhores",
+    "completo",
+    "completa",
+    "definitivo",
+    "definitiva",
+    "migliore",
+    "migliori",
+    "completo",
+    "completa",
+    "definitivo",
+    "definitiva",
+    "bästa",
+    "bäst",
+    "komplett",
+    "viktig",
+    "viktigaste",
+    "bedste",
+    "komplet",
+    "vigtig",
+    "vigtigste",
+    "paras",
+    "parhaat",
+    "täydellinen",
+    "tärkeä",
+    "tärkein",
+    "najlepszy",
+    "najlepsza",
+    "najlepsze",
+    "kompletny",
+    "kompletna",
+    "ważny",
+    "ważna",
+    "nejlepší",
+    "kompletní",
+    "důležitý",
+    "důležitá",
+    "najlepší",
+    "kompletný",
+    "dôležitý",
+    "dôležitá",
+    "legjobb",
+    "teljes",
+    "fontos",
+    "en iyi",
+    "mükemmel",
+    "kusursuz",
+    "tam",
+    "önemli",
+    "أفضل",
+    "الأفضل",
+    "مثالي",
+    "كامل",
+    "شامل",
+    "مهم",
+    "הטוב ביותר",
+    "מושלם",
+    "מלא",
+    "חשוב",
+    "بهترین",
+    "کامل",
+    "مهم",
+    "بهترین",
+    "مکمل",
+    "اہم",
+    "最佳",
+    "最好",
+    "完美",
+    "完整",
+    "全面",
+    "重要",
+    "ベスト",
+    "最高",
+    "完璧",
+    "完全",
+    "重要",
+    "최고",
+    "완벽한",
+    "완전한",
+    "중요한",
+    "सबसे अच्छा",
+    "बेहतरीन",
+    "पूर्ण",
+    "महत्वपूर्ण",
+    "সেরা",
+    "সম্পূর্ণ",
+    "গুরুত্বপূর্ণ",
+    "terbaik",
+    "sempurna",
+    "lengkap",
+    "penting",
+    "tốt nhất",
+    "hoàn hảo",
+    "đầy đủ",
+    "quan trọng",
+    "ดีที่สุด",
+    "สมบูรณ์แบบ",
+    "ครบถ้วน",
+    "สำคัญ",
+    "безупречная",
+    "безупречное",
+    "безупречные",
+    "безупречный",
+    "идеальная",
+    "идеальное",
+    "идеальные",
+    "идеальный",
+    "исчерпывающая",
+    "исчерпывающее",
+    "исчерпывающие",
+    "исчерпывающий",
+    "критически важная",
+    "критически важное",
+    "критически важный",
+    "критически важные",
+    "лучшая",
+    "лучшее",
+    "лучшие",
+    "лучший",
+    "оптимальная",
+    "оптимальное",
+    "оптимальные",
+    "оптимальный",
+    "полная",
+    "полное",
+    "полные",
+    "полный",
+)
+
+
+_DEFAULT_FILLER_LOW_EFFORT_EXEMPT_PHRASES: tuple[str, ...] = (
+    "critical section",
+    "critical path",
+    "exhaustive search",
+    "full text search",
+    "optimal transport",
+)
+
+
+@dataclass
+class QueryQualitySection:
+    """Controls optional soft handling of title-like/filler wording.
+
+    This is separate from the hard BAD_QUERY gate.  It is disabled by default
+    because filler-like adjectives can be valid technical terms in context.
+    """
+
+    filler_low_effort_enabled: bool = False
+    filler_low_effort_min_hits: int = 1
+    filler_low_effort_target: str = "low"
+    filler_low_effort_notice: bool = True
+    filler_low_effort_terms: tuple[str, ...] = field(
+        default_factory=lambda: _DEFAULT_FILLER_LOW_EFFORT_TERMS
+    )
+    filler_low_effort_exempt_phrases: tuple[str, ...] = field(
+        default_factory=lambda: _DEFAULT_FILLER_LOW_EFFORT_EXEMPT_PHRASES
+    )
+
+
 @dataclass
 class EffortSection:
     low_hard_timeout: float = 9.0
@@ -130,6 +368,7 @@ class SearchConfig:
     extraction: ExtractionSection = field(default_factory=ExtractionSection)
     cache: CacheSection = field(default_factory=CacheSection)
     query: QuerySection = field(default_factory=QuerySection)
+    query_quality: QueryQualitySection = field(default_factory=QueryQualitySection)
     effort: "EffortSection" = field(default_factory=lambda: EffortSection())
 
 
@@ -150,6 +389,14 @@ def _optional_string(value: object, default: Optional[str]) -> Optional[str]:
     if value is _MISSING:
         return default
     return str(value)
+
+
+def _string_tuple(value: object, default: tuple[str, ...]) -> tuple[str, ...]:
+    if value is _MISSING:
+        return default
+    if not isinstance(value, list):
+        return default
+    return tuple(str(item).strip().lower() for item in value if str(item).strip())
 
 
 def load_search_config(path: Path | None = None) -> SearchConfig:
@@ -178,6 +425,7 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
     e = raw.get("extraction", {})
     c = raw.get("cache", {})
     q = raw.get("query", {})
+    qq = raw.get("query_quality", {})
     effort = raw.get("effort", {})
 
     config = SearchConfig(
@@ -220,6 +468,20 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             year_hint_current=_optional_string(q.get("year_hint_current", _MISSING), "m"),
             year_hint_prev=_optional_string(q.get("year_hint_prev", _MISSING), "y"),
             year_hint_older=_optional_string(q.get("year_hint_older", _MISSING), None),
+        ),
+        query_quality=QueryQualitySection(
+            filler_low_effort_enabled=bool(qq.get("filler_low_effort_enabled", False)),
+            filler_low_effort_min_hits=max(1, int(qq.get("filler_low_effort_min_hits", 1))),
+            filler_low_effort_target=str(qq.get("filler_low_effort_target", "low")),
+            filler_low_effort_notice=bool(qq.get("filler_low_effort_notice", True)),
+            filler_low_effort_terms=_string_tuple(
+                qq.get("filler_low_effort_terms", _MISSING),
+                _DEFAULT_FILLER_LOW_EFFORT_TERMS,
+            ),
+            filler_low_effort_exempt_phrases=_string_tuple(
+                qq.get("filler_low_effort_exempt_phrases", _MISSING),
+                _DEFAULT_FILLER_LOW_EFFORT_EXEMPT_PHRASES,
+            ),
         ),
         effort=EffortSection(
             low_hard_timeout=float(effort.get("low_hard_timeout", 9.0)),
