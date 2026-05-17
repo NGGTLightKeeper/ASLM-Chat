@@ -20,6 +20,8 @@ from types import ModuleType
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from Services import user_mcp_client
+from Settings import mcp_json
 from Settings import settings as runtime_settings
 
 logger = logging.getLogger(__name__)
@@ -668,6 +670,7 @@ def reset_cache() -> None:
 
     _SERVER_CACHE_SIGNATURE = None
     _SERVER_CACHE = {}
+    user_mcp_client.shutdown_all()
 
 
 # Yield one server's source files.
@@ -704,6 +707,10 @@ def _server_signature() -> tuple[tuple[str, int], ...]:
                 continue
 
             entries.append((str(source_file), stat.st_mtime_ns))
+
+    mcp_sig = mcp_json.mcp_json_signature()
+    if mcp_sig is not None:
+        entries.append(mcp_sig)
 
     return tuple(entries)
 
@@ -984,6 +991,37 @@ def _normalize_server_tools(raw_tools: Any, server_id: str) -> list[dict[str, An
 
     return normalized_tools
 
+
+def _merge_user_mcp_servers(discovered: dict[str, dict[str, Any]]) -> None:
+    """Append servers from ``MCP/mcp.json`` to the registry payload."""
+
+    try:
+        mcp_json.ensure_default_mcp_json()
+        reserved = set(discovered.keys())
+        for entry in mcp_json.iter_user_mcp_entries(reserved):
+            tools, err = user_mcp_client.fetch_tool_definitions(entry)
+            description = f"User MCP server ({entry.transport})"
+            if err:
+                description = f"{description}. {err}"
+            placeholder = mcp_json.MCP_DIR / f".user_mcp_{entry.server_id}"
+            discovered[entry.server_id] = {
+                "id": entry.server_id,
+                "name": entry.display_name,
+                "description": description[:500],
+                "tools": tools,
+                "user_mcp": True,
+                "user_mcp_entry": entry,
+                "module": None,
+                "supports": None,
+                "server_callable": None,
+                "tool_handlers": {},
+                "server_file": placeholder,
+                "external": False,
+            }
+    except Exception as exc:
+        logger.warning("Failed to merge user MCP servers: %s", exc)
+
+
 # Build one server definition.
 def _extract_server_definition(module: ModuleType, folder_name: str, server_file: Path) -> dict[str, Any]:
     """Validate a local MCP module and normalize its public metadata."""
@@ -1048,6 +1086,8 @@ def _ensure_registry_loaded() -> dict[str, dict[str, Any]]:
     if signature == _SERVER_CACHE_SIGNATURE:
         return _SERVER_CACHE
 
+    user_mcp_client.shutdown_all()
+
     discovered: dict[str, dict[str, Any]] = {}
     for server_file in _iter_server_files():
         folder_name = server_file.parent.name
@@ -1062,6 +1102,8 @@ def _ensure_registry_loaded() -> dict[str, dict[str, Any]]:
         except Exception as exc:
             logger.warning("Skipping invalid MCP server module %s: %s", server_file, exc)
 
+    _merge_user_mcp_servers(discovered)
+
     _SERVER_CACHE_SIGNATURE = signature
     _SERVER_CACHE = discovered
     return _SERVER_CACHE
@@ -1073,6 +1115,9 @@ def _server_is_supported(
     model_name: str | None,
 ) -> bool:
     """Return whether a server supports the current engine and model."""
+
+    if server_definition.get("user_mcp"):
+        return True
 
     if server_definition.get("external"):
         try:
@@ -1472,7 +1517,8 @@ def call_ollama_tool(
     call_context.setdefault("tool_id", tool_definition["id"])
     call_context.setdefault("tool_name", tool_definition["name"])
     call_context.setdefault("tool_alias", tool_definition["alias"])
-    call_context.setdefault("server_file", str(server_definition["server_file"]))
+    if not server_definition.get("user_mcp"):
+        call_context.setdefault("server_file", str(server_definition["server_file"]))
     call_context.setdefault("tools_dir", str(TOOLS_DIR))
     started_at = time.perf_counter()
 
@@ -1487,6 +1533,23 @@ def call_ollama_tool(
         )
 
     try:
+        if server_definition.get("user_mcp"):
+            entry = server_definition["user_mcp_entry"]
+            mcp_tool_name = str(tool_definition.get("mcp_tool_name") or tool_definition["id"] or "").strip()
+            if not mcp_tool_name:
+                return "Tool execution failed: missing MCP tool name"
+            result = user_mcp_client.call_user_mcp_tool(entry, mcp_tool_name, call_arguments)
+            if _is_debug_logging_enabled():
+                _print_runtime_event(
+                    "Tool completed: "
+                    f"server={server_definition['id']}, "
+                    f"tool={tool_definition['id']}, "
+                    f"status=ok, "
+                    f"took={time.perf_counter() - started_at:.2f}s, "
+                    f"result={_summarize_tool_result(result)}"
+                )
+            return result
+
         if server_definition.get("external"):
             worker_context = json.loads(json.dumps(call_context, ensure_ascii=False, default=str))
             worker_payload = {

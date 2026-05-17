@@ -65,7 +65,7 @@ from Apps.Data.models import (
 )
 from Apps.UI.host_theme_bridge import build_host_theme_template_context
 from Apps.UI.upload_storage import load_upload_manifest, model_upload_payload, public_upload_payload, save_upload_to_sandbox
-from Settings import settings
+from Settings import mcp_json, settings
 
 logger = logging.getLogger(__name__)
 
@@ -646,6 +646,13 @@ def _clear_model_metadata_caches() -> None:
     with _metadata_cache_lock:
         _model_info_cache.clear()
         _model_list_cache.clear()
+        _tool_server_cache.clear()
+
+
+def _clear_tool_server_cache() -> None:
+    """Drop cached tool server lists only (e.g. after ``mcp.json`` changes)."""
+
+    with _metadata_cache_lock:
         _tool_server_cache.clear()
 
 
@@ -4767,6 +4774,37 @@ def get_models_api(request):
 
 
 # Return discovered tool servers.
+def mcp_config_api(request):
+    """Read or replace ``MCP/mcp.json`` (LM Studio / Cursor style user MCP servers)."""
+
+    mcp_json.ensure_default_mcp_json()
+
+    if request.method == "GET":
+        return JsonResponse({"content": mcp_json.load_raw_text()})
+
+    if request.method not in {"PUT", "PATCH"}:
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    content = payload.get("content")
+    if not isinstance(content, str):
+        return JsonResponse({"error": "Expected JSON object with string field 'content'"}, status=400)
+
+    try:
+        mcp_json.save_raw_text(content)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    tool_registry.reset_cache()
+    _clear_tool_server_cache()
+
+    return JsonResponse({"ok": True, "content": mcp_json.load_raw_text()})
+
+
 def get_tools_api(request):
     """Return locally discovered MCP-style tool servers for the requested engine/model."""
 

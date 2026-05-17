@@ -200,6 +200,11 @@ def run(log: bool = False, ui_port: int = 30000, api_port: int = 30001) -> None:
     existing = load_settings()
     initial = _build_initial_settings(existing, ui_port, api_port)
     save_settings(initial)
+
+    from Settings.mcp_json import ensure_default_mcp_json
+
+    ensure_default_mcp_json()
+
     _run_tool_bootstrap(log)
 
     if log:

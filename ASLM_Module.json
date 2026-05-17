@@ -21,6 +21,7 @@
             "Data/downloads_bridge_cache",
             "Data/venvs",
             "Settings/settings.json",
+            "MCP/mcp.json",
             "db.sqlite3"
         ],
         "runFirstRunAfterUpdate": true

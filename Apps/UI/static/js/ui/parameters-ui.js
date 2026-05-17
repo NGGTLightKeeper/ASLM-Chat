@@ -14,6 +14,7 @@ import {
   isThinkingParameterKey,
   setNestedValue
 } from '../main/utils.js';
+import { getJson, patchJson } from '../main/api.js';
 
 // Parameters UI.
 // Create helpers for model controls, tool selection, and option payloads.
@@ -61,44 +62,155 @@ export function createParametersUi(context) {
 
   // Rebuild the tool server checkbox list from the current state.
   function renderToolControls() {
-    const hasToolSupport = state.toolState.supported
-      && Array.isArray(state.availableToolServers)
-      && state.availableToolServers.length > 0;
+    const modelSupportsTools = Boolean(state.toolState.supported);
+    const list = Array.isArray(state.availableToolServers) ? state.availableToolServers : [];
+    const hasToolList = list.length > 0;
+    const showToolsPanel = modelSupportsTools;
 
-    dom.$groupTools.toggle(hasToolSupport);
-    dom.$dividerTools.toggle(hasToolSupport);
+    dom.$groupTools.toggle(showToolsPanel);
+    dom.$dividerTools.toggle(showToolsPanel);
 
     const $content = dom.$groupTools.find('.settings-section-content');
     $content.empty();
 
-    if (!hasToolSupport) {
+    if (!showToolsPanel) {
       return;
     }
 
-    const $list = $('<div class="tool-server-list" id="toolServerList">');
-    state.availableToolServers.forEach(function renderServer(server) {
-      const serverId = normalizeToolServerId(server.id);
-      const toolCount = Number(server.tool_count || (server.tools || []).length || 0);
-      const label = toolCount > 0 ? `${server.name || serverId} (${toolCount} tools)` : (server.name || serverId);
-      const checked = state.selectedToolServerIds.has(serverId);
+    if (hasToolList) {
+      const $list = $('<div class="tool-server-list" id="toolServerList">');
+      list.forEach(function renderServer(server) {
+        const serverId = normalizeToolServerId(server.id);
+        const toolCount = Number(server.tool_count || (server.tools || []).length || 0);
+        const label = toolCount > 0 ? `${server.name || serverId} (${toolCount} tools)` : (server.name || serverId);
+        const checked = state.selectedToolServerIds.has(serverId);
 
-      const $row = $('<label class="tool-server-row">');
-      const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
-      const $name = $('<span class="tool-server-name">').text(label);
+        const $row = $('<label class="tool-server-row">');
+        const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
+        const $name = $('<span class="tool-server-name">').text(label);
 
-      $checkbox.on('change', function onChange() {
-        if (this.checked) {
-          state.selectedToolServerIds.add(serverId);
-        } else {
-          state.selectedToolServerIds.delete(serverId);
-        }
+        $checkbox.on('change', function onChange() {
+          if (this.checked) {
+            state.selectedToolServerIds.add(serverId);
+          } else {
+            state.selectedToolServerIds.delete(serverId);
+          }
+        });
+
+        $row.append($checkbox).append($name);
+        $list.append($row);
       });
 
-      $row.append($checkbox).append($name);
-      $list.append($row);
+      $content.append($list);
+    }
+
+    const $mcpWrap = $('<div class="mcp-user-config">');
+    const $hint = $('<p class="mcp-user-hint">').text(
+      'User MCP servers use the same JSON shape as LM Studio / Cursor. Untrusted servers can run code and use the network.'
+    );
+    const $btn = $('<button type="button" class="preset-action-btn" id="mcpJsonEditBtn">').text('Edit MCP (mcp.json)');
+    $btn.on('click', function onMcpClick() {
+      openMcpJsonEditor();
+    });
+    $mcpWrap.append($hint).append($btn);
+    $content.append($mcpWrap);
+  }
+
+  async function refreshToolServersAfterMcpSave() {
+    const engine = normalizeEngineValue(state.activeEngine || 'ollama-service');
+    const modelName = String(dom.$modelSelector.val() || '').trim();
+    const data = await getJson(
+      `/api/tools/?engine=${encodeURIComponent(engine)}&model=${encodeURIComponent(modelName)}`
+    );
+    updateAvailableToolServers(data.tool_servers || data.tools || data.servers || []);
+  }
+
+  async function openMcpJsonEditor() {
+    let data;
+    try {
+      data = await getJson('/api/mcp_config/');
+    } catch (err) {
+      window.alert(err && err.message ? err.message : String(err));
+      return;
+    }
+
+    const initial = typeof data.content === 'string' ? data.content : '';
+
+    const $modal = $('<div class="mcp-json-modal-backdrop">');
+    const $box = $('<div class="mcp-json-modal">');
+    const $title = $('<div class="mcp-json-modal-title">').text('User MCP configuration (mcp.json)');
+    const $ta = $('<textarea class="mcp-json-textarea" spellcheck="false">').val(initial);
+    const $err = $('<div class="mcp-json-error">').hide();
+    const $actions = $('<div class="mcp-json-actions">');
+    const $cancel = $('<button type="button" class="preset-action-btn">').text('Cancel');
+    const $save = $('<button type="button" class="preset-action-btn">').text('Save');
+    $actions.append($cancel).append($save);
+
+    function closeModal() {
+      $modal.remove();
+    }
+
+    $cancel.on('click', closeModal);
+    $modal.on('click', function onBackdrop(ev) {
+      if (ev.target === $modal[0]) {
+        closeModal();
+      }
     });
 
-    $content.append($list);
+    $save.on('click', async function onSave() {
+      $err.hide();
+      try {
+        const resp = await patchJson('/api/mcp_config/', { content: $ta.val() });
+        if (typeof resp.content === 'string') {
+          $ta.val(resp.content);
+        }
+        await refreshToolServersAfterMcpSave();
+        closeModal();
+      } catch (err) {
+        $err.text(err && err.message ? err.message : String(err)).show();
+      }
+    });
+
+    $modal.css({
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(0,0,0,0.5)',
+      zIndex: 10000,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '12px'
+    });
+    $box.css({
+      background: 'var(--settings-panel-bg, #1e1e1e)',
+      color: 'var(--settings-text, #eee)',
+      borderRadius: '8px',
+      maxWidth: 'min(920px, 100%)',
+      width: '100%',
+      maxHeight: '90vh',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '8px',
+      padding: '12px',
+      boxSizing: 'border-box'
+    });
+    $title.css({ fontWeight: '600', fontSize: '15px' });
+    $ta.css({
+      width: '100%',
+      flex: '1 1 auto',
+      minHeight: '240px',
+      resize: 'vertical',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      fontSize: '12px',
+      boxSizing: 'border-box'
+    });
+    $err.css({ color: '#f66', fontSize: '13px' });
+    $actions.css({ display: 'flex', gap: '8px', justifyContent: 'flex-end' });
+
+    $box.append($title).append($ta).append($err).append($actions);
+    $modal.append($box);
+    $('body').append($modal);
+    $ta.trigger('focus');
   }
 
 
