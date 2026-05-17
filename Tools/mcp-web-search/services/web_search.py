@@ -711,70 +711,132 @@ _MEDICAL_HINTS = frozenset({
 # Query quality gate — SEO spam words & word-count ceiling
 # ---------------------------------------------------------------------------
 
-#: Words that signal a "keyword-stuffed" SEO-style query rather than a real
-#: information need.  If any of these appear in the query the tool rejects it
-#: and asks the model to reformulate.  Intentionally multilingual to stay
-#: consistent with the other _*_HINTS sets above.
+#: Words that signal an SEO/clickbait-style query rather than a focused search
+#: expression.  This list intentionally stays narrow: ordinary research intents
+#: such as reviews, comparisons, rankings, and how-to lookups are allowed when
+#: paired with specific nouns or identifiers.
 _SEO_SPAM_WORDS: frozenset[str] = frozenset({
     # ── English ──────────────────────────────────────────────────────────────
-    "best", "top", "ultimate", "perfect", "amazing", "awesome", "incredible",
-    "outstanding", "excellent", "great", "good", "fantastic", "wonderful",
+    "best", "top", "ultimate", "amazing", "awesome", "incredible",
     "most popular", "highly rated", "top-rated", "top rated", "number one",
     "#1", "must-have", "must have", "must-know", "must know",
     "comprehensive", "complete guide", "definitive", "essential",
     "everything you need", "all you need", "you need to know",
-    "how to", "what is", "what are", "why is", "why are",
-    "reviewed", "reviews", "review", "rated", "rankings", "ranked",
-    "compared", "comparison", "versus", "vs",
     # ── Russian / Ukrainian ──────────────────────────────────────────────────
     "лучший", "лучшая", "лучшее", "лучшие",
-    "топ", "рейтинг", "рейтинги", "популярный", "популярная",
-    "обзор", "обзоры", "сравнение", "всё что нужно",
-    "как выбрать", "что такое", "зачем нужен",
-    "найлучший", "найкращий", "найкраща", "найкращі",
-    "рейтинг", "огляд", "огляди",
+    "топ", "топовый", "топовая", "самый популярный", "самая популярная", "всё что нужно",
+    "полное руководство", "подробный гайд", "обязательно знать",
+    "найлучший", "найкращий", "найкраща", "найкраще", "найкращі",
+    "топ", "повний посібник",
     # ── German / Dutch ───────────────────────────────────────────────────────
-    "beste", "besten", "top", "bewertung", "bewertungen",
-    "vergleich", "vollständig", "ultimativ", "empfehlung",
-    "wie man", "was ist",
-    "beste", "top", "beoordeling", "vergelijking", "aanbeveling",
+    "beste", "bester", "bestes", "besten", "top", "beliebteste",
+    "testsieger", "vollständiger leitfaden", "ultimativ",
+    "beste", "best", "top", "complete gids",
+    # ── Nordic ───────────────────────────────────────────────────────────────
+    "bästa", "bäst", "topp", "populäraste", "komplett guide",
+    "bedste", "top", "komplet guide",
+    "paras", "parhaat", "täydellinen opas",
+    "beste", "best", "topp", "komplett guide",
     # ── French ───────────────────────────────────────────────────────────────
     "meilleur", "meilleure", "meilleurs", "meilleures",
-    "top", "classement", "comparatif", "avis", "guide complet",
-    "comment", "qu'est-ce que",
+    "top", "plus populaire", "guide complet", "guide ultime",
     # ── Spanish / Portuguese ─────────────────────────────────────────────────
-    "mejor", "mejores", "top", "clasificación", "comparativa",
-    "reseña", "reseñas", "guía completa", "cómo", "qué es",
-    "melhor", "melhores", "classificação", "análise", "guia completo",
-    "como", "o que é",
+    "mejor", "mejores", "top", "más popular", "guía completa", "guía definitiva",
+    "melhor", "melhores", "top", "mais popular", "guia completo", "guia definitivo",
     # ── Italian ──────────────────────────────────────────────────────────────
-    "migliore", "migliori", "top", "classifica", "confronto",
-    "recensione", "recensioni", "guida completa", "come", "che cos'è",
-    # ── Polish ───────────────────────────────────────────────────────────────
-    "najlepszy", "najlepsza", "najlepsze", "ranking",
-    "porównanie", "recenzja", "recenzje", "jak", "co to jest",
+    "migliore", "migliori", "top", "più popolare", "guida completa", "guida definitiva",
+    # ── Central / Eastern European ───────────────────────────────────────────
+    "najlepszy", "najlepsza", "najlepsze", "najlepsi", "top",
+    "najpopularniejszy", "kompletny przewodnik",
+    "nejlepší", "top", "nejoblíbenější", "kompletní průvodce",
+    "najlepší", "top", "najpopulárnejší", "kompletný sprievodca",
+    "legjobb", "top", "legnépszerűbb", "teljes útmutató",
+    "cel mai bun", "cele mai bune", "top", "ghid complet",
+    "най-добър", "най-добра", "най-добро", "най-добри", "топ",
+    "пълно ръководство",
+    "најбољи", "најбоља", "најбоље", "топ",
+    "najbolji", "najbolja", "najbolje",
     # ── Turkish ──────────────────────────────────────────────────────────────
-    "en iyi", "en iyi", "sıralama", "karşılaştırma",
-    "inceleme", "rehber", "nasıl", "nedir",
+    "en iyi", "top", "en popüler", "tam rehber",
     # ── Arabic / Hebrew / Persian ────────────────────────────────────────────
-    "أفضل", "الأفضل", "تقييم", "مقارنة", "مراجعة", "دليل شامل",
-    "הטוב ביותר", "הטובים ביותר", "דירוג", "השוואה", "ביקורת",
-    "بهترین", "برترین", "رتبه‌بندی", "مقایسه", "بررسی",
+    "أفضل", "الأفضل", "الأكثر شعبية", "دليل شامل",
+    "הטוב ביותר", "הטובים ביותר", "הכי פופולרי", "מדריך מלא",
+    "بهترین", "برترین", "محبوب‌ترین", "راهنمای کامل",
+    "بہترین", "مقبول ترین", "مکمل رہنما",
     # ── Chinese / Japanese / Korean ──────────────────────────────────────────
-    "最好", "最佳", "排名", "比较", "评测", "全面指南", "如何", "什么是",
-    "最高", "ランキング", "比較", "レビュー", "ガイド", "方法", "とは",
-    "최고", "최상", "랭킹", "비교", "리뷰", "가이드", "방법", "이란",
-    # ── Hindi / Greek / Thai ─────────────────────────────────────────────────
-    "सबसे अच्छा", "शीर्ष", "रैंकिंग", "तुलना", "समीक्षा",
-    "καλύτερο", "κορυφαίο", "κατάταξη", "σύγκριση", "αξιολόγηση",
-    "ดีที่สุด", "อันดับ", "เปรียบเทียบ", "รีวิว", "คู่มือ",
+    "最好", "最佳", "最受欢迎", "全面指南", "终极指南",
+    "最高", "ベスト", "完全ガイド", "究極ガイド",
+    "최고", "최상", "가장 인기", "완전 가이드",
+    # ── South Asian ──────────────────────────────────────────────────────────
+    "सबसे अच्छा", "बेहतरीन", "सबसे लोकप्रिय", "पूरी गाइड",
+    "সেরা", "সবচেয়ে জনপ্রিয়", "সম্পূর্ণ গাইড",
+    "சிறந்த", "மிகவும் பிரபலமான", "முழு வழிகாட்டி",
+    "ఉత్తమ", "అత్యంత ప్రజాదరణ", "పూర్తి గైడ్",
+    "ਸਭ ਤੋਂ ਵਧੀਆ", "ਪੂਰੀ ਗਾਈਡ",
+    # ── Southeast Asian ──────────────────────────────────────────────────────
+    "terbaik", "paling populer", "panduan lengkap",
+    "tốt nhất", "phổ biến nhất", "hướng dẫn đầy đủ",
+    "ดีที่สุด",
+    "ល្អបំផុត", "ពេញនិយមបំផុត", "មគ្គុទ្ទេសក៍ពេញលេញ",
+    "အကောင်းဆုံး", "လူကြိုက်အများဆုံး", "လမ်းညွှန်အပြည့်အစုံ",
+    # ── Greek ────────────────────────────────────────────────────────────────
+    "καλύτερο", "καλύτερη", "καλύτερα", "κορυφαίο",
+    "πιο δημοφιλές", "πλήρης οδηγός",
 })
 
 _NATURAL_INTENT_WORDS: frozenset[str] = frozenset({
+    # Keep ordinary informational/comparison intents searchable.  These words
+    # can appear in SEO spam, but on their own they are valid focused queries.
     "how to", "what is", "what are", "why is", "why are",
-    "review", "reviews", "comparison", "compared", "versus", "vs",
+    "review", "reviews", "reviewed", "comparison", "compared", "versus", "vs",
+    "rated", "ranked", "ranking", "rankings", "popular",
+    "обзор", "обзоры", "сравнение", "как выбрать", "что такое", "зачем нужен",
+    "рейтинг", "рейтинги", "популярный", "популярная",
+    "огляд", "огляди", "порівняння", "що таке", "популярний", "популярна",
+    "bewertung", "bewertungen", "vergleich", "empfehlung", "wie man", "was ist",
+    "beliebt", "beoordeling", "beoordelingen", "vergelijking", "aanbeveling",
+    "populair", "wat is",
+    "populär", "rankning", "jämförelse", "recension", "recensioner", "vad är",
+    "populær", "rangering", "sammenligning", "anmeldelse", "anmeldelser", "hvad er",
+    "suosituin", "sijoitus", "vertailu", "arvostelu", "arvostelut", "mikä on",
+    "hva er",
+    "populaire", "classement", "comparatif", "avis", "critique", "comment", "qu'est-ce que",
+    "popular", "clasificación", "ranking", "comparativa", "comparación", "reseña", "reseñas",
+    "cómo", "qué es", "classificação", "comparação", "análise", "avaliação", "como", "o que é",
+    "popolare", "classifica", "confronto", "comparazione", "recensione", "recensioni",
+    "come", "che cos'è",
+    "popularny", "porównanie", "recenzja", "recenzje", "jak", "co to jest",
+    "žebříček", "srovnání", "recenze", "co je",
+    "rebríček", "porovnanie", "recenzia", "recenzie", "čo je",
+    "népszerű", "rangsor", "összehasonlítás", "értékelés", "vélemény", "mi az",
+    "clasament", "comparație", "recenzie", "recenzii", "ce este",
+    "популярен", "класация", "сравнение", "ревю", "отзив",
+    "рангирање", "поређење", "рецензија", "ljestvica", "usporedba", "recenzija",
+    "popüler", "sıralama", "karşılaştırma", "inceleme", "yorum", "nasıl", "nedir",
+    "تقييم", "تصنيف", "ترتيب", "مقارنة", "مراجعة", "مراجعات", "ما هو",
+    "דירוג", "השוואה", "ביקורת", "ביקורות", "מה זה",
+    "رتبه‌بندی", "رده‌بندی", "مقایسه", "بررسی", "نقد", "چیست",
+    "درجہ بندی", "موازنہ", "جائزہ", "کیا ہے",
+    "热门", "排名", "排行榜", "比较", "对比", "评测", "测评", "评价", "如何", "什么是",
+    "人気", "ランキング", "比較", "レビュー", "口コミ", "評価", "方法", "とは",
+    "인기", "랭킹", "순위", "비교", "리뷰", "후기", "평가", "방법", "이란",
+    "लोकप्रिय", "रैंकिंग", "तुलना", "समीक्षा", "क्या है",
+    "শীর্ষ", "র‍্যাঙ্কিং", "তুলনা", "রিভিউ", "পর্যালোচনা", "কি",
+    "தரவரிசை", "ஒப்பீடு", "விமர்சனம்",
+    "ర్యాంకింగ్", "పోలిక", "సమీక్ష",
+    "ਪ੍ਰਸਿੱਧ", "ਰੈਂਕਿੰਗ", "ਤੁਲਨਾ", "ਸਮੀਖਿਆ",
+    "peringkat", "perbandingan", "ulasan", "apa itu",
+    "xếp hạng", "so sánh", "đánh giá", "là gì",
+    "ยอดนิยม", "อันดับ", "เปรียบเทียบ", "รีวิว", "คืออะไร",
+    "ចំណាត់ថ្នាក់", "ប្រៀបធៀប", "ពិនិត្យ",
+    "အဆင့်", "နှိုင်းယှဉ်", "သုံးသပ်ချက်",
+    "δημοφιλές", "κατάταξη", "σύγκριση", "αξιολόγηση", "κριτική", "τι είναι",
 })
 _SEO_SPAM_WORDS = frozenset(word for word in _SEO_SPAM_WORDS if word not in _NATURAL_INTENT_WORDS)
+_SPACELESS_SCRIPT_RE = re.compile(
+    r"[\u0e00-\u0e7f\u1000-\u109f\u1780-\u17ff\u3040-\u30ff\u3400-\u4dbf"
+    r"\u4e00-\u9fff\uac00-\ud7af]"
+)
 
 #: Hard ceiling for content tokens (non-operator words) in a search query.
 #: This should only catch sentence-sized keyword dumps, not ordinary focused
@@ -854,11 +916,20 @@ def _contains_spam_keyword(query: str, keyword: str) -> bool:
     if not keyword:
         return False
 
+    if _SPACELESS_SCRIPT_RE.search(keyword):
+        return keyword in query
+
     if re.search(r"\w", keyword, flags=re.UNICODE):
         return re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", query, flags=re.UNICODE) is not None
 
     # Scripts without word boundaries still need substring matching.
     return keyword in query
+
+
+def _spam_scan_text(query: str) -> str:
+    """Return the part of a query that should be checked for SEO markers."""
+
+    return _OPERATOR_TOKEN_RE.sub(" ", query.strip().lower()).strip()
 
 
 def validate_search_query(query: str) -> str | None:
@@ -869,7 +940,8 @@ def validate_search_query(query: str) -> str | None:
     return directly to the model so it can reformulate.
 
     Checks (in order):
-      1. SEO spam words — multilingual blocklist applied to content tokens only.
+      1. SEO spam words — multilingual blocklist applied after search operators
+         and quoted exact phrases are removed.
       2. Content-word ceiling — more than ``_QUERY_MAX_TOKENS`` non-operator
          words is treated as a keyword-pile / sentence query.
          Operators (site:, -site:, OR, quoted phrases) are excluded from count.
@@ -877,7 +949,7 @@ def validate_search_query(query: str) -> str | None:
     if not query or not query.strip():
         return None  # empty queries are handled elsewhere
 
-    q_lower = query.strip().lower()
+    q_lower = _spam_scan_text(query)
 
     # Check 1: SEO spam words as whole keywords, not substrings.
     spam_hit = {p for p in _SEO_SPAM_WORDS if _contains_spam_keyword(q_lower, p)}

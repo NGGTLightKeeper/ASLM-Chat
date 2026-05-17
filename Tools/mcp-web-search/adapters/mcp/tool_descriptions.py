@@ -7,9 +7,9 @@ MCP_SERVER_DESCRIPTION = "Search and page reading tools."
 WEB_SEARCH_TOOL_DESCRIPTION = """\
 Ranked web search and page-content extraction.
 
-The query is a search-engine directive, not a question. Write it like a
-librarian's search expression: concrete nouns, identifiers, versions, or
-quoted error text - no prose, no explanation.
+The query is a search-engine directive, not a conversational request. Write it
+like a librarian's search expression: concrete nouns, identifiers, versions,
+quoted error text, and at most one intent term - no prose, no explanation.
 
 EFFORT:
   effort="low"     fast discovery mode, typically ~7-9s. It uses DDGS only,
@@ -28,9 +28,11 @@ EFFORT:
 QUALITY GATE (enforced automatically):
   The engine validates every query before sending it to the network.
   Only extreme violations return a BAD_QUERY error you must resolve:
-  - Explicit banned SEO-style keywords/phrases - generic qualifiers that surface
-    clickbait instead of substance (e.g. "great", "ultimate", "overview",
-    "how to", "what is"). Use specific nouns and identifiers instead.
+  - Explicit SEO-style superlatives and clickbait phrases that surface marketing
+    pages instead of evidence (e.g. "best", "top", "#1", "ultimate",
+    "complete guide", and close equivalents in other languages). Ordinary
+    research intents such as review, comparison, ranking, how to, or what is are
+    valid when paired with specific nouns and identifiers.
   - More than 18 content words - operators (site:, -site:, OR, "phrases")
     are free and do not count toward the limit, but they also do not reduce
     the existing content-word count: adding operators cannot make an
