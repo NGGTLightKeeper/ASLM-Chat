@@ -89,7 +89,7 @@
   margin: 0 0 16px;
   border: 1px solid var(--c-border);
   border-radius: var(--r-md);
-  background: #111314;
+  background: var(--surface-primary);
 }
 
 .markdown-body .md-code-head {
@@ -138,7 +138,7 @@
 
 .markdown-body .md-code-copy-btn:hover {
   background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  color: var(--c-text);
 }
 
 .markdown-body .md-code-copy-btn:active {
@@ -193,7 +193,7 @@
   min-height: 120px;
   overflow-x: auto;
   padding: 18px;
-  background: color-mix(in srgb, var(--surface-secondary) 88%, #ffffff 12%);
+  background: color-mix(in srgb, var(--surface-secondary) 88%, var(--c-white) 12%);
 }
 
 .markdown-body .md-mermaid-canvas:empty {
@@ -260,7 +260,7 @@
   border: 0;
   border-top: 1px solid var(--c-border);
   border-radius: 0;
-  background: #111314;
+  background: var(--surface-primary);
 }
 
 .markdown-body .md-mermaid-source code {
@@ -695,7 +695,7 @@
 }
 
 .msg-reasoning-tool-icon.is-sandbox {
-  background: color-mix(in srgb, var(--c-accent, #4caf50) 18%, transparent);
+  background: color-mix(in srgb, var(--c-accent) 18%, transparent);
 }
 
 .msg-reasoning-tool-main {
@@ -733,8 +733,8 @@
 }
 
 .msg-reasoning-tool-row.is-error .msg-reasoning-tool-status {
-  color: var(--c-error, #e74c3c);
-  background: color-mix(in srgb, var(--c-error, #e74c3c) 13%, transparent);
+  color: var(--c-error);
+  background: color-mix(in srgb, var(--c-error) 13%, transparent);
 }
 
 .msg-reasoning-tool-row.is-pending .msg-reasoning-tool-status {
@@ -750,12 +750,12 @@
   padding: 10px;
   border: 1px solid color-mix(in srgb, var(--c-border) 46%, transparent);
   border-radius: 14px;
-  background: color-mix(in srgb, #000 22%, var(--surface-secondary));
+  background: color-mix(in srgb, var(--c-black) 22%, var(--surface-secondary));
 }
 
 .msg-sandbox-card:hover {
   border-color: color-mix(in srgb, var(--c-border) 46%, transparent);
-  background: color-mix(in srgb, #000 22%, var(--surface-secondary));
+  background: color-mix(in srgb, var(--c-black) 22%, var(--surface-secondary));
 }
 
 .msg-sandbox-head {
@@ -786,11 +786,11 @@
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--c-border) 48%, transparent);
   border-radius: 10px;
-  background: color-mix(in srgb, #000 32%, transparent);
+  background: color-mix(in srgb, var(--c-black) 32%, transparent);
 }
 
 .msg-sandbox-section.is-stderr {
-  border-color: color-mix(in srgb, var(--c-error, #e74c3c) 42%, transparent);
+  border-color: color-mix(in srgb, var(--c-error) 42%, transparent);
 }
 
 .msg-sandbox-section-label {
@@ -817,7 +817,7 @@
 }
 
 .msg-sandbox-section.is-stderr .msg-sandbox-pre {
-  color: var(--c-error, #e74c3c);
+  color: var(--c-error);
 }
 
 .msg-sandbox-section.is-empty .msg-sandbox-pre {
@@ -846,7 +846,7 @@
     linear-gradient(-45deg, rgba(255, 255, 255, 0.035) 25%, transparent 25%),
     linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.035) 75%),
     linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.035) 75%),
-    color-mix(in srgb, #000 28%, transparent);
+    color-mix(in srgb, var(--c-black) 28%, transparent);
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   background-size: 16px 16px;
 }
@@ -1035,7 +1035,7 @@
 
 .msg-write-line--fade {
   color: color-mix(in srgb, var(--c-text-dim) 52%, transparent);
-  mask-image: linear-gradient(90deg, #000 0%, #000 68%, transparent 100%);
+  mask-image: linear-gradient(90deg, var(--c-black) 0%, var(--c-black) 68%, transparent 100%);
 }
 
 .msg-write-line--empty {
@@ -1117,7 +1117,7 @@
   overflow-y: hidden;
   border: 1px solid color-mix(in srgb, var(--c-border) 44%, transparent);
   border-radius: 8px;
-  background: color-mix(in srgb, #000 18%, transparent);
+  background: color-mix(in srgb, var(--c-black) 18%, transparent);
   color: var(--c-text);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   font-size: var(--font-size-caption-1);
@@ -1157,11 +1157,11 @@
 }
 
 .msg-edit-row.is-delete {
-  background: color-mix(in srgb, var(--c-error, #e74c3c) 18%, transparent);
+  background: color-mix(in srgb, var(--c-error) 18%, transparent);
 }
 
 .msg-edit-row.is-add {
-  background: color-mix(in srgb, var(--c-accent, #4caf50) 16%, transparent);
+  background: color-mix(in srgb, var(--c-accent) 16%, transparent);
 }
 
 .msg-edit-row.is-hunk {
@@ -1170,7 +1170,7 @@
 }
 
 .msg-edit-row--fade {
-  mask-image: linear-gradient(90deg, #000 0%, #000 72%, transparent 100%);
+  mask-image: linear-gradient(90deg, var(--c-black) 0%, var(--c-black) 72%, transparent 100%);
   opacity: 0.62;
 }
 
@@ -1527,7 +1527,7 @@
 }
 
 .tool-inspector-panel {
-  background: color-mix(in srgb, var(--surface-secondary) 92%, #000);
+  background: color-mix(in srgb, var(--surface-secondary) 92%, var(--c-black));
   border-color: var(--activity-card-border-hover);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
 }
@@ -1608,12 +1608,12 @@
   padding: 10px;
   border: 1px solid color-mix(in srgb, var(--c-border) 46%, transparent);
   border-radius: 12px;
-  background: color-mix(in srgb, #000 18%, var(--surface-secondary));
+  background: color-mix(in srgb, var(--c-black) 18%, var(--surface-secondary));
 }
 
 .msg-tool-only-group > .msg-sandbox-card:hover {
   border-color: color-mix(in srgb, var(--c-border) 46%, transparent);
-  background: color-mix(in srgb, #000 18%, var(--surface-secondary));
+  background: color-mix(in srgb, var(--c-black) 18%, var(--surface-secondary));
 }
 
 .msg-search-card,

@@ -3374,6 +3374,32 @@ export function createMessagesUi(context, dependencies) {
     return String(svg || '');
   }
 
+  function readRootCssVar(name, fallback) {
+    if (typeof document === 'undefined' || !document.documentElement) {
+      return fallback;
+    }
+    var raw = window.getComputedStyle(document.documentElement).getPropertyValue(name);
+    raw = (raw || '').trim();
+    return raw || fallback;
+  }
+
+  function buildMermaidThemeVariables() {
+    return {
+      background: 'transparent',
+      mainBkg: readRootCssVar('--surface-secondary', '#202326'),
+      primaryColor: readRootCssVar('--surface-secondary', '#202326'),
+      primaryTextColor: readRootCssVar('--c-text', '#f4f5f6'),
+      primaryBorderColor: readRootCssVar('--c-border', '#5f6b76'),
+      nodeTextColor: readRootCssVar('--c-text', '#f4f5f6'),
+      labelTextColor: readRootCssVar('--c-text', '#f4f5f6'),
+      edgeLabelBackground: readRootCssVar('--surface-tertiary', '#343638'),
+      lineColor: readRootCssVar('--c-gray-1', '#8fa3b8'),
+      secondaryColor: readRootCssVar('--surface-tertiary', '#253241'),
+      tertiaryColor: readRootCssVar('--surface-primary', '#17201b'),
+      fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif'
+    };
+  }
+
   function parseCssColorToRgb(value) {
     const color = String(value || '').trim().toLowerCase();
     if (!color || color === 'none' || color === 'transparent') {
@@ -3450,9 +3476,13 @@ export function createMessagesUi(context, dependencies) {
         return;
       }
 
-      const darkText = { r: 32, g: 35, b: 38 };
-      const lightText = { r: 244, g: 245, b: 246 };
-      const textColor = contrastRatio(fill, darkText) >= contrastRatio(fill, lightText) ? '#202326' : '#f4f5f6';
+      const darkText = parseCssColorToRgb(readRootCssVar('--surface-secondary', '#202326'))
+        || { r: 32, g: 35, b: 38 };
+      const lightText = parseCssColorToRgb(readRootCssVar('--c-text', '#f4f5f6'))
+        || { r: 244, g: 245, b: 246 };
+      const textColor = contrastRatio(fill, darkText) >= contrastRatio(fill, lightText)
+        ? readRootCssVar('--surface-secondary', '#202326')
+        : readRootCssVar('--c-text', '#f4f5f6');
       nodeEl.querySelectorAll('text, tspan').forEach(function applySvgTextColor(textEl) {
         textEl.setAttribute('fill', textColor);
         textEl.style.fill = textColor;
@@ -3554,20 +3584,7 @@ export function createMessagesUi(context, dependencies) {
       flowchart: {
         htmlLabels: false
       },
-      themeVariables: {
-        background: 'transparent',
-        mainBkg: '#202326',
-        primaryColor: '#202326',
-        primaryTextColor: '#f4f5f6',
-        primaryBorderColor: '#5f6b76',
-        nodeTextColor: '#f4f5f6',
-        labelTextColor: '#f4f5f6',
-        edgeLabelBackground: '#343638',
-        lineColor: '#8fa3b8',
-        secondaryColor: '#253241',
-        tertiaryColor: '#17201b',
-        fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif'
-      }
+      themeVariables: buildMermaidThemeVariables()
     });
   }
 

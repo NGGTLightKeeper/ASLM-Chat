@@ -74,6 +74,11 @@
   --c-overlay-blue: rgba(10, 132, 255, 0.12);
   --c-overlay-blue-strong: rgba(10, 132, 255, 0.16);
 
+  --c-white: #ffffff;
+  --c-black: #000000;
+  --c-bg-error-overlay: #4c1f24;
+  --c-overlay-scrim: rgba(0, 0, 0, 0.25);
+
   --c-primary: var(--c-system-blue);
   --c-success: var(--c-system-green);
   --c-danger: var(--c-system-red);
@@ -81,6 +86,9 @@
   --c-info: var(--c-system-teal);
   --c-accent-secondary: var(--c-system-indigo);
   --c-accent-tertiary: var(--c-system-purple);
+
+  --c-error: var(--c-danger);
+  --c-accent: var(--c-success);
 
   --surface-primary: var(--c-bg);
   --surface-secondary: var(--c-bg-surface);

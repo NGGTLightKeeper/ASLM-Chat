@@ -1,7 +1,7 @@
 {% load static %}
 {% comment %} Copyright NGGT.LightKeeper. All Rights Reserved. {% endcomment %}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" style="color-scheme: {% if host_theme_effective == 'light' %}light{% else %}dark{% endif %};">
 
 <head>
     <meta charset="UTF-8" />
@@ -17,6 +17,10 @@
     <link rel="stylesheet" href="{% static 'css/main/main.css' %}" />
     <link rel="stylesheet" href="{% static 'css/main/markdown.css' %}" />
     <link rel="stylesheet" href="{% static 'css/main/browser-portal.css' %}" />
+    {% if host_theme_available %}
+    <style id="aslm-host-theme">{{ host_theme_css_variables|safe }}</style>
+    {% endif %}
+    <script type="application/json" id="aslmHostThemeData">{{ host_theme_json|safe }}</script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
     {% block extra_css %}{% endblock %}
 </head>
@@ -133,6 +137,7 @@
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 <script src="{% static 'js/vendor/mermaid.min.js' %}"></script>
 <!-- Syntax highlighting -->
+<!-- Syntax highlighting: vendor theme is fixed (dark); swapping for host light/dark is deferred. -->
 <link rel="stylesheet" href="{% static 'css/vendor/atom-one-dark.min.css' %}">
 <script src="{% static 'js/vendor/highlight.min.js' %}"></script>
 

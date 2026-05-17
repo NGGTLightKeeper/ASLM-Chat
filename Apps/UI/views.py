@@ -63,6 +63,7 @@ from Apps.Data.models import (
     MessageImage,
     OllamaPreset,
 )
+from Apps.UI.host_theme_bridge import build_host_theme_template_context
 from Apps.UI.upload_storage import load_upload_manifest, model_upload_payload, public_upload_payload, save_upload_to_sandbox
 from Settings import settings
 
@@ -1573,7 +1574,7 @@ def _build_base_context() -> dict[str, Any]:
 
     runtime_settings = settings.get_runtime_engine_settings()
     engine = _get_active_engine(runtime_settings.get("llm-engine"))
-    return {
+    base = {
         "llm_engine": engine,
         "models": [],
         "engine_options": settings.get_supported_engines(),
@@ -1581,6 +1582,8 @@ def _build_base_context() -> dict[str, Any]:
         "available_tool_servers": _list_tool_servers_cached(engine=engine),
         "chats": Chat.objects.all(),
     }
+    base.update(build_host_theme_template_context())
+    return base
 
 
 # Build runtime settings payload
