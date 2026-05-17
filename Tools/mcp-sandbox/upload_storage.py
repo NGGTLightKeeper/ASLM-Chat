@@ -167,6 +167,21 @@ def _file_sha256(file_bytes: bytes) -> str:
     return hashlib.sha256(file_bytes or b"").hexdigest()
 
 
+def _read_upload_bytes(uploaded_file: Any) -> bytes:
+    chunks = uploaded_file.chunks() if hasattr(uploaded_file, "chunks") else [uploaded_file.read()]
+    payload_chunks: list[bytes] = []
+    size_bytes = 0
+    for chunk in chunks:
+        if not chunk:
+            continue
+        chunk_bytes = bytes(chunk)
+        size_bytes += len(chunk_bytes)
+        if size_bytes > MAX_UPLOAD_BYTES:
+            raise ValueError("File is too large")
+        payload_chunks.append(chunk_bytes)
+    return b"".join(payload_chunks)
+
+
 def _load_manifest_from_sidecar(sidecar_path: Path) -> dict[str, Any] | None:
     try:
         manifest = json.loads(sidecar_path.read_text(encoding="utf-8"))
@@ -290,9 +305,7 @@ def save_upload_to_sandbox(
     if size_bytes > MAX_UPLOAD_BYTES:
         raise ValueError("File is too large")
 
-    chunks = uploaded_file.chunks() if hasattr(uploaded_file, "chunks") else [uploaded_file.read()]
-    payload_chunks = [chunk for chunk in chunks if chunk]
-    file_bytes = b"".join(payload_chunks)
+    file_bytes = _read_upload_bytes(uploaded_file)
     mime = str(getattr(uploaded_file, "content_type", "") or "")
     file_sha256 = _file_sha256(file_bytes)
     safe_scope = _safe_scope(file_sha256)

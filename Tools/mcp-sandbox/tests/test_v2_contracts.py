@@ -49,7 +49,19 @@ class SandboxV2ContractsTests(unittest.TestCase):
 
     def test_head_uses_real_bash(self) -> None:
         handle_tool("write", {"path": "lines.txt", "content": "\n".join(f"line{i}" for i in range(1, 21))})
-        result = handle_tool("bash", {"command": "head -n 5 lines.txt"})
+        with patch(
+            "sandbox.api.exec_bash",
+            return_value={
+                "exit_code": 0,
+                "stdout": "line1\nline2\nline3\nline4\nline5\n",
+                "stderr": "",
+                "error": None,
+                "elapsed_ms": 5,
+                "truncated": False,
+                "cwd": ".",
+            },
+        ):
+            result = handle_tool("bash", {"command": "head -n 5 lines.txt"})
         self.assertTrue(result["ok"])
         self.assertIn("line1", result["result"]["stdout"])
         self.assertNotIn("line10", result["result"]["stdout"])
@@ -118,7 +130,19 @@ class SandboxV2ContractsTests(unittest.TestCase):
         self.assertIn("[head:", stdout)
         self.assertTrue(result["result"].get("routed", False))
 
-        head_result = handle_tool("bash", {"command": "head -n 1 big.log"})
+        with patch(
+            "sandbox.api.exec_bash",
+            return_value={
+                "exit_code": 0,
+                "stdout": oversized + "\n",
+                "stderr": "",
+                "error": None,
+                "elapsed_ms": 5,
+                "truncated": False,
+                "cwd": ".",
+            },
+        ):
+            head_result = handle_tool("bash", {"command": "head -n 1 big.log"})
         self.assertTrue(head_result["ok"])
         self.assertFalse(head_result["result"].get("routed", False))
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 import time
 import unittest
@@ -28,16 +29,25 @@ WORKSPACE = ROOT / ".test_workspace_jobs"
 os.environ["SANDBOX_HOST_WORKSPACE"] = str(WORKSPACE)
 os.environ["SANDBOX_IN_CONTAINER"] = "1"
 os.environ["SANDBOX_COMMAND_USER"] = ""
+os.environ["SANDBOX_JOB_ROOT"] = str(WORKSPACE / ".sandbox_jobs")
 
 from sandbox.config import BACKGROUND_TIMEOUT_THRESHOLD  # noqa: E402
-from sandbox.exec import should_use_background, _exec_bash_native_background  # noqa: E402
+from sandbox.exec import should_use_background, _exec_bash_native_background, job_root  # noqa: E402
 from sandbox.jobs import JOB_REGISTRY  # noqa: E402
 from sandbox.workspace import task_root  # noqa: E402
 from sandbox.supervisor import _cleanup_orphaned_job_dirs  # noqa: E402
 
 
 def _jobs_root() -> Path:
-    return task_root() / ".sandbox_jobs"
+    return job_root()
+
+
+def _native_bash_available() -> bool:
+    try:
+        result = subprocess.run(["bash", "-lc", "true"], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except Exception:
+        return False
 
 
 class TestShouldUseBackground(unittest.TestCase):
@@ -68,12 +78,14 @@ class TestShouldUseBackground(unittest.TestCase):
         self.assertFalse(should_use_background("python script.py", 5, "auto"))
 
 
+@unittest.skipIf(not _native_bash_available(), "native bash is not available in this test environment")
 class TestJobDirCleanupOnSyncCompletion(unittest.TestCase):
     """Job dirs for synchronously completed commands must be deleted."""
 
     def setUp(self):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
+        shutil.rmtree(_jobs_root(), ignore_errors=True)
         task_root().mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
@@ -115,12 +127,14 @@ class TestJobDirCleanupOnSyncCompletion(unittest.TestCase):
         self.assertEqual(len(dirs), 0, "Dir should be gone even after non-zero exit")
 
 
+@unittest.skipIf(not _native_bash_available(), "native bash is not available in this test environment")
 class TestJobDirKeptForTrulyBackgrounded(unittest.TestCase):
     """Commands that time out must keep their dir for incremental polling."""
 
     def setUp(self):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
+        shutil.rmtree(_jobs_root(), ignore_errors=True)
         task_root().mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
@@ -153,6 +167,7 @@ class TestPurgeStaleFilesystemCleanup(unittest.TestCase):
     def setUp(self):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
+        shutil.rmtree(_jobs_root(), ignore_errors=True)
         task_root().mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
@@ -204,6 +219,7 @@ class TestStartupOrphanCleanup(unittest.TestCase):
     def setUp(self):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
+        shutil.rmtree(_jobs_root(), ignore_errors=True)
         task_root().mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):

@@ -33,6 +33,7 @@ CONTEXT_LINES = 3
 TEXT_SAMPLE_BYTES = 8192
 IMAGE_MIME_PREFIX = "image/"
 TEXT_MIME_PREFIX = "text/"
+MAX_FILE_READ_BYTES = max(MAX_READ_BYTES, MAX_IMAGE_PREVIEW_BYTES, TEXT_SAMPLE_BYTES)
 LEGACY_MODEL_ROOT_ALIASES = ("task",)
 LEGACY_UPLOAD_ROOT_PREFIXES = ("mnt/data/User",)
 
@@ -317,6 +318,55 @@ def _reject_symlink_escape(path: Path, original: str) -> None:
             f"Access denied: {original!r} is a symlink pointing outside the sandbox workspace."
         )
 
+
+def _is_workspace_absolute_path(path: str) -> bool:
+    raw = str(path or "").replace("\\", "/").strip()
+    if not raw.startswith("/"):
+        return False
+    legacy_upload = _legacy_upload_relative_path(raw)
+    if legacy_upload is not None:
+        return True
+    for alias in model_root_aliases():
+        container_task_root = f"{CONTAINER_WORKSPACE.rstrip('/')}/{alias}"
+        if raw == container_task_root or raw.startswith(f"{container_task_root}/"):
+            return True
+    return False
+
+
+def _reject_non_workspace_absolute_path(path: str, kind: str) -> None:
+    raw = str(path or "").replace("\\", "/").strip()
+    if raw.startswith("/") and not _is_workspace_absolute_path(raw):
+        raise ValueError(
+            f"{kind} only accepts absolute paths under the model workspace. "
+            "Use bash for direct container/system paths."
+        )
+
+
+def _stat_size(path: Path, original: str) -> int:
+    try:
+        return path.stat().st_size
+    except OSError as exc:
+        raise FileNotFoundError(f"File not found: {normalize_model_relative_path(original)}") from exc
+
+
+def _reject_oversized_read(path: Path, original: str, max_bytes: int | None = None) -> int:
+    limit = MAX_FILE_READ_BYTES if max_bytes is None else max(1, int(max_bytes))
+    size_bytes = _stat_size(path, original)
+    if size_bytes > limit:
+        raise SandboxToolError(
+            "file_too_large",
+            (
+                f"File is too large to load into the supervisor safely: "
+                f"{normalize_model_relative_path(original)} ({size_bytes} bytes, limit {limit} bytes). "
+                "Use bash with streaming tools for large files."
+            ),
+            result={
+                "path": normalize_model_relative_path(original),
+                "size_bytes": size_bytes,
+                "max_bytes": limit,
+            },
+        )
+    return size_bytes
 
 
 
@@ -622,6 +672,7 @@ def read(
     if not target.is_file():
         raise FileNotFoundError(f"File not found: {normalize_model_relative_path(path)}")
 
+    size_bytes = _reject_oversized_read(target, path)
     data = target.read_bytes()
     mime_type = _guess_mime(target)
     normalized_path = normalize_model_relative_path(path)
@@ -637,7 +688,7 @@ def read(
                 "path": normalized_path,
                 "kind": "binary",
                 "mime": mime_type,
-                "size_bytes": len(data),
+                "size_bytes": size_bytes,
                 "encoding": None,
             },
             "warnings": warnings,
@@ -668,7 +719,7 @@ def read(
             "start_line": line_start,
             "end_line": line_end,
             "total_lines": total_lines,
-            "size_bytes": len(data),
+            "size_bytes": size_bytes,
         },
         "warnings": warnings,
         "truncated": truncated,
@@ -720,26 +771,30 @@ def read_image(
 ) -> dict[str, Any]:
     """Read image metadata and, when small enough, an inline preview."""
 
+    _reject_non_workspace_absolute_path(path, "view_image")
     target = get_secure_task_path(path)
     _reject_symlink_escape(target, path)
     if not target.is_file():
         raise FileNotFoundError(f"File not found: {normalize_model_relative_path(path)}")
 
-    data = target.read_bytes()
+    size_bytes = _reject_oversized_read(target, path)
     mime_type = _guess_mime(target)
     normalized_path = normalize_model_relative_path(path)
     if not mime_type.startswith(IMAGE_MIME_PREFIX):
+        with target.open("rb") as handle:
+            sample = handle.read(TEXT_SAMPLE_BYTES)
         raise SandboxToolError(
             "not_image",
             f"File is not an image: {normalized_path}",
             result={
                 "path": normalized_path,
-                "kind": "binary" if _is_probably_binary(data, mime_type) else "text",
+                "kind": "binary" if _is_probably_binary(sample, mime_type) else "text",
                 "mime": mime_type,
-                "size_bytes": len(data),
+                "size_bytes": size_bytes,
             },
         )
 
+    data = target.read_bytes()
     return _image_payload(
         normalized_path,
         data,

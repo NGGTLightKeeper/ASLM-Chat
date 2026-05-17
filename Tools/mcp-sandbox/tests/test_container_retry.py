@@ -22,9 +22,9 @@ import os
 import shutil
 os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT / ".test_workspace"))
 
-import sandbox.container as container_mod  # noqa: E402
 import sandbox.docker_host as docker_host_mod  # noqa: E402
 
+container_mod = docker_host_mod
 
 # Helper: build a fake subprocess result
 def _ok(stdout: str = "", stderr: str = "") -> MagicMock:
@@ -123,7 +123,7 @@ class TestStartExisting(unittest.TestCase):
         """docker start returns 0 but container dies immediately."""
         import json
         # start OK, then inspect shows not running
-        dead_payload = json.dumps({"running": False, "status": "exited", "mounts": ""})
+        dead_payload = json.dumps([{"State": {"Running": False, "Status": "exited"}, "Mounts": []}])
         with patch.object(docker_host_mod, "_run_command",
                           side_effect=[_ok(), _ok(dead_payload)]):
             ok, msg = container_mod._start_existing()
@@ -238,23 +238,20 @@ class TestEnsureImage(unittest.TestCase):
         import json
 
         stale_payload = json.dumps([{"Config": {"Labels": {}}}])
+        setup_result = MagicMock(returncode=0)
 
         def fake_run(args, timeout=30, **kwargs):
             if args[:3] == ["docker", "image", "inspect"]:
                 return _ok(stale_payload)
-            if args[:2] == ["docker", "build"]:
-                return _ok()
             return _fail(f"unexpected command: {args}")
 
-        with patch.object(docker_host_mod, "_run_command", side_effect=fake_run) as run_mock:
+        with patch.object(docker_host_mod, "_run_command", side_effect=fake_run) as run_mock, \
+             patch.object(docker_host_mod.subprocess, "run", return_value=setup_result) as setup_mock:
             ok, message = container_mod._ensure_image()
 
         self.assertTrue(ok)
-        self.assertIn("built locally", message)
-        self.assertTrue(
-            any(call_args.args[0][:2] == ["docker", "build"] for call_args in run_mock.call_args_list),
-            "stale image should trigger docker build",
-        )
+        self.assertIn("ready", message)
+        setup_mock.assert_called_once()
 
 
 # ── _ensure_container_running (integration) ───────────────────────────
@@ -285,7 +282,7 @@ class TestEnsureContainerRunning(unittest.TestCase):
         """If volume is wrong, old container is removed and a new one created."""
         import json
         # First inspect: running but wrong volume
-        bad_payload = json.dumps({"running": True, "status": "running", "mounts": "/wrong"})
+        bad_payload = json.dumps([{"State": {"Running": True, "Status": "running"}, "Mounts": [{"Source": "/wrong"}]}])
         # After rm, no container; after docker run, OK
         no_container_fail = _fail("No such container", 1)
 
@@ -312,7 +309,7 @@ class TestEnsureContainerRunning(unittest.TestCase):
         import json, os as os_mod
         from sandbox.config import HOST_WORKSPACE, DEFAULT_TASK_DIR
         mount = os_mod.path.normpath(os_mod.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR))
-        running_payload = json.dumps({"running": True, "status": "running", "mounts": mount})
+        running_payload = json.dumps([{"State": {"Running": True, "Status": "running"}, "Mounts": [{"Source": mount}]}])
 
         call_count = {"n": 0}
 

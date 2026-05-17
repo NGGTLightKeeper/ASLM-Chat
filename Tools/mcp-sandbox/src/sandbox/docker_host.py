@@ -1369,7 +1369,12 @@ def _exec_bash_docker_background(
     setup_script = (
         f"job_root=''; "
         f"for candidate in {candidate_roots}; do "
-        f"  candidate=$(eval echo \"$candidate\"); "
+        f"  home_dollar='$HOME/'; home_braced='${{HOME}}/'; home_tilde='~/'; "
+        f"  case \"$candidate\" in "
+        f"    \"$home_dollar\"*) candidate=\"$HOME/${{candidate#$home_dollar}}\" ;; "
+        f"    \"$home_braced\"*) candidate=\"$HOME/${{candidate#$home_braced}}\" ;; "
+        f"    \"$home_tilde\"*) candidate=\"$HOME/${{candidate#$home_tilde}}\" ;; "
+        f"  esac; "
         f"  if mkdir -p \"$candidate\" >/dev/null 2>&1 && [ -w \"$candidate\" ]; then "
         f"    job_root=\"$candidate\"; break; "
         f"  fi; "

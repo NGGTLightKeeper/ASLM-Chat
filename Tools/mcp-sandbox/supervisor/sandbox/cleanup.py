@@ -109,8 +109,35 @@ def _iter_stageable_root_entries(root: Path) -> list[Path]:
     ]
 
 
+def _has_running_background_jobs() -> bool:
+    try:
+        from sandbox.jobs import JOB_REGISTRY
+    except Exception:
+        return False
+
+    try:
+        return any(job.get("status") == "running" for job in JOB_REGISTRY.list_jobs())
+    except Exception:
+        return False
+
+
+def _safe_tmp_root(root: Path) -> Path:
+    tmp_root = root / TMP_DIR_NAME
+    if tmp_root.exists() and tmp_root.is_symlink():
+        tmp_root.unlink()
+    tmp_root.mkdir(parents=True, exist_ok=True)
+    try:
+        tmp_root.resolve().relative_to(root.resolve())
+    except ValueError as exc:
+        raise RuntimeError(f"Cleanup tmp path escaped sandbox root: {tmp_root}") from exc
+    return tmp_root
+
+
 def stage_workspace_to_tmp(staged_at: datetime | None = None) -> Path | None:
     """Move current root entries into one tmp batch inside the sandbox."""
+
+    if _has_running_background_jobs():
+        return None
 
     root = task_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -118,8 +145,7 @@ def stage_workspace_to_tmp(staged_at: datetime | None = None) -> Path | None:
     if not entries:
         return None
 
-    tmp_root = root / TMP_DIR_NAME
-    tmp_root.mkdir(parents=True, exist_ok=True)
+    tmp_root = _safe_tmp_root(root)
     batch_dir = _unique_child(tmp_root, _safe_batch_name())
     batch_dir.mkdir(parents=True, exist_ok=False)
 
@@ -216,7 +242,7 @@ def recycle_due_tmp_batches(now: datetime | None = None) -> list[Path]:
     """Move expired tmp batches to the OS trash without depending on trash name."""
 
     root = task_root()
-    tmp_root = root / TMP_DIR_NAME
+    tmp_root = _safe_tmp_root(root)
     if not tmp_root.exists() or not tmp_root.is_dir():
         return []
 
@@ -256,6 +282,8 @@ def run_cleanup_once() -> None:
         now = _utc_now()
         recycle_due_tmp_batches(now=now)
         if _ACTIVE_CALLS > 0:
+            return
+        if _has_running_background_jobs():
             return
         idle_for = time.monotonic() - _LAST_ACTIVITY_MONOTONIC
         if idle_for >= WORKSPACE_CLEANUP_IDLE_SECONDS:

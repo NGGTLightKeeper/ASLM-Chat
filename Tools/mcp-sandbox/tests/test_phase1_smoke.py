@@ -6,6 +6,7 @@ import os
 import sys
 import shutil
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -42,8 +43,8 @@ def test_large_file_auto_preview():
     print(stdout[:600])
     print("...")
     assert result["ok"], f"Expected ok=True, got error: {result.get('error')}"
-    assert "──" in stdout, "Missing metadata header"
-    assert "next targets" in stdout, "Missing next targets"
+    assert "-- big.py" in stdout, "Missing preview header"
+    assert "[next]" in stdout, "Missing next suggestions"
     print("PASS: large file auto-preview")
 
 
@@ -53,34 +54,59 @@ def test_small_file_metadata_header():
 
     assert result["ok"]
     stdout = result["result"]["stdout"]
-    assert "──" in stdout, "Missing metadata header"
-    assert "small.txt" in stdout, "Missing path in header"
-    print("PASS: small file metadata header")
+    assert stdout == "hello\nworld\n"
+    print("PASS: small file cat")
     print(stdout)
 
 
 def test_head_metadata():
     content = "\n".join(f"line{i}" for i in range(1, 101))
     handle_tool("write", {"path": "lines.txt", "content": content})
-    result = handle_tool("bash", {"command": "head -n 5 lines.txt"})
+    with patch(
+        "sandbox.api.exec_bash",
+        return_value={
+            "exit_code": 0,
+            "stdout": "line1\nline2\nline3\nline4\nline5\n",
+            "stderr": "",
+            "error": None,
+            "elapsed_ms": 5,
+            "truncated": False,
+            "cwd": ".",
+        },
+    ):
+        result = handle_tool("bash", {"command": "head -n 5 lines.txt"})
 
     assert result["ok"]
     stdout = result["result"]["stdout"]
-    assert "remaining" in stdout, "Missing remaining count"
-    assert "lines.txt" in stdout, "Missing path"
-    print("PASS: head with metadata")
+    assert "line1" in stdout
+    assert "line10" not in stdout
+    assert not result["result"].get("routed", False)
+    print("PASS: head falls through to real bash")
     print(stdout)
 
 
 def test_grep_with_few_results():
     handle_tool("write", {"path": "src/main.py", "content": "print('hello')\n"})
     handle_tool("write", {"path": "src/other.txt", "content": "HELLO\n"})
-    result = handle_tool("bash", {"command": "grep -ri hello ."})
+    with patch(
+        "sandbox.api.exec_bash",
+        return_value={
+            "exit_code": 0,
+            "stdout": "src/main.py:print('hello')\nsrc/other.txt:HELLO\n",
+            "stderr": "",
+            "error": None,
+            "elapsed_ms": 5,
+            "truncated": False,
+            "cwd": ".",
+        },
+    ):
+        result = handle_tool("bash", {"command": "grep -ri hello ."})
 
     assert result["ok"]
     stdout = result["result"]["stdout"]
-    assert "grep:" in stdout.lower() or "hello" in stdout.lower()
-    print("PASS: grep with few results")
+    assert "hello" in stdout.lower()
+    assert not result["result"].get("routed", False)
+    print("PASS: grep falls through to real bash")
     print(stdout)
 
 
@@ -91,12 +117,25 @@ def test_grep_clustered():
             "path": f"pkg/file_{i}.py",
             "content": f"import foo\nfoo.bar()\nfoo.baz()\n",
         })
-    result = handle_tool("bash", {"command": "grep -r foo pkg/"})
+    with patch(
+        "sandbox.api.exec_bash",
+        return_value={
+            "exit_code": 0,
+            "stdout": "pkg/file_0.py:import foo\npkg/file_1.py:foo.bar()\n",
+            "stderr": "",
+            "error": None,
+            "elapsed_ms": 5,
+            "truncated": False,
+            "cwd": ".",
+        },
+    ):
+        result = handle_tool("bash", {"command": "grep -r foo pkg/"})
 
     assert result["ok"]
     stdout = result["result"]["stdout"]
-    assert "densest files" in stdout or "grep:" in stdout.lower()
-    print("PASS: grep clustering")
+    assert "foo" in stdout
+    assert not result["result"].get("routed", False)
+    print("PASS: grep fallback")
     print(stdout[:500])
     print("...")
 

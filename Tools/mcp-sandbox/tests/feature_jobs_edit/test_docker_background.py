@@ -35,6 +35,8 @@ class DockerBackgroundTests(unittest.TestCase):
             script = args[-1]
             if "nohup" in script:
                 self.assertIn("export job_dir; nohup", script)
+                self.assertNotIn("eval echo", script)
+                self.assertIn("home_dollar='$HOME/'", script)
                 return RunResult(stdout="9876\n")
             if "/status" in script and "exit_code" in script:
                 return RunResult(stdout="running\n\n")

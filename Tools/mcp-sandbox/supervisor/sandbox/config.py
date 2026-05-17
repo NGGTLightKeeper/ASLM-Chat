@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -114,6 +115,7 @@ MAX_IMAGE_PREVIEW_BYTES = int(os.getenv("SANDBOX_MAX_IMAGE_PREVIEW_BYTES", "2000
 MAX_LS_ENTRIES = int(os.getenv("SANDBOX_MAX_LS_ENTRIES", "500"))
 MAX_FIND_RESULTS = int(os.getenv("SANDBOX_MAX_FIND_RESULTS", "200"))
 MAX_GREP_RESULTS = int(os.getenv("SANDBOX_MAX_GREP_RESULTS", "200"))
+LOOP_BREAK_THRESHOLD = int(os.getenv("SANDBOX_LOOP_BREAK_THRESHOLD", "3"))
 
 # Presentation layer tuning.
 
@@ -171,12 +173,79 @@ IGNORED_DIR_NAMES = {
 }
 
 
+_RG_TYPE_FALLBACK = {
+    "c": "*.c",
+    "cc": "*.cc",
+    "cpp": "*.cpp",
+    "cs": "*.cs",
+    "go": "*.go",
+    "java": "*.java",
+    "js": "*.js",
+    "jsx": "*.jsx",
+    "kt": "*.kt",
+    "mjs": "*.mjs",
+    "php": "*.php",
+    "py": "*.py",
+    "python": "*.py",
+    "rs": "*.rs",
+    "rust": "*.rs",
+    "scala": "*.scala",
+    "sh": "*.sh",
+    "swift": "*.swift",
+    "ts": "*.ts",
+    "tsx": "*.tsx",
+}
+
+
+def _load_rg_type_map() -> dict[str, str]:
+    """Return ripgrep type aliases mapped to representative glob patterns."""
+
+    try:
+        result = subprocess.run(
+            ["rg", "--type-list"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return dict(_RG_TYPE_FALLBACK)
+
+    if result.returncode != 0:
+        return dict(_RG_TYPE_FALLBACK)
+
+    type_map: dict[str, str] = {}
+    for raw_line in result.stdout.splitlines():
+        name, sep, patterns = raw_line.partition(":")
+        if not sep:
+            continue
+        first_pattern = patterns.split(",", 1)[0].strip()
+        if not first_pattern.startswith("*."):
+            continue
+        type_name = name.strip()
+        if not type_name:
+            continue
+        type_map[type_name] = first_pattern
+        ext_alias = first_pattern[2:]
+        if ext_alias:
+            type_map.setdefault(ext_alias, first_pattern)
+
+    for key, value in _RG_TYPE_FALLBACK.items():
+        type_map.setdefault(key, value)
+    return type_map or dict(_RG_TYPE_FALLBACK)
+
+
+RG_TYPE_TO_GLOB = _load_rg_type_map()
+
+
 # Workspace validation.
 
 def _validate_workspace_path(path: str) -> bool:
     """Return True when the host workspace path looks safe."""
 
     normalized = os.path.normpath(os.path.abspath(path)).lower()
+    path_name = os.path.basename(normalized.rstrip("\\/"))
     dangerous_patterns = [
         "windows",
         "system32",
@@ -202,6 +271,9 @@ def _validate_workspace_path(path: str) -> bool:
             return False
 
     path_parts = normalized.replace("\\", "/").strip("/").split("/")
+    if DEFAULT_TASK_DIR in {"", "."} and "sandbox" not in path_name:
+        return False
+
     return len(path_parts) >= 2
 
 

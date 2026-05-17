@@ -52,6 +52,35 @@ class WorkspaceCleanupTests(unittest.TestCase):
         self.assertTrue((self.task_root / cleanup_mod.STATE_FILENAME).is_file())
         self.assertTrue((batch / cleanup_mod.BATCH_METADATA).is_file())
 
+    def test_stage_workspace_to_tmp_skips_when_background_job_running(self) -> None:
+        (self.task_root / "notes.txt").write_text("hello\n", encoding="utf-8")
+
+        with patch.object(cleanup_mod, "_has_running_background_jobs", return_value=True):
+            batch = cleanup_mod.stage_workspace_to_tmp()
+
+        self.assertIsNone(batch)
+        self.assertTrue((self.task_root / "notes.txt").is_file())
+        self.assertFalse((self.task_root / "tmp").exists())
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Symlink creation requires elevated privileges on Windows",
+    )
+    def test_stage_workspace_replaces_tmp_symlink(self) -> None:
+        outside = Path(self.tmpdir.name) / "outside"
+        outside.mkdir()
+        (self.task_root / "notes.txt").write_text("hello\n", encoding="utf-8")
+        (self.task_root / "tmp").symlink_to(outside, target_is_directory=True)
+
+        batch = cleanup_mod.stage_workspace_to_tmp()
+
+        self.assertIsNotNone(batch)
+        assert batch is not None
+        self.assertEqual(batch.parent, self.task_root / "tmp")
+        self.assertFalse((self.task_root / "tmp").is_symlink())
+        self.assertTrue((batch / "notes.txt").is_file())
+        self.assertEqual(list(outside.iterdir()), [])
+
     def test_recycle_due_tmp_batches_uses_trash_backend_for_expired_batches(self) -> None:
         batch = self.task_root / "tmp" / "idle-old"
         batch.mkdir(parents=True)
@@ -95,6 +124,24 @@ class WorkspaceCleanupTests(unittest.TestCase):
         self.assertEqual(result, [])
         trash_mock.assert_not_called()
         self.assertTrue(batch.exists())
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Symlink creation requires elevated privileges on Windows",
+    )
+    def test_recycle_due_tmp_batches_replaces_tmp_symlink(self) -> None:
+        outside = Path(self.tmpdir.name) / "outside-recycle"
+        outside.mkdir()
+        (self.task_root / "tmp").symlink_to(outside, target_is_directory=True)
+
+        with patch.object(cleanup_mod, "_send_to_platform_trash") as trash_mock:
+            result = cleanup_mod.recycle_due_tmp_batches()
+
+        self.assertEqual(result, [])
+        trash_mock.assert_not_called()
+        self.assertFalse((self.task_root / "tmp").is_symlink())
+        self.assertTrue((self.task_root / "tmp").is_dir())
+        self.assertEqual(list(outside.iterdir()), [])
 
 
 if __name__ == "__main__":

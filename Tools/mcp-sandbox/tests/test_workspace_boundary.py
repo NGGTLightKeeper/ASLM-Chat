@@ -26,6 +26,7 @@ from sandbox import workspace  # noqa: E402
 import sandbox.workspace as workspace_mod  # noqa: E402
 from sandbox.workspace import (  # noqa: E402
     read,
+    read_image,
     write,
     edit,
     describe,
@@ -176,6 +177,19 @@ class WorkspaceBoundaryTests(unittest.TestCase):
             real.unlink(missing_ok=True)
 
     # ── In-container absolute path access ────────────────────────────
+
+    def test_read_rejects_oversized_file_before_loading(self) -> None:
+        big = self.task_root / "big.txt"
+        big.write_text("1234567890", encoding="utf-8")
+        with patch.object(workspace_mod, "MAX_FILE_READ_BYTES", 4):
+            with self.assertRaises(workspace_mod.SandboxToolError) as ctx:
+                read("big.txt")
+        self.assertEqual(ctx.exception.error_type, "file_too_large")
+
+    def test_read_image_rejects_non_workspace_absolute_path(self) -> None:
+        with patch.object(workspace_mod, "IN_CONTAINER", True):
+            with self.assertRaises(ValueError):
+                read_image("/etc/passwd")
 
     def test_validate_allows_absolute_in_container(self) -> None:
         with patch.object(workspace_mod, "IN_CONTAINER", True):
