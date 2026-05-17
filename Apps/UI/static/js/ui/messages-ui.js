@@ -11,6 +11,10 @@ import {
 } from './citations-ui.js';
 import { bindCitationPreviewCards } from './citation-preview-ui.js';
 
+// marked's default GFM `del` allows single-tilde pairs (~x~), which breaks ~ for "approximately".
+// GitHub-style strikethrough is ~~ only; install tokenizer override once.
+let markedStrikethroughDoubleTildeOnlyInstalled = false;
+
 // Message UI.
 // Create helpers for rendering messages, activity timelines, and message actions.
 export function createMessagesUi(context, dependencies) {
@@ -5510,6 +5514,26 @@ export function createMessagesUi(context, dependencies) {
     marked.setOptions({
       breaks: true
     });
+
+    if (!markedStrikethroughDoubleTildeOnlyInstalled) {
+      markedStrikethroughDoubleTildeOnlyInstalled = true;
+      const delDoubleTilde = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
+      marked.use({
+        tokenizer: {
+          del(src) {
+            const cap = delDoubleTilde.exec(src);
+            if (cap) {
+              return {
+                type: 'del',
+                raw: cap[0],
+                text: cap[2],
+                tokens: this.lexer.inlineTokens(cap[2])
+              };
+            }
+          }
+        }
+      });
+    }
 
     configureMermaid();
   }

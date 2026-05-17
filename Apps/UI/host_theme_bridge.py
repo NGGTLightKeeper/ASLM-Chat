@@ -49,6 +49,13 @@ _ASLM_COLOR_KEY_TO_CSS_VAR: Final[dict[str, str]] = {
 }
 
 _HEX_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+_RGBA_FN_RE = re.compile(
+    r"^rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*([01]|0?\.\d+)\s*\)$",
+    re.IGNORECASE,
+)
+
+# sRGB relative luminance (WCAG). Used to pick activity/tool card contrast from the host canvas.
+_LIGHT_SURFACE_LUMINANCE_THRESHOLD: Final[float] = 0.45
 
 
 def normalize_color_to_css(raw: str | None) -> str | None:
@@ -90,6 +97,53 @@ def _effective_theme(payload: dict[str, Any]) -> str:
     return "dark"
 
 
+def _srgb_channel_to_linear(c: float) -> float:
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _relative_luminance_srgb(r: float, g: float, b: float) -> float:
+    """WCAG relative luminance for sRGB channels in 0..1."""
+
+    return (
+        0.2126 * _srgb_channel_to_linear(r)
+        + 0.7152 * _srgb_channel_to_linear(g)
+        + 0.0722 * _srgb_channel_to_linear(b)
+    )
+
+
+def css_color_to_srgb_channels(css: str) -> tuple[float, float, float] | None:
+    """Parse ``#rrggbb`` (from :func:`normalize_color_to_css`) or ``rgba(r,g,b,a)`` into sRGB 0..1."""
+
+    s = str(css or "").strip()
+    if not s:
+        return None
+    if s.startswith("#") and len(s) == 7:
+        try:
+            r = int(s[1:3], 16) / 255.0
+            g = int(s[3:5], 16) / 255.0
+            b = int(s[5:7], 16) / 255.0
+        except ValueError:
+            return None
+        return (r, g, b)
+    m = _RGBA_FN_RE.match(s)
+    if not m:
+        return None
+    r_i, g_i, b_i = (int(m.group(i)) for i in range(1, 4))
+    if not (0 <= r_i <= 255 and 0 <= g_i <= 255 and 0 <= b_i <= 255):
+        return None
+    return (r_i / 255.0, g_i / 255.0, b_i / 255.0)
+
+
+def infer_prefer_light_activity_surfaces(resolved: dict[str, str], fallback_theme: str) -> bool:
+    """Choose light vs dark activity surfaces from the resolved host canvas (not only ``theme``)."""
+
+    bg = resolved.get("--c-bg")
+    ch = css_color_to_srgb_channels(bg) if bg else None
+    if ch is not None:
+        return _relative_luminance_srgb(*ch) >= _LIGHT_SURFACE_LUMINANCE_THRESHOLD
+    return str(fallback_theme or "").strip().lower() == "light"
+
+
 def build_host_theme_template_context() -> dict[str, Any]:
     """Return keys for ``base.html``: CSS variable block, color-scheme, optional JSON."""
 
@@ -118,30 +172,11 @@ def build_host_theme_template_context() -> dict[str, Any]:
         resolved["--c-system-cyan"] = resolved["--c-system-teal"]
 
     theme = _effective_theme(raw)
+    prefer_light_activity = infer_prefer_light_activity_surfaces(resolved, theme)
 
     declarations = [f"  {var}: {value};" for var, value in resolved.items()]
 
-    # Derived soft surfaces from semantic colors (override static rgba tied to old blue).
-    declarations.append("  --surface-blue-soft: color-mix(in srgb, var(--c-primary) 10%, transparent);")
-    declarations.append(
-        "  --c-overlay-blue-strong: color-mix(in srgb, var(--c-primary) 16%, transparent);"
-    )
-    declarations.append("  --focus-ring: color-mix(in srgb, var(--c-primary) 18%, transparent);")
-    declarations.append(
-        "  --surface-purple-soft: color-mix(in srgb, var(--c-system-purple) 12%, transparent);"
-    )
-    declarations.append(
-        "  --surface-purple-strong: color-mix(in srgb, var(--c-system-purple) 15%, transparent);"
-    )
-    declarations.append(
-        "  --surface-green-soft: color-mix(in srgb, var(--c-success) 8%, transparent);"
-    )
-    declarations.append(
-        "  --border-success: color-mix(in srgb, var(--c-success) 40%, transparent);"
-    )
-    declarations.append(
-        "  --text-success: color-mix(in srgb, var(--c-success) 85%, transparent);"
-    )
+    declarations.extend(_derived_theme_declarations(prefer_light_activity))
 
     inner = "\n".join(declarations)
     host_theme_css_variables = f":root {{\n{inner}\n}}"
@@ -152,7 +187,7 @@ def build_host_theme_template_context() -> dict[str, Any]:
         "customThemeId": raw.get("customThemeId"),
         "customThemeName": raw.get("customThemeName"),
     }
-    safe_json = json.dumps(meta, ensure_ascii=False)
+    safe_json = _json_for_script_tag(meta)
 
     return {
         "host_theme_available": True,
@@ -169,3 +204,79 @@ def _empty_context() -> dict[str, Any]:
         "host_theme_css_variables": "",
         "host_theme_json": "{}",
     }
+
+
+def _derived_theme_declarations(prefer_light_surfaces: bool) -> list[str]:
+    """Return semantic UI variables that should follow the resolved host palette."""
+
+    if prefer_light_surfaces:
+        activity_card_bg = "var(--surface-secondary)"
+        activity_card_bg_hover = "color-mix(in srgb, var(--surface-secondary) 94%, var(--c-primary) 6%)"
+        activity_card_subtle_bg = "var(--surface-secondary)"
+        activity_card_hover_subtle_bg = activity_card_bg_hover
+        activity_inner_bg = "color-mix(in srgb, var(--c-text) 4.5%, transparent)"
+        activity_inner_bg_strong = "color-mix(in srgb, var(--c-text) 6.5%, transparent)"
+        activity_card_border = "color-mix(in srgb, var(--surface-secondary) 94%, var(--c-text) 6%)"
+        activity_card_border_hover = "color-mix(in srgb, var(--surface-secondary) 86%, var(--c-primary) 14%)"
+        activity_monochrome_svg_filter = "brightness(0) saturate(100%)"
+    else:
+        activity_card_bg = "color-mix(in srgb, var(--c-text) 4.5%, transparent)"
+        activity_card_bg_hover = "color-mix(in srgb, var(--c-text) 7%, transparent)"
+        activity_card_subtle_bg = "color-mix(in srgb, var(--surface-secondary) 22%, transparent)"
+        activity_card_hover_subtle_bg = "color-mix(in srgb, var(--surface-tertiary) 22%, transparent)"
+        activity_inner_bg = "color-mix(in srgb, var(--c-black) 18%, transparent)"
+        activity_inner_bg_strong = "color-mix(in srgb, var(--c-black) 20%, transparent)"
+        activity_card_border = "color-mix(in srgb, var(--c-text) 10.5%, transparent)"
+        activity_card_border_hover = "color-mix(in srgb, var(--c-text) 16%, transparent)"
+        activity_monochrome_svg_filter = "none"
+
+    return [
+        "  --surface-blue-soft: color-mix(in srgb, var(--c-primary) 10%, transparent);",
+        "  --c-overlay-blue-strong: color-mix(in srgb, var(--c-primary) 16%, transparent);",
+        "  --focus-ring: color-mix(in srgb, var(--c-primary) 18%, transparent);",
+        "  --surface-purple-soft: color-mix(in srgb, var(--c-system-purple) 12%, transparent);",
+        "  --surface-purple-strong: color-mix(in srgb, var(--c-system-purple) 15%, transparent);",
+        "  --surface-green-soft: color-mix(in srgb, var(--c-success) 8%, transparent);",
+        "  --border-success: color-mix(in srgb, var(--c-success) 40%, transparent);",
+        "  --text-success: color-mix(in srgb, var(--c-success) 85%, transparent);",
+        f"  --activity-card-bg: {activity_card_bg};",
+        f"  --activity-card-bg-hover: {activity_card_bg_hover};",
+        f"  --activity-card-border: {activity_card_border};",
+        f"  --activity-card-border-hover: {activity_card_border_hover};",
+        "  --activity-card-shadow: 0 10px 26px color-mix(in srgb, var(--c-black) 14%, transparent);",
+        f"  --activity-card-inner-bg: {activity_inner_bg};",
+        f"  --activity-card-inner-bg-strong: {activity_inner_bg_strong};",
+        f"  --activity-card-subtle-bg: {activity_card_subtle_bg};",
+        f"  --activity-card-hover-subtle-bg: {activity_card_hover_subtle_bg};",
+        "  --activity-on-surface: var(--c-text);",
+        "  --activity-on-surface-muted: color-mix(in srgb, var(--c-text) 72%, transparent);",
+        "  --activity-on-surface-dim: color-mix(in srgb, var(--c-text) 54%, transparent);",
+        "  --activity-status-bg: color-mix(in srgb, var(--c-text) 6%, transparent);",
+        "  --activity-status-border: color-mix(in srgb, var(--c-text) 10%, transparent);",
+        "  --activity-icon-bg: color-mix(in srgb, var(--surface-secondary) 94%, var(--c-text) 6%);",
+        "  --activity-chip-bg: color-mix(in srgb, var(--c-text) 5.5%, transparent);",
+        "  --activity-chip-bg-hover: color-mix(in srgb, var(--c-text) 8.5%, transparent);",
+        f"  --activity-monochrome-svg-filter: {activity_monochrome_svg_filter};",
+        "  --activity-preview-action-bg: color-mix(in srgb, var(--surface-secondary) 86%, var(--c-primary) 14%);",
+        "  --activity-preview-action-bg-hover: color-mix(in srgb, var(--surface-secondary) 76%, var(--c-primary) 24%);",
+        "  --activity-preview-action-border: color-mix(in srgb, var(--c-primary) 34%, var(--c-text) 10%);",
+        "  --activity-image-frame-bg: color-mix(in srgb, var(--surface-secondary) 94%, var(--c-text) 6%);",
+        "  --activity-image-grid-tile: color-mix(in srgb, var(--c-text) 3.5%, transparent);",
+        "  --activity-image-loader-glow: color-mix(in srgb, var(--c-primary) 24%, transparent);",
+        "  --activity-media-track-bg: color-mix(in srgb, var(--c-text) 10%, transparent);",
+        "  --activity-media-track-buffered: color-mix(in srgb, var(--c-text) 22%, transparent);",
+        "  --activity-media-control-bg: color-mix(in srgb, var(--surface-secondary) 88%, var(--c-text) 12%);",
+        "  --activity-media-control-bg-hover: color-mix(in srgb, var(--surface-secondary) 82%, var(--c-text) 18%);",
+        "  --activity-media-control-border: color-mix(in srgb, var(--c-text) 14%, transparent);",
+    ]
+
+
+def _json_for_script_tag(value: dict[str, Any]) -> str:
+    """Return JSON that is safe to embed in an application/json script tag."""
+
+    return (
+        json.dumps(value, ensure_ascii=False)
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+    )
