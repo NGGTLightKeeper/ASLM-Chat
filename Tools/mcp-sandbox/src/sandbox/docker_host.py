@@ -1220,17 +1220,63 @@ def _read_docker_job_file(
     if job.container_job_dir is None:
         return ""
     path = f"{job.container_job_dir.rstrip('/')}/{stream}"
+    offset_attr = f"{stream}_offset"
+    offset = int(getattr(job, offset_attr)) if incremental else 0
+    head_ratio = min(0.9, max(0.1, OUTPUT_HEAD_RATIO))
+    head_bytes = max(1, int(MAX_OUTPUT_BYTES * head_ratio))
+    tail_bytes = max(1, MAX_OUTPUT_BYTES - head_bytes)
+    reader = (
+        "python3 - "
+        f"{shlex.quote(path)} {offset} {MAX_OUTPUT_BYTES} {head_bytes} {tail_bytes} <<'PY'\n"
+        "from __future__ import annotations\n"
+        "import os, sys\n"
+        "path = sys.argv[1]\n"
+        "start = max(0, int(sys.argv[2]))\n"
+        "max_bytes = max(1, int(sys.argv[3]))\n"
+        "head_bytes = max(1, int(sys.argv[4]))\n"
+        "tail_bytes = max(1, int(sys.argv[5]))\n"
+        "try:\n"
+        "    size = os.path.getsize(path)\n"
+        "except OSError:\n"
+        "    raise SystemExit(0)\n"
+        "start = min(start, size)\n"
+        "remaining = size - start\n"
+        "with open(path, 'rb') as fh:\n"
+        "    if remaining <= max_bytes:\n"
+        "        fh.seek(start)\n"
+        "        data = fh.read(remaining)\n"
+        "    else:\n"
+        "        fh.seek(start)\n"
+        "        head = fh.read(head_bytes)\n"
+        "        fh.seek(max(start, size - tail_bytes))\n"
+        "        tail = fh.read(tail_bytes)\n"
+        "        marker = (\n"
+        "            b'\\n\\n[output truncated while reading docker job spool: '\n"
+        "            + f'showed first {head_bytes} bytes and last {tail_bytes} bytes '\n"
+        "              f'of {remaining} new bytes'.encode('ascii')\n"
+        "            + b']\\n\\n'\n"
+        "        )\n"
+        "        data = head + marker + tail\n"
+        "sys.stdout.write(data.decode('utf-8', errors='replace').replace('\\r\\n', '\\n'))\n"
+        "PY"
+    )
     result = _docker_exec_shell(
-        f"cat {shlex.quote(path)} 2>/dev/null || true", timeout=10
+        reader,
+        timeout=10,
     )
     content = result.stdout if result.returncode == 0 else ""
     if not incremental:
         return content
-    offset_attr = f"{stream}_offset"
-    offset = int(getattr(job, offset_attr))
-    new_content = content[offset:]
-    setattr(job, offset_attr, len(content))
-    return new_content
+    size_result = _docker_exec_shell(
+        f"wc -c < {shlex.quote(path)} 2>/dev/null || true",
+        timeout=10,
+    )
+    try:
+        new_offset = int((size_result.stdout or "").strip())
+    except ValueError:
+        new_offset = offset
+    setattr(job, offset_attr, max(offset, new_offset))
+    return content
 
 
 def _refresh_docker_job(job: BackgroundJob) -> BackgroundJob:
@@ -1277,13 +1323,15 @@ def foreground_background_job(job_id: str) -> dict:
     job = _refresh_docker_job(JOB_REGISTRY.get(job_id))
     stdout = _read_docker_job_file(job, "stdout", incremental=True)
     stderr = _read_docker_job_file(job, "stderr", incremental=True)
+    spool_trunc_out = "[output truncated while reading docker job spool:" in stdout
+    spool_trunc_err = "[output truncated while reading docker job spool:" in stderr
     stdout, trunc_out = _truncate(stdout)
     stderr, trunc_err = _truncate(stderr)
     return {
         **job.to_result(),
         "new_stdout": stdout,
         "new_stderr": stderr,
-        "truncated": trunc_out or trunc_err,
+        "truncated": spool_trunc_out or spool_trunc_err or trunc_out or trunc_err,
     }
 
 
@@ -1382,6 +1430,8 @@ def _exec_bash_docker_background(
         if job.status != "running":
             stdout = _read_docker_job_file(job, "stdout", incremental=False)
             stderr = _read_docker_job_file(job, "stderr", incremental=False)
+            spool_trunc_out = "[output truncated while reading docker job spool:" in stdout
+            spool_trunc_err = "[output truncated while reading docker job spool:" in stderr
             stdout, trunc_out = _truncate(stdout)
             stderr, trunc_err = _truncate(stderr)
             if on_progress is not None:
@@ -1392,7 +1442,7 @@ def _exec_bash_docker_background(
                 "stderr": stderr,
                 "error": None if job.exit_code == 0 else f"Exit code: {job.exit_code}",
                 "elapsed_ms": int((time.time() - start_time) * 1000),
-                "truncated": trunc_out or trunc_err,
+                "truncated": spool_trunc_out or spool_trunc_err or trunc_out or trunc_err,
                 "cwd": normalize_model_relative_path(cwd),
             }
 
@@ -1400,6 +1450,8 @@ def _exec_bash_docker_background(
         if elapsed_s >= timeout_s:
             stdout = _read_docker_job_file(job, "stdout", incremental=True)
             stderr = _read_docker_job_file(job, "stderr", incremental=True)
+            spool_trunc_out = "[output truncated while reading docker job spool:" in stdout
+            spool_trunc_err = "[output truncated while reading docker job spool:" in stderr
             stdout, trunc_out = _truncate(stdout)
             stderr, trunc_err = _truncate(stderr)
             return _background_error_result(
@@ -1409,7 +1461,7 @@ def _exec_bash_docker_background(
                 start_time=start_time,
                 timeout_s=timeout_s,
                 cwd=cwd,
-                truncated=trunc_out or trunc_err,
+                truncated=spool_trunc_out or spool_trunc_err or trunc_out or trunc_err,
             )
         if on_progress is not None:
             progress = min(95.0, max(5.0, (elapsed_s / timeout_s) * 90.0))

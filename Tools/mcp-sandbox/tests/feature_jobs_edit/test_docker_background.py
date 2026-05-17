@@ -85,6 +85,42 @@ class DockerBackgroundTests(unittest.TestCase):
         self.assertEqual(status["exit_code"], 0)
         self.assertEqual(status["new_stdout"], "ok\n")
 
+    def test_foreground_docker_job_reads_long_single_line_with_bounded_reader(self) -> None:
+        job = docker_host_mod.JOB_REGISTRY.create(
+            command="python3 -c 'print(\"A\" * 120000)'",
+            cwd=".",
+            runtime="docker",
+            pid=9876,
+            container_job_dir=TEST_JOB_DIR,
+            job_id="bg_12345678",
+        )
+        calls: list[str] = []
+        marker = (
+            "\n\n[output truncated while reading docker job spool: "
+            "showed first 30000 bytes and last 30000 bytes of 120000 new bytes]\n\n"
+        )
+
+        def fake_run(args, timeout=30, **kwargs):
+            script = args[-1]
+            calls.append(script)
+            if "/status" in script and "exit_code" in script:
+                return RunResult(stdout="done\n0\n")
+            if "python3 -" in script and "/stdout" in script:
+                self.assertNotIn("cat /workspace/.sandbox_jobs/bg_12345678/stdout", script)
+                return RunResult(stdout=("A" * 100) + marker + ("B" * 100))
+            if "python3 -" in script and "/stderr" in script:
+                return RunResult(stdout="")
+            if "wc -c" in script:
+                return RunResult(stdout="120000\n")
+            return RunResult()
+
+        with patch.object(docker_host_mod, "_run_command", side_effect=fake_run):
+            status = docker_host_mod.foreground_background_job(job.job_id)
+
+        self.assertTrue(status["truncated"])
+        self.assertIn("[output truncated while reading docker job spool:", status["new_stdout"])
+        self.assertTrue(any("python3 -" in call and "/stdout" in call for call in calls))
+
     def test_kill_docker_job_uses_container_pid_file(self) -> None:
         docker_host_mod.JOB_REGISTRY.create(
             command="pytest",
