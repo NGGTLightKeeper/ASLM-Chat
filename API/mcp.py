@@ -1197,13 +1197,16 @@ def _serialize_server(server_definition: dict[str, Any]) -> dict[str, Any]:
     """Return the frontend-facing representation of one server."""
 
     tools = [_serialize_tool(tool_definition) for tool_definition in server_definition["tools"]]
-    return {
+    payload: dict[str, Any] = {
         "id": server_definition["id"],
         "name": server_definition["name"],
         "description": server_definition["description"],
         "tool_count": len(tools),
         "tools": tools,
     }
+    if server_definition.get("user_mcp"):
+        payload["user_mcp"] = True
+    return payload
 
 # Build Ollama-compatible tool definitions.
 def build_ollama_tools(
