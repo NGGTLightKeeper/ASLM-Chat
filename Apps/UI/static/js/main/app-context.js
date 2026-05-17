@@ -52,6 +52,9 @@ export function createAppContext() {
     $presetDeleteBtn: $('#ollamaPresetDeleteBtn'),
     $groupTools: $('#group-tools'),
     $dividerTools: $('#divider-tools'),
+    $groupMcp: $('#group-mcp'),
+    $dividerMcp: $('#divider-mcp'),
+    $mcpSettingsContent: $('#mcpSettingsContent'),
     $toolInspectorModal: $('#toolInspectorModal'),
     $chatItemDropdown: $('#chatItemDropdown'),
     $systemPrompt: $('#systemPrompt'),
@@ -72,7 +75,13 @@ export function createAppContext() {
   };
 
   const runtimeSettings = parseJsonScript('runtimeSettingsData') || {};
-  const defaultAvailableToolServers = parseJsonScript('availableToolServersData') || [];
+  const defaultAllToolServers = parseJsonScript('availableToolServersData') || [];
+  const defaultAvailableToolServers = defaultAllToolServers.filter(function filterBundled(server) {
+    return !server || !server.user_mcp;
+  });
+  const defaultUserMcpToolServers = defaultAllToolServers.filter(function filterUserMcp(server) {
+    return server && server.user_mcp;
+  });
   const uiIconPaths = parseJsonScript('uiIconPathsData') || {};
 
   const icons = {
@@ -131,6 +140,7 @@ export function createAppContext() {
       runtimeSettings,
       defaultAvailableToolServers,
       availableToolServers: Array.isArray(defaultAvailableToolServers) ? defaultAvailableToolServers.slice() : [],
+      userMcpToolServers: Array.isArray(defaultUserMcpToolServers) ? defaultUserMcpToolServers.slice() : [],
       selectedToolServerIds: new Set(),
       currentChatId: null,
       engineSelectionVersion: 0,
