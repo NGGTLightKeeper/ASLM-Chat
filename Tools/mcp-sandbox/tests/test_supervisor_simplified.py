@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -26,7 +27,14 @@ from sandbox.workspace import find, resolve_model_path, task_root  # noqa: E402
 def _setup_task_root() -> None:
     tr = task_root()
     if tr.exists():
-        shutil.rmtree(tr)
+        for attempt in range(3):
+            try:
+                shutil.rmtree(tr)
+                break
+            except OSError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.1)
     tr.mkdir(parents=True, exist_ok=True)
 
 

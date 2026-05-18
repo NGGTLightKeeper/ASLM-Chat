@@ -90,10 +90,6 @@ SUPERVISOR_SRC_HOST = os.getenv(
 
 # Import and sharing settings.
 
-LM_STUDIO_USER_FILES = os.getenv(
-    "LM_STUDIO_USER_FILES",
-    os.path.expanduser("~/.lmstudio/user-files"),
-)
 IMPORT_ROOTS_ENV = os.getenv("SANDBOX_IMPORT_ROOTS", "")
 
 # Execution limits.
@@ -299,9 +295,6 @@ def get_allowed_import_roots() -> list[str]:
         raw_roots.extend(
             item for item in IMPORT_ROOTS_ENV.split(os.pathsep) if item.strip()
         )
-
-    if LM_STUDIO_USER_FILES:
-        raw_roots.append(LM_STUDIO_USER_FILES)
 
     normalized_roots: list[str] = []
     seen: set[str] = set()

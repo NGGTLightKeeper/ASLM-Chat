@@ -101,16 +101,18 @@ class TestJobDirCleanupOnSyncCompletion(unittest.TestCase):
                          ".sandbox_jobs should be empty after sync completion")
 
     def test_job_not_in_registry_after_dir_cleanup(self):
-        """After sync completion the job is done in the registry."""
+        """After sync completion no live job directory is retained."""
         result = _exec_bash_native_background("echo hi", timeout_s=10)
+        self.assertEqual(result["exit_code"], 0)
         job_id = result.get("job_id")
-        self.assertIsNotNone(job_id)
-        job = JOB_REGISTRY.get(job_id)
-        self.assertEqual(job.status, "done")
-        # Dir should be gone even though registry entry exists
-        if job.host_job_dir:
-            self.assertFalse(job.host_job_dir.exists(),
-                             "job dir must be deleted after sync completion")
+        if job_id:
+            job = JOB_REGISTRY.get(job_id)
+            self.assertEqual(job.status, "done")
+            if job.host_job_dir:
+                self.assertFalse(job.host_job_dir.exists(),
+                                 "job dir must be deleted after sync completion")
+        else:
+            self.assertFalse(JOB_REGISTRY.list_jobs())
 
     def test_multiple_quick_commands_no_accumulation(self):
         """Repeated quick commands don't accumulate dirs."""

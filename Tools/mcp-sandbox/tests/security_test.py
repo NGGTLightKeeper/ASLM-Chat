@@ -123,19 +123,17 @@ for path, label in ABSOLUTE_PATHS:
     )
 
 check(
-    "legacy task/ prefix tolerated",
+    "task/ prefix is a normal relative directory",
     expect_raise=False,
     fn=lambda: validate_model_path("task/secret.txt"),
 )
 check(
-    "legacy task alias tolerated",
+    "task path is not normalized as workspace alias",
     expect_raise=False,
-    fn=lambda: validate_model_path("task"),
-)
-check(
-    "task\\ prefix normalized",
-    expect_raise=False,
-    fn=lambda: normalize_model_relative_path(r"task\pages\example.json"),
+    fn=lambda: (
+        normalize_model_relative_path(r"task\pages\example.json") == "task/pages/example.json"
+        or (_ for _ in ()).throw(AssertionError("task alias still active"))
+    ),
 )
 
 print()
@@ -264,9 +262,10 @@ print(f"\n  {INFO}  Project root ({project_root}) import allowed: {allowed_proje
 if allowed_project:
     print("  WARNING  Project root is inside allowed import roots.")
 
-lms_dir = Path(config.LM_STUDIO_USER_FILES)
-allowed_lms = is_allowed_host_import(lms_dir)
-print(f"  {INFO}  LM Studio user-files ({lms_dir}) import allowed: {allowed_lms}")
+print(
+    f"  {INFO}  Explicit import roots: "
+    f"{config.ALLOWED_IMPORT_ROOTS if config.ALLOWED_IMPORT_ROOTS else '(none)'}"
+)
 
 
 # HTTP share path checks.

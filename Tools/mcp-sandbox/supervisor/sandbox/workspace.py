@@ -34,14 +34,13 @@ TEXT_SAMPLE_BYTES = 8192
 IMAGE_MIME_PREFIX = "image/"
 TEXT_MIME_PREFIX = "text/"
 MAX_FILE_READ_BYTES = max(MAX_READ_BYTES, MAX_IMAGE_PREVIEW_BYTES, TEXT_SAMPLE_BYTES)
-LEGACY_MODEL_ROOT_ALIASES = ("task",)
 LEGACY_UPLOAD_ROOT_PREFIXES = ("mnt/data/User",)
 
 
 def model_root_aliases() -> tuple[str, ...]:
     """Return accepted model-facing workspace root aliases."""
 
-    aliases = [DEFAULT_TASK_DIR, *LEGACY_MODEL_ROOT_ALIASES]
+    aliases = [DEFAULT_TASK_DIR]
     seen: set[str] = set()
     result: list[str] = []
     for alias in aliases:
