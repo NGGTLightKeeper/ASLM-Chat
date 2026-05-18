@@ -289,6 +289,12 @@
             }
         }
     },
+    "moduleInterop": {
+        "protocolVersion": 1,
+        "client": {
+            "enabled": true
+        }
+    },
     "status": {
         "installed": false,
         "enabled": false,
