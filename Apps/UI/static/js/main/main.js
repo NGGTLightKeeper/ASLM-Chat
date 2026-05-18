@@ -4,6 +4,7 @@ import { createAttachmentsUi } from '../ui/attachments-ui.js';
 import { createBrowserPortalUi } from '../ui/browser-portal-ui.js';
 import { createChatHistoryUi } from '../ui/chat-history-ui.js';
 import { createMessagesUi } from '../ui/messages-ui.js';
+import { createModelSelectorUi } from '../ui/model-selector-ui.js?v=custom-model-selector-7';
 import { createParametersUi } from '../ui/parameters-ui.js';
 import { createToolInspector } from '../ui/tool-inspector.js';
 import { createAppContext } from './app-context.js';
@@ -20,6 +21,7 @@ $(function initChatApp() {
   const browserPortalUi = createBrowserPortalUi(context);
   const attachmentsUi = createAttachmentsUi(context);
   const parametersUi = createParametersUi(context);
+  const modelSelectorUi = createModelSelectorUi(context);
   const messagesUi = createMessagesUi(context, {
     attachmentUi: attachmentsUi,
     browserPortalUi,
@@ -47,6 +49,7 @@ $(function initChatApp() {
     engineManager,
     historyUi,
     messagesUi,
+    modelSelectorUi,
     parametersUi
   });
 

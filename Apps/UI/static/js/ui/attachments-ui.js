@@ -50,6 +50,7 @@ export function createAttachmentsUi(context) {
     dom.$attachBtn.show();
     dom.$attachBtnConv.show();
     dom.$modelVisionIndicator.toggleClass('is-visible', state.visionState.supported);
+    $(document).trigger('aslm:modelCapabilitiesChanged');
   }
 
   // Clear all pending attachments from both composers.
