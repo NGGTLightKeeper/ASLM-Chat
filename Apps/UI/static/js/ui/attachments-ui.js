@@ -49,8 +49,7 @@ export function createAttachmentsUi(context) {
   function updateAttachmentControls() {
     dom.$attachBtn.show();
     dom.$attachBtnConv.show();
-    dom.$visionBadge.toggle(state.visionState.supported);
-    dom.$visionBadgeConv.toggle(state.visionState.supported);
+    dom.$modelVisionIndicator.toggleClass('is-visible', state.visionState.supported);
   }
 
   // Clear all pending attachments from both composers.

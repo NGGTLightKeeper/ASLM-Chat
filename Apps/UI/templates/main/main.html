@@ -30,15 +30,21 @@
                             <textarea class="chat-input" id="chatInput" placeholder="Message ASLM..." rows="1"></textarea>
                             <div class="input-bottom-bar">
                                 <div class="input-bottom-left">
-                                    <button class="attach-btn" id="attachBtn" style="display:none;" title="Attach files" aria-label="Attach files">
-                                        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/paperclip.svg' %}#icon"></use></svg>
+                                    <button class="composer-menu-btn" id="composerMenuBtn" type="button" title="Composer menu" aria-label="Composer menu" aria-expanded="false" aria-controls="composerMenuPopover">
+                                        <svg width="18" height="18" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"><use href="{% static 'img/ui/add-2.svg' %}#icon"></use></svg>
                                     </button>
+                                    <div class="composer-menu-popover" id="composerMenuPopover" role="menu" aria-label="Composer menu" style="display:none;">
+                                        <button class="composer-menu-action attach-btn" id="attachBtn" type="button" style="display:none;" role="menuitem" title="Attach files" aria-label="Attach files">
+                                            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/paperclip.svg' %}#icon"></use></svg>
+                                            <span>Attach files</span>
+                                        </button>
+                                        <div class="composer-menu-tools" data-tool-menu style="display:none;">
+                                            <div class="composer-menu-section-title">Tools</div>
+                                            <div class="composer-tool-list"></div>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div class="input-bottom-center">
-                                    <div class="vision-badge" id="visionBadge" style="display:none;" title="Vision model">
-                                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/eye.svg' %}#icon"></use></svg>
-                                        Vision
-                                    </div>
                                     <button class="think-toggle-btn" id="thinkToggleBtn" style="display:none;" title="Toggle thinking">
                                         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/think.svg' %}#icon"></use></svg>
                                         Think
@@ -75,19 +81,21 @@
                 <textarea class="chat-input" id="chatInputConv" placeholder="Message ASLM..." rows="1"></textarea>
                 <div class="input-bottom-bar">
                     <div class="input-bottom-left">
-                        <button class="attach-btn" id="attachBtnConv" style="display:none;" title="Attach files" aria-label="Attach files">
-                            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/paperclip.svg' %}#icon"></use></svg>
+                        <button class="composer-menu-btn" id="composerMenuBtnConv" type="button" title="Composer menu" aria-label="Composer menu" aria-expanded="false" aria-controls="composerMenuPopoverConv">
+                            <svg width="18" height="18" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"><use href="{% static 'img/ui/add-2.svg' %}#icon"></use></svg>
                         </button>
+                        <div class="composer-menu-popover" id="composerMenuPopoverConv" role="menu" aria-label="Composer menu" style="display:none;">
+                            <button class="composer-menu-action attach-btn" id="attachBtnConv" type="button" style="display:none;" role="menuitem" title="Attach files" aria-label="Attach files">
+                                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/paperclip.svg' %}#icon"></use></svg>
+                                <span>Attach files</span>
+                            </button>
+                            <div class="composer-menu-tools" data-tool-menu style="display:none;">
+                                <div class="composer-menu-section-title">Tools</div>
+                                <div class="composer-tool-list"></div>
+                            </div>
+                        </div>
                     </div>
                     <div class="input-bottom-center">
-                        <div class="vision-badge" id="visionBadgeConv" style="display:none;" title="Vision model">
-                            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/eye.svg' %}#icon"></use></svg>
-                            Vision
-                        </div>
-                        <button class="tool-toggle-btn" id="toolToggleBtnConv" style="display:none;" title="Select tool server">
-                            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/tool-server.svg' %}#icon"></use></svg>
-                            <span class="tool-toggle-label">Tools</span>
-                        </button>
                         <button class="think-toggle-btn" id="thinkToggleBtnConv" style="display:none;" title="Toggle thinking">
                             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/think.svg' %}#icon"></use></svg>
                             Think
@@ -189,15 +197,20 @@
                     <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/chevron-down-markup.svg' %}#icon"></use></svg>
                 </div>
                 <div class="settings-section-content">
-                    <select class="model-selector" id="modelSelector">
-                        {% if models %}
-                            {% for model in models %}
-                                <option value="{{ model }}">{{ model }}</option>
-                            {% endfor %}
-                        {% else %}
-                            <option value="">Models load on demand</option>
-                        {% endif %}
-                    </select>
+                    <div class="model-selector-wrap">
+                        <select class="model-selector" id="modelSelector">
+                            {% if models %}
+                                {% for model in models %}
+                                    <option value="{{ model }}">{{ model }}</option>
+                                {% endfor %}
+                            {% else %}
+                                <option value="">Models load on demand</option>
+                            {% endif %}
+                        </select>
+                        <span class="model-vision-indicator" id="modelVisionIndicator" title="Vision model" aria-label="Vision model">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/eye.svg' %}#icon"></use></svg>
+                        </span>
+                    </div>
                     <div class="setting-group" id="ollamaPresetGroup" style="display:none;">
                         <label class="setting-label" for="ollamaPresetSelector">Preset</label>
                         <select class="model-selector" id="ollamaPresetSelector">

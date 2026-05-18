@@ -69,44 +69,65 @@ export function createParametersUi(context) {
     renderToolControls();
   }
 
+  function toolServerIconClass(server) {
+    const text = `${server && server.id ? server.id : ''} ${server && server.name ? server.name : ''}`.toLowerCase();
+    if (text.includes('browser')) {
+      return 'is-browser-agent';
+    }
+    if (text.includes('sandbox')) {
+      return 'is-sandbox';
+    }
+    if (text.includes('web') || text.includes('search')) {
+      return 'is-web-search';
+    }
+    return 'is-generic-tool';
+  }
+
+  function renderToolServerList($target, hasToolSupport) {
+    $target.empty();
+    if (!hasToolSupport) {
+      return;
+    }
+
+    state.availableToolServers.forEach(function renderServer(server) {
+      const serverId = normalizeToolServerId(server.id);
+      const label = server.name || serverId;
+      const checked = state.selectedToolServerIds.has(serverId);
+
+      const $row = $('<label class="tool-server-row composer-tool-row">');
+      const $icon = $('<span class="composer-tool-icon">').addClass(toolServerIconClass(server)).attr('aria-hidden', 'true');
+      const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
+      const $name = $('<span class="tool-server-name">').text(label);
+
+      $checkbox.on('change', function onChange() {
+        if (this.checked) {
+          state.selectedToolServerIds.add(serverId);
+        } else {
+          state.selectedToolServerIds.delete(serverId);
+        }
+        renderToolControls();
+      });
+
+      $row.append($icon).append($name).append($checkbox);
+      $target.append($row);
+    });
+  }
+
   // Rebuild the tool server checkbox list from the current state.
   function renderToolControls() {
     const hasToolSupport = state.toolState.supported
       && Array.isArray(state.availableToolServers)
       && state.availableToolServers.length > 0;
 
-    dom.$groupTools.toggle(hasToolSupport);
-    dom.$dividerTools.toggle(hasToolSupport);
+    dom.$groupTools.hide();
+    dom.$dividerTools.hide();
+    dom.$composerToolMenus.toggle(hasToolSupport);
 
     const $content = dom.$groupTools.find('.settings-section-content');
     $content.empty();
-
-    if (hasToolSupport) {
-      const $list = $('<div class="tool-server-list" id="toolServerList">');
-      state.availableToolServers.forEach(function renderServer(server) {
-        const serverId = normalizeToolServerId(server.id);
-        const toolCount = Number(server.tool_count || (server.tools || []).length || 0);
-        const label = toolCount > 0 ? `${server.name || serverId} (${toolCount} tools)` : (server.name || serverId);
-        const checked = state.selectedToolServerIds.has(serverId);
-
-        const $row = $('<label class="tool-server-row">');
-        const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
-        const $name = $('<span class="tool-server-name">').text(label);
-
-        $checkbox.on('change', function onChange() {
-          if (this.checked) {
-            state.selectedToolServerIds.add(serverId);
-          } else {
-            state.selectedToolServerIds.delete(serverId);
-          }
-        });
-
-        $row.append($checkbox).append($name);
-        $list.append($row);
-      });
-
-      $content.append($list);
-    }
+    dom.$composerToolLists.each(function renderComposerToolList() {
+      renderToolServerList($(this), hasToolSupport);
+    });
 
     renderMcpControls();
   }

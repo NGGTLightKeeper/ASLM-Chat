@@ -84,6 +84,47 @@ export function bindEventHandlers(context, dependencies) {
     });
   });
 
+  function closeComposerMenus() {
+    dom.$composerMenuPopover.add(dom.$composerMenuPopoverConv).hide();
+    dom.$composerMenuBtn.add(dom.$composerMenuBtnConv)
+      .removeClass('is-open')
+      .attr('aria-expanded', 'false');
+  }
+
+  function toggleComposerMenu($button, $popover) {
+    const willOpen = !$popover.is(':visible');
+    closeComposerMenus();
+    if (!willOpen) {
+      return;
+    }
+    $popover.show();
+    $button.addClass('is-open').attr('aria-expanded', 'true');
+  }
+
+  dom.$composerMenuBtn.on('click', function onComposerMenuClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleComposerMenu(dom.$composerMenuBtn, dom.$composerMenuPopover);
+  });
+
+  dom.$composerMenuBtnConv.on('click', function onComposerMenuConvClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleComposerMenu(dom.$composerMenuBtnConv, dom.$composerMenuPopoverConv);
+  });
+
+  $(document).on('click', function onComposerMenuDocumentClick(event) {
+    if (!$(event.target).closest('.composer-menu-popover, .composer-menu-btn').length) {
+      closeComposerMenus();
+    }
+  });
+
+  $(document).on('keydown', function onComposerMenuKeydown(event) {
+    if (event.key === 'Escape') {
+      closeComposerMenus();
+    }
+  });
+
   $activityRoots.on('click', '.msg-search-chip:not(.msg-search-chip--more)', function onSearchChipClick(event) {
     event.stopPropagation();
   });
@@ -190,10 +231,12 @@ export function bindEventHandlers(context, dependencies) {
   });
 
   $(document).on('click', '#attachBtn', function onAttachClick() {
+    closeComposerMenus();
     dom.$imageInput.attr('accept', '*/*').prop('disabled', false).trigger('click');
   });
 
   $(document).on('click', '#attachBtnConv', function onAttachConvClick() {
+    closeComposerMenus();
     dom.$imageInputConv.attr('accept', '*/*').prop('disabled', false).trigger('click');
   });
 
