@@ -37,7 +37,10 @@ QUALITY GATE (enforced automatically):
     are free and do not count toward the limit, but they also do not reduce
     the existing content-word count: adding operators cannot make an
     overlong query valid. Plain filler words do.
-
+  If high effort is exhausted:
+  - retry the good query with effort="medium"; if needed, use effort="low" for
+    additional discovery and read_page for shortlisted URLs.
+    
 OPERATORS (ASCII only - never translate):
   site:domain.com           restrict to domain and subdomains
   -site:domain.com          exclude domain
