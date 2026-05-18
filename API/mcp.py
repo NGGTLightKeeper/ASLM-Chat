@@ -16,6 +16,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from queue import Queue
 from types import ModuleType
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -32,6 +33,10 @@ WORKER_FILE = Path(__file__).resolve().parent.parent / "Services" / "tool_worker
 SERVER_DISPATCHER_NAMES = ("call_tool", "run_tool", "execute_tool", "execute")
 SERVER_METADATA_NAMES = ("MCP_SERVER", "SERVER")
 TOOL_HANDLER_NAMES = ("TOOL_HANDLERS", "TOOL_EXECUTORS")
+WORKER_RESPONSE_IDLE_TIMEOUT_SECONDS = 20.0
+WORKER_TIMEOUT_BUFFER_SECONDS = 45.0
+WORKER_DEFAULT_TIMEOUT_SECONDS = 180.0
+WORKER_MAX_TIMEOUT_SECONDS = 7200.0
 
 _SERVER_CACHE_SIGNATURE: tuple[tuple[str, int], ...] | None = None
 _SERVER_CACHE: dict[str, dict[str, Any]] = {}
@@ -99,11 +104,11 @@ class AsyncCallableRunner:
             self._thread.start()
             self._ready.wait()
 
-    def run(self, coro: Any) -> Any:
+    def run(self, coro: Any, *, timeout: float | None = None) -> Any:
         self.ensure_started()
         assert self._loop is not None
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result()
+        return future.result(timeout=timeout)
 
     def close(self) -> None:
         loop = self._loop
@@ -166,7 +171,13 @@ class ExternalWorkerSession:
             bufsize=1,
         )
 
-    def request(self, operation: str, payload: dict[str, Any] | None = None) -> Any:
+    def request(
+        self,
+        operation: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        timeout_s: float | None = None,
+    ) -> Any:
         """Send one request to the worker process and return its result."""
 
         with self.lock:
@@ -186,7 +197,12 @@ class ExternalWorkerSession:
                 try:
                     self.process.stdin.write(json.dumps(request_payload, ensure_ascii=False) + "\n")
                     self.process.stdin.flush()
-                    raw_response = self.process.stdout.readline()
+                    raw_response = self._read_response_line(timeout_s or _worker_timeout_seconds(operation, payload))
+                except TimeoutError as exc:
+                    last_error = exc
+                    raw_response = ""
+                    self.close()
+                    break
                 except (BrokenPipeError, OSError) as exc:
                     last_error = exc
                     raw_response = ""
@@ -218,6 +234,48 @@ class ExternalWorkerSession:
 
             return envelope.get("result")
 
+    def _read_response_line(self, timeout_s: float) -> str:
+        """Read worker protocol lines until a final envelope arrives."""
+
+        process = self.process
+        if process is None or process.stdout is None:
+            return ""
+
+        deadline = time.monotonic() + max(1.0, float(timeout_s))
+        while True:
+            lines: Queue[str] = Queue()
+
+            def reader() -> None:
+                try:
+                    lines.put(process.stdout.readline())
+                except Exception:
+                    lines.put("")
+
+            thread = threading.Thread(target=reader, name="aslm-tool-worker-readline", daemon=True)
+            thread.start()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.close()
+                raise TimeoutError(f"Tool worker timed out after {timeout_s:.0f}s for {self.server_file}.")
+            wait_s = min(WORKER_RESPONSE_IDLE_TIMEOUT_SECONDS, remaining)
+            thread.join(timeout=wait_s)
+            if thread.is_alive():
+                self.close()
+                raise TimeoutError(
+                    f"Tool worker produced no heartbeat or result within {wait_s:.0f}s for {self.server_file}."
+                )
+
+            raw_line = lines.get()
+            if not raw_line:
+                return ""
+            try:
+                envelope = json.loads(raw_line)
+            except json.JSONDecodeError:
+                return raw_line
+            if isinstance(envelope, dict) and envelope.get("event") == "heartbeat":
+                continue
+            return raw_line
+
     def close(self) -> None:
         """Stop the worker process if it is running."""
 
@@ -247,6 +305,21 @@ def _print_runtime_event(message: str) -> None:
     """Emit one console-visible runtime event."""
 
     print(f"[ASLM-Chat] {message}", flush=True)
+
+
+def _worker_timeout_seconds(operation: str, payload: dict[str, Any] | None = None) -> float:
+    """Return a wall-clock timeout for one worker request."""
+
+    timeout_s = WORKER_DEFAULT_TIMEOUT_SECONDS
+    payload = payload if isinstance(payload, dict) else {}
+    if operation == "call":
+        arguments = payload.get("arguments")
+        if isinstance(arguments, dict):
+            try:
+                timeout_s = float(arguments.get("timeout_s") or timeout_s)
+            except (TypeError, ValueError):
+                timeout_s = WORKER_DEFAULT_TIMEOUT_SECONDS
+    return min(WORKER_MAX_TIMEOUT_SECONDS, max(1.0, timeout_s + WORKER_TIMEOUT_BUFFER_SECONDS))
 
 
 # Check whether debug logging is enabled.
@@ -841,7 +914,11 @@ def _run_worker(
     """Run a tool worker operation and return its result payload."""
 
     if persistent:
-        return _get_worker_session(server_file).request(operation, payload)
+        return _get_worker_session(server_file).request(
+            operation,
+            payload,
+            timeout_s=_worker_timeout_seconds(operation, payload),
+        )
 
     python_path = _get_worker_python(server_file)
     if python_path is None:
@@ -858,6 +935,7 @@ def _run_worker(
         cwd=str(server_file.parent),
         env=_venv_subprocess_env(python_path),
         check=False,
+        timeout=_worker_timeout_seconds(operation, payload),
     )
 
     stdout = (result.stdout or "").strip()

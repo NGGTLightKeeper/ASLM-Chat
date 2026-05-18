@@ -665,6 +665,31 @@ class UploadFilesApiTests(SimpleTestCase):
         finally:
             temp_path.unlink(missing_ok=True)
 
+    # Test shared-file downloads are limited to the sandbox workspace.
+    def test_shared_file_download_rejects_project_absolute_path(self):
+        response = self.client.get(
+            reverse("shared_file_download_api"),
+            {"path": str(Path(__file__).resolve())},
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    # Test container-style sandbox paths are still mapped to the host sandbox.
+    def test_shared_file_download_allows_container_sandbox_path(self):
+        sandbox_file = Path("Tools/mcp-sandbox/_sandbox/User/shared-test.txt")
+        sandbox_file.parent.mkdir(parents=True, exist_ok=True)
+        sandbox_file.write_text("shared ok", encoding="utf-8")
+        try:
+            response = self.client.get(
+                reverse("shared_file_download_api"),
+                {"path": "/workspace/_sandbox/User/shared-test.txt"},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(b"".join(response.streaming_content), b"shared ok")
+        finally:
+            sandbox_file.unlink(missing_ok=True)
+
     # Test empty upload requests fail before returning a card payload.
     def test_upload_api_requires_files(self):
         response = self.client.post(reverse("uploads_api"), {})

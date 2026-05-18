@@ -1285,8 +1285,21 @@ def _refresh_docker_job(job: BackgroundJob) -> BackgroundJob:
     job_dir = shlex.quote(job.container_job_dir)
     result = _docker_exec_shell(
         (
-            f"cat {job_dir}/status 2>/dev/null || echo running; "
-            f"cat {job_dir}/exit_code 2>/dev/null || true"
+            f"status=$(cat {job_dir}/status 2>/dev/null || echo running); "
+            f"exit_code=$(cat {job_dir}/exit_code 2>/dev/null || true); "
+            f"pid=$(cat {job_dir}/pid 2>/dev/null || true); "
+            f"pgid=$(cat {job_dir}/pgid 2>/dev/null || true); "
+            "alive=unknown; "
+            "case \"$pgid\" in ''|*[!0-9]*) pgid='' ;; esac; "
+            "case \"$pid\" in ''|*[!0-9]*) pid='' ;; esac; "
+            "if [ \"$status\" = running ]; then "
+            "  if [ -n \"$pgid\" ]; then "
+            "    if kill -0 -- -\"$pgid\" >/dev/null 2>&1; then alive=yes; else alive=no; fi; "
+            "  elif [ -n \"$pid\" ]; then "
+            "    if kill -0 \"$pid\" >/dev/null 2>&1; then alive=yes; else alive=no; fi; "
+            "  fi; "
+            "fi; "
+            "printf '%s\\n%s\\n%s\\n%s\\n%s\\n' \"$status\" \"$exit_code\" \"$pid\" \"$pgid\" \"$alive\""
         ),
         timeout=10,
     )
@@ -1300,10 +1313,21 @@ def _refresh_docker_job(job: BackgroundJob) -> BackgroundJob:
             exit_code = int(lines[1].strip())
         except ValueError:
             exit_code = job.exit_code
+    pid = job.pid
+    if len(lines) > 2 and lines[2].strip():
+        try:
+            pid = int(lines[2].strip())
+        except ValueError:
+            pid = job.pid
+    if pid is not None:
+        job.pid = pid
+    alive = lines[4].strip() if len(lines) > 4 else "unknown"
     if status == "done":
         JOB_REGISTRY.mark_done(job.job_id, exit_code)
     elif status == "killed":
         JOB_REGISTRY.mark_killed(job.job_id)
+    elif status == "running" and alive == "no":
+        JOB_REGISTRY.mark_done(job.job_id, exit_code)
     elif status:
         job.status = status
     return job
@@ -1340,7 +1364,19 @@ def kill_background_job(job_id: str) -> dict:
     if job.runtime == "docker" and job.container_job_dir:
         job_dir = shlex.quote(job.container_job_dir)
         _docker_exec_shell(
-            f"kill $(cat {job_dir}/pid 2>/dev/null) >/dev/null 2>&1 || true; "
+            f"pid=$(cat {job_dir}/pid 2>/dev/null || true); "
+            f"pgid=$(cat {job_dir}/pgid 2>/dev/null || true); "
+            "case \"$pgid\" in ''|*[!0-9]*) pgid='' ;; esac; "
+            "case \"$pid\" in ''|*[!0-9]*) pid='' ;; esac; "
+            "if [ -n \"$pgid\" ]; then "
+            "  kill -TERM -- -\"$pgid\" >/dev/null 2>&1 || true; "
+            "  sleep 0.5; "
+            "  kill -KILL -- -\"$pgid\" >/dev/null 2>&1 || true; "
+            "elif [ -n \"$pid\" ]; then "
+            "  kill -TERM \"$pid\" >/dev/null 2>&1 || true; "
+            "  sleep 0.5; "
+            "  kill -KILL \"$pid\" >/dev/null 2>&1 || true; "
+            "fi; "
             f"echo killed > {job_dir}/status",
             timeout=10,
         )
@@ -1388,10 +1424,17 @@ def _exec_bash_docker_background(
         f": > \"$job_dir/stderr\"; "
         f"echo running > \"$job_dir/status\"; "
         f"export job_dir; "
-        f"nohup bash -lc {shlex.quote(wrapper)} "
+        f"if command -v setsid >/dev/null 2>&1; then "
+        f"  setsid bash -lc {shlex.quote(wrapper)} "
         f"> \"$job_dir/stdout\" 2> \"$job_dir/stderr\" < /dev/null & "
+        f"  child_pid=$!; echo \"$child_pid\" > \"$job_dir/pgid\"; "
+        f"else "
+        f"  nohup bash -lc {shlex.quote(wrapper)} "
+        f"> \"$job_dir/stdout\" 2> \"$job_dir/stderr\" < /dev/null & "
+        f"  child_pid=$!; : > \"$job_dir/pgid\"; "
+        f"fi; "
         f"echo \"$job_dir\"; "
-        f"echo $! > \"$job_dir/pid\"; "
+        f"echo \"$child_pid\" > \"$job_dir/pid\"; "
         f"cat \"$job_dir/pid\""
     )
     setup = _docker_exec_shell(

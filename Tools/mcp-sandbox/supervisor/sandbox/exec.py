@@ -241,7 +241,19 @@ def _kill_process_group(process: subprocess.Popen) -> None:
     """Best-effort kill for the command's process group."""
     if os.name == "posix":
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            pgid = os.getpgid(process.pid)
+        except ProcessLookupError:
+            return
+        except Exception:
+            pgid = process.pid
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    return
+                time.sleep(0.05)
+            os.killpg(pgid, signal.SIGKILL)
             return
         except ProcessLookupError:
             return

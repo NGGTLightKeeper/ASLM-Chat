@@ -614,7 +614,10 @@ def ls(
 
         children = sorted(
             current.iterdir(),
-            key=lambda item: (not item.is_dir(), item.name.lower()),
+            key=lambda item: (
+                not (item.is_dir() and not item.is_symlink()),
+                item.name.lower(),
+            ),
         )
         for child in children:
             if _should_skip_entry(child.name, include_hidden):
@@ -624,13 +627,15 @@ def ls(
             if child_depth > depth:
                 continue
 
+            is_symlink = child.is_symlink()
+            is_dir = child.is_dir() and not is_symlink
             entry: dict[str, Any] = {
                 "path": child.relative_to(task_root()).as_posix(),
                 "name": child.name,
-                "type": "directory" if child.is_dir() else "file",
+                "type": "symlink" if is_symlink else ("directory" if is_dir else "file"),
                 "depth": child_depth,
             }
-            if child.is_file():
+            if child.is_file() and not is_symlink:
                 try:
                     entry["size_bytes"] = child.stat().st_size
                     entry["mime"] = _guess_mime(child)
@@ -643,7 +648,7 @@ def ls(
                 warnings.append(f"Entry limit reached at {max_entries} items.")
                 return
 
-            if child.is_dir() and child_depth < depth:
+            if is_dir and child_depth < depth:
                 _walk(child)
 
     _walk(target)
@@ -1307,6 +1312,8 @@ def grep(
     truncated = False
 
     if target.is_file():
+        _reject_symlink_escape(target, path)
+        _reject_oversized_read(target, path)
         candidates = [target]
     else:
         candidates = []
@@ -1326,6 +1333,14 @@ def grep(
                 candidates.append(file_path)
 
     for candidate in candidates:
+        _reject_symlink_escape(candidate, candidate.relative_to(task_root()).as_posix())
+        try:
+            _reject_oversized_read(candidate, candidate.relative_to(task_root()).as_posix())
+        except SandboxToolError as exc:
+            if exc.error_type != "file_too_large":
+                raise
+            warnings.append(exc.message)
+            continue
         data = candidate.read_bytes()
         mime_type = _guess_mime(candidate)
         if _is_probably_binary(data, mime_type):

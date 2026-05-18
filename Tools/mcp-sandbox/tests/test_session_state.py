@@ -17,6 +17,7 @@ for path in (SUPERVISOR, SRC):
 os.environ["SANDBOX_HOST_WORKSPACE"] = str(ROOT)
 
 from sandbox.session_state import get_session_state, reset_session_state  # noqa: E402
+import sandbox.session_state as session_state_mod  # noqa: E402
 
 
 def test_state_tracks_touches():
@@ -73,3 +74,32 @@ def test_read_overlap():
     assert state.get_read_overlap("ov.py", 1, 100) == 1.0
     assert 0.4 < state.get_read_overlap("ov.py", 50, 150) < 0.6
     assert state.get_read_overlap("ov.py", 101, 200) == 0.0
+
+
+def test_state_caps_long_lived_path_memory(monkeypatch):
+    reset_session_state()
+    monkeypatch.setattr(session_state_mod, "MAX_TRACKED_PATHS", 3)
+    monkeypatch.setattr(session_state_mod, "MAX_LOOP_COUNTERS", 4)
+    monkeypatch.setattr(session_state_mod, "MAX_READ_WINDOWS_PER_PATH", 2)
+    monkeypatch.setattr(session_state_mod, "MAX_REPRESENTATIONS_PER_PATH", 2)
+    state = get_session_state()
+
+    for index in range(10):
+        state.record_touch(
+            f"file_{index}.py",
+            "open",
+            window=(index + 1, index + 1),
+            representation="raw",
+        )
+
+    assert len(state.touched_paths) <= 3
+    assert len(state.read_windows) <= 3
+    assert len(state.loop_counters) <= 4
+    assert len(state.representations_served) <= 3
+
+    state.record_touch("hot.py", "open", window=(1, 1), representation="raw")
+    state.record_touch("hot.py", "open", window=(2, 2), representation="map")
+    state.record_touch("hot.py", "open", window=(3, 3), representation="outline")
+
+    assert state.read_windows["hot.py"] == [(2, 2), (3, 3)]
+    assert state.representations_served["hot.py"] == ["map", "outline"]

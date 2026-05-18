@@ -21,6 +21,20 @@ from sandbox.config import CONTAINER_WORKSPACE, DEFAULT_TASK_DIR, LOOP_BREAK_THR
 
 # Container-side task root (e.g. "/workspace/_sandbox")
 _CONTAINER_TASK_ROOT = f"{CONTAINER_WORKSPACE}/{DEFAULT_TASK_DIR}"
+MAX_TRACKED_PATHS = 1000
+MAX_READ_WINDOWS_PER_PATH = 100
+MAX_LOOP_COUNTERS = 1000
+MAX_REPRESENTATIONS_PER_PATH = 20
+
+
+def _trim_dict_oldest(mapping: dict[Any, Any], max_items: int) -> None:
+    """Keep singleton state bounded during long-lived supervisor sessions."""
+
+    overflow = len(mapping) - max_items
+    if overflow <= 0:
+        return
+    for key in list(mapping.keys())[:overflow]:
+        mapping.pop(key, None)
 
 
 @dataclass
@@ -64,15 +78,25 @@ class ExplorationState:
             return
 
         self.touched_paths[path] = self.touched_paths.get(path, 0) + 1
+        _trim_dict_oldest(self.touched_paths, MAX_TRACKED_PATHS)
 
         if window is not None:
-            self.read_windows.setdefault(path, []).append(window)
+            windows = self.read_windows.setdefault(path, [])
+            windows.append(window)
+            if len(windows) > MAX_READ_WINDOWS_PER_PATH:
+                del windows[: len(windows) - MAX_READ_WINDOWS_PER_PATH]
+            _trim_dict_oldest(self.read_windows, MAX_TRACKED_PATHS)
 
         key = f"{intent}:{path}"
         self.loop_counters[key] = self.loop_counters.get(key, 0) + 1
+        _trim_dict_oldest(self.loop_counters, MAX_LOOP_COUNTERS)
 
         if representation is not None:
-            self.representations_served.setdefault(path, []).append(representation)
+            served = self.representations_served.setdefault(path, [])
+            served.append(representation)
+            if len(served) > MAX_REPRESENTATIONS_PER_PATH:
+                del served[: len(served) - MAX_REPRESENTATIONS_PER_PATH]
+            _trim_dict_oldest(self.representations_served, MAX_TRACKED_PATHS)
 
     def record_search(self, pattern: str, path: str, hit_count: int) -> None:
         """Record a search query."""

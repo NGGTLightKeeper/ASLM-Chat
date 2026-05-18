@@ -4040,9 +4040,7 @@ def _path_is_within(path: Path, root: Path) -> bool:
 
 def _shared_file_allowed_roots() -> list[Path]:
     roots = [
-        settings.BASE_DIR,
         settings.BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox",
-        Path.home() / "Downloads",
     ]
 
     sandbox_host_workspace = os.getenv("SANDBOX_HOST_WORKSPACE", "").strip()

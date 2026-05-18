@@ -10,6 +10,7 @@ import json
 import re
 import sys
 import threading
+import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -22,6 +23,7 @@ if str(BASE_DIR) not in sys.path:
 SERVER_DISPATCHER_NAMES = ("call_tool", "run_tool", "execute_tool", "execute")
 SERVER_METADATA_NAMES = ("MCP_SERVER", "SERVER")
 TOOL_HANDLER_NAMES = ("TOOL_HANDLERS", "TOOL_EXECUTORS")
+WORKER_HEARTBEAT_SECONDS = 5.0
 
 
 class AsyncCallableRunner:
@@ -313,6 +315,12 @@ def _print_response(ok: bool, payload: Any, *, output=sys.stdout) -> int:
     return 0 if ok else 1
 
 
+def _worker_heartbeat(output=sys.stdout) -> None:
+    """Emit one protocol-safe liveness line for the parent process."""
+
+    print(json.dumps({"event": "heartbeat"}, ensure_ascii=False), file=output, flush=True)
+
+
 # Execute one request for persistent worker mode.
 def _execute_request(operation: str, server_file: Path, payload: dict[str, Any]) -> tuple[bool, Any]:
     """Return one worker envelope payload without printing it."""
@@ -352,8 +360,26 @@ def serve(server_file: Path) -> int:
                     request_payload = request.get("payload")
                     if not isinstance(request_payload, dict):
                         request_payload = {}
-                    with contextlib.redirect_stdout(sys.stderr):
-                        ok, payload = _execute_request(operation, server_file, request_payload)
+                    done = threading.Event()
+                    outcome: dict[str, Any] = {}
+
+                    def run_request() -> None:
+                        with contextlib.redirect_stdout(sys.stderr):
+                            ok, payload = _execute_request(operation, server_file, request_payload)
+                        outcome["ok"] = ok
+                        outcome["payload"] = payload
+                        done.set()
+
+                    worker = threading.Thread(
+                        target=run_request,
+                        name="aslm-tool-worker-request",
+                        daemon=True,
+                    )
+                    worker.start()
+                    while not done.wait(WORKER_HEARTBEAT_SECONDS):
+                        _worker_heartbeat(output)
+                    ok = bool(outcome.get("ok"))
+                    payload = outcome.get("payload")
 
             key = "result" if ok else "error"
             print(json.dumps({"ok": ok, key: _to_jsonable(payload)}, ensure_ascii=False), file=output, flush=True)
