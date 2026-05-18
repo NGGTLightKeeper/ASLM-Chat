@@ -6,6 +6,9 @@
     "version": "0.6.0.31",
     "author": "NGGT-ASLM",
     "type": "ui",
+    "category": [
+        "text-generation"
+    ],
     "hasPage": true,
     "icon": "icon.png",
     "sidebarIcon": "sidebar_icon.png",
