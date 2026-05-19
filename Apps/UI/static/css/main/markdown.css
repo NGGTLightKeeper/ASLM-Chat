@@ -498,15 +498,17 @@
 .msg-reasoning-step::before {
   content: "";
   position: absolute;
-  top: 11px;
-  bottom: -8px;
-  left: 10px;
+  top: 12px;
+  bottom: -3px;
+  left: 11px;
   width: 1px;
   background: color-mix(in srgb, var(--c-border-strong) 62%, transparent);
+  transform: translateX(-50%);
 }
 
 .msg-reasoning-step--tool::before {
-  left: 10px;
+  top: 29px;
+  left: 11px;
 }
 
 .msg-reasoning-step:last-child::before {
@@ -522,7 +524,7 @@
   z-index: 1;
   width: 8px;
   height: 8px;
-  margin-top: 7px;
+  margin-top: 0;
   justify-self: center;
   border-radius: 50%;
   background: var(--c-text-muted);

@@ -70,61 +70,82 @@ export function createChatController(context, dependencies) {
     });
   }
 
+  function formatCompactTokens(value) {
+    const numericValue = Number(value) || 0;
+    if (numericValue >= 1000000) {
+      return `${Math.round(numericValue / 100000) / 10} M`;
+    }
+    if (numericValue >= 1000) {
+      return `${Math.round(numericValue / 1000)} K`;
+    }
+    return numericValue.toLocaleString();
+  }
+
+  function formatDetailedTokens(value) {
+    return (Number(value) || 0).toLocaleString();
+  }
+
+  function buildContextUsageLabel(percent, used, windowTokens) {
+    const remaining = Math.max(0, 100 - percent);
+    return `Context: ${percent}% used, ${remaining}% remaining. ${formatCompactTokens(used)} / ${formatCompactTokens(windowTokens)} tokens.`;
+  }
+
+  function buildContextUsageTooltip(percent, used, windowTokens) {
+    const remaining = Math.max(0, 100 - percent);
+    return [
+      'Context window:',
+      `${percent}% used`,
+      `${remaining}% remaining`,
+      `${formatDetailedTokens(used)} / ${formatDetailedTokens(windowTokens)} tokens`
+    ].join('\n');
+  }
+
+  function updateContextUsageButtonMetrics($btn, percent, label, tooltip) {
+    const boundedPercent = Math.max(0, Math.min(100, percent));
+    const circumference = 37.7;
+    const progress = boundedPercent > 0
+      ? Math.max(1.8, (boundedPercent / 100) * circumference)
+      : 0;
+    $btn
+      .css('--context-usage-progress', progress.toFixed(2))
+      .removeAttr('title')
+      .removeAttr('data-tooltip')
+      .attr('data-context-tooltip', tooltip)
+      .attr('aria-label', label);
+  }
+
   function setContextUsageUi(payload) {
     const ratio = Math.max(0, Math.min(1, Number(payload && payload.ratio) || 0));
     const percent = Math.round(ratio * 100);
     const used = Number(payload && payload.estimated_used_tokens) || 0;
     const windowTokens = Number(payload && payload.context_window_tokens) || 0;
-    const observed = payload && payload.observed_usage && typeof payload.observed_usage === 'object'
-      ? payload.observed_usage
-      : {};
     state.contextUsage = payload || {};
     if (contextCompressionInFlight) {
       contextUsageButtons().forEach(function updateBusy($btn) {
         $btn
           .removeClass('is-warn is-danger is-compressed')
           .addClass('is-compressing')
-          .attr('title', 'Compressing context now. The model is building a structured summary.');
-        $btn.find('.context-usage-text').text('compressing...');
+          .css('--context-usage-progress', '37.7')
+          .removeAttr('title')
+          .removeAttr('data-tooltip')
+          .attr('data-context-tooltip', 'Context window:\nCompressing context')
+          .attr('aria-label', 'Context compression in progress');
       });
       syncContextCompressionButtons();
       return;
     }
-    const observedPrompt = Number(observed.prompt_tokens || 0) || 0;
-    const estimator = payload && payload.token_estimator && typeof payload.token_estimator === 'object'
-      ? payload.token_estimator
-      : {};
-    const baseCharsPerToken = Number(estimator.base_chars_per_token || 0);
-    const effectiveCharsPerToken = Number(estimator.effective_chars_per_token || 0);
-    const observedCharsPerToken = Number(
-      estimator.chat_observed_chars_per_token || estimator.observed_chars_per_token || 0
-    );
     const compressedActive = payload && payload.compressed_context_active === true;
     const showCompressedIndicator = compressedActive && !hideCompressedIndicator;
-    const compressionNote = showCompressedIndicator
-      ? ' Compressed context is active; older turns are represented by a structured summary.'
-      : ' Compression is not active for this chat yet.';
-    let title = observedPrompt > 0
-      ? `Context: ~${used.toLocaleString()} / ${windowTokens.toLocaleString()} tokens (${percent}%). Last observed prompt: ${observedPrompt.toLocaleString()} tokens.`
-      : `Context: ~${used.toLocaleString()} / ${windowTokens.toLocaleString()} tokens (${percent}%).`;
-    if (baseCharsPerToken > 0 || effectiveCharsPerToken > 0 || observedCharsPerToken > 0) {
-      const parts = [];
-      if (baseCharsPerToken > 0) {
-        parts.push(`base chars/token: ${baseCharsPerToken.toFixed(2)}`);
-      }
-      if (effectiveCharsPerToken > 0) {
-        parts.push(`effective chars/token: ${effectiveCharsPerToken.toFixed(2)}`);
-      }
-      if (observedCharsPerToken > 0) {
-        parts.push(`observed chars/token: ${observedCharsPerToken.toFixed(2)}`);
-      }
-      if (parts.length) {
-        title += ` Token estimator (${parts.join(', ')}).`;
-      }
-    }
+    const label = showCompressedIndicator
+      ? `${buildContextUsageLabel(percent, used, windowTokens)} Compressed context is active.`
+      : buildContextUsageLabel(percent, used, windowTokens);
+    const tooltip = showCompressedIndicator
+      ? `${buildContextUsageTooltip(percent, used, windowTokens)}\nCompressed context active`
+      : buildContextUsageTooltip(percent, used, windowTokens);
 
     contextUsageButtons().forEach(function updateOne($btn) {
       $btn.removeClass('is-warn is-danger is-compressed is-compressing');
+      updateContextUsageButtonMetrics($btn, percent, label, tooltip);
       if (ratio >= 0.9) {
         $btn.addClass('is-danger');
       } else if (ratio >= 0.75) {
@@ -133,8 +154,6 @@ export function createChatController(context, dependencies) {
       if (showCompressedIndicator) {
         $btn.addClass('is-compressed');
       }
-      $btn.attr('title', `${title}${compressionNote}`);
-      $btn.find('.context-usage-text').text(showCompressedIndicator ? `${percent}% / compressed` : `${percent}%`);
     });
     syncContextCompressionButtons();
   }
@@ -146,8 +165,11 @@ export function createChatController(context, dependencies) {
         $btn
           .removeClass('is-warn is-danger is-compressed')
           .addClass('is-compressing')
-          .attr('title', 'Compressing context now. The model is building a structured summary.');
-        $btn.find('.context-usage-text').text('compressing...');
+          .css('--context-usage-progress', '37.7')
+          .removeAttr('title')
+          .removeAttr('data-tooltip')
+          .attr('data-context-tooltip', 'Context window:\nCompressing context')
+          .attr('aria-label', 'Context compression in progress');
       });
       syncContextCompressionButtons();
       return;

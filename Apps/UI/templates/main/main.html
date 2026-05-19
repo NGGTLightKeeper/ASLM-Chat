@@ -46,10 +46,6 @@
                                 </div>
                                 <div class="input-bottom-right">
                                     <div class="composer-trailing-actions">
-                                        <button class="context-usage-indicator" id="contextUsageBtn" type="button" title="Context usage" aria-label="Context usage">
-                                            <span class="context-usage-dot"></span>
-                                            <span class="context-usage-text">--%</span>
-                                        </button>
                                         <div class="think-level-selector" id="thinkLevelSelector" style="display:none;">
                                             <button class="think-toggle-btn" id="thinkToggleBtn" type="button" title="Reasoning effort" aria-haspopup="menu" aria-expanded="false">
                                                 <span class="think-toggle-label">Off</span>
@@ -97,9 +93,11 @@
                     </div>
                     <div class="input-bottom-right">
                         <div class="composer-trailing-actions">
-                            <button class="context-usage-indicator" id="contextUsageBtnConv" type="button" title="Context usage" aria-label="Context usage">
-                                <span class="context-usage-dot"></span>
-                                <span class="context-usage-text">--%</span>
+                            <button class="context-usage-indicator" id="contextUsageBtnConv" type="button" aria-label="Context usage">
+                                <svg class="context-usage-ring" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+                                    <circle class="context-usage-track" cx="9" cy="9" r="6"></circle>
+                                    <circle class="context-usage-progress" cx="9" cy="9" r="6"></circle>
+                                </svg>
                             </button>
                             <div class="think-level-selector" id="thinkLevelSelectorConv" style="display:none;">
                                 <button class="think-toggle-btn" id="thinkToggleBtnConv" type="button" title="Reasoning effort" aria-haspopup="menu" aria-expanded="false">
