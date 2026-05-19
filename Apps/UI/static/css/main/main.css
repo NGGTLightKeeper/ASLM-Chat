@@ -1212,6 +1212,28 @@
   flex-shrink: 0;
 }
 
+/* Isolate LTR so trailing composer actions stay correct under RTL / host direction. */
+.composer-trailing-actions {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.composer-trailing-actions > .context-usage-indicator {
+  order: 0;
+}
+
+.composer-trailing-actions > .think-level-selector {
+  order: 1;
+}
+
+.composer-trailing-actions > .send-btn {
+  order: 2;
+}
+
 .input-bottom-left {
   position: relative;
 }
@@ -1483,7 +1505,6 @@
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
-  margin-right: 8px;
 }
 
 .context-usage-dot {
@@ -1753,53 +1774,110 @@
 }
 
 .think-toggle-btn {
+  position: relative;
+  align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 5px 12px;
-  border: 1px solid var(--c-border-strong);
+  min-height: 28px;
+  padding: 4px 8px 4px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
   background: transparent;
   color: var(--c-text-muted);
+  font-size: var(--font-size-caption-2);
+  font-weight: 500;
   transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
   -webkit-user-select: none;
   -moz-user-select: none;
   -ms-user-select: none;
 }
 
-.think-toggle-btn:hover {
-  border-color: var(--c-gray-2);
-  color: var(--c-text);
+.think-toggle-label {
+  line-height: 1;
+}
+
+.think-toggle-btn:hover,
+.think-level-selector.is-open .think-toggle-btn {
+  border-color: color-mix(in srgb, var(--c-gray-2) 62%, transparent);
+  color: var(--c-text-muted);
+  background: var(--surface-tertiary);
 }
 
 .think-toggle-btn.active {
-  border-color: var(--c-accent-tertiary);
-  background: var(--surface-purple-soft);
-  color: var(--c-accent-tertiary);
+  color: var(--c-text-muted);
 }
 
-.think-toggle-btn svg {
+.think-toggle-btn::after {
+  content: "";
+  display: block;
   flex-shrink: 0;
-  transition: stroke var(--t-fast);
+  width: 6px;
+  height: 6px;
+  margin-left: 0;
+  margin-top: -2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  transform-origin: center;
+  opacity: 1;
 }
 
-.think-toggle-btn.active svg {
-  stroke: var(--c-accent-tertiary);
+.think-toggle-chevron {
+  display: none;
+}
+
+.think-level-selector.is-open .think-toggle-chevron {
+  opacity: 1;
 }
 
 .think-level-selector {
-  overflow: hidden;
-  border: 1px solid var(--c-border-strong);
+  position: relative;
+}
+
+.think-level-selector > .think-level-btn {
+  display: none;
+}
+
+.think-level-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 40;
+  min-width: 178px;
+  padding: 8px 0;
+  border: 1px solid var(--c-border);
+  border-radius: 10px;
+  background: var(--surface-secondary);
+  box-shadow: 0 14px 35px rgba(0, 0, 0, 0.35);
+}
+
+.think-level-menu-title {
+  padding: 4px 16px 8px;
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-1);
+  font-weight: 600;
 }
 
 .think-level-btn {
-  padding: 5px 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 16px;
+  padding: 8px 16px;
   white-space: nowrap;
-  color: var(--text-soft-alt);
+  color: var(--c-text);
   font-size: var(--font-size-caption-1);
   font-weight: 500;
+  text-align: left;
   transition: background var(--t-fast), color var(--t-fast);
 }
 
-.think-level-btn:not(:last-child) {
-  border-right: 1px solid var(--c-border-strong);
+.think-level-check {
+  visibility: hidden;
+  color: var(--c-text-muted);
+  font-size: 15px;
+  line-height: 1;
 }
 
 .think-level-btn:hover {
@@ -1808,8 +1886,11 @@
 }
 
 .think-level-btn.active {
-  background: var(--surface-purple-strong);
-  color: var(--c-accent-tertiary);
+  color: var(--c-text);
+}
+
+.think-level-btn.active .think-level-check {
+  visibility: visible;
 }
 
 .msg-images {

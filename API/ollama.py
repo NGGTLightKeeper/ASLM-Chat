@@ -373,6 +373,8 @@ def _prepare_chat_kwargs_with_metadata(kwargs: dict[str, Any]) -> tuple[dict[str
             call_kwargs["think"] = think_level
         else:
             call_kwargs["think"] = think
+    elif think_level in {"low", "medium", "high"}:
+        call_kwargs["think"] = think_level
 
     return call_kwargs, dropped_options
 

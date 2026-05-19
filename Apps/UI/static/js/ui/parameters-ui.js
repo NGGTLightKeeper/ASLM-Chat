@@ -1,7 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import {
-  DEFAULT_THINK_LEVEL_OPTIONS,
   LLM_PARAMETER_OPTION_SETS,
   OLLAMA_UNSUPPORTED_RUNTIME_PARAMS,
   PARAMETER_DEFINITIONS
@@ -882,57 +881,146 @@ export function createParametersUi(context) {
   // Thinking controls.
   // Rebuild both think-level button strips from the model payload.
   function renderThinkLevelControls() {
-    const normalizedOptions = Array.isArray(state.thinkState.levelOptions) && state.thinkState.levelOptions.length > 0
-      ? state.thinkState.levelOptions
-      : DEFAULT_THINK_LEVEL_OPTIONS;
+    $('.think-toggle-btn').not('.think-level-selector .think-toggle-btn').remove();
 
-    [dom.$thinkLevelSelector, dom.$thinkLevelSelectorConv].forEach(function rebuildSelector($selector) {
-      $selector.empty();
+    const metadataOptions = Array.isArray(state.thinkState.levelOptions)
+      ? state.thinkState.levelOptions
+      : [];
+    const canDisableThinking = !!state.thinkState.toggleSupported;
+    const baseOptions = state.thinkState.levelSupported
+      ? metadataOptions
+      : (state.thinkState.supported ? ['on'] : []);
+    const normalizedOptions = (canDisableThinking ? ['off'] : []).concat(baseOptions)
+      .map(function normalizeOption(optionValue) {
+        return String(optionValue || '').trim().toLowerCase();
+      })
+      .filter(function uniqueOption(optionValue, index, options) {
+        return optionValue && options.indexOf(optionValue) === index;
+      });
+
+    function labelForThinkOption(normalizedValue) {
+      const labels = {
+        off: 'Off',
+        on: 'On',
+        minimal: 'Minimal',
+        low: 'Low',
+        medium: 'Medium',
+        high: 'High',
+        xhigh: 'XHigh',
+        max: 'Max',
+        ultra: 'Ultra'
+      };
+      if (labels[normalizedValue]) {
+        return labels[normalizedValue];
+      }
+      return normalizedValue
+        .replace(/[_-]+/g, ' ')
+        .replace(/\b\w/g, function capitalize(letter) {
+          return letter.toUpperCase();
+        });
+    }
+
+    [
+      { $selector: dom.$thinkLevelSelector, buttonId: 'thinkToggleBtn' },
+      { $selector: dom.$thinkLevelSelectorConv, buttonId: 'thinkToggleBtnConv' }
+    ].forEach(function rebuildSelector(pair) {
+      const $selector = pair.$selector;
+      let $trigger = $selector.find('.think-toggle-btn').first();
+      let $menu = $selector.find('.think-level-menu').first();
+
+      if (!$trigger.length) {
+        $trigger = $('<button type="button" class="think-toggle-btn">');
+      }
+      $trigger
+        .attr({
+          id: pair.buttonId,
+          title: 'Reasoning effort',
+          'aria-haspopup': 'menu',
+          'aria-expanded': 'false'
+        })
+        .empty()
+        .append($('<span class="think-toggle-label">').text('Off'))
+        .append(
+          $('<svg class="think-toggle-chevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">')
+            .append($('<path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round">'))
+        );
+
+      if (!$menu.length) {
+        $menu = $('<div class="think-level-menu" role="menu" aria-label="Reasoning effort" style="display:none;">');
+      }
+      $menu.empty().append($('<div class="think-level-menu-title">').text('Intelligence'));
 
       normalizedOptions.forEach(function appendOption(optionValue) {
-        const normalizedValue = String(optionValue || '').trim();
+        const normalizedValue = String(optionValue || '').trim().toLowerCase();
         if (!normalizedValue) {
           return;
         }
 
-        const label = normalizedValue
-          .replace(/[_-]+/g, ' ')
-          .replace(/\b\w/g, function capitalize(letter) {
-            return letter.toUpperCase();
-          });
-
-        $selector.append(
+        $menu.append(
           $('<button type="button" class="think-level-btn">')
             .attr('data-value', normalizedValue)
-            .text(label)
+            .attr('role', 'menuitem')
+            .append($('<span class="think-level-btn-label">').text(labelForThinkOption(normalizedValue)))
+            .append($('<span class="think-level-check" aria-hidden="true">').text('\u2713'))
         );
       });
+
+      $selector.empty().append($trigger).append($menu);
     });
+
+    dom.$thinkToggleBtn = dom.$thinkLevelSelector.find('.think-toggle-btn').first();
+    dom.$thinkToggleBtnConv = dom.$thinkLevelSelectorConv.find('.think-toggle-btn').first();
+  }
+
+  function getThinkLevelLabel(value) {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    const $matchingButton = dom.$thinkLevelSelector
+      .add(dom.$thinkLevelSelectorConv)
+      .find(`.think-level-btn[data-value="${normalizedValue}"]`)
+      .first();
+    if ($matchingButton.length) {
+      return $matchingButton.find('.think-level-btn-label').text() || $matchingButton.text().trim();
+    }
+    return normalizedValue || 'Off';
   }
 
   // Update think toggles and think-level selectors for both composers.
   function updateThinkControls() {
-    [
-      { $toggle: dom.$thinkToggleBtn, $selector: dom.$thinkLevelSelector },
-      { $toggle: dom.$thinkToggleBtnConv, $selector: dom.$thinkLevelSelectorConv }
-    ].forEach(function updatePair(pair) {
-      if (!state.thinkState.supported) {
-        pair.$toggle.hide();
-        pair.$selector.hide();
+    const hasLevelOptions = state.thinkState.levelSupported
+      && Array.isArray(state.thinkState.levelOptions)
+      && state.thinkState.levelOptions.length > 0;
+    const canDisableThinking = !!state.thinkState.toggleSupported;
+    const showThinkControl = state.thinkState.supported
+      && (hasLevelOptions || state.thinkState.toggleSupported || state.thinkState.supported);
+    let selectedValue = '';
+    if (hasLevelOptions) {
+      selectedValue = canDisableThinking && (!state.thinkState.enabled || String(state.thinkState.level || '').toLowerCase() === 'off')
+        ? 'off'
+        : String(state.thinkState.level || state.thinkState.levelOptions[0] || '').toLowerCase();
+    } else {
+      selectedValue = state.thinkState.enabled ? 'on' : 'off';
+    }
+    const selectedLabel = getThinkLevelLabel(selectedValue);
+
+    [dom.$thinkLevelSelector, dom.$thinkLevelSelectorConv].forEach(function updatePair($selector) {
+      const $toggle = $selector.find('.think-toggle-btn').first();
+
+      if (!showThinkControl) {
+        $selector.hide();
+        $toggle.attr('aria-expanded', 'false');
+        $selector.find('.think-level-menu').hide();
         return;
       }
 
-      pair.$toggle.toggle(state.thinkState.toggleSupported && !state.thinkState.levelSupported);
-      pair.$toggle.toggleClass('active', state.thinkState.enabled);
-
-      if (state.thinkState.levelSupported) {
-        pair.$selector.show();
-        pair.$selector.find('.think-level-btn').each(function toggleButton() {
-          $(this).toggleClass('active', $(this).data('value') === state.thinkState.level);
-        });
-      } else {
-        pair.$selector.hide();
-      }
+      $selector.show();
+      $toggle.show();
+      $toggle
+        .toggleClass('active', selectedValue !== 'off')
+        .find('.think-toggle-label')
+        .text(selectedLabel);
+      $selector.find('.think-level-btn').each(function toggleButton() {
+        $(this).toggleClass('active', $(this).data('value') === selectedValue);
+      });
     });
   }
 
@@ -1101,10 +1189,17 @@ export function createParametersUi(context) {
     let payload = collectParameterPayload('#dynamicParameters .dyn-param');
     const adapter = getEngineAdapter(state.activeEngine);
 
-    if (state.thinkState.supported && state.thinkState.toggleSupported && !state.thinkState.levelSupported) {
+    if (
+      state.thinkState.supported
+      && state.thinkState.toggleSupported
+    ) {
       payload[state.thinkState.paramName] = state.thinkState.enabled;
     }
-    if (state.thinkState.supported && state.thinkState.levelSupported) {
+    if (
+      state.thinkState.supported
+      && state.thinkState.levelSupported
+      && String(state.thinkState.level || '').toLowerCase() !== 'off'
+    ) {
       payload[state.thinkState.levelParamName] = state.thinkState.level;
     }
 

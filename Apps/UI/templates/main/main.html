@@ -44,27 +44,27 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="input-bottom-center">
-                                    <button class="think-toggle-btn" id="thinkToggleBtn" style="display:none;" title="Toggle thinking">
-                                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/think.svg' %}#icon"></use></svg>
-                                        Think
-                                    </button>
-                                    <div class="think-level-selector" id="thinkLevelSelector" style="display:none;">
-                                        <button class="think-level-btn" data-value="low">Low</button>
-                                        <button class="think-level-btn" data-value="medium">Medium</button>
-                                        <button class="think-level-btn" data-value="high">High</button>
-                                    </div>
-                                </div>
                                 <div class="input-bottom-right">
-                                    <button class="context-usage-indicator" id="contextUsageBtn" type="button" title="Context usage" aria-label="Context usage">
-                                        <span class="context-usage-dot"></span>
-                                        <span class="context-usage-text">--%</span>
-                                    </button>
-                                    <button class="send-btn" id="sendBtn" disabled aria-label="Send Message">
-                                        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
-                                            <use href="{% static 'img/ui/send.svg' %}#icon"></use>
-                                        </svg>
-                                    </button>
+                                    <div class="composer-trailing-actions">
+                                        <button class="context-usage-indicator" id="contextUsageBtn" type="button" title="Context usage" aria-label="Context usage">
+                                            <span class="context-usage-dot"></span>
+                                            <span class="context-usage-text">--%</span>
+                                        </button>
+                                        <div class="think-level-selector" id="thinkLevelSelector" style="display:none;">
+                                            <button class="think-toggle-btn" id="thinkToggleBtn" type="button" title="Reasoning effort" aria-haspopup="menu" aria-expanded="false">
+                                                <span class="think-toggle-label">Off</span>
+                                                <svg class="think-toggle-chevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                                            </button>
+                                            <div class="think-level-menu" role="menu" aria-label="Reasoning effort" style="display:none;">
+                                                <div class="think-level-menu-title">Intelligence</div>
+                                            </div>
+                                        </div>
+                                        <button class="send-btn" id="sendBtn" disabled aria-label="Send Message">
+                                            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                                                <use href="{% static 'img/ui/send.svg' %}#icon"></use>
+                                            </svg>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -95,27 +95,27 @@
                             </div>
                         </div>
                     </div>
-                    <div class="input-bottom-center">
-                        <button class="think-toggle-btn" id="thinkToggleBtnConv" style="display:none;" title="Toggle thinking">
-                            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/think.svg' %}#icon"></use></svg>
-                            Think
-                        </button>
-                        <div class="think-level-selector" id="thinkLevelSelectorConv" style="display:none;">
-                            <button class="think-level-btn" data-value="low">Low</button>
-                            <button class="think-level-btn" data-value="medium">Medium</button>
-                            <button class="think-level-btn" data-value="high">High</button>
-                        </div>
-                    </div>
                     <div class="input-bottom-right">
-                        <button class="context-usage-indicator" id="contextUsageBtnConv" type="button" title="Context usage" aria-label="Context usage">
-                            <span class="context-usage-dot"></span>
-                            <span class="context-usage-text">--%</span>
-                        </button>
-                        <button class="send-btn" id="sendBtnConv" disabled aria-label="Send Message">
-                            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
-                                <use href="{% static 'img/ui/send.svg' %}#icon"></use>
-                            </svg>
-                        </button>
+                        <div class="composer-trailing-actions">
+                            <button class="context-usage-indicator" id="contextUsageBtnConv" type="button" title="Context usage" aria-label="Context usage">
+                                <span class="context-usage-dot"></span>
+                                <span class="context-usage-text">--%</span>
+                            </button>
+                            <div class="think-level-selector" id="thinkLevelSelectorConv" style="display:none;">
+                                <button class="think-toggle-btn" id="thinkToggleBtnConv" type="button" title="Reasoning effort" aria-haspopup="menu" aria-expanded="false">
+                                    <span class="think-toggle-label">Off</span>
+                                    <svg class="think-toggle-chevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                                </button>
+                                <div class="think-level-menu" role="menu" aria-label="Reasoning effort" style="display:none;">
+                                    <div class="think-level-menu-title">Intelligence</div>
+                                </div>
+                            </div>
+                            <button class="send-btn" id="sendBtnConv" disabled aria-label="Send Message">
+                                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                                    <use href="{% static 'img/ui/send.svg' %}#icon"></use>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -348,5 +348,5 @@
 {{ runtime_settings|json_script:"runtimeSettingsData" }}
 {{ engine_options|json_script:"engineOptionsData" }}
 {{ available_tool_servers|json_script:"availableToolServersData" }}
-<script type="module" src="{% static 'js/main/main.js' %}?v=custom-model-selector-7"></script>
+<script type="module" src="{% static 'js/main/main.js' %}?v=reasoning-selector-4"></script>
 {% endblock %}

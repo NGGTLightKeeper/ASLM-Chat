@@ -49,7 +49,9 @@ export function createAttachmentsUi(context) {
   function updateAttachmentControls() {
     dom.$attachBtn.show();
     dom.$attachBtnConv.show();
-    dom.$modelVisionIndicator.toggleClass('is-visible', state.visionState.supported);
+    if (dom.$modelVisionIndicator && dom.$modelVisionIndicator.length) {
+      dom.$modelVisionIndicator.toggleClass('is-visible', state.visionState.supported);
+    }
     $(document).trigger('aslm:modelCapabilitiesChanged');
   }
 

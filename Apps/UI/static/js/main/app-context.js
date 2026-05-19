@@ -1,7 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { normalizeEngineValue } from '../engines/engine-registry.js';
-import { DEFAULT_THINK_LEVEL_OPTIONS } from './constants.js';
 import { parseJsonScript } from './utils.js';
 
 // Icon helpers.
@@ -184,8 +183,8 @@ export function createAppContext() {
         enabled: true,
         levelSupported: false,
         levelParamName: 'think_level',
-        levelOptions: DEFAULT_THINK_LEVEL_OPTIONS.slice(),
-        level: 'medium'
+        levelOptions: [],
+        level: ''
       },
       toolState: {
         supported: false

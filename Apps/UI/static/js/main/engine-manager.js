@@ -1,7 +1,7 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { getJson, postJson } from './api.js';
-import { DEFAULT_THINK_LEVEL_OPTIONS } from './constants.js';
+import { LLM_PARAMETER_OPTION_SETS } from './constants.js';
 import { getEngineAdapter, normalizeEngineValue } from '../engines/engine-registry.js';
 import { isLocalHostname, normalizeAddressForParsing } from './utils.js';
 
@@ -79,8 +79,8 @@ export function createEngineManager(context, dependencies) {
     state.thinkState.enabled = true;
     state.thinkState.levelSupported = false;
     state.thinkState.levelParamName = 'think_level';
-    state.thinkState.levelOptions = DEFAULT_THINK_LEVEL_OPTIONS.slice();
-    state.thinkState.level = 'medium';
+    state.thinkState.levelOptions = [];
+    state.thinkState.level = '';
   }
 
   // Reset the preset UI and in-memory preset metadata.
@@ -655,20 +655,34 @@ export function createEngineManager(context, dependencies) {
 
       state.thinkState.supported = !!data.supports_thinking;
       state.thinkState.paramName = data.think_param_name || 'think';
-      state.thinkState.toggleSupported = data.supports_think_toggle === undefined
-        ? !!data.supports_thinking
-        : !!data.supports_think_toggle;
       state.thinkState.levelSupported = !!data.supports_think_level;
+      state.thinkState.toggleSupported = data.supports_think_toggle === undefined
+        ? false
+        : !!data.supports_think_toggle;
       state.thinkState.levelParamName = data.think_level_param_name || 'think_level';
-      state.thinkState.levelOptions = Array.isArray(data.think_level_options) && data.think_level_options.length > 0
+      const metadataThinkLevelOptions = Array.isArray(data.think_level_options) && data.think_level_options.length > 0
         ? data.think_level_options.map(function mapOption(value) { return String(value); })
-        : DEFAULT_THINK_LEVEL_OPTIONS.slice();
+        : [];
+      const fallbackThinkLevelOptions = state.thinkState.levelSupported
+        ? (LLM_PARAMETER_OPTION_SETS[state.thinkState.levelParamName] || [])
+        : [];
+      state.thinkState.levelOptions = metadataThinkLevelOptions.length > 0
+        ? metadataThinkLevelOptions
+        : fallbackThinkLevelOptions.slice();
       state.thinkState.enabled = data.defaults && data.defaults[state.thinkState.paramName] !== undefined
         ? String(data.defaults[state.thinkState.paramName]).toLowerCase() === 'true' || data.defaults[state.thinkState.paramName] === true
         : true;
       state.thinkState.level = data.defaults && data.defaults[state.thinkState.levelParamName] !== undefined
         ? String(data.defaults[state.thinkState.levelParamName])
-        : (state.thinkState.levelOptions[0] || 'medium');
+        : (state.thinkState.levelOptions[0] || '');
+      if (
+        state.thinkState.levelSupported
+        && state.thinkState.levelOptions.length > 0
+        && String(state.thinkState.level || '').toLowerCase() === 'off'
+        && state.thinkState.enabled
+      ) {
+        state.thinkState.level = state.thinkState.levelOptions[0];
+      }
 
       parametersUi.renderThinkLevelControls();
       parametersUi.updateThinkControls();

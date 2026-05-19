@@ -531,6 +531,7 @@ LLM_HISTORY_COMPRESSION_RECENT_USER_MESSAGES = 5
 LLM_HISTORY_COMPRESSION_DIRECTIVE_MESSAGES = 20
 STREAMING_ASSISTANT_SNAPSHOT_INTERVAL_SECONDS = 1.0
 STREAMING_ASSISTANT_SNAPSHOT_MIN_CHAR_DELTA = 256
+MODEL_INFO_CACHE_SCHEMA_VERSION = "reasoning-level-options-v2"
 MODEL_INFO_CACHE_TTL_SECONDS = 300
 MODEL_LIST_CACHE_TTL_SECONDS = 45
 MODEL_RUNTIME_METADATA_PATH = settings.BASE_DIR / "Tools" / "model_runtime_metadata.json"
@@ -732,7 +733,7 @@ def _get_cached_model_info(engine: str, model_name: str) -> dict[str, Any] | Non
     """Return a cached model-info payload if available."""
 
     endpoint, api_key_hash = _engine_metadata_scope(engine)
-    cache_key = (engine, model_name, endpoint, api_key_hash)
+    cache_key = (engine, model_name, endpoint, f"{api_key_hash}:{MODEL_INFO_CACHE_SCHEMA_VERSION}")
     now = time.monotonic()
 
     with _metadata_cache_lock:
@@ -751,7 +752,7 @@ def _set_cached_model_info(engine: str, model_name: str, payload: dict[str, Any]
     """Cache and return a detached model-info payload."""
 
     endpoint, api_key_hash = _engine_metadata_scope(engine)
-    cache_key = (engine, model_name, endpoint, api_key_hash)
+    cache_key = (engine, model_name, endpoint, f"{api_key_hash}:{MODEL_INFO_CACHE_SCHEMA_VERSION}")
     cached_payload = _clone_metadata_payload(payload)
 
     with _metadata_cache_lock:
@@ -2119,6 +2120,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
     supports_think_level = any(
         marker in template_str for marker in (".ThinkLevel", ".ReasoningEffort")
     )
+    supports_think_toggle = False
 
     if "thinking" in normalized_capabilities:
         supports_thinking = True
@@ -2126,6 +2128,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
     for candidate in THINK_PARAM_NAMES:
         if candidate in defaults:
             think_param_name = candidate
+            supports_think_toggle = True
             supports_thinking = True
             break
 
@@ -2134,6 +2137,12 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
             think_level_param_name = candidate
             supports_think_level = True
             break
+
+    # Ollama exposes plain thinking as a boolean `think` request field, but
+    # level-based models such as gpt-oss use the same field for low/medium/high.
+    # Do not add a fake Off option when the model advertises think levels.
+    if supports_thinking and not supports_think_level:
+        supports_think_toggle = True
 
     supports_vision = "vision" in normalized_capabilities
     supports_tool_calling = _ollama_metadata_supports_tool_calling(capabilities, template_str)
@@ -2148,6 +2157,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
         "model_layers": model_layers,
         "defaults": defaults,
         "supports_thinking": supports_thinking,
+        "supports_think_toggle": supports_think_toggle,
         "supports_think_level": supports_think_level,
         "think_param_name": think_param_name,
         "think_level_param_name": think_level_param_name,
@@ -2191,6 +2201,21 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
     if not isinstance(defaults, dict):
         defaults = {}
 
+    supports_think_level = bool(settings_data.get("supports_think_level", False))
+    think_level_param_name = str(settings_data.get("think_level_param_name", "think_level") or "think_level")
+    think_level_options = (
+        settings_data.get("think_level_options", [])
+        if isinstance(settings_data.get("think_level_options", []), list)
+        else []
+    )
+    if supports_think_level and not think_level_options:
+        if think_level_param_name == "reasoning_effort":
+            think_level_options = ["minimal", "low", "medium", "high", "xhigh"]
+        elif think_level_param_name == "thinking_level":
+            think_level_options = ["minimal", "low", "medium", "high"]
+        else:
+            think_level_options = ["low", "medium", "high"]
+
     context_length = (
         settings_data.get("context_length")
         or settings_data.get("max_context_window")
@@ -2202,11 +2227,11 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
         "context_length": int(context_length),
         "defaults": defaults,
         "supports_thinking": bool(settings_data.get("supports_thinking", False)),
-        "supports_think_toggle": bool(settings_data.get("supports_think_toggle", settings_data.get("supports_thinking", False))),
-        "supports_think_level": bool(settings_data.get("supports_think_level", False)),
+        "supports_think_toggle": bool(settings_data.get("supports_think_toggle", False)),
+        "supports_think_level": supports_think_level,
         "think_param_name": settings_data.get("think_param_name", "think"),
-        "think_level_param_name": settings_data.get("think_level_param_name", "think_level"),
-        "think_level_options": settings_data.get("think_level_options", []) if isinstance(settings_data.get("think_level_options", []), list) else [],
+        "think_level_param_name": think_level_param_name,
+        "think_level_options": think_level_options,
         "supported_parameters": settings_data.get("supported_parameters", []) if isinstance(settings_data.get("supported_parameters", []), list) else [],
         "supports_vision": "vision" in normalized_capabilities or bool(settings_data.get("supports_vision", False)),
         "supports_tool_calling": bool(settings_data.get("supports_tool_calling", False)),
@@ -2352,7 +2377,7 @@ def _build_inference_info_payload(
             "items": capabilities,
             "supports_thinking": bool(model_info_payload.get("supports_thinking", False)),
             "supports_think_toggle": bool(
-                model_info_payload.get("supports_think_toggle", model_info_payload.get("supports_thinking", False))
+                model_info_payload.get("supports_think_toggle", False)
             ),
             "supports_think_level": bool(model_info_payload.get("supports_think_level", False)),
             "supports_vision": bool(model_info_payload.get("supports_vision", False)),

@@ -91,9 +91,20 @@ export function bindEventHandlers(context, dependencies) {
       .attr('aria-expanded', 'false');
   }
 
+  function closeThinkLevelMenus() {
+    dom.$thinkLevelSelector.add(dom.$thinkLevelSelectorConv)
+      .removeClass('is-open')
+      .find('.think-level-menu')
+      .hide();
+    dom.$thinkLevelSelector.add(dom.$thinkLevelSelectorConv)
+      .find('.think-toggle-btn')
+      .attr('aria-expanded', 'false');
+  }
+
   function toggleComposerMenu($button, $popover) {
     const willOpen = !$popover.is(':visible');
     closeComposerMenus();
+    closeThinkLevelMenus();
     if (!willOpen) {
       return;
     }
@@ -117,11 +128,15 @@ export function bindEventHandlers(context, dependencies) {
     if (!$(event.target).closest('.composer-menu-popover, .composer-menu-btn').length) {
       closeComposerMenus();
     }
+    if (!$(event.target).closest('.think-level-selector').length) {
+      closeThinkLevelMenus();
+    }
   });
 
   $(document).on('keydown', function onComposerMenuKeydown(event) {
     if (event.key === 'Escape') {
       closeComposerMenus();
+      closeThinkLevelMenus();
     }
   });
 
@@ -347,21 +362,41 @@ export function bindEventHandlers(context, dependencies) {
   });
 
   $(document).on('click', '.think-toggle-btn', function onThinkToggleClick() {
-    if (!state.thinkState.supported || !state.thinkState.toggleSupported || state.thinkState.levelSupported) {
+    if (!state.thinkState.supported) {
       return;
     }
 
-    state.thinkState.enabled = !state.thinkState.enabled;
-    parametersUi.updateThinkControls();
-    engineManager.schedulePresetSync();
+    const $selector = $(this).closest('.think-level-selector');
+    if (!$selector.length) {
+      $(this).remove();
+      return;
+    }
+
+    const $menu = $selector.find('.think-level-menu').first();
+    const willOpen = !$menu.is(':visible');
+    closeComposerMenus();
+    closeThinkLevelMenus();
+    if (willOpen) {
+      $selector.addClass('is-open');
+      $menu.show();
+      $(this).attr('aria-expanded', 'true');
+    }
   });
 
   $(document).on('click', '.think-level-btn', function onThinkLevelClick() {
-    if (!state.thinkState.supported || !state.thinkState.levelSupported) {
+    if (!state.thinkState.supported) {
       return;
     }
 
-    state.thinkState.level = $(this).data('value');
+    const value = String($(this).data('value') || '').toLowerCase();
+    if (value === 'off') {
+      state.thinkState.enabled = false;
+      state.thinkState.level = 'off';
+    } else {
+      state.thinkState.enabled = true;
+      state.thinkState.level = value || state.thinkState.level || 'medium';
+    }
+    closeThinkLevelMenus();
     parametersUi.updateThinkControls();
     engineManager.schedulePresetSync();
   });
