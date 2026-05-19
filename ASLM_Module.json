@@ -96,6 +96,14 @@
             "setExec": "main.py apply_aslm_host_theme --file {value}"
         },
         {
+            "key": "aslm-host-locale",
+            "name": "ASLM host locale",
+            "description": "Language snapshot from the host ASLM app; applied on each module start. Managed only by ASLM.",
+            "type": "locale",
+            "engine": "python-runtime",
+            "setExec": "main.py apply_aslm_locale --file {value}"
+        },
+        {
             "key": "console_log_level",
             "name": "Console Log Level",
             "description": "How much runtime detail ASLM-Chat prints into the ASLM console.",

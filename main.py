@@ -293,6 +293,35 @@ def cmd_apply_aslm_host_theme(theme_file: str) -> None:
     print("[ASLM-Chat] Host theme snapshot updated.")
 
 
+def cmd_apply_aslm_locale(locale_file: str) -> None:
+    """Apply a JSON locale snapshot written by ASLM (temp file path in ``--file``)."""
+
+    from pathlib import Path
+
+    from Settings.host_locale import save_host_locale_payload
+
+    path = Path(locale_file)
+    if not path.is_file():
+        print(f"Error: locale file not found: {locale_file}")
+        sys.exit(1)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"Error: could not read locale file: {exc}")
+        sys.exit(1)
+    raw = raw.lstrip("\ufeff").strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"Error: invalid JSON in locale file: {exc}")
+        sys.exit(1)
+    if not isinstance(data, dict):
+        print("Error: host locale JSON must be an object.")
+        sys.exit(1)
+    save_host_locale_payload(data)
+    print("[ASLM-Chat] Host locale snapshot updated.")
+
+
 # Start local engine service
 def maybe_start_local_engine_service(log: bool) -> None:
     """Start the active local engine service when the current adapter needs it."""
@@ -351,7 +380,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--file",
         type=str,
         default=None,
-        help="Path to JSON payload for apply_aslm_host_theme",
+        help="Path to JSON payload for apply_aslm_host_theme or apply_aslm_locale",
     )
     parser.add_argument("--log", action="store_true", help="Enable verbose output")
     return parser
@@ -365,6 +394,7 @@ def _maybe_print_banner(command: str) -> None:
         "set_setting",
         "downloads_bridge",
         "apply_aslm_host_theme",
+        "apply_aslm_locale",
     }:
         from Settings.console import PrintTechData
 
@@ -437,6 +467,12 @@ def main() -> None:
                 print("Error: --file argument is required.")
                 sys.exit(1)
             cmd_apply_aslm_host_theme(args.file)
+
+        case "apply_aslm_locale":
+            if not args.file:
+                print("Error: --file argument is required.")
+                sys.exit(1)
+            cmd_apply_aslm_locale(args.file)
 
         case "downloads_bridge":
             cmd_downloads_bridge()
