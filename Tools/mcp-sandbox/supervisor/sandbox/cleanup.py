@@ -26,7 +26,7 @@ TMP_DIR_NAME = "tmp"
 BATCH_PREFIX = "idle-"
 BATCH_METADATA = ".sandbox_cleanup_batch.json"
 STATE_FILENAME = ".sandbox_cleanup_state.json"
-_RESERVED_ROOT_NAMES = {TMP_DIR_NAME, STATE_FILENAME}
+_RESERVED_ROOT_NAMES = {TMP_DIR_NAME, STATE_FILENAME, "Skills"}
 
 _LOCK = threading.RLock()
 _MONITOR_STARTED = False

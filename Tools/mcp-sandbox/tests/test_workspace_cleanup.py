@@ -52,6 +52,19 @@ class WorkspaceCleanupTests(unittest.TestCase):
         self.assertTrue((self.task_root / cleanup_mod.STATE_FILENAME).is_file())
         self.assertTrue((batch / cleanup_mod.BATCH_METADATA).is_file())
 
+    def test_stage_workspace_to_tmp_keeps_skills_root(self) -> None:
+        (self.task_root / "Skills").mkdir()
+        (self.task_root / "Skills" / "SKILL.md").write_text("skill\n", encoding="utf-8")
+        (self.task_root / "notes.txt").write_text("hello\n", encoding="utf-8")
+
+        batch = cleanup_mod.stage_workspace_to_tmp()
+
+        self.assertIsNotNone(batch)
+        assert batch is not None
+        self.assertTrue((self.task_root / "Skills" / "SKILL.md").is_file())
+        self.assertFalse((batch / "Skills").exists())
+        self.assertTrue((batch / "notes.txt").is_file())
+
     def test_stage_workspace_to_tmp_skips_when_background_job_running(self) -> None:
         (self.task_root / "notes.txt").write_text("hello\n", encoding="utf-8")
 

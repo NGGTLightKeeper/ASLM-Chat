@@ -204,6 +204,9 @@ def run(log: bool = False, ui_port: int = 30000, api_port: int = 30001) -> None:
     from Settings.mcp_json import ensure_default_mcp_json
 
     ensure_default_mcp_json()
+    from Settings.skills import ensure_skills_dir
+
+    ensure_skills_dir()
 
     _run_tool_bootstrap(log)
 

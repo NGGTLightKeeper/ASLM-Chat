@@ -23,6 +23,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from Services import user_mcp_client
 from Settings import mcp_json
+from Settings import skills as skills_config
 from Settings import settings as runtime_settings
 
 logger = logging.getLogger(__name__)
@@ -1614,6 +1615,9 @@ def call_ollama_tool(
         )
 
     try:
+        if server_definition["id"] == "sandbox":
+            skills_config.sync_skills_to_sandbox()
+
         if server_definition.get("user_mcp"):
             entry = server_definition["user_mcp_entry"]
             mcp_tool_name = str(tool_definition.get("mcp_tool_name") or tool_definition["id"] or "").strip()

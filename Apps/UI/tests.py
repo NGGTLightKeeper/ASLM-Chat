@@ -36,6 +36,7 @@ from API.openai import (
     get_model_settings as get_openai_model_settings,
 )
 from Settings import settings as project_settings
+from Settings import skills as skills_config
 from Apps.Data.models import (
     Chat,
     LmsPreset,
@@ -60,6 +61,7 @@ from Apps.UI.views import (
     _build_uploaded_file_context_entry,
     _build_uploaded_file_prompt_block,
     _clear_model_metadata_caches,
+    _compose_system_prompt,
     _extract_attachment_text,
     _extract_uploaded_file_ids_from_message,
     _extract_ollama_model_info,
@@ -140,6 +142,222 @@ class ToolRegistryTestMixin:
         tool_registry.reset_cache()
 
 # Model and adapter parsing tests.
+
+
+class SkillsApiTests(TestCase):
+    """Cover project skill file management APIs."""
+
+    def setUp(self):
+        super().setUp()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.skills_dir = self.root / "Skills"
+        self.sandbox_skills_dir = self.root / "Tools" / "mcp-sandbox" / "_sandbox" / "Skills"
+        self._patches = [
+            patch.object(skills_config, "BASE_DIR", self.root),
+            patch.object(skills_config, "SKILLS_DIR", self.skills_dir),
+            patch.object(skills_config, "SANDBOX_SKILLS_DIR", self.sandbox_skills_dir),
+        ]
+        for patcher in self._patches:
+            patcher.start()
+        self.client = Client()
+
+    def tearDown(self):
+        for patcher in reversed(self._patches):
+            patcher.stop()
+        self._tmp.cleanup()
+        super().tearDown()
+
+    def test_skills_root_created_and_crud_validates_paths(self):
+        response = self.client.get(reverse("skills_api"))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.skills_dir.is_dir())
+
+        created = self.client.post(
+            reverse("skills_api"),
+            data=json.dumps({"name": "skill-creator"}),
+            content_type="application/json",
+        )
+        self.assertEqual(created.status_code, 200)
+        self.assertTrue((self.skills_dir / "skill-creator" / "SKILL.md").is_file())
+
+        saved = self.client.put(
+            reverse("skills_file_api"),
+            data=json.dumps({
+                "folder": "skill-creator",
+                "file": "agents/grader.md",
+                "content": "---\nname: skill-creator\ndescription: Make skills\nenabled: true\n---\n\n# Skill\n",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertTrue((self.skills_dir / "skill-creator" / "agents" / "grader.md").is_file())
+
+        renamed = self.client.patch(
+            reverse("skills_folder_api"),
+            data=json.dumps({"old_name": "skill-creator", "new_name": "renamed-skill"}),
+            content_type="application/json",
+        )
+        self.assertEqual(renamed.status_code, 200)
+        self.assertTrue((self.skills_dir / "renamed-skill" / "SKILL.md").is_file())
+        self.assertEqual(renamed.json()["folders"][0]["title"], "renamed-skill")
+
+        rejected = self.client.put(
+            reverse("skills_file_api"),
+            data=json.dumps({"folder": "renamed-skill", "file": "../bad.md", "content": "x"}),
+            content_type="application/json",
+        )
+        self.assertEqual(rejected.status_code, 400)
+
+    def test_front_matter_summary_and_prompt_inventory(self):
+        skill_root = self.skills_dir / "skill-creator"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text(
+            "---\n"
+            "name: skill-creator\n"
+            "description: Create and improve skills.\n"
+            "trigger: Slash command + auto\n"
+            "added_by: Anthropic\n"
+            "enabled: true\n"
+            "---\n\n# Skill Creator\n",
+            encoding="utf-8",
+        )
+
+        payload = self.client.get(reverse("skills_api")).json()
+        folder = payload["folders"][0]
+        self.assertEqual(folder["title"], "skill-creator")
+        self.assertEqual(folder["description"], "Create and improve skills.")
+        self.assertEqual(folder["source"], "download")
+        self.assertIsInstance(folder["created_at"], float)
+        self.assertGreater(folder["created_at"], 0)
+
+        prompt = _compose_system_prompt("")
+        self.assertIn("Available project skills", prompt)
+        self.assertIn("/workspace/_sandbox/Skills/skill-creator/SKILL.md", prompt)
+        self.assertNotIn("# Skill Creator", prompt)
+
+    def test_sync_mirrors_skills_and_overrides_sandbox(self):
+        skill_root = self.skills_dir / "writer"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text("# Writer\n", encoding="utf-8")
+        stale_root = self.sandbox_skills_dir / "writer"
+        stale_root.mkdir(parents=True)
+        (stale_root / "SKILL.md").write_text("stale\n", encoding="utf-8")
+        (self.sandbox_skills_dir / "extra.txt").write_text("remove\n", encoding="utf-8")
+
+        result = skills_config.sync_skills_to_sandbox()
+
+        self.assertGreaterEqual(result["copied"], 1)
+        self.assertEqual((self.sandbox_skills_dir / "writer" / "SKILL.md").read_text(encoding="utf-8"), "# Writer\n")
+        self.assertFalse((self.sandbox_skills_dir / "extra.txt").exists())
+
+    def test_create_skill_subdirectory(self):
+        skill_root = self.skills_dir / "my-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text("# My Skill\n", encoding="utf-8")
+
+        response = self.client.post(
+            reverse("skills_directory_api"),
+            data=json.dumps({"folder": "my-skill", "path": "agents"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue((skill_root / "agents").is_dir())
+
+        nested_response = self.client.post(
+            reverse("skills_directory_api"),
+            data=json.dumps({"folder": "my-skill", "path": "agents/tools"}),
+            content_type="application/json",
+        )
+        self.assertEqual(nested_response.status_code, 200)
+        self.assertTrue((skill_root / "agents" / "tools").is_dir())
+
+    def test_create_skill_subdirectory_rejects_duplicate(self):
+        skill_root = self.skills_dir / "my-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "agents").mkdir()
+
+        response = self.client.post(
+            reverse("skills_directory_api"),
+            data=json.dumps({"folder": "my-skill", "path": "agents"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_create_skill_subdirectory_rejects_traversal(self):
+        skill_root = self.skills_dir / "my-skill"
+        skill_root.mkdir(parents=True)
+
+        response = self.client.post(
+            reverse("skills_directory_api"),
+            data=json.dumps({"folder": "my-skill", "path": "../escape"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_create_skill_subdirectory_rejects_file_extension(self):
+        skill_root = self.skills_dir / "my-skill"
+        skill_root.mkdir(parents=True)
+
+        response = self.client.post(
+            reverse("skills_directory_api"),
+            data=json.dumps({"folder": "my-skill", "path": "agents.md"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_rename_and_delete_skill_subdirectory(self):
+        skill_root = self.skills_dir / "my-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "agents").mkdir()
+        (skill_root / "agents" / "grader.md").write_text("# Grader\n", encoding="utf-8")
+
+        renamed = self.client.patch(
+            reverse("skills_path_api"),
+            data=json.dumps({
+                "folder": "my-skill",
+                "old_path": "agents",
+                "new_path": "reviewers",
+                "kind": "directory",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(renamed.status_code, 200)
+        self.assertTrue((skill_root / "reviewers" / "grader.md").is_file())
+        self.assertFalse((skill_root / "agents").exists())
+
+        deleted = self.client.delete(
+            reverse("skills_directory_api"),
+            data=json.dumps({"folder": "my-skill", "path": "reviewers"}),
+            content_type="application/json",
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertFalse((skill_root / "reviewers").exists())
+
+
+class SkillsSandboxDispatchTests(SimpleTestCase):
+    """Ensure sandbox dispatch refreshes Skills before executing a tool."""
+
+    def test_sandbox_tool_dispatch_syncs_skills_first(self):
+        server = {
+            "id": "sandbox",
+            "name": "Sandbox",
+            "description": "",
+            "tools": [{"id": "write", "alias": "sandbox__write", "name": "Write", "description": ""}],
+            "module": None,
+            "supports": None,
+            "server_callable": None,
+            "tool_handlers": {"write": lambda arguments, context=None: {"ok": True, "result": arguments}},
+            "server_file": Path("Tools/mcp-sandbox/mcp-server.py"),
+            "external": False,
+        }
+        lookup = {"sandbox__write": {"server": server, "tool": server["tools"][0]}}
+
+        with patch.object(skills_config, "sync_skills_to_sandbox") as sync_mock:
+            result = tool_registry.call_ollama_tool(lookup, "sandbox__write", {"path": "x.txt"})
+
+        sync_mock.assert_called_once()
+        self.assertIn("x.txt", str(result))
 
 
 # Cover per-response tool quota guardrails.

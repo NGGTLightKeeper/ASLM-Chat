@@ -66,6 +66,7 @@ from Apps.Data.models import (
 from Apps.UI.host_theme_bridge import build_host_theme_template_context
 from Apps.UI.upload_storage import load_upload_manifest, model_upload_payload, public_upload_payload, save_upload_to_sandbox
 from Settings import mcp_json, settings
+from Settings import skills as skills_config
 
 logger = logging.getLogger(__name__)
 
@@ -476,6 +477,10 @@ def _compose_system_prompt(user_system_prompt: str) -> str:
     runtime_context = _build_runtime_context()
     if runtime_context:
         parts.append(runtime_context)
+
+    skills_inventory = skills_config.build_system_prompt_inventory()
+    if skills_inventory:
+        parts.append(skills_inventory)
 
     user_prompt = str(user_system_prompt or "").strip()
     if user_prompt:
@@ -4826,6 +4831,139 @@ def mcp_config_api(request):
     _clear_tool_server_cache()
 
     return JsonResponse({"ok": True, "content": mcp_json.load_raw_text()})
+
+
+def _skills_error_response(exc: Exception) -> JsonResponse:
+    """Return a normalized JSON error for skills APIs."""
+
+    if isinstance(exc, FileNotFoundError):
+        return JsonResponse({"error": str(exc)}, status=404)
+    if isinstance(exc, ValueError):
+        return JsonResponse({"error": str(exc)}, status=400)
+    logger.exception("Unhandled skills API error")
+    return JsonResponse({"error": str(exc)}, status=500)
+
+
+def skills_api(request):
+    """List skills or create a new skill folder."""
+
+    if request.method == "GET":
+        try:
+            return JsonResponse(skills_config.list_skills())
+        except Exception as exc:
+            return _skills_error_response(exc)
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        return JsonResponse(skills_config.create_skill_folder(str(payload.get("name") or "")))
+    except Exception as exc:
+        return _skills_error_response(exc)
+
+
+def skills_folder_api(request):
+    """Rename or delete one skill folder."""
+
+    if request.method not in {"PATCH", "DELETE"}:
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        if request.method == "PATCH":
+            return JsonResponse(
+                skills_config.rename_skill_folder(
+                    str(payload.get("old_name") or payload.get("name") or ""),
+                    str(payload.get("new_name") or ""),
+                )
+            )
+        return JsonResponse(skills_config.delete_skill_folder(str(payload.get("name") or "")))
+    except Exception as exc:
+        return _skills_error_response(exc)
+
+
+def skills_file_api(request):
+    """Read, write, or delete one skill file."""
+
+    if request.method == "GET":
+        try:
+            return JsonResponse(
+                skills_config.read_skill_file(
+                    str(request.GET.get("folder") or ""),
+                    str(request.GET.get("file") or ""),
+                )
+            )
+        except Exception as exc:
+            return _skills_error_response(exc)
+
+    if request.method not in {"PUT", "DELETE"}:
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        folder = str(payload.get("folder") or "")
+        file_path = str(payload.get("file") or "")
+        if request.method == "PUT":
+            return JsonResponse(skills_config.write_skill_file(folder, file_path, str(payload.get("content") or "")))
+        return JsonResponse(skills_config.delete_skill_file(folder, file_path))
+    except Exception as exc:
+        return _skills_error_response(exc)
+
+
+def skills_enabled_api(request):
+    """Enable or disable one skill."""
+
+    if request.method not in {"PATCH", "POST"}:
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        return JsonResponse(
+            skills_config.set_skill_enabled(
+                str(payload.get("folder") or payload.get("name") or ""),
+                bool(payload.get("enabled")),
+            )
+        )
+    except Exception as exc:
+        return _skills_error_response(exc)
+
+
+def skills_directory_api(request):
+    """Create or delete a subdirectory inside a skill folder."""
+
+    if request.method not in {"POST", "DELETE"}:
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        folder = str(payload.get("folder") or "")
+        path = str(payload.get("path") or "")
+        if request.method == "DELETE":
+            return JsonResponse(skills_config.delete_skill_subdirectory(folder, path))
+        return JsonResponse(skills_config.create_skill_subdirectory(folder, path))
+    except Exception as exc:
+        return _skills_error_response(exc)
+
+
+def skills_path_api(request):
+    """Rename a file or directory inside a skill folder."""
+
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        return JsonResponse(
+            skills_config.rename_skill_item(
+                str(payload.get("folder") or ""),
+                str(payload.get("old_path") or ""),
+                str(payload.get("new_path") or ""),
+                str(payload.get("kind") or "file"),
+            )
+        )
+    except Exception as exc:
+        return _skills_error_response(exc)
 
 
 def get_tools_api(request):

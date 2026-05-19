@@ -325,11 +325,12 @@ export function createParametersUi(context) {
     $('.settings-section').filter(function filterPanels() {
       return this.id.startsWith('group-')
         && this.id !== 'group-connection'
+        && this.id !== 'group-skills'
         && this.id !== 'group-system'
         && this.id !== 'group-model';
     }).hide().find('.settings-section-content').empty();
 
-    $('.settings-divider[id^="divider-"]').not('#divider-connection').hide();
+    $('.settings-divider[id^="divider-"]').not('#divider-connection, #divider-skills').hide();
   }
 
 

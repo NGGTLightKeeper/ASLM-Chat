@@ -54,6 +54,9 @@ export function createAppContext() {
     $groupMcp: $('#group-mcp'),
     $dividerMcp: $('#divider-mcp'),
     $mcpSettingsContent: $('#mcpSettingsContent'),
+    $groupSkills: $('#group-skills'),
+    $dividerSkills: $('#divider-skills'),
+    $skillsSettingsContent: $('#skillsSettingsContent'),
     $toolInspectorModal: $('#toolInspectorModal'),
     $chatItemDropdown: $('#chatItemDropdown'),
     $systemPrompt: $('#systemPrompt'),
@@ -99,6 +102,8 @@ export function createAppContext() {
     ARROW_LEFT_ICON: svgIcon(uiIconPaths.arrowLeft, 'width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     CHAT_ITEM_ICON: svgIcon(uiIconPaths.chatBubble, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     GLOBE_ICON: svgIcon(uiIconPaths.globe, 'width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
+    EYE_ICON: svgIcon(uiIconPaths.eye, 'width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
+    ADD_ICON: svgIcon(uiIconPaths.addMenu, 'width="16" height="16" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"'),
     WEB_SEARCH_ICON: imageIcon(uiIconPaths.webSearch, 'msg-search-main-icon', ''),
     WEB_SEARCH_ERROR_ICON: imageIcon(uiIconPaths.webSearchError, 'msg-search-main-icon', ''),
     TOOL_CODE_EXEC_ICON: imageIcon(uiIconPaths.toolBash, 'msg-tool-svg-icon', ''),
@@ -125,7 +130,10 @@ export function createAppContext() {
     DOWNLOAD_FILE_ICON: svgIcon(uiIconPaths.download, 'width="20" height="20" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
     AUDIO_FILE_ICON: svgIcon(uiIconPaths.audio, 'width="20" height="20" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
     VIDEO_FILE_ICON: svgIcon(uiIconPaths.video, 'width="20" height="20" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"'),
-    CLOSE_ICON: svgIcon(uiIconPaths.removeAttachment, 'width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true"')
+    CLOSE_ICON: svgIcon(uiIconPaths.removeAttachment, 'width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true"'),
+    SKILLS_FOLDER_ICON: svgIcon(uiIconPaths.skillsFolder, 'width="16" height="16" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"'),
+    SKILLS_FOLDER_OPEN_ICON: svgIcon(uiIconPaths.skillsFolderOpen, 'width="16" height="16" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"'),
+    SKILLS_FILE_ICON: svgIcon(uiIconPaths.skillsFile, 'width="16" height="16" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"')
   };
 
   // Build the shared action buttons used by assistant and user rows.
