@@ -77,6 +77,7 @@ export function createSkillsUi(context) {
     state.payload = await getJson('/api/skills/');
     selectFallback();
     renderSidebarSummary();
+    renderComposerSkillsMenu();
     renderOverlay();
   }
 
@@ -884,9 +885,97 @@ export function createSkillsUi(context) {
     return $tools.append($rename);
   }
 
+  function syncComposerSkillCheckbox(folderName) {
+    const folder = findFolder(folderName);
+    if (!folder) {
+      return;
+    }
+    const enabled = folder.enabled !== false;
+    dom.$composerSkillsHosts.find('.composer-skill-row').each(function syncRow() {
+      const $row = $(this);
+      if (String($row.attr('data-skill-name') || '') === String(folderName)) {
+        $row.find('.tool-server-checkbox').prop('checked', enabled);
+      }
+    });
+  }
+
   async function setEnabled(folderName, enabled) {
     state.payload = await patchJson('/api/skills/enabled/', { folder: folderName, enabled });
+    syncComposerSkillCheckbox(folderName);
     renderOverlay();
+  }
+
+  function renderComposerSkillsMenu() {
+    if (!dom.$composerSkillsHosts || !dom.$composerSkillsHosts.length) {
+      return;
+    }
+    const folders = folderList();
+    const chevron = '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+
+    dom.$composerSkillsHosts.each(function fillHost() {
+      const $host = $(this);
+      $host.empty();
+
+      const $entry = $('<div class="composer-skills-entry">');
+      const $trigger = $('<button type="button" class="composer-tool-row composer-skills-trigger" aria-haspopup="menu">');
+      const $icon = $('<span class="composer-tool-icon is-skills" aria-hidden="true">');
+      const $name = $('<span class="tool-server-name">').text('Skills');
+      const $chev = $('<span class="composer-skills-chevron" aria-hidden="true">').html(chevron);
+      $trigger.append($icon).append($name).append($chev);
+
+      const $flyout = $('<div class="composer-skills-flyout" role="menu" aria-label="Skills">');
+      const $list = $('<div class="composer-skills-flyout-list">');
+
+      if (!folders.length) {
+        $list.append($('<div class="composer-skills-empty">').text('No skills yet'));
+      } else {
+        folders.forEach(function renderSkillRow(folder) {
+          const folderName = String(folder.name || '');
+          const label = String(folder.title || folderName).trim() || folderName;
+          const $row = $('<label class="tool-server-row composer-tool-row composer-skill-row">')
+            .attr('data-skill-name', folderName);
+          const $rowIcon = $('<span class="composer-tool-icon is-skills-file" aria-hidden="true">');
+          const $rowName = $('<span class="tool-server-name">').text(label);
+          const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">')
+            .prop('checked', folder.enabled !== false);
+          $row.on('mousedown click', function onSkillRowPointer(ev) {
+            ev.stopPropagation();
+          });
+          $checkbox.on('mousedown click change', function onSkillCheckboxPointer(ev) {
+            ev.stopPropagation();
+          });
+          $checkbox.on('change', function onEnabledChange() {
+            const checked = this.checked;
+            setEnabled(folderName, checked).catch(function onEnabledError(error) {
+              $checkbox.prop('checked', !checked);
+              showError(error);
+            });
+          });
+          $row.append($rowIcon).append($rowName).append($checkbox);
+          $list.append($row);
+        });
+      }
+
+      const $manage = $('<button type="button" class="composer-menu-action composer-skills-manage" role="menuitem">')
+        .append($('<span class="composer-tool-icon is-skills" aria-hidden="true">'))
+        .append($('<span>').text('Manage skills'));
+      $manage.on('click', function onManageClick(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        openManager();
+      });
+
+      $flyout.on('click', function onFlyoutClick(ev) {
+        ev.stopPropagation();
+      });
+      $flyout.append($list).append($manage);
+      $entry.append($trigger).append($flyout);
+      $host.append($entry);
+    });
+
+    if (dom.$composerSkillsMenus && dom.$composerSkillsMenus.length) {
+      dom.$composerSkillsMenus.show();
+    }
   }
 
   async function loadCurrentFile() {
@@ -1447,6 +1536,7 @@ export function createSkillsUi(context) {
 
   function init() {
     renderSidebarSummary();
+    renderComposerSkillsMenu();
     loadSkills().catch(function ignoreInitialLoad(error) {
       if (typeof window.console !== 'undefined' && window.console.warn) {
         window.console.warn(error);
@@ -1456,6 +1546,8 @@ export function createSkillsUi(context) {
 
   return {
     init,
-    openManager
+    openManager,
+    renderComposerSkillsMenu,
+    refreshComposerSkillsMenu: renderComposerSkillsMenu
   };
 }

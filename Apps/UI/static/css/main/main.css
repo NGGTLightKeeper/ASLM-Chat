@@ -1265,7 +1265,7 @@
   z-index: 60;
   width: min(268px, calc(100vw - 36px));
   max-height: min(380px, 52vh);
-  overflow-y: auto;
+  overflow: visible;
   padding: 8px;
   border: 1px solid var(--c-border-strong);
   border-radius: var(--r-md);
@@ -1316,6 +1316,127 @@
   margin-top: 4px;
   padding-top: 5px;
   border-top: 1px solid var(--c-border);
+}
+
+.composer-menu-tools .composer-tool-list {
+  max-height: min(220px, 36vh);
+  overflow-y: auto;
+}
+
+.composer-menu-other {
+  margin-top: 4px;
+  padding-top: 5px;
+  border-top: 1px solid var(--c-border);
+}
+
+.composer-skills-entry {
+  position: relative;
+}
+
+.composer-skills-entry::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 100%;
+  width: 14px;
+  height: 100%;
+  z-index: 79;
+}
+
+.composer-skills-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.composer-skills-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: auto;
+  line-height: 0;
+  color: var(--c-text-muted);
+  transition: color var(--t-fast);
+}
+
+.composer-skills-chevron svg {
+  display: block;
+}
+
+.composer-skills-entry:hover .composer-skills-chevron,
+.composer-skills-entry:focus-within .composer-skills-chevron {
+  color: var(--c-text);
+}
+
+.composer-skills-flyout {
+  display: none;
+  position: absolute;
+  left: calc(100% + 2px);
+  top: auto;
+  bottom: 0;
+  z-index: 80;
+  width: min(260px, calc(100vw - 48px));
+  max-height: min(280px, 40vh);
+  overflow: visible;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-secondary);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--c-black) 34%, transparent);
+}
+
+.composer-skills-flyout::before {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 0;
+  width: 14px;
+  height: 100%;
+}
+
+.composer-skills-entry:hover .composer-skills-flyout,
+.composer-skills-entry:focus-within .composer-skills-flyout,
+.composer-skills-flyout:hover {
+  display: flex;
+}
+
+.composer-skills-flyout-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(220px, 36vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: calc(var(--r-md) - 2px);
+}
+
+.composer-skills-empty {
+  padding: 8px 10px;
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-1);
+}
+
+.composer-skills-manage {
+  flex: 0 0 auto;
+  margin-top: 4px;
+  padding-top: 7px;
+  border-top: 1px solid var(--c-border);
+}
+
+.composer-skill-row {
+  cursor: pointer;
 }
 
 .composer-menu-section-title {
@@ -1441,6 +1562,16 @@
 .composer-tool-icon.is-generic-tool {
   -webkit-mask: url("../../img/ui/tool-server.svg") center / contain no-repeat;
   mask: url("../../img/ui/tool-server.svg") center / contain no-repeat;
+}
+
+.composer-tool-icon.is-skills {
+  -webkit-mask: url("../../img/ui/skills/folder.svg") center / contain no-repeat;
+  mask: url("../../img/ui/skills/folder.svg") center / contain no-repeat;
+}
+
+.composer-tool-icon.is-skills-file {
+  -webkit-mask: url("../../img/ui/skills/file.svg") center / contain no-repeat;
+  mask: url("../../img/ui/skills/file.svg") center / contain no-repeat;
 }
 
 .attach-btn,

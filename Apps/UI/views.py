@@ -464,8 +464,21 @@ def _write_favicon_disk_cache(domain: str, content_type: str, content: bytes, ex
         logger.debug("Failed to write favicon disk cache for %s", domain, exc_info=True)
 
 
+def _chat_is_first_user_turn(chat: Chat | None) -> bool:
+    """Return whether the chat has not yet persisted a user message."""
+
+    if chat is None:
+        return True
+    return not chat.messages.filter(role="user").exists()
+
+
 # Merge the project prompt with per-request user instructions.
-def _compose_system_prompt(user_system_prompt: str) -> str:
+def _compose_system_prompt(
+    user_system_prompt: str,
+    *,
+    consume_skill_notifications: bool = True,
+    include_skills_baseline: bool = False,
+) -> str:
     """Build the system prompt sent to the model for one request."""
 
     parts: list[str] = []
@@ -478,9 +491,16 @@ def _compose_system_prompt(user_system_prompt: str) -> str:
     if runtime_context:
         parts.append(runtime_context)
 
-    skills_inventory = skills_config.build_system_prompt_inventory()
-    if skills_inventory:
-        parts.append(skills_inventory)
+    try:
+        skill_delta = skills_config.build_system_prompt_skills_section(
+            consume=consume_skill_notifications,
+            include_baseline=include_skills_baseline,
+        )
+    except Exception:
+        logger.exception("Failed to build skills prompt delta")
+        skill_delta = ""
+    if skill_delta:
+        parts.append(skill_delta)
 
     user_prompt = str(user_system_prompt or "").strip()
     if user_prompt:
@@ -3888,7 +3908,6 @@ def chat_api(request):
         # Read request payload and validate required inputs.
         user_message = data.get("message", "")
         model_name = data.get("model", "")
-        system_prompt = _compose_system_prompt(data.get("system_prompt", ""))
         options = data.get("options", {}) or {}
         chat_id = data.get("chat_id", "")
         attachments = _normalize_request_attachments(data)
@@ -3948,6 +3967,11 @@ def chat_api(request):
             chat = _resolve_chat(chat_id, user_message, attachments or upload_manifests)
         except LookupError as exc:
             return JsonResponse({"error": str(exc)}, status=404)
+
+        system_prompt = _compose_system_prompt(
+            data.get("system_prompt", ""),
+            include_skills_baseline=_chat_is_first_user_turn(chat),
+        )
 
         import json as _json
         active_slug = _json.dumps([s["id"] for s in selected_tool_servers], ensure_ascii=False)
@@ -4441,7 +4465,6 @@ def regenerate_chat_api(request, chat_id):
         data = _read_json_request_body(request)
 
         model_name = data.get("model", "")
-        system_prompt = _compose_system_prompt(data.get("system_prompt", ""))
         options = data.get("options", {}) or {}
         engine = _get_active_engine(data.get("engine"))
         raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
@@ -4456,6 +4479,11 @@ def regenerate_chat_api(request, chat_id):
             chat = Chat.objects.get(id=chat_id)
         except Chat.DoesNotExist:
             return JsonResponse({"error": "Chat not found"}, status=404)
+
+        system_prompt = _compose_system_prompt(
+            data.get("system_prompt", ""),
+            include_skills_baseline=False,
+        )
 
         target_id = data.get("user_message_id")
         ordered = list(chat.messages.order_by("created_at", "id"))
@@ -4922,7 +4950,7 @@ def skills_enabled_api(request):
         return JsonResponse(
             skills_config.set_skill_enabled(
                 str(payload.get("folder") or payload.get("name") or ""),
-                bool(payload.get("enabled")),
+                skills_config.parse_enabled_flag(payload.get("enabled")),
             )
         )
     except Exception as exc:
@@ -5074,7 +5102,6 @@ def get_context_usage_api(request):
         model_name = str(request.GET.get("model") or _get_remembered_active_model(engine) or "").strip()
         chat_id = str(request.GET.get("chat_id") or "").strip()
         draft_text = str(request.GET.get("draft") or "")
-        system_prompt = _compose_system_prompt(str(request.GET.get("system_prompt") or ""))
 
         model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
         chat: Chat | None = None
@@ -5083,6 +5110,12 @@ def get_context_usage_api(request):
                 chat = Chat.objects.get(id=chat_id)
             except Chat.DoesNotExist:
                 chat = None
+
+        system_prompt = _compose_system_prompt(
+            str(request.GET.get("system_prompt") or ""),
+            consume_skill_notifications=False,
+            include_skills_baseline=_chat_is_first_user_turn(chat),
+        )
 
         estimate = _estimate_context_usage(
             chat=chat,
@@ -5135,13 +5168,18 @@ def context_compress_api(request):
         if not chat_id:
             return JsonResponse({"ok": True, "applied": False, "reason": "missing_chat_id"})
         force = bool(data.get("force"))
-        system_prompt = _compose_system_prompt(str(data.get("system_prompt") or ""))
         draft_text = str(data.get("draft") or data.get("draft_text") or "")
 
         try:
             chat = Chat.objects.get(id=chat_id)
         except Chat.DoesNotExist:
             return JsonResponse({"ok": True, "applied": False, "reason": "chat_not_found"})
+
+        system_prompt = _compose_system_prompt(
+            str(data.get("system_prompt") or ""),
+            consume_skill_notifications=False,
+            include_skills_baseline=False,
+        )
 
         with _generation_state_lock:
             active_generation_id = str(_active_generation_id_by_chat_id.get(str(chat.id)) or "")

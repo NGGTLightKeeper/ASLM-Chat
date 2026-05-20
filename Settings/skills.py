@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import os
 import re
 import shutil
@@ -38,7 +40,11 @@ MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,79}$")
 _FRONT_MATTER_RE = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
+_LEGACY_PENDING_NOTIFY_FILE = ".skills-pending-notify.json"
+_PENDING_NOTIFY_PATH = BASE_DIR / ".aslm" / "skills-pending-notify.json"
 _sync_lock = threading.RLock()
+_notify_lock = threading.RLock()
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -449,6 +455,19 @@ def delete_skill_file(folder: str, file_path: str) -> dict[str, Any]:
     return list_skills()
 
 
+def parse_enabled_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    cleaned = str(value or "").strip().lower()
+    if cleaned in {"true", "1", "yes", "on"}:
+        return True
+    if cleaned in {"false", "0", "no", "off", ""}:
+        return False
+    return bool(cleaned)
+
+
 def set_skill_enabled(folder: str, enabled: bool) -> dict[str, Any]:
     skill_root = _skill_dir(folder)
     if not skill_root.is_dir():
@@ -457,13 +476,22 @@ def set_skill_enabled(folder: str, enabled: bool) -> dict[str, Any]:
     if primary.exists():
         content = _safe_read_text(primary)
         meta, body = parse_front_matter(content)
+        was_enabled = _read_skill_meta(skill_root)[0]["enabled"]
     else:
         meta, body = {}, f"# {folder}\n\nDescribe when and how this skill should be used.\n"
+        was_enabled = True
     meta.setdefault("name", folder)
     meta.setdefault("description", "")
     meta.setdefault("source", "local")
-    meta["enabled"] = bool(enabled)
+    new_enabled = parse_enabled_flag(enabled)
+    meta["enabled"] = new_enabled
     _atomic_write_text(primary, _format_front_matter(_normalize_meta_for_storage(meta)) + body.lstrip("\r\n"))
+    if was_enabled != new_enabled:
+        try:
+            sync_skills_to_sandbox()
+        except Exception:
+            logger.exception("Skills sandbox sync failed after toggling %s", folder)
+        _queue_skill_config_refresh()
     return list_skills()
 
 
@@ -567,6 +595,74 @@ def _format_skill_tree_lines(nodes: list[dict[str, Any]], *, indent: int = 2) ->
     return lines
 
 
+def _pending_notify_path() -> Path:
+    path = _PENDING_NOTIFY_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _load_notify_state() -> dict[str, Any]:
+    path = _pending_notify_path()
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        logger.warning("Ignoring invalid skills notification file at %s", path, exc_info=True)
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _save_notify_state(state: dict[str, Any]) -> None:
+    path = _pending_notify_path()
+    if not state.get("config_refresh_pending"):
+        if path.exists():
+            path.unlink(missing_ok=True)
+        return
+    _atomic_write_text(
+        path,
+        json.dumps({"config_refresh_pending": True}, ensure_ascii=False, indent=2) + "\n",
+    )
+
+
+def clear_skill_config_refresh_pending() -> None:
+    """Clear any queued one-shot skills summary refresh (tests and tooling)."""
+
+    with _notify_lock:
+        _save_notify_state({})
+
+
+def _migrate_legacy_notify_state() -> None:
+    legacy_path = ensure_skills_dir() / _LEGACY_PENDING_NOTIFY_FILE
+    if legacy_path.is_file():
+        legacy_path.unlink(missing_ok=True)
+        _queue_skill_config_refresh()
+        return
+
+    payload = _load_notify_state()
+    if payload.get("disabled"):
+        _queue_skill_config_refresh()
+
+
+def _peek_config_refresh_pending() -> bool:
+    _migrate_legacy_notify_state()
+    return bool(_load_notify_state().get("config_refresh_pending"))
+
+
+def _consume_config_refresh_pending() -> bool:
+    with _notify_lock:
+        _migrate_legacy_notify_state()
+        pending = bool(_load_notify_state().get("config_refresh_pending"))
+        if pending:
+            _save_notify_state({})
+        return pending
+
+
+def _queue_skill_config_refresh() -> None:
+    with _notify_lock:
+        _save_notify_state({"config_refresh_pending": True})
+
+
 def build_system_prompt_inventory() -> str:
     """Build a system-prompt block listing enabled skills and their on-disk layout."""
 
@@ -615,6 +711,39 @@ def build_system_prompt_inventory() -> str:
     return "\n".join(lines)
 
 
+def build_system_prompt_skills_section(
+    *,
+    consume: bool = True,
+    include_baseline: bool = False,
+) -> str:
+    """Inject skills into the system prompt only for the first chat turn or after toggles."""
+
+    pending = _consume_config_refresh_pending() if consume else _peek_config_refresh_pending()
+    inventory = build_system_prompt_inventory()
+    if pending:
+        if inventory:
+            return (
+                "Skill configuration update:\n\n"
+                "The user changed which project skills are enabled. "
+                "Use only the skills listed below.\n\n"
+                + inventory
+            )
+        return (
+            "Skill configuration update:\n\n"
+            "The user changed which project skills are enabled. "
+            "There are currently no enabled project skills."
+        )
+    if include_baseline and inventory:
+        return inventory
+    return ""
+
+
+def build_system_prompt_skill_delta(*, consume: bool = True, include_baseline: bool = False) -> str:
+    """Backward-compatible alias for the skills system-prompt section."""
+
+    return build_system_prompt_skills_section(consume=consume, include_baseline=include_baseline)
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -623,7 +752,20 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _iter_sync_files(root: Path) -> dict[str, dict[str, Any]]:
+def _enabled_skill_names(root: Path) -> set[str]:
+    names: set[str] = set()
+    if not root.is_dir():
+        return names
+    for skill_root in root.iterdir():
+        if not skill_root.is_dir() or skill_root.is_symlink() or _is_hidden_part(skill_root.name):
+            continue
+        meta, _primary = _read_skill_meta(skill_root)
+        if meta.get("enabled", True):
+            names.add(skill_root.name)
+    return names
+
+
+def _iter_sync_files(root: Path, skill_names: set[str] | None = None) -> dict[str, dict[str, Any]]:
     files: dict[str, dict[str, Any]] = {}
     if not root.exists():
         return files
@@ -636,6 +778,10 @@ def _iter_sync_files(root: Path) -> dict[str, dict[str, Any]]:
             continue
         if any(_is_hidden_part(part) for part in rel_parts):
             continue
+        if skill_names is not None:
+            top_level = rel_parts[0] if rel_parts else ""
+            if top_level not in skill_names:
+                continue
         rel_path = Path(*rel_parts).as_posix()
         stat = path.stat()
         files[rel_path] = {
@@ -665,7 +811,8 @@ def sync_skills_to_sandbox() -> dict[str, Any]:
         if not target_root.is_relative_to((BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox").resolve()):
             raise RuntimeError("Sandbox Skills target escapes sandbox root.")
 
-        source_files = _iter_sync_files(source_root)
+        enabled_names = _enabled_skill_names(source_root)
+        source_files = _iter_sync_files(source_root, enabled_names)
         target_files = _iter_sync_files(target_root)
 
         removed = 0

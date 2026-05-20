@@ -61,6 +61,7 @@ from Apps.UI.views import (
     _build_uploaded_file_context_entry,
     _build_uploaded_file_prompt_block,
     _clear_model_metadata_caches,
+    _chat_is_first_user_turn,
     _compose_system_prompt,
     _extract_attachment_text,
     _extract_uploaded_file_ids_from_message,
@@ -157,12 +158,15 @@ class SkillsApiTests(TestCase):
             patch.object(skills_config, "BASE_DIR", self.root),
             patch.object(skills_config, "SKILLS_DIR", self.skills_dir),
             patch.object(skills_config, "SANDBOX_SKILLS_DIR", self.sandbox_skills_dir),
+            patch.object(skills_config, "_PENDING_NOTIFY_PATH", self.root / ".aslm" / "skills-pending-notify.json"),
         ]
         for patcher in self._patches:
             patcher.start()
         self.client = Client()
+        skills_config.clear_skill_config_refresh_pending()
 
     def tearDown(self):
+        skills_config.clear_skill_config_refresh_pending()
         for patcher in reversed(self._patches):
             patcher.stop()
         self._tmp.cleanup()
@@ -234,15 +238,13 @@ class SkillsApiTests(TestCase):
         self.assertIsInstance(folder["created_at"], float)
         self.assertGreater(folder["created_at"], 0)
 
-        prompt = _compose_system_prompt("")
+        prompt = _compose_system_prompt("", include_skills_baseline=True)
         self.assertIn("Your skills:", prompt)
-        self.assertIn("Sandbox path: /workspace/_sandbox/Skills", prompt)
-        self.assertIn(str(self.skills_dir), prompt)
         self.assertIn("/workspace/_sandbox/Skills/skill-creator", prompt)
-        self.assertIn("SKILL.md", prompt)
         self.assertIn("agents/grader.md", prompt)
-        self.assertNotIn("# Skill Creator", prompt)
-        self.assertNotIn("# Grader", prompt)
+
+        follow_up_prompt = _compose_system_prompt("")
+        self.assertNotIn("Your skills:", follow_up_prompt)
 
         disabled_root = self.skills_dir / "disabled-skill"
         disabled_root.mkdir()
@@ -252,6 +254,34 @@ class SkillsApiTests(TestCase):
         )
         prompt_with_disabled = _compose_system_prompt("")
         self.assertNotIn("disabled-skill", prompt_with_disabled)
+
+    def test_disable_skill_queues_refreshed_inventory_for_next_prompt(self):
+        skill_root = self.skills_dir / "pdf"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text(
+            "---\nname: pdf\ndescription: PDF skill\nenabled: true\n---\n",
+            encoding="utf-8",
+        )
+
+        baseline_prompt = _compose_system_prompt("", include_skills_baseline=True)
+        self.assertIn("Your skills:", baseline_prompt)
+        self.assertNotIn("Skill configuration update:", baseline_prompt)
+
+        response = self.client.patch(
+            reverse("skills_enabled_api"),
+            data=json.dumps({"folder": "pdf", "enabled": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        prompt_after_disable = _compose_system_prompt("")
+        self.assertIn("Skill configuration update:", prompt_after_disable)
+        self.assertIn("no enabled project skills", prompt_after_disable)
+        self.assertNotIn("Your skills:", prompt_after_disable)
+
+        prompt_after_consume = _compose_system_prompt("")
+        self.assertNotIn("Skill configuration update:", prompt_after_consume)
+        self.assertNotIn("Your skills:", prompt_after_consume)
 
     def test_sync_mirrors_skills_and_overrides_sandbox(self):
         skill_root = self.skills_dir / "writer"
@@ -267,6 +297,46 @@ class SkillsApiTests(TestCase):
         self.assertGreaterEqual(result["copied"], 1)
         self.assertEqual((self.sandbox_skills_dir / "writer" / "SKILL.md").read_text(encoding="utf-8"), "# Writer\n")
         self.assertFalse((self.sandbox_skills_dir / "extra.txt").exists())
+
+    def test_sync_excludes_disabled_skills_from_sandbox(self):
+        enabled_root = self.skills_dir / "writer"
+        enabled_root.mkdir(parents=True)
+        (enabled_root / "SKILL.md").write_text("# Writer\n", encoding="utf-8")
+
+        disabled_root = self.skills_dir / "disabled-skill"
+        disabled_root.mkdir(parents=True)
+        (disabled_root / "SKILL.md").write_text(
+            "---\nname: disabled\ndescription: Off\nenabled: false\n---\n",
+            encoding="utf-8",
+        )
+
+        stale_disabled = self.sandbox_skills_dir / "disabled-skill"
+        stale_disabled.mkdir(parents=True)
+        (stale_disabled / "SKILL.md").write_text("stale\n", encoding="utf-8")
+
+        skills_config.sync_skills_to_sandbox()
+
+        self.assertTrue((self.sandbox_skills_dir / "writer" / "SKILL.md").is_file())
+        self.assertFalse(stale_disabled.exists())
+
+    def test_disable_skill_removes_folder_from_sandbox(self):
+        skill_root = self.skills_dir / "toggle-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text(
+            "---\nname: toggle-skill\ndescription: Toggle\nenabled: true\n---\n",
+            encoding="utf-8",
+        )
+        skills_config.sync_skills_to_sandbox()
+        self.assertTrue((self.sandbox_skills_dir / "toggle-skill" / "SKILL.md").is_file())
+
+        response = self.client.patch(
+            reverse("skills_enabled_api"),
+            data=json.dumps({"folder": "toggle-skill", "enabled": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["folders"][0]["enabled"])
+        self.assertFalse((self.sandbox_skills_dir / "toggle-skill").exists())
 
     def test_create_skill_subdirectory(self):
         skill_root = self.skills_dir / "my-skill"
@@ -411,6 +481,200 @@ class SkillsApiTests(TestCase):
         payload = response.json()
         folder_names = [f["name"] for f in payload["folders"]]
         self.assertIn("duplicate-skill", folder_names)
+
+
+class SkillsModelContextTests(TestCase):
+    """Verify what the model receives in system context under skills toggles."""
+
+    def setUp(self):
+        super().setUp()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.skills_dir = self.root / "Skills"
+        self.sandbox_skills_dir = self.root / "Tools" / "mcp-sandbox" / "_sandbox" / "Skills"
+        self._patches = [
+            patch.object(skills_config, "BASE_DIR", self.root),
+            patch.object(skills_config, "SKILLS_DIR", self.skills_dir),
+            patch.object(skills_config, "SANDBOX_SKILLS_DIR", self.sandbox_skills_dir),
+            patch.object(skills_config, "_PENDING_NOTIFY_PATH", self.root / ".aslm" / "skills-pending-notify.json"),
+        ]
+        for patcher in self._patches:
+            patcher.start()
+        self.client = Client()
+        skills_config.clear_skill_config_refresh_pending()
+
+    def tearDown(self):
+        skills_config.clear_skill_config_refresh_pending()
+        for patcher in reversed(self._patches):
+            patcher.stop()
+        self._tmp.cleanup()
+        super().tearDown()
+
+    def _assert_has_skills_inventory(self, text: str, *folders: str) -> None:
+        self.assertIn("Your skills:", text)
+        for folder in folders:
+            self.assertIn(f"/workspace/_sandbox/Skills/{folder}", text)
+
+    def _assert_no_skill_context(self, text: str) -> None:
+        self.assertNotIn("Your skills:", text)
+        self.assertNotIn("Skill configuration update:", text)
+        self.assertNotIn("/workspace/_sandbox/Skills/", text)
+
+    def _assert_config_update_header(self, text: str) -> None:
+        self.assertIn("Skill configuration update:", text)
+        self.assertIn("changed which project skills are enabled", text)
+
+    def _write_skill(self, folder: str, *, enabled: bool = True, title: str | None = None) -> None:
+        skill_root = self.skills_dir / folder
+        skill_root.mkdir(parents=True, exist_ok=True)
+        display = title or folder
+        (skill_root / "SKILL.md").write_text(
+            f"---\nname: {display}\ndescription: Test\nenabled: {'true' if enabled else 'false'}\n---\n",
+            encoding="utf-8",
+        )
+
+    def _compose(self, *, consume: bool = True, include_baseline: bool = False, user_prompt: str = "") -> str:
+        return _compose_system_prompt(
+            user_prompt,
+            consume_skill_notifications=consume,
+            include_skills_baseline=include_baseline,
+        )
+
+    def _system_message_for_chat(self, system_prompt: str, user_text: str = "hello") -> str:
+        chat = Chat.objects.create(title="Skills model context")
+        user_record = Message.objects.create(chat=chat, role="user", content=user_text)
+        llm_messages, _compression = _build_chat_history(
+            chat,
+            user_record,
+            user_text,
+            system_prompt,
+            "ollama-service",
+            "test-model",
+        )
+        system_entries = [entry for entry in llm_messages if entry.get("role") == "system"]
+        self.assertEqual(len(system_entries), 1)
+        return str(system_entries[0].get("content") or "")
+
+    def _disable_via_api(self, folder: str) -> None:
+        response = self.client.patch(
+            reverse("skills_enabled_api"),
+            data=json.dumps({"folder": folder, "enabled": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_enabled_skills_appear_only_on_first_chat_turn(self):
+        self._write_skill("writer", enabled=True)
+        self._write_skill("pdf", enabled=True, title="PDF helper")
+
+        first_turn = self._compose(include_baseline=True)
+        history = self._system_message_for_chat(first_turn)
+
+        self._assert_has_skills_inventory(first_turn, "writer", "pdf")
+        self._assert_has_skills_inventory(history, "writer", "pdf")
+        self.assertNotIn("Skill configuration update:", first_turn)
+
+        follow_up = self._compose(include_baseline=False)
+        self._assert_no_skill_context(follow_up)
+
+    def test_chat_api_first_turn_includes_skills_baseline(self):
+        self._write_skill("writer", enabled=True)
+        chat = Chat.objects.create(title="Skills baseline chat")
+        prompt = _compose_system_prompt("", include_skills_baseline=_chat_is_first_user_turn(chat))
+        self._assert_has_skills_inventory(prompt, "writer")
+
+        chat.messages.create(role="user", content="hello")
+        prompt_after_history = _compose_system_prompt("", include_skills_baseline=_chat_is_first_user_turn(chat))
+        self._assert_no_skill_context(prompt_after_history)
+
+    def test_static_disabled_skill_is_omitted_from_inventory(self):
+        self._write_skill("writer", enabled=True)
+        self._write_skill("legacy-off", enabled=False, title="Legacy")
+
+        composed = self._compose(include_baseline=True)
+        self._assert_has_skills_inventory(composed, "writer")
+        self.assertNotIn("legacy-off", composed)
+
+    def test_disable_sends_updated_inventory_once(self):
+        self._write_skill("writer", enabled=True)
+        self._write_skill("pdf", enabled=True, title="PDF skill")
+        self._disable_via_api("pdf")
+
+        first_compose = self._compose(consume=True)
+        self._assert_config_update_header(first_compose)
+        self._assert_has_skills_inventory(first_compose, "writer")
+        self.assertNotIn("/workspace/_sandbox/Skills/pdf", first_compose)
+
+        second_compose = self._compose(consume=True)
+        self.assertNotIn("Skill configuration update:", second_compose)
+        self._assert_no_skill_context(second_compose)
+
+    def test_context_usage_style_compose_does_not_consume_pending_refresh(self):
+        self._write_skill("writer", enabled=True)
+        self._write_skill("docx", enabled=True, title="DOCX skill")
+        self._disable_via_api("docx")
+
+        peek = self._compose(consume=False)
+        self._assert_config_update_header(peek)
+        self._assert_has_skills_inventory(peek, "writer")
+        self.assertTrue(skills_config._peek_config_refresh_pending())
+
+        generation = self._compose(consume=True)
+        self._assert_config_update_header(generation)
+        self.assertFalse(skills_config._peek_config_refresh_pending())
+
+        follow_up = self._compose(consume=True)
+        self.assertNotIn("Skill configuration update:", follow_up)
+        self._assert_no_skill_context(follow_up)
+
+    def test_enable_queues_refreshed_inventory_with_enabled_skill(self):
+        self._write_skill("pdf", enabled=True, title="PDF")
+        self._disable_via_api("pdf")
+        self._compose(consume=True)
+
+        enable_response = self.client.patch(
+            reverse("skills_enabled_api"),
+            data=json.dumps({"folder": "pdf", "enabled": True}),
+            content_type="application/json",
+        )
+        self.assertEqual(enable_response.status_code, 200)
+
+        composed = self._compose(consume=True)
+        self._assert_config_update_header(composed)
+        self._assert_has_skills_inventory(composed, "pdf")
+
+        follow_up = self._compose(consume=True)
+        self.assertNotIn("Skill configuration update:", follow_up)
+        self._assert_no_skill_context(follow_up)
+
+    def test_re_toggle_without_change_does_not_queue_refresh(self):
+        self._write_skill("pdf", enabled=False, title="PDF")
+
+        response = self.client.patch(
+            reverse("skills_enabled_api"),
+            data=json.dumps({"folder": "pdf", "enabled": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        composed = self._compose(consume=True)
+        self._assert_no_skill_context(composed)
+        self.assertFalse(skills_config._peek_config_refresh_pending())
+
+    @patch.object(skills_config, "sync_skills_to_sandbox", side_effect=RuntimeError("sandbox unavailable"))
+    def test_toggle_still_queues_inventory_when_sandbox_sync_fails(self, _sync_mock):
+        self._write_skill("writer", enabled=True)
+        self._write_skill("pdf", enabled=True, title="PDF skill")
+        response = self.client.patch(
+            reverse("skills_enabled_api"),
+            data=json.dumps({"folder": "pdf", "enabled": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        prompt = self._compose(consume=True)
+        self._assert_config_update_header(prompt)
+        self._assert_has_skills_inventory(prompt, "writer")
 
 
 class SkillsSandboxDispatchTests(SimpleTestCase):

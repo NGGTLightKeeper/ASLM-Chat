@@ -70,6 +70,8 @@ export function createAppContext() {
     $composerMenuPopoverConv: $('#composerMenuPopoverConv'),
     $composerToolLists: $('.composer-tool-list'),
     $composerToolMenus: $('[data-tool-menu]'),
+    $composerSkillsMenus: $('[data-skills-menu]'),
+    $composerSkillsHosts: $('.composer-skills-host'),
     $attachBtn: $('#attachBtn'),
     $attachBtnConv: $('#attachBtnConv'),
     $modelVisionIndicator: $('#modelVisionIndicator'),

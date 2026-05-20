@@ -125,7 +125,7 @@ export function bindEventHandlers(context, dependencies) {
   });
 
   $(document).on('click', function onComposerMenuDocumentClick(event) {
-    if (!$(event.target).closest('.composer-menu-popover, .composer-menu-btn').length) {
+    if (!$(event.target).closest('.composer-menu-popover, .composer-menu-btn, .composer-skills-flyout').length) {
       closeComposerMenus();
     }
     if (!$(event.target).closest('.think-level-selector').length) {
