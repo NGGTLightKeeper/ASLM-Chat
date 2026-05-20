@@ -222,6 +222,9 @@ class SkillsApiTests(TestCase):
             "---\n\n# Skill Creator\n",
             encoding="utf-8",
         )
+        agents_dir = skill_root / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "grader.md").write_text("# Grader\n", encoding="utf-8")
 
         payload = self.client.get(reverse("skills_api")).json()
         folder = payload["folders"][0]
@@ -232,9 +235,23 @@ class SkillsApiTests(TestCase):
         self.assertGreater(folder["created_at"], 0)
 
         prompt = _compose_system_prompt("")
-        self.assertIn("Available project skills", prompt)
-        self.assertIn("/workspace/_sandbox/Skills/skill-creator/SKILL.md", prompt)
+        self.assertIn("Your skills:", prompt)
+        self.assertIn("Sandbox path: /workspace/_sandbox/Skills", prompt)
+        self.assertIn(str(self.skills_dir), prompt)
+        self.assertIn("/workspace/_sandbox/Skills/skill-creator", prompt)
+        self.assertIn("SKILL.md", prompt)
+        self.assertIn("agents/grader.md", prompt)
         self.assertNotIn("# Skill Creator", prompt)
+        self.assertNotIn("# Grader", prompt)
+
+        disabled_root = self.skills_dir / "disabled-skill"
+        disabled_root.mkdir()
+        (disabled_root / "SKILL.md").write_text(
+            "---\nname: disabled\ndescription: Off\nenabled: false\n---\n",
+            encoding="utf-8",
+        )
+        prompt_with_disabled = _compose_system_prompt("")
+        self.assertNotIn("disabled-skill", prompt_with_disabled)
 
     def test_sync_mirrors_skills_and_overrides_sandbox(self):
         skill_root = self.skills_dir / "writer"
@@ -333,6 +350,67 @@ class SkillsApiTests(TestCase):
         )
         self.assertEqual(deleted.status_code, 200)
         self.assertFalse((skill_root / "reviewers").exists())
+
+    def test_rename_skill_file(self):
+        skill_root = self.skills_dir / "my-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "notes.md").write_text("# Notes\n", encoding="utf-8")
+
+        renamed = self.client.patch(
+            reverse("skills_path_api"),
+            data=json.dumps({
+                "folder": "my-skill",
+                "old_path": "notes.md",
+                "new_path": "journal.md",
+                "kind": "file",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(renamed.status_code, 200)
+        self.assertTrue((skill_root / "journal.md").is_file())
+        self.assertFalse((skill_root / "notes.md").exists())
+
+    def test_import_skill_creates_folder_and_files(self):
+        files = [
+            {"path": "SKILL.md", "content": "---\nname: imported\ndescription: Test import\nenabled: true\n---\n\n# Imported\n"},
+            {"path": "agents/grader.md", "content": "# Grader\n"},
+            {"path": "../escape.md", "content": "bad"},   # should be silently skipped
+            {"path": "binary\x00.md", "content": "bad"},  # should be skipped
+        ]
+        response = self.client.post(
+            reverse("skills_import_api"),
+            data=json.dumps({"name": "imported-skill", "files": files}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        skill_root = self.skills_dir / "imported-skill"
+        self.assertTrue((skill_root / "SKILL.md").is_file())
+        self.assertTrue((skill_root / "agents" / "grader.md").is_file())
+        self.assertFalse((self.skills_dir / "escape.md").exists())
+        payload = response.json()
+        folder_names = [f["name"] for f in payload["folders"]]
+        self.assertIn("imported-skill", folder_names)
+        imported = next(f for f in payload["folders"] if f["name"] == "imported-skill")
+        self.assertEqual(imported["description"], "Test import")
+
+    def test_import_skill_merges_into_existing_folder(self):
+        skill_root = self.skills_dir / "duplicate-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text("# Duplicate\n", encoding="utf-8")
+
+        response = self.client.post(
+            reverse("skills_import_api"),
+            data=json.dumps({
+                "name": "duplicate-skill",
+                "files": [{"path": "notes.md", "content": "# Notes\n"}],
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue((skill_root / "notes.md").is_file())
+        payload = response.json()
+        folder_names = [f["name"] for f in payload["folders"]]
+        self.assertIn("duplicate-skill", folder_names)
 
 
 class SkillsSandboxDispatchTests(SimpleTestCase):

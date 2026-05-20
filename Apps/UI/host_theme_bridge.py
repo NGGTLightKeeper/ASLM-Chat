@@ -231,6 +231,8 @@ def _derived_theme_declarations(prefer_light_surfaces: bool) -> list[str]:
         activity_monochrome_svg_filter = "none"
 
     return [
+        "  --surface-hover: color-mix(in srgb, var(--c-text) 6%, transparent);",
+        "  --surface-hover-strong: color-mix(in srgb, var(--c-text) 10%, transparent);",
         "  --surface-blue-soft: color-mix(in srgb, var(--c-primary) 10%, transparent);",
         "  --c-overlay-blue-strong: color-mix(in srgb, var(--c-primary) 16%, transparent);",
         "  --focus-ring: color-mix(in srgb, var(--c-primary) 18%, transparent);",

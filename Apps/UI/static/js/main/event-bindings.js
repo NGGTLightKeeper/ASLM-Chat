@@ -284,9 +284,31 @@ export function bindEventHandlers(context, dependencies) {
     });
   }
 
+  function isSkillsManagerOpen() {
+    return document.body.classList.contains('skills-manager-open');
+  }
+
+  function isOverSkillsImportSurface(event) {
+    const el = event && (event.target || (event.nativeEvent && event.nativeEvent.target));
+    return !!(el && el.closest && (
+      el.closest('.skills-import-dropzone')
+      || el.closest('.skills-add-dialog')
+    ));
+  }
+
   function handleFileDrag(event) {
     const dataTransfer = getDragDataTransfer(event);
     if (!dataTransfer) {
+      return;
+    }
+
+    // Only accept file drag over the import dropzone — global preventDefault breaks
+    // Windows drag-and-drop (ghost icon stuck to cursor after mouseup).
+    if (isSkillsManagerOpen()) {
+      if (isOverSkillsImportSurface(event)) {
+        event.preventDefault();
+        dataTransfer.dropEffect = 'copy';
+      }
       return;
     }
 
@@ -300,6 +322,12 @@ export function bindEventHandlers(context, dependencies) {
     if (!event) {
       return;
     }
+    if (isSkillsManagerOpen()) {
+      document.querySelectorAll('.skills-import-dropzone.is-dragover').forEach(function (el) {
+        el.classList.remove('is-dragover');
+      });
+      return;
+    }
     if (event.type === 'dragend' || event.type === 'drop') {
       hideDropOverlay();
       return;
@@ -311,11 +339,20 @@ export function bindEventHandlers(context, dependencies) {
 
   function handleFileDrop(event) {
     const dataTransfer = getDragDataTransfer(event);
-    const files = dataTransfer ? dataTransfer.files : null;
     if (!dataTransfer) {
       return;
     }
 
+    // Never read dataTransfer.files while skills manager is open — that triggers
+    // Chromium's "upload N files to this site?" confirmation dialog.
+    if (isSkillsManagerOpen()) {
+      if (isOverSkillsImportSurface(event)) {
+        event.preventDefault();
+      }
+      return;
+    }
+
+    const files = dataTransfer.files;
     event.preventDefault();
     event.stopPropagation();
     hideDropOverlay();

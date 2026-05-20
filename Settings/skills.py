@@ -467,25 +467,151 @@ def set_skill_enabled(folder: str, enabled: bool) -> dict[str, Any]:
     return list_skills()
 
 
+def import_skill_files(skill_name: str, files: list[dict[str, Any]]) -> dict[str, Any]:
+    """Create a skill folder from a list of ``{path, content}`` dicts (browser import).
+
+    Raises ``ValueError`` if the skill already exists.
+    Each file path is validated: only relative paths with allowed extensions are written.
+    """
+
+    validated_name = _validate_skill_name(skill_name)
+    target_root = _skill_dir(validated_name)
+    target_resolved = target_root.resolve()
+
+    # Collect and validate all files first so we fail before writing anything.
+    validated: list[tuple[str, str]] = []
+    for entry in (files or []):
+        if not isinstance(entry, dict):
+            continue
+        raw_path = str(entry.get("path") or "").replace("\\", "/").strip().strip("/")
+        content = str(entry.get("content") or "")
+        if not raw_path or "\x00" in raw_path:
+            continue
+        # Normalise and security-check the relative path.
+        parts = [p for p in raw_path.split("/") if p]
+        if not parts or any(_is_hidden_part(p) for p in parts):
+            continue
+        suffix = Path(parts[-1]).suffix.lower()
+        if suffix not in ALLOWED_TEXT_SUFFIXES:
+            continue
+        rel = "/".join(parts)
+        dest = (target_root / Path(rel)).resolve()
+        try:
+            if not dest.is_relative_to(target_resolved):
+                continue
+        except ValueError:
+            continue
+        validated.append((rel, content))
+
+    if not validated:
+        raise ValueError("No valid files to import.")
+
+    target_root.mkdir(parents=True, exist_ok=True)
+
+    # Patch the primary SKILL.md front-matter if present, otherwise inject one.
+    primary_rel = next(
+        (r for r, _ in validated if Path(r).name in PRIMARY_SKILL_FILENAMES),
+        None,
+    )
+
+    for rel, content in validated:
+        dest = target_root / Path(rel)
+        if rel == primary_rel:
+            meta, body = parse_front_matter(content)
+            meta.setdefault("name", validated_name)
+            meta.setdefault("description", "")
+            meta["source"] = "local"
+            meta.setdefault("enabled", True)
+            content = _format_front_matter(_normalize_meta_for_storage(meta)) + body.lstrip("\r\n")
+        _atomic_write_text(dest, content)
+
+    if primary_rel is None:
+        # No primary file was included — synthesise a minimal SKILL.md.
+        title = validated_name.replace("_", " ").replace("-", " ").strip().title() or validated_name
+        _atomic_write_text(
+            target_root / "SKILL.md",
+            _format_front_matter({
+                "name": validated_name,
+                "description": "",
+                "source": "local",
+                "enabled": True,
+            }) + f"# {title}\n\nImported skill.\n",
+        )
+
+    return list_skills()
+
+
+def _format_skill_tree_lines(nodes: list[dict[str, Any]], *, indent: int = 2) -> list[str]:
+    """Render enabled skill tree nodes as indented lines (folders and .md files)."""
+
+    lines: list[str] = []
+    pad = " " * indent
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_type = str(node.get("type") or "").strip().lower()
+        if node_type == "directory":
+            dir_name = str(node.get("name") or node.get("path") or "").strip()
+            if not dir_name:
+                continue
+            lines.append(f"{pad}{dir_name}/")
+            lines.extend(
+                _format_skill_tree_lines(node.get("children") or [], indent=indent + 2)
+            )
+            continue
+        if node_type != "file":
+            continue
+        rel_path = str(node.get("path") or node.get("name") or "").strip()
+        if rel_path.lower().endswith(".md"):
+            lines.append(f"{pad}{rel_path}")
+    return lines
+
+
 def build_system_prompt_inventory() -> str:
+    """Build a system-prompt block listing enabled skills and their on-disk layout."""
+
     payload = list_skills()
     folders = [folder for folder in payload["folders"] if folder.get("enabled", True)]
     if not folders:
         return ""
 
+    sandbox_prefix = str(payload.get("sandbox_path_prefix") or SANDBOX_MODEL_SKILLS_PREFIX).rstrip("/")
+    project_root = str(payload.get("root") or SKILLS_DIR)
+
     lines = [
-        "Available project skills are stored as files. Use them when relevant by reading the listed sandbox paths with tools.",
+        "Your skills:",
+        "",
+        "Read these skill files with sandbox tools when they are relevant to the user's request.",
+        f"Sandbox path: {sandbox_prefix}",
+        f"Project folder: {project_root}",
+        "",
     ]
+
     for folder in folders:
-        title = str(folder.get("title") or folder.get("name") or "").strip()
-        name = str(folder.get("name") or title).strip()
+        name = str(folder.get("name") or "").strip()
+        if not name:
+            continue
+        title = str(folder.get("title") or name).strip()
         description = str(folder.get("description") or "").strip()
-        primary = str(folder.get("primary_file") or "SKILL.md").strip()
-        sandbox_path = f"{SANDBOX_MODEL_SKILLS_PREFIX}/{name}/{primary}"
-        line = f"- {title} ({sandbox_path})"
+        skill_sandbox = f"{sandbox_prefix}/{name}"
+        header = f"- {name}/"
+        details: list[str] = []
+        if title and title.casefold() != name.casefold():
+            details.append(title)
         if description:
-            line += f": {description}"
-        lines.append(line)
+            details.append(description)
+        if details:
+            header += f" ({'; '.join(details)})"
+        header += f" → {skill_sandbox}"
+        lines.append(header)
+
+        tree_lines = _format_skill_tree_lines(folder.get("tree") or [])
+        if tree_lines:
+            lines.extend(tree_lines)
+        else:
+            primary = str(folder.get("primary_file") or "SKILL.md").strip()
+            lines.append(f"  {primary}")
+
     return "\n".join(lines)
 
 

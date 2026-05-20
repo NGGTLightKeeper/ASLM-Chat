@@ -4946,6 +4946,26 @@ def skills_directory_api(request):
         return _skills_error_response(exc)
 
 
+def skills_import_api(request):
+    """Import a skill folder from a list of {path, content} file entries."""
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        skill_name = str(payload.get("name") or "")
+        files = payload.get("files")
+        if not isinstance(files, list):
+            return JsonResponse({"error": "files must be a list"}, status=400)
+        return JsonResponse(skills_config.import_skill_files(skill_name, files))
+    except ValueError as exc:
+        status = 409 if "already exists" in str(exc).lower() else 400
+        return JsonResponse({"error": str(exc)}, status=status)
+    except Exception as exc:
+        return _skills_error_response(exc)
+
+
 def skills_path_api(request):
     """Rename a file or directory inside a skill folder."""
 

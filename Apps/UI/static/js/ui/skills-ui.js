@@ -100,23 +100,12 @@ export function createSkillsUi(context) {
     }
     $overlay = $('<div class="skills-manager-backdrop" role="dialog" aria-modal="true" aria-label="Customize skills">');
     const $shell = $('<div class="skills-manager-shell">');
-    const $nav = $('<aside class="skills-customize-nav">');
-    const $back = $('<button type="button" class="skills-back-btn" aria-label="Close skills manager">')
-      .html('<span aria-hidden="true">&larr;</span><span>Customize</span>');
-    const $close = $('<button type="button" class="skills-manager-close" aria-label="Close skills manager">')
-      .html(icons.CLOSE_ICON || '<span aria-hidden="true">x</span>');
-    const $navList = $('<div class="skills-customize-nav-list">');
-    const $skillsNav = $('<button type="button" class="skills-customize-nav-item is-active">').text('Skills');
-    $navList.append($skillsNav);
-    $nav.append($back).append($navList);
 
     $middle = $('<aside class="skills-tree-pane">');
     $detail = $('<main class="skills-detail-pane">');
-    $shell.append($nav).append($middle).append($detail).append($close);
+    $shell.append($middle).append($detail);
     $overlay.append($shell);
     $('body').append($overlay);
-    $back.on('click', closeManager);
-    $close.on('click', closeManager);
     $overlay.on('click', function onBackdrop(ev) {
       if (ev.target === $overlay[0]) {
         closeManager();
@@ -259,6 +248,409 @@ export function createSkillsUi(context) {
     });
   }
 
+  const ALLOWED_IMPORT_EXTENSIONS = new Set([
+    '.bat', '.css', '.html', '.js', '.json', '.md', '.ps1',
+    '.py', '.sh', '.toml', '.ts', '.txt', '.yaml', '.yml'
+  ]);
+
+  function readFileAsText(file) {
+    return new Promise(function readPromise(resolve, reject) {
+      const reader = new FileReader();
+      reader.onload = function onLoad(ev) { resolve(ev.target.result || ''); };
+      reader.onerror = function onErr() { reject(new Error(`Failed to read ${file.name}`)); };
+      reader.readAsText(file);
+    });
+  }
+
+  function firstPathSegment(relativePath) {
+    const norm = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    const slash = norm.indexOf('/');
+    return slash === -1 ? norm : norm.slice(0, slash);
+  }
+
+  function pathWithinSkillRoot(relativePath, rootName) {
+    const norm = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!rootName) {
+      return norm;
+    }
+    const prefix = `${rootName}/`;
+    if (norm.startsWith(prefix)) {
+      return norm.slice(prefix.length);
+    }
+    const slash = norm.indexOf('/');
+    return slash === -1 ? '' : norm.slice(slash + 1);
+  }
+
+  function isAllowedImportFileName(fileName) {
+    const ext = ('.' + String(fileName || '').split('.').pop()).toLowerCase();
+    return ALLOWED_IMPORT_EXTENSIONS.has(ext);
+  }
+
+  async function readAllDirectoryEntries(dirReader) {
+    const all = [];
+    let batch = [];
+    do {
+      batch = await new Promise(function (res, rej) { dirReader.readEntries(res, rej); });
+      all.push(...batch);
+    } while (batch.length > 0);
+    return all;
+  }
+
+  async function collectFilesFromEntry(entry, prefix) {
+    const results = [];
+    if (entry.isFile) {
+      if (!isAllowedImportFileName(entry.name)) {
+        return results;
+      }
+      const file = await new Promise(function (res, rej) { entry.file(res, rej); });
+      const content = await readFileAsText(file);
+      results.push({ path: prefix ? `${prefix}/${entry.name}` : entry.name, content });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const children = await readAllDirectoryEntries(reader);
+      const childPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
+      for (const child of children) {
+        const sub = await collectFilesFromEntry(child, childPrefix);
+        results.push(...sub);
+      }
+    }
+    return results;
+  }
+
+  async function collectFilesFromDirectoryEntry(dirEntry) {
+    const reader = dirEntry.createReader();
+    const children = await readAllDirectoryEntries(reader);
+    const files = [];
+    for (const child of children) {
+      const sub = await collectFilesFromEntry(child, '');
+      files.push(...sub);
+    }
+    return files;
+  }
+
+  async function collectFilesFromDirectoryHandle(dirHandle, prefix) {
+    const results = [];
+    for await (const childHandle of dirHandle.values()) {
+      const rel = prefix ? `${prefix}/${childHandle.name}` : childHandle.name;
+      if (childHandle.kind === 'file') {
+        if (!isAllowedImportFileName(childHandle.name)) {
+          continue;
+        }
+        const file = await childHandle.getFile();
+        const content = await readFileAsText(file);
+        results.push({ path: rel, content });
+      } else if (childHandle.kind === 'directory') {
+        const sub = await collectFilesFromDirectoryHandle(childHandle, rel);
+        results.push(...sub);
+      }
+    }
+    return results;
+  }
+
+  async function collectFilesFromFileList(fileList, rootName, skillName) {
+    const arr = Array.from(fileList instanceof FileList ? fileList : (fileList.files || []));
+    const files = [];
+    const pathRoot = rootName || skillName || '';
+    for (const file of arr) {
+      if (!isAllowedImportFileName(file.name)) {
+        continue;
+      }
+      const rel = file.webkitRelativePath || file.name;
+      let relWithinSkill = pathWithinSkillRoot(rel, pathRoot);
+      if (!relWithinSkill && pathRoot && !rel.includes('/')) {
+        relWithinSkill = file.name;
+      }
+      if (!relWithinSkill && !pathRoot) {
+        relWithinSkill = file.name;
+      }
+      if (!relWithinSkill) {
+        continue;
+      }
+      const content = await readFileAsText(file);
+      files.push({ path: relWithinSkill, content });
+    }
+    return files;
+  }
+
+  async function groupFileListBySkillRoot(fileList, explicitName) {
+    const arr = Array.from(fileList instanceof FileList ? fileList : (fileList.files || []));
+    const groups = new Map();
+    for (const file of arr) {
+      const rel = file.webkitRelativePath || '';
+      const root = firstPathSegment(rel);
+      if (!root) {
+        continue;
+      }
+      if (!groups.has(root)) {
+        groups.set(root, []);
+      }
+      groups.get(root).push(file);
+    }
+    if (groups.size > 0) {
+      const payloads = [];
+      for (const [root, files] of groups.entries()) {
+        const collected = await collectFilesFromFileList(files, root, root);
+        if (collected.length) {
+          payloads.push({ skillName: root, files: collected });
+        }
+      }
+      return payloads;
+    }
+    const target = String(explicitName || state.selectedFolder || '').trim();
+    if (!target) {
+      return [];
+    }
+    const collected = await collectFilesFromFileList(arr, '', target);
+    if (!collected.length) {
+      return [];
+    }
+    return [{ skillName: target, files: collected }];
+  }
+
+  async function resolveImportPayloads(source, explicitName) {
+    const nameHint = String(explicitName || state.selectedFolder || '').trim();
+
+    if (source && source.skillName && Array.isArray(source.files)) {
+      return [{ skillName: source.skillName, files: source.files }];
+    }
+
+    const dataTransfer = source instanceof DataTransfer ? source : null;
+    const fileList = source instanceof FileList ? source : null;
+    let entries = dataTransfer
+      ? Array.from(dataTransfer.items || [])
+        .map(function (item) { return item.webkitGetAsEntry ? item.webkitGetAsEntry() : null; })
+        .filter(Boolean)
+      : [];
+
+    if (entries.length === 0 && dataTransfer && dataTransfer.files && dataTransfer.files.length > 0) {
+      return groupFileListBySkillRoot(dataTransfer.files, nameHint);
+    }
+
+    if (entries.length > 0) {
+      const topDirs = entries.filter(function (e) { return e.isDirectory; });
+      const topFiles = entries.filter(function (e) { return e.isFile; });
+
+      if (topDirs.length === 1 && topFiles.length === 0) {
+        const skillName = topDirs[0].name;
+        const files = await collectFilesFromDirectoryEntry(topDirs[0]);
+        return [{ skillName, files }];
+      }
+
+      if (topDirs.length > 1 && !nameHint) {
+        const payloads = [];
+        for (const dir of topDirs) {
+          const files = await collectFilesFromDirectoryEntry(dir);
+          if (files.length) {
+            payloads.push({ skillName: dir.name, files });
+          }
+        }
+        if (payloads.length) {
+          return payloads;
+        }
+      }
+
+      const skillName = nameHint;
+      if (!skillName) {
+        throw new Error('Enter a skill name in the field above, or drop one skill folder at a time.');
+      }
+      const files = [];
+      for (const entry of entries) {
+        if (entry.isFile) {
+          if (!isAllowedImportFileName(entry.name)) {
+            continue;
+          }
+          const file = await new Promise(function (res, rej) { entry.file(res, rej); });
+          const content = await readFileAsText(file);
+          files.push({ path: entry.name, content });
+        } else if (entry.isDirectory) {
+          const sub = await collectFilesFromDirectoryEntry(entry);
+          const prefix = entry.name;
+          for (const item of sub) {
+            files.push({ path: `${prefix}/${item.path}`, content: item.content });
+          }
+        }
+      }
+      return [{ skillName, files }];
+    }
+
+    if (fileList && fileList.length > 0) {
+      const grouped = await groupFileListBySkillRoot(fileList, nameHint);
+      if (grouped.length) {
+        return grouped;
+      }
+      throw new Error('Enter a skill name above, select a skill in the tree, or pick a single skill folder.');
+    }
+
+    throw new Error('No files found.');
+  }
+
+  async function importSkillFromSource(source, explicitName) {
+    const payloads = await resolveImportPayloads(source, explicitName);
+    if (!payloads.length) {
+      throw new Error('No supported text files found (.md, .txt, .py, …).');
+    }
+
+    for (const payload of payloads) {
+      const skillName = String(payload.skillName || '').trim();
+      if (!skillName) {
+        throw new Error('Skill name is required.');
+      }
+      if (!payload.files || !payload.files.length) {
+        throw new Error(`No supported text files found for "${skillName}".`);
+      }
+      await postJson('/api/skills/import/', {
+        name: skillName,
+        files: payload.files
+      });
+    }
+
+    state.query = '';
+    const lastName = payloads[payloads.length - 1].skillName;
+    await loadSkills();
+    state.selectedFolder = lastName;
+    state.selectedFile = firstFile(findFolder(lastName));
+    state.expandedSkills.add(lastName);
+    return lastName;
+  }
+
+  function showAddSkillsDialog() {
+    ensureOverlay();
+    return new Promise(function addDialogPromise(resolve) {
+      const $backdrop = $('<div class="skills-inline-dialog-backdrop" role="dialog" aria-modal="true">');
+      const $dialog = $('<div class="skills-inline-dialog skills-add-dialog">');
+
+      // --- Create section ---
+      const $createSection = $('<div class="skills-add-section">');
+      const $createLabel = $('<div class="skills-add-section-title">').text('Create skill');
+      const $createRow = $('<div class="skills-add-create-row">');
+      const $nameInput = $('<input class="skills-inline-dialog-input" type="text" autocomplete="off" spellcheck="false">')
+        .attr('placeholder', 'skill-name');
+      const $createBtn = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text('Create');
+      const $createError = $('<div class="skills-inline-dialog-error" role="alert">').hide();
+      $createRow.append($nameInput).append($createBtn);
+      $createSection.append($createLabel).append($createRow).append($createError);
+
+      // --- Divider ---
+      const $divider = $('<div class="skills-add-divider">');
+
+      // --- Import section ---
+      const $importSection = $('<div class="skills-add-section">');
+      const $importLabel = $('<div class="skills-add-section-title">').text('Import skill folder');
+      const $dropzone = $('<div class="skills-import-dropzone" role="button" tabindex="0" aria-label="Drop a skill folder here">');
+      const $dropzoneText = $('<div class="skills-import-dropzone-text">').text('Drop the skill folder here (parent directory)');
+      const $dropzoneHint = $('<div class="skills-import-dropzone-hint">').text('or');
+      const $browseBtn = $('<button type="button" class="preset-action-btn">').text('Browse folder…');
+      const $fileInput = $('<input type="file" style="display:none">').attr('webkitdirectory', '').attr('multiple', '');
+      const $importStatus = $('<div class="skills-inline-dialog-error" role="status">').hide();
+      $dropzone.append($dropzoneText).append($dropzoneHint).append($browseBtn);
+      $importSection.append($importLabel).append($dropzone).append($importStatus);
+
+      $dialog.append($createSection).append($divider).append($importSection);
+      $backdrop.append($dialog).append($fileInput);
+      ($overlay || $('body')).append($backdrop);
+
+      function close(value) {
+        $(document).off('dragend.skillsAddDialog');
+        $backdrop.remove();
+        resolve(value);
+      }
+
+      async function doCreate() {
+        const name = String($nameInput.val() || '').trim();
+        if (!name) {
+          $createError.text('Skill name is required.').show();
+          return;
+        }
+        $createError.hide();
+        try {
+          state.payload = await postJson('/api/skills/', { name });
+          state.selectedFolder = name;
+          state.selectedFile = firstFile(findFolder(name));
+          state.expandedSkills.add(name);
+          close(name);
+          renderOverlay();
+        } catch (err) {
+          $createError.text(err && err.message ? err.message : String(err)).show();
+        }
+      }
+
+      async function doImport(source) {
+        $importStatus.text('Importing…').removeClass('is-error').show();
+        try {
+          const explicitName = String($nameInput.val() || '').trim();
+          const name = await importSkillFromSource(source, explicitName);
+          close(name);
+          renderOverlay();
+        } catch (err) {
+          $importStatus.text(err && err.message ? err.message : String(err)).addClass('is-error').show();
+        }
+      }
+
+      $createBtn.on('click', doCreate);
+      $nameInput.on('keydown', function onKey(ev) {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          doCreate();
+        } else if (ev.key === 'Escape') {
+          ev.preventDefault();
+          close('');
+        }
+      });
+
+      $browseBtn.on('click', function onBrowse(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        $fileInput.val('');
+        $fileInput.trigger('click');
+      });
+
+      $fileInput.on('change', function onFileChange() {
+        if (this.files && this.files.length > 0) {
+          doImport(this.files);
+        }
+      });
+
+      $dropzone.on('dragenter dragover', function onDragOver(ev) {
+        ev.preventDefault();
+        const dt = ev.originalEvent && ev.originalEvent.dataTransfer;
+        if (dt) {
+          dt.dropEffect = 'copy';
+        }
+        $dropzone.addClass('is-dragover');
+      });
+
+      $dropzone.on('dragleave', function onDragLeave(ev) {
+        if (!$dropzone[0].contains(ev.relatedTarget)) {
+          $dropzone.removeClass('is-dragover');
+        }
+      });
+
+      $dropzone.on('drop', function onDrop(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        $dropzone.removeClass('is-dragover');
+        const dt = ev.originalEvent && ev.originalEvent.dataTransfer;
+        if (dt && dt.items && dt.items.length > 0) {
+          doImport(dt);
+        }
+      });
+
+      $(document).on('dragend.skillsAddDialog', function onDragEnd() {
+        $dropzone.removeClass('is-dragover');
+      });
+
+      $backdrop.on('click', function onBackdrop(ev) {
+        if (ev.target === $backdrop[0]) {
+          close('');
+        }
+      });
+
+      requestAnimationFrame(function focusInput() {
+        $nameInput.trigger('focus');
+      });
+    });
+  }
+
   async function createSkill() {
     const name = await showTextDialog({
       title: 'New skill',
@@ -346,7 +738,7 @@ export function createSkillsUi(context) {
     if (!opts.skipConfirm) {
       const confirmed = await showConfirmDialog({
         title: 'Delete file',
-        message: `Delete file "${filePath}"?`,
+        message: 'Are you sure?',
         confirmText: 'Delete',
         danger: true
       });
@@ -439,6 +831,31 @@ export function createSkillsUi(context) {
     renderOverlay();
   }
 
+  async function renameTreeFile(folderName, filePath) {
+    const baseName = filePath.split('/').pop() || filePath;
+    const newName = await showTextDialog({
+      title: 'Rename file',
+      label: 'File name',
+      value: baseName,
+      confirmText: 'Rename'
+    });
+    if (!newName || newName === baseName) {
+      return;
+    }
+    const parent = filePath.includes('/') ? filePath.replace(/\/[^/]+$/, '') : '';
+    const newPath = parent ? `${parent}/${newName}` : newName;
+    state.payload = await patchJson('/api/skills/path/', {
+      folder: folderName,
+      old_path: filePath,
+      new_path: newPath,
+      kind: 'file'
+    });
+    if (state.selectedFolder === folderName && state.selectedFile === filePath) {
+      state.selectedFile = newPath;
+    }
+    renderOverlay();
+  }
+
   function renderDirTools(folderName, dirPath) {
     const $tools = $('<div class="skills-tree-node-tools">');
     const $newFile = $('<button type="button" class="skills-tree-tool-btn" title="New file" aria-label="New file in folder">')
@@ -454,6 +871,17 @@ export function createSkillsUi(context) {
       renameTreeDirectory(folderName, dirPath).catch(showError);
     });
     return $tools.append($newFile).append($rename);
+  }
+
+  function renderFileTools(folderName, filePath) {
+    const $tools = $('<div class="skills-tree-node-tools">');
+    const $rename = $('<button type="button" class="skills-tree-tool-btn" title="Rename file" aria-label="Rename file">')
+      .text('Aa');
+    $rename.on('click', function onRename(ev) {
+      ev.stopPropagation();
+      renameTreeFile(folderName, filePath).catch(showError);
+    });
+    return $tools.append($rename);
   }
 
   async function setEnabled(folderName, enabled) {
@@ -480,28 +908,16 @@ export function createSkillsUi(context) {
     renderDetailPane();
   }
 
-  function renderTreePane() {
+  function renderTreeList() {
     if (!$middle || !$middle.length) {
       return;
     }
-    $middle.empty();
-    const $head = $('<div class="skills-tree-head">');
-    const $title = $('<div class="skills-tree-title">').text('Skills');
-    const $actions = $('<div class="skills-tree-actions">');
-    const $addBtn = $('<button type="button" class="skills-icon-btn" title="Create skill" aria-label="Create skill">').html(icons.ADD_ICON || '+');
-    $actions.append($addBtn);
-    $head.append($title).append($actions);
-
-    const $search = $('<input class="skills-search-input" type="search" placeholder="Search skills">').val(state.query);
-    $search.on('input', function onSearch() {
-      state.query = String(this.value || '').toLowerCase();
+    let $group = $middle.find('.skills-personal-group');
+    if (!$group.length) {
       renderTreePane();
-    });
-    $addBtn.on('click', function onAdd() {
-      createSkill().catch(showError);
-    });
-    const $group = $('<div class="skills-personal-group">');
-    $group.append($('<div class="skills-group-label">').text('Personal skills'));
+      return;
+    }
+    $group.empty();
     const query = state.query;
     folderList()
       .filter((folder) => {
@@ -511,8 +927,35 @@ export function createSkillsUi(context) {
         return `${folder.name || ''} ${folder.title || ''} ${folder.description || ''}`.toLowerCase().includes(query);
       })
       .forEach((folder) => $group.append(renderSkillFolder(folder)));
+  }
 
-    $middle.append($head).append($search).append($group);
+  function renderTreePane() {
+    if (!$middle || !$middle.length) {
+      return;
+    }
+    $middle.empty();
+    const $head = $('<div class="skills-tree-head">');
+    const $closeBtn = $('<button type="button" class="skills-manager-close skills-tree-close" aria-label="Close skills manager">')
+      .html(icons.CLOSE_ICON || '<span aria-hidden="true">×</span>');
+    const $title = $('<div class="skills-tree-title">').text('Skills');
+    const $actions = $('<div class="skills-tree-actions">');
+    const $addBtn = $('<button type="button" class="skills-icon-btn" title="Add skill" aria-label="Add skill">').html(icons.ADD_ICON || '+');
+    $actions.append($addBtn);
+    $head.append($closeBtn).append($title).append($actions);
+
+    $closeBtn.on('click', closeManager);
+
+    const $search = $('<input class="skills-search-input" type="search" placeholder="Search skills">').val(state.query);
+    $search.on('input', function onSearch() {
+      state.query = String(this.value || '').toLowerCase();
+      renderTreeList();
+    });
+    $addBtn.on('click', function onAdd() {
+      showAddSkillsDialog().catch(showError);
+    });
+
+    $middle.append($head).append($search).append($('<div class="skills-personal-group">'));
+    renderTreeList();
   }
 
   function renderSkillFolder(folder) {
@@ -546,7 +989,7 @@ export function createSkillsUi(context) {
       } else {
         state.expandedSkills.add(folderName);
       }
-      renderTreePane();
+      renderTreeList();
     });
     $actions.on('click', function onFolderActions(ev) {
       ev.stopPropagation();
@@ -608,7 +1051,7 @@ export function createSkillsUi(context) {
       } else {
         state.expandedDirs.add(key);
       }
-      renderTreePane();
+      renderTreeList();
     }
     $row.append(
       $('<span class="skills-tree-icon" aria-hidden="true">').html(dirIcon),
@@ -629,7 +1072,7 @@ export function createSkillsUi(context) {
       .html(icons.CLOSE_ICON || '×');
     $delete.on('click', function onDelete(ev) {
       ev.stopPropagation();
-      deleteFile(folderName, path, { skipConfirm: true }).catch(showError);
+      deleteFile(folderName, path).catch(showError);
     });
     $file.append(
       $('<span class="skills-tree-icon" aria-hidden="true">').html(icons.SKILLS_FILE_ICON || ''),
@@ -640,7 +1083,7 @@ export function createSkillsUi(context) {
       state.selectedFile = path;
       loadCurrentFile().catch(showError).finally(renderOverlay);
     });
-    return $rowWrap.append($file).append($delete);
+    return $rowWrap.append($file).append(renderFileTools(folderName, path)).append($delete);
   }
 
   function renderEditComposer(folderName, parentPath) {
@@ -660,7 +1103,8 @@ export function createSkillsUi(context) {
     $kindBtn.on('click', function onKindToggle(ev) {
       ev.stopPropagation();
       editMode.createKind = isFile ? 'folder' : 'file';
-      renderTreePane();
+      renderTreeList();
+      focusComposerInput();
     });
 
     $input.on('keydown', function onKey(ev) {
@@ -716,9 +1160,9 @@ export function createSkillsUi(context) {
     $controls.append($toggle);
     $top.append($title).append($controls);
 
-    const $meta = $('<div class="skills-meta-grid">')
-      .append(metaBlock('Created', formatCreatedAt(folder.created_at)))
-      .append(metaBlock('Source', formatSource(folder.source)));
+    const $meta = $('<div class="skills-meta-grid skills-meta-grid--created">').append(
+      metaBlock('Created', formatCreatedAt(folder.created_at))
+    );
 
     const $panel = $('<div class="skills-content-panel">');
     const $panelTools = $('<div class="skills-panel-tools">');
@@ -769,11 +1213,6 @@ export function createSkillsUi(context) {
       hour: '2-digit',
       minute: '2-digit'
     });
-  }
-
-  function formatSource(source) {
-    const normalized = String(source || 'local').trim().toLowerCase();
-    return normalized === 'download' ? 'Downloaded' : 'Local';
   }
 
   function enterEditMode(folderName) {

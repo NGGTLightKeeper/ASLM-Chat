@@ -6,7 +6,7 @@ import { createChatHistoryUi } from '../ui/chat-history-ui.js';
 import { createMessagesUi } from '../ui/messages-ui.js';
 import { createModelSelectorUi } from '../ui/model-selector-ui.js?v=custom-model-selector-7';
 import { createParametersUi } from '../ui/parameters-ui.js?v=skills-panel-1';
-import { createSkillsUi } from '../ui/skills-ui.js?v=skills-manager-18';
+import { createSkillsUi } from '../ui/skills-ui.js?v=skills-manager-27';
 import { createToolInspector } from '../ui/tool-inspector.js';
 import { createAppContext } from './app-context.js';
 import { createChatController } from './chat-controller.js';

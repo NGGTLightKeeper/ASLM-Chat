@@ -41,6 +41,7 @@ urlpatterns = [
     path("api/skills/file/", views.skills_file_api, name="skills_file_api"),
     path("api/skills/enabled/", views.skills_enabled_api, name="skills_enabled_api"),
     path("api/skills/directory/", views.skills_directory_api, name="skills_directory_api"),
+    path("api/skills/import/", views.skills_import_api, name="skills_import_api"),
     path("api/skills/path/", views.skills_path_api, name="skills_path_api"),
     path("api/favicon/", views.favicon_api, name="favicon_api"),
     path("api/browser_portal/frame/", views.browser_portal_frame_api, name="browser_portal_frame_api"),
