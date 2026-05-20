@@ -1002,43 +1002,44 @@ export function createSkillsUi(context) {
     });
     $cascade.append($row);
     if (isExpanded) {
-      appendTreeToCascade($cascade, folderName, folder.tree || []);
+      appendTreeToCascade($cascade, folderName, folder.tree || [], 1);
       const editMode = state.editMode;
       if (editMode && editMode.skillName === folderName && editMode.parentPath === '') {
-        $cascade.append(renderEditComposer(folderName, ''));
+        $cascade.append(renderEditComposer(folderName, '', 1));
       }
     }
     return $wrap.append($cascade);
   }
 
-  function appendTreeToCascade($cascade, folderName, nodes) {
+  function appendTreeToCascade($cascade, folderName, nodes, depth) {
     (Array.isArray(nodes) ? nodes : []).forEach(function visit(node) {
       if (!node || typeof node !== 'object') {
         return;
       }
       const path = String(node.path || '');
       if (node.type === 'directory') {
-        $cascade.append(renderDirRow(folderName, node));
+        $cascade.append(renderDirRow(folderName, node, depth));
         const key = `${folderName}/${path}`;
         if (state.expandedDirs.has(key)) {
-          appendTreeToCascade($cascade, folderName, node.children || []);
+          appendTreeToCascade($cascade, folderName, node.children || [], depth + 1);
           const editMode = state.editMode;
           if (editMode && editMode.skillName === folderName && editMode.parentPath === path) {
-            $cascade.append(renderEditComposer(folderName, path));
+            $cascade.append(renderEditComposer(folderName, path, depth + 1));
           }
         }
         return;
       }
-      $cascade.append(renderFileRow(folderName, node));
+      $cascade.append(renderFileRow(folderName, node, depth));
     });
   }
 
-  function renderDirRow(folderName, node) {
+  function renderDirRow(folderName, node, depth) {
     const path = String(node.path || '');
     const key = `${folderName}/${path}`;
     const expanded = state.expandedDirs.has(key);
     const dirIcon = expanded ? (icons.SKILLS_FOLDER_OPEN_ICON || '') : (icons.SKILLS_FOLDER_ICON || '');
-    const $rowWrap = $('<div class="skills-tree-node-row skills-tree-dir-row">');
+    const $rowWrap = $('<div class="skills-tree-node-row skills-tree-dir-row">')
+      .css('--skills-tree-depth', String(depth || 0));
     const $row = $('<button type="button" class="skills-tree-node is-dir">');
     const $toggle = $('<button type="button" class="skills-tree-caret" aria-label="Toggle folder">')
       .toggleClass('is-expanded', expanded);
@@ -1062,10 +1063,11 @@ export function createSkillsUi(context) {
     return $rowWrap.append($row).append(renderDirTools(folderName, path)).append($toggle);
   }
 
-  function renderFileRow(folderName, node) {
+  function renderFileRow(folderName, node, depth) {
     const path = String(node.path || '');
     const selected = folderName === state.selectedFolder && path === state.selectedFile;
     const $rowWrap = $('<div class="skills-tree-node-row skills-tree-file-row">')
+      .css('--skills-tree-depth', String(depth || 0))
       .toggleClass('is-active', selected);
     const $file = $('<button type="button" class="skills-tree-node is-file">');
     const $delete = $('<button type="button" class="skills-tree-delete-btn" title="Delete file" aria-label="Delete file">')
@@ -1086,13 +1088,14 @@ export function createSkillsUi(context) {
     return $rowWrap.append($file).append(renderFileTools(folderName, path)).append($delete);
   }
 
-  function renderEditComposer(folderName, parentPath) {
+  function renderEditComposer(folderName, parentPath, depth) {
     const editMode = state.editMode;
     if (!editMode) {
       return $();
     }
     const isFile = editMode.createKind === 'file';
-    const $row = $('<div class="skills-edit-composer">');
+    const $row = $('<div class="skills-edit-composer">')
+      .css('--skills-tree-depth', String(depth || 0));
     const kindIcon = isFile ? (icons.SKILLS_FILE_ICON || '') : (icons.SKILLS_FOLDER_ICON || '');
     const $kindBtn = $('<button type="button" class="skills-edit-kind-toggle" aria-label="Toggle folder or file">')
       .html(kindIcon);
@@ -1137,6 +1140,18 @@ export function createSkillsUi(context) {
     return $row;
   }
 
+  function formatDetailFilePath(folderName, filePath) {
+    const folder = String(folderName || '').trim();
+    const file = String(filePath || '').trim().replace(/^\/+/, '');
+    if (!folder) {
+      return file || 'No file selected';
+    }
+    if (!file) {
+      return folder;
+    }
+    return `${folder}/${file}`;
+  }
+
   function renderDetailPane() {
     if (!$detail || !$detail.length) {
       return;
@@ -1150,22 +1165,7 @@ export function createSkillsUi(context) {
 
     const $top = $('<div class="skills-detail-topbar">');
     const $title = $('<div class="skills-detail-title">').text(folder.title || folder.name);
-    const $controls = $('<div class="skills-detail-controls">');
-    const $toggle = $('<label class="skills-enabled-toggle" title="Enable skill">')
-      .append($('<input type="checkbox">').prop('checked', folder.enabled !== false))
-      .append($('<span>'));
-    $toggle.find('input').on('change', function onEnabledChange() {
-      setEnabled(folder.name, this.checked).catch(showError);
-    });
-    $controls.append($toggle);
-    $top.append($title).append($controls);
-
-    const $meta = $('<div class="skills-meta-grid skills-meta-grid--created">').append(
-      metaBlock('Created', formatCreatedAt(folder.created_at))
-    );
-
-    const $panel = $('<div class="skills-content-panel">');
-    const $panelTools = $('<div class="skills-panel-tools">');
+    const $controls = $('<div class="skills-detail-controls skills-panel-tools">');
     const $previewBtn = $('<button type="button" class="skills-panel-toggle">').toggleClass('is-active', state.mode === 'preview').html(icons.EYE_ICON || 'Preview');
     const $sourceBtn = $('<button type="button" class="skills-panel-toggle">').toggleClass('is-active', state.mode === 'source').text('</>');
     $previewBtn.on('click', function onPreview() {
@@ -1176,8 +1176,14 @@ export function createSkillsUi(context) {
       state.mode = 'source';
       loadCurrentFile().catch(showError).finally(renderDetailPane);
     });
-    $panelTools.append($previewBtn).append($sourceBtn);
-    $panel.append($panelTools);
+    $controls.append($previewBtn).append($sourceBtn);
+    $top.append($title).append($controls);
+
+    const $meta = $('<div class="skills-meta-grid skills-meta-grid--created">').append(
+      metaBlock('Created', formatCreatedAt(folder.created_at))
+    );
+
+    const $panel = $('<div class="skills-content-panel">');
 
     if (state.mode === 'source') {
       renderSourceEditor($panel);
@@ -1342,25 +1348,45 @@ export function createSkillsUi(context) {
     const $editor = $('<div class="skills-source-editor">');
     const $body = $('<div class="skills-source-body">');
     const $gutter = $('<div class="skills-source-gutter" aria-hidden="true">');
+    const $gutterInner = $('<div class="skills-source-gutter-inner">');
     const $cell = $('<div class="skills-source-cell">');
     const $highlight = $('<pre class="skills-source-highlight"><code></code></pre>');
     const $textarea = $('<textarea class="skills-source-textarea" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off">').val(content);
     const $actions = $('<div class="skills-source-actions">');
+    const $path = $('<div class="skills-source-path">').text(
+      formatDetailFilePath(state.selectedFolder, state.selectedFile)
+    );
     const $save = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text('Save');
-    const $path = $('<div class="skills-source-path">').text(state.selectedFile || '');
 
-    function syncEditor() {
-      const raw = $textarea.val();
-      const lineCount = Math.max(1, String(raw || '').split('\n').length);
-      $gutter.text(Array.from({ length: lineCount }, (_, index) => String(index + 1)).join('\n'));
-      $highlight.find('code').html(highlightCode(raw, state.selectedFile));
+    function buildGutterLines(lineCount) {
+      return Array.from({ length: lineCount }, function (_v, index) {
+        return String(index + 1);
+      }).join('\n');
     }
 
-    $textarea.on('input', syncEditor);
-    $textarea.on('scroll', function onScroll() {
-      $highlight.css('transform', `translateY(-${$textarea.scrollTop()}px)`);
-      $gutter.css('transform', `translateY(-${$textarea.scrollTop()}px)`);
+    function syncEditor() {
+      const raw = String($textarea.val() || '');
+      const lineCount = Math.max(1, raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').length);
+      $gutterInner.text(buildGutterLines(lineCount));
+      const $code = $highlight.find('code');
+      $code.html(highlightCode(raw, state.selectedFile));
+      const scrollHeight = $textarea[0] ? $textarea[0].scrollHeight : 0;
+      const minHeight = Math.max(scrollHeight, $textarea.outerHeight() || 0);
+      $code.css('min-height', `${minHeight}px`);
+    }
+
+    function syncScroll() {
+      const scrollTop = $textarea.scrollTop();
+      $highlight.css('transform', `translateY(-${scrollTop}px)`);
+      $gutterInner.css('transform', `translateY(-${scrollTop}px)`);
+    }
+
+    $gutter.append($gutterInner);
+    $textarea.on('input', function onInput() {
+      syncEditor();
+      syncScroll();
     });
+    $textarea.on('scroll', syncScroll);
     $save.on('click', async function onSave() {
       try {
         state.payload = await requestJson('/api/skills/file/', {
