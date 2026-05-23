@@ -72,6 +72,8 @@ DEFAULT_CPUS = "1"
 DEFAULT_PIDS_LIMIT = 256
 DEFAULT_MAX_CONCURRENT = 1
 DEFAULT_SESSION_IDLE_SECONDS = 30 * 60
+_BACKGROUND_CLEANUP_INTERVAL_SECONDS = 5 * 60   # run background reaper every 5 min
+_BACKGROUND_CLEANUP_STARTED = False
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TMP_ROOT = Path(tempfile.gettempdir()) / "ada-sandbox"
@@ -457,6 +459,8 @@ def _docker_create_argv(
         f"ada.sandbox.run_id={run_dir.name}",
         "--label",
         f"ada.sandbox.run_dir={run_dir}",
+        "--label",
+        f"ada.sandbox.started_at={int(time.time())}",
         "--init",
         "--stop-timeout",
         "1",
@@ -661,6 +665,13 @@ def _touch_active_session() -> None:
     global _LAST_ACTIVITY
     with _SESSION_LOCK:
         _LAST_ACTIVITY = time.time()
+        run_dir = _ACTIVE_RUN_DIR
+    # Update run_dir mtime so cross-process orphan detection sees a live heartbeat.
+    if run_dir and run_dir.is_dir():
+        try:
+            os.utime(run_dir, None)
+        except OSError:
+            pass
 
 
 def _active_session_expired(now: float | None = None) -> bool:
@@ -754,38 +765,75 @@ def _container_label(container_name: str, label: str) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _container_age_seconds(name: str, now: float) -> float | None:
+    """Return seconds since container was started, using the started_at label if available."""
+    raw = _container_label(name, "ada.sandbox.started_at")
+    if raw:
+        try:
+            return now - float(raw)
+        except ValueError:
+            pass
+    return None
+
+
 def _cleanup_orphan_containers() -> int:
+    """Remove all ada.sandbox containers that are stopped or older than the idle timeout.
+
+    Three eviction rules (checked in order):
+    1. Stopped container (--rm should have handled this, but may race) → remove.
+    2. Invalid / unknown run_id format → remove immediately.
+    3. run_dir missing (process crashed) → remove immediately.
+    4. run_dir exists but mtime is stale (≥ idle timeout since last heartbeat) → remove.
+    5. started_at label shows age ≥ idle timeout even if run_dir freshness is unclear → remove.
+    """
     listed = _docker(["ps", "-a", "--filter", "label=ada.sandbox=1", "--format", "{{.Names}}"])
     if listed.returncode != 0:
         return 0
     with _SESSION_LOCK:
         active = _ACTIVE_RUN_ID
     now = time.time()
+    idle = _session_idle_seconds()
     removed = 0
     for name in listed.stdout.splitlines():
         name = name.strip()
         if not name:
             continue
         rid = _container_label(name, "ada.sandbox.run_id")
+        # Never evict the current process's own active session.
         if active and rid == active:
             continue
+        # Rule 1: stopped containers should not linger (--rm races Docker stop).
         if not _container_running(name):
             _remove_container(name)
             removed += 1
             continue
-        run_dir_raw = _container_label(name, "ada.sandbox.run_dir")
-        run_dir = Path(run_dir_raw) if run_dir_raw else None
+        # Rules 2-5 apply to running containers.
         should_remove = False
         if not rid or not re.fullmatch(r"[a-f0-9]{32}", rid):
-            should_remove = True
-        elif run_dir is None or not run_dir.exists():
+            # Rule 2: bogus run_id — not managed by us.
             should_remove = True
         else:
-            try:
-                should_remove = now - run_dir.stat().st_mtime >= _session_idle_seconds()
-            except OSError:
+            run_dir_raw = _container_label(name, "ada.sandbox.run_dir")
+            run_dir = Path(run_dir_raw) if run_dir_raw else None
+            if run_dir is None or not run_dir.exists():
+                # Rule 3: run_dir gone — owning process crashed or cleaned up.
                 should_remove = True
+            else:
+                try:
+                    # Rule 4: heartbeat via mtime (updated by _touch_active_session).
+                    mtime_stale = now - run_dir.stat().st_mtime >= idle
+                except OSError:
+                    mtime_stale = True
+                # Rule 5: started_at label as independent age fence.
+                age = _container_age_seconds(name, now)
+                age_stale = age is not None and age >= idle
+                should_remove = mtime_stale and age_stale
         if should_remove:
+            log.info(
+                "removing orphan sandbox container rid=%s name=%s",
+                rid,
+                name,
+            )
             _remove_container(name)
             removed += 1
     return removed
@@ -801,6 +849,33 @@ def _cleanup_active_session_at_exit() -> None:
 atexit.register(_cleanup_active_session_at_exit)
 
 
+def _background_cleanup_loop(interval: int) -> None:
+    """Periodic reaper: runs independently of any run_sandbox call."""
+    while True:
+        time.sleep(interval)
+        try:
+            _cleanup_old_state()
+        except Exception:
+            log.exception("background cleanup failed")
+
+
+def _ensure_background_cleanup_started() -> None:
+    """Start the background reaper thread once, on demand."""
+    global _BACKGROUND_CLEANUP_STARTED
+    with _SESSION_LOCK:
+        if _BACKGROUND_CLEANUP_STARTED:
+            return
+        _BACKGROUND_CLEANUP_STARTED = True
+    thread = threading.Thread(
+        target=_background_cleanup_loop,
+        args=(_BACKGROUND_CLEANUP_INTERVAL_SECONDS,),
+        name="oda-sandbox-reaper",
+        daemon=True,
+    )
+    thread.start()
+    log.info("ODA sandbox background reaper started interval=%ss", _BACKGROUND_CLEANUP_INTERVAL_SECONDS)
+
+
 def _cleanup_old_state() -> None:
     if _active_session_expired():
         _end_active_session()
@@ -810,6 +885,7 @@ def _cleanup_old_state() -> None:
 
 
 def run_sandbox(request: SandboxRunRequest) -> str:
+    _ensure_background_cleanup_started()
     _cleanup_old_state()
     shared_before = shared_file_snapshot()
     image = _image()
