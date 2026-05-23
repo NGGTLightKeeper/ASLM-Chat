@@ -3223,6 +3223,8 @@
 .msg-tool-only-group>.msg-search-card,
 .msg-tool-only-group>.msg-read-page-card,
 .msg-tool-only-group>.msg-sandbox-card,
+.msg-tool-only-group>.msg-oda-card,
+.msg-tool-only-group>.msg-oda-shared-file-wrap,
 .msg-tool-only-group>.msg-write-card,
 .msg-tool-only-group>.msg-edit-card,
 .msg-tool-only-group>.msg-reasoning-tool-row {
@@ -4291,12 +4293,15 @@ body.is-resizing-reasoning-drawer * {
 }
 
 #reasoningDrawerBody .msg-reasoning-step-body>.msg-sandbox-card,
+#reasoningDrawerBody .msg-reasoning-step-body>.msg-oda-card,
+#reasoningDrawerBody .msg-reasoning-step-body>.msg-oda-shared-file-wrap,
 #reasoningDrawerBody .msg-reasoning-step-body>.msg-tool-pending-card {
   width: 100%;
   max-width: 100%;
 }
 
-#reasoningDrawerBody .msg-reasoning-step-body>.msg-sandbox-card .msg-sandbox-pre {
+#reasoningDrawerBody .msg-reasoning-step-body>.msg-sandbox-card .msg-sandbox-pre,
+#reasoningDrawerBody .msg-reasoning-step-body>.msg-oda-card .msg-sandbox-pre {
   max-height: 220px;
 }
 

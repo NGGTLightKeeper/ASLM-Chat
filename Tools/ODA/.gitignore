@@ -1,0 +1,10 @@
+tmp/
+mcp_server/.venv/
+.venv/
+__pycache__/
+*.pyc
+dist/
+*.egg-info/
+.pytest_cache/
+.cursor/mcp.json
+mcp_server/uv.lock

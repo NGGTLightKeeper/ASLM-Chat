@@ -78,6 +78,14 @@
             "packages": [
                 "mcp==1.26.0"
             ]
+        },
+        {
+            "id": "oda",
+            "path": "Data/venvs/tools/ODA",
+            "tool": "ODA",
+            "packages": [
+                "mcp==1.26.0"
+            ]
         }
     ]
 }

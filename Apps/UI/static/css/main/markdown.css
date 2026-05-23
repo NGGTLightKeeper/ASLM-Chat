@@ -751,6 +751,59 @@
   color: var(--activity-on-surface-muted);
 }
 
+.msg-oda-card {
+  width: min(100%, 720px);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.msg-oda-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.msg-oda-head .msg-tool-svg-icon {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  opacity: var(--activity-icon-opacity);
+  filter: var(--activity-monochrome-svg-filter);
+}
+
+.msg-oda-title {
+  flex: 1 1 0;
+  min-width: 0;
+  color: var(--c-text);
+  font-size: var(--font-size-caption-1);
+  font-weight: 700;
+}
+
+.msg-oda-shared-file-wrap {
+  display: block;
+}
+
+.msg-reasoning-step-body > .msg-oda-card,
+.msg-tool-only-group > .msg-oda-card,
+.msg-tool-only-group > .msg-oda-shared-file-wrap {
+  margin-top: 2px;
+}
+
+.msg-reasoning-step-body > .msg-oda-card {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  gap: 6px;
+  padding: 8px 0;
+}
+
 .msg-sandbox-card {
   width: min(100%, 720px);
   min-width: 0;
@@ -1227,6 +1280,7 @@
 .msg-search-card,
 .msg-read-page-card,
 .msg-sandbox-card,
+.msg-oda-card,
 .msg-write-card,
 .msg-edit-card,
 .msg-reasoning-tool-row,
@@ -1272,6 +1326,7 @@
 .msg-read-page-line,
 .msg-search-batch-head,
 .msg-sandbox-head,
+.msg-oda-head,
 .msg-write-head,
 .msg-edit-head {
   min-height: 22px;
@@ -1604,6 +1659,8 @@ img.msg-search-main-icon {
 }
 
 .msg-tool-only-group > .msg-sandbox-card,
+.msg-tool-only-group > .msg-oda-card,
+.msg-tool-only-group > .msg-oda-shared-file-wrap,
 .msg-tool-only-group > .msg-write-card,
 .msg-tool-only-group > .msg-edit-card {
   width: 100%;

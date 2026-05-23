@@ -50,14 +50,15 @@ ENGINE_API_KEY_KEYS = {
 }
 
 DEFAULTS: dict[str, Any] = {
-    "ui-port": 30000,
-    "api-port": 30001,
+    "ui-port": 20000,
+    "api-port": 20001,
+    "oda-daemon-port": 20002,
     "debug": True,
     "console_log_level": "debug",
     "secret_key": "",
     "allowed_hosts": ["127.0.0.1", "localhost"],
     "llm-engine": "ollama-service",
-    "ollama-service_port": 30002,
+    "ollama-service_port": 20002,
     "ollama-service": False,
     "ollama-service_path": None,
     "ollama-service_data": None,
@@ -431,8 +432,11 @@ def set(key: str, value: Any) -> None:
     if key in NORMALIZED_ADDRESS_KEYS:
         value = normalize_engine_address(value)
 
-    stored_data = _load_stored_settings_snapshot()
-    if stored_data.get(key, DEFAULTS.get(key)) == value:
+    stored_raw_data = _load_settings_from_disk()
+    stored_data = dict(DEFAULTS)
+    stored_data.update(stored_raw_data)
+    stored_data = _normalize_loaded_settings(stored_data)
+    if key in stored_raw_data and stored_data.get(key, DEFAULTS.get(key)) == value:
         _apply_process_environment_value(key, value)
         _store_settings_cache(_apply_environment_overrides(stored_data), _get_settings_mtime_ns())
         return

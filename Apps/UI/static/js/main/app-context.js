@@ -109,6 +109,7 @@ export function createAppContext() {
     WEB_SEARCH_ICON: imageIcon(uiIconPaths.webSearch, 'msg-search-main-icon', ''),
     WEB_SEARCH_ERROR_ICON: imageIcon(uiIconPaths.webSearchError, 'msg-search-main-icon', ''),
     TOOL_CODE_EXEC_ICON: imageIcon(uiIconPaths.toolBash, 'msg-tool-svg-icon', ''),
+    ODA_TOOL_CODE_ICON: imageIcon(uiIconPaths.toolCode || uiIconPaths.toolBash, 'msg-tool-svg-icon', ''),
     TOOL_BASH_ICON: imageIcon(uiIconPaths.toolTerminal || uiIconPaths.toolBash, 'msg-tool-svg-icon', ''),
     TOOL_MAKE_FILE_ICON: imageIcon(uiIconPaths.toolMakeFile, 'msg-tool-svg-icon', ''),
     TOOL_EDIT_FILE_ICON: imageIcon(uiIconPaths.toolEditFile, 'msg-tool-svg-icon', ''),

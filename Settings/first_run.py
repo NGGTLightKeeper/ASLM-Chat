@@ -14,7 +14,12 @@ TOOLS_DIR = BASE_DIR / "Tools"
 
 
 # Build the initial settings payload for the first run.
-def _build_initial_settings(existing: dict[str, Any], ui_port: int, api_port: int) -> dict[str, Any]:
+def _build_initial_settings(
+    existing: dict[str, Any],
+    ui_port: int,
+    api_port: int,
+    oda_daemon_port: int,
+) -> dict[str, Any]:
     """Return the initial settings payload while preserving existing values."""
 
     initial: dict[str, Any] = dict(existing)
@@ -23,6 +28,7 @@ def _build_initial_settings(existing: dict[str, Any], ui_port: int, api_port: in
             "secret_key": existing.get("secret_key") or secrets.token_urlsafe(50),
             "ui-port": existing.get("ui-port", ui_port),
             "api-port": existing.get("api-port", api_port),
+            "oda-daemon-port": existing.get("oda-daemon-port", oda_daemon_port),
             "allowed_hosts": existing.get("allowed_hosts", ["127.0.0.1", "localhost"]),
             "debug": existing.get("debug", False),
             "llm-engine": existing.get("llm-engine", "ollama-service"),
@@ -183,6 +189,7 @@ def _print_summary(settings_file: Path, initial: dict[str, Any]) -> None:
     print(f"[ASLM-Chat] Settings written to: {settings_file}")
     print(f"[ASLM-Chat]   ui-port    : {initial['ui-port']}")
     print(f"[ASLM-Chat]   api-port   : {initial['api-port']}")
+    print(f"[ASLM-Chat]   oda-port   : {initial['oda-daemon-port']}")
     print(f"[ASLM-Chat]   debug      : {initial['debug']}")
     print(f"[ASLM-Chat]   llm-engine : {initial['llm-engine']}")
     print(f"[ASLM-Chat]   lms_url    : {initial['lms_url']}")
@@ -192,13 +199,18 @@ def _print_summary(settings_file: Path, initial: dict[str, Any]) -> None:
 
 
 # Run the first-run setup workflow.
-def run(log: bool = False, ui_port: int = 30000, api_port: int = 30001) -> None:
+def run(
+    log: bool = False,
+    ui_port: int = 20000,
+    api_port: int = 20001,
+    oda_daemon_port: int = 20002,
+) -> None:
     """Create the initial settings file while preserving existing values."""
 
     from Settings.settings import SETTINGS_FILE, load_settings, save_settings
 
     existing = load_settings()
-    initial = _build_initial_settings(existing, ui_port, api_port)
+    initial = _build_initial_settings(existing, ui_port, api_port, oda_daemon_port)
     save_settings(initial)
 
     from Settings.mcp_json import ensure_default_mcp_json

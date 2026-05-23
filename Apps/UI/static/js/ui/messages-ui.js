@@ -1936,6 +1936,9 @@ export function createMessagesUi(context, dependencies) {
   }
 
   function isSharedFileToolSegment(segment) {
+    if (isOdaToolSegment(segment)) {
+      return isOdaShareFileToolSegment(segment) || Boolean(sharedFileFromSegment(segment));
+    }
     if (sharedFileFromSegment(segment)) {
       return true;
     }
@@ -2746,7 +2749,7 @@ export function createMessagesUi(context, dependencies) {
         continue;
       }
       seen[dedupeKey] = true;
-      cards.push(renderSharedFileCard(segment));
+      cards.push(isOdaToolSegment(segment) ? renderOdaSharedFileCard(segment) : renderSharedFileCard(segment));
     }
     return cards.filter(function filterCard(card) {
       return !!String(card || '').trim();
@@ -3011,6 +3014,9 @@ export function createMessagesUi(context, dependencies) {
     if (isEditToolSegment(segment)) {
       return HEAVY_TOOL_ARGUMENT_KEYS.edit;
     }
+    if (isOdaPythonToolSegment(segment)) {
+      return HEAVY_TOOL_ARGUMENT_KEYS.bash;
+    }
     if (isSandboxToolSegment(segment)) {
       return HEAVY_TOOL_ARGUMENT_KEYS.bash;
     }
@@ -3028,8 +3034,59 @@ export function createMessagesUi(context, dependencies) {
     ].join(' ').toLowerCase();
   }
 
+  function toolServerId(segment) {
+    return String(segment && segment.serverId || '').trim().toLowerCase();
+  }
+
+  function isOdaToolSegment(segment) {
+    const serverId = toolServerId(segment);
+    if (serverId === 'oda') {
+      return true;
+    }
+    const alias = String(segment && segment.alias || '').trim().toLowerCase();
+    return alias.startsWith('oda__');
+  }
+
+  function isMcpSandboxToolSegment(segment) {
+    const serverId = toolServerId(segment);
+    if (serverId === 'sandbox') {
+      return true;
+    }
+    const alias = String(segment && segment.alias || '').trim().toLowerCase();
+    return alias.startsWith('sandbox__');
+  }
+
+  function isOdaPythonToolSegment(segment) {
+    if (!isOdaToolSegment(segment)) {
+      return false;
+    }
+    const toolId = String(segment && segment.toolId || '').trim().toLowerCase();
+    return toolId === 'oda_python' || toolId === 'sandbox_python';
+  }
+
+  function isOdaShareFileToolSegment(segment) {
+    if (!isOdaToolSegment(segment)) {
+      return false;
+    }
+    const toolId = String(segment && segment.toolId || '').trim().toLowerCase();
+    return toolId === 'oda_share_file' || toolId === 'share_file';
+  }
+
   function isSandboxToolSegment(segment) {
-    return /sandbox|python|bash|shell|exec|code|deep[-_\s]?think|container/.test(toolIdentityText(segment));
+    if (isOdaToolSegment(segment)) {
+      return false;
+    }
+    if (isMcpSandboxToolSegment(segment)) {
+      const toolId = String(segment && segment.toolId || '').trim().toLowerCase();
+      if (['bash', 'write', 'edit', 'view_image', 'share_file'].includes(toolId)) {
+        return true;
+      }
+    }
+    const identity = toolIdentityText(segment);
+    if (/\boda\b/.test(identity)) {
+      return false;
+    }
+    return /sandbox|bash|shell|exec|deep[-_\s]?think|container/.test(identity);
   }
 
   function parseSandboxResult(segment) {
@@ -3069,6 +3126,55 @@ export function createMessagesUi(context, dependencies) {
         raw: rawResult
       };
     }
+  }
+
+  function parseOdaResult(segment) {
+    const rawResult = segment && segment.result !== null && segment.result !== undefined
+      ? String(segment.result)
+      : '';
+    if (!rawResult) {
+      return {
+        ok: null,
+        exitCode: null,
+        stdout: '',
+        stderr: '',
+        raw: ''
+      };
+    }
+
+    const exitMatch = rawResult.match(/^exit_code:\s*(\S+)/m);
+    const exitToken = exitMatch ? String(exitMatch[1]).trim() : null;
+    const exitCode = exitToken && exitToken !== 'error' ? exitToken : null;
+    let ok = null;
+    if (exitToken === '0') {
+      ok = true;
+    } else if (exitToken && exitToken !== 'error') {
+      ok = false;
+    } else if (exitToken === 'error') {
+      ok = false;
+    }
+
+    const stdoutMatch = rawResult.match(/stdout:\n([\s\S]*?)(?=\n\nstderr:|\n\nshared_files:|\n\nfile_bridge:|$)/);
+    const stderrMatch = rawResult.match(/stderr:\n([\s\S]*?)(?=\n\nshared_files:|\n\nfile_bridge:|$)/);
+    const stdout = stdoutMatch ? stdoutMatch[1].replace(/\s+$/, '') : '';
+    const stderr = stderrMatch ? stderrMatch[1].replace(/\s+$/, '') : '';
+
+    if (!stdout && !stderr && !exitMatch) {
+      return parseSandboxResult(segment);
+    }
+
+    return {
+      ok,
+      exitCode,
+      stdout,
+      stderr,
+      raw: rawResult
+    };
+  }
+
+  function odaInputText(segment) {
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    return String(args.code || args.command || args.cmd || args.input || '');
   }
 
   function sandboxInputText(segment) {
@@ -3167,6 +3273,46 @@ export function createMessagesUi(context, dependencies) {
         ${metaParts.length ? `<div class="msg-sandbox-image-meta">${escHtml(metaParts.join(' В· '))}</div>` : ''}
       </div>
     `;
+  }
+
+  function renderOdaPythonToolBlock(segment, toolSegmentIndex) {
+    const result = parseOdaResult(segment);
+    const inputText = truncateTextPreview(odaInputText(segment), SANDBOX_INPUT_PREVIEW_CHARS);
+    const previewText = inputText.truncated
+      ? `${inputText.text}\n\n... ${inputText.omittedChars} more characters omitted`
+      : inputText.text;
+    const hasResult = segment.result !== null && segment.result !== undefined;
+    const outputText = result.stdout || (!hasResult ? 'Running...' : '');
+    const exitCodeText = result.exitCode !== null && result.exitCode !== undefined
+      ? `exit ${result.exitCode}`
+      : toolStatusText(segment);
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-tool-segment-index="${toolSegmentIndex}"` : '';
+    const stderrHtml = renderSandboxStreamBlock('stderr', result.stderr, 'is-stderr', 'plaintext');
+    const stdoutHtml = renderSandboxStreamBlock('stdout', outputText, 'is-stdout', 'plaintext');
+    const statusClass = result.ok === false || (result.exitCode !== null && String(result.exitCode) !== '0')
+      ? ' is-error'
+      : toolStatusClass(segment);
+    const codeIcon = icons.ODA_TOOL_CODE_ICON || icons.TOOL_CODE_EXEC_ICON || '';
+
+    return `
+      <div class="msg-oda-card msg-oda-python-card${statusClass}"${dataIndex}>
+        <div class="msg-oda-head">
+          ${codeIcon}
+          <span class="msg-oda-title">Python</span>
+          <span class="msg-reasoning-tool-status">${escHtml(exitCodeText)}</span>
+        </div>
+        ${renderSandboxStreamBlock('code', previewText, 'is-stdin', 'python')}
+        ${stdoutHtml || stderrHtml ? `${stdoutHtml}${stderrHtml}` : renderSandboxStreamBlock('stdout', 'No output.', 'is-stdout is-empty', 'plaintext')}
+      </div>
+    `;
+  }
+
+  function renderOdaSharedFileCard(segment) {
+    const card = renderSharedFileCard(segment);
+    if (!card || card.indexOf('msg-reasoning-tool-row') >= 0) {
+      return card;
+    }
+    return `<div class="msg-oda-shared-file-wrap">${card}</div>`;
   }
 
   function renderSandboxToolBlock(segment, toolSegmentIndex) {
@@ -3666,6 +3812,12 @@ export function createMessagesUi(context, dependencies) {
     if (isReadPageToolSegment(segment)) {
       return 'Read page';
     }
+    if (isOdaPythonToolSegment(segment)) {
+      return 'ODA Python';
+    }
+    if (isOdaShareFileToolSegment(segment)) {
+      return 'ODA file';
+    }
     if (isSharedFileToolSegment(segment)) {
       return 'Shared file';
     }
@@ -3752,6 +3904,9 @@ export function createMessagesUi(context, dependencies) {
     if (isSearchToolSegment(segment) || isReadPageToolSegment(segment)) {
       return icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON || '';
     }
+    if (isOdaToolSegment(segment)) {
+      return icons.ODA_TOOL_CODE_ICON || icons.TOOL_CODE_EXEC_ICON || '';
+    }
     if (isSharedFileToolSegment(segment)) {
       return DOWNLOAD_FILE_ICON;
     }
@@ -3803,6 +3958,14 @@ export function createMessagesUi(context, dependencies) {
     if (isReadPageToolSegment(segment)) {
       return renderReadPageToolCard([{ segment, index: toolIndex }]);
     }
+    if (isOdaToolSegment(segment)) {
+      if (isOdaShareFileToolSegment(segment) || isSharedFileToolSegment(segment)) {
+        return renderOdaSharedFileCard(segment);
+      }
+      if (isOdaPythonToolSegment(segment)) {
+        return renderOdaPythonToolBlock(segment, toolIndex);
+      }
+    }
     if (isSharedFileToolSegment(segment)) {
       return renderSharedFileCard(segment);
     }
@@ -3827,6 +3990,13 @@ export function createMessagesUi(context, dependencies) {
     }
     if (isReadPageToolSegment(segment)) {
       return 'Reading source page';
+    }
+    if (isOdaPythonToolSegment(segment)) {
+      return toolStatusText(segment) === 'Done' ? 'Ran ODA Python' : 'Running ODA Python';
+    }
+    if (isOdaShareFileToolSegment(segment) || (isOdaToolSegment(segment) && isSharedFileToolSegment(segment))) {
+      const file = sharedFileFromSegment(segment);
+      return file && file.filename ? `ODA shared ${file.filename}` : 'ODA shared file';
     }
     if (isSharedFileToolSegment(segment)) {
       const file = sharedFileFromSegment(segment);

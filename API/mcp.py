@@ -1422,14 +1422,30 @@ def _serialize_tool_result(result: Any) -> str:
     return str(result)
 
 
+def _coerce_tool_result_object(result: Any) -> Any:
+    """Parse JSON tool payloads returned as plain strings."""
+
+    if not isinstance(result, str):
+        return result
+    text = result.strip()
+    if not text.startswith("{"):
+        return result
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return result
+    return parsed if isinstance(parsed, dict) else result
+
+
 def _extract_shared_file_payload(result: Any) -> dict[str, Any] | None:
     """Return a normalized shared-file payload from direct or sandbox-wrapped results."""
 
+    result = _coerce_tool_result_object(result)
     if not isinstance(result, dict):
         return None
 
     candidate: Any = result
-    if result.get("tool") == "share_file" and isinstance(result.get("result"), dict):
+    if result.get("tool") in {"share_file", "oda_share_file"} and isinstance(result.get("result"), dict):
         candidate = result["result"]
     elif result.get("kind") != "shared_file" and isinstance(result.get("file"), dict):
         candidate = result["file"]
@@ -1457,6 +1473,7 @@ def _extract_shared_file_payload(result: Any) -> dict[str, Any] | None:
 def _extract_structured_tool_result(result: Any) -> dict[str, Any] | None:
     """Return frontend metadata for rich structured tool results."""
 
+    result = _coerce_tool_result_object(result)
     if not isinstance(result, dict):
         return None
     shared_file = _extract_shared_file_payload(result)
@@ -1710,7 +1727,7 @@ def call_ollama_tool(
                 f"took={time.perf_counter() - started_at:.2f}s, "
                 f"result={_summarize_tool_result(result)}"
             )
-        structured_result = _extract_structured_tool_result(result)
+        structured_result = _extract_structured_tool_result(_coerce_tool_result_object(result))
         if structured_result is not None:
             return {
                 "_tool_result_content": _serialize_tool_result(result),

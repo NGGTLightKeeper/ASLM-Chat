@@ -88,6 +88,17 @@
             "setExec": "main.py set_setting --key api-port --value {value}"
         },
         {
+            "key": "oda-daemon-port",
+            "name": "ODA Daemon Port",
+            "description": "Port the ODA sandbox daemon listens on",
+            "type": "port",
+            "default": 20002,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key oda-daemon-port",
+            "setExec": "main.py set_setting --key oda-daemon-port --value {value}",
+            "value": 20002
+        },
+        {
             "key": "aslm-host-theme",
             "name": "ASLM host theme",
             "description": "Theme snapshot from the host ASLM app; applied on each module start. Managed only by ASLM.",
@@ -180,7 +191,7 @@
             "name": "Ollama Port",
             "description": "Port that the local Ollama service listens on",
             "type": "port",
-            "default": 30002,
+            "default": 20003,
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key ollama-service_port",
             "setExec": "main.py set_setting --key ollama-service_port --value {value}"
