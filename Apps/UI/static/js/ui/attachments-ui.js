@@ -309,6 +309,12 @@ export function createAttachmentsUi(context) {
     formData.append('files', file, file.name || 'file');
     formData.append('scope', state.currentChatId || 'pending');
     formData.append('supports_vision', state.visionState.supported ? '1' : '0');
+    Array.from(state.selectedToolServerIds || []).forEach(function appendToolServerId(serverId) {
+      const normalized = String(serverId || '').trim();
+      if (normalized) {
+        formData.append('tool_server_ids', normalized);
+      }
+    });
 
     const response = await fetch('/api/uploads/', {
       method: 'POST',

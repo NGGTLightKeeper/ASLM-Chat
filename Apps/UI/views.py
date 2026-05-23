@@ -64,7 +64,13 @@ from Apps.Data.models import (
     OllamaPreset,
 )
 from Apps.UI.host_theme_bridge import build_host_theme_template_context
-from Apps.UI.upload_storage import load_upload_manifest, model_upload_payload, public_upload_payload, save_upload_to_sandbox
+from Apps.UI.upload_storage import (
+    load_upload_manifest,
+    model_upload_payload,
+    public_upload_payload,
+    resolve_uploaded_file_host_path,
+    save_upload_to_sandbox,
+)
 from Settings import mcp_json, settings
 from Settings import skills as skills_config
 
@@ -1308,9 +1314,13 @@ def _build_file_attachment_prompt_block(attachment: dict[str, Any]) -> str:
 
 
 def _selected_tools_include_sandbox(selected_tool_servers: list[dict[str, Any]]) -> bool:
-    """Return whether the resolved tool selection includes sandbox access."""
+    """Return whether the resolved tool selection includes sandbox file access."""
 
-    return any(str(server.get("id") or "").strip() == "sandbox" for server in selected_tool_servers)
+    selected_ids = {
+        str(server.get("id") or "").strip()
+        for server in selected_tool_servers
+    }
+    return bool(selected_ids & {"sandbox", "oda"})
 
 
 def _normalize_uploaded_file_ids(data: dict[str, Any]) -> list[str]:
@@ -3871,6 +3881,16 @@ def upload_files_api(request):
 
     scope = request.POST.get("chat_id") or request.POST.get("scope") or "pending"
     model_supports_vision = str(request.POST.get("supports_vision", "")).lower() in {"1", "true", "yes"}
+    tool_server_ids = request.POST.getlist("tool_server_ids")
+    if not tool_server_ids:
+        raw_tool_server_ids = str(request.POST.get("tool_server_ids") or "").strip()
+        if raw_tool_server_ids.startswith("["):
+            try:
+                parsed_tool_server_ids = json.loads(raw_tool_server_ids)
+            except json.JSONDecodeError:
+                parsed_tool_server_ids = []
+            if isinstance(parsed_tool_server_ids, list):
+                tool_server_ids = [str(item) for item in parsed_tool_server_ids if str(item).strip()]
     public_files: list[dict[str, Any]] = []
     for uploaded_file in uploaded_files:
         try:
@@ -3878,6 +3898,7 @@ def upload_files_api(request):
                 uploaded_file,
                 scope=scope,
                 model_supports_vision=model_supports_vision,
+                tool_server_ids=tool_server_ids,
             )
             public_files.append(public_payload)
         except Exception as exc:
@@ -4175,19 +4196,7 @@ def _resolve_shared_file_path(raw_path: str) -> Path:
 def _resolve_uploaded_file_content_path(manifest: dict[str, Any]) -> Path:
     """Return the local path for one uploaded file manifest."""
 
-    sandbox_path = str((manifest or {}).get("sandbox_path") or "").strip()
-    prefix = "/workspace/_sandbox/User/"
-    if not sandbox_path.startswith(prefix):
-        raise FileNotFoundError("Uploaded file content is not available")
-
-    relative = sandbox_path[len(prefix):].lstrip("/")
-    root = (settings.BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox" / "User").resolve()
-    target = (root / relative).resolve()
-    if root != target and root not in target.parents:
-        raise ValueError("Unsafe uploaded file path")
-    if not target.is_file():
-        raise FileNotFoundError("Uploaded file not found")
-    return target
+    return resolve_uploaded_file_host_path(manifest)
 
 
 MEDIA_RANGE_CHUNK_BYTES = 64 * 1024 * 1024

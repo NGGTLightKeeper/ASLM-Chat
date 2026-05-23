@@ -1257,6 +1257,33 @@ class UploadFilesApiTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "No files uploaded")
 
+    # Test ODA uploads land in the ODA sandbox tree with model-facing paths.
+    def test_upload_api_uses_oda_paths_when_oda_selected(self):
+        self.oda_upload_root = self.upload_root / "oda"
+        self.oda_upload_root.mkdir(parents=True, exist_ok=True)
+        oda_root_patch = patch.object(upload_storage, "ODA_SANDBOX_ROOT", self.oda_upload_root)
+        upload = SimpleUploadedFile("notes.txt", b"Hello from ODA upload", content_type="text/plain")
+
+        with oda_root_patch:
+            response = self.client.post(
+                reverse("uploads_api"),
+                {"files": [upload], "tool_server_ids": ["oda"]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        public_file = response.json()["files"][0]
+        manifests = list(self.manifest_root.glob("*/*.manifest.json"))
+        self.assertEqual(len(manifests), 1)
+        private_manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+        self.assertTrue(private_manifest["sandbox_path"].startswith("/mnt/data/_sandbox/"))
+        self.assertIn("oda", private_manifest["recommended_tools"])
+        stored_files = list(self.oda_upload_root.glob(f"{private_manifest['sha256']}/*"))
+        self.assertEqual(len(stored_files), 1)
+        self.assertEqual(stored_files[0].read_bytes(), b"Hello from ODA upload")
+
+        with_sandbox = _load_model_upload_manifests([public_file["file_id"]], sandbox_enabled=True)[0]
+        self.assertEqual(with_sandbox["sandbox_path"], private_manifest["sandbox_path"])
+
     # Test model-facing upload manifests do not expose sandbox paths unless selected.
     def test_model_upload_manifest_respects_sandbox_selection(self):
         upload = SimpleUploadedFile("notes.txt", b"Hello from upload", content_type="text/plain")

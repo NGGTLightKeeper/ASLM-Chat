@@ -6,6 +6,7 @@ import json
 import re
 import uuid
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,11 +18,46 @@ from .file_manifests import guess_upload_mime
 
 SANDBOX_ROOT = settings.BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox"
 USER_UPLOAD_ROOT = SANDBOX_ROOT / "User"
+ODA_SANDBOX_ROOT = settings.BASE_DIR / "Tools" / "ODA" / "tmp" / "_sandbox"
 USER_FILE_MANIFEST_ROOT = settings.BASE_DIR / "Tools" / "user_files"
 SANDBOX_MODEL_PREFIX = "/workspace/_sandbox/User"
+ODA_MODEL_PREFIX = "/mnt/data/_sandbox"
 UPLOAD_MANIFEST_SUFFIX = ".manifest.json"
 MAX_UPLOAD_BYTES = 16 * 1024 * 1024 * 1024
 INLINE_MANIFEST_MAX_BYTES = 64 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class UploadStorageTarget:
+    """Host and model paths for one upload destination."""
+
+    server_id: str
+    upload_root: Path
+    model_prefix: str
+
+
+def normalize_tool_server_ids(tool_server_ids: list[str] | None) -> list[str]:
+    """Return a stable list of tool server ids from request payloads."""
+
+    if not tool_server_ids:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in tool_server_ids:
+        value = str(raw_value or "").strip().lower()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def resolve_upload_storage_target(tool_server_ids: list[str] | None = None) -> UploadStorageTarget:
+    """Route UI uploads to ODA or the default mcp-sandbox tree."""
+
+    if "oda" in normalize_tool_server_ids(tool_server_ids):
+        return UploadStorageTarget("oda", ODA_SANDBOX_ROOT, ODA_MODEL_PREFIX)
+    return UploadStorageTarget("sandbox", USER_UPLOAD_ROOT, SANDBOX_MODEL_PREFIX)
 
 
 def _safe_scope(value: str | None) -> str:
@@ -105,7 +141,9 @@ def model_upload_payload(manifest: dict[str, Any], *, sandbox_enabled: bool = Fa
         payload["sandbox_path"] = None
         recommended_tools = payload.get("recommended_tools")
         if isinstance(recommended_tools, list):
-            payload["recommended_tools"] = [tool for tool in recommended_tools if tool != "sandbox"]
+            payload["recommended_tools"] = [
+                tool for tool in recommended_tools if tool not in {"sandbox", "oda"}
+            ]
     return payload
 
 
@@ -138,8 +176,34 @@ def _write_manifest(manifest: UploadedFileManifest) -> None:
     )
 
 
-def _model_sandbox_path(scope: str, stored_name: str) -> str:
-    return f"{SANDBOX_MODEL_PREFIX}/{scope}/{stored_name}".replace("\\", "/")
+def _model_sandbox_path(model_prefix: str, scope: str, stored_name: str) -> str:
+    return f"{model_prefix}/{scope}/{stored_name}".replace("\\", "/")
+
+
+def resolve_uploaded_file_host_path(manifest: dict[str, Any]) -> Path:
+    """Map a stored manifest sandbox_path back to a host file path."""
+
+    sandbox_path = str((manifest or {}).get("sandbox_path") or "").strip().replace("\\", "/")
+    if not sandbox_path:
+        raise FileNotFoundError("Uploaded file content is not available")
+
+    oda_prefix = f"{ODA_MODEL_PREFIX}/"
+    if sandbox_path.startswith(oda_prefix):
+        relative = sandbox_path[len(oda_prefix):].lstrip("/")
+        root = ODA_SANDBOX_ROOT.resolve()
+    else:
+        mcp_prefix = f"{SANDBOX_MODEL_PREFIX}/"
+        if not sandbox_path.startswith(mcp_prefix):
+            raise FileNotFoundError("Uploaded file content is not available")
+        relative = sandbox_path[len(mcp_prefix):].lstrip("/")
+        root = USER_UPLOAD_ROOT.resolve()
+
+    target = (root / relative).resolve()
+    if root != target and root not in target.parents:
+        raise ValueError("Unsafe uploaded file path")
+    if not target.is_file():
+        raise FileNotFoundError("Uploaded file not found")
+    return target
 
 
 def _file_sha256(file_bytes: bytes) -> str:
@@ -154,8 +218,12 @@ def _format_upload_size(size_bytes: int) -> str:
     return f"{size_bytes} bytes"
 
 
-def _stream_upload_to_temp(uploaded_file: Any) -> tuple[Path, int, str, bytes | None]:
-    incoming_dir = USER_UPLOAD_ROOT / "_incoming"
+def _stream_upload_to_temp(
+    uploaded_file: Any,
+    *,
+    incoming_root: Path,
+) -> tuple[Path, int, str, bytes | None]:
+    incoming_dir = incoming_root / "_incoming"
     incoming_dir.mkdir(parents=True, exist_ok=True)
     temp_path = incoming_dir / f"{uuid.uuid4().hex}.upload"
     sha256 = hashlib.sha256()
@@ -233,6 +301,7 @@ def _find_stored_manifest(
 def _find_existing_upload(
     target_dir: Path,
     *,
+    model_prefix: str,
     safe_scope: str,
     clean_name: str,
     file_bytes: bytes,
@@ -244,7 +313,7 @@ def _find_existing_upload(
     for file_path in target_dir.iterdir():
         if not file_path.is_file() or file_path.name.endswith(UPLOAD_MANIFEST_SUFFIX):
             continue
-        expected_sandbox_path = _model_sandbox_path(safe_scope, file_path.name)
+        expected_sandbox_path = _model_sandbox_path(model_prefix, safe_scope, file_path.name)
         manifest = _find_stored_manifest(
             sha256=expected_sha256,
             size_bytes=expected_size,
@@ -312,6 +381,7 @@ def _manifest_from_dict(manifest: dict[str, Any]) -> UploadedFileManifest | None
 def _normalize_existing_manifest_for_path(
     manifest: dict[str, Any],
     *,
+    model_prefix: str,
     safe_scope: str,
     stored_name: str,
 ) -> UploadedFileManifest | None:
@@ -319,7 +389,7 @@ def _normalize_existing_manifest_for_path(
     if parsed is None:
         return None
 
-    expected_sandbox_path = _model_sandbox_path(safe_scope, stored_name)
+    expected_sandbox_path = _model_sandbox_path(model_prefix, safe_scope, stored_name)
     if str(parsed.sandbox_path or "") == expected_sandbox_path:
         return parsed
 
@@ -337,9 +407,10 @@ def _build_lightweight_upload_manifest(
     sha256: str,
     sandbox_path: str,
     model_supports_vision: bool,
+    tool_server_id: str = "sandbox",
 ) -> UploadedFileManifest:
     clean_mime = guess_upload_mime(clean_name, mime)
-    recommended_tools = ["sandbox"] if sandbox_path else []
+    recommended_tools = [tool_server_id] if sandbox_path else []
     return UploadedFileManifest(
         file_id=file_id,
         name=clean_name,
@@ -363,6 +434,7 @@ def save_upload_to_sandbox(
     *,
     scope: str | None = None,
     model_supports_vision: bool = False,
+    tool_server_ids: list[str] | None = None,
 ) -> tuple[UploadedFileManifest, dict[str, Any]]:
     """Persist one Django uploaded file and return its private manifest plus public payload."""
 
@@ -371,16 +443,21 @@ def save_upload_to_sandbox(
     if declared_size_bytes > MAX_UPLOAD_BYTES:
         raise ValueError(f"File is too large (max {_format_upload_size(MAX_UPLOAD_BYTES)})")
 
+    storage_target = resolve_upload_storage_target(tool_server_ids)
     mime = str(getattr(uploaded_file, "content_type", "") or "")
-    temp_path, size_bytes, file_sha256, file_bytes = _stream_upload_to_temp(uploaded_file)
+    temp_path, size_bytes, file_sha256, file_bytes = _stream_upload_to_temp(
+        uploaded_file,
+        incoming_root=storage_target.upload_root,
+    )
     safe_scope = _safe_scope(file_sha256)
-    target_dir = USER_UPLOAD_ROOT / safe_scope
+    target_dir = storage_target.upload_root / safe_scope
     target_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         existing_upload = (
             _find_existing_upload(
                 target_dir,
+                model_prefix=storage_target.model_prefix,
                 safe_scope=safe_scope,
                 clean_name=clean_name,
                 file_bytes=file_bytes,
@@ -399,6 +476,7 @@ def save_upload_to_sandbox(
             if existing_manifest:
                 parsed_manifest = _normalize_existing_manifest_for_path(
                     existing_manifest,
+                    model_prefix=storage_target.model_prefix,
                     safe_scope=safe_scope,
                     stored_name=existing_path.name,
                 )
@@ -409,7 +487,7 @@ def save_upload_to_sandbox(
             # Existing binary matched but sidecar is missing/corrupted. Rebuild one
             # manifest bound to the existing file path, then reuse it.
             rebuilt_file_id = uuid.uuid4().hex
-            sandbox_path = _model_sandbox_path(safe_scope, existing_path.name)
+            sandbox_path = _model_sandbox_path(storage_target.model_prefix, safe_scope, existing_path.name)
             rebuilt_manifest = (
                 build_uploaded_file_manifest(
                     file_bytes,
@@ -418,6 +496,7 @@ def save_upload_to_sandbox(
                     sandbox_path=sandbox_path,
                     model_supports_vision=model_supports_vision,
                     file_id=rebuilt_file_id,
+                    tool_server_id=storage_target.server_id,
                 )
                 if file_bytes is not None
                 else _build_lightweight_upload_manifest(
@@ -428,6 +507,7 @@ def save_upload_to_sandbox(
                     sha256=file_sha256,
                     sandbox_path=sandbox_path,
                     model_supports_vision=model_supports_vision,
+                    tool_server_id=storage_target.server_id,
                 )
             )
             _write_manifest(rebuilt_manifest)
@@ -437,7 +517,7 @@ def save_upload_to_sandbox(
         stored_name = _stored_file_name(file_id, clean_name)
         target_path = target_dir / stored_name
         temp_path.replace(target_path)
-        sandbox_path = _model_sandbox_path(safe_scope, stored_name)
+        sandbox_path = _model_sandbox_path(storage_target.model_prefix, safe_scope, stored_name)
 
         manifest = (
             build_uploaded_file_manifest(
@@ -447,6 +527,7 @@ def save_upload_to_sandbox(
                 sandbox_path=sandbox_path,
                 model_supports_vision=model_supports_vision,
                 file_id=file_id,
+                tool_server_id=storage_target.server_id,
             )
             if file_bytes is not None
             else _build_lightweight_upload_manifest(
@@ -457,6 +538,7 @@ def save_upload_to_sandbox(
                 sha256=file_sha256,
                 sandbox_path=sandbox_path,
                 model_supports_vision=model_supports_vision,
+                tool_server_id=storage_target.server_id,
             )
         )
         _write_manifest(manifest)
@@ -483,8 +565,9 @@ def load_upload_manifest(file_id: str) -> dict[str, Any] | None:
 
     # Legacy fallback for uploads created before manifests were moved out of
     # the sandbox file tree.
-    for sidecar in USER_UPLOAD_ROOT.glob(f"**/*{UPLOAD_MANIFEST_SUFFIX}"):
-        manifest = _load_manifest_from_sidecar(sidecar)
-        if manifest and str(manifest.get("file_id") or "") == normalized_id:
-            return manifest
+    for upload_root in (USER_UPLOAD_ROOT, ODA_SANDBOX_ROOT):
+        for sidecar in upload_root.glob(f"**/*{UPLOAD_MANIFEST_SUFFIX}"):
+            manifest = _load_manifest_from_sidecar(sidecar)
+            if manifest and str(manifest.get("file_id") or "") == normalized_id:
+                return manifest
     return None
