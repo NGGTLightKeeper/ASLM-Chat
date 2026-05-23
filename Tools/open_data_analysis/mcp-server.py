@@ -15,25 +15,28 @@ if str(MCP_SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(MCP_SERVER_ROOT))
 
 from sandbox_mcp import daemon_client
-from sandbox_mcp.files import FileBridgeError
+from sandbox_mcp.files import FileBridgeError, read_shared_image
 from sandbox_mcp.runner import max_concurrent, parse_run_request, run_sandbox, share_sandbox_file
 
 
 MCP_SERVER = {
     "id": "oda",
-    "name": "ODA",
-    "description": "Run Python code in the ODA sandbox and share generated files.",
+    "name": "Data Analysis",
+    "description": "Run Python code in the data-analysis sandbox and share generated files.",
 }
 
 TOOLS = [
     {
         "id": "oda_python",
-        "name": "ODA Python",
+        "name": "Python",
         "description": (
-            "Run Python code in the ODA data-analysis sandbox. "
+            "Run Python code in the data-analysis sandbox. "
             "Write normal Python in `code`; it runs as a script in /mnt/data/work. "
             "Read and write user-visible files only under /mnt/data/_sandbox. "
             "Use /mnt/data/work for private scratch files. "
+            "If needed packages are missing, install them from inside the code before importing "
+            "them, for example with subprocess.run([sys.executable, '-m', 'pip', 'install', "
+            "'package'], check=True). "
             "After creating a file the user should receive, call oda_share_file with its path "
             "inside /mnt/data/_sandbox."
         ),
@@ -41,8 +44,11 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "code": {
-                    "type": "string",
-                    "description": "Python source code to execute. Use print() for textual results.",
+                "type": "string",
+                    "description": (
+                        "Python source code to execute. Use print() for textual results. "
+                        "Install missing third-party packages with pip when necessary."
+                    ),
                 },
             },
             "required": ["code"],
@@ -51,9 +57,9 @@ TOOLS = [
     },
     {
         "id": "oda_share_file",
-        "name": "ODA Share File",
+        "name": "Share File",
         "description": (
-            "Present an existing file from the shared ODA sandbox folder to the user. "
+            "Present an existing file from the shared sandbox folder to the user. "
             "Use this after creating or updating a file the user should receive."
         ),
         "parameters": {
@@ -67,6 +73,27 @@ TOOLS = [
                     "type": "string",
                     "description": "Optional display/download filename.",
                 },
+            },
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "id": "oda_view_image",
+        "name": "View Image",
+        "description": (
+            "Inspect an image file from the shared sandbox folder. "
+            "Returns image metadata and an inline preview when the file is small enough."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path inside /mnt/data/_sandbox, e.g. /mnt/data/_sandbox/chart.png or chart.png.",
+                },
+                "include_preview": {"type": "boolean", "default": True},
+                "max_preview_bytes": {"type": "integer"},
             },
             "required": ["path"],
             "additionalProperties": False,
@@ -105,6 +132,14 @@ async def _share_file(path: object, filename: object | None = None) -> dict[str,
     return meta
 
 
+def _view_image(arguments: dict[str, Any]) -> dict[str, Any]:
+    return read_shared_image(
+        arguments.get("path"),
+        include_preview=bool(arguments.get("include_preview", True)),
+        max_preview_bytes=arguments.get("max_preview_bytes"),
+    )
+
+
 async def call_tool(
     tool_id: str,
     arguments: dict[str, Any] | None,
@@ -119,7 +154,10 @@ async def call_tool(
         if tool_id in ("oda_share_file", "share_file"):
             return await _share_file(args.get("path"), args.get("filename"))
 
+        if tool_id in ("oda_view_image", "view_image"):
+            return _view_image(args)
+
     except (ValueError, FileBridgeError, KeyError, daemon_client.SandboxDaemonError) as exc:
         return f"exit_code: error\n\nstderr:\n{exc}"
 
-    raise ValueError(f"Unknown ODA tool: {tool_id}")
+    raise ValueError(f"Unknown data-analysis tool: {tool_id}")

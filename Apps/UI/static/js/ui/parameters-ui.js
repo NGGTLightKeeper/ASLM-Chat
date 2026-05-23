@@ -13,17 +13,135 @@ import {
   isThinkingParameterKey,
   setNestedValue
 } from '../main/utils.js';
-import { getJson, patchJson } from '../main/api.js';
+import { getJson, patchJson, postJson } from '../main/api.js';
 
 // Parameters UI.
 // Create helpers for model controls, tool selection, and option payloads.
 export function createParametersUi(context) {
   const { dom, state } = context;
+  const sandboxDefaultStorageKey = 'aslm.sandboxDefaultMode';
+  const sandboxDefaultModes = [
+    { mode: 'linux_sandbox', serverId: 'sandbox' },
+    { mode: 'data_analysis', serverId: 'oda' }
+  ];
 
   // Tool selection helpers.
   // Normalize one tool server id for Set usage.
   function normalizeToolServerId(serverId) {
     return String(serverId || '').trim();
+  }
+
+  function sandboxModeForServerId(serverId) {
+    const normalized = normalizeToolServerId(serverId);
+    const match = sandboxDefaultModes.find(function findMode(option) {
+      return option.serverId === normalized;
+    });
+    return match ? match.mode : '';
+  }
+
+  function sandboxServerIdForMode(mode) {
+    const normalized = String(mode || '').trim();
+    const match = sandboxDefaultModes.find(function findServer(option) {
+      return option.mode === normalized;
+    });
+    return match ? match.serverId : '';
+  }
+
+  function isSandboxServerId(serverId) {
+    const normalized = normalizeToolServerId(serverId);
+    return sandboxDefaultModes.some(function hasServer(option) {
+      return option.serverId === normalized;
+    });
+  }
+
+  function availableToolServerIds() {
+    return new Set((state.availableToolServers || []).map(function mapServer(server) {
+      return normalizeToolServerId(server && server.id);
+    }).filter(Boolean));
+  }
+
+  function availableSandboxModes() {
+    const validIds = availableToolServerIds();
+    return sandboxDefaultModes.filter(function filterAvailable(option) {
+      return validIds.has(option.serverId);
+    });
+  }
+
+  function selectedSandboxServerId() {
+    const validIds = availableToolServerIds();
+    for (let index = 0; index < sandboxDefaultModes.length; index += 1) {
+      const serverId = sandboxDefaultModes[index].serverId;
+      if (validIds.has(serverId) && state.selectedToolServerIds.has(serverId)) {
+        return serverId;
+      }
+    }
+    return '';
+  }
+
+  function storedSandboxDefaultMode() {
+    try {
+      const value = window.localStorage.getItem(sandboxDefaultStorageKey);
+      return sandboxServerIdForMode(value) ? value : '';
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  function preferredSandboxDefaultMode() {
+    const selected = sandboxModeForServerId(selectedSandboxServerId());
+    if (selected) {
+      return selected;
+    }
+    const stored = storedSandboxDefaultMode();
+    const available = availableSandboxModes();
+    if (stored && available.some(function hasStored(option) { return option.mode === stored; })) {
+      return stored;
+    }
+    if (available.some(function hasDataAnalysis(option) { return option.mode === 'data_analysis'; })) {
+      return 'data_analysis';
+    }
+    return available[0] ? available[0].mode : '';
+  }
+
+  function getSandboxDefaultMode() {
+    return preferredSandboxDefaultMode();
+  }
+
+  function applySandboxDefaultMode(mode, persist, rerender) {
+    const serverId = sandboxServerIdForMode(mode);
+    const validIds = availableToolServerIds();
+    if (!serverId || !validIds.has(serverId)) {
+      return;
+    }
+    const sandboxEnabled = !!selectedSandboxServerId();
+    if (sandboxEnabled) {
+      sandboxDefaultModes.forEach(function removeSandboxOption(option) {
+        state.selectedToolServerIds.delete(option.serverId);
+      });
+      state.selectedToolServerIds.add(serverId);
+    }
+    if (persist !== false) {
+      try {
+        window.localStorage.setItem(sandboxDefaultStorageKey, mode);
+      } catch (_error) {
+        // Ignore storage failures in privacy-restricted contexts.
+      }
+    }
+    if (rerender !== false) {
+      renderToolControls();
+    }
+  }
+
+  async function syncSandboxDefaultProgress(sourceMode, targetMode) {
+    const source = String(sourceMode || '').trim();
+    const target = String(targetMode || '').trim();
+    if (!source || !target || source === target) {
+      return null;
+    }
+    return postJson('/api/sandbox/sync/', {
+      source_mode: source,
+      target_mode: target
+    });
   }
 
   // Replace the available tool server list and prune invalid selections.
@@ -90,8 +208,13 @@ export function createParametersUi(context) {
 
     state.availableToolServers.forEach(function renderServer(server) {
       const serverId = normalizeToolServerId(server.id);
+      if (serverId === 'oda') {
+        return;
+      }
       const label = server.name || serverId;
-      const checked = state.selectedToolServerIds.has(serverId);
+      const checked = isSandboxServerId(serverId)
+        ? !!selectedSandboxServerId()
+        : state.selectedToolServerIds.has(serverId);
 
       const $row = $('<label class="tool-server-row composer-tool-row">');
       const $icon = $('<span class="composer-tool-icon">').addClass(toolServerIconClass(server)).attr('aria-hidden', 'true');
@@ -99,10 +222,19 @@ export function createParametersUi(context) {
       const $name = $('<span class="tool-server-name">').text(label);
 
       $checkbox.on('change', function onChange() {
-        if (this.checked) {
-          state.selectedToolServerIds.add(serverId);
+        if (isSandboxServerId(serverId)) {
+          sandboxDefaultModes.forEach(function removeSandboxOption(option) {
+            state.selectedToolServerIds.delete(option.serverId);
+          });
+          if (this.checked) {
+            state.selectedToolServerIds.add(sandboxServerIdForMode(preferredSandboxDefaultMode()) || serverId);
+          }
         } else {
-          state.selectedToolServerIds.delete(serverId);
+          if (this.checked) {
+            state.selectedToolServerIds.add(serverId);
+          } else {
+            state.selectedToolServerIds.delete(serverId);
+          }
         }
         renderToolControls();
       });
@@ -121,6 +253,7 @@ export function createParametersUi(context) {
     dom.$groupTools.hide();
     dom.$dividerTools.hide();
     dom.$composerToolMenus.toggle(hasToolSupport);
+    renderSandboxDefaultControl(hasToolSupport);
 
     const $content = dom.$groupTools.find('.settings-section-content');
     $content.empty();
@@ -129,6 +262,35 @@ export function createParametersUi(context) {
     });
 
     renderMcpControls();
+  }
+
+  function renderSandboxDefaultControl(hasToolSupport) {
+    const available = hasToolSupport ? availableSandboxModes() : [];
+    const show = available.length > 0;
+    dom.$groupSandboxDefault.toggle(show);
+    dom.$dividerSandboxDefault.toggle(show);
+    if (!show) {
+      return;
+    }
+    dom.$groupSandboxDefault.removeClass('collapsed');
+
+    const mode = preferredSandboxDefaultMode();
+    dom.$sandboxDefaultValue.text(mode || '');
+    dom.$sandboxDefaultToggle.find('.sandbox-default-option').each(function syncOption() {
+      const $btn = $(this);
+      const optionMode = String($btn.data('sandbox-mode') || '').trim();
+      const serverId = sandboxServerIdForMode(optionMode);
+      const availableOption = available.some(function hasOption(option) {
+        return option.mode === optionMode;
+      });
+      const active = optionMode === mode;
+      $btn
+        .prop('disabled', !availableOption)
+        .toggleClass('is-active', active)
+        .attr('aria-pressed', active ? 'true' : 'false')
+        .attr('title', availableOption ? optionMode : `${optionMode} unavailable`)
+        .data('sandbox-server-id', serverId);
+    });
   }
 
   function renderMcpControls() {
@@ -327,10 +489,11 @@ export function createParametersUi(context) {
         && this.id !== 'group-connection'
         && this.id !== 'group-skills'
         && this.id !== 'group-system'
-        && this.id !== 'group-model';
+        && this.id !== 'group-model'
+        && this.id !== 'group-sandbox-default';
     }).hide().find('.settings-section-content').empty();
 
-    $('.settings-divider[id^="divider-"]').not('#divider-connection, #divider-skills').hide();
+    $('.settings-divider[id^="divider-"]').not('#divider-connection, #divider-skills, #divider-sandbox-default').hide();
   }
 
 
@@ -1321,9 +1484,51 @@ export function createParametersUi(context) {
     });
   }
 
+  dom.$sandboxDefaultToggle.on('click', '.sandbox-default-option', async function onSandboxDefaultClick() {
+    if ($(this).prop('disabled')) {
+      return;
+    }
+    const sourceMode = preferredSandboxDefaultMode();
+    const mode = String($(this).data('sandbox-mode') || '').trim();
+    dom.$sandboxDefaultToggle.find('.sandbox-default-option').prop('disabled', true);
+    try {
+      await syncSandboxDefaultProgress(sourceMode, mode);
+      if (sourceMode && mode && sourceMode !== mode) {
+        state.pendingSandboxModeSwitch = {
+          source_mode: sourceMode,
+          target_mode: mode
+        };
+      }
+    } catch (error) {
+      console.error('Failed to sync sandbox progress:', error);
+    } finally {
+      dom.$sandboxDefaultToggle.find('.sandbox-default-option').prop('disabled', false);
+    }
+    applySandboxDefaultMode(mode, true, true);
+  });
+
+  function takePendingSandboxModeSwitch() {
+    const pending = state.pendingSandboxModeSwitch;
+    state.pendingSandboxModeSwitch = null;
+    if (!pending || typeof pending !== 'object') {
+      return null;
+    }
+    const sourceMode = String(pending.source_mode || '').trim();
+    const targetMode = String(pending.target_mode || '').trim();
+    if (!sourceMode || !targetMode || sourceMode === targetMode) {
+      return null;
+    }
+    return {
+      source_mode: sourceMode,
+      target_mode: targetMode
+    };
+  }
+
   return {
     applySelectedToolServerIds,
     collectOptionsPayload,
+    getSandboxDefaultMode,
+    takePendingSandboxModeSwitch,
     getSelectedToolServerIds,
     getSupportedParameterDefinitions,
     handleNumberInput,

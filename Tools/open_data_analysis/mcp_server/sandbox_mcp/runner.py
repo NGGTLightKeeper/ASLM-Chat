@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import atexit
 import json
 import os
 import re
@@ -447,6 +448,7 @@ def _docker_create_argv(
     return [
         "run",
         "-d",
+        "--rm",
         "--name",
         container_name,
         "--label",
@@ -767,6 +769,10 @@ def _cleanup_orphan_containers() -> int:
         rid = _container_label(name, "ada.sandbox.run_id")
         if active and rid == active:
             continue
+        if not _container_running(name):
+            _remove_container(name)
+            removed += 1
+            continue
         run_dir_raw = _container_label(name, "ada.sandbox.run_dir")
         run_dir = Path(run_dir_raw) if run_dir_raw else None
         should_remove = False
@@ -783,6 +789,16 @@ def _cleanup_orphan_containers() -> int:
             _remove_container(name)
             removed += 1
     return removed
+
+
+def _cleanup_active_session_at_exit() -> None:
+    try:
+        _end_active_session()
+    except Exception:
+        pass
+
+
+atexit.register(_cleanup_active_session_at_exit)
 
 
 def _cleanup_old_state() -> None:

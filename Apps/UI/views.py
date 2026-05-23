@@ -12,6 +12,7 @@ import logging
 import mimetypes
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -3385,6 +3386,105 @@ def _split_generation_options(
 
     return think_value, think_level_value, clean_options
 
+
+def _normalize_sandbox_default_mode(value: object) -> str:
+    """Normalize the UI sandbox default mode sent with a generation request."""
+
+    normalized = str(value or "").strip()
+    return normalized if normalized in {"linux_sandbox", "data_analysis"} else ""
+
+
+SANDBOX_MODE_SWITCH_DETAILS: dict[str, dict[str, str]] = {
+    "linux_sandbox": {
+        "label": "Linux sandbox (mcp-sandbox)",
+        "workspace_prefix": "/workspace/_sandbox",
+        "tool_server_id": "sandbox",
+    },
+    "data_analysis": {
+        "label": "Data analysis sandbox (ODA)",
+        "workspace_prefix": "/mnt/data/_sandbox",
+        "tool_server_id": "oda",
+    },
+}
+
+
+def _parse_sandbox_mode_switch(data: dict[str, Any]) -> tuple[str, str] | None:
+    """Return a validated sandbox mode switch announced by the UI, if any."""
+
+    raw_switch = data.get("sandbox_mode_switch")
+    if raw_switch is None:
+        raw_switch = data.get("sandboxModeSwitch")
+    if not isinstance(raw_switch, dict):
+        return None
+
+    source_mode = _normalize_sandbox_default_mode(
+        raw_switch.get("source_mode") or raw_switch.get("sourceMode")
+    )
+    target_mode = _normalize_sandbox_default_mode(
+        raw_switch.get("target_mode") or raw_switch.get("targetMode")
+    )
+    if not source_mode or not target_mode or source_mode == target_mode:
+        return None
+    return source_mode, target_mode
+
+
+def _build_sandbox_mode_switch_notice(source_mode: str, target_mode: str) -> str:
+    """Build a one-shot system notice after the UI synchronizes sandbox workspaces."""
+
+    source = SANDBOX_MODE_SWITCH_DETAILS[source_mode]
+    target = SANDBOX_MODE_SWITCH_DETAILS[target_mode]
+    return (
+        "Sandbox default changed by the user in the UI. This is an operational notice, not a new user request.\n"
+        f"- Previous default: {source['label']} ({source_mode})\n"
+        f"- Active default now: {target['label']} ({target_mode})\n"
+        "- The host already merged workspace files from the previous `_sandbox` tree into the active one. "
+        "Relative paths under `_sandbox` (for example `User/...`, task outputs, screenshots) were preserved.\n"
+        f"- Use `{target['workspace_prefix']}/...` for all new sandbox file paths and tool calls. "
+        f"The previous prefix was `{source['workspace_prefix']}/...`.\n"
+        "- Older chat messages may still mention the previous prefix. Treat those as the same files at the "
+        "same relative location inside the active sandbox unless a tool proves otherwise.\n"
+        "- Do not assume work was lost, do not restart from scratch, and do not tell the user files disappeared. "
+        "Continue the current task seamlessly with the active sandbox.\n"
+        f"- Default tool server for sandbox work is now `{target['tool_server_id']}`."
+    )
+
+
+def _inject_ephemeral_system_notice(llm_messages: list[dict[str, Any]], notice: str) -> None:
+    """Insert a one-off system notice after the main system prompt, without persisting a message."""
+
+    cleaned = str(notice or "").strip()
+    if not cleaned:
+        return
+    entry = {"role": "system", "content": cleaned}
+    if llm_messages and llm_messages[0].get("role") == "system":
+        llm_messages.insert(1, entry)
+        return
+    llm_messages.insert(0, entry)
+
+
+def _maybe_inject_sandbox_mode_switch_notice(
+    llm_messages: list[dict[str, Any]],
+    *,
+    data: dict[str, Any],
+    sandbox_enabled: bool,
+    sandbox_default_mode: str,
+) -> None:
+    """Announce a sandbox mode switch to the model on the next generation only."""
+
+    if not sandbox_enabled:
+        return
+    parsed = _parse_sandbox_mode_switch(data)
+    if not parsed:
+        return
+    source_mode, target_mode = parsed
+    if sandbox_default_mode and sandbox_default_mode != target_mode:
+        return
+    _inject_ephemeral_system_notice(
+        llm_messages,
+        _build_sandbox_mode_switch_notice(source_mode, target_mode),
+    )
+
+
 # Build generation kwargs
 def _build_generate_kwargs(
     engine: str,
@@ -3398,6 +3498,7 @@ def _build_generate_kwargs(
     think_param_name: str = "think",
     think_level_param_name: str = "think_level",
     sync_operation_defaults: dict[str, Any] | None = None,
+    sandbox_default_mode: str = "",
 ) -> dict[str, Any]:
     """Build keyword arguments for ``llm_api.generate``."""
 
@@ -3431,6 +3532,7 @@ def _build_generate_kwargs(
             "project_dir": str(settings.BASE_DIR),
             "selected_tool_server_ids": [s["id"] for s in selected_tool_servers],
             "sandbox_enabled": _selected_tools_include_sandbox(selected_tool_servers),
+            "sandbox_default_mode": sandbox_default_mode,
         }
 
     return generate_kwargs
@@ -3934,6 +4036,7 @@ def chat_api(request):
         attachments = _normalize_request_attachments(data)
         uploaded_file_ids = _normalize_uploaded_file_ids(data)
         engine = _get_active_engine(data.get("engine"))
+        sandbox_default_mode = _normalize_sandbox_default_mode(data.get("sandbox_default_mode"))
         raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
         if isinstance(raw_tool_ids, str):
             raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
@@ -4031,6 +4134,12 @@ def chat_api(request):
             upload_manifests,
             sandbox_enabled=sandbox_enabled,
         )
+        _maybe_inject_sandbox_mode_switch_notice(
+            llm_messages,
+            data=data,
+            sandbox_enabled=sandbox_enabled,
+            sandbox_default_mode=sandbox_default_mode,
+        )
 
         # Split generic options from thinking-specific controls.
         think_value, think_level_value, clean_options = _split_generation_options(
@@ -4072,6 +4181,7 @@ def chat_api(request):
                 if engine == "lms"
                 else {}
             ),
+            sandbox_default_mode=sandbox_default_mode,
         )
 
         generation_id = uuid.uuid4().hex
@@ -4116,6 +4226,8 @@ def _path_is_within(path: Path, root: Path) -> bool:
 def _shared_file_allowed_roots() -> list[Path]:
     roots = [
         settings.BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox",
+        settings.BASE_DIR / "Tools" / "open_data_analysis" / "tmp" / "_sandbox",
+        settings.BASE_DIR / "Tools" / "ODA" / "tmp" / "_sandbox",
     ]
 
     sandbox_host_workspace = os.getenv("SANDBOX_HOST_WORKSPACE", "").strip()
@@ -4145,6 +4257,8 @@ def _resolve_shared_file_path(raw_path: str) -> Path:
     raw = Path(cleaned)
     allowed_roots = _shared_file_allowed_roots()
     sandbox_root = settings.BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox"
+    oda_root = settings.BASE_DIR / "Tools" / "open_data_analysis" / "tmp" / "_sandbox"
+    legacy_oda_root = settings.BASE_DIR / "Tools" / "ODA" / "tmp" / "_sandbox"
     normalized_cleaned = cleaned.replace("\\", "/").strip("/")
     normalized_parts = [part for part in normalized_cleaned.split("/") if part not in {"", "."}]
     mapped_parts = normalized_parts
@@ -4179,6 +4293,14 @@ def _resolve_shared_file_path(raw_path: str) -> Path:
     push_candidate(settings.BASE_DIR / cleaned)
     push_candidate(sandbox_root / cleaned)
     push_candidate(sandbox_root / mapped_relative)
+    push_candidate(oda_root / cleaned)
+    push_candidate(oda_root / Path(*mapped_parts) if mapped_parts else oda_root)
+    push_candidate(legacy_oda_root / cleaned)
+    push_candidate(legacy_oda_root / Path(*mapped_parts) if mapped_parts else legacy_oda_root)
+    for root in allowed_roots:
+        push_candidate(root / cleaned)
+        push_candidate(root / mapped_relative)
+        push_candidate(root / Path(*mapped_parts) if mapped_parts else root)
 
     for candidate in candidate_set:
         try:
@@ -4348,6 +4470,109 @@ def shared_file_download_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+SANDBOX_DEFAULT_ROOTS = {
+    "linux_sandbox": ("Tools", "mcp-sandbox", "_sandbox"),
+    "data_analysis": ("Tools", "open_data_analysis", "tmp", "_sandbox"),
+}
+
+
+def _sandbox_default_root(mode: object) -> Path:
+    """Return the host _sandbox root for one UI sandbox default mode."""
+
+    normalized = str(mode or "").strip()
+    parts = SANDBOX_DEFAULT_ROOTS.get(normalized)
+    if not parts:
+        raise ValueError("Unknown sandbox mode.")
+    return (settings.BASE_DIR.joinpath(*parts)).resolve()
+
+
+def _sync_sandbox_roots(source_root: Path, target_root: Path) -> dict[str, int]:
+    """Merge-copy files from one sandbox root into another without deleting target files."""
+
+    source_root = source_root.resolve()
+    target_root = target_root.resolve()
+    if source_root == target_root:
+        return {"copied": 0, "skipped": 0, "dirs": 0}
+    if not source_root.exists():
+        source_root.mkdir(parents=True, exist_ok=True)
+    if not source_root.is_dir():
+        raise ValueError("Source sandbox root is not a directory.")
+    target_root.mkdir(parents=True, exist_ok=True)
+
+    copied = 0
+    skipped = 0
+    dirs = 0
+    for root, dirnames, filenames in os.walk(source_root, topdown=True, followlinks=False):
+        root_path = Path(root)
+        safe_dirnames: list[str] = []
+        for dirname in dirnames:
+            source_dir = root_path / dirname
+            if source_dir.is_symlink():
+                skipped += 1
+                continue
+            safe_dirnames.append(dirname)
+            relative_dir = source_dir.relative_to(source_root)
+            (target_root / relative_dir).mkdir(parents=True, exist_ok=True)
+            dirs += 1
+        dirnames[:] = safe_dirnames
+
+        for filename in filenames:
+            source_file = root_path / filename
+            if source_file.is_symlink() or not source_file.is_file():
+                skipped += 1
+                continue
+            relative_file = source_file.relative_to(source_root)
+            target_file = target_root / relative_file
+            try:
+                resolved_target = target_file.resolve(strict=False)
+                resolved_target.relative_to(target_root)
+            except ValueError:
+                skipped += 1
+                continue
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            if target_file.exists():
+                try:
+                    if target_file.stat().st_mtime >= source_file.stat().st_mtime:
+                        skipped += 1
+                        continue
+                except OSError:
+                    skipped += 1
+                    continue
+            shutil.copy2(source_file, target_file)
+            copied += 1
+    return {"copied": copied, "skipped": skipped, "dirs": dirs}
+
+
+def sandbox_sync_api(request):
+    """Synchronize user-visible sandbox files when switching sandbox defaults."""
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        source_mode = str(data.get("source_mode") or data.get("sourceMode") or "").strip()
+        target_mode = str(data.get("target_mode") or data.get("targetMode") or "").strip()
+        if not source_mode or not target_mode:
+            raise ValueError("Missing sandbox mode.")
+        source_root = _sandbox_default_root(source_mode)
+        target_root = _sandbox_default_root(target_mode)
+        stats = _sync_sandbox_roots(source_root, target_root)
+        return JsonResponse(
+            {
+                "ok": True,
+                "source_mode": source_mode,
+                "target_mode": target_mode,
+                "stats": stats,
+            }
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Failed to synchronize sandbox roots")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
 # Abort active generation.
 def abort_generation_api(request):
     """Immediately signal the active LLM generation to stop."""
@@ -4476,6 +4701,7 @@ def regenerate_chat_api(request, chat_id):
         model_name = data.get("model", "")
         options = data.get("options", {}) or {}
         engine = _get_active_engine(data.get("engine"))
+        sandbox_default_mode = _normalize_sandbox_default_mode(data.get("sandbox_default_mode"))
         raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
         if isinstance(raw_tool_ids, str):
             raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
@@ -4552,6 +4778,12 @@ def regenerate_chat_api(request, chat_id):
             model_info_payload,
             sandbox_enabled=sandbox_enabled,
         )
+        _maybe_inject_sandbox_mode_switch_notice(
+            llm_messages,
+            data=data,
+            sandbox_enabled=sandbox_enabled,
+            sandbox_default_mode=sandbox_default_mode,
+        )
 
         think_value, think_level_value, clean_options = _split_generation_options(
             options,
@@ -4591,6 +4823,7 @@ def regenerate_chat_api(request, chat_id):
                 if engine == "lms"
                 else {}
             ),
+            sandbox_default_mode=sandbox_default_mode,
         )
 
         assistant_message_record = Message.objects.create(

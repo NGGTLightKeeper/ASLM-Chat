@@ -682,7 +682,7 @@ def _run_tool_loop(
             conversation_tool_message = {
                 key: value
                 for key, value in tool_message.items()
-                if key not in {"structured_content", "tool_ui"}
+                if key not in {"structured_content", "tool_ui", "images"}
             }
             conversation.append(conversation_tool_message)
             tool_registry.log_search_tool_io(

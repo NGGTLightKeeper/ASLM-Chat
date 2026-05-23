@@ -11,12 +11,14 @@ from mcp.server.stdio import stdio_server
 from sandbox_mcp import daemon_client
 from sandbox_mcp.files import (
     FileBridgeError,
+    read_shared_image,
 )
 from sandbox_mcp.runner import max_concurrent, parse_run_request, run_sandbox, share_sandbox_file
 
 TOOL_SANDBOX = "sandbox"
 TOOL_PYTHON = "oda_python"
 TOOL_SHARE_FILE = "oda_share_file"
+TOOL_VIEW_IMAGE = "oda_view_image"
 
 PYTHON_TOOL = types.Tool(
     name=TOOL_PYTHON,
@@ -25,6 +27,9 @@ PYTHON_TOOL = types.Tool(
         "Write normal Python in `code`; it runs as a script in /mnt/data/work. "
         "Read and write user-visible files only under /mnt/data/_sandbox. "
         "Use /mnt/data/work for private scratch files. "
+        "If needed packages are missing, install them from inside the code before importing "
+        "them, for example with subprocess.run([sys.executable, '-m', 'pip', 'install', "
+        "'package'], check=True). "
         "After creating a file the user should receive, call oda_share_file with its path "
         "inside /mnt/data/_sandbox. "
         "The sandbox has Python, pip, common build tools, Chromium/Chromedriver, ffmpeg, "
@@ -39,6 +44,7 @@ PYTHON_TOOL = types.Tool(
                 "description": (
                     "Python source code to execute. Use print() for textual results. "
                     "Read/write shared files in /mnt/data/_sandbox. "
+                    "Install missing third-party packages with pip when necessary. "
                     "Use subprocess.run(...) inside Python only when a system command is needed."
                 ),
             },
@@ -93,13 +99,34 @@ SHARE_FILE_TOOL = types.Tool(
     },
 )
 
+VIEW_IMAGE_TOOL = types.Tool(
+    name=TOOL_VIEW_IMAGE,
+    description=(
+        "Inspect an image file from the shared sandbox folder. "
+        "Returns image metadata and an inline preview when the file is small enough."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Path inside /mnt/data/_sandbox, e.g. /mnt/data/_sandbox/chart.png or chart.png.",
+            },
+            "include_preview": {"type": "boolean", "default": True},
+            "max_preview_bytes": {"type": "integer"},
+        },
+        "required": ["path"],
+        "additionalProperties": False,
+    },
+)
+
 app = Server("sandbox")
 _run_semaphore = asyncio.Semaphore(max_concurrent())
 
 
 @app.list_tools()
 async def list_tools() -> list[types.Tool]:
-    return [PYTHON_TOOL, SHARE_FILE_TOOL]
+    return [PYTHON_TOOL, SHARE_FILE_TOOL, VIEW_IMAGE_TOOL]
 
 
 def _text(content: str) -> list[types.TextContent]:
@@ -135,6 +162,14 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                     arguments.get("path"),
                     arguments.get("filename"),
                 )
+            return _text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+        if name == TOOL_VIEW_IMAGE:
+            meta = read_shared_image(
+                arguments.get("path"),
+                include_preview=bool(arguments.get("include_preview", True)),
+                max_preview_bytes=arguments.get("max_preview_bytes"),
+            )
             return _text(json.dumps(meta, ensure_ascii=False, indent=2))
 
         if name == TOOL_PYTHON:

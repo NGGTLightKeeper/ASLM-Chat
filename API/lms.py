@@ -1537,9 +1537,6 @@ def _run_tool_loop(
             else:
                 consecutive_blocked_tool_results = 0
 
-            if isinstance(tool_result, dict) and "_image_b64" in tool_result:
-                tool_result = f"[Image: {tool_result.get('_path', 'image')}]"
-
             tool_message = _build_tool_message(
                 tool_call["name"],
                 tool_call["id"],
