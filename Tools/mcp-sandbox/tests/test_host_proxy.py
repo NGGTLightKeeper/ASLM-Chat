@@ -177,7 +177,8 @@ class HostProxyTests(unittest.TestCase):
 
         with patch.object(docker_host_mod, "healthcheck_container_supervisor", side_effect=health_results), \
              patch.object(docker_host_mod, "_force_remove", return_value=(True, "removed")) as remove_mock, \
-             patch.object(docker_host_mod, "_create_container", return_value=(True, "created")) as create_mock:
+             patch.object(docker_host_mod, "_create_container", return_value=(True, "created")) as create_mock, \
+             patch.object(docker_host_mod, "_wait_for_container_running", return_value=(True, "running")):
             ok, message = container_mod.ensure_supervisor_ready(attempts=2, timeout_s=1)
 
         self.assertTrue(ok)
@@ -229,7 +230,8 @@ class HostProxyTests(unittest.TestCase):
 
         with patch.object(docker_host_mod, "healthcheck_container_supervisor", side_effect=health_results), \
              patch.object(docker_host_mod, "_force_remove", return_value=(True, "removed")) as remove_mock, \
-             patch.object(docker_host_mod, "_create_container", return_value=(True, "created")) as create_mock:
+             patch.object(docker_host_mod, "_create_container", return_value=(True, "created")) as create_mock, \
+             patch.object(docker_host_mod, "_wait_for_container_running", return_value=(True, "running")):
             ok, message = container_mod.ensure_supervisor_ready(attempts=2, timeout_s=1)
 
         self.assertFalse(ok)
@@ -276,7 +278,8 @@ class HostProxyTests(unittest.TestCase):
         with patch.object(docker_host_mod, "healthcheck_container_supervisor", side_effect=health_results), \
              patch.object(docker_host_mod, "_force_remove", return_value=(True, "removed")) as remove_mock, \
              patch.object(docker_host_mod, "_create_container", return_value=(True, "created")) as create_mock, \
-             patch.object(docker_host_mod, "_ensure_image", return_value=(True, "rebuilt")) as image_mock:
+             patch.object(docker_host_mod, "_ensure_image", return_value=(True, "rebuilt")) as image_mock, \
+             patch.object(docker_host_mod, "_wait_for_container_running", return_value=(True, "running")):
             ok, message = container_mod.ensure_supervisor_ready(attempts=2, timeout_s=1)
 
         self.assertTrue(ok)

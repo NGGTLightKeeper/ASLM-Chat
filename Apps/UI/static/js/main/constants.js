@@ -26,9 +26,6 @@ export const THINK_PARAMETER_KEYS = new Set([
   'reasoning_effort'
 ]);
 
-// Shared think-level fallback options.
-export const DEFAULT_THINK_LEVEL_OPTIONS = ['low', 'medium', 'high'];
-
 // Parameter definitions rendered into the dynamic settings UI.
 export const PARAMETER_DEFINITIONS = {
   // Shared parameters.

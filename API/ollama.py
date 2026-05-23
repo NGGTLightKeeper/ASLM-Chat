@@ -373,6 +373,8 @@ def _prepare_chat_kwargs_with_metadata(kwargs: dict[str, Any]) -> tuple[dict[str
             call_kwargs["think"] = think_level
         else:
             call_kwargs["think"] = think
+    elif think_level in {"low", "medium", "high"}:
+        call_kwargs["think"] = think_level
 
     return call_kwargs, dropped_options
 
@@ -651,7 +653,11 @@ def _run_tool_loop(
                 if duplicate_error is not None:
                     tool_result = duplicate_error
                 else:
-                    quota_error = tool_registry.consume_tool_quota(tool_event, tool_quota_counters)
+                    quota_error = tool_registry.consume_tool_quota(
+                        tool_event,
+                        tool_quota_counters,
+                        arguments=tool_call.get("arguments") or {},
+                    )
                     if quota_error is not None:
                         tool_result = quota_error
                     else:

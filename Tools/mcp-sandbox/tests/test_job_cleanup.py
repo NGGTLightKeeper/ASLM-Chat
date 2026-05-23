@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 import time
 import unittest
@@ -28,16 +29,25 @@ WORKSPACE = ROOT / ".test_workspace_jobs"
 os.environ["SANDBOX_HOST_WORKSPACE"] = str(WORKSPACE)
 os.environ["SANDBOX_IN_CONTAINER"] = "1"
 os.environ["SANDBOX_COMMAND_USER"] = ""
+os.environ["SANDBOX_JOB_ROOT"] = str(WORKSPACE / ".sandbox_jobs")
 
 from sandbox.config import BACKGROUND_TIMEOUT_THRESHOLD  # noqa: E402
-from sandbox.exec import should_use_background, _exec_bash_native_background  # noqa: E402
+from sandbox.exec import should_use_background, _exec_bash_native_background, job_root  # noqa: E402
 from sandbox.jobs import JOB_REGISTRY  # noqa: E402
 from sandbox.workspace import task_root  # noqa: E402
 from sandbox.supervisor import _cleanup_orphaned_job_dirs  # noqa: E402
 
 
 def _jobs_root() -> Path:
-    return task_root() / ".sandbox_jobs"
+    return job_root()
+
+
+def _native_bash_available() -> bool:
+    try:
+        result = subprocess.run(["bash", "-lc", "true"], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except Exception:
+        return False
 
 
 class TestShouldUseBackground(unittest.TestCase):
@@ -68,12 +78,14 @@ class TestShouldUseBackground(unittest.TestCase):
         self.assertFalse(should_use_background("python script.py", 5, "auto"))
 
 
+@unittest.skipIf(not _native_bash_available(), "native bash is not available in this test environment")
 class TestJobDirCleanupOnSyncCompletion(unittest.TestCase):
     """Job dirs for synchronously completed commands must be deleted."""
 
     def setUp(self):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
+        shutil.rmtree(_jobs_root(), ignore_errors=True)
         task_root().mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
@@ -89,16 +101,18 @@ class TestJobDirCleanupOnSyncCompletion(unittest.TestCase):
                          ".sandbox_jobs should be empty after sync completion")
 
     def test_job_not_in_registry_after_dir_cleanup(self):
-        """After sync completion the job is done in the registry."""
+        """After sync completion no live job directory is retained."""
         result = _exec_bash_native_background("echo hi", timeout_s=10)
+        self.assertEqual(result["exit_code"], 0)
         job_id = result.get("job_id")
-        self.assertIsNotNone(job_id)
-        job = JOB_REGISTRY.get(job_id)
-        self.assertEqual(job.status, "done")
-        # Dir should be gone even though registry entry exists
-        if job.host_job_dir:
-            self.assertFalse(job.host_job_dir.exists(),
-                             "job dir must be deleted after sync completion")
+        if job_id:
+            job = JOB_REGISTRY.get(job_id)
+            self.assertEqual(job.status, "done")
+            if job.host_job_dir:
+                self.assertFalse(job.host_job_dir.exists(),
+                                 "job dir must be deleted after sync completion")
+        else:
+            self.assertFalse(JOB_REGISTRY.list_jobs())
 
     def test_multiple_quick_commands_no_accumulation(self):
         """Repeated quick commands don't accumulate dirs."""
@@ -115,12 +129,14 @@ class TestJobDirCleanupOnSyncCompletion(unittest.TestCase):
         self.assertEqual(len(dirs), 0, "Dir should be gone even after non-zero exit")
 
 
+@unittest.skipIf(not _native_bash_available(), "native bash is not available in this test environment")
 class TestJobDirKeptForTrulyBackgrounded(unittest.TestCase):
     """Commands that time out must keep their dir for incremental polling."""
 
     def setUp(self):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
+        shutil.rmtree(_jobs_root(), ignore_errors=True)
         task_root().mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
@@ -153,6 +169,7 @@ class TestPurgeStaleFilesystemCleanup(unittest.TestCase):
     def setUp(self):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
+        shutil.rmtree(_jobs_root(), ignore_errors=True)
         task_root().mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
@@ -204,6 +221,7 @@ class TestStartupOrphanCleanup(unittest.TestCase):
     def setUp(self):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
+        shutil.rmtree(_jobs_root(), ignore_errors=True)
         task_root().mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):

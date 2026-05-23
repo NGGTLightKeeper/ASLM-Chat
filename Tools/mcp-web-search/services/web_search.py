@@ -711,70 +711,132 @@ _MEDICAL_HINTS = frozenset({
 # Query quality gate — SEO spam words & word-count ceiling
 # ---------------------------------------------------------------------------
 
-#: Words that signal a "keyword-stuffed" SEO-style query rather than a real
-#: information need.  If any of these appear in the query the tool rejects it
-#: and asks the model to reformulate.  Intentionally multilingual to stay
-#: consistent with the other _*_HINTS sets above.
+#: Words that signal an SEO/clickbait-style query rather than a focused search
+#: expression.  This list intentionally stays narrow: ordinary research intents
+#: such as reviews, comparisons, rankings, and how-to lookups are allowed when
+#: paired with specific nouns or identifiers.
 _SEO_SPAM_WORDS: frozenset[str] = frozenset({
     # ── English ──────────────────────────────────────────────────────────────
-    "best", "top", "ultimate", "perfect", "amazing", "awesome", "incredible",
-    "outstanding", "excellent", "great", "good", "fantastic", "wonderful",
+    "best", "top", "ultimate", "amazing", "awesome", "incredible",
     "most popular", "highly rated", "top-rated", "top rated", "number one",
     "#1", "must-have", "must have", "must-know", "must know",
     "comprehensive", "complete guide", "definitive", "essential",
     "everything you need", "all you need", "you need to know",
-    "how to", "what is", "what are", "why is", "why are",
-    "reviewed", "reviews", "review", "rated", "rankings", "ranked",
-    "compared", "comparison", "versus", "vs",
     # ── Russian / Ukrainian ──────────────────────────────────────────────────
     "лучший", "лучшая", "лучшее", "лучшие",
-    "топ", "рейтинг", "рейтинги", "популярный", "популярная",
-    "обзор", "обзоры", "сравнение", "всё что нужно",
-    "как выбрать", "что такое", "зачем нужен",
-    "найлучший", "найкращий", "найкраща", "найкращі",
-    "рейтинг", "огляд", "огляди",
+    "топ", "топовый", "топовая", "самый популярный", "самая популярная", "всё что нужно",
+    "полное руководство", "подробный гайд", "обязательно знать",
+    "найлучший", "найкращий", "найкраща", "найкраще", "найкращі",
+    "топ", "повний посібник",
     # ── German / Dutch ───────────────────────────────────────────────────────
-    "beste", "besten", "top", "bewertung", "bewertungen",
-    "vergleich", "vollständig", "ultimativ", "empfehlung",
-    "wie man", "was ist",
-    "beste", "top", "beoordeling", "vergelijking", "aanbeveling",
+    "beste", "bester", "bestes", "besten", "top", "beliebteste",
+    "testsieger", "vollständiger leitfaden", "ultimativ",
+    "beste", "best", "top", "complete gids",
+    # ── Nordic ───────────────────────────────────────────────────────────────
+    "bästa", "bäst", "topp", "populäraste", "komplett guide",
+    "bedste", "top", "komplet guide",
+    "paras", "parhaat", "täydellinen opas",
+    "beste", "best", "topp", "komplett guide",
     # ── French ───────────────────────────────────────────────────────────────
     "meilleur", "meilleure", "meilleurs", "meilleures",
-    "top", "classement", "comparatif", "avis", "guide complet",
-    "comment", "qu'est-ce que",
+    "top", "plus populaire", "guide complet", "guide ultime",
     # ── Spanish / Portuguese ─────────────────────────────────────────────────
-    "mejor", "mejores", "top", "clasificación", "comparativa",
-    "reseña", "reseñas", "guía completa", "cómo", "qué es",
-    "melhor", "melhores", "classificação", "análise", "guia completo",
-    "como", "o que é",
+    "mejor", "mejores", "top", "más popular", "guía completa", "guía definitiva",
+    "melhor", "melhores", "top", "mais popular", "guia completo", "guia definitivo",
     # ── Italian ──────────────────────────────────────────────────────────────
-    "migliore", "migliori", "top", "classifica", "confronto",
-    "recensione", "recensioni", "guida completa", "come", "che cos'è",
-    # ── Polish ───────────────────────────────────────────────────────────────
-    "najlepszy", "najlepsza", "najlepsze", "ranking",
-    "porównanie", "recenzja", "recenzje", "jak", "co to jest",
+    "migliore", "migliori", "top", "più popolare", "guida completa", "guida definitiva",
+    # ── Central / Eastern European ───────────────────────────────────────────
+    "najlepszy", "najlepsza", "najlepsze", "najlepsi", "top",
+    "najpopularniejszy", "kompletny przewodnik",
+    "nejlepší", "top", "nejoblíbenější", "kompletní průvodce",
+    "najlepší", "top", "najpopulárnejší", "kompletný sprievodca",
+    "legjobb", "top", "legnépszerűbb", "teljes útmutató",
+    "cel mai bun", "cele mai bune", "top", "ghid complet",
+    "най-добър", "най-добра", "най-добро", "най-добри", "топ",
+    "пълно ръководство",
+    "најбољи", "најбоља", "најбоље", "топ",
+    "najbolji", "najbolja", "najbolje",
     # ── Turkish ──────────────────────────────────────────────────────────────
-    "en iyi", "en iyi", "sıralama", "karşılaştırma",
-    "inceleme", "rehber", "nasıl", "nedir",
+    "en iyi", "top", "en popüler", "tam rehber",
     # ── Arabic / Hebrew / Persian ────────────────────────────────────────────
-    "أفضل", "الأفضل", "تقييم", "مقارنة", "مراجعة", "دليل شامل",
-    "הטוב ביותר", "הטובים ביותר", "דירוג", "השוואה", "ביקורת",
-    "بهترین", "برترین", "رتبه‌بندی", "مقایسه", "بررسی",
+    "أفضل", "الأفضل", "الأكثر شعبية", "دليل شامل",
+    "הטוב ביותר", "הטובים ביותר", "הכי פופולרי", "מדריך מלא",
+    "بهترین", "برترین", "محبوب‌ترین", "راهنمای کامل",
+    "بہترین", "مقبول ترین", "مکمل رہنما",
     # ── Chinese / Japanese / Korean ──────────────────────────────────────────
-    "最好", "最佳", "排名", "比较", "评测", "全面指南", "如何", "什么是",
-    "最高", "ランキング", "比較", "レビュー", "ガイド", "方法", "とは",
-    "최고", "최상", "랭킹", "비교", "리뷰", "가이드", "방법", "이란",
-    # ── Hindi / Greek / Thai ─────────────────────────────────────────────────
-    "सबसे अच्छा", "शीर्ष", "रैंकिंग", "तुलना", "समीक्षा",
-    "καλύτερο", "κορυφαίο", "κατάταξη", "σύγκριση", "αξιολόγηση",
-    "ดีที่สุด", "อันดับ", "เปรียบเทียบ", "รีวิว", "คู่มือ",
+    "最好", "最佳", "最受欢迎", "全面指南", "终极指南",
+    "最高", "ベスト", "完全ガイド", "究極ガイド",
+    "최고", "최상", "가장 인기", "완전 가이드",
+    # ── South Asian ──────────────────────────────────────────────────────────
+    "सबसे अच्छा", "बेहतरीन", "सबसे लोकप्रिय", "पूरी गाइड",
+    "সেরা", "সবচেয়ে জনপ্রিয়", "সম্পূর্ণ গাইড",
+    "சிறந்த", "மிகவும் பிரபலமான", "முழு வழிகாட்டி",
+    "ఉత్తమ", "అత్యంత ప్రజాదరణ", "పూర్తి గైడ్",
+    "ਸਭ ਤੋਂ ਵਧੀਆ", "ਪੂਰੀ ਗਾਈਡ",
+    # ── Southeast Asian ──────────────────────────────────────────────────────
+    "terbaik", "paling populer", "panduan lengkap",
+    "tốt nhất", "phổ biến nhất", "hướng dẫn đầy đủ",
+    "ดีที่สุด",
+    "ល្អបំផុត", "ពេញនិយមបំផុត", "មគ្គុទ្ទេសក៍ពេញលេញ",
+    "အကောင်းဆုံး", "လူကြိုက်အများဆုံး", "လမ်းညွှန်အပြည့်အစုံ",
+    # ── Greek ────────────────────────────────────────────────────────────────
+    "καλύτερο", "καλύτερη", "καλύτερα", "κορυφαίο",
+    "πιο δημοφιλές", "πλήρης οδηγός",
 })
 
 _NATURAL_INTENT_WORDS: frozenset[str] = frozenset({
+    # Keep ordinary informational/comparison intents searchable.  These words
+    # can appear in SEO spam, but on their own they are valid focused queries.
     "how to", "what is", "what are", "why is", "why are",
-    "review", "reviews", "comparison", "compared", "versus", "vs",
+    "review", "reviews", "reviewed", "comparison", "compared", "versus", "vs",
+    "rated", "ranked", "ranking", "rankings", "popular",
+    "обзор", "обзоры", "сравнение", "как выбрать", "что такое", "зачем нужен",
+    "рейтинг", "рейтинги", "популярный", "популярная",
+    "огляд", "огляди", "порівняння", "що таке", "популярний", "популярна",
+    "bewertung", "bewertungen", "vergleich", "empfehlung", "wie man", "was ist",
+    "beliebt", "beoordeling", "beoordelingen", "vergelijking", "aanbeveling",
+    "populair", "wat is",
+    "populär", "rankning", "jämförelse", "recension", "recensioner", "vad är",
+    "populær", "rangering", "sammenligning", "anmeldelse", "anmeldelser", "hvad er",
+    "suosituin", "sijoitus", "vertailu", "arvostelu", "arvostelut", "mikä on",
+    "hva er",
+    "populaire", "classement", "comparatif", "avis", "critique", "comment", "qu'est-ce que",
+    "popular", "clasificación", "ranking", "comparativa", "comparación", "reseña", "reseñas",
+    "cómo", "qué es", "classificação", "comparação", "análise", "avaliação", "como", "o que é",
+    "popolare", "classifica", "confronto", "comparazione", "recensione", "recensioni",
+    "come", "che cos'è",
+    "popularny", "porównanie", "recenzja", "recenzje", "jak", "co to jest",
+    "žebříček", "srovnání", "recenze", "co je",
+    "rebríček", "porovnanie", "recenzia", "recenzie", "čo je",
+    "népszerű", "rangsor", "összehasonlítás", "értékelés", "vélemény", "mi az",
+    "clasament", "comparație", "recenzie", "recenzii", "ce este",
+    "популярен", "класация", "сравнение", "ревю", "отзив",
+    "рангирање", "поређење", "рецензија", "ljestvica", "usporedba", "recenzija",
+    "popüler", "sıralama", "karşılaştırma", "inceleme", "yorum", "nasıl", "nedir",
+    "تقييم", "تصنيف", "ترتيب", "مقارنة", "مراجعة", "مراجعات", "ما هو",
+    "דירוג", "השוואה", "ביקורת", "ביקורות", "מה זה",
+    "رتبه‌بندی", "رده‌بندی", "مقایسه", "بررسی", "نقد", "چیست",
+    "درجہ بندی", "موازنہ", "جائزہ", "کیا ہے",
+    "热门", "排名", "排行榜", "比较", "对比", "评测", "测评", "评价", "如何", "什么是",
+    "人気", "ランキング", "比較", "レビュー", "口コミ", "評価", "方法", "とは",
+    "인기", "랭킹", "순위", "비교", "리뷰", "후기", "평가", "방법", "이란",
+    "लोकप्रिय", "रैंकिंग", "तुलना", "समीक्षा", "क्या है",
+    "শীর্ষ", "র‍্যাঙ্কিং", "তুলনা", "রিভিউ", "পর্যালোচনা", "কি",
+    "தரவரிசை", "ஒப்பீடு", "விமர்சனம்",
+    "ర్యాంకింగ్", "పోలిక", "సమీక్ష",
+    "ਪ੍ਰਸਿੱਧ", "ਰੈਂਕਿੰਗ", "ਤੁਲਨਾ", "ਸਮੀਖਿਆ",
+    "peringkat", "perbandingan", "ulasan", "apa itu",
+    "xếp hạng", "so sánh", "đánh giá", "là gì",
+    "ยอดนิยม", "อันดับ", "เปรียบเทียบ", "รีวิว", "คืออะไร",
+    "ចំណាត់ថ្នាក់", "ប្រៀបធៀប", "ពិនិត្យ",
+    "အဆင့်", "နှိုင်းယှဉ်", "သုံးသပ်ချက်",
+    "δημοφιλές", "κατάταξη", "σύγκριση", "αξιολόγηση", "κριτική", "τι είναι",
 })
 _SEO_SPAM_WORDS = frozenset(word for word in _SEO_SPAM_WORDS if word not in _NATURAL_INTENT_WORDS)
+_SPACELESS_SCRIPT_RE = re.compile(
+    r"[\u0e00-\u0e7f\u1000-\u109f\u1780-\u17ff\u3040-\u30ff\u3400-\u4dbf"
+    r"\u4e00-\u9fff\uac00-\ud7af]"
+)
 
 #: Hard ceiling for content tokens (non-operator words) in a search query.
 #: This should only catch sentence-sized keyword dumps, not ordinary focused
@@ -854,11 +916,20 @@ def _contains_spam_keyword(query: str, keyword: str) -> bool:
     if not keyword:
         return False
 
+    if _SPACELESS_SCRIPT_RE.search(keyword):
+        return keyword in query
+
     if re.search(r"\w", keyword, flags=re.UNICODE):
         return re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", query, flags=re.UNICODE) is not None
 
     # Scripts without word boundaries still need substring matching.
     return keyword in query
+
+
+def _spam_scan_text(query: str) -> str:
+    """Return the part of a query that should be checked for SEO markers."""
+
+    return _OPERATOR_TOKEN_RE.sub(" ", query.strip().lower()).strip()
 
 
 def validate_search_query(query: str) -> str | None:
@@ -869,7 +940,8 @@ def validate_search_query(query: str) -> str | None:
     return directly to the model so it can reformulate.
 
     Checks (in order):
-      1. SEO spam words — multilingual blocklist applied to content tokens only.
+      1. SEO spam words — multilingual blocklist applied after search operators
+         and quoted exact phrases are removed.
       2. Content-word ceiling — more than ``_QUERY_MAX_TOKENS`` non-operator
          words is treated as a keyword-pile / sentence query.
          Operators (site:, -site:, OR, quoted phrases) are excluded from count.
@@ -877,7 +949,7 @@ def validate_search_query(query: str) -> str | None:
     if not query or not query.strip():
         return None  # empty queries are handled elsewhere
 
-    q_lower = query.strip().lower()
+    q_lower = _spam_scan_text(query)
 
     # Check 1: SEO spam words as whole keywords, not substrings.
     spam_hit = {p for p in _SEO_SPAM_WORDS if _contains_spam_keyword(q_lower, p)}
@@ -1865,6 +1937,84 @@ def _normalize_search_effort(effort: str | None) -> str:
     value = str(effort or "").strip().lower()
     value = _SEARCH_EFFORT_ALIASES.get(value, value)
     return value if value in _SEARCH_EFFORT_VALUES else "medium"
+
+
+@dataclass(frozen=True)
+class _QueryQualityDecision:
+    effort: str
+    filler_hits: tuple[str, ...] = ()
+    original_effort: str = "medium"
+
+    @property
+    def downgraded(self) -> bool:
+        return bool(self.filler_hits) and self.effort != self.original_effort
+
+
+def _filler_low_effort_hits(query: str, qcfg: object) -> tuple[str, ...]:
+    if not bool(getattr(qcfg, "filler_low_effort_enabled", False)):
+        return ()
+
+    scan_text = _spam_scan_text(query)
+    for phrase in getattr(qcfg, "filler_low_effort_exempt_phrases", ()) or ():
+        if _contains_spam_keyword(scan_text, str(phrase)):
+            return ()
+
+    terms = getattr(qcfg, "filler_low_effort_terms", ()) or ()
+    hits = sorted({term for term in terms if _contains_spam_keyword(scan_text, str(term))})
+    min_hits = max(1, int(getattr(qcfg, "filler_low_effort_min_hits", 1) or 1))
+    return tuple(hits) if len(hits) >= min_hits else ()
+
+
+def _apply_query_quality_effort_policy(query: str, effort: str, qcfg: object) -> _QueryQualityDecision:
+    original_effort = _normalize_search_effort(effort)
+    hits = _filler_low_effort_hits(query, qcfg)
+    if not hits:
+        return _QueryQualityDecision(effort=original_effort, original_effort=original_effort)
+
+    target = _normalize_search_effort(getattr(qcfg, "filler_low_effort_target", "low"))
+    return _QueryQualityDecision(effort=target, filler_hits=hits, original_effort=original_effort)
+
+
+def _query_quality_notice(decision: _QueryQualityDecision) -> str:
+    if not decision.downgraded:
+        return ""
+    shown = ", ".join(f"'{hit}'" for hit in decision.filler_hits[:5])
+    if len(decision.filler_hits) > 5:
+        shown += ", ..."
+    return (
+        f"Query quality note: filler-like wording detected ({shown}); "
+        f"search ran with effort='{decision.effort}' instead of "
+        f"effort='{decision.original_effort}'."
+    )
+
+
+def _apply_query_quality_notice_text(text: str, decision: _QueryQualityDecision, qcfg: object) -> str:
+    if not bool(getattr(qcfg, "filler_low_effort_notice", True)):
+        return text
+    notice = _query_quality_notice(decision)
+    return f"{notice}\n\n{text}" if notice else text
+
+
+def _apply_query_quality_notice_payload(
+    payload: dict[str, object],
+    decision: _QueryQualityDecision,
+    qcfg: object,
+) -> dict[str, object]:
+    if not bool(getattr(qcfg, "filler_low_effort_notice", True)):
+        return payload
+    notice = _query_quality_notice(decision)
+    if not notice:
+        return payload
+    patched = dict(payload)
+    model_context = str(patched.get("model_context", "") or "")
+    patched["model_context"] = f"{notice}\n\n{model_context}" if model_context else notice
+    patched["query_quality"] = {
+        "filler_low_effort_applied": True,
+        "filler_hits": list(decision.filler_hits),
+        "original_effort": decision.original_effort,
+        "effective_effort": decision.effort,
+    }
+    return patched
 
 
 def _is_low_effort(opts: WebSearchOptions) -> bool:
@@ -3303,6 +3453,24 @@ def _timeout_fallback_rich_payload(query: str, results: list[SearchResult]) -> d
     }
 
 
+def _rejected_search_payload(query: str, rejection: str) -> dict[str, object]:
+    return {
+        "query": query,
+        "search_id": f"rejected_{_make_request_id()}",
+        "sources": [],
+        "model_context": rejection,
+        "ui": {
+            "status": "rejected",
+            "result_count": 0,
+            "compact": {
+                "label": f"Query rejected: {query}",
+                "source_chips": [],
+                "more_count": 0,
+            },
+        },
+    }
+
+
 def _effort_hard_timeout(effort: str, hard_timeout: float | None) -> float:
     if hard_timeout is not None:
         return float(hard_timeout)
@@ -3396,6 +3564,9 @@ async def run_web_search(
     constraints = parse_domain_constraints(query)
     query_for_search = constraints.clean_query or query
     query_for_search, year_tl = _apply_year_hint_policy(query_for_search, cfg.query)
+    rejection = validate_search_query(query_for_search)
+    if rejection:
+        return rejection
     # Type-based timelimit is disabled when the query explicitly anchors an older year.
     type_tl = _resolve_auto_timelimit(query_for_search)
     # Use the more restrictive of the two signals.
@@ -3406,7 +3577,8 @@ async def run_web_search(
         or timelimit
     )
     resolved_timelimit = explicit_timelimit or auto_timelimit
-    search_effort = _normalize_search_effort(effort)
+    quality_decision = _apply_query_quality_effort_policy(query_for_search, effort, cfg.query_quality)
+    search_effort = quality_decision.effort
     effective_hard_timeout = _effort_hard_timeout(search_effort, hard_timeout)
     opts = _build_effort_options(
         cfg,
@@ -3424,10 +3596,11 @@ async def run_web_search(
     try:
         loop = asyncio.get_event_loop()
         deadline = loop.time() + effective_hard_timeout
-        return await asyncio.wait_for(
+        result_text = await asyncio.wait_for(
             service.search(query, deadline=deadline),
             timeout=effective_hard_timeout,
         )
+        return _apply_query_quality_notice_text(result_text, quality_decision, cfg.query_quality)
     except asyncio.TimeoutError:
         elapsed = round(time.perf_counter() - init_t0, 1)
         logger.warning(
@@ -3435,7 +3608,8 @@ async def run_web_search(
             query[:80], elapsed, effective_hard_timeout,
         )
         if search_effort == "low":
-            return f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) for: {query_for_search}"
+            timeout_text = f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) for: {query_for_search}"
+            return _apply_query_quality_notice_text(timeout_text, quality_decision, cfg.query_quality)
         try:
             fallback_results = await run_web_search_structured(
                 query=query,
@@ -3449,8 +3623,10 @@ async def run_web_search(
             logger.warning("web_search.timeout_fallback_failed query=%r err=%s", query[:80], fallback_exc)
             fallback_results = []
         if fallback_results:
-            return _format_timeout_fallback_text(query_for_search, fallback_results, limit=max_results)
-        return f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) for: {query_for_search}"
+            fallback_text = _format_timeout_fallback_text(query_for_search, fallback_results, limit=max_results)
+            return _apply_query_quality_notice_text(fallback_text, quality_decision, cfg.query_quality)
+        timeout_text = f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) for: {query_for_search}"
+        return _apply_query_quality_notice_text(timeout_text, quality_decision, cfg.query_quality)
 
 
 async def run_web_search_structured(
@@ -3466,6 +3642,9 @@ async def run_web_search_structured(
     constraints = parse_domain_constraints(query)
     query_for_search = constraints.clean_query or query
     query_for_search, year_tl = _apply_year_hint_policy(query_for_search, cfg.query)
+    rejection = validate_search_query(query_for_search)
+    if rejection:
+        return []
     type_tl = _resolve_auto_timelimit(query_for_search)
     auto_timelimit = _stricter_timelimit(year_tl, type_tl)
     explicit_timelimit = (
@@ -3474,7 +3653,8 @@ async def run_web_search_structured(
         or timelimit
     )
     resolved_timelimit = explicit_timelimit or auto_timelimit
-    search_effort = _normalize_search_effort(effort)
+    quality_decision = _apply_query_quality_effort_policy(query_for_search, effort, cfg.query_quality)
+    search_effort = quality_decision.effort
     effective_hard_timeout = _effort_hard_timeout(search_effort, hard_timeout)
     opts = _build_effort_options(
         cfg,
@@ -3512,6 +3692,9 @@ async def run_web_search_rich(
     constraints = parse_domain_constraints(query)
     query_for_search = constraints.clean_query or query
     query_for_search, year_tl = _apply_year_hint_policy(query_for_search, cfg.query)
+    rejection = validate_search_query(query_for_search)
+    if rejection:
+        return _rejected_search_payload(query_for_search, rejection)
     type_tl = _resolve_auto_timelimit(query_for_search)
     auto_timelimit = _stricter_timelimit(year_tl, type_tl)
     explicit_timelimit = (
@@ -3520,7 +3703,8 @@ async def run_web_search_rich(
         or timelimit
     )
     resolved_timelimit = explicit_timelimit or auto_timelimit
-    search_effort = _normalize_search_effort(effort)
+    quality_decision = _apply_query_quality_effort_policy(query_for_search, effort, cfg.query_quality)
+    search_effort = quality_decision.effort
     effective_hard_timeout = _effort_hard_timeout(search_effort, hard_timeout)
     opts = _build_effort_options(
         cfg,
@@ -3537,7 +3721,11 @@ async def run_web_search_rich(
             service.search_rich(query.strip(), deadline=deadline),
             timeout=effective_hard_timeout,
         )
-        return _rich_result_to_dict(rich)
+        return _apply_query_quality_notice_payload(
+            _rich_result_to_dict(rich),
+            quality_decision,
+            cfg.query_quality,
+        )
     except asyncio.TimeoutError:
         logger.warning(
             "web_search_rich.hard_timeout query=%r limit=%.0fs",
@@ -3545,7 +3733,7 @@ async def run_web_search_rich(
         )
         if search_effort == "low":
             search_id = f"srch_{_make_request_id()}"
-            return {
+            payload = {
                 "query": query_for_search,
                 "search_id": search_id,
                 "sources": [],
@@ -3560,6 +3748,7 @@ async def run_web_search_rich(
                     },
                 },
             }
+            return _apply_query_quality_notice_payload(payload, quality_decision, cfg.query_quality)
         fallback_results: list[SearchResult] = []
         try:
             fallback_results = await run_web_search_structured(
@@ -3574,10 +3763,14 @@ async def run_web_search_rich(
             logger.warning("web_search_rich.timeout_fallback_failed query=%r err=%s", query[:80], fallback_exc)
 
         if fallback_results:
-            return _timeout_fallback_rich_payload(query_for_search, fallback_results)
+            return _apply_query_quality_notice_payload(
+                _timeout_fallback_rich_payload(query_for_search, fallback_results),
+                quality_decision,
+                cfg.query_quality,
+            )
 
         search_id = f"srch_{_make_request_id()}"
-        return {
+        payload = {
             "query": query_for_search,
             "search_id": search_id,
             "sources": [],
@@ -3592,3 +3785,4 @@ async def run_web_search_rich(
                 },
             },
         }
+        return _apply_query_quality_notice_payload(payload, quality_decision, cfg.query_quality)

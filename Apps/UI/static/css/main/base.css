@@ -74,6 +74,11 @@
   --c-overlay-blue: rgba(10, 132, 255, 0.12);
   --c-overlay-blue-strong: rgba(10, 132, 255, 0.16);
 
+  --c-white: #ffffff;
+  --c-black: #000000;
+  --c-bg-error-overlay: #4c1f24;
+  --c-overlay-scrim: rgba(0, 0, 0, 0.25);
+
   --c-primary: var(--c-system-blue);
   --c-success: var(--c-system-green);
   --c-danger: var(--c-system-red);
@@ -81,6 +86,9 @@
   --c-info: var(--c-system-teal);
   --c-accent-secondary: var(--c-system-indigo);
   --c-accent-tertiary: var(--c-system-purple);
+
+  --c-error: var(--c-danger);
+  --c-accent: var(--c-success);
 
   --surface-primary: var(--c-bg);
   --surface-secondary: var(--c-bg-surface);
@@ -97,12 +105,36 @@
   --surface-elevated-soft: rgba(44, 44, 46, 0.8);
   --surface-elevated-hover: rgba(58, 58, 60, 0.9);
 
-  --activity-card-bg: rgba(255, 255, 255, 0.045);
-  --activity-card-bg-hover: rgba(255, 255, 255, 0.07);
-  --activity-card-border: rgba(255, 255, 255, 0.105);
-  --activity-card-border-hover: rgba(255, 255, 255, 0.16);
-  --activity-card-shadow: 0 10px 26px rgba(0, 0, 0, 0.14);
-  --activity-icon-opacity: 0.58;
+  --activity-card-bg: color-mix(in srgb, var(--c-text) 4.5%, transparent);
+  --activity-card-bg-hover: color-mix(in srgb, var(--c-text) 7%, transparent);
+  --activity-card-border: color-mix(in srgb, var(--c-text) 10.5%, transparent);
+  --activity-card-border-hover: color-mix(in srgb, var(--c-text) 16%, transparent);
+  --activity-card-shadow: 0 10px 26px color-mix(in srgb, var(--c-black) 14%, transparent);
+  --activity-card-inner-bg: color-mix(in srgb, var(--c-black) 18%, transparent);
+  --activity-card-inner-bg-strong: color-mix(in srgb, var(--c-black) 20%, transparent);
+  --activity-card-subtle-bg: color-mix(in srgb, var(--surface-secondary) 22%, transparent);
+  --activity-card-hover-subtle-bg: color-mix(in srgb, var(--surface-tertiary) 22%, transparent);
+  --activity-on-surface: var(--c-text);
+  --activity-on-surface-muted: color-mix(in srgb, var(--c-text) 72%, transparent);
+  --activity-on-surface-dim: color-mix(in srgb, var(--c-text) 54%, transparent);
+  --activity-status-bg: color-mix(in srgb, var(--c-text) 6%, transparent);
+  --activity-status-border: color-mix(in srgb, var(--c-text) 10%, transparent);
+  --activity-icon-bg: color-mix(in srgb, var(--surface-secondary) 94%, var(--c-text) 6%);
+  --activity-chip-bg: color-mix(in srgb, var(--c-text) 5.5%, transparent);
+  --activity-chip-bg-hover: color-mix(in srgb, var(--c-text) 8.5%, transparent);
+  --activity-icon-opacity: 0.76;
+  --activity-monochrome-svg-filter: none;
+  --activity-preview-action-bg: color-mix(in srgb, var(--surface-secondary) 86%, var(--c-primary) 14%);
+  --activity-preview-action-bg-hover: color-mix(in srgb, var(--surface-secondary) 76%, var(--c-primary) 24%);
+  --activity-preview-action-border: color-mix(in srgb, var(--c-primary) 34%, var(--c-text) 10%);
+  --activity-image-frame-bg: color-mix(in srgb, var(--surface-secondary) 94%, var(--c-text) 6%);
+  --activity-image-grid-tile: color-mix(in srgb, var(--c-text) 3.5%, transparent);
+  --activity-image-loader-glow: color-mix(in srgb, var(--c-primary) 24%, transparent);
+  --activity-media-track-bg: color-mix(in srgb, var(--c-text) 10%, transparent);
+  --activity-media-track-buffered: color-mix(in srgb, var(--c-text) 22%, transparent);
+  --activity-media-control-bg: color-mix(in srgb, var(--surface-secondary) 88%, var(--c-text) 12%);
+  --activity-media-control-bg-hover: color-mix(in srgb, var(--surface-secondary) 82%, var(--c-text) 18%);
+  --activity-media-control-border: color-mix(in srgb, var(--c-text) 14%, transparent);
 
   --border-subtle: rgba(255, 255, 255, 0.1);
   --border-soft: rgba(255, 255, 255, 0.15);
@@ -176,6 +208,7 @@
 html,
 body {
   height: 100%;
+  overflow: hidden;
   font-family: var(--font);
   font-size: var(--text-base);
   background: var(--surface-primary);

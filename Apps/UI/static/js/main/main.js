@@ -1,9 +1,12 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { createAttachmentsUi } from '../ui/attachments-ui.js';
+import { createBrowserPortalUi } from '../ui/browser-portal-ui.js';
 import { createChatHistoryUi } from '../ui/chat-history-ui.js';
 import { createMessagesUi } from '../ui/messages-ui.js';
-import { createParametersUi } from '../ui/parameters-ui.js';
+import { createModelSelectorUi } from '../ui/model-selector-ui.js?v=custom-model-selector-7';
+import { createParametersUi } from '../ui/parameters-ui.js?v=skills-panel-1';
+import { createSkillsUi } from '../ui/skills-ui.js?v=skills-manager-27';
 import { createToolInspector } from '../ui/tool-inspector.js';
 import { createAppContext } from './app-context.js';
 import { createChatController } from './chat-controller.js';
@@ -16,10 +19,14 @@ $(function initChatApp() {
   const context = createAppContext();
 
   const toolInspector = createToolInspector(context);
+  const browserPortalUi = createBrowserPortalUi(context);
   const attachmentsUi = createAttachmentsUi(context);
   const parametersUi = createParametersUi(context);
+  const skillsUi = createSkillsUi(context);
+  const modelSelectorUi = createModelSelectorUi(context);
   const messagesUi = createMessagesUi(context, {
     attachmentUi: attachmentsUi,
+    browserPortalUi,
     toolInspector
   });
 
@@ -44,6 +51,7 @@ $(function initChatApp() {
     engineManager,
     historyUi,
     messagesUi,
+    modelSelectorUi,
     parametersUi
   });
 
@@ -53,6 +61,7 @@ $(function initChatApp() {
   chatController.wireInput(context.dom.$chatInput, context.dom.$sendBtn);
   chatController.wireInput(context.dom.$chatInputConv, context.dom.$sendBtnConv);
   messagesUi.updateSendButtons();
+  skillsUi.init();
   chatController.refreshContextUsageNow();
   chatController.startContextUsagePolling();
 

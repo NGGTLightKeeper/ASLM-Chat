@@ -16,10 +16,14 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from queue import Queue
 from types import ModuleType
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from Services import user_mcp_client
+from Settings import mcp_json
+from Settings import skills as skills_config
 from Settings import settings as runtime_settings
 
 logger = logging.getLogger(__name__)
@@ -30,11 +34,17 @@ WORKER_FILE = Path(__file__).resolve().parent.parent / "Services" / "tool_worker
 SERVER_DISPATCHER_NAMES = ("call_tool", "run_tool", "execute_tool", "execute")
 SERVER_METADATA_NAMES = ("MCP_SERVER", "SERVER")
 TOOL_HANDLER_NAMES = ("TOOL_HANDLERS", "TOOL_EXECUTORS")
+WORKER_RESPONSE_IDLE_TIMEOUT_SECONDS = 20.0
+WORKER_TIMEOUT_BUFFER_SECONDS = 45.0
+WORKER_DEFAULT_TIMEOUT_SECONDS = 180.0
+WORKER_MAX_TIMEOUT_SECONDS = 7200.0
 
 _SERVER_CACHE_SIGNATURE: tuple[tuple[str, int], ...] | None = None
 _SERVER_CACHE: dict[str, dict[str, Any]] = {}
 _WORKER_SESSION_LOCK = threading.Lock()
 _WORKER_SESSIONS: dict[str, "ExternalWorkerSession"] = {}
+_ASYNC_CALLABLE_RUNNER: "AsyncCallableRunner | None" = None
+_ASYNC_CALLABLE_RUNNER_LOCK = threading.Lock()
 _SEARCH_IO_LOG_LOCK = threading.Lock()
 _SEARCH_IO_LOG_PATH = TOOLS_DIR / "mcp-web-search" / "logs" / "model_search_io.json"
 _TOOL_COOLDOWN_SECONDS = 30.0
@@ -44,12 +54,80 @@ TOOL_CALL_QUOTAS = {
     "web_search": 15,
     "read_page": 10,
 }
+HIGH_EFFORT_WEB_SEARCH_QUOTA = 3
 TOOL_BLOCK_FINAL_PROMPT = (
     "Tool loop guard: repeated tool calls were blocked because they duplicate recent work, "
     "hit a quota, or are in cooldown. Do not call tools again. Use the evidence already "
     "present in the conversation and answer the user now. If the collected evidence is "
     "insufficient for a claim, say that clearly instead of searching again."
 )
+
+
+class AsyncCallableRunner:
+    """Run async tool handlers on one persistent event loop.
+
+    Some tool handlers keep asyncio subprocess transports between calls. On
+    Windows those transports are tied to the event loop that created them, so
+    using a fresh asyncio.run() per tool call can leave a live process with a
+    closed Proactor pipe.
+    """
+
+    def __init__(self) -> None:
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._ready = threading.Event()
+        self._lock = threading.Lock()
+
+    def _thread_main(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._loop = loop
+        self._ready.set()
+        try:
+            loop.run_forever()
+        finally:
+            loop.close()
+
+    def ensure_started(self) -> None:
+        if self._thread is not None and self._thread.is_alive() and self._loop is not None:
+            return
+
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive() and self._loop is not None:
+                return
+
+            self._ready.clear()
+            self._thread = threading.Thread(
+                target=self._thread_main,
+                name="aslm-async-tool-runner",
+                daemon=True,
+            )
+            self._thread.start()
+            self._ready.wait()
+
+    def run(self, coro: Any, *, timeout: float | None = None) -> Any:
+        self.ensure_started()
+        assert self._loop is not None
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result(timeout=timeout)
+
+    def close(self) -> None:
+        loop = self._loop
+        thread = self._thread
+        self._loop = None
+        self._thread = None
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=3)
+
+
+def _get_async_callable_runner() -> AsyncCallableRunner:
+    global _ASYNC_CALLABLE_RUNNER
+    with _ASYNC_CALLABLE_RUNNER_LOCK:
+        if _ASYNC_CALLABLE_RUNNER is None:
+            _ASYNC_CALLABLE_RUNNER = AsyncCallableRunner()
+        return _ASYNC_CALLABLE_RUNNER
 
 
 # Build a clean environment for one isolated Python venv.
@@ -94,7 +172,13 @@ class ExternalWorkerSession:
             bufsize=1,
         )
 
-    def request(self, operation: str, payload: dict[str, Any] | None = None) -> Any:
+    def request(
+        self,
+        operation: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        timeout_s: float | None = None,
+    ) -> Any:
         """Send one request to the worker process and return its result."""
 
         with self.lock:
@@ -114,7 +198,12 @@ class ExternalWorkerSession:
                 try:
                     self.process.stdin.write(json.dumps(request_payload, ensure_ascii=False) + "\n")
                     self.process.stdin.flush()
-                    raw_response = self.process.stdout.readline()
+                    raw_response = self._read_response_line(timeout_s or _worker_timeout_seconds(operation, payload))
+                except TimeoutError as exc:
+                    last_error = exc
+                    raw_response = ""
+                    self.close()
+                    break
                 except (BrokenPipeError, OSError) as exc:
                     last_error = exc
                     raw_response = ""
@@ -146,6 +235,48 @@ class ExternalWorkerSession:
 
             return envelope.get("result")
 
+    def _read_response_line(self, timeout_s: float) -> str:
+        """Read worker protocol lines until a final envelope arrives."""
+
+        process = self.process
+        if process is None or process.stdout is None:
+            return ""
+
+        deadline = time.monotonic() + max(1.0, float(timeout_s))
+        while True:
+            lines: Queue[str] = Queue()
+
+            def reader() -> None:
+                try:
+                    lines.put(process.stdout.readline())
+                except Exception:
+                    lines.put("")
+
+            thread = threading.Thread(target=reader, name="aslm-tool-worker-readline", daemon=True)
+            thread.start()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.close()
+                raise TimeoutError(f"Tool worker timed out after {timeout_s:.0f}s for {self.server_file}.")
+            wait_s = min(WORKER_RESPONSE_IDLE_TIMEOUT_SECONDS, remaining)
+            thread.join(timeout=wait_s)
+            if thread.is_alive():
+                self.close()
+                raise TimeoutError(
+                    f"Tool worker produced no heartbeat or result within {wait_s:.0f}s for {self.server_file}."
+                )
+
+            raw_line = lines.get()
+            if not raw_line:
+                return ""
+            try:
+                envelope = json.loads(raw_line)
+            except json.JSONDecodeError:
+                return raw_line
+            if isinstance(envelope, dict) and envelope.get("event") == "heartbeat":
+                continue
+            return raw_line
+
     def close(self) -> None:
         """Stop the worker process if it is running."""
 
@@ -175,6 +306,21 @@ def _print_runtime_event(message: str) -> None:
     """Emit one console-visible runtime event."""
 
     print(f"[ASLM-Chat] {message}", flush=True)
+
+
+def _worker_timeout_seconds(operation: str, payload: dict[str, Any] | None = None) -> float:
+    """Return a wall-clock timeout for one worker request."""
+
+    timeout_s = WORKER_DEFAULT_TIMEOUT_SECONDS
+    payload = payload if isinstance(payload, dict) else {}
+    if operation == "call":
+        arguments = payload.get("arguments")
+        if isinstance(arguments, dict):
+            try:
+                timeout_s = float(arguments.get("timeout_s") or timeout_s)
+            except (TypeError, ValueError):
+                timeout_s = WORKER_DEFAULT_TIMEOUT_SECONDS
+    return min(WORKER_MAX_TIMEOUT_SECONDS, max(1.0, timeout_s + WORKER_TIMEOUT_BUFFER_SECONDS))
 
 
 # Check whether debug logging is enabled.
@@ -260,6 +406,26 @@ def _quota_tool_id(tool_event: dict[str, Any] | None) -> str:
     return ""
 
 
+def _search_effort(arguments: dict[str, Any] | None) -> str:
+    """Return the normalized web-search effort value from tool arguments."""
+
+    if not isinstance(arguments, dict):
+        return ""
+
+    value = arguments.get("effort")
+    if value is None and isinstance(arguments.get("query"), dict):
+        value = arguments["query"].get("effort")
+    return str(value or "").strip().lower()
+
+
+def _tool_quota_limit(quota_tool_id: str, arguments: dict[str, Any] | None = None) -> int:
+    """Return the per-response quota for one tool call."""
+
+    if quota_tool_id == "web_search" and _search_effort(arguments) == "high":
+        return HIGH_EFFORT_WEB_SEARCH_QUOTA
+    return TOOL_CALL_QUOTAS[quota_tool_id]
+
+
 def _write_search_io_event(event: dict[str, Any]) -> None:
     """Append complete model/search tool IO as a readable JSON array."""
 
@@ -336,17 +502,26 @@ def log_search_tool_io(
     )
 
 
-def consume_tool_quota(tool_event: dict[str, Any] | None, counters: dict[str, int]) -> str | None:
+def consume_tool_quota(
+    tool_event: dict[str, Any] | None,
+    counters: dict[str, int],
+    arguments: dict[str, Any] | None = None,
+) -> str | None:
     """Increment one quota counter and return an error message if the call is over limit."""
 
     quota_tool_id = _quota_tool_id(tool_event)
     if not quota_tool_id:
         return None
 
-    limit = TOOL_CALL_QUOTAS[quota_tool_id]
+    limit = _tool_quota_limit(quota_tool_id, arguments)
     current = int(counters.get(quota_tool_id, 0) or 0)
     if current >= limit:
         display_name = str((tool_event or {}).get("tool_name") or quota_tool_id).strip() or quota_tool_id
+        if quota_tool_id == "web_search" and _search_effort(arguments) == "high":
+            return (
+                f"Tool quota exceeded: {display_name} high mode is unavailable "
+                "for the rest of this assistant response; use medium or low."
+            )
         return (
             f"Tool quota exceeded: {display_name} can be used at most {limit} times "
             "in one assistant response. Stop calling this tool and answer with the evidence already collected."
@@ -569,6 +744,7 @@ def reset_cache() -> None:
 
     _SERVER_CACHE_SIGNATURE = None
     _SERVER_CACHE = {}
+    user_mcp_client.shutdown_all()
 
 
 # Yield one server's source files.
@@ -605,6 +781,10 @@ def _server_signature() -> tuple[tuple[str, int], ...]:
                 continue
 
             entries.append((str(source_file), stat.st_mtime_ns))
+
+    mcp_sig = mcp_json.mcp_json_signature()
+    if mcp_sig is not None:
+        entries.append(mcp_sig)
 
     return tuple(entries)
 
@@ -694,6 +874,13 @@ def close_external_workers() -> None:
     for session in sessions:
         session.close()
 
+    global _ASYNC_CALLABLE_RUNNER
+    with _ASYNC_CALLABLE_RUNNER_LOCK:
+        runner = _ASYNC_CALLABLE_RUNNER
+        _ASYNC_CALLABLE_RUNNER = None
+    if runner is not None:
+        runner.close()
+
 
 atexit.register(close_external_workers)
 
@@ -728,7 +915,11 @@ def _run_worker(
     """Run a tool worker operation and return its result payload."""
 
     if persistent:
-        return _get_worker_session(server_file).request(operation, payload)
+        return _get_worker_session(server_file).request(
+            operation,
+            payload,
+            timeout_s=_worker_timeout_seconds(operation, payload),
+        )
 
     python_path = _get_worker_python(server_file)
     if python_path is None:
@@ -745,6 +936,7 @@ def _run_worker(
         cwd=str(server_file.parent),
         env=_venv_subprocess_env(python_path),
         check=False,
+        timeout=_worker_timeout_seconds(operation, payload),
     )
 
     stdout = (result.stdout or "").strip()
@@ -878,6 +1070,37 @@ def _normalize_server_tools(raw_tools: Any, server_id: str) -> list[dict[str, An
 
     return normalized_tools
 
+
+def _merge_user_mcp_servers(discovered: dict[str, dict[str, Any]]) -> None:
+    """Append servers from ``MCP/mcp.json`` to the registry payload."""
+
+    try:
+        mcp_json.ensure_default_mcp_json()
+        reserved = set(discovered.keys())
+        for entry in mcp_json.iter_user_mcp_entries(reserved):
+            tools, err = user_mcp_client.fetch_tool_definitions(entry)
+            description = f"User MCP server ({entry.transport})"
+            if err:
+                description = f"{description}. {err}"
+            placeholder = mcp_json.MCP_DIR / f".user_mcp_{entry.server_id}"
+            discovered[entry.server_id] = {
+                "id": entry.server_id,
+                "name": entry.display_name,
+                "description": description[:500],
+                "tools": tools,
+                "user_mcp": True,
+                "user_mcp_entry": entry,
+                "module": None,
+                "supports": None,
+                "server_callable": None,
+                "tool_handlers": {},
+                "server_file": placeholder,
+                "external": False,
+            }
+    except Exception as exc:
+        logger.warning("Failed to merge user MCP servers: %s", exc)
+
+
 # Build one server definition.
 def _extract_server_definition(module: ModuleType, folder_name: str, server_file: Path) -> dict[str, Any]:
     """Validate a local MCP module and normalize its public metadata."""
@@ -942,6 +1165,8 @@ def _ensure_registry_loaded() -> dict[str, dict[str, Any]]:
     if signature == _SERVER_CACHE_SIGNATURE:
         return _SERVER_CACHE
 
+    user_mcp_client.shutdown_all()
+
     discovered: dict[str, dict[str, Any]] = {}
     for server_file in _iter_server_files():
         folder_name = server_file.parent.name
@@ -956,6 +1181,8 @@ def _ensure_registry_loaded() -> dict[str, dict[str, Any]]:
         except Exception as exc:
             logger.warning("Skipping invalid MCP server module %s: %s", server_file, exc)
 
+    _merge_user_mcp_servers(discovered)
+
     _SERVER_CACHE_SIGNATURE = signature
     _SERVER_CACHE = discovered
     return _SERVER_CACHE
@@ -967,6 +1194,9 @@ def _server_is_supported(
     model_name: str | None,
 ) -> bool:
     """Return whether a server supports the current engine and model."""
+
+    if server_definition.get("user_mcp"):
+        return True
 
     if server_definition.get("external"):
         try:
@@ -1046,13 +1276,16 @@ def _serialize_server(server_definition: dict[str, Any]) -> dict[str, Any]:
     """Return the frontend-facing representation of one server."""
 
     tools = [_serialize_tool(tool_definition) for tool_definition in server_definition["tools"]]
-    return {
+    payload: dict[str, Any] = {
         "id": server_definition["id"],
         "name": server_definition["name"],
         "description": server_definition["description"],
         "tool_count": len(tools),
         "tools": tools,
     }
+    if server_definition.get("user_mcp"):
+        payload["user_mcp"] = True
+    return payload
 
 # Build Ollama-compatible tool definitions.
 def build_ollama_tools(
@@ -1133,7 +1366,7 @@ def _execute_callable(callable_fn, *args: Any) -> Any:
     """Execute sync and async callables behind one shared helper."""
 
     if inspect.iscoroutinefunction(callable_fn):
-        return asyncio.run(_run_async_callable(callable_fn, *args))
+        return _get_async_callable_runner().run(_run_async_callable(callable_fn, *args))
 
     return _run_sync_callable(callable_fn, *args)
 
@@ -1189,14 +1422,30 @@ def _serialize_tool_result(result: Any) -> str:
     return str(result)
 
 
+def _coerce_tool_result_object(result: Any) -> Any:
+    """Parse JSON tool payloads returned as plain strings."""
+
+    if not isinstance(result, str):
+        return result
+    text = result.strip()
+    if not text.startswith("{"):
+        return result
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return result
+    return parsed if isinstance(parsed, dict) else result
+
+
 def _extract_shared_file_payload(result: Any) -> dict[str, Any] | None:
     """Return a normalized shared-file payload from direct or sandbox-wrapped results."""
 
+    result = _coerce_tool_result_object(result)
     if not isinstance(result, dict):
         return None
 
     candidate: Any = result
-    if result.get("tool") == "share_file" and isinstance(result.get("result"), dict):
+    if result.get("tool") in {"share_file", "oda_share_file"} and isinstance(result.get("result"), dict):
         candidate = result["result"]
     elif result.get("kind") != "shared_file" and isinstance(result.get("file"), dict):
         candidate = result["file"]
@@ -1224,6 +1473,7 @@ def _extract_shared_file_payload(result: Any) -> dict[str, Any] | None:
 def _extract_structured_tool_result(result: Any) -> dict[str, Any] | None:
     """Return frontend metadata for rich structured tool results."""
 
+    result = _coerce_tool_result_object(result)
     if not isinstance(result, dict):
         return None
     shared_file = _extract_shared_file_payload(result)
@@ -1366,7 +1616,8 @@ def call_ollama_tool(
     call_context.setdefault("tool_id", tool_definition["id"])
     call_context.setdefault("tool_name", tool_definition["name"])
     call_context.setdefault("tool_alias", tool_definition["alias"])
-    call_context.setdefault("server_file", str(server_definition["server_file"]))
+    if not server_definition.get("user_mcp"):
+        call_context.setdefault("server_file", str(server_definition["server_file"]))
     call_context.setdefault("tools_dir", str(TOOLS_DIR))
     started_at = time.perf_counter()
 
@@ -1381,6 +1632,26 @@ def call_ollama_tool(
         )
 
     try:
+        if server_definition["id"] == "sandbox":
+            skills_config.sync_skills_to_sandbox()
+
+        if server_definition.get("user_mcp"):
+            entry = server_definition["user_mcp_entry"]
+            mcp_tool_name = str(tool_definition.get("mcp_tool_name") or tool_definition["id"] or "").strip()
+            if not mcp_tool_name:
+                return "Tool execution failed: missing MCP tool name"
+            result = user_mcp_client.call_user_mcp_tool(entry, mcp_tool_name, call_arguments)
+            if _is_debug_logging_enabled():
+                _print_runtime_event(
+                    "Tool completed: "
+                    f"server={server_definition['id']}, "
+                    f"tool={tool_definition['id']}, "
+                    f"status=ok, "
+                    f"took={time.perf_counter() - started_at:.2f}s, "
+                    f"result={_summarize_tool_result(result)}"
+                )
+            return result
+
         if server_definition.get("external"):
             worker_context = json.loads(json.dumps(call_context, ensure_ascii=False, default=str))
             worker_payload = {
@@ -1456,7 +1727,7 @@ def call_ollama_tool(
                 f"took={time.perf_counter() - started_at:.2f}s, "
                 f"result={_summarize_tool_result(result)}"
             )
-        structured_result = _extract_structured_tool_result(result)
+        structured_result = _extract_structured_tool_result(_coerce_tool_result_object(result))
         if structured_result is not None:
             return {
                 "_tool_result_content": _serialize_tool_result(result),

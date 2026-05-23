@@ -26,6 +26,9 @@ from sandbox import workspace  # noqa: E402
 import sandbox.workspace as workspace_mod  # noqa: E402
 from sandbox.workspace import (  # noqa: E402
     read,
+    read_image,
+    grep,
+    ls,
     write,
     edit,
     describe,
@@ -175,7 +178,70 @@ class WorkspaceBoundaryTests(unittest.TestCase):
             sym.unlink(missing_ok=True)
             real.unlink(missing_ok=True)
 
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Symlink creation requires elevated privileges on Windows",
+    )
+    def test_ls_does_not_recurse_into_symlink_directory(self) -> None:
+        """ls() may report a symlink but must not walk through it."""
+        outside = self.task_root.parent / "__outside_ls_target"
+        outside.mkdir(exist_ok=True)
+        (outside / "secret.txt").write_text("SECRET", encoding="utf-8")
+        link = self.task_root / "__ls_link"
+        link.symlink_to(outside, target_is_directory=True)
+        try:
+            result = ls(".", depth=2, include_hidden=True)
+            paths = {entry["path"] for entry in result["result"]["entries"]}
+            self.assertIn("__ls_link", paths)
+            self.assertNotIn("__ls_link/secret.txt", paths)
+        finally:
+            link.unlink(missing_ok=True)
+            shutil.rmtree(outside, ignore_errors=True)
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Symlink creation requires elevated privileges on Windows",
+    )
+    def test_grep_symlink_file_escape_blocked(self) -> None:
+        """grep() must not read through symlink files that escape task_root."""
+        outside = self.task_root.parent / "__outside_grep_secret.txt"
+        outside.write_text("SECRET", encoding="utf-8")
+        link = self.task_root / "__grep_link.txt"
+        link.symlink_to(outside)
+        try:
+            with self.assertRaises(ValueError):
+                grep("SECRET", ".")
+        finally:
+            link.unlink(missing_ok=True)
+            outside.unlink(missing_ok=True)
+
     # ── In-container absolute path access ────────────────────────────
+
+    def test_read_rejects_oversized_file_before_loading(self) -> None:
+        big = self.task_root / "big.txt"
+        big.write_text("1234567890", encoding="utf-8")
+        with patch.object(workspace_mod, "MAX_FILE_READ_BYTES", 4):
+            with self.assertRaises(workspace_mod.SandboxToolError) as ctx:
+                read("big.txt")
+        self.assertEqual(ctx.exception.error_type, "file_too_large")
+
+    def test_grep_skips_oversized_file_before_loading(self) -> None:
+        big = self.task_root / "big-grep.txt"
+        big.write_text("SECRET-LONG\n", encoding="utf-8")
+        small = self.task_root / "small-grep.txt"
+        small.write_text("needle\n", encoding="utf-8")
+
+        with patch.object(workspace_mod, "MAX_FILE_READ_BYTES", 8):
+            result = grep("needle", ".")
+
+        paths = {match["path"] for match in result["result"]["matches"]}
+        self.assertIn("small-grep.txt", paths)
+        self.assertTrue(any("big-grep.txt" in warning for warning in result["warnings"]))
+
+    def test_read_image_rejects_non_workspace_absolute_path(self) -> None:
+        with patch.object(workspace_mod, "IN_CONTAINER", True):
+            with self.assertRaises(ValueError):
+                read_image("/etc/passwd")
 
     def test_validate_allows_absolute_in_container(self) -> None:
         with patch.object(workspace_mod, "IN_CONTAINER", True):

@@ -1220,17 +1220,63 @@ def _read_docker_job_file(
     if job.container_job_dir is None:
         return ""
     path = f"{job.container_job_dir.rstrip('/')}/{stream}"
+    offset_attr = f"{stream}_offset"
+    offset = int(getattr(job, offset_attr)) if incremental else 0
+    head_ratio = min(0.9, max(0.1, OUTPUT_HEAD_RATIO))
+    head_bytes = max(1, int(MAX_OUTPUT_BYTES * head_ratio))
+    tail_bytes = max(1, MAX_OUTPUT_BYTES - head_bytes)
+    reader = (
+        "python3 - "
+        f"{shlex.quote(path)} {offset} {MAX_OUTPUT_BYTES} {head_bytes} {tail_bytes} <<'PY'\n"
+        "from __future__ import annotations\n"
+        "import os, sys\n"
+        "path = sys.argv[1]\n"
+        "start = max(0, int(sys.argv[2]))\n"
+        "max_bytes = max(1, int(sys.argv[3]))\n"
+        "head_bytes = max(1, int(sys.argv[4]))\n"
+        "tail_bytes = max(1, int(sys.argv[5]))\n"
+        "try:\n"
+        "    size = os.path.getsize(path)\n"
+        "except OSError:\n"
+        "    raise SystemExit(0)\n"
+        "start = min(start, size)\n"
+        "remaining = size - start\n"
+        "with open(path, 'rb') as fh:\n"
+        "    if remaining <= max_bytes:\n"
+        "        fh.seek(start)\n"
+        "        data = fh.read(remaining)\n"
+        "    else:\n"
+        "        fh.seek(start)\n"
+        "        head = fh.read(head_bytes)\n"
+        "        fh.seek(max(start, size - tail_bytes))\n"
+        "        tail = fh.read(tail_bytes)\n"
+        "        marker = (\n"
+        "            b'\\n\\n[output truncated while reading docker job spool: '\n"
+        "            + f'showed first {head_bytes} bytes and last {tail_bytes} bytes '\n"
+        "              f'of {remaining} new bytes'.encode('ascii')\n"
+        "            + b']\\n\\n'\n"
+        "        )\n"
+        "        data = head + marker + tail\n"
+        "sys.stdout.write(data.decode('utf-8', errors='replace').replace('\\r\\n', '\\n'))\n"
+        "PY"
+    )
     result = _docker_exec_shell(
-        f"cat {shlex.quote(path)} 2>/dev/null || true", timeout=10
+        reader,
+        timeout=10,
     )
     content = result.stdout if result.returncode == 0 else ""
     if not incremental:
         return content
-    offset_attr = f"{stream}_offset"
-    offset = int(getattr(job, offset_attr))
-    new_content = content[offset:]
-    setattr(job, offset_attr, len(content))
-    return new_content
+    size_result = _docker_exec_shell(
+        f"wc -c < {shlex.quote(path)} 2>/dev/null || true",
+        timeout=10,
+    )
+    try:
+        new_offset = int((size_result.stdout or "").strip())
+    except ValueError:
+        new_offset = offset
+    setattr(job, offset_attr, max(offset, new_offset))
+    return content
 
 
 def _refresh_docker_job(job: BackgroundJob) -> BackgroundJob:
@@ -1239,8 +1285,21 @@ def _refresh_docker_job(job: BackgroundJob) -> BackgroundJob:
     job_dir = shlex.quote(job.container_job_dir)
     result = _docker_exec_shell(
         (
-            f"cat {job_dir}/status 2>/dev/null || echo running; "
-            f"cat {job_dir}/exit_code 2>/dev/null || true"
+            f"status=$(cat {job_dir}/status 2>/dev/null || echo running); "
+            f"exit_code=$(cat {job_dir}/exit_code 2>/dev/null || true); "
+            f"pid=$(cat {job_dir}/pid 2>/dev/null || true); "
+            f"pgid=$(cat {job_dir}/pgid 2>/dev/null || true); "
+            "alive=unknown; "
+            "case \"$pgid\" in ''|*[!0-9]*) pgid='' ;; esac; "
+            "case \"$pid\" in ''|*[!0-9]*) pid='' ;; esac; "
+            "if [ \"$status\" = running ]; then "
+            "  if [ -n \"$pgid\" ]; then "
+            "    if kill -0 -- -\"$pgid\" >/dev/null 2>&1; then alive=yes; else alive=no; fi; "
+            "  elif [ -n \"$pid\" ]; then "
+            "    if kill -0 \"$pid\" >/dev/null 2>&1; then alive=yes; else alive=no; fi; "
+            "  fi; "
+            "fi; "
+            "printf '%s\\n%s\\n%s\\n%s\\n%s\\n' \"$status\" \"$exit_code\" \"$pid\" \"$pgid\" \"$alive\""
         ),
         timeout=10,
     )
@@ -1254,10 +1313,21 @@ def _refresh_docker_job(job: BackgroundJob) -> BackgroundJob:
             exit_code = int(lines[1].strip())
         except ValueError:
             exit_code = job.exit_code
+    pid = job.pid
+    if len(lines) > 2 and lines[2].strip():
+        try:
+            pid = int(lines[2].strip())
+        except ValueError:
+            pid = job.pid
+    if pid is not None:
+        job.pid = pid
+    alive = lines[4].strip() if len(lines) > 4 else "unknown"
     if status == "done":
         JOB_REGISTRY.mark_done(job.job_id, exit_code)
     elif status == "killed":
         JOB_REGISTRY.mark_killed(job.job_id)
+    elif status == "running" and alive == "no":
+        JOB_REGISTRY.mark_done(job.job_id, exit_code)
     elif status:
         job.status = status
     return job
@@ -1277,13 +1347,15 @@ def foreground_background_job(job_id: str) -> dict:
     job = _refresh_docker_job(JOB_REGISTRY.get(job_id))
     stdout = _read_docker_job_file(job, "stdout", incremental=True)
     stderr = _read_docker_job_file(job, "stderr", incremental=True)
+    spool_trunc_out = "[output truncated while reading docker job spool:" in stdout
+    spool_trunc_err = "[output truncated while reading docker job spool:" in stderr
     stdout, trunc_out = _truncate(stdout)
     stderr, trunc_err = _truncate(stderr)
     return {
         **job.to_result(),
         "new_stdout": stdout,
         "new_stderr": stderr,
-        "truncated": trunc_out or trunc_err,
+        "truncated": spool_trunc_out or spool_trunc_err or trunc_out or trunc_err,
     }
 
 
@@ -1292,7 +1364,19 @@ def kill_background_job(job_id: str) -> dict:
     if job.runtime == "docker" and job.container_job_dir:
         job_dir = shlex.quote(job.container_job_dir)
         _docker_exec_shell(
-            f"kill $(cat {job_dir}/pid 2>/dev/null) >/dev/null 2>&1 || true; "
+            f"pid=$(cat {job_dir}/pid 2>/dev/null || true); "
+            f"pgid=$(cat {job_dir}/pgid 2>/dev/null || true); "
+            "case \"$pgid\" in ''|*[!0-9]*) pgid='' ;; esac; "
+            "case \"$pid\" in ''|*[!0-9]*) pid='' ;; esac; "
+            "if [ -n \"$pgid\" ]; then "
+            "  kill -TERM -- -\"$pgid\" >/dev/null 2>&1 || true; "
+            "  sleep 0.5; "
+            "  kill -KILL -- -\"$pgid\" >/dev/null 2>&1 || true; "
+            "elif [ -n \"$pid\" ]; then "
+            "  kill -TERM \"$pid\" >/dev/null 2>&1 || true; "
+            "  sleep 0.5; "
+            "  kill -KILL \"$pid\" >/dev/null 2>&1 || true; "
+            "fi; "
             f"echo killed > {job_dir}/status",
             timeout=10,
         )
@@ -1321,7 +1405,12 @@ def _exec_bash_docker_background(
     setup_script = (
         f"job_root=''; "
         f"for candidate in {candidate_roots}; do "
-        f"  candidate=$(eval echo \"$candidate\"); "
+        f"  home_dollar='$HOME/'; home_braced='${{HOME}}/'; home_tilde='~/'; "
+        f"  case \"$candidate\" in "
+        f"    \"$home_dollar\"*) candidate=\"$HOME/${{candidate#$home_dollar}}\" ;; "
+        f"    \"$home_braced\"*) candidate=\"$HOME/${{candidate#$home_braced}}\" ;; "
+        f"    \"$home_tilde\"*) candidate=\"$HOME/${{candidate#$home_tilde}}\" ;; "
+        f"  esac; "
         f"  if mkdir -p \"$candidate\" >/dev/null 2>&1 && [ -w \"$candidate\" ]; then "
         f"    job_root=\"$candidate\"; break; "
         f"  fi; "
@@ -1335,10 +1424,17 @@ def _exec_bash_docker_background(
         f": > \"$job_dir/stderr\"; "
         f"echo running > \"$job_dir/status\"; "
         f"export job_dir; "
-        f"nohup bash -lc {shlex.quote(wrapper)} "
+        f"if command -v setsid >/dev/null 2>&1; then "
+        f"  setsid bash -lc {shlex.quote(wrapper)} "
         f"> \"$job_dir/stdout\" 2> \"$job_dir/stderr\" < /dev/null & "
+        f"  child_pid=$!; echo \"$child_pid\" > \"$job_dir/pgid\"; "
+        f"else "
+        f"  nohup bash -lc {shlex.quote(wrapper)} "
+        f"> \"$job_dir/stdout\" 2> \"$job_dir/stderr\" < /dev/null & "
+        f"  child_pid=$!; : > \"$job_dir/pgid\"; "
+        f"fi; "
         f"echo \"$job_dir\"; "
-        f"echo $! > \"$job_dir/pid\"; "
+        f"echo \"$child_pid\" > \"$job_dir/pid\"; "
         f"cat \"$job_dir/pid\""
     )
     setup = _docker_exec_shell(
@@ -1382,6 +1478,8 @@ def _exec_bash_docker_background(
         if job.status != "running":
             stdout = _read_docker_job_file(job, "stdout", incremental=False)
             stderr = _read_docker_job_file(job, "stderr", incremental=False)
+            spool_trunc_out = "[output truncated while reading docker job spool:" in stdout
+            spool_trunc_err = "[output truncated while reading docker job spool:" in stderr
             stdout, trunc_out = _truncate(stdout)
             stderr, trunc_err = _truncate(stderr)
             if on_progress is not None:
@@ -1392,7 +1490,7 @@ def _exec_bash_docker_background(
                 "stderr": stderr,
                 "error": None if job.exit_code == 0 else f"Exit code: {job.exit_code}",
                 "elapsed_ms": int((time.time() - start_time) * 1000),
-                "truncated": trunc_out or trunc_err,
+                "truncated": spool_trunc_out or spool_trunc_err or trunc_out or trunc_err,
                 "cwd": normalize_model_relative_path(cwd),
             }
 
@@ -1400,6 +1498,8 @@ def _exec_bash_docker_background(
         if elapsed_s >= timeout_s:
             stdout = _read_docker_job_file(job, "stdout", incremental=True)
             stderr = _read_docker_job_file(job, "stderr", incremental=True)
+            spool_trunc_out = "[output truncated while reading docker job spool:" in stdout
+            spool_trunc_err = "[output truncated while reading docker job spool:" in stderr
             stdout, trunc_out = _truncate(stdout)
             stderr, trunc_err = _truncate(stderr)
             return _background_error_result(
@@ -1409,7 +1509,7 @@ def _exec_bash_docker_background(
                 start_time=start_time,
                 timeout_s=timeout_s,
                 cwd=cwd,
-                truncated=trunc_out or trunc_err,
+                truncated=spool_trunc_out or spool_trunc_err or trunc_out or trunc_err,
             )
         if on_progress is not None:
             progress = min(95.0, max(5.0, (elapsed_s / timeout_s) * 90.0))

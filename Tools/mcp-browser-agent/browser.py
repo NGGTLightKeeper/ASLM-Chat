@@ -3,6 +3,7 @@
 import asyncio
 import concurrent.futures
 import importlib.util
+import json
 import logging
 import re
 import sys
@@ -12,7 +13,7 @@ from typing import Any
 
 from camoufox.async_api import AsyncCamoufox
 from mcp.types import TextContent
-from playwright.async_api import BrowserContext, Page
+from playwright.async_api import Browser, BrowserContext, Page
 
 SERVER_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = SERVER_ROOT / "config.py"
@@ -34,6 +35,7 @@ _config = _load_local_config()
 
 AUTO_TEXT_PREVIEW_LEN = _config.AUTO_TEXT_PREVIEW_LEN
 BROWSER_HEIGHT = _config.BROWSER_HEIGHT
+BROWSER_HEADLESS = _config.BROWSER_HEADLESS
 BROWSER_WIDTH = _config.BROWSER_WIDTH
 DOWNLOADS_DIR = _config.DOWNLOADS_DIR
 MAX_A11Y_DEPTH = _config.MAX_A11Y_DEPTH
@@ -55,7 +57,10 @@ class BrowserRuntime:
         asyncio.set_event_loop(loop)
         self._loop = loop
         self._ready.set()
-        loop.run_forever()
+        try:
+            loop.run_forever()
+        finally:
+            loop.close()
 
     def ensure_started(self) -> None:
         if self._thread is not None and self._thread.is_alive() and self._loop is not None:
@@ -79,8 +84,30 @@ class BrowserRuntime:
         assert self._loop is not None
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
+    def close(self) -> None:
+        """Stop the dedicated browser loop after browser resources are closed."""
+
+        with self._lock:
+            loop = self._loop
+            thread = self._thread
+            self._loop = None
+            self._thread = None
+            self._ready.clear()
+
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=5.0)
+
 
 _browser_runtime = BrowserRuntime()
+
+
+def close_browser_runtime() -> None:
+    """Stop the shared browser runtime loop during worker shutdown."""
+
+    _browser_runtime.close()
 
 
 async def run_in_browser_loop(
@@ -102,8 +129,11 @@ async def run_in_browser_loop(
 
             if session is not None:
                 try:
-                    await session.send_log_message(level="debug", data=message, logger="browser-agent")
-                except Exception:
+                    send_log_message = getattr(session, "send_log_message", None)
+                    if send_log_message is not None:
+                        await send_log_message(level="debug", data=message, logger="browser-agent")
+                except BaseException:
+                    session = None
                     pass
     except asyncio.CancelledError:
         future.cancel()
@@ -163,6 +193,27 @@ INTERACTIVE_ROLES = {
     "option",
     "slider",
     "spinbutton", "treeitem",
+}
+
+TEXT_ENTRY_ROLES = {
+    "textbox",
+    "searchbox",
+    "combobox",
+    "spinbutton",
+}
+
+ACTION_CONTROL_ROLES = {
+    "button",
+    "checkbox",
+    "radio",
+    "switch",
+    "tab",
+    "menuitem",
+    "menuitemcheckbox",
+    "menuitemradio",
+    "option",
+    "slider",
+    "treeitem",
 }
 
 SEMANTIC_ROLES = INTERACTIVE_ROLES | {
@@ -392,43 +443,157 @@ def _is_noise_element(elem: dict) -> bool:
     return False
 
 
-# Format visible interactive elements for snapshots
-def _format_interactive_list(
+def _snapshot_element_payload(el: dict) -> dict[str, Any]:
+    """Return the stable, model-facing subset of one accessibility element."""
+
+    payload: dict[str, Any] = {
+        "ref": el.get("ref"),
+        "role": el.get("role"),
+        "name": el.get("name") or "",
+        "region": el.get("landmark") or "unknown",
+    }
+
+    if el.get("role") in TEXT_ENTRY_ROLES:
+        payload["editable"] = True
+    if el.get("value"):
+        payload["value"] = el.get("value")
+    if el.get("checked") is not None:
+        payload["checked"] = el.get("checked")
+    if el.get("expanded") is not None:
+        payload["expanded"] = el.get("expanded")
+    if el.get("disabled"):
+        payload["disabled"] = True
+    if el.get("level") is not None:
+        payload["level"] = el.get("level")
+
+    return payload
+
+
+def _format_control_line(el: dict) -> str:
+    """Format one element as a compact action line."""
+
+    payload = _snapshot_element_payload(el)
+    parts = [f'[{payload["ref"]}]', str(payload["role"])]
+    if payload.get("name"):
+        parts.append(json.dumps(str(payload["name"]), ensure_ascii=False))
+    if payload.get("value"):
+        parts.append(f'value={json.dumps(str(payload["value"]), ensure_ascii=False)}')
+    if payload.get("editable"):
+        parts.append("editable")
+    if payload.get("disabled"):
+        parts.append("disabled")
+    if "checked" in payload:
+        parts.append(f'checked={str(payload["checked"]).lower()}')
+    if "expanded" in payload:
+        parts.append(f'expanded={str(payload["expanded"]).lower()}')
+    if payload.get("region") and payload["region"] != "unknown":
+        parts.append(f'region={payload["region"]}')
+    return "- " + " ".join(parts)
+
+
+def _filter_snapshot_controls(
     elements: list[dict],
-    region_filter: str | None = None,
-    max_items: int = 60,
-    skip_noise: bool = True,
+    *,
+    full: bool,
+) -> list[dict]:
+    """Pick the controls that belong in the default snapshot."""
+
+    controls = [e for e in elements if e.get("interactive")]
+    if not full:
+        controls = [e for e in controls if not _is_noise_element(e)]
+
+    return controls
+
+
+def _group_controls(elements: list[dict]) -> dict[str, list[dict]]:
+    """Group interactive elements by the operation a model can perform."""
+
+    groups: dict[str, list[dict]] = {
+        "text_inputs": [],
+        "buttons": [],
+        "links": [],
+        "other_controls": [],
+    }
+
+    for el in elements:
+        role = el.get("role")
+        if role in TEXT_ENTRY_ROLES:
+            groups["text_inputs"].append(el)
+        elif role in ACTION_CONTROL_ROLES:
+            groups["buttons"].append(el)
+        elif role == "link":
+            groups["links"].append(el)
+        else:
+            groups["other_controls"].append(el)
+
+    return groups
+
+
+def _format_parsed_controls(
+    elements: list[dict],
+    *,
+    full: bool,
+    max_items: int,
 ) -> list[str]:
-    """Format interactive elements as compact snapshot lines."""
+    """Format controls in a predictable grouped order."""
 
-    lines = []
-    interactive = [e for e in elements if e.get("interactive")]
+    selected = _filter_snapshot_controls(elements, full=full)
+    groups = _group_controls(selected)
+    lines: list[str] = []
+    shown = 0
 
-    if region_filter:
-        interactive = [e for e in interactive if e.get("landmark") == region_filter]
+    labels = [
+        ("text_inputs", "Text inputs"),
+        ("buttons", "Buttons and controls"),
+        ("links", "Links"),
+        ("other_controls", "Other interactive elements"),
+    ]
 
-    for el in interactive:
-        if skip_noise and _is_noise_element(el):
+    for key, label in labels:
+        items = groups[key]
+        if not items:
             continue
-
-        if len(lines) >= max_items:
-            remaining = len(interactive) - len(lines)
-            if remaining > 0:
-                lines.append(f"... and {remaining} more (use browser_snapshot for full list)")
+        section_lines: list[str] = []
+        for el in items:
+            if shown >= max_items:
+                break
+            section_lines.append(_format_control_line(el))
+            shown += 1
+        if section_lines:
+            lines.append(f"\n### {label}")
+            lines.extend(section_lines)
+        if shown >= max_items:
             break
 
-        ep = [f'[{el["ref"]}]', el["role"]]
-        if el.get("name"):
-            ep.append(f'"{el["name"]}"')
-        if el.get("value"):
-            ep.append(f'value="{el["value"]}"')
-        if el.get("disabled"):
-            ep.append("(disabled)")
-        if el.get("checked") is not None:
-            ep.append(f'checked={el["checked"]}')
-        lines.append(f"- {' '.join(ep)}")
+    remaining = max(0, len(selected) - shown)
+    if remaining:
+        hint = "browser_snapshot(full=true)" if not full else "scroll or refine the request"
+        lines.append(f"\n... {remaining} more controls hidden; use {hint}.")
+
+    if not lines:
+        lines.append("\n### Controls\nNo interactive controls found.")
 
     return lines
+
+
+def _build_parsed_state(elements: list[dict], *, full: bool, max_items: int) -> dict[str, Any]:
+    """Build a compact structured state for models that prefer JSON."""
+
+    selected = _filter_snapshot_controls(elements, full=full)
+    groups = _group_controls(selected)
+
+    return {
+        "mode": "full" if full else "controls",
+        "ref_rule": "Refs are fresh for this snapshot. After click/key/text/scroll, use the returned refs.",
+        "counts": {
+            "total_elements": len(elements),
+            "visible_controls": len(selected),
+            "listed_controls": min(len(selected), max_items),
+            "text_inputs": len(groups["text_inputs"]),
+            "buttons": len(groups["buttons"]),
+            "links": len(groups["links"]),
+        },
+    }
 
 
 # Snapshot text extraction
@@ -877,6 +1042,34 @@ async def _detect_undismissable_overlay(page: Page) -> str | None:
 
 # Browser lifecycle
 
+_BROWSER_CLOSED_MARKERS = (
+    "targetclosederror",
+    "target page, context or browser has been closed",
+    "browser has been closed",
+    "browser closed",
+    "context has been closed",
+    "connection closed",
+    "connection closed while reading from the driver",
+    "playwright connection closed",
+)
+
+
+def is_browser_closed_error(exc: BaseException) -> bool:
+    """Return whether an exception means the browser process/session died."""
+
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in _BROWSER_CLOSED_MARKERS)
+
+
+def last_known_url() -> str:
+    """Return the most recent non-blank browser URL remembered by snapshots."""
+
+    for url in reversed(_nav_history):
+        value = str(url or "").strip()
+        if value and value not in {"about:blank", ""}:
+            return value
+    return ""
+
 # Hold the shared browser context and page
 class BrowserState:
     """Store the shared browser session used by MCP tools."""
@@ -885,25 +1078,77 @@ class BrowserState:
         """Initialize empty browser state."""
 
         self._camoufox_cm: AsyncCamoufox | None = None
+        self.browser: Browser | None = None
         self.context: BrowserContext | None = None
         self.page: Page | None = None
+        self.tool_context: dict[str, Any] = {}
 
+    def downloads_dir(self) -> Path:
+        """Return the active downloads directory for the current tool context."""
+
+        safe_context = self.tool_context or {}
+        module_dir = str(safe_context.get("module_dir") or safe_context.get("project_dir") or "").strip()
+        selected = safe_context.get("selected_tool_server_ids")
+        sandbox_enabled = bool(safe_context.get("sandbox_enabled"))
+        if isinstance(selected, list):
+            sandbox_enabled = sandbox_enabled or any(str(item) == "sandbox" for item in selected)
+        if sandbox_enabled and module_dir:
+            return Path(module_dir) / "Tools" / "mcp-sandbox" / "_sandbox" / "downloads"
+        return DOWNLOADS_DIR
+
+
+    async def _has_live_page(self) -> bool:
+        """Return whether the stored Playwright page can still receive commands."""
+
+        if self.page is None:
+            return False
+
+        try:
+            if self.page.is_closed():
+                return False
+        except Exception:
+            return False
+
+        try:
+            await asyncio.wait_for(self.page.evaluate("() => true"), timeout=2.0)
+            return True
+        except asyncio.TimeoutError:
+            log.warning("Browser page health check timed out; relaunching browser session.")
+            return False
+        except Exception as exc:
+            if is_browser_closed_error(exc):
+                return False
+            log.debug("Browser page health check failed but did not look fatal: %s", exc)
+            return True
 
     # Open the browser lazily on first use
-    async def ensure_open(self):
-        """Launch the browser and register page handlers when needed."""
+    async def ensure_open(self) -> bool:
+        """Launch the browser and register page handlers when needed.
 
-        if self.page is not None:
-            return
+        Returns True when a new browser session was launched.
+        """
 
-        log.info("Launching camoufox browser (Firefox stealth)...")
+        if await self._has_live_page():
+            return False
+
+        if (
+            self.page is not None
+            or self.context is not None
+            or self.browser is not None
+            or self._camoufox_cm is not None
+        ):
+            log.warning("Stored Camoufox page is no longer usable; relaunching browser session.")
+            await self.close()
+
+        log.info("Launching camoufox browser (Firefox stealth, headless=%s)...", BROWSER_HEADLESS)
 
         try:
             self._camoufox_cm = AsyncCamoufox(
-                headless=False,
+                headless=BROWSER_HEADLESS,
                 window=(BROWSER_WIDTH, BROWSER_HEIGHT),
             )
             browser = await self._camoufox_cm.__aenter__()
+            self.browser = browser
 
             self.context = await browser.new_context(
                 viewport={"width": BROWSER_WIDTH, "height": BROWSER_HEIGHT},
@@ -913,6 +1158,7 @@ class BrowserState:
         except Exception as exc:
             self.page = None
             self.context = None
+            self.browser = None
             if self._camoufox_cm is not None:
                 try:
                     await self._camoufox_cm.__aexit__(None, None, None)
@@ -924,14 +1170,15 @@ class BrowserState:
                 f"and that the current runtime is allowed to spawn browser subprocesses. Original error: {exc}"
             ) from exc
 
-        # Persist downloads into the shared task directory.
+        # Persist downloads into the active shared workspace.
         async def handle_download(download):
-            """Save downloaded files into the task directory."""
+            """Save downloaded files into the active workspace directory."""
 
             log.info(f"Download started: {download.suggested_filename}")
             try:
-                DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
-                file_path = DOWNLOADS_DIR / download.suggested_filename
+                downloads_dir = self.downloads_dir()
+                downloads_dir.mkdir(parents=True, exist_ok=True)
+                file_path = downloads_dir / download.suggested_filename
                 await download.save_as(file_path)
                 log.info(f"File saved to: {file_path}")
             except Exception as exc:
@@ -954,19 +1201,43 @@ class BrowserState:
 
         self.page.on("dialog", handle_dialog)
         log.info("Camoufox browser ready.")
+        return True
 
 
     # Close all shared browser resources
     async def close(self):
         """Close the browser context and reset stored references."""
 
-        if self.context:
-            await self.context.close()
-        if self._camoufox_cm:
-            await self._camoufox_cm.__aexit__(None, None, None)
+        page = self.page
+        context = self.context
+        browser = self.browser
+        camoufox_cm = self._camoufox_cm
         self.page = None
         self.context = None
+        self.browser = None
         self._camoufox_cm = None
+
+        if page:
+            try:
+                if not page.is_closed():
+                    await page.close()
+            except Exception:
+                pass
+        if context:
+            try:
+                await context.close()
+            except Exception:
+                pass
+        if browser:
+            try:
+                await browser.close()
+            except Exception:
+                pass
+        if camoufox_cm:
+            try:
+                await camoufox_cm.__aexit__(None, None, None)
+            except Exception:
+                pass
 
 
 # Shared runtime state
@@ -974,6 +1245,71 @@ state = BrowserState()
 _last_elements: list[dict] = []
 _waiting_for_user: bool = False
 _nav_history: list[str] = []
+
+# How often (at most) to capture the a11y bundle during active portal polling.
+# The portal captures a JPEG on every publish; we only rebuild the a11y tree
+# every PORTAL_A11Y_CAPTURE_EVERY publishes to avoid excessive Playwright calls.
+PORTAL_A11Y_CAPTURE_EVERY = 4
+
+# Compact a11y bundle for the live portal panel — kept as last-known value so
+# the Django frame response always has something to return even between rebuilds.
+_portal_a11y_bundle: dict | None = None
+_portal_a11y_capture_counter: int = 0
+
+
+async def capture_portal_a11y_bundle(page: Any, *, max_controls: int = 60) -> dict | None:
+    """Build a compact a11y bundle for the live portal panel.
+
+    Updates the shared _last_elements cache so that click_ref events fired by
+    the UI panel map to the most recently published element tree.  Returns a
+    dict ready to embed under the ``a11y`` key in state.json, or None on error.
+    """
+    global _last_elements, _portal_a11y_bundle, _portal_a11y_capture_counter
+
+    _portal_a11y_capture_counter += 1
+    if _portal_a11y_capture_counter % PORTAL_A11Y_CAPTURE_EVERY != 1:
+        # Return the last-known bundle without re-querying Playwright.
+        return _portal_a11y_bundle
+
+    if page is None:
+        return _portal_a11y_bundle
+
+    try:
+        elements, _ = await get_accessibility_tree(page, full=False)
+    except Exception:
+        return _portal_a11y_bundle
+
+    # Sync the shared element cache so _click_by_role_and_name works with ref
+    # IDs from this bundle (same as _take_compact_snapshot does).
+    _last_elements = elements
+
+    controls = _filter_snapshot_controls(elements, full=False)[:max_controls]
+    items = [_snapshot_element_payload(el) for el in controls]
+
+    try:
+        url = page.url
+        title = await page.title()
+    except Exception:
+        url = ""
+        title = ""
+
+    bundle = {
+        "url": url,
+        "title": title,
+        "controls": items,
+        "total_controls": len(controls),
+        "truncated": len(controls) > max_controls,
+    }
+    _portal_a11y_bundle = bundle
+    return bundle
+
+
+def reset_portal_a11y_state() -> None:
+    """Reset portal a11y counters and bundle; call when a new portal session starts."""
+    global _portal_a11y_bundle, _portal_a11y_capture_counter
+    _portal_a11y_bundle = None
+    _portal_a11y_capture_counter = 0
+
 
 # Snapshot builders
 
@@ -1020,9 +1356,11 @@ async def _take_snapshot(
 
     # Build the textual snapshot in model-friendly sections.
     parts = [
-        "## Current page",
+        "## Browser snapshot",
         f"**URL:** {url}",
         f"**Title:** {title}",
+        f"**Mode:** {'full page' if full else 'controls only'}",
+        "**Ref rule:** use refs from this snapshot only; after an action, use the returned snapshot refs.",
     ]
     if len(_nav_history) >= 2:
         parts.append(f"**Back URL:** {_nav_history[-2]}")
@@ -1030,7 +1368,8 @@ async def _take_snapshot(
         parts.append(f"**Action:** {action_context}")
 
     main_count = sum(1 for e in elements if e.get("landmark") == "main")
-    parts.append(f"**Elements:** {len(elements)} total, {main_count} in main area")
+    controls = _filter_snapshot_controls(elements, full=full)
+    parts.append(f"**Elements:** {len(elements)} total, {main_count} in main area, {len(controls)} controls")
 
     all_warnings = list(warnings)
     if overlay_warning:
@@ -1040,30 +1379,34 @@ async def _take_snapshot(
         parts.append("\n### ⚠️ Page Situation")
         parts.extend(all_warnings)
 
-    # Include a short text preview so the model can orient itself quickly.
+    max_items = MAX_MAIN_INTERACTIVE * 3 if full else MAX_MAIN_INTERACTIVE
+    parts.append("\n### Parsed state")
+    parts.append("```json")
+    parts.append(json.dumps(_build_parsed_state(elements, full=full, max_items=max_items), ensure_ascii=False, indent=2))
+    parts.append("```")
+
+    if not full:
+        parts.extend(_format_parsed_controls(elements, full=full, max_items=max_items))
+        parts.append(
+            "\n### Hint\nDefault snapshot hides page text and low-value links. "
+            "Call browser_snapshot(full=true) when you need full page text, navigation, footer, or hidden/missing controls."
+        )
+        return [TextContent(type="text", text="\n".join(parts))]
+
+    # Full mode includes page text and the accessibility tree for broad orientation.
     if include_text:
-        brief_text = await _extract_brief_text(state.page)
+        brief_text = await _extract_brief_text(state.page, max_chars=max(AUTO_TEXT_PREVIEW_LEN * 8, 12000))
         if brief_text and len(brief_text.strip()) > 30:
-            parts.append(f"\n### Page Text Preview\n{brief_text}")
+            parts.append(f"\n### Page text\n{brief_text}")
         else:
-            parts.append("\n### Page Text Preview\n(no text content detected — page may still be loading)")
+            parts.append("\n### Page text\n(no text content detected — page may still be loading)")
 
-    # Expose the parsed accessibility tree for structural context.
-    tree_label = "### Accessibility Tree" if full else "### Accessibility Tree (main area)"
+    parts.extend(_format_parsed_controls(elements, full=full, max_items=max_items))
+
     if tree_text.strip():
-        parts.append(f"\n{tree_label}\n```\n{tree_text}\n```")
+        parts.append(f"\n### Accessibility tree\n```\n{tree_text}\n```")
     else:
-        parts.append("\n### Accessibility Tree\n(empty — page may not have rendered yet)")
-
-    # Finish with the clickable and fillable controls list.
-    parts.append("\n### Interactive elements")
-    interactive_lines = _format_interactive_list(
-        elements, region_filter=None, max_items=MAX_MAIN_INTERACTIVE * 2 if full else MAX_MAIN_INTERACTIVE, skip_noise=not full
-    )
-    if interactive_lines:
-        parts.extend(interactive_lines)
-    else:
-        parts.append("No interactive elements found.")
+        parts.append("\n### Accessibility tree\n(empty — page may not have rendered yet)")
 
     return [TextContent(type="text", text="\n".join(parts))]
 
@@ -1087,28 +1430,23 @@ async def _take_compact_snapshot(action_context: str | None = None) -> list[Text
 
     # Keep compact snapshots focused on interactive controls.
     main_count = sum(1 for e in elements if e.get("landmark") == "main")
-    parts = [f"**URL:** {url}  |  **Title:** {title}"]
+    controls = _filter_snapshot_controls(elements, full=False)
+    parts = [
+        "## Browser snapshot",
+        f"**URL:** {url}",
+        f"**Title:** {title}",
+        "**Mode:** controls only",
+        "**Ref rule:** use refs from this snapshot only; after an action, use the returned snapshot refs.",
+    ]
     if action_context:
         parts.append(f"**Action:** {action_context}")
-    parts.append(f"**Elements:** {main_count} in main area")
-    parts.append("")
-    parts.append("### Interactive elements (main area)")
-
-    interactive_lines = _format_interactive_list(
-        elements, region_filter="main", max_items=MAX_MAIN_INTERACTIVE, skip_noise=True
-    )
-    if interactive_lines:
-        parts.extend(interactive_lines)
-    else:
-        # Fall back to the full page if the main region is empty.
-        all_lines = _format_interactive_list(
-            elements, region_filter=None, max_items=MAX_MAIN_INTERACTIVE, skip_noise=True
-        )
-        if all_lines:
-            parts[-1] = "### Interactive elements"
-            parts.extend(all_lines)
-        else:
-            parts.append("(none)")
+    parts.append(f"**Elements:** {len(elements)} total, {main_count} in main area, {len(controls)} controls")
+    parts.append("\n### Parsed state")
+    parts.append("```json")
+    parts.append(json.dumps(_build_parsed_state(elements, full=False, max_items=MAX_MAIN_INTERACTIVE), ensure_ascii=False, indent=2))
+    parts.append("```")
+    parts.extend(_format_parsed_controls(elements, full=False, max_items=MAX_MAIN_INTERACTIVE))
+    parts.append("\n### Hint\nCall browser_snapshot(full=true) if the needed text or control is not listed.")
 
     return [TextContent(type="text", text="\n".join(parts))]
 
@@ -1239,58 +1577,3 @@ async def _click_by_role_and_name(ref: str):
     )
 
 
-# Text input actions
-
-# Fill a cached input-like element with new text
-async def _fill_by_role_and_name(ref: str, text: str, clear: bool, press_enter: bool):
-    """Fill an input element referenced by the last accessibility snapshot."""
-
-    elem = _find_element(ref)
-    if not elem:
-        raise ValueError(
-            f"Element ref='{ref}' not found. "
-            f"Use browser_snapshot to refresh elements."
-        )
-
-    role = elem["role"]
-    name = elem.get("name", "")
-
-    locator = await _resolve_locator(role, name)
-
-    # Placeholder lookup helps when the accessible name is not exposed as a role name.
-    if locator is None and name:
-        try:
-            loc = state.page.get_by_placeholder(name, exact=False)
-            if await loc.count() >= 1:
-                locator = loc.first
-        except Exception:
-            pass
-
-    if locator is None:
-        raise ValueError(
-            f"Could not locate input ref='{ref}' (role={role}, name='{name}'). "
-            f"Try browser_snapshot to refresh."
-        )
-
-    if clear:
-        # Clear standard inputs first.
-        try:
-            await locator.fill("")
-        except Exception:
-            pass
-
-        # Rich text editors often need keyboard-based clearing instead.
-        try:
-            await locator.press("Control+a")
-            await locator.press("Delete")
-        except Exception:
-            pass
-
-    # Prefer fill(), then fall back to sequential typing for custom editors.
-    try:
-        await locator.fill(text)
-    except Exception:
-        await locator.press_sequentially(text, delay=30)
-
-    if press_enter:
-        await locator.press("Enter")

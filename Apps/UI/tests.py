@@ -36,6 +36,7 @@ from API.openai import (
     get_model_settings as get_openai_model_settings,
 )
 from Settings import settings as project_settings
+from Settings import skills as skills_config
 from Apps.Data.models import (
     Chat,
     LmsPreset,
@@ -60,11 +61,14 @@ from Apps.UI.views import (
     _build_uploaded_file_context_entry,
     _build_uploaded_file_prompt_block,
     _clear_model_metadata_caches,
+    _chat_is_first_user_turn,
+    _compose_system_prompt,
     _extract_attachment_text,
     _extract_uploaded_file_ids_from_message,
     _extract_ollama_model_info,
     _extract_model_name,
     _format_runtime_error,
+    _is_active_browser_portal_state,
     _load_model_upload_manifests,
     _normalize_request_attachments,
     _normalize_uploaded_file_ids,
@@ -139,6 +143,592 @@ class ToolRegistryTestMixin:
         tool_registry.reset_cache()
 
 # Model and adapter parsing tests.
+
+
+class SkillsApiTests(TestCase):
+    """Cover project skill file management APIs."""
+
+    def setUp(self):
+        super().setUp()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.skills_dir = self.root / "Skills"
+        self.sandbox_skills_dir = self.root / "Tools" / "mcp-sandbox" / "_sandbox" / "Skills"
+        self._patches = [
+            patch.object(skills_config, "BASE_DIR", self.root),
+            patch.object(skills_config, "SKILLS_DIR", self.skills_dir),
+            patch.object(skills_config, "SANDBOX_SKILLS_DIR", self.sandbox_skills_dir),
+            patch.object(skills_config, "_PENDING_NOTIFY_PATH", self.root / ".aslm" / "skills-pending-notify.json"),
+        ]
+        for patcher in self._patches:
+            patcher.start()
+        self.client = Client()
+        skills_config.clear_skill_config_refresh_pending()
+
+    def tearDown(self):
+        skills_config.clear_skill_config_refresh_pending()
+        for patcher in reversed(self._patches):
+            patcher.stop()
+        self._tmp.cleanup()
+        super().tearDown()
+
+    def test_skills_root_created_and_crud_validates_paths(self):
+        response = self.client.get(reverse("skills_api"))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.skills_dir.is_dir())
+
+        created = self.client.post(
+            reverse("skills_api"),
+            data=json.dumps({"name": "skill-creator"}),
+            content_type="application/json",
+        )
+        self.assertEqual(created.status_code, 200)
+        self.assertTrue((self.skills_dir / "skill-creator" / "SKILL.md").is_file())
+
+        saved = self.client.put(
+            reverse("skills_file_api"),
+            data=json.dumps({
+                "folder": "skill-creator",
+                "file": "agents/grader.md",
+                "content": "---\nname: skill-creator\ndescription: Make skills\nenabled: true\n---\n\n# Skill\n",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertTrue((self.skills_dir / "skill-creator" / "agents" / "grader.md").is_file())
+
+        renamed = self.client.patch(
+            reverse("skills_folder_api"),
+            data=json.dumps({"old_name": "skill-creator", "new_name": "renamed-skill"}),
+            content_type="application/json",
+        )
+        self.assertEqual(renamed.status_code, 200)
+        self.assertTrue((self.skills_dir / "renamed-skill" / "SKILL.md").is_file())
+        self.assertEqual(renamed.json()["folders"][0]["title"], "renamed-skill")
+
+        rejected = self.client.put(
+            reverse("skills_file_api"),
+            data=json.dumps({"folder": "renamed-skill", "file": "../bad.md", "content": "x"}),
+            content_type="application/json",
+        )
+        self.assertEqual(rejected.status_code, 400)
+
+    def test_front_matter_summary_and_prompt_inventory(self):
+        skill_root = self.skills_dir / "skill-creator"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text(
+            "---\n"
+            "name: skill-creator\n"
+            "description: Create and improve skills.\n"
+            "trigger: Slash command + auto\n"
+            "added_by: Anthropic\n"
+            "enabled: true\n"
+            "---\n\n# Skill Creator\n",
+            encoding="utf-8",
+        )
+        agents_dir = skill_root / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "grader.md").write_text("# Grader\n", encoding="utf-8")
+
+        payload = self.client.get(reverse("skills_api")).json()
+        folder = payload["folders"][0]
+        self.assertEqual(folder["title"], "skill-creator")
+        self.assertEqual(folder["description"], "Create and improve skills.")
+        self.assertEqual(folder["source"], "download")
+        self.assertIsInstance(folder["created_at"], float)
+        self.assertGreater(folder["created_at"], 0)
+
+        prompt = _compose_system_prompt("", include_skills_baseline=True)
+        self.assertIn("Your skills:", prompt)
+        self.assertIn("/workspace/_sandbox/Skills/skill-creator", prompt)
+        self.assertIn("agents/grader.md", prompt)
+
+        follow_up_prompt = _compose_system_prompt("")
+        self.assertNotIn("Your skills:", follow_up_prompt)
+
+        disabled_root = self.skills_dir / "disabled-skill"
+        disabled_root.mkdir()
+        (disabled_root / "SKILL.md").write_text(
+            "---\nname: disabled\ndescription: Off\nenabled: false\n---\n",
+            encoding="utf-8",
+        )
+        prompt_with_disabled = _compose_system_prompt("")
+        self.assertNotIn("disabled-skill", prompt_with_disabled)
+
+    def test_disable_skill_queues_refreshed_inventory_for_next_prompt(self):
+        skill_root = self.skills_dir / "pdf"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text(
+            "---\nname: pdf\ndescription: PDF skill\nenabled: true\n---\n",
+            encoding="utf-8",
+        )
+
+        baseline_prompt = _compose_system_prompt("", include_skills_baseline=True)
+        self.assertIn("Your skills:", baseline_prompt)
+        self.assertNotIn("Skill configuration update:", baseline_prompt)
+
+        response = self.client.patch(
+            reverse("skills_enabled_api"),
+            data=json.dumps({"folder": "pdf", "enabled": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        prompt_after_disable = _compose_system_prompt("")
+        self.assertIn("Skill configuration update:", prompt_after_disable)
+        self.assertIn("no enabled project skills", prompt_after_disable)
+        self.assertNotIn("Your skills:", prompt_after_disable)
+
+        prompt_after_consume = _compose_system_prompt("")
+        self.assertNotIn("Skill configuration update:", prompt_after_consume)
+        self.assertNotIn("Your skills:", prompt_after_consume)
+
+    def test_sync_mirrors_skills_and_overrides_sandbox(self):
+        skill_root = self.skills_dir / "writer"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text("# Writer\n", encoding="utf-8")
+        stale_root = self.sandbox_skills_dir / "writer"
+        stale_root.mkdir(parents=True)
+        (stale_root / "SKILL.md").write_text("stale\n", encoding="utf-8")
+        (self.sandbox_skills_dir / "extra.txt").write_text("remove\n", encoding="utf-8")
+
+        result = skills_config.sync_skills_to_sandbox()
+
+        self.assertGreaterEqual(result["copied"], 1)
+        self.assertEqual((self.sandbox_skills_dir / "writer" / "SKILL.md").read_text(encoding="utf-8"), "# Writer\n")
+        self.assertFalse((self.sandbox_skills_dir / "extra.txt").exists())
+
+    def test_sync_excludes_disabled_skills_from_sandbox(self):
+        enabled_root = self.skills_dir / "writer"
+        enabled_root.mkdir(parents=True)
+        (enabled_root / "SKILL.md").write_text("# Writer\n", encoding="utf-8")
+
+        disabled_root = self.skills_dir / "disabled-skill"
+        disabled_root.mkdir(parents=True)
+        (disabled_root / "SKILL.md").write_text(
+            "---\nname: disabled\ndescription: Off\nenabled: false\n---\n",
+            encoding="utf-8",
+        )
+
+        stale_disabled = self.sandbox_skills_dir / "disabled-skill"
+        stale_disabled.mkdir(parents=True)
+        (stale_disabled / "SKILL.md").write_text("stale\n", encoding="utf-8")
+
+        skills_config.sync_skills_to_sandbox()
+
+        self.assertTrue((self.sandbox_skills_dir / "writer" / "SKILL.md").is_file())
+        self.assertFalse(stale_disabled.exists())
+
+    def test_disable_skill_removes_folder_from_sandbox(self):
+        skill_root = self.skills_dir / "toggle-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text(
+            "---\nname: toggle-skill\ndescription: Toggle\nenabled: true\n---\n",
+            encoding="utf-8",
+        )
+        skills_config.sync_skills_to_sandbox()
+        self.assertTrue((self.sandbox_skills_dir / "toggle-skill" / "SKILL.md").is_file())
+
+        response = self.client.patch(
+            reverse("skills_enabled_api"),
+            data=json.dumps({"folder": "toggle-skill", "enabled": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["folders"][0]["enabled"])
+        self.assertFalse((self.sandbox_skills_dir / "toggle-skill").exists())
+
+    def test_create_skill_subdirectory(self):
+        skill_root = self.skills_dir / "my-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text("# My Skill\n", encoding="utf-8")
+
+        response = self.client.post(
+            reverse("skills_directory_api"),
+            data=json.dumps({"folder": "my-skill", "path": "agents"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue((skill_root / "agents").is_dir())
+
+        nested_response = self.client.post(
+            reverse("skills_directory_api"),
+            data=json.dumps({"folder": "my-skill", "path": "agents/tools"}),
+            content_type="application/json",
+        )
+        self.assertEqual(nested_response.status_code, 200)
+        self.assertTrue((skill_root / "agents" / "tools").is_dir())
+
+    def test_create_skill_subdirectory_rejects_duplicate(self):
+        skill_root = self.skills_dir / "my-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "agents").mkdir()
+
+        response = self.client.post(
+            reverse("skills_directory_api"),
+            data=json.dumps({"folder": "my-skill", "path": "agents"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_create_skill_subdirectory_rejects_traversal(self):
+        skill_root = self.skills_dir / "my-skill"
+        skill_root.mkdir(parents=True)
+
+        response = self.client.post(
+            reverse("skills_directory_api"),
+            data=json.dumps({"folder": "my-skill", "path": "../escape"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_create_skill_subdirectory_rejects_file_extension(self):
+        skill_root = self.skills_dir / "my-skill"
+        skill_root.mkdir(parents=True)
+
+        response = self.client.post(
+            reverse("skills_directory_api"),
+            data=json.dumps({"folder": "my-skill", "path": "agents.md"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_rename_and_delete_skill_subdirectory(self):
+        skill_root = self.skills_dir / "my-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "agents").mkdir()
+        (skill_root / "agents" / "grader.md").write_text("# Grader\n", encoding="utf-8")
+
+        renamed = self.client.patch(
+            reverse("skills_path_api"),
+            data=json.dumps({
+                "folder": "my-skill",
+                "old_path": "agents",
+                "new_path": "reviewers",
+                "kind": "directory",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(renamed.status_code, 200)
+        self.assertTrue((skill_root / "reviewers" / "grader.md").is_file())
+        self.assertFalse((skill_root / "agents").exists())
+
+        deleted = self.client.delete(
+            reverse("skills_directory_api"),
+            data=json.dumps({"folder": "my-skill", "path": "reviewers"}),
+            content_type="application/json",
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertFalse((skill_root / "reviewers").exists())
+
+    def test_rename_skill_file(self):
+        skill_root = self.skills_dir / "my-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "notes.md").write_text("# Notes\n", encoding="utf-8")
+
+        renamed = self.client.patch(
+            reverse("skills_path_api"),
+            data=json.dumps({
+                "folder": "my-skill",
+                "old_path": "notes.md",
+                "new_path": "journal.md",
+                "kind": "file",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(renamed.status_code, 200)
+        self.assertTrue((skill_root / "journal.md").is_file())
+        self.assertFalse((skill_root / "notes.md").exists())
+
+    def test_import_skill_creates_folder_and_files(self):
+        files = [
+            {"path": "SKILL.md", "content": "---\nname: imported\ndescription: Test import\nenabled: true\n---\n\n# Imported\n"},
+            {"path": "agents/grader.md", "content": "# Grader\n"},
+            {"path": "../escape.md", "content": "bad"},   # should be silently skipped
+            {"path": "binary\x00.md", "content": "bad"},  # should be skipped
+        ]
+        response = self.client.post(
+            reverse("skills_import_api"),
+            data=json.dumps({"name": "imported-skill", "files": files}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        skill_root = self.skills_dir / "imported-skill"
+        self.assertTrue((skill_root / "SKILL.md").is_file())
+        self.assertTrue((skill_root / "agents" / "grader.md").is_file())
+        self.assertFalse((self.skills_dir / "escape.md").exists())
+        payload = response.json()
+        folder_names = [f["name"] for f in payload["folders"]]
+        self.assertIn("imported-skill", folder_names)
+        imported = next(f for f in payload["folders"] if f["name"] == "imported-skill")
+        self.assertEqual(imported["description"], "Test import")
+
+    def test_import_skill_merges_into_existing_folder(self):
+        skill_root = self.skills_dir / "duplicate-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text("# Duplicate\n", encoding="utf-8")
+
+        response = self.client.post(
+            reverse("skills_import_api"),
+            data=json.dumps({
+                "name": "duplicate-skill",
+                "files": [{"path": "notes.md", "content": "# Notes\n"}],
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue((skill_root / "notes.md").is_file())
+        payload = response.json()
+        folder_names = [f["name"] for f in payload["folders"]]
+        self.assertIn("duplicate-skill", folder_names)
+
+
+class SkillsModelContextTests(TestCase):
+    """Verify what the model receives in system context under skills toggles."""
+
+    def setUp(self):
+        super().setUp()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.skills_dir = self.root / "Skills"
+        self.sandbox_skills_dir = self.root / "Tools" / "mcp-sandbox" / "_sandbox" / "Skills"
+        self._patches = [
+            patch.object(skills_config, "BASE_DIR", self.root),
+            patch.object(skills_config, "SKILLS_DIR", self.skills_dir),
+            patch.object(skills_config, "SANDBOX_SKILLS_DIR", self.sandbox_skills_dir),
+            patch.object(skills_config, "_PENDING_NOTIFY_PATH", self.root / ".aslm" / "skills-pending-notify.json"),
+        ]
+        for patcher in self._patches:
+            patcher.start()
+        self.client = Client()
+        skills_config.clear_skill_config_refresh_pending()
+
+    def tearDown(self):
+        skills_config.clear_skill_config_refresh_pending()
+        for patcher in reversed(self._patches):
+            patcher.stop()
+        self._tmp.cleanup()
+        super().tearDown()
+
+    def _assert_has_skills_inventory(self, text: str, *folders: str) -> None:
+        self.assertIn("Your skills:", text)
+        for folder in folders:
+            self.assertIn(f"/workspace/_sandbox/Skills/{folder}", text)
+
+    def _assert_no_skill_context(self, text: str) -> None:
+        self.assertNotIn("Your skills:", text)
+        self.assertNotIn("Skill configuration update:", text)
+        self.assertNotIn("/workspace/_sandbox/Skills/", text)
+
+    def _assert_config_update_header(self, text: str) -> None:
+        self.assertIn("Skill configuration update:", text)
+        self.assertIn("changed which project skills are enabled", text)
+
+    def _write_skill(self, folder: str, *, enabled: bool = True, title: str | None = None) -> None:
+        skill_root = self.skills_dir / folder
+        skill_root.mkdir(parents=True, exist_ok=True)
+        display = title or folder
+        (skill_root / "SKILL.md").write_text(
+            f"---\nname: {display}\ndescription: Test\nenabled: {'true' if enabled else 'false'}\n---\n",
+            encoding="utf-8",
+        )
+
+    def _compose(self, *, consume: bool = True, include_baseline: bool = False, user_prompt: str = "") -> str:
+        return _compose_system_prompt(
+            user_prompt,
+            consume_skill_notifications=consume,
+            include_skills_baseline=include_baseline,
+        )
+
+    def _system_message_for_chat(self, system_prompt: str, user_text: str = "hello") -> str:
+        chat = Chat.objects.create(title="Skills model context")
+        user_record = Message.objects.create(chat=chat, role="user", content=user_text)
+        llm_messages, _compression = _build_chat_history(
+            chat,
+            user_record,
+            user_text,
+            system_prompt,
+            "ollama-service",
+            "test-model",
+        )
+        system_entries = [entry for entry in llm_messages if entry.get("role") == "system"]
+        self.assertEqual(len(system_entries), 1)
+        return str(system_entries[0].get("content") or "")
+
+    def _disable_via_api(self, folder: str) -> None:
+        response = self.client.patch(
+            reverse("skills_enabled_api"),
+            data=json.dumps({"folder": folder, "enabled": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_enabled_skills_appear_only_on_first_chat_turn(self):
+        self._write_skill("writer", enabled=True)
+        self._write_skill("pdf", enabled=True, title="PDF helper")
+
+        first_turn = self._compose(include_baseline=True)
+        history = self._system_message_for_chat(first_turn)
+
+        self._assert_has_skills_inventory(first_turn, "writer", "pdf")
+        self._assert_has_skills_inventory(history, "writer", "pdf")
+        self.assertNotIn("Skill configuration update:", first_turn)
+
+        follow_up = self._compose(include_baseline=False)
+        self._assert_no_skill_context(follow_up)
+
+    def test_chat_api_first_turn_includes_skills_baseline(self):
+        self._write_skill("writer", enabled=True)
+        chat = Chat.objects.create(title="Skills baseline chat")
+        prompt = _compose_system_prompt("", include_skills_baseline=_chat_is_first_user_turn(chat))
+        self._assert_has_skills_inventory(prompt, "writer")
+
+        chat.messages.create(role="user", content="hello")
+        prompt_after_history = _compose_system_prompt("", include_skills_baseline=_chat_is_first_user_turn(chat))
+        self._assert_no_skill_context(prompt_after_history)
+
+    def test_static_disabled_skill_is_omitted_from_inventory(self):
+        self._write_skill("writer", enabled=True)
+        self._write_skill("legacy-off", enabled=False, title="Legacy")
+
+        composed = self._compose(include_baseline=True)
+        self._assert_has_skills_inventory(composed, "writer")
+        self.assertNotIn("legacy-off", composed)
+
+    def test_disable_sends_updated_inventory_once(self):
+        self._write_skill("writer", enabled=True)
+        self._write_skill("pdf", enabled=True, title="PDF skill")
+        self._disable_via_api("pdf")
+
+        first_compose = self._compose(consume=True)
+        self._assert_config_update_header(first_compose)
+        self._assert_has_skills_inventory(first_compose, "writer")
+        self.assertNotIn("/workspace/_sandbox/Skills/pdf", first_compose)
+
+        second_compose = self._compose(consume=True)
+        self.assertNotIn("Skill configuration update:", second_compose)
+        self._assert_no_skill_context(second_compose)
+
+    def test_context_usage_style_compose_does_not_consume_pending_refresh(self):
+        self._write_skill("writer", enabled=True)
+        self._write_skill("docx", enabled=True, title="DOCX skill")
+        self._disable_via_api("docx")
+
+        peek = self._compose(consume=False)
+        self._assert_config_update_header(peek)
+        self._assert_has_skills_inventory(peek, "writer")
+        self.assertTrue(skills_config._peek_config_refresh_pending())
+
+        generation = self._compose(consume=True)
+        self._assert_config_update_header(generation)
+        self.assertFalse(skills_config._peek_config_refresh_pending())
+
+        follow_up = self._compose(consume=True)
+        self.assertNotIn("Skill configuration update:", follow_up)
+        self._assert_no_skill_context(follow_up)
+
+    def test_enable_queues_refreshed_inventory_with_enabled_skill(self):
+        self._write_skill("pdf", enabled=True, title="PDF")
+        self._disable_via_api("pdf")
+        self._compose(consume=True)
+
+        enable_response = self.client.patch(
+            reverse("skills_enabled_api"),
+            data=json.dumps({"folder": "pdf", "enabled": True}),
+            content_type="application/json",
+        )
+        self.assertEqual(enable_response.status_code, 200)
+
+        composed = self._compose(consume=True)
+        self._assert_config_update_header(composed)
+        self._assert_has_skills_inventory(composed, "pdf")
+
+        follow_up = self._compose(consume=True)
+        self.assertNotIn("Skill configuration update:", follow_up)
+        self._assert_no_skill_context(follow_up)
+
+    def test_re_toggle_without_change_does_not_queue_refresh(self):
+        self._write_skill("pdf", enabled=False, title="PDF")
+
+        response = self.client.patch(
+            reverse("skills_enabled_api"),
+            data=json.dumps({"folder": "pdf", "enabled": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        composed = self._compose(consume=True)
+        self._assert_no_skill_context(composed)
+        self.assertFalse(skills_config._peek_config_refresh_pending())
+
+    @patch.object(skills_config, "sync_skills_to_sandbox", side_effect=RuntimeError("sandbox unavailable"))
+    def test_toggle_still_queues_inventory_when_sandbox_sync_fails(self, _sync_mock):
+        self._write_skill("writer", enabled=True)
+        self._write_skill("pdf", enabled=True, title="PDF skill")
+        response = self.client.patch(
+            reverse("skills_enabled_api"),
+            data=json.dumps({"folder": "pdf", "enabled": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        prompt = self._compose(consume=True)
+        self._assert_config_update_header(prompt)
+        self._assert_has_skills_inventory(prompt, "writer")
+
+
+class SkillsSandboxDispatchTests(SimpleTestCase):
+    """Ensure sandbox dispatch refreshes Skills before executing a tool."""
+
+    def test_sandbox_tool_dispatch_syncs_skills_first(self):
+        server = {
+            "id": "sandbox",
+            "name": "Sandbox",
+            "description": "",
+            "tools": [{"id": "write", "alias": "sandbox__write", "name": "Write", "description": ""}],
+            "module": None,
+            "supports": None,
+            "server_callable": None,
+            "tool_handlers": {"write": lambda arguments, context=None: {"ok": True, "result": arguments}},
+            "server_file": Path("Tools/mcp-sandbox/mcp-server.py"),
+            "external": False,
+        }
+        lookup = {"sandbox__write": {"server": server, "tool": server["tools"][0]}}
+
+        with patch.object(skills_config, "sync_skills_to_sandbox") as sync_mock:
+            result = tool_registry.call_ollama_tool(lookup, "sandbox__write", {"path": "x.txt"})
+
+        sync_mock.assert_called_once()
+        self.assertIn("x.txt", str(result))
+
+
+# Cover per-response tool quota guardrails.
+class ToolQuotaTests(SimpleTestCase):
+    """Cover search-effort quotas used by the shared tool bridge."""
+
+    # High-effort web search is expensive, so keep it bounded per response.
+    def test_high_effort_web_search_limits_to_three_calls(self):
+        tool_event = {"tool_id": "web_search", "tool_name": "Web search"}
+        counters: dict[str, int] = {}
+        arguments = {"query": "cheap coding model", "effort": "high"}
+
+        self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
+        self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
+        self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
+
+        error = tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments)
+        self.assertIsNotNone(error)
+        self.assertIn("high mode is unavailable", str(error))
+        self.assertIn("use medium or low", str(error))
+
+    # Lower-effort searches keep the existing broader budget.
+    def test_normal_web_search_keeps_default_quota(self):
+        tool_event = {"tool_id": "web_search", "tool_name": "Web search"}
+        counters: dict[str, int] = {}
+        arguments = {"query": "cheap coding model", "effort": "medium"}
+
+        for _index in range(4):
+            self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
 
 # Cover adapter-specific model list formats.
 class ModelNameExtractionTests(SimpleTestCase):
@@ -543,12 +1133,156 @@ class UploadFilesApiTests(SimpleTestCase):
         self.assertFalse(private_manifest["text_available"])
         self.assertTrue(private_manifest["sandbox_path"].startswith(f"/workspace/_sandbox/User/{private_manifest['sha256']}/"))
 
+    # Test the configured upload ceiling matches the advertised large-video contract.
+    def test_upload_limit_is_16_gb(self):
+        self.assertEqual(upload_storage.MAX_UPLOAD_BYTES, 16 * 1024 * 1024 * 1024)
+
+    # Test uploads beyond the inline manifest threshold are stored without full in-memory extraction.
+    def test_upload_api_uses_lightweight_manifest_after_inline_threshold(self):
+        upload = SimpleUploadedFile("clip.mp4", b"12345", content_type="video/mp4")
+
+        with patch.object(upload_storage, "INLINE_MANIFEST_MAX_BYTES", 4):
+            response = self.client.post(reverse("uploads_api"), {"files": [upload], "scope": "chat-video"})
+
+        self.assertEqual(response.status_code, 200)
+        public_file = response.json()["files"][0]
+        self.assertEqual(public_file["status"], "ready")
+        self.assertEqual(public_file["display_kind"], "video")
+        self.assertEqual(public_file["type_label"], "Video")
+
+        manifests = list(self.manifest_root.glob("*/*.manifest.json"))
+        self.assertEqual(len(manifests), 1)
+        private_manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+        self.assertEqual(private_manifest["name"], "clip.mp4")
+        self.assertEqual(private_manifest["mime"], "video/mp4")
+        self.assertEqual(private_manifest["size_bytes"], 5)
+        self.assertFalse(private_manifest["text_available"])
+        self.assertIsNone(private_manifest["text_preview"])
+        stored_files = [path for path in self.upload_root.glob("*/*") if path.is_file()]
+        self.assertEqual(len(stored_files), 1)
+        self.assertEqual(stored_files[0].read_bytes(), b"12345")
+
+    # Test oversize uploads are rejected before being stored.
+    def test_upload_api_reports_oversized_files(self):
+        upload = SimpleUploadedFile("too-big.mp4", b"12345", content_type="video/mp4")
+
+        with patch.object(upload_storage, "MAX_UPLOAD_BYTES", 4):
+            response = self.client.post(reverse("uploads_api"), {"files": [upload]})
+
+        self.assertEqual(response.status_code, 200)
+        public_file = response.json()["files"][0]
+        self.assertEqual(public_file["status"], "error")
+        self.assertIn("File is too large", public_file["error"])
+        self.assertEqual(list(self.manifest_root.glob("*/*.manifest.json")), [])
+
+    # Test media content endpoint supports suffix ranges needed by MP4 metadata reads.
+    def test_uploaded_file_content_supports_suffix_byte_range(self):
+        upload = SimpleUploadedFile("clip.mp4", b"0123456789", content_type="video/mp4")
+        upload_response = self.client.post(reverse("uploads_api"), {"files": [upload]})
+        content_url = upload_response.json()["files"][0]["content_url"]
+        stored_file = next(path for path in self.upload_root.glob("*/*") if path.is_file())
+
+        with patch("Apps.UI.views._resolve_uploaded_file_content_path", return_value=stored_file):
+            response = self.client.get(content_url, HTTP_RANGE="bytes=-4")
+
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response["Content-Range"], "bytes 6-9/10")
+        self.assertEqual(b"".join(response.streaming_content), b"6789")
+
+    # Test open-ended media ranges are chunked so playback can start without reading the rest of a large file.
+    def test_uploaded_file_content_chunks_open_ended_range(self):
+        upload = SimpleUploadedFile("clip.mp4", b"0123456789", content_type="video/mp4")
+        upload_response = self.client.post(reverse("uploads_api"), {"files": [upload]})
+        content_url = upload_response.json()["files"][0]["content_url"]
+        stored_file = next(path for path in self.upload_root.glob("*/*") if path.is_file())
+
+        with (
+            patch("Apps.UI.views.MEDIA_RANGE_CHUNK_BYTES", 4),
+            patch("Apps.UI.views._resolve_uploaded_file_content_path", return_value=stored_file),
+        ):
+            response = self.client.get(content_url, HTTP_RANGE="bytes=2-")
+
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response["Content-Range"], "bytes 2-5/10")
+        self.assertEqual(b"".join(response.streaming_content), b"2345")
+
+    # Test model-shared files use the same range streaming path as uploaded files.
+    def test_shared_file_download_supports_byte_range(self):
+        with tempfile.NamedTemporaryFile(delete=False) as handle:
+            handle.write(b"abcdefghij")
+            temp_path = Path(handle.name)
+        try:
+            with patch("Apps.UI.views._resolve_shared_file_path", return_value=temp_path):
+                response = self.client.get(
+                    reverse("shared_file_download_api"),
+                    {"path": str(temp_path), "preview": "1"},
+                    HTTP_RANGE="bytes=-3",
+                )
+
+            self.assertEqual(response.status_code, 206)
+            self.assertEqual(response["Content-Range"], "bytes 7-9/10")
+            self.assertEqual(b"".join(response.streaming_content), b"hij")
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    # Test shared-file downloads are limited to the sandbox workspace.
+    def test_shared_file_download_rejects_project_absolute_path(self):
+        response = self.client.get(
+            reverse("shared_file_download_api"),
+            {"path": str(Path(__file__).resolve())},
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    # Test container-style sandbox paths are still mapped to the host sandbox.
+    def test_shared_file_download_allows_container_sandbox_path(self):
+        sandbox_file = Path("Tools/mcp-sandbox/_sandbox/User/shared-test.txt")
+        sandbox_file.parent.mkdir(parents=True, exist_ok=True)
+        sandbox_file.write_text("shared ok", encoding="utf-8")
+        try:
+            response = self.client.get(
+                reverse("shared_file_download_api"),
+                {"path": "/workspace/_sandbox/User/shared-test.txt"},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(b"".join(response.streaming_content), b"shared ok")
+        finally:
+            sandbox_file.unlink(missing_ok=True)
+
     # Test empty upload requests fail before returning a card payload.
     def test_upload_api_requires_files(self):
         response = self.client.post(reverse("uploads_api"), {})
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "No files uploaded")
+
+    # Test ODA uploads land in the ODA sandbox tree with model-facing paths.
+    def test_upload_api_uses_oda_paths_when_oda_selected(self):
+        self.oda_upload_root = self.upload_root / "oda"
+        self.oda_upload_root.mkdir(parents=True, exist_ok=True)
+        oda_root_patch = patch.object(upload_storage, "ODA_SANDBOX_ROOT", self.oda_upload_root)
+        upload = SimpleUploadedFile("notes.txt", b"Hello from ODA upload", content_type="text/plain")
+
+        with oda_root_patch:
+            response = self.client.post(
+                reverse("uploads_api"),
+                {"files": [upload], "tool_server_ids": ["oda"]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        public_file = response.json()["files"][0]
+        manifests = list(self.manifest_root.glob("*/*.manifest.json"))
+        self.assertEqual(len(manifests), 1)
+        private_manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+        self.assertTrue(private_manifest["sandbox_path"].startswith("/mnt/data/_sandbox/"))
+        self.assertIn("oda", private_manifest["recommended_tools"])
+        stored_files = list(self.oda_upload_root.glob(f"{private_manifest['sha256']}/*"))
+        self.assertEqual(len(stored_files), 1)
+        self.assertEqual(stored_files[0].read_bytes(), b"Hello from ODA upload")
+
+        with_sandbox = _load_model_upload_manifests([public_file["file_id"]], sandbox_enabled=True)[0]
+        self.assertEqual(with_sandbox["sandbox_path"], private_manifest["sandbox_path"])
 
     # Test model-facing upload manifests do not expose sandbox paths unless selected.
     def test_model_upload_manifest_respects_sandbox_selection(self):
@@ -642,6 +1376,8 @@ class UploadRoutingTests(SimpleTestCase):
             ("report.pdf", "application/pdf", ("document", "PDF document")),
             ("sheet.csv", "text/csv", ("table", "CSV table")),
             ("bundle.zip", "application/zip", ("archive", "ZIP archive")),
+            ("voice_note.mp3", "audio/mpeg", ("audio", "Audio")),
+            ("demo_clip.mp4", "video/mp4", ("video", "Video")),
             ("slides.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", ("presentation", "PowerPoint presentation")),
         ]
 
@@ -1624,6 +2360,70 @@ class ViewFormattingTests(SimpleTestCase):
             if segment.get("type") == "tool"
         ]
         self.assertEqual(files, ["a.txt", "b.txt"])
+
+
+class BrowserPortalApiTests(SimpleTestCase):
+    """Verify wait-for-user portal timing and finish signaling."""
+
+    def test_active_browser_portal_state_uses_deadline_when_available(self):
+        with patch("Apps.UI.views.time.time", return_value=1000.0):
+            self.assertFalse(
+                _is_active_browser_portal_state(
+                    {
+                        "status": "waiting",
+                        "updated_at": 999.0,
+                        "timeout_seconds": 45,
+                        "deadline_at": 980.0,
+                    }
+                )
+            )
+            self.assertTrue(
+                _is_active_browser_portal_state(
+                    {
+                        "status": "waiting",
+                        "updated_at": 500.0,
+                        "timeout_seconds": 45,
+                        "deadline_at": 1005.0,
+                    }
+                )
+            )
+
+    def test_finish_event_response_reports_done_and_queues_event(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "browser_portal"
+            events_dir = root / "events"
+            events_dir.mkdir(parents=True)
+            (root / "state.json").write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "status": "waiting",
+                        "session_id": "session-a",
+                        "updated_at": 999.0,
+                        "timeout_seconds": 45,
+                        "deadline_at": 1045.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("Apps.UI.views._browser_portal_roots", return_value=[root]):
+                with patch("Apps.UI.views.time.time", return_value=1000.0):
+                    response = Client().post(
+                        reverse("browser_portal_event_api"),
+                        data=json.dumps({"type": "finish", "session_id": "session-a"}),
+                        content_type="application/json",
+                    )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertTrue(payload["queued"])
+            self.assertEqual(payload["status"], "done")
+            queued_events = list(events_dir.glob("event_*.json"))
+            self.assertEqual(len(queued_events), 1)
+            queued_payload = json.loads(queued_events[0].read_text(encoding="utf-8"))
+            self.assertEqual(queued_payload["type"], "finish")
+            self.assertEqual(queued_payload["session_id"], "session-a")
 
 
 # Model metadata cache tests.

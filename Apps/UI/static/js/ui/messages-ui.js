@@ -1,11 +1,24 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
+import {
+  addSegmentCitationSources,
+  addSegmentsCitationSources,
+  createCitationRegistry,
+  decorateCitationsInHtml as decorateCitationHandlesInHtml,
+  normalizeCitationBrackets as normalizeCitationHandleBrackets,
+  normalizeCitationSpacing as normalizeCitationHandleSpacing
+} from './citations-ui.js';
+import { bindCitationPreviewCards } from './citation-preview-ui.js';
+
+// marked's default GFM `del` allows single-tilde pairs (~x~), which breaks ~ for "approximately".
+// GitHub-style strikethrough is ~~ only; install tokenizer override once.
+let markedStrikethroughDoubleTildeOnlyInstalled = false;
 
 // Message UI.
 // Create helpers for rendering messages, activity timelines, and message actions.
 export function createMessagesUi(context, dependencies) {
-  const { attachmentUi, toolInspector } = dependencies;
+  const { attachmentUi, browserPortalUi, toolInspector } = dependencies;
   const { dom, icons, state } = context;
   const MORE_LABEL = 'More';
   const HIDE_LABEL = 'Hide';
@@ -19,9 +32,22 @@ export function createMessagesUi(context, dependencies) {
   const SANDBOX_INPUT_PREVIEW_CHARS = 12000;
   const REASONING_CHUNK_TARGET_CHARS = 132;
   const REASONING_CHUNK_MAX_CHARS = 168;
-  const DOWNLOAD_FILE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="currentColor" aria-hidden="true"><path d="M480-320 280-520l56-58 104 104v-326h80v326l104-104 56 58-200 200ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z"/></svg>';
+  const DOWNLOAD_FILE_ICON = icons.DOWNLOAD_FILE_ICON || '';
+  const MEDIA_PLAY_ICON = icons.PLAY_ICON || '&#9658;';
+  const MEDIA_PAUSE_ICON = icons.PAUSE_ICON || '&#10073;&#10073;';
+  const MEDIA_VOLUME_ICON = icons.VOLUME_ICON || '';
+  const MEDIA_VOLUME_MUTED_ICON = icons.VOLUME_MUTED_ICON || MEDIA_VOLUME_ICON;
+  const MEDIA_FULLSCREEN_ICON = icons.FULLSCREEN_ICON || '';
+  const MEDIA_FULLSCREEN_EXIT_ICON = icons.FULLSCREEN_EXIT_ICON || MEDIA_FULLSCREEN_ICON;
+  const MEDIA_POPOUT_ICON = icons.POPOUT_ICON || '';
+  const MEDIA_DOCK_ICON = icons.DOCK_ICON || '';
+  const MEDIA_CLOSE_ICON = icons.CLOSE_ICON || '&times;';
+  const MEDIA_AUDIO_ICON = icons.AUDIO_FILE_ICON || '';
+  const MEDIA_VIDEO_ICON = icons.VIDEO_FILE_ICON || '';
   const loadedSandboxImageSrcs = new Set();
   const sandboxImageLoadStateBySrc = new Map();
+  const floatingMediaPlaceholders = new WeakMap();
+  const activeMediaFrameIds = new WeakMap();
   const HEAVY_TOOL_ARGUMENT_KEYS = {
     bash: ['stdin'],
     edit: ['content', 'new_str', 'old_str'],
@@ -43,6 +69,7 @@ export function createMessagesUi(context, dependencies) {
     '<analysis>',
     '</analysis>'
   ];
+  let mermaidRenderSeq = 0;
 
   // Composer state.
   // Sync both send buttons with the current generation and attachment state.
@@ -312,19 +339,59 @@ export function createMessagesUi(context, dependencies) {
     return result;
   }
 
-  function markdownCodeLanguage(codeEl) {
+  function markdownRawCodeLanguage(codeEl) {
     const classNames = String((codeEl && codeEl.className) || '');
     const match = classNames.match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)
       || classNames.match(/(?:^|\s)lang-([a-z0-9_+#.-]+)/i);
-    const normalized = normalizeHighlightLanguage(match ? match[1] : '');
+    return String(match ? match[1] : '').trim().toLowerCase();
+  }
+
+  function markdownCodeLanguage(codeEl) {
+    const normalized = normalizeHighlightLanguage(markdownRawCodeLanguage(codeEl));
     return normalized === 'plaintext' ? 'Code' : normalized.toUpperCase();
   }
 
   function markdownCodeHighlightLanguage(codeEl) {
-    const classNames = String((codeEl && codeEl.className) || '');
-    const match = classNames.match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)
-      || classNames.match(/(?:^|\s)lang-([a-z0-9_+#.-]+)/i);
-    return normalizeHighlightLanguage(match ? match[1] : '');
+    return normalizeHighlightLanguage(markdownRawCodeLanguage(codeEl));
+  }
+
+  function isMermaidCodeLanguage(codeEl) {
+    return markdownRawCodeLanguage(codeEl) === 'mermaid';
+  }
+
+  function safeMarkdownUrl(value) {
+    try {
+      const parsed = new URL(String(value || '').trim());
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  function linkifyInlineCodeUrls(template) {
+    template.content.querySelectorAll('code').forEach(function linkifyInlineCodeUrl(codeEl) {
+      if (codeEl.closest('pre, a')) {
+        return;
+      }
+
+      const rawText = String(codeEl.textContent || '').trim();
+      if (!rawText || /\s/.test(rawText)) {
+        return;
+      }
+
+      const url = safeMarkdownUrl(rawText);
+      if (!url) {
+        return;
+      }
+
+      const linkEl = document.createElement('a');
+      linkEl.className = 'md-inline-code-link';
+      linkEl.href = url;
+      linkEl.target = '_blank';
+      linkEl.rel = 'noopener noreferrer';
+      codeEl.parentNode.insertBefore(linkEl, codeEl);
+      linkEl.appendChild(codeEl);
+    });
   }
 
   function enhanceMarkdownCodeBlocks(html) {
@@ -334,9 +401,44 @@ export function createMessagesUi(context, dependencies) {
 
     const template = document.createElement('template');
     template.innerHTML = String(html || '');
+    linkifyInlineCodeUrls(template);
     template.content.querySelectorAll('pre > code').forEach(function wrapMarkdownCodeBlock(codeEl) {
       const preEl = codeEl.parentElement;
-      if (!preEl || preEl.closest('.md-code-card')) {
+      if (!preEl || preEl.closest('.md-code-card, .md-mermaid-card')) {
+        return;
+      }
+
+      if (isMermaidCodeLanguage(codeEl)) {
+        const source = codeEl.textContent || '';
+        const cardEl = document.createElement('div');
+        cardEl.className = 'md-mermaid-card';
+        cardEl.dataset.mermaidState = 'pending';
+
+        const headerEl = document.createElement('div');
+        headerEl.className = 'md-mermaid-head';
+        headerEl.innerHTML = `
+          <span class="md-code-lang">
+            <span class="md-code-icon" aria-hidden="true">&lt;&gt;</span>
+            <span>MERMAID</span>
+          </span>
+          <button type="button" class="md-code-copy-btn" title="Copy diagram source" aria-label="Copy diagram source">${icons.COPY_MESSAGE_ICON}</button>
+        `;
+
+        const canvasEl = document.createElement('div');
+        canvasEl.className = 'md-mermaid-canvas';
+        canvasEl.setAttribute('role', 'img');
+
+        const statusEl = document.createElement('div');
+        statusEl.className = 'md-mermaid-status';
+        statusEl.textContent = 'Rendering diagram...';
+
+        preEl.classList.add('md-mermaid-source');
+        preEl.parentNode.insertBefore(cardEl, preEl);
+        cardEl.appendChild(headerEl);
+        cardEl.appendChild(canvasEl);
+        cardEl.appendChild(statusEl);
+        cardEl.appendChild(preEl);
+        codeEl.textContent = source;
         return;
       }
 
@@ -368,22 +470,21 @@ export function createMessagesUi(context, dependencies) {
 
   // Render one visible text segment as sanitized HTML.
   function renderMarkdownSegment(content, citationSources) {
-    const hasCitationSources = citationSources && typeof citationSources === 'object' && Object.keys(citationSources).length > 0;
-    const normalizedContent = normalizeLooseDisplayLatex(normalizeCitationSpacing(normalizeCitationBrackets(content)));
-    const visibleContent = hasCitationSources
-      ? normalizedContent
-      : normalizedContent.replace(/\s*\[(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,12}-\d+)\]/gi, '');
+    const normalizedContent = normalizeLooseDisplayLatex(
+      normalizeCitationHandleSpacing(normalizeCitationHandleBrackets(content))
+    );
+    const visibleContent = normalizedContent;
     const latexBlocks = extractLatexBlocks(visibleContent);
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
       const fallbackHtml = restoreLatexPlaceholders(
-        decorateCitationsInHtml(escHtml(latexBlocks.text), citationSources),
+        decorateCitationHandlesInHtml(escHtml(latexBlocks.text), citationSources),
         latexBlocks.blocks
       );
       return enhanceMarkdownCodeBlocks(renderLatexInHtml(fallbackHtml));
     }
 
     const html = restoreLatexPlaceholders(
-      decorateCitationsInHtml(DOMPurify.sanitize(marked.parse(latexBlocks.text)), citationSources),
+      decorateCitationHandlesInHtml(DOMPurify.sanitize(marked.parse(latexBlocks.text)), citationSources),
       latexBlocks.blocks
     );
     return enhanceMarkdownCodeBlocks(renderLatexInHtml(html));
@@ -467,76 +568,8 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
-  function normalizeCitationId(value) {
-    return String(value || '').trim().replace(/^\[|\]$/g, '').toUpperCase();
-  }
 
-  function isCitationHandleId(value) {
-    return /^(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,12}-\d+)$/.test(normalizeCitationId(value));
-  }
 
-  function citationSourceForId(citationSources, sourceId) {
-    if (!citationSources || typeof citationSources !== 'object') {
-      return null;
-    }
-
-    const normalizedId = normalizeCitationId(sourceId);
-    return citationSources[normalizedId] || citationSources[sourceId] || citationSources[String(sourceId || '').toLowerCase()] || null;
-  }
-
-  function extractCitationIds(value, citationSources) {
-    const text = String(value || '');
-    const ids = [];
-    const seen = {};
-
-    function addId(candidate) {
-      const normalizedId = normalizeCitationId(String(candidate || '').replace(/^[^\w]+|[^\w-]+$/g, ''));
-      if (!normalizedId || seen[normalizedId]) {
-        return;
-      }
-      if (!isCitationHandleId(normalizedId) && !citationSourceForId(citationSources, normalizedId)) {
-        return;
-      }
-      seen[normalizedId] = true;
-      ids.push(normalizedId);
-    }
-
-    const broadHandlePattern = /\b(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,12}-\d+)\b/gi;
-    let match = broadHandlePattern.exec(text);
-    while (match) {
-      addId(match[0]);
-      match = broadHandlePattern.exec(text);
-    }
-
-    text.split(/[\s,;]+/).forEach(addId);
-    return ids;
-  }
-
-  function normalizeCitationBrackets(value) {
-    return String(value || '')
-      .replace(/[【［]/g, '[')
-      .replace(/[】］]/g, ']');
-  }
-
-  function normalizeCitationSpacing(value) {
-    return String(value || '').replace(
-      /([^\s\[(])\[((?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,12}-\d+)(\s*,\s*(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,12}-\d+))*)\]/gi,
-      '$1 [$2]'
-    );
-  }
-
-  function sourceDisplayDomain(source) {
-    const candidate = String(source.display_domain || source.domain || '').trim();
-    if (candidate) {
-      return candidate;
-    }
-
-    try {
-      return new URL(String(source.url || '')).hostname.replace(/^www\./i, '');
-    } catch (_error) {
-      return '';
-    }
-  }
 
   function safeExternalUrl(value) {
     const rawValue = String(value || '').trim();
@@ -613,117 +646,7 @@ export function createMessagesUi(context, dependencies) {
     return extraStyle ? `${base} ${extraStyle}` : base;
   }
 
-  function renderCitationChip(source, sourceId) {
-    const safeSource = source && typeof source === 'object' ? source : {};
-    const normalizedId = normalizeCitationId(sourceId || safeSource.id);
-    const sourceUrl = safeExternalUrl(safeSource.url);
-    if (!normalizedId) {
-      return escHtml(`[${normalizedId || sourceId}]`);
-    }
 
-    const domain = sourceDisplayDomain(safeSource) || normalizedId;
-    if (!sourceUrl && domain === normalizedId) {
-      return escHtml(`[${normalizedId || sourceId}]`);
-    }
-
-    const title = String(safeSource.title || domain || normalizedId).trim();
-    const faviconUrl = sourceFaviconUrl(safeSource);
-    const fallbackLetter = domain.charAt(0).toUpperCase();
-    const faviconHtml = faviconUrl
-      ? `<img class="msg-citation-favicon" src="${escapeAttributeValue(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
-      : '';
-    const fallbackStyle = domainAccentStyle(domain, faviconUrl ? 'display:none;' : '');
-    const tagName = sourceUrl ? 'a' : 'span';
-    const linkAttrs = sourceUrl
-      ? ` href="${escapeAttributeValue(sourceUrl)}" target="_blank" rel="noopener noreferrer"`
-      : '';
-
-    return `
-      <${tagName} class="msg-citation-chip" title="${escapeAttributeValue(title)}"${linkAttrs}>
-        ${faviconHtml}<span class="msg-citation-fallback" style="${escapeAttributeValue(fallbackStyle)}">${escHtml(fallbackLetter)}</span>
-        <span class="msg-citation-domain">${escHtml(domain)}</span>
-      </${tagName}>
-    `;
-  }
-
-  function decorateCitationsInHtml(html, citationSources) {
-    if (!citationSources || typeof citationSources !== 'object' || Object.keys(citationSources).length === 0) {
-      return html;
-    }
-
-    const template = document.createElement('template');
-    template.innerHTML = html;
-    const citationPattern = /\[\s*([^\]]+)\s*\]/gi;
-    const ignoredTags = new Set(['A', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA']);
-
-    function appendChip(fragment, source, sourceId) {
-      const chipTemplate = document.createElement('template');
-      chipTemplate.innerHTML = renderCitationChip(source, sourceId).trim();
-      fragment.appendChild(chipTemplate.content.cloneNode(true));
-    }
-
-    function walk(node) {
-      if (!node) {
-        return;
-      }
-
-      if (node.nodeType === Node.ELEMENT_NODE && ignoredTags.has(node.tagName)) {
-        return;
-      }
-
-      if (node.nodeType === Node.TEXT_NODE) {
-        const value = node.nodeValue || '';
-        const normalizedValue = normalizeCitationSpacing(normalizeCitationBrackets(value));
-        citationPattern.lastIndex = 0;
-        if (!citationPattern.test(normalizedValue)) {
-          return;
-        }
-
-        citationPattern.lastIndex = 0;
-        const fragment = document.createDocumentFragment();
-        let lastIndex = 0;
-        let match = citationPattern.exec(normalizedValue);
-
-        while (match) {
-          const inner = String(match[1] || '');
-          const sourceIds = extractCitationIds(inner, citationSources);
-          if (match.index > lastIndex) {
-            fragment.appendChild(document.createTextNode(normalizedValue.slice(lastIndex, match.index)));
-          }
-          sourceIds.forEach(function appendCitationById(sourceId, sourceIndex) {
-            const source = citationSourceForId(citationSources, sourceId);
-            if (!source) {
-              return;
-            }
-            if (sourceIndex > 0) {
-              fragment.appendChild(document.createTextNode(' '));
-            }
-            appendChip(fragment, source, sourceId);
-          });
-          if (!sourceIds.some(function hasRegisteredSource(sourceId) { return !!citationSourceForId(citationSources, sourceId); })) {
-            fragment.appendChild(document.createTextNode(match[0]));
-          }
-          lastIndex = match.index + match[0].length;
-          match = citationPattern.exec(normalizedValue);
-        }
-
-        if (lastIndex === 0) {
-          return;
-        }
-
-        if (lastIndex < normalizedValue.length) {
-          fragment.appendChild(document.createTextNode(normalizedValue.slice(lastIndex)));
-        }
-        node.parentNode.replaceChild(fragment, node);
-        return;
-      }
-
-      Array.from(node.childNodes).forEach(walk);
-    }
-
-    Array.from(template.content.childNodes).forEach(walk);
-    return template.innerHTML;
-  }
 
 
   // Activity parsing.
@@ -1620,41 +1543,16 @@ export function createMessagesUi(context, dependencies) {
   }
 
   function addSearchSourcesToCitationRegistry(registry, segment) {
-    searchSourcesFromSegment(segment).forEach(function registerSource(source) {
-      if (!source || typeof source !== 'object') {
-        return;
-      }
-
-      [
-        source.id,
-        source.source_id,
-        source.sourceId,
-        source.citation_id,
-        source.citationId,
-        source.citation_handle,
-        source.citationHandle,
-        source.handle
-      ].forEach(function registerSourceId(candidate) {
-        const sourceId = normalizeCitationId(candidate);
-        if (!isCitationHandleId(sourceId)) {
-          return;
-        }
-
-        const existing = registry[sourceId];
-        if (existing && safeExternalUrl(existing.url) && !safeExternalUrl(source.url)) {
-          return;
-        }
-        registry[sourceId] = source;
-      });
-    });
+    addSegmentCitationSources(registry, segment);
   }
 
   function addAllSearchSourcesToCitationRegistry(registry, segments) {
-    (Array.isArray(segments) ? segments : []).forEach(function registerSegmentSources(segment) {
-      if (segment && segment.type === 'tool' && isSearchToolSegment(segment)) {
-        addSearchSourcesToCitationRegistry(registry, segment);
-      }
-    });
+    addSegmentsCitationSources(
+      registry,
+      (Array.isArray(segments) ? segments : []).filter(function onlySearchToolSegment(segment) {
+        return segment && segment.type === 'tool' && isSearchToolSegment(segment);
+      })
+    );
   }
 
   function renderSourceChip(chip) {
@@ -2003,17 +1901,18 @@ export function createMessagesUi(context, dependencies) {
     }
 
     const path = asScalarText(file.path || file.file);
-    if (!path) {
+    const downloadUrl = asScalarText(file.download_url || file.downloadUrl || file.content_url || file.contentUrl || file.url);
+    if (!path && !downloadUrl) {
       return null;
     }
-    const filename = asScalarText(file.filename || file.name) || path.split(/[\\/]/).pop() || 'download';
+    const filename = asScalarText(file.filename || file.name) || String(path || downloadUrl).split(/[\\/]/).pop() || 'download';
     return {
       path,
       filename,
       mimeType: asScalarText(file.mime_type || file.mimeType || file.type),
       typeLabel: asScalarText(file.type_label || file.typeLabel || file.mime_type || file.mimeType) || 'File',
       sizeBytes: Number(file.size_bytes ?? file.sizeBytes ?? -1),
-      downloadUrl: asScalarText(file.download_url || file.downloadUrl),
+      downloadUrl,
       modelContext: asScalarText(file.model_context || file.modelContext),
       render: file.render && typeof file.render === 'object' ? file.render : null
     };
@@ -2037,6 +1936,9 @@ export function createMessagesUi(context, dependencies) {
   }
 
   function isSharedFileToolSegment(segment) {
+    if (isOdaToolSegment(segment)) {
+      return isOdaShareFileToolSegment(segment) || Boolean(sharedFileFromSegment(segment));
+    }
     if (sharedFileFromSegment(segment)) {
       return true;
     }
@@ -2120,15 +2022,24 @@ export function createMessagesUi(context, dependencies) {
       });
   }
 
-  function sharedFileDownloadUrl(file) {
+  function sharedFileDownloadUrl(file, options) {
     if (!file) {
       return '';
     }
     if (file.downloadUrl) {
       return file.downloadUrl;
     }
-    const query = `path=${encodeURIComponent(file.path)}&name=${encodeURIComponent(file.filename || 'download')}`;
-    return `/api/shared-file/download/?${query}`;
+    if (!file.path) {
+      return '';
+    }
+    const params = new URLSearchParams({
+      path: file.path,
+      name: file.filename || 'download'
+    });
+    if (options && options.preview) {
+      params.set('preview', '1');
+    }
+    return `/api/shared-file/download/?${params.toString()}`;
   }
 
   function sharedFileImageRender(file) {
@@ -2164,36 +2075,641 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
-  function renderSharedImageFileCard(file) {
-    const render = sharedFileImageRender(file);
-    if (!render) {
+  function normalizeAttachmentCardFile(file, options) {
+    const renderOptions = options || {};
+    if (!file) {
+      return null;
+    }
+    if (renderOptions.source === 'shared_file') {
+      return file;
+    }
+    return attachmentUi.normalizeAttachment(file);
+  }
+
+  function attachmentFilename(file) {
+    return String((file && (file.filename || file.name)) || 'File').trim() || 'File';
+  }
+
+  function attachmentMimeType(file) {
+    return String((file && (file.mimeType || file.mime_type || file.type)) || '').trim().toLowerCase();
+  }
+
+  function attachmentTypeLabel(file) {
+    const rawLabel = String((file && (file.typeLabel || file.type_label || file.mimeType || file.mime_type)) || '').trim();
+    if (rawLabel && rawLabel.toLowerCase() !== 'file') {
+      return rawLabel;
+    }
+    const displayKind = inferredAttachmentDisplayKind(file);
+    if (displayKind === 'audio') {
+      return 'Audio';
+    }
+    if (displayKind === 'video') {
+      return 'Video';
+    }
+    if (displayKind === 'image') {
+      return 'Image';
+    }
+    return rawLabel || 'File';
+  }
+
+  function attachmentSizeBytes(file) {
+    return Number(file && (file.sizeBytes ?? file.size_bytes ?? file.size ?? -1));
+  }
+
+  function attachmentSourceUrl(file, options) {
+    const renderOptions = options || {};
+    if (!file) {
       return '';
     }
-    const href = sharedFileDownloadUrl(file);
-    const width = Number(render.width);
-    const height = Number(render.height);
+    if (renderOptions.source === 'shared_file') {
+      return sharedFileDownloadUrl(file, { preview: true });
+    }
+    return String(file.dataUrl || file.previewDataUrl || file.contentUrl || '').trim();
+  }
+
+  function attachmentDownloadUrl(file, options) {
+    const renderOptions = options || {};
+    if (!file) {
+      return '';
+    }
+    if (renderOptions.source === 'shared_file') {
+      return sharedFileDownloadUrl(file);
+    }
+    return String(file.contentUrl || (!/^data:/i.test(file.dataUrl || '') ? file.dataUrl : '') || '').trim();
+  }
+
+  function attachmentDisplayKind(file) {
+    return String((file && (file.displayKind || file.display_kind || file.kind)) || '').trim().toLowerCase();
+  }
+
+  function isAudioAttachment(file) {
+    const mimeType = attachmentMimeType(file);
+    const filename = attachmentFilename(file).toLowerCase();
+    const displayKind = attachmentDisplayKind(file);
+    return displayKind === 'audio'
+      || mimeType.startsWith('audio/')
+      || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)$/i.test(filename);
+  }
+
+  function isVideoAttachment(file) {
+    const mimeType = attachmentMimeType(file);
+    const filename = attachmentFilename(file).toLowerCase();
+    const displayKind = attachmentDisplayKind(file);
+    return displayKind === 'video'
+      || mimeType.startsWith('video/')
+      || /\.(mp4|webm|mov|m4v|ogv|avi|mkv)$/i.test(filename);
+  }
+
+  function isImageAttachment(file) {
+    const mimeType = attachmentMimeType(file);
+    const filename = attachmentFilename(file).toLowerCase();
+    const displayKind = attachmentDisplayKind(file);
+    return displayKind === 'image'
+      || mimeType.startsWith('image/')
+      || /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i.test(filename);
+  }
+
+  function mediaMetaText(file) {
+    const typeLabel = attachmentTypeLabel(file);
+    const sizeText = formatByteSize(attachmentSizeBytes(file));
+    return [typeLabel, sizeText].filter(Boolean).join(' / ');
+  }
+
+  function renderAttachmentDownloadButton(file, options, className) {
+    const href = attachmentDownloadUrl(file, options);
+    if (!href) {
+      return '';
+    }
+    return `
+      <a class="${className || 'msg-media-download'}" href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(attachmentFilename(file))}" title="Download" aria-label="Download ${escapeAttributeValue(attachmentFilename(file))}">
+        ${DOWNLOAD_FILE_ICON}
+      </a>
+    `;
+  }
+
+  function renderImageAttachmentCard(file, options) {
+    const renderOptions = options || {};
+    const sharedRender = renderOptions.source === 'shared_file' ? sharedFileImageRender(file) : null;
+    const src = sharedRender ? sharedRender.src : attachmentSourceUrl(file, renderOptions);
+    if (!src) {
+      return renderGenericAttachmentCard(file, renderOptions);
+    }
+    const filename = attachmentFilename(file);
+    const width = Number(sharedRender && sharedRender.width);
+    const height = Number(sharedRender && sharedRender.height);
     const hasDimensions = Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
-    const metaParts = [
-      formatByteSize(file.sizeBytes),
+    const details = [
+      formatByteSize(attachmentSizeBytes(file)),
       hasDimensions ? `${Math.round(width)}x${Math.round(height)}` : '',
-      render.mimeType || file.typeLabel
-    ].filter(Boolean);
-    const altText = file.filename ? `Preview for ${file.filename}` : 'Shared image preview';
+      (sharedRender && sharedRender.mimeType) || attachmentTypeLabel(file)
+    ].filter(Boolean).join(' / ');
+    const href = attachmentDownloadUrl(file, renderOptions) || src;
+    const tagName = href ? 'a' : 'span';
+    const hrefAttr = href ? ` href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(filename)}"` : '';
 
     return `
-      <a class="msg-shared-image-card" href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(file.filename)}">
+      <${tagName} class="msg-attachment-card msg-image-card${renderOptions.source === 'shared_file' ? ' msg-shared-image-card' : ''}"${hrefAttr}>
         <span class="msg-shared-image-preview">
-          <img class="msg-shared-image" src="${escapeAttributeValue(render.src)}" alt="${escapeAttributeValue(altText)}" loading="lazy">
+          <img class="msg-shared-image" src="${escapeAttributeValue(src)}" alt="${escapeAttributeValue(filename ? `Preview for ${filename}` : 'Attached image')}" loading="lazy">
         </span>
         <span class="msg-shared-image-footer">
           <span class="msg-shared-image-meta">
-            <span class="msg-shared-image-name">${escHtml(file.filename)}</span>
-            <span class="msg-shared-image-details" data-shared-image-details="${escapeAttributeValue(metaParts.join(' / '))}">${escHtml(metaParts.join(' / '))}</span>
+            <span class="msg-shared-image-name">${escHtml(filename)}</span>
+            <span class="msg-shared-image-details">${escHtml(details)}</span>
           </span>
-          <span class="msg-shared-image-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>
+          ${href ? `<span class="msg-shared-image-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>` : ''}
         </span>
-      </a>
+      </${tagName}>
     `;
+  }
+
+  function renderGenericAttachmentCard(file, options) {
+    const renderOptions = options || {};
+    const filename = attachmentFilename(file);
+    const href = attachmentDownloadUrl(file, renderOptions);
+    const tagName = href ? 'a' : 'div';
+    const hrefAttr = href ? ` href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(filename)}"` : '';
+    const badgeLabel = inferredAttachmentDisplayKind(file).toUpperCase();
+
+    return `
+      <${tagName} class="msg-file-chip msg-attachment-card msg-shared-file-card"${hrefAttr}>
+        <span class="msg-shared-file-badge" aria-hidden="true">${escHtml(badgeLabel.slice(0, 6) || 'FILE')}</span>
+        <span class="msg-shared-file-main">
+          <span class="msg-file-name">${escHtml(filename)}</span>
+          <span class="msg-file-meta">${escHtml(mediaMetaText(file))}</span>
+        </span>
+        ${href ? `<span class="msg-shared-file-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>` : ''}
+      </${tagName}>
+    `;
+  }
+
+  function inferredAttachmentDisplayKind(file) {
+    let displayKind = attachmentDisplayKind(file);
+    if (!displayKind || displayKind === 'file') {
+      if (isAudioAttachment(file)) {
+        displayKind = 'audio';
+      } else if (isVideoAttachment(file)) {
+        displayKind = 'video';
+      } else if (isImageAttachment(file)) {
+        displayKind = 'image';
+      } else {
+        displayKind = 'file';
+      }
+    }
+    return displayKind;
+  }
+
+  function renderUserUploadAttachmentChip(file) {
+    const filename = attachmentFilename(file);
+    const badgeLabel = inferredAttachmentDisplayKind(file).toUpperCase();
+
+    return `
+      <div class="msg-upload-file-chip msg-attachment-card">
+        <span class="msg-upload-file-badge" aria-hidden="true">${escHtml(badgeLabel.slice(0, 6) || 'FILE')}</span>
+        <span class="msg-upload-file-main">
+          <span class="msg-upload-file-name">${escHtml(filename)}</span>
+          <span class="msg-upload-file-meta">${escHtml(mediaMetaText(file))}</span>
+        </span>
+      </div>
+    `;
+  }
+
+  function renderAudioAttachmentCard(file, options) {
+    const renderOptions = options || {};
+    const src = attachmentSourceUrl(file, renderOptions);
+    const filename = attachmentFilename(file);
+    const disabledClass = src ? '' : ' is-unavailable';
+
+    return `
+      <div class="msg-attachment-card msg-media-card msg-audio-card${disabledClass}" data-media-card data-media-type="audio">
+        ${src ? `<audio class="msg-media-native" preload="metadata" src="${escapeAttributeValue(src)}"></audio>` : ''}
+        <div class="msg-audio-control">
+          <button class="msg-media-play-btn" type="button" data-media-action="toggle" aria-label="Play audio"${src ? '' : ' disabled'}>
+            ${MEDIA_PLAY_ICON}
+          </button>
+        </div>
+        <div class="msg-media-main">
+          <div class="msg-media-kicker">
+            <span class="msg-media-type-pill">AUDIO</span>
+          </div>
+          <div class="msg-media-name">${escHtml(filename)}</div>
+          <div class="msg-media-meta">${escHtml(mediaMetaText(file))}</div>
+          <div class="msg-audio-progress-row">
+            <span class="msg-media-time msg-audio-time" data-media-time>0:00 / --:--</span>
+            <input class="msg-media-range" type="range" min="0" max="1000" value="0" step="1" data-media-action="seek" aria-label="Audio progress"${src ? '' : ' disabled'}>
+          </div>
+        </div>
+        ${renderAttachmentDownloadButton(file, renderOptions, 'msg-media-download')}
+      </div>
+    `;
+  }
+
+  function renderVideoAttachmentCard(file, options) {
+    const renderOptions = options || {};
+    const src = attachmentSourceUrl(file, renderOptions);
+    const filename = attachmentFilename(file);
+    const disabledClass = src ? '' : ' is-unavailable';
+
+    return `
+      <div class="msg-attachment-card msg-media-card msg-video-card${disabledClass}" data-media-card data-media-type="video">
+        <div class="msg-video-viewport">
+          ${src ? `<video class="msg-media-native" preload="metadata" src="${escapeAttributeValue(src)}"></video>` : '<div class="msg-video-empty">Video preview unavailable</div>'}
+          <button class="msg-video-center-play" type="button" data-media-action="toggle" aria-label="Play video"${src ? '' : ' disabled'}>
+            ${MEDIA_PLAY_ICON}
+          </button>
+          <div class="msg-video-controls">
+            <button class="msg-media-icon-btn" type="button" data-media-action="toggle" aria-label="Play video"${src ? '' : ' disabled'}>${MEDIA_PLAY_ICON}</button>
+            <span class="msg-media-time" data-media-current>0:00</span>
+            <input class="msg-media-range" type="range" min="0" max="1000" value="0" step="1" data-media-action="seek" aria-label="Video progress"${src ? '' : ' disabled'}>
+            <span class="msg-media-time" data-media-duration>--:--</span>
+            <button class="msg-media-icon-btn" type="button" data-media-action="mute" aria-label="Mute video"${src ? '' : ' disabled'}>${MEDIA_VOLUME_ICON}</button>
+            <button class="msg-media-icon-btn" type="button" data-media-action="fullscreen" aria-label="Fullscreen"${src ? '' : ' disabled'}>${MEDIA_FULLSCREEN_ICON}</button>
+            <button class="msg-media-icon-btn msg-media-popout-btn" type="button" data-media-action="popout" aria-label="Open mini player"${src ? '' : ' disabled'}>${MEDIA_POPOUT_ICON}</button>
+            <button class="msg-media-icon-btn msg-media-dock-btn" type="button" data-media-action="dock" aria-label="Return to message">${MEDIA_DOCK_ICON}</button>
+            <button class="msg-media-icon-btn msg-media-close-btn" type="button" data-media-action="close-floating" aria-label="Close mini player">${MEDIA_CLOSE_ICON}</button>
+          </div>
+        </div>
+        <div class="msg-media-info">
+          <span class="msg-media-type-badge" aria-hidden="true">${MEDIA_VIDEO_ICON || 'VIDEO'}</span>
+          <span class="msg-media-copy">
+            <span class="msg-media-name">${escHtml(filename)}</span>
+            <span class="msg-media-meta">${escHtml(mediaMetaText(file))}</span>
+          </span>
+          ${renderAttachmentDownloadButton(file, renderOptions, 'msg-media-download')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderAttachmentCard(file, options) {
+    const renderOptions = options || {};
+    const normalized = normalizeAttachmentCardFile(file, renderOptions);
+    if (!normalized) {
+      return '';
+    }
+    if (renderOptions.source === 'upload' && renderOptions.side === 'user') {
+      return renderUserUploadAttachmentChip(normalized);
+    }
+    if (isAudioAttachment(normalized)) {
+      return renderAudioAttachmentCard(normalized, renderOptions);
+    }
+    if (isVideoAttachment(normalized)) {
+      return renderVideoAttachmentCard(normalized, renderOptions);
+    }
+    if (isImageAttachment(normalized)) {
+      return renderImageAttachmentCard(normalized, renderOptions);
+    }
+    return renderGenericAttachmentCard(normalized, renderOptions);
+  }
+
+  function renderMessageAttachments(attachments, options) {
+    const cards = (attachments || [])
+      .map(function renderOneAttachment(attachment) {
+        return renderAttachmentCard(attachment, options);
+      })
+      .filter(function hasCard(card) {
+        return !!String(card || '').trim();
+      });
+    if (!cards.length) {
+      return '';
+    }
+    return `<div class="msg-attachments msg-attachments--${escapeAttributeValue((options && options.side) || 'message')}">${cards.join('')}</div>`;
+  }
+
+  function formatMediaTime(seconds) {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value < 0) {
+      return '--:--';
+    }
+    const whole = Math.floor(value);
+    const minutes = Math.floor(whole / 60);
+    const remainingSeconds = whole % 60;
+    return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+  }
+
+  function mediaElementFromCard(card) {
+    return card ? card.querySelector('audio, video') : null;
+  }
+
+  function bufferedProgressPercent(media, duration, progressPercent) {
+    const buffered = media && media.buffered;
+    if (!buffered || !Number.isFinite(duration) || duration <= 0) {
+      return progressPercent;
+    }
+
+    let bufferedEnd = 0;
+    const currentTime = Number(media.currentTime) || 0;
+    for (let index = 0; index < buffered.length; index += 1) {
+      const start = buffered.start(index);
+      const end = buffered.end(index);
+      if (start <= currentTime && currentTime <= end) {
+        bufferedEnd = Math.max(bufferedEnd, end);
+      } else {
+        bufferedEnd = Math.max(bufferedEnd, end);
+      }
+    }
+    return Math.max(progressPercent, Math.min(100, (bufferedEnd / duration) * 100));
+  }
+
+  function stopMediaFrameSync(card) {
+    const frameId = activeMediaFrameIds.get(card);
+    if (frameId) {
+      window.cancelAnimationFrame(frameId);
+      activeMediaFrameIds.delete(card);
+    }
+  }
+
+  function startMediaFrameSync(card) {
+    if (!card || activeMediaFrameIds.has(card)) {
+      return;
+    }
+
+    function syncFrame() {
+      const media = mediaElementFromCard(card);
+      syncMediaCard(card);
+      if (media && !media.paused && !media.ended) {
+        activeMediaFrameIds.set(card, window.requestAnimationFrame(syncFrame));
+      } else {
+        activeMediaFrameIds.delete(card);
+      }
+    }
+
+    activeMediaFrameIds.set(card, window.requestAnimationFrame(syncFrame));
+  }
+
+  function syncMediaCard(card) {
+    const media = mediaElementFromCard(card);
+    if (!card || !media) {
+      return;
+    }
+    const isPlaying = !media.paused && !media.ended;
+    const duration = Number(media.duration);
+    const currentTime = Number(media.currentTime);
+    const hasDuration = Number.isFinite(duration) && duration > 0;
+    const progressValue = hasDuration ? Math.max(0, Math.min(1000, Math.round((currentTime / duration) * 1000))) : 0;
+    const progressPercent = progressValue / 10;
+    const bufferedPercent = bufferedProgressPercent(media, duration, progressPercent);
+    const playIcon = isPlaying ? MEDIA_PAUSE_ICON : MEDIA_PLAY_ICON;
+
+    card.classList.toggle('is-playing', isPlaying);
+    card.style.setProperty('--media-progress', `${progressPercent}%`);
+    card.style.setProperty('--media-buffered', `${bufferedPercent}%`);
+    card.querySelectorAll('[data-media-action="toggle"]').forEach(function syncToggle(button) {
+      button.innerHTML = playIcon;
+      button.setAttribute('aria-label', isPlaying ? 'Pause media' : 'Play media');
+    });
+    card.querySelectorAll('[data-media-action="mute"]').forEach(function syncMute(button) {
+      button.innerHTML = media.muted || media.volume === 0 ? MEDIA_VOLUME_MUTED_ICON : MEDIA_VOLUME_ICON;
+      button.setAttribute('aria-label', media.muted || media.volume === 0 ? 'Unmute media' : 'Mute media');
+    });
+    card.querySelectorAll('[data-media-action="seek"]').forEach(function syncRange(range) {
+      if (document.activeElement !== range) {
+        range.value = String(progressValue);
+      }
+      range.disabled = !hasDuration;
+    });
+    card.querySelectorAll('[data-media-current]').forEach(function syncCurrent(node) {
+      node.textContent = formatMediaTime(currentTime);
+    });
+    card.querySelectorAll('[data-media-duration]').forEach(function syncDuration(node) {
+      node.textContent = formatMediaTime(duration);
+    });
+    card.querySelectorAll('[data-media-time]').forEach(function syncCombined(node) {
+      node.textContent = `${formatMediaTime(currentTime)} / ${formatMediaTime(duration)}`;
+    });
+    syncFullscreenControls(card);
+  }
+
+  function previewMediaSeek(card, value) {
+    const media = mediaElementFromCard(card);
+    const duration = Number(media && media.duration);
+    if (!card || !Number.isFinite(duration) || duration <= 0) {
+      return;
+    }
+    const progressValue = Math.max(0, Math.min(1000, Number(value) || 0));
+    const progressPercent = progressValue / 10;
+    const seekTime = (progressValue / 1000) * duration;
+    card.style.setProperty('--media-progress', `${progressPercent}%`);
+    card.style.setProperty('--media-buffered', `${bufferedProgressPercent(media, duration, progressPercent)}%`);
+    card.querySelectorAll('[data-media-current]').forEach(function syncCurrent(node) {
+      node.textContent = formatMediaTime(seekTime);
+    });
+    card.querySelectorAll('[data-media-time]').forEach(function syncCombined(node) {
+      node.textContent = `${formatMediaTime(seekTime)} / ${formatMediaTime(duration)}`;
+    });
+  }
+
+  function forcePauseMedia(card, media) {
+    if (!card || !media) {
+      return;
+    }
+    card._mediaWantsPaused = true;
+    stopMediaFrameSync(card);
+    media.pause();
+    syncMediaCard(card);
+  }
+
+  function forcePlayMedia(card, media) {
+    if (!card || !media) {
+      return;
+    }
+    card._mediaWantsPaused = false;
+    const playResult = media.play();
+    if (playResult && typeof playResult.then === 'function') {
+      playResult
+        .then(function afterPlay() {
+          if (!card._mediaWantsPaused && !media.paused && !media.ended) {
+            startMediaFrameSync(card);
+          }
+        })
+        .catch(function ignorePlayError() {
+          syncMediaCard(card);
+        });
+    } else {
+      startMediaFrameSync(card);
+    }
+    syncMediaCard(card);
+  }
+
+  function toggleMediaCard(card) {
+    const media = mediaElementFromCard(card);
+    if (!media) {
+      return;
+    }
+    if (media.paused || media.ended) {
+      forcePlayMedia(card, media);
+    } else {
+      forcePauseMedia(card, media);
+    }
+  }
+
+  function commitMediaSeek(range) {
+    const card = range && range.closest('[data-media-card]');
+    const media = mediaElementFromCard(card);
+    if (!media || !Number.isFinite(media.duration) || media.duration <= 0) {
+      return;
+    }
+    const shouldResume = !card._mediaWantsPaused && !media.paused && !media.ended;
+    media.currentTime = (Number(range.value) / 1000) * media.duration;
+    if (shouldResume) {
+      forcePlayMedia(card, media);
+    } else {
+      syncMediaCard(card);
+    }
+  }
+
+  function syncFullscreenControls(card) {
+    if (!card) {
+      return;
+    }
+    const viewport = card.querySelector('.msg-video-viewport');
+    const isFullscreen = !!viewport && document.fullscreenElement === viewport;
+    card.classList.toggle('is-fullscreen', isFullscreen);
+    card.querySelectorAll('[data-media-action="fullscreen"]').forEach(function syncFullscreen(button) {
+      button.innerHTML = isFullscreen ? MEDIA_FULLSCREEN_EXIT_ICON : MEDIA_FULLSCREEN_ICON;
+      button.setAttribute('aria-label', isFullscreen ? 'Exit fullscreen' : 'Fullscreen');
+      button.setAttribute('title', isFullscreen ? 'Exit fullscreen' : 'Fullscreen');
+    });
+  }
+
+  function ensureFloatingMediaRoot() {
+    let root = document.getElementById('floating-media-root');
+    if (!root) {
+      root = document.createElement('div');
+      root.id = 'floating-media-root';
+      document.body.appendChild(root);
+    }
+    return root;
+  }
+
+  function openFloatingVideoCard(card) {
+    if (!card || card.classList.contains('is-floating')) {
+      return;
+    }
+    const placeholder = document.createElement('div');
+    placeholder.className = 'video-inline-placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+    placeholder.style.height = `${Math.max(96, Math.round(card.getBoundingClientRect().height || 0))}px`;
+    card.replaceWith(placeholder);
+    floatingMediaPlaceholders.set(card, placeholder);
+    ensureFloatingMediaRoot().appendChild(card);
+    card.classList.add('is-floating');
+  }
+
+  function dockFloatingVideoCard(card) {
+    if (!card || !card.classList.contains('is-floating')) {
+      return;
+    }
+    const placeholder = floatingMediaPlaceholders.get(card);
+    if (placeholder && placeholder.parentNode) {
+      placeholder.replaceWith(card);
+    } else {
+      dom.$messagesInner.append(card);
+    }
+    floatingMediaPlaceholders.delete(card);
+    card.classList.remove('is-floating');
+  }
+
+  function closeFloatingVideoCard(card) {
+    const media = mediaElementFromCard(card);
+    forcePauseMedia(card, media);
+    dockFloatingVideoCard(card);
+  }
+
+  function bindAttachmentMediaEvents() {
+    $(document)
+      .on('click.mediaAttachments', '[data-media-card] [data-media-action="toggle"]', function onMediaToggle(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        const card = this.closest('[data-media-card]');
+        toggleMediaCard(card);
+      })
+      .on('input.mediaAttachments', '[data-media-card] [data-media-action="seek"]', function onMediaSeekPreview() {
+        previewMediaSeek(this.closest('[data-media-card]'), this.value);
+      })
+      .on('change.mediaAttachments', '[data-media-card] [data-media-action="seek"]', function onMediaSeek() {
+        commitMediaSeek(this);
+      })
+      .on('pointerup.mediaAttachments', '[data-media-card] [data-media-action="seek"]', function onMediaSeekPointerUp() {
+        commitMediaSeek(this);
+      })
+      .on('keydown.mediaAttachments', '[data-media-card] [data-media-action="seek"]', function onMediaSeekKey(event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          commitMediaSeek(this);
+        }
+      })
+      .on('click.mediaAttachments', '[data-media-card] [data-media-action="mute"]', function onMediaMute(event) {
+        event.preventDefault();
+        const card = this.closest('[data-media-card]');
+        const media = mediaElementFromCard(card);
+        if (!media) {
+          return;
+        }
+        media.muted = !media.muted;
+        syncMediaCard(card);
+      })
+      .on('click.mediaAttachments', '[data-media-card] [data-media-action="fullscreen"]', function onMediaFullscreen(event) {
+        event.preventDefault();
+        const card = this.closest('[data-media-card]');
+        const target = card && card.querySelector('.msg-video-viewport');
+        if (!target) {
+          return;
+        }
+        if (document.fullscreenElement === target && document.exitFullscreen) {
+          document.exitFullscreen().catch(function ignoreFullscreenExitError() {});
+          return;
+        }
+        if (target.requestFullscreen) {
+          target.requestFullscreen()
+            .then(function afterFullscreen() { syncFullscreenControls(card); })
+            .catch(function ignoreFullscreenError() {});
+        }
+      })
+      .on('click.mediaAttachments', '[data-media-card] [data-media-action="popout"]', function onMediaPopout(event) {
+        event.preventDefault();
+        openFloatingVideoCard(this.closest('.msg-video-card'));
+      })
+      .on('click.mediaAttachments', '[data-media-card] [data-media-action="dock"]', function onMediaDock(event) {
+        event.preventDefault();
+        dockFloatingVideoCard(this.closest('.msg-video-card'));
+      })
+      .on('click.mediaAttachments', '[data-media-card] [data-media-action="close-floating"]', function onMediaClose(event) {
+        event.preventDefault();
+        closeFloatingVideoCard(this.closest('.msg-video-card'));
+      })
+      .on('loadedmetadata.mediaAttachments progress.mediaAttachments canplay.mediaAttachments waiting.mediaAttachments seeking.mediaAttachments seeked.mediaAttachments play.mediaAttachments pause.mediaAttachments volumechange.mediaAttachments ended.mediaAttachments', '[data-media-card] audio, [data-media-card] video', function onMediaStateChange(event) {
+        const card = this.closest('[data-media-card]');
+        if (event.type === 'play') {
+          card._mediaWantsPaused = false;
+          startMediaFrameSync(card);
+        } else if (event.type === 'pause' || event.type === 'ended') {
+          card._mediaWantsPaused = true;
+          stopMediaFrameSync(card);
+        }
+        syncMediaCard(card);
+      })
+      .on('timeupdate.mediaAttachments', '[data-media-card] audio, [data-media-card] video', function onMediaTimeUpdate() {
+        // Throttle progress updates to one repaint per animation frame per card
+        // to avoid hammering conic-gradient / CSS custom-property recalculations.
+        const card = this.closest('[data-media-card]');
+        if (!card || card._rafPending) { return; }
+        card._rafPending = true;
+        requestAnimationFrame(function rafSync() {
+          card._rafPending = false;
+          syncMediaCard(card);
+        });
+      });
+    document.addEventListener('fullscreenchange', function onMediaFullscreenChange() {
+      document.querySelectorAll('[data-media-card]').forEach(syncFullscreenControls);
+    });
+  }
+
+  function renderSharedImageFileCard(file) {
+    return renderAttachmentCard(file, {
+      side: 'assistant',
+      source: 'shared_file',
+      mode: 'message'
+    });
   }
 
   function renderSharedFileCard(segment) {
@@ -2209,26 +2725,11 @@ export function createMessagesUi(context, dependencies) {
       return renderReasoningToolRow(segment);
     }
 
-    const sizeText = formatByteSize(normalized.sizeBytes);
-    const metaParts = [normalized.typeLabel];
-    if (sizeText) {
-      metaParts.push(sizeText);
-    }
-    const href = sharedFileDownloadUrl(normalized);
-    const renderedImageCard = renderSharedImageFileCard(normalized);
-    if (renderedImageCard) {
-      return renderedImageCard;
-    }
-    return `
-      <a class="msg-file-chip msg-shared-file-card" href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(normalized.filename)}">
-        <span class="msg-shared-file-badge" aria-hidden="true">FILE</span>
-        <span class="msg-shared-file-main">
-          <span class="msg-file-name">${escHtml(normalized.filename)}</span>
-          <span class="msg-file-meta">${escHtml(metaParts.filter(Boolean).join(' · '))}</span>
-        </span>
-        <span class="msg-shared-file-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>
-      </a>
-    `;
+    return renderAttachmentCard(normalized, {
+      side: 'assistant',
+      source: 'shared_file',
+      mode: 'message'
+    });
   }
 
   function collectPinnedSharedFileCards(segments) {
@@ -2248,7 +2749,7 @@ export function createMessagesUi(context, dependencies) {
         continue;
       }
       seen[dedupeKey] = true;
-      cards.push(renderSharedFileCard(segment));
+      cards.push(isOdaToolSegment(segment) ? renderOdaSharedFileCard(segment) : renderSharedFileCard(segment));
     }
     return cards.filter(function filterCard(card) {
       return !!String(card || '').trim();
@@ -2513,6 +3014,9 @@ export function createMessagesUi(context, dependencies) {
     if (isEditToolSegment(segment)) {
       return HEAVY_TOOL_ARGUMENT_KEYS.edit;
     }
+    if (isOdaPythonToolSegment(segment)) {
+      return HEAVY_TOOL_ARGUMENT_KEYS.bash;
+    }
     if (isSandboxToolSegment(segment)) {
       return HEAVY_TOOL_ARGUMENT_KEYS.bash;
     }
@@ -2530,8 +3034,59 @@ export function createMessagesUi(context, dependencies) {
     ].join(' ').toLowerCase();
   }
 
+  function toolServerId(segment) {
+    return String(segment && segment.serverId || '').trim().toLowerCase();
+  }
+
+  function isOdaToolSegment(segment) {
+    const serverId = toolServerId(segment);
+    if (serverId === 'oda') {
+      return true;
+    }
+    const alias = String(segment && segment.alias || '').trim().toLowerCase();
+    return alias.startsWith('oda__');
+  }
+
+  function isMcpSandboxToolSegment(segment) {
+    const serverId = toolServerId(segment);
+    if (serverId === 'sandbox') {
+      return true;
+    }
+    const alias = String(segment && segment.alias || '').trim().toLowerCase();
+    return alias.startsWith('sandbox__');
+  }
+
+  function isOdaPythonToolSegment(segment) {
+    if (!isOdaToolSegment(segment)) {
+      return false;
+    }
+    const toolId = String(segment && segment.toolId || '').trim().toLowerCase();
+    return toolId === 'oda_python' || toolId === 'sandbox_python';
+  }
+
+  function isOdaShareFileToolSegment(segment) {
+    if (!isOdaToolSegment(segment)) {
+      return false;
+    }
+    const toolId = String(segment && segment.toolId || '').trim().toLowerCase();
+    return toolId === 'oda_share_file' || toolId === 'share_file';
+  }
+
   function isSandboxToolSegment(segment) {
-    return /sandbox|python|bash|shell|exec|code|deep[-_\s]?think|container/.test(toolIdentityText(segment));
+    if (isOdaToolSegment(segment)) {
+      return false;
+    }
+    if (isMcpSandboxToolSegment(segment)) {
+      const toolId = String(segment && segment.toolId || '').trim().toLowerCase();
+      if (['bash', 'write', 'edit', 'view_image', 'share_file'].includes(toolId)) {
+        return true;
+      }
+    }
+    const identity = toolIdentityText(segment);
+    if (/\boda\b/.test(identity)) {
+      return false;
+    }
+    return /sandbox|bash|shell|exec|deep[-_\s]?think|container/.test(identity);
   }
 
   function parseSandboxResult(segment) {
@@ -2571,6 +3126,55 @@ export function createMessagesUi(context, dependencies) {
         raw: rawResult
       };
     }
+  }
+
+  function parseOdaResult(segment) {
+    const rawResult = segment && segment.result !== null && segment.result !== undefined
+      ? String(segment.result)
+      : '';
+    if (!rawResult) {
+      return {
+        ok: null,
+        exitCode: null,
+        stdout: '',
+        stderr: '',
+        raw: ''
+      };
+    }
+
+    const exitMatch = rawResult.match(/^exit_code:\s*(\S+)/m);
+    const exitToken = exitMatch ? String(exitMatch[1]).trim() : null;
+    const exitCode = exitToken && exitToken !== 'error' ? exitToken : null;
+    let ok = null;
+    if (exitToken === '0') {
+      ok = true;
+    } else if (exitToken && exitToken !== 'error') {
+      ok = false;
+    } else if (exitToken === 'error') {
+      ok = false;
+    }
+
+    const stdoutMatch = rawResult.match(/stdout:\n([\s\S]*?)(?=\n\nstderr:|\n\nshared_files:|\n\nfile_bridge:|$)/);
+    const stderrMatch = rawResult.match(/stderr:\n([\s\S]*?)(?=\n\nshared_files:|\n\nfile_bridge:|$)/);
+    const stdout = stdoutMatch ? stdoutMatch[1].replace(/\s+$/, '') : '';
+    const stderr = stderrMatch ? stderrMatch[1].replace(/\s+$/, '') : '';
+
+    if (!stdout && !stderr && !exitMatch) {
+      return parseSandboxResult(segment);
+    }
+
+    return {
+      ok,
+      exitCode,
+      stdout,
+      stderr,
+      raw: rawResult
+    };
+  }
+
+  function odaInputText(segment) {
+    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    return String(args.code || args.command || args.cmd || args.input || '');
   }
 
   function sandboxInputText(segment) {
@@ -2669,6 +3273,46 @@ export function createMessagesUi(context, dependencies) {
         ${metaParts.length ? `<div class="msg-sandbox-image-meta">${escHtml(metaParts.join(' В· '))}</div>` : ''}
       </div>
     `;
+  }
+
+  function renderOdaPythonToolBlock(segment, toolSegmentIndex) {
+    const result = parseOdaResult(segment);
+    const inputText = truncateTextPreview(odaInputText(segment), SANDBOX_INPUT_PREVIEW_CHARS);
+    const previewText = inputText.truncated
+      ? `${inputText.text}\n\n... ${inputText.omittedChars} more characters omitted`
+      : inputText.text;
+    const hasResult = segment.result !== null && segment.result !== undefined;
+    const outputText = result.stdout || (!hasResult ? 'Running...' : '');
+    const exitCodeText = result.exitCode !== null && result.exitCode !== undefined
+      ? `exit ${result.exitCode}`
+      : toolStatusText(segment);
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-tool-segment-index="${toolSegmentIndex}"` : '';
+    const stderrHtml = renderSandboxStreamBlock('stderr', result.stderr, 'is-stderr', 'plaintext');
+    const stdoutHtml = renderSandboxStreamBlock('stdout', outputText, 'is-stdout', 'plaintext');
+    const statusClass = result.ok === false || (result.exitCode !== null && String(result.exitCode) !== '0')
+      ? ' is-error'
+      : toolStatusClass(segment);
+    const codeIcon = icons.ODA_TOOL_CODE_ICON || icons.TOOL_CODE_EXEC_ICON || '';
+
+    return `
+      <div class="msg-oda-card msg-oda-python-card${statusClass}"${dataIndex}>
+        <div class="msg-oda-head">
+          ${codeIcon}
+          <span class="msg-oda-title">Python</span>
+          <span class="msg-reasoning-tool-status">${escHtml(exitCodeText)}</span>
+        </div>
+        ${renderSandboxStreamBlock('code', previewText, 'is-stdin', 'python')}
+        ${stdoutHtml || stderrHtml ? `${stdoutHtml}${stderrHtml}` : renderSandboxStreamBlock('stdout', 'No output.', 'is-stdout is-empty', 'plaintext')}
+      </div>
+    `;
+  }
+
+  function renderOdaSharedFileCard(segment) {
+    const card = renderSharedFileCard(segment);
+    if (!card || card.indexOf('msg-reasoning-tool-row') >= 0) {
+      return card;
+    }
+    return `<div class="msg-oda-shared-file-wrap">${card}</div>`;
   }
 
   function renderSandboxToolBlock(segment, toolSegmentIndex) {
@@ -2871,12 +3515,308 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  function sanitizeMermaidSvg(svg) {
+    if (typeof DOMPurify !== 'undefined' && DOMPurify.sanitize) {
+      return DOMPurify.sanitize(String(svg || ''), {
+        USE_PROFILES: { svg: true, svgFilters: true }
+      });
+    }
+    return String(svg || '');
+  }
+
+  function readRootCssVar(name, fallback) {
+    if (typeof document === 'undefined' || !document.documentElement) {
+      return fallback;
+    }
+    var raw = window.getComputedStyle(document.documentElement).getPropertyValue(name);
+    raw = (raw || '').trim();
+    return raw || fallback;
+  }
+
+  function buildMermaidThemeVariables() {
+    return {
+      background: 'transparent',
+      mainBkg: readRootCssVar('--surface-secondary', '#202326'),
+      primaryColor: readRootCssVar('--surface-secondary', '#202326'),
+      primaryTextColor: readRootCssVar('--c-text', '#f4f5f6'),
+      primaryBorderColor: readRootCssVar('--c-border', '#5f6b76'),
+      nodeTextColor: readRootCssVar('--c-text', '#f4f5f6'),
+      labelTextColor: readRootCssVar('--c-text', '#f4f5f6'),
+      edgeLabelBackground: readRootCssVar('--surface-tertiary', '#343638'),
+      lineColor: readRootCssVar('--c-gray-1', '#8fa3b8'),
+      secondaryColor: readRootCssVar('--surface-tertiary', '#253241'),
+      tertiaryColor: readRootCssVar('--surface-primary', '#17201b'),
+      fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif'
+    };
+  }
+
+  function parseCssColorToRgb(value) {
+    const color = String(value || '').trim().toLowerCase();
+    if (!color || color === 'none' || color === 'transparent') {
+      return null;
+    }
+
+    const hex = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+      const raw = hex[1];
+      const expanded = raw.length === 3
+        ? raw.split('').map(function expandHex(part) { return part + part; }).join('')
+        : raw;
+      return {
+        r: parseInt(expanded.slice(0, 2), 16),
+        g: parseInt(expanded.slice(2, 4), 16),
+        b: parseInt(expanded.slice(4, 6), 16)
+      };
+    }
+
+    const rgb = color.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+    if (rgb) {
+      return {
+        r: Number(rgb[1]),
+        g: Number(rgb[2]),
+        b: Number(rgb[3])
+      };
+    }
+
+    return null;
+  }
+
+  function relativeLuminance(rgb) {
+    if (!rgb) {
+      return 0;
+    }
+    const channels = [rgb.r, rgb.g, rgb.b].map(function normalizeChannel(value) {
+      const channel = Math.max(0, Math.min(255, Number(value) || 0)) / 255;
+      return channel <= 0.03928
+        ? channel / 12.92
+        : Math.pow((channel + 0.055) / 1.055, 2.4);
+    });
+    return (0.2126 * channels[0]) + (0.7152 * channels[1]) + (0.0722 * channels[2]);
+  }
+
+  function contrastRatio(firstRgb, secondRgb) {
+    const first = relativeLuminance(firstRgb);
+    const second = relativeLuminance(secondRgb);
+    const lighter = Math.max(first, second);
+    const darker = Math.min(first, second);
+    return (lighter + 0.05) / (darker + 0.05);
+  }
+
+  function getSvgShapeFill(shapeEl) {
+    if (!shapeEl) {
+      return null;
+    }
+    const computedFill = typeof window !== 'undefined' && window.getComputedStyle
+      ? window.getComputedStyle(shapeEl).fill
+      : '';
+    return parseCssColorToRgb(computedFill)
+      || parseCssColorToRgb(shapeEl.getAttribute('fill'))
+      || parseCssColorToRgb((shapeEl.getAttribute('style') || '').match(/fill\s*:\s*([^;]+)/i)?.[1]);
+  }
+
+  function applyMermaidLabelContrast(svgRoot) {
+    if (!svgRoot || !svgRoot.querySelectorAll) {
+      return;
+    }
+
+    svgRoot.querySelectorAll('g.node').forEach(function applyNodeLabelContrast(nodeEl) {
+      const shapeEl = nodeEl.querySelector('rect, polygon, circle, ellipse, path');
+      const fill = getSvgShapeFill(shapeEl);
+      if (!fill) {
+        return;
+      }
+
+      const darkText = parseCssColorToRgb(readRootCssVar('--surface-secondary', '#202326'))
+        || { r: 32, g: 35, b: 38 };
+      const lightText = parseCssColorToRgb(readRootCssVar('--c-text', '#f4f5f6'))
+        || { r: 244, g: 245, b: 246 };
+      const textColor = contrastRatio(fill, darkText) >= contrastRatio(fill, lightText)
+        ? readRootCssVar('--surface-secondary', '#202326')
+        : readRootCssVar('--c-text', '#f4f5f6');
+      nodeEl.querySelectorAll('text, tspan').forEach(function applySvgTextColor(textEl) {
+        textEl.setAttribute('fill', textColor);
+        textEl.style.fill = textColor;
+      });
+      nodeEl.querySelectorAll('.nodeLabel, .md-mermaid-katex-label').forEach(function applyHtmlTextColor(labelEl) {
+        labelEl.style.color = textColor;
+      });
+    });
+  }
+
+  function renderMermaidLatexLabels(svgRoot) {
+    if (!svgRoot || !svgRoot.querySelectorAll || typeof document === 'undefined') {
+      return;
+    }
+
+    svgRoot.querySelectorAll('text').forEach(function replaceLatexSvgText(textEl) {
+      const source = String(textEl.textContent || '').trim();
+      if (!source || !/(?:\$|\\\[|\\\()/.test(source) || textEl.closest('foreignObject')) {
+        return;
+      }
+
+      let bbox = null;
+      try {
+        bbox = textEl.getBBox();
+      } catch (error) {
+        bbox = null;
+      }
+      if (!bbox || !Number.isFinite(bbox.x) || !Number.isFinite(bbox.y)) {
+        return;
+      }
+
+      const parentEl = textEl.parentNode;
+      if (!parentEl) {
+        return;
+      }
+
+      const textAnchor = String(textEl.getAttribute('text-anchor') || '').toLowerCase();
+      const width = Math.max(bbox.width + 40, 80);
+      const height = Math.max(bbox.height + 18, 30);
+      const centerX = bbox.x + (bbox.width / 2);
+      let x = centerX - (width / 2);
+      if (textAnchor === 'start') {
+        x = bbox.x - 8;
+      } else if (textAnchor === 'end') {
+        x = bbox.x + bbox.width - width + 8;
+      }
+
+      const foreignObject = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+      foreignObject.classList.add('md-mermaid-katex-foreign');
+      foreignObject.setAttribute('x', String(x));
+      foreignObject.setAttribute('y', String(bbox.y - 8));
+      foreignObject.setAttribute('width', String(width));
+      foreignObject.setAttribute('height', String(height));
+      foreignObject.setAttribute('requiredExtensions', 'http://www.w3.org/1999/xhtml');
+
+      const labelEl = document.createElement('div');
+      labelEl.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+      labelEl.className = 'md-mermaid-katex-label';
+      labelEl.innerHTML = renderLatexInHtml(escHtml(source));
+
+      foreignObject.appendChild(labelEl);
+      parentEl.insertBefore(foreignObject, textEl.nextSibling);
+      textEl.setAttribute('aria-hidden', 'true');
+      textEl.style.display = 'none';
+    });
+  }
+
+  function enhanceMermaidSvg(canvasEl) {
+    if (!canvasEl || !canvasEl.querySelector) {
+      return;
+    }
+    const svgRoot = canvasEl.querySelector('svg');
+    if (!svgRoot) {
+      return;
+    }
+    renderMermaidLatexLabels(svgRoot);
+    applyMermaidLabelContrast(svgRoot);
+  }
+
+  function getMermaidRenderer() {
+    if (typeof window !== 'undefined' && window.mermaid) {
+      return window.mermaid;
+    }
+    if (typeof globalThis !== 'undefined' && globalThis.mermaid) {
+      return globalThis.mermaid;
+    }
+    return null;
+  }
+
+  function configureMermaid() {
+    const mermaidApi = getMermaidRenderer();
+    if (!mermaidApi || !mermaidApi.initialize) {
+      return;
+    }
+    mermaidApi.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: 'base',
+      flowchart: {
+        htmlLabels: false
+      },
+      themeVariables: buildMermaidThemeVariables()
+    });
+  }
+
+  function hydrateMermaidDiagrams($root) {
+    const root = $root && $root.length ? $root : dom.$messagesInner;
+    root.find('.md-mermaid-card').each(function hydrateMermaidCard() {
+      const cardEl = this;
+      if (cardEl.dataset.mermaidState === 'rendered' || cardEl.dataset.mermaidState === 'rendering') {
+        return;
+      }
+
+      const canvasEl = cardEl.querySelector('.md-mermaid-canvas');
+      const sourceEl = cardEl.querySelector('.md-mermaid-source code');
+      const statusEl = cardEl.querySelector('.md-mermaid-status');
+      const source = sourceEl ? String(sourceEl.textContent || '').trim() : '';
+      if (!canvasEl || !source) {
+        cardEl.dataset.mermaidState = 'error';
+        if (statusEl) {
+          statusEl.textContent = 'Mermaid diagram source is empty.';
+        }
+        return;
+      }
+
+      const mermaidApi = getMermaidRenderer();
+      if (!mermaidApi || !mermaidApi.render) {
+        cardEl.dataset.mermaidState = 'unavailable';
+        if (statusEl) {
+          statusEl.textContent = 'Mermaid renderer is unavailable.';
+        }
+        return;
+      }
+
+      const renderToken = `mermaid-${Date.now()}-${++mermaidRenderSeq}`;
+      cardEl.dataset.mermaidState = 'rendering';
+      cardEl.dataset.mermaidRenderToken = renderToken;
+      if (statusEl) {
+        statusEl.textContent = 'Rendering diagram...';
+      }
+
+      Promise.resolve(mermaidApi.render(`aslm-${renderToken}`, source))
+        .then(function onMermaidRendered(result) {
+          if (cardEl.dataset.mermaidRenderToken !== renderToken) {
+            return;
+          }
+          const svg = result && result.svg ? result.svg : '';
+          if (!svg) {
+            throw new Error('Mermaid returned an empty SVG.');
+          }
+          canvasEl.innerHTML = sanitizeMermaidSvg(svg);
+          enhanceMermaidSvg(canvasEl);
+          if (result && typeof result.bindFunctions === 'function') {
+            result.bindFunctions(canvasEl);
+          }
+          cardEl.dataset.mermaidState = 'rendered';
+          if (statusEl) {
+            statusEl.textContent = '';
+          }
+        })
+        .catch(function onMermaidError(error) {
+          if (cardEl.dataset.mermaidRenderToken !== renderToken) {
+            return;
+          }
+          cardEl.dataset.mermaidState = 'error';
+          if (statusEl) {
+            statusEl.textContent = `Could not render Mermaid diagram: ${error && error.message ? error.message : 'syntax error'}`;
+          }
+        });
+    });
+  }
+
   function toolDisplayName(segment) {
     if (isSearchToolSegment(segment)) {
       return 'Search';
     }
     if (isReadPageToolSegment(segment)) {
       return 'Read page';
+    }
+    if (isOdaPythonToolSegment(segment)) {
+      return 'ODA Python';
+    }
+    if (isOdaShareFileToolSegment(segment)) {
+      return 'ODA file';
     }
     if (isSharedFileToolSegment(segment)) {
       return 'Shared file';
@@ -2964,6 +3904,9 @@ export function createMessagesUi(context, dependencies) {
     if (isSearchToolSegment(segment) || isReadPageToolSegment(segment)) {
       return icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON || '';
     }
+    if (isOdaToolSegment(segment)) {
+      return icons.ODA_TOOL_CODE_ICON || icons.TOOL_CODE_EXEC_ICON || '';
+    }
     if (isSharedFileToolSegment(segment)) {
       return DOWNLOAD_FILE_ICON;
     }
@@ -3015,6 +3958,14 @@ export function createMessagesUi(context, dependencies) {
     if (isReadPageToolSegment(segment)) {
       return renderReadPageToolCard([{ segment, index: toolIndex }]);
     }
+    if (isOdaToolSegment(segment)) {
+      if (isOdaShareFileToolSegment(segment) || isSharedFileToolSegment(segment)) {
+        return renderOdaSharedFileCard(segment);
+      }
+      if (isOdaPythonToolSegment(segment)) {
+        return renderOdaPythonToolBlock(segment, toolIndex);
+      }
+    }
     if (isSharedFileToolSegment(segment)) {
       return renderSharedFileCard(segment);
     }
@@ -3039,6 +3990,13 @@ export function createMessagesUi(context, dependencies) {
     }
     if (isReadPageToolSegment(segment)) {
       return 'Reading source page';
+    }
+    if (isOdaPythonToolSegment(segment)) {
+      return toolStatusText(segment) === 'Done' ? 'Ran ODA Python' : 'Running ODA Python';
+    }
+    if (isOdaShareFileToolSegment(segment) || (isOdaToolSegment(segment) && isSharedFileToolSegment(segment))) {
+      const file = sharedFileFromSegment(segment);
+      return file && file.filename ? `ODA shared ${file.filename}` : 'ODA shared file';
     }
     if (isSharedFileToolSegment(segment)) {
       const file = sharedFileFromSegment(segment);
@@ -3353,6 +4311,27 @@ export function createMessagesUi(context, dependencies) {
 
   // Copy attributes from toEl onto fromEl without touching fromEl's identity.
   function syncElementAttrs(fromEl, toEl) {
+    const preserveBrowserPortalClientAttrs =
+      fromEl.nodeType === 1
+      && toEl.nodeType === 1
+      && fromEl.classList.contains('browser-portal')
+      && toEl.classList.contains('browser-portal');
+    const preservedBrowserPortal = {};
+    if (preserveBrowserPortalClientAttrs) {
+      [
+        'data-browser-portal-timer-started',
+        'data-browser-portal-hydrated',
+        'data-browser-session-id',
+        'data-browser-wait-started-at',
+        'data-browser-wait-deadline-at',
+        'data-browser-wait-elapsed'
+      ].forEach(function copyAttr(name) {
+        const value = fromEl.getAttribute(name);
+        if (value !== null && value !== '') {
+          preservedBrowserPortal[name] = value;
+        }
+      });
+    }
     const toAttrs = toEl.attributes;
     for (let i = 0; i < toAttrs.length; i += 1) {
       const { name, value } = toAttrs[i];
@@ -3365,6 +4344,11 @@ export function createMessagesUi(context, dependencies) {
       if (!toEl.hasAttribute(name)) {
         fromEl.removeAttribute(name);
       }
+    }
+    if (preserveBrowserPortalClientAttrs) {
+      Object.keys(preservedBrowserPortal).forEach(function restoreAttr(name) {
+        fromEl.setAttribute(name, preservedBrowserPortal[name]);
+      });
     }
   }
 
@@ -3501,6 +4485,9 @@ export function createMessagesUi(context, dependencies) {
     });
     hydrateSandboxImages($stream);
     hydrateSharedImageCards($stream);
+    if (browserPortalUi && typeof browserPortalUi.hydrate === 'function') {
+      browserPortalUi.hydrate($stream);
+    }
   }
 
   function renderActivityTimeline($msgRow, segments, options) {
@@ -3557,6 +4544,10 @@ export function createMessagesUi(context, dependencies) {
       renderSegments = [];
     }
 
+    if (browserPortalUi && typeof browserPortalUi.enhanceSegments === 'function') {
+      renderSegments = browserPortalUi.enhanceSegments(renderSegments, renderOptions);
+    }
+
     segments = renderSegments;
 
     const expandedThoughts = getExpandedThoughtIndices($msgRow);
@@ -3566,7 +4557,7 @@ export function createMessagesUi(context, dependencies) {
     const expandedEdits = getExpandedEditIndices($msgRow);
     let thoughtIndex = -1;
     let toolSegmentIndex = 0;
-    const citationRegistry = {};
+    const citationRegistry = createCitationRegistry();
     addAllSearchSourcesToCitationRegistry(citationRegistry, segments);
     const toolSegments = segments.filter(function onlyToolSegments(segment) {
       return segment.type === 'tool';
@@ -3640,6 +4631,10 @@ export function createMessagesUi(context, dependencies) {
           return;
         }
 
+        if (segment.type === 'browser_portal') {
+          return;
+        }
+
         if (segment.type === 'thought') {
           reasoningItems.push(segment);
           return;
@@ -3683,6 +4678,14 @@ export function createMessagesUi(context, dependencies) {
           continue;
         }
 
+        if (segment.type === 'browser_portal') {
+          pushBlock(segment.key || `browser-portal-${segmentIndex}`, segment.html);
+          if (segmentIndex === reasoningAnchorTextIndex && reasoningItems.length > 0 && !isStreamingTextAfterReasoning) {
+            pushBlock('reasoning-active', renderActiveReasoningBlock());
+          }
+          continue;
+        }
+
         if (!hideTextSegments) {
           pushTextSegmentBlock(segment, segmentIndex);
         }
@@ -3709,6 +4712,9 @@ export function createMessagesUi(context, dependencies) {
       setExpandedWriteIndices($msgRow, expandedWrites);
       setExpandedEditIndices($msgRow, expandedEdits);
       $msgRow.data('toolSegments', toolSegments);
+      if (renderOptions.streaming !== true) {
+        hydrateMermaidDiagrams($stream);
+      }
 
       if (shouldSyncOpenDrawer) {
         const $nextActiveWrapper = $msgRow
@@ -3734,6 +4740,11 @@ export function createMessagesUi(context, dependencies) {
 
     for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
       const segment = segments[segmentIndex];
+
+      if (segment && segment.type === 'browser_portal') {
+        pushBlock(segment.key || `browser-portal-${segmentIndex}`, segment.html);
+        continue;
+      }
 
       if (segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending') {
         const groupStartIndex = segmentIndex;
@@ -3828,6 +4839,9 @@ export function createMessagesUi(context, dependencies) {
     setExpandedWriteIndices($msgRow, expandedWrites);
     setExpandedEditIndices($msgRow, expandedEdits);
     $msgRow.data('toolSegments', toolSegments);
+    if (renderOptions.streaming !== true) {
+      hydrateMermaidDiagrams($stream);
+    }
 
     if (shouldSyncOpenDrawer) {
       const $nextActiveWrapper = $msgRow
@@ -4272,42 +5286,14 @@ export function createMessagesUi(context, dependencies) {
     }
 
     if (isUser && attachments && attachments.length > 0) {
-      const imageHtml = attachments
-        .filter(function onlyImages(attachment) {
-          return typeof attachment === 'string'
-            || attachment.kind === 'image'
-            || (attachment.displayKind || attachment.display_kind) === 'image';
-        })
-        .map(function renderImage(attachment) {
-          const normalizedAttachment = attachmentUi.normalizeAttachment(attachment);
-          const src = normalizedAttachment ? (normalizedAttachment.dataUrl || normalizedAttachment.previewDataUrl) : '';
-          if (!src) {
-            return '';
-          }
-          return `<img src="${src}" alt="Attached image">`;
-        }).join('');
-
-      const fileHtml = attachments
-        .filter(function onlyFiles(attachment) {
-          return typeof attachment !== 'string'
-            && attachment.kind === 'file'
-            && (attachment.displayKind || attachment.display_kind) !== 'image';
-        })
-        .map(function renderFile(attachment) {
-          const meta = attachment.typeLabel || attachment.type_label || attachment.mimeType || attachment.mime_type || 'File';
-          return `
-            <div class="msg-file-chip">
-              <div class="msg-file-name">${escHtml(attachment.name || 'File')}</div>
-              <div class="msg-file-meta">${escHtml(meta)}</div>
-            </div>
-          `;
-        }).join('');
-
-      attachmentsHtml = `
-        ${imageHtml ? `<div class="msg-images">${imageHtml}</div>` : ''}
-        ${fileHtml ? `<div class="msg-files">${fileHtml}</div>` : ''}
-      `;
+      attachmentsHtml = renderMessageAttachments(attachments, {
+        side: 'user',
+        source: 'upload',
+        mode: 'message'
+      });
     }
+
+    const userBubbleAttachmentClass = isUser && attachmentsHtml ? ' msg-bubble--attachments' : '';
 
     const $row = $(`
       <div class="msg ${role}${viewOptions.queued ? ' is-queued' : ''}" data-message-key="${escapeAttributeValue(messageKey)}"${messageId ? ` data-message-id="${messageId}"` : ''}>
@@ -4319,16 +5305,25 @@ export function createMessagesUi(context, dependencies) {
             ${queuedBadge}
           </div>
           ${!isUser ? '<div class="msg-activity-stream" style="display:none;"></div>' : ''}
-          <div class="msg-bubble">${attachmentsHtml}</div>
+          <div class="msg-bubble${userBubbleAttachmentClass}">${attachmentsHtml}</div>
           ${icons.buildMessageActionsHtml()}
         </div>
       </div>
     `);
 
     if (isUser) {
-      const $bubble = $row.find('.msg-bubble')
-        .attr('data-raw', text)
-        .append($('<span>').text(text));
+      const $bubble = $row.find('.msg-bubble').attr('data-raw', text);
+      const hasAttachmentCards = !!attachmentsHtml;
+      if (hasAttachmentCards) {
+        const body = String(text ?? '');
+        if (body.length > 0) {
+          $bubble.append(
+            $('<div class="msg-bubble-caption"></div>').append($('<span>').text(text))
+          );
+        }
+      } else {
+        $bubble.append($('<span>').text(text));
+      }
       $bubble.data('attachments', attachments || []);
     } else if (normalizedActivitySegments.length > 0) {
       $row.find('.msg-bubble').attr('data-raw', text);
@@ -4481,7 +5476,8 @@ export function createMessagesUi(context, dependencies) {
 
   function copyCodeBlock($button) {
     const $btn = $button || $();
-    const $code = $btn.closest('.md-code-card').find('pre code').first();
+    const $card = $btn.closest('.md-code-card, .md-mermaid-card');
+    const $code = $card.find('pre code').first();
     const text = $code.text();
     if (!$code.length) {
       return;
@@ -4561,6 +5557,7 @@ export function createMessagesUi(context, dependencies) {
     $body
       .data('messageRow', $wrapper.closest('.msg'))
       .data('toolSegments', $wrapper.closest('.msg').data('toolSegments') || []);
+    hydrateMermaidDiagrams($body);
     if (isNearBottom && bodyEl) {
       bodyEl.scrollTop = bodyEl.scrollHeight;
     }
@@ -4680,15 +5677,40 @@ export function createMessagesUi(context, dependencies) {
   // Code highlighting is applied after sanitization when code cards are built.
   function configureMarkdown() {
     if (typeof marked === 'undefined') {
+      configureMermaid();
       return;
     }
 
     marked.setOptions({
       breaks: true
     });
+
+    if (!markedStrikethroughDoubleTildeOnlyInstalled) {
+      markedStrikethroughDoubleTildeOnlyInstalled = true;
+      const delDoubleTilde = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
+      marked.use({
+        tokenizer: {
+          del(src) {
+            const cap = delDoubleTilde.exec(src);
+            if (cap) {
+              return {
+                type: 'del',
+                raw: cap[0],
+                text: cap[2],
+                tokens: this.lexer.inlineTokens(cap[2])
+              };
+            }
+          }
+        }
+      });
+    }
+
+    configureMermaid();
   }
 
   bindReasoningDrawerResize();
+  bindAttachmentMediaEvents();
+  bindCitationPreviewCards(document);
 
   return {
     appendMessage,

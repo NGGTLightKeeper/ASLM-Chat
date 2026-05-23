@@ -6,6 +6,9 @@
     "version": "0.6.0.31",
     "author": "NGGT-ASLM",
     "type": "ui",
+    "category": [
+        "text-generation"
+    ],
     "hasPage": true,
     "icon": "icon.png",
     "sidebarIcon": "sidebar_icon.png",
@@ -21,6 +24,7 @@
             "Data/downloads_bridge_cache",
             "Data/venvs",
             "Settings/settings.json",
+            "MCP/mcp.json",
             "db.sqlite3"
         ],
         "runFirstRunAfterUpdate": true
@@ -82,6 +86,33 @@
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key api-port",
             "setExec": "main.py set_setting --key api-port --value {value}"
+        },
+        {
+            "key": "oda-daemon-port",
+            "name": "ODA Daemon Port",
+            "description": "Port the ODA sandbox daemon listens on",
+            "type": "port",
+            "default": 20002,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key oda-daemon-port",
+            "setExec": "main.py set_setting --key oda-daemon-port --value {value}",
+            "value": 20002
+        },
+        {
+            "key": "aslm-host-theme",
+            "name": "ASLM host theme",
+            "description": "Theme snapshot from the host ASLM app; applied on each module start. Managed only by ASLM.",
+            "type": "theme",
+            "engine": "python-runtime",
+            "setExec": "main.py apply_aslm_host_theme --file {value}"
+        },
+        {
+            "key": "aslm-host-locale",
+            "name": "ASLM host locale",
+            "description": "Language snapshot from the host ASLM app; applied on each module start. Managed only by ASLM.",
+            "type": "locale",
+            "engine": "python-runtime",
+            "setExec": "main.py apply_aslm_locale --file {value}"
         },
         {
             "key": "console_log_level",
@@ -160,7 +191,7 @@
             "name": "Ollama Port",
             "description": "Port that the local Ollama service listens on",
             "type": "port",
-            "default": 30002,
+            "default": 20003,
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key ollama-service_port",
             "setExec": "main.py set_setting --key ollama-service_port --value {value}"
@@ -275,6 +306,12 @@
                 "relative": "ollama-service",
                 "description": "Managed Ollama model storage inside ASLM."
             }
+        }
+    },
+    "moduleInterop": {
+        "protocolVersion": 1,
+        "client": {
+            "enabled": true
         }
     },
     "status": {

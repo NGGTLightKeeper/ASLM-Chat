@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import sys
 import tempfile
 import textwrap
 from pathlib import Path
@@ -710,6 +712,47 @@ class LocalServerRegistryTests(ToolRegistryTestCase):
         )
 
         self.assertIn('"value": "async"', payload)
+
+    # Test persistent workers ignore heartbeat lines and wait for the final envelope.
+    def test_external_worker_session_skips_heartbeat_lines(self):
+        session = tool_registry.ExternalWorkerSession(Path("dummy-server.py"), Path(sys.executable))
+        session.process = type(
+            "FakeProcess",
+            (),
+            {"stdout": io.StringIO('{"event": "heartbeat"}\n{"ok": true, "result": "done"}\n')},
+        )()
+
+        self.assertEqual(session._read_response_line(timeout_s=1), '{"ok": true, "result": "done"}\n')
+
+    # Test a silent persistent worker is killed instead of blocking forever.
+    def test_external_worker_session_times_out_silent_worker(self):
+        server_file = self.tools_dir / "slow_suite" / "mcp-server.py"
+        server_file.parent.mkdir(parents=True, exist_ok=True)
+        server_file.write_text(
+            textwrap.dedent(
+                """
+                import time
+
+                MCP_SERVER = {"id": "slow_suite", "name": "Slow Suite"}
+                TOOLS = [{"id": "slow", "name": "Slow", "parameters": {"type": "object", "properties": {}}}]
+
+                def call_tool(tool_id, arguments, context=None):
+                    time.sleep(10)
+                    return "late"
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        session = tool_registry.ExternalWorkerSession(server_file, Path(sys.executable))
+        try:
+            with (
+                patch.object(tool_registry, "WORKER_RESPONSE_IDLE_TIMEOUT_SECONDS", 0.2),
+                self.assertRaisesRegex(RuntimeError, "Tool worker stopped"),
+            ):
+                session.request("call", {"tool_id": "slow", "arguments": {}}, timeout_s=0.3)
+        finally:
+            session.close()
 
     # Return a readable error for unknown tool aliases.
     def test_call_ollama_tool_returns_error_for_unknown_alias(self):

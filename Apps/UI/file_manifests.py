@@ -345,6 +345,7 @@ def build_uploaded_file_manifest(
     sandbox_path: str | None = None,
     model_supports_vision: bool = False,
     file_id: str | None = None,
+    tool_server_id: str = "sandbox",
 ) -> UploadedFileManifest:
     """Build the model-facing manifest for one uploaded file."""
 
@@ -384,7 +385,7 @@ def build_uploaded_file_manifest(
 
     recommended_tools: list[str] = []
     if sandbox_path:
-        recommended_tools.append("sandbox")
+        recommended_tools.append(str(tool_server_id or "sandbox").strip() or "sandbox")
     if archive_tree:
         recommended_tools.append("archive")
     if text_preview and text_truncated:

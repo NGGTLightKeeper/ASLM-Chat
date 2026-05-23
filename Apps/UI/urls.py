@@ -15,6 +15,7 @@ urlpatterns = [
     # Chat APIs.
     path("api/chat/", views.chat_api, name="chat_api"),
     path("api/uploads/", views.upload_files_api, name="uploads_api"),
+    path("api/uploads/<str:file_id>/content/", views.uploaded_file_content_api, name="uploaded_file_content_api"),
     path("api/chat/abort/", views.abort_generation_api, name="abort_generation_api"),
     path("api/chat/<uuid:chat_id>/", views.load_chat_api, name="load_chat_api"),
     path("api/chat/<uuid:chat_id>/last/", views.delete_last_assistant_api, name="delete_last_assistant_api"),
@@ -34,7 +35,17 @@ urlpatterns = [
 
     # Tool discovery APIs.
     path("api/tools/", views.get_tools_api, name="tools_api"),
+    path("api/mcp_config/", views.mcp_config_api, name="mcp_config_api"),
+    path("api/skills/", views.skills_api, name="skills_api"),
+    path("api/skills/folder/", views.skills_folder_api, name="skills_folder_api"),
+    path("api/skills/file/", views.skills_file_api, name="skills_file_api"),
+    path("api/skills/enabled/", views.skills_enabled_api, name="skills_enabled_api"),
+    path("api/skills/directory/", views.skills_directory_api, name="skills_directory_api"),
+    path("api/skills/import/", views.skills_import_api, name="skills_import_api"),
+    path("api/skills/path/", views.skills_path_api, name="skills_path_api"),
     path("api/favicon/", views.favicon_api, name="favicon_api"),
+    path("api/browser_portal/frame/", views.browser_portal_frame_api, name="browser_portal_frame_api"),
+    path("api/browser_portal/event/", views.browser_portal_event_api, name="browser_portal_event_api"),
 
     # Ollama preset APIs.
     path("api/ollama_presets/", views.get_ollama_presets_api, name="ollama_presets_api"),

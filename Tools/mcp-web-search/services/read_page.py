@@ -27,9 +27,10 @@ from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from core.config import load_search_config
+from core.extract.nextjs_rsc import extract_nextjs_rsc_text
 from core.extract.page_normalizer import normalize_page
 from core.fetch.antibot import is_antibot
-from core.fetch.camoufox_fetcher import fetch_with_camoufox
+from core.fetch.camoufox_fetcher import fetch_with_camoufox, is_camoufox_available
 from core.fetch.url_utils import (
     UnsafeFetchUrl,
     has_non_text_extension,
@@ -139,6 +140,30 @@ def _truncate_markdown(markdown: str, max_chars: int) -> str:
     if len(markdown) <= max_chars:
         return markdown
     return markdown[:max_chars].rsplit("\n", 1)[0] + "\n\n[...truncated]"
+
+
+def _fallback_text_to_markdown(url: str, text: str) -> str:
+    """Wrap already-extracted fallback text in minimal markdown headers."""
+
+    host = _host(url)
+    body = text.strip()
+    return f"**Site:** {host}\n**URL:** {url}\n\n---\n\n{body}"
+
+
+def _inner_text_to_markdown(url: str, inner_text: str) -> str:
+    """Convert raw DOM innerText to minimal markdown. Used as last-resort SPA fallback."""
+
+    lines = [line for line in inner_text.splitlines() if line.strip()]
+    return _fallback_text_to_markdown(url, "\n\n".join(lines))
+
+
+def _nextjs_rsc_to_markdown(url: str, raw_html: str) -> str:
+    """Extract Next.js RSC text and wrap it as minimal markdown."""
+
+    text = extract_nextjs_rsc_text(raw_html)
+    if not text:
+        return ""
+    return _fallback_text_to_markdown(url, text)
 
 
 # ---------------------------------------------------------------------------
@@ -730,8 +755,16 @@ class ReadPageService:
                 ), attempts
 
             retail_meta = _extract_retail_metadata(candidate_url, raw_html)
-            candidate_markdown = normalize_page(candidate_url, raw_html)
-            candidate_markdown = _prepend_retail_metadata(candidate_markdown, retail_meta)
+            candidate_markdown = ""
+            if self._registry.prefers_nextjs_rsc(candidate_url):
+                candidate_markdown = _nextjs_rsc_to_markdown(candidate_url, raw_html)
+                if candidate_markdown:
+                    candidate_markdown = _prepend_retail_metadata(candidate_markdown, retail_meta)
+                    fetch_method = f"{fetch_method}_rsc"
+
+            if not candidate_markdown:
+                candidate_markdown = normalize_page(candidate_url, raw_html)
+                candidate_markdown = _prepend_retail_metadata(candidate_markdown, retail_meta)
             markdown = candidate_markdown
             weak = _is_weak_extraction(candidate_markdown, min_length=self._cfg.extraction.min_content_length)
             if fetch_method == "network" and not weak and not is_antibot(raw_html):
@@ -753,6 +786,60 @@ class ReadPageService:
                         markdown = refreshed_markdown
                         weak = refreshed_weak
                         fetch_method = "network_refresh"
+            if weak and fetch_method == "network" and not self._registry.needs_camoufox(candidate_url):
+                if is_camoufox_available():
+                    logger.info("weak extraction for %s - retrying via camoufox SPA fallback", candidate_url)
+                    camoufox_result = await fetch_with_camoufox(
+                        candidate_url,
+                        wait_sec=4.0,
+                        timeout_sec=opts.timeout,
+                        process_timeout=opts.timeout + 15.0,
+                        warmup_count=0,
+                        normalize=False,
+                    )
+                    if camoufox_result.success and camoufox_result.html:
+                        spa_markdown = normalize_page(candidate_url, camoufox_result.html)
+                        spa_weak = _is_weak_extraction(
+                            spa_markdown,
+                            min_length=self._cfg.extraction.min_content_length,
+                        )
+                        if not spa_weak or len(spa_markdown) > len(candidate_markdown or ""):
+                            raw_html = camoufox_result.html
+                            candidate_markdown = spa_markdown
+                            markdown = spa_markdown
+                            weak = spa_weak
+                            fetch_method = "camoufox"
+                        elif (
+                            spa_weak
+                            and camoufox_result.inner_text
+                            and len(camoufox_result.inner_text.strip()) > self._cfg.extraction.min_content_length
+                        ):
+                            inner_text_markdown = _inner_text_to_markdown(candidate_url, camoufox_result.inner_text)
+                            inner_text_weak = _is_weak_extraction(
+                                inner_text_markdown,
+                                min_length=self._cfg.extraction.min_content_length,
+                            )
+                            if not inner_text_weak or len(inner_text_markdown) > len(candidate_markdown or ""):
+                                raw_html = camoufox_result.html
+                                candidate_markdown = inner_text_markdown
+                                markdown = inner_text_markdown
+                                weak = inner_text_weak
+                                fetch_method = "camoufox_innertext"
+                                logger.info("SPA innerText fallback used for %s", candidate_url)
+                        if weak:
+                            rsc_markdown = _nextjs_rsc_to_markdown(candidate_url, camoufox_result.html)
+                            if rsc_markdown:
+                                rsc_weak = _is_weak_extraction(
+                                    rsc_markdown,
+                                    min_length=self._cfg.extraction.min_content_length,
+                                )
+                                if not rsc_weak or len(rsc_markdown) > len(candidate_markdown or ""):
+                                    raw_html = camoufox_result.html
+                                    candidate_markdown = rsc_markdown
+                                    markdown = rsc_markdown
+                                    weak = rsc_weak
+                                    fetch_method = "camoufox_rsc"
+                                    logger.info("SPA Next.js RSC fallback used for %s", candidate_url)
             winner = _host(url) != "dns-shop.ru" or not weak or idx == len(fetch_candidates) - 1
             attempt = ReadPageVariantAttempt(
                 url=candidate_url,

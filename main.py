@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -154,16 +155,32 @@ def cmd_runserver(port: int, log: bool) -> None:
     if log:
         print(f"[ASLM-Chat] Starting server on port {port}...")
 
+    import socket
     from socketserver import ThreadingMixIn
     from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
+
+    # Large file uploads (video, audio) require a much longer socket timeout than
+    # the default 30 s used by http.server.BaseHTTPRequestHandler.  Without this,
+    # the connection is torn down mid-transfer and the browser shows "Upload failed".
+    _UPLOAD_SOCKET_TIMEOUT_SECONDS = 3600
 
     class ThreadedWSGIServer(ThreadingMixIn, WSGIServer):
         """Serve local UI requests concurrently."""
 
         daemon_threads = True
 
+        def get_request(self):
+            """Accept a connection and apply a generous timeout for large uploads."""
+            conn, addr = self.socket.accept()
+            conn.settimeout(_UPLOAD_SOCKET_TIMEOUT_SECONDS)
+            return conn, addr
+
     class QuietWSGIRequestHandler(WSGIRequestHandler):
         """Keep routine HTTP access logs out of the ASLM console."""
+
+        # Mirror the server-level timeout so BaseHTTPRequestHandler doesn't
+        # override it with a shorter value on its own.
+        timeout = _UPLOAD_SOCKET_TIMEOUT_SECONDS
 
         def log_message(self, format: str, *args) -> None:
             return
@@ -208,13 +225,18 @@ def cmd_collectstatic(log: bool) -> None:
 
 
 # Run first-time setup
-def cmd_first_run(log: bool = True, ui_port: int = 30000, api_port: int = 30001) -> None:
+def cmd_first_run(
+    log: bool = True,
+    ui_port: int = 30000,
+    api_port: int = 30001,
+    oda_daemon_port: int = 20002,
+) -> None:
     """Generate settings and apply initial migrations."""
 
     from Settings.first_run import run as first_run
 
     print("[ASLM-Chat] Running first-run setup...")
-    first_run(log=log, ui_port=ui_port, api_port=api_port)
+    first_run(log=log, ui_port=ui_port, api_port=api_port, oda_daemon_port=oda_daemon_port)
 
     from Services import venv_manager
 
@@ -244,6 +266,66 @@ def cmd_set_setting(key: str, value: str) -> None:
     parsed_value = normalize_setting_value(value)
     set(key, parsed_value)
     print(f"[ASLM-Chat] Setting '{key}' updated to {parsed_value}")
+
+
+def cmd_apply_aslm_host_theme(theme_file: str) -> None:
+    """Apply a JSON theme snapshot written by ASLM (temp file path in ``--file``)."""
+
+    from pathlib import Path
+
+    from Settings.host_theme import save_host_theme_payload
+
+    path = Path(theme_file)
+    if not path.is_file():
+        print(f"Error: theme file not found: {theme_file}")
+        sys.exit(1)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"Error: could not read theme file: {exc}")
+        sys.exit(1)
+    # .NET may write UTF-8 with BOM; json.loads rejects a leading U+FEFF unless stripped.
+    raw = raw.lstrip("\ufeff").strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"Error: invalid JSON in theme file: {exc}")
+        sys.exit(1)
+    if not isinstance(data, dict):
+        print("Error: host theme JSON must be an object.")
+        sys.exit(1)
+    save_host_theme_payload(data)
+    print("[ASLM-Chat] Host theme snapshot updated.")
+
+
+def cmd_apply_aslm_locale(locale_file: str) -> None:
+    """Apply a JSON locale snapshot written by ASLM (temp file path in ``--file``)."""
+
+    from pathlib import Path
+
+    from Settings.host_locale import save_host_locale_payload
+
+    path = Path(locale_file)
+    if not path.is_file():
+        print(f"Error: locale file not found: {locale_file}")
+        sys.exit(1)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"Error: could not read locale file: {exc}")
+        sys.exit(1)
+    raw = raw.lstrip("\ufeff").strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"Error: invalid JSON in locale file: {exc}")
+        sys.exit(1)
+    if not isinstance(data, dict):
+        print("Error: host locale JSON must be an object.")
+        sys.exit(1)
+    save_host_locale_payload(data)
+    print("[ASLM-Chat] Host locale snapshot updated.")
+
 
 # Start local engine service
 def maybe_start_local_engine_service(log: bool) -> None:
@@ -296,9 +378,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("command", type=str, help="Command to execute")
     parser.add_argument("--port", type=int, default=30000, help="Port for runserver (default: 30000)")
     parser.add_argument("--api-port", type=int, default=30001, help="API server port (default: 30001)")
+    parser.add_argument("--oda-daemon-port", type=int, default=20002, help="ODA daemon port (default: 20002)")
     parser.add_argument("--app", type=str, default=None, help="App name for makemigrations")
     parser.add_argument("--key", type=str, default=None, help="Setting key for get_setting/set_setting")
     parser.add_argument("--value", type=str, default=None, help="Setting value for set_setting")
+    parser.add_argument(
+        "--file",
+        type=str,
+        default=None,
+        help="Path to JSON payload for apply_aslm_host_theme or apply_aslm_locale",
+    )
     parser.add_argument("--log", action="store_true", help="Enable verbose output")
     return parser
 
@@ -306,7 +395,13 @@ def _build_parser() -> argparse.ArgumentParser:
 def _maybe_print_banner(command: str) -> None:
     """Print technical module data once for interactive commands."""
 
-    if not os.environ.get("RUN_MAIN") and command not in {"get_setting", "set_setting", "downloads_bridge"}:
+    if not os.environ.get("RUN_MAIN") and command not in {
+        "get_setting",
+        "set_setting",
+        "downloads_bridge",
+        "apply_aslm_host_theme",
+        "apply_aslm_locale",
+    }:
         from Settings.console import PrintTechData
 
         PrintTechData().PTD_Print()
@@ -359,7 +454,7 @@ def main() -> None:
             cmd_collectstatic(args.log)
 
         case "first_run":
-            cmd_first_run(log=True, ui_port=args.port, api_port=args.api_port)
+            cmd_first_run(log=True, ui_port=args.port, api_port=args.api_port, oda_daemon_port=args.oda_daemon_port)
 
         case "get_setting":
             if not args.key:
@@ -372,6 +467,18 @@ def main() -> None:
                 print("Error: --key and --value arguments are required.")
                 sys.exit(1)
             cmd_set_setting(args.key, args.value)
+
+        case "apply_aslm_host_theme":
+            if not args.file:
+                print("Error: --file argument is required.")
+                sys.exit(1)
+            cmd_apply_aslm_host_theme(args.file)
+
+        case "apply_aslm_locale":
+            if not args.file:
+                print("Error: --file argument is required.")
+                sys.exit(1)
+            cmd_apply_aslm_locale(args.file)
 
         case "downloads_bridge":
             cmd_downloads_bridge()

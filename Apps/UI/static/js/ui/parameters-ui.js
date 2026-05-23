@@ -1,7 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import {
-  DEFAULT_THINK_LEVEL_OPTIONS,
   LLM_PARAMETER_OPTION_SETS,
   OLLAMA_UNSUPPORTED_RUNTIME_PARAMS,
   PARAMETER_DEFINITIONS
@@ -14,6 +13,7 @@ import {
   isThinkingParameterKey,
   setNestedValue
 } from '../main/utils.js';
+import { getJson, patchJson } from '../main/api.js';
 
 // Parameters UI.
 // Create helpers for model controls, tool selection, and option payloads.
@@ -28,12 +28,21 @@ export function createParametersUi(context) {
 
   // Replace the available tool server list and prune invalid selections.
   function updateAvailableToolServers(tools) {
-    state.availableToolServers = Array.isArray(tools) ? tools.slice() : [];
-    const validIds = new Set(
-      state.availableToolServers.map(function mapId(server) {
-        return normalizeToolServerId(server.id);
-      })
-    );
+    const all = Array.isArray(tools) ? tools.slice() : [];
+    state.availableToolServers = all.filter(function filterBundled(server) {
+      return !server || !server.user_mcp;
+    });
+    state.userMcpToolServers = all.filter(function filterUserMcp(server) {
+      return server && server.user_mcp;
+    });
+
+    const validIds = new Set();
+    state.availableToolServers.forEach(function collectId(server) {
+      validIds.add(normalizeToolServerId(server.id));
+    });
+    state.userMcpToolServers.forEach(function collectUserMcpId(server) {
+      validIds.add(normalizeToolServerId(server.id));
+    });
 
     Array.from(state.selectedToolServerIds).forEach(function pruneSelected(id) {
       if (!validIds.has(id)) {
@@ -59,30 +68,33 @@ export function createParametersUi(context) {
     renderToolControls();
   }
 
-  // Rebuild the tool server checkbox list from the current state.
-  function renderToolControls() {
-    const hasToolSupport = state.toolState.supported
-      && Array.isArray(state.availableToolServers)
-      && state.availableToolServers.length > 0;
+  function toolServerIconClass(server) {
+    const text = `${server && server.id ? server.id : ''} ${server && server.name ? server.name : ''}`.toLowerCase();
+    if (text.includes('browser')) {
+      return 'is-browser-agent';
+    }
+    if (text.includes('sandbox')) {
+      return 'is-sandbox';
+    }
+    if (text.includes('web') || text.includes('search')) {
+      return 'is-web-search';
+    }
+    return 'is-generic-tool';
+  }
 
-    dom.$groupTools.toggle(hasToolSupport);
-    dom.$dividerTools.toggle(hasToolSupport);
-
-    const $content = dom.$groupTools.find('.settings-section-content');
-    $content.empty();
-
+  function renderToolServerList($target, hasToolSupport) {
+    $target.empty();
     if (!hasToolSupport) {
       return;
     }
 
-    const $list = $('<div class="tool-server-list" id="toolServerList">');
     state.availableToolServers.forEach(function renderServer(server) {
       const serverId = normalizeToolServerId(server.id);
-      const toolCount = Number(server.tool_count || (server.tools || []).length || 0);
-      const label = toolCount > 0 ? `${server.name || serverId} (${toolCount} tools)` : (server.name || serverId);
+      const label = server.name || serverId;
       const checked = state.selectedToolServerIds.has(serverId);
 
-      const $row = $('<label class="tool-server-row">');
+      const $row = $('<label class="tool-server-row composer-tool-row">');
+      const $icon = $('<span class="composer-tool-icon">').addClass(toolServerIconClass(server)).attr('aria-hidden', 'true');
       const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
       const $name = $('<span class="tool-server-name">').text(label);
 
@@ -92,13 +104,210 @@ export function createParametersUi(context) {
         } else {
           state.selectedToolServerIds.delete(serverId);
         }
+        renderToolControls();
       });
 
-      $row.append($checkbox).append($name);
-      $list.append($row);
+      $row.append($icon).append($name).append($checkbox);
+      $target.append($row);
+    });
+  }
+
+  // Rebuild the tool server checkbox list from the current state.
+  function renderToolControls() {
+    const hasToolSupport = state.toolState.supported
+      && Array.isArray(state.availableToolServers)
+      && state.availableToolServers.length > 0;
+
+    dom.$groupTools.hide();
+    dom.$dividerTools.hide();
+    dom.$composerToolMenus.toggle(hasToolSupport);
+
+    const $content = dom.$groupTools.find('.settings-section-content');
+    $content.empty();
+    dom.$composerToolLists.each(function renderComposerToolList() {
+      renderToolServerList($(this), hasToolSupport);
     });
 
-    $content.append($list);
+    renderMcpControls();
+  }
+
+  function renderMcpControls() {
+    const show = Boolean(state.toolState.supported);
+    dom.$groupMcp.toggle(show);
+    dom.$dividerMcp.toggle(show);
+    dom.$mcpSettingsContent.empty();
+    if (!show) {
+      return;
+    }
+
+    const $btn = $('<button type="button" class="preset-action-btn mcp-json-open-btn">').text('Edit mcp.json');
+    $btn.on('click', function onOpenMcp() {
+      openMcpJsonEditor();
+    });
+    dom.$mcpSettingsContent.append($btn);
+
+    const userList = Array.isArray(state.userMcpToolServers) ? state.userMcpToolServers : [];
+    if (userList.length > 0) {
+      const $list = $('<div class="mcp-user-tool-server-list">');
+      userList.forEach(function renderUserMcpServer(server) {
+        const serverId = normalizeToolServerId(server.id);
+        const toolCount = Number(server.tool_count || (server.tools || []).length || 0);
+        const label = toolCount > 0 ? `${server.name || serverId} (${toolCount} tools)` : (server.name || serverId);
+        const checked = state.selectedToolServerIds.has(serverId);
+
+        const $row = $('<label class="tool-server-row mcp-user-tool-server-row">');
+        const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
+        const $name = $('<span class="tool-server-name">').text(label);
+
+        $checkbox.on('change', function onChange() {
+          if (this.checked) {
+            state.selectedToolServerIds.add(serverId);
+          } else {
+            state.selectedToolServerIds.delete(serverId);
+          }
+        });
+
+        $row.append($checkbox).append($name);
+        $list.append($row);
+      });
+      dom.$mcpSettingsContent.append($list);
+    }
+  }
+
+  function escapeHtmlPlain(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function highlightJsonHtml(source) {
+    const text = String(source || '');
+    if (typeof hljs === 'undefined' || !hljs.highlight) {
+      return escapeHtmlPlain(text);
+    }
+    try {
+      return hljs.highlight(text, { language: 'json', ignoreIllegals: true }).value;
+    } catch (_err) {
+      return escapeHtmlPlain(text);
+    }
+  }
+
+  function buildGutterLines(lineCount) {
+    const lines = [];
+    for (let i = 1; i <= lineCount; i += 1) {
+      lines.push(String(i));
+    }
+    return lines.join('\n');
+  }
+
+  async function refreshToolServersAfterMcpSave() {
+    const engine = normalizeEngineValue(state.activeEngine || 'ollama-service');
+    const modelName = String(dom.$modelSelector.val() || '').trim();
+    const data = await getJson(
+      `/api/tools/?engine=${encodeURIComponent(engine)}&model=${encodeURIComponent(modelName)}`
+    );
+    updateAvailableToolServers(data.tool_servers || data.tools || data.servers || []);
+  }
+
+  async function openMcpJsonEditor() {
+    let data;
+    try {
+      data = await getJson('/api/mcp_config/');
+    } catch (err) {
+      window.alert(err && err.message ? err.message : String(err));
+      return;
+    }
+
+    const initial = typeof data.content === 'string' ? data.content : '';
+
+    const $modal = $('<div class="mcp-json-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="mcpJsonModalTitle">');
+    const $box = $('<div class="mcp-json-modal">');
+    const $title = $('<div class="mcp-json-modal-title" id="mcpJsonModalTitle">').text('mcp.json');
+    const $editor = $('<div class="mcp-json-editor">');
+    const $body = $('<div class="mcp-json-editor-body">');
+    const $gutter = $('<div class="mcp-json-editor-gutter" aria-hidden="true">');
+    const $gutterInner = $('<div class="mcp-json-editor-gutter-inner">');
+    const $cell = $('<div class="mcp-json-editor-cell">');
+    const $hlWrap = $('<div class="mcp-json-highlight-layer">');
+    const $pre = $('<pre class="mcp-json-highlight-pre">');
+    const $code = $('<code class="hljs language-json">');
+    const $ta = $('<textarea class="mcp-json-editor-textarea" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off">').val(initial);
+
+    $pre.append($code);
+    $hlWrap.append($pre);
+    $gutter.append($gutterInner);
+    $cell.append($hlWrap).append($ta);
+    $body.append($gutter).append($cell);
+    $editor.append($body);
+
+    const $err = $('<div class="mcp-json-modal-error" role="alert">').hide();
+    const $actions = $('<div class="mcp-json-modal-actions">');
+    const $cancel = $('<button type="button" class="preset-action-btn">').text('Cancel');
+    const $save = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text('Save');
+    $actions.append($cancel).append($save);
+
+    function syncLayers() {
+      const raw = $ta.val();
+      $code.html(highlightJsonHtml(raw));
+      const lines = raw.length === 0 ? 1 : raw.split('\n').length;
+      $gutterInner.text(buildGutterLines(lines));
+      const sh = $ta.prop('scrollHeight');
+      $pre.css('min-height', `${Math.max(sh, $ta.outerHeight() || 0)}px`);
+    }
+
+    function syncScroll() {
+      const st = $ta.scrollTop();
+      $hlWrap.css('transform', `translateY(-${st}px)`);
+      $gutterInner.css('transform', `translateY(-${st}px)`);
+    }
+
+    $ta.on('input', function onInput() {
+      syncLayers();
+      syncScroll();
+    });
+    $ta.on('scroll', syncScroll);
+
+    function closeModal() {
+      $modal.remove();
+    }
+
+    $cancel.on('click', closeModal);
+    $modal.on('click', function onBackdrop(ev) {
+      if (ev.target === $modal[0]) {
+        closeModal();
+      }
+    });
+
+    $save.on('click', async function onSave(ev) {
+      if (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+      $err.hide();
+      try {
+        await patchJson('/api/mcp_config/', { content: $ta.val() });
+        closeModal();
+        try {
+          await refreshToolServersAfterMcpSave();
+        } catch (refreshErr) {
+          if (typeof window.console !== 'undefined' && window.console.warn) {
+            window.console.warn(refreshErr);
+          }
+        }
+      } catch (err) {
+        $err.text(err && err.message ? err.message : String(err)).show();
+      }
+    });
+
+    $box.append($title).append($editor).append($err).append($actions);
+    $modal.append($box);
+    $('body').append($modal);
+    requestAnimationFrame(function afterLayout() {
+      syncLayers();
+      syncScroll();
+      $ta.trigger('focus');
+    });
   }
 
 
@@ -116,11 +325,12 @@ export function createParametersUi(context) {
     $('.settings-section').filter(function filterPanels() {
       return this.id.startsWith('group-')
         && this.id !== 'group-connection'
+        && this.id !== 'group-skills'
         && this.id !== 'group-system'
         && this.id !== 'group-model';
     }).hide().find('.settings-section-content').empty();
 
-    $('.settings-divider[id^="divider-"]').not('#divider-connection').hide();
+    $('.settings-divider[id^="divider-"]').not('#divider-connection, #divider-skills').hide();
   }
 
 
@@ -672,57 +882,146 @@ export function createParametersUi(context) {
   // Thinking controls.
   // Rebuild both think-level button strips from the model payload.
   function renderThinkLevelControls() {
-    const normalizedOptions = Array.isArray(state.thinkState.levelOptions) && state.thinkState.levelOptions.length > 0
-      ? state.thinkState.levelOptions
-      : DEFAULT_THINK_LEVEL_OPTIONS;
+    $('.think-toggle-btn').not('.think-level-selector .think-toggle-btn').remove();
 
-    [dom.$thinkLevelSelector, dom.$thinkLevelSelectorConv].forEach(function rebuildSelector($selector) {
-      $selector.empty();
+    const metadataOptions = Array.isArray(state.thinkState.levelOptions)
+      ? state.thinkState.levelOptions
+      : [];
+    const canDisableThinking = !!state.thinkState.toggleSupported;
+    const baseOptions = state.thinkState.levelSupported
+      ? metadataOptions
+      : (state.thinkState.supported ? ['on'] : []);
+    const normalizedOptions = (canDisableThinking ? ['off'] : []).concat(baseOptions)
+      .map(function normalizeOption(optionValue) {
+        return String(optionValue || '').trim().toLowerCase();
+      })
+      .filter(function uniqueOption(optionValue, index, options) {
+        return optionValue && options.indexOf(optionValue) === index;
+      });
+
+    function labelForThinkOption(normalizedValue) {
+      const labels = {
+        off: 'Off',
+        on: 'On',
+        minimal: 'Minimal',
+        low: 'Low',
+        medium: 'Medium',
+        high: 'High',
+        xhigh: 'XHigh',
+        max: 'Max',
+        ultra: 'Ultra'
+      };
+      if (labels[normalizedValue]) {
+        return labels[normalizedValue];
+      }
+      return normalizedValue
+        .replace(/[_-]+/g, ' ')
+        .replace(/\b\w/g, function capitalize(letter) {
+          return letter.toUpperCase();
+        });
+    }
+
+    [
+      { $selector: dom.$thinkLevelSelector, buttonId: 'thinkToggleBtn' },
+      { $selector: dom.$thinkLevelSelectorConv, buttonId: 'thinkToggleBtnConv' }
+    ].forEach(function rebuildSelector(pair) {
+      const $selector = pair.$selector;
+      let $trigger = $selector.find('.think-toggle-btn').first();
+      let $menu = $selector.find('.think-level-menu').first();
+
+      if (!$trigger.length) {
+        $trigger = $('<button type="button" class="think-toggle-btn">');
+      }
+      $trigger
+        .attr({
+          id: pair.buttonId,
+          title: 'Reasoning effort',
+          'aria-haspopup': 'menu',
+          'aria-expanded': 'false'
+        })
+        .empty()
+        .append($('<span class="think-toggle-label">').text('Off'))
+        .append(
+          $('<svg class="think-toggle-chevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">')
+            .append($('<path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round">'))
+        );
+
+      if (!$menu.length) {
+        $menu = $('<div class="think-level-menu" role="menu" aria-label="Reasoning effort" style="display:none;">');
+      }
+      $menu.empty().append($('<div class="think-level-menu-title">').text('Intelligence'));
 
       normalizedOptions.forEach(function appendOption(optionValue) {
-        const normalizedValue = String(optionValue || '').trim();
+        const normalizedValue = String(optionValue || '').trim().toLowerCase();
         if (!normalizedValue) {
           return;
         }
 
-        const label = normalizedValue
-          .replace(/[_-]+/g, ' ')
-          .replace(/\b\w/g, function capitalize(letter) {
-            return letter.toUpperCase();
-          });
-
-        $selector.append(
+        $menu.append(
           $('<button type="button" class="think-level-btn">')
             .attr('data-value', normalizedValue)
-            .text(label)
+            .attr('role', 'menuitem')
+            .append($('<span class="think-level-btn-label">').text(labelForThinkOption(normalizedValue)))
+            .append($('<span class="think-level-check" aria-hidden="true">').text('\u2713'))
         );
       });
+
+      $selector.empty().append($trigger).append($menu);
     });
+
+    dom.$thinkToggleBtn = dom.$thinkLevelSelector.find('.think-toggle-btn').first();
+    dom.$thinkToggleBtnConv = dom.$thinkLevelSelectorConv.find('.think-toggle-btn').first();
+  }
+
+  function getThinkLevelLabel(value) {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    const $matchingButton = dom.$thinkLevelSelector
+      .add(dom.$thinkLevelSelectorConv)
+      .find(`.think-level-btn[data-value="${normalizedValue}"]`)
+      .first();
+    if ($matchingButton.length) {
+      return $matchingButton.find('.think-level-btn-label').text() || $matchingButton.text().trim();
+    }
+    return normalizedValue || 'Off';
   }
 
   // Update think toggles and think-level selectors for both composers.
   function updateThinkControls() {
-    [
-      { $toggle: dom.$thinkToggleBtn, $selector: dom.$thinkLevelSelector },
-      { $toggle: dom.$thinkToggleBtnConv, $selector: dom.$thinkLevelSelectorConv }
-    ].forEach(function updatePair(pair) {
-      if (!state.thinkState.supported) {
-        pair.$toggle.hide();
-        pair.$selector.hide();
+    const hasLevelOptions = state.thinkState.levelSupported
+      && Array.isArray(state.thinkState.levelOptions)
+      && state.thinkState.levelOptions.length > 0;
+    const canDisableThinking = !!state.thinkState.toggleSupported;
+    const showThinkControl = state.thinkState.supported
+      && (hasLevelOptions || state.thinkState.toggleSupported || state.thinkState.supported);
+    let selectedValue = '';
+    if (hasLevelOptions) {
+      selectedValue = canDisableThinking && (!state.thinkState.enabled || String(state.thinkState.level || '').toLowerCase() === 'off')
+        ? 'off'
+        : String(state.thinkState.level || state.thinkState.levelOptions[0] || '').toLowerCase();
+    } else {
+      selectedValue = state.thinkState.enabled ? 'on' : 'off';
+    }
+    const selectedLabel = getThinkLevelLabel(selectedValue);
+
+    [dom.$thinkLevelSelector, dom.$thinkLevelSelectorConv].forEach(function updatePair($selector) {
+      const $toggle = $selector.find('.think-toggle-btn').first();
+
+      if (!showThinkControl) {
+        $selector.hide();
+        $toggle.attr('aria-expanded', 'false');
+        $selector.find('.think-level-menu').hide();
         return;
       }
 
-      pair.$toggle.toggle(state.thinkState.toggleSupported && !state.thinkState.levelSupported);
-      pair.$toggle.toggleClass('active', state.thinkState.enabled);
-
-      if (state.thinkState.levelSupported) {
-        pair.$selector.show();
-        pair.$selector.find('.think-level-btn').each(function toggleButton() {
-          $(this).toggleClass('active', $(this).data('value') === state.thinkState.level);
-        });
-      } else {
-        pair.$selector.hide();
-      }
+      $selector.show();
+      $toggle.show();
+      $toggle
+        .toggleClass('active', selectedValue !== 'off')
+        .find('.think-toggle-label')
+        .text(selectedLabel);
+      $selector.find('.think-level-btn').each(function toggleButton() {
+        $(this).toggleClass('active', $(this).data('value') === selectedValue);
+      });
     });
   }
 
@@ -891,10 +1190,17 @@ export function createParametersUi(context) {
     let payload = collectParameterPayload('#dynamicParameters .dyn-param');
     const adapter = getEngineAdapter(state.activeEngine);
 
-    if (state.thinkState.supported && state.thinkState.toggleSupported && !state.thinkState.levelSupported) {
+    if (
+      state.thinkState.supported
+      && state.thinkState.toggleSupported
+    ) {
       payload[state.thinkState.paramName] = state.thinkState.enabled;
     }
-    if (state.thinkState.supported && state.thinkState.levelSupported) {
+    if (
+      state.thinkState.supported
+      && state.thinkState.levelSupported
+      && String(state.thinkState.level || '').toLowerCase() !== 'off'
+    ) {
       payload[state.thinkState.levelParamName] = state.thinkState.level;
     }
 
@@ -1002,11 +1308,13 @@ export function createParametersUi(context) {
 
   // Return only selected tool ids that still exist in the live server list.
   function getSelectedToolServerIds() {
-    const validIds = new Set(
-      state.availableToolServers.map(function mapId(server) {
-        return normalizeToolServerId(server.id);
-      })
-    );
+    const validIds = new Set();
+    state.availableToolServers.forEach(function mapId(server) {
+      validIds.add(normalizeToolServerId(server.id));
+    });
+    (state.userMcpToolServers || []).forEach(function mapUserMcpId(server) {
+      validIds.add(normalizeToolServerId(server.id));
+    });
 
     return Array.from(state.selectedToolServerIds).filter(function filterValid(id) {
       return validIds.has(id);

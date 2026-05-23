@@ -84,6 +84,62 @@ export function bindEventHandlers(context, dependencies) {
     });
   });
 
+  function closeComposerMenus() {
+    dom.$composerMenuPopover.add(dom.$composerMenuPopoverConv).hide();
+    dom.$composerMenuBtn.add(dom.$composerMenuBtnConv)
+      .removeClass('is-open')
+      .attr('aria-expanded', 'false');
+  }
+
+  function closeThinkLevelMenus() {
+    dom.$thinkLevelSelector.add(dom.$thinkLevelSelectorConv)
+      .removeClass('is-open')
+      .find('.think-level-menu')
+      .hide();
+    dom.$thinkLevelSelector.add(dom.$thinkLevelSelectorConv)
+      .find('.think-toggle-btn')
+      .attr('aria-expanded', 'false');
+  }
+
+  function toggleComposerMenu($button, $popover) {
+    const willOpen = !$popover.is(':visible');
+    closeComposerMenus();
+    closeThinkLevelMenus();
+    if (!willOpen) {
+      return;
+    }
+    $popover.show();
+    $button.addClass('is-open').attr('aria-expanded', 'true');
+  }
+
+  dom.$composerMenuBtn.on('click', function onComposerMenuClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleComposerMenu(dom.$composerMenuBtn, dom.$composerMenuPopover);
+  });
+
+  dom.$composerMenuBtnConv.on('click', function onComposerMenuConvClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleComposerMenu(dom.$composerMenuBtnConv, dom.$composerMenuPopoverConv);
+  });
+
+  $(document).on('click', function onComposerMenuDocumentClick(event) {
+    if (!$(event.target).closest('.composer-menu-popover, .composer-menu-btn, .composer-skills-flyout').length) {
+      closeComposerMenus();
+    }
+    if (!$(event.target).closest('.think-level-selector').length) {
+      closeThinkLevelMenus();
+    }
+  });
+
+  $(document).on('keydown', function onComposerMenuKeydown(event) {
+    if (event.key === 'Escape') {
+      closeComposerMenus();
+      closeThinkLevelMenus();
+    }
+  });
+
   $activityRoots.on('click', '.msg-search-chip:not(.msg-search-chip--more)', function onSearchChipClick(event) {
     event.stopPropagation();
   });
@@ -190,10 +246,12 @@ export function bindEventHandlers(context, dependencies) {
   });
 
   $(document).on('click', '#attachBtn', function onAttachClick() {
+    closeComposerMenus();
     dom.$imageInput.attr('accept', '*/*').prop('disabled', false).trigger('click');
   });
 
   $(document).on('click', '#attachBtnConv', function onAttachConvClick() {
+    closeComposerMenus();
     dom.$imageInputConv.attr('accept', '*/*').prop('disabled', false).trigger('click');
   });
 
@@ -226,9 +284,31 @@ export function bindEventHandlers(context, dependencies) {
     });
   }
 
+  function isSkillsManagerOpen() {
+    return document.body.classList.contains('skills-manager-open');
+  }
+
+  function isOverSkillsImportSurface(event) {
+    const el = event && (event.target || (event.nativeEvent && event.nativeEvent.target));
+    return !!(el && el.closest && (
+      el.closest('.skills-import-dropzone')
+      || el.closest('.skills-add-dialog')
+    ));
+  }
+
   function handleFileDrag(event) {
     const dataTransfer = getDragDataTransfer(event);
     if (!dataTransfer) {
+      return;
+    }
+
+    // Only accept file drag over the import dropzone — global preventDefault breaks
+    // Windows drag-and-drop (ghost icon stuck to cursor after mouseup).
+    if (isSkillsManagerOpen()) {
+      if (isOverSkillsImportSurface(event)) {
+        event.preventDefault();
+        dataTransfer.dropEffect = 'copy';
+      }
       return;
     }
 
@@ -242,6 +322,12 @@ export function bindEventHandlers(context, dependencies) {
     if (!event) {
       return;
     }
+    if (isSkillsManagerOpen()) {
+      document.querySelectorAll('.skills-import-dropzone.is-dragover').forEach(function (el) {
+        el.classList.remove('is-dragover');
+      });
+      return;
+    }
     if (event.type === 'dragend' || event.type === 'drop') {
       hideDropOverlay();
       return;
@@ -253,11 +339,20 @@ export function bindEventHandlers(context, dependencies) {
 
   function handleFileDrop(event) {
     const dataTransfer = getDragDataTransfer(event);
-    const files = dataTransfer ? dataTransfer.files : null;
     if (!dataTransfer) {
       return;
     }
 
+    // Never read dataTransfer.files while skills manager is open — that triggers
+    // Chromium's "upload N files to this site?" confirmation dialog.
+    if (isSkillsManagerOpen()) {
+      if (isOverSkillsImportSurface(event)) {
+        event.preventDefault();
+      }
+      return;
+    }
+
+    const files = dataTransfer.files;
     event.preventDefault();
     event.stopPropagation();
     hideDropOverlay();
@@ -304,21 +399,41 @@ export function bindEventHandlers(context, dependencies) {
   });
 
   $(document).on('click', '.think-toggle-btn', function onThinkToggleClick() {
-    if (!state.thinkState.supported || !state.thinkState.toggleSupported || state.thinkState.levelSupported) {
+    if (!state.thinkState.supported) {
       return;
     }
 
-    state.thinkState.enabled = !state.thinkState.enabled;
-    parametersUi.updateThinkControls();
-    engineManager.schedulePresetSync();
+    const $selector = $(this).closest('.think-level-selector');
+    if (!$selector.length) {
+      $(this).remove();
+      return;
+    }
+
+    const $menu = $selector.find('.think-level-menu').first();
+    const willOpen = !$menu.is(':visible');
+    closeComposerMenus();
+    closeThinkLevelMenus();
+    if (willOpen) {
+      $selector.addClass('is-open');
+      $menu.show();
+      $(this).attr('aria-expanded', 'true');
+    }
   });
 
   $(document).on('click', '.think-level-btn', function onThinkLevelClick() {
-    if (!state.thinkState.supported || !state.thinkState.levelSupported) {
+    if (!state.thinkState.supported) {
       return;
     }
 
-    state.thinkState.level = $(this).data('value');
+    const value = String($(this).data('value') || '').toLowerCase();
+    if (value === 'off') {
+      state.thinkState.enabled = false;
+      state.thinkState.level = 'off';
+    } else {
+      state.thinkState.enabled = true;
+      state.thinkState.level = value || state.thinkState.level || 'medium';
+    }
+    closeThinkLevelMenus();
     parametersUi.updateThinkControls();
     engineManager.schedulePresetSync();
   });

@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper. All Rights Reserved.
+﻿# Copyright NGGT.LightKeeper. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -63,8 +63,16 @@ from Apps.Data.models import (
     MessageImage,
     OllamaPreset,
 )
-from Apps.UI.upload_storage import load_upload_manifest, model_upload_payload, save_upload_to_sandbox
-from Settings import settings
+from Apps.UI.host_theme_bridge import build_host_theme_template_context
+from Apps.UI.upload_storage import (
+    load_upload_manifest,
+    model_upload_payload,
+    public_upload_payload,
+    resolve_uploaded_file_host_path,
+    save_upload_to_sandbox,
+)
+from Settings import mcp_json, settings
+from Settings import skills as skills_config
 
 logger = logging.getLogger(__name__)
 
@@ -462,8 +470,21 @@ def _write_favicon_disk_cache(domain: str, content_type: str, content: bytes, ex
         logger.debug("Failed to write favicon disk cache for %s", domain, exc_info=True)
 
 
+def _chat_is_first_user_turn(chat: Chat | None) -> bool:
+    """Return whether the chat has not yet persisted a user message."""
+
+    if chat is None:
+        return True
+    return not chat.messages.filter(role="user").exists()
+
+
 # Merge the project prompt with per-request user instructions.
-def _compose_system_prompt(user_system_prompt: str) -> str:
+def _compose_system_prompt(
+    user_system_prompt: str,
+    *,
+    consume_skill_notifications: bool = True,
+    include_skills_baseline: bool = False,
+) -> str:
     """Build the system prompt sent to the model for one request."""
 
     parts: list[str] = []
@@ -475,6 +496,17 @@ def _compose_system_prompt(user_system_prompt: str) -> str:
     runtime_context = _build_runtime_context()
     if runtime_context:
         parts.append(runtime_context)
+
+    try:
+        skill_delta = skills_config.build_system_prompt_skills_section(
+            consume=consume_skill_notifications,
+            include_baseline=include_skills_baseline,
+        )
+    except Exception:
+        logger.exception("Failed to build skills prompt delta")
+        skill_delta = ""
+    if skill_delta:
+        parts.append(skill_delta)
 
     user_prompt = str(user_system_prompt or "").strip()
     if user_prompt:
@@ -530,6 +562,7 @@ LLM_HISTORY_COMPRESSION_RECENT_USER_MESSAGES = 5
 LLM_HISTORY_COMPRESSION_DIRECTIVE_MESSAGES = 20
 STREAMING_ASSISTANT_SNAPSHOT_INTERVAL_SECONDS = 1.0
 STREAMING_ASSISTANT_SNAPSHOT_MIN_CHAR_DELTA = 256
+MODEL_INFO_CACHE_SCHEMA_VERSION = "reasoning-level-options-v2"
 MODEL_INFO_CACHE_TTL_SECONDS = 300
 MODEL_LIST_CACHE_TTL_SECONDS = 45
 MODEL_RUNTIME_METADATA_PATH = settings.BASE_DIR / "Tools" / "model_runtime_metadata.json"
@@ -648,6 +681,13 @@ def _clear_model_metadata_caches() -> None:
         _tool_server_cache.clear()
 
 
+def _clear_tool_server_cache() -> None:
+    """Drop cached tool server lists only (e.g. after ``mcp.json`` changes)."""
+
+    with _metadata_cache_lock:
+        _tool_server_cache.clear()
+
+
 # Remember the latest selected model for one engine.
 def _remember_active_model(engine: str, model_name: str) -> None:
     """Store the latest selected model for this server process."""
@@ -724,7 +764,7 @@ def _get_cached_model_info(engine: str, model_name: str) -> dict[str, Any] | Non
     """Return a cached model-info payload if available."""
 
     endpoint, api_key_hash = _engine_metadata_scope(engine)
-    cache_key = (engine, model_name, endpoint, api_key_hash)
+    cache_key = (engine, model_name, endpoint, f"{api_key_hash}:{MODEL_INFO_CACHE_SCHEMA_VERSION}")
     now = time.monotonic()
 
     with _metadata_cache_lock:
@@ -743,7 +783,7 @@ def _set_cached_model_info(engine: str, model_name: str, payload: dict[str, Any]
     """Cache and return a detached model-info payload."""
 
     endpoint, api_key_hash = _engine_metadata_scope(engine)
-    cache_key = (engine, model_name, endpoint, api_key_hash)
+    cache_key = (engine, model_name, endpoint, f"{api_key_hash}:{MODEL_INFO_CACHE_SCHEMA_VERSION}")
     cached_payload = _clone_metadata_payload(payload)
 
     with _metadata_cache_lock:
@@ -1274,9 +1314,13 @@ def _build_file_attachment_prompt_block(attachment: dict[str, Any]) -> str:
 
 
 def _selected_tools_include_sandbox(selected_tool_servers: list[dict[str, Any]]) -> bool:
-    """Return whether the resolved tool selection includes sandbox access."""
+    """Return whether the resolved tool selection includes sandbox file access."""
 
-    return any(str(server.get("id") or "").strip() == "sandbox" for server in selected_tool_servers)
+    selected_ids = {
+        str(server.get("id") or "").strip()
+        for server in selected_tool_servers
+    }
+    return bool(selected_ids & {"sandbox", "oda"})
 
 
 def _normalize_uploaded_file_ids(data: dict[str, Any]) -> list[str]:
@@ -1573,7 +1617,7 @@ def _build_base_context() -> dict[str, Any]:
 
     runtime_settings = settings.get_runtime_engine_settings()
     engine = _get_active_engine(runtime_settings.get("llm-engine"))
-    return {
+    base = {
         "llm_engine": engine,
         "models": [],
         "engine_options": settings.get_supported_engines(),
@@ -1581,6 +1625,8 @@ def _build_base_context() -> dict[str, Any]:
         "available_tool_servers": _list_tool_servers_cached(engine=engine),
         "chats": Chat.objects.all(),
     }
+    base.update(build_host_theme_template_context())
+    return base
 
 
 # Build runtime settings payload
@@ -1858,6 +1904,15 @@ def _serialize_message(message: Message, *, include_attachment_data: bool = True
         payload["activity_segments"] = activity_segments
         payload["reasoning_mode"] = _message_has_reasoning_segments(message)
     attachments = _get_message_attachments(message, include_data=include_attachment_data)
+    if message.role == "user":
+        for manifest in _load_message_upload_manifests(message, sandbox_enabled=True):
+            try:
+                uploaded_payload = public_upload_payload(manifest)
+            except Exception:
+                continue
+            if uploaded_payload:
+                uploaded_payload["kind"] = "file"
+                attachments.append(uploaded_payload)
     if attachments:
         payload["attachments"] = attachments
         payload["images"] = [
@@ -2100,6 +2155,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
     supports_think_level = any(
         marker in template_str for marker in (".ThinkLevel", ".ReasoningEffort")
     )
+    supports_think_toggle = False
 
     if "thinking" in normalized_capabilities:
         supports_thinking = True
@@ -2107,6 +2163,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
     for candidate in THINK_PARAM_NAMES:
         if candidate in defaults:
             think_param_name = candidate
+            supports_think_toggle = True
             supports_thinking = True
             break
 
@@ -2115,6 +2172,12 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
             think_level_param_name = candidate
             supports_think_level = True
             break
+
+    # Ollama exposes plain thinking as a boolean `think` request field, but
+    # level-based models such as gpt-oss use the same field for low/medium/high.
+    # Do not add a fake Off option when the model advertises think levels.
+    if supports_thinking and not supports_think_level:
+        supports_think_toggle = True
 
     supports_vision = "vision" in normalized_capabilities
     supports_tool_calling = _ollama_metadata_supports_tool_calling(capabilities, template_str)
@@ -2129,6 +2192,7 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
         "model_layers": model_layers,
         "defaults": defaults,
         "supports_thinking": supports_thinking,
+        "supports_think_toggle": supports_think_toggle,
         "supports_think_level": supports_think_level,
         "think_param_name": think_param_name,
         "think_level_param_name": think_level_param_name,
@@ -2172,6 +2236,21 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
     if not isinstance(defaults, dict):
         defaults = {}
 
+    supports_think_level = bool(settings_data.get("supports_think_level", False))
+    think_level_param_name = str(settings_data.get("think_level_param_name", "think_level") or "think_level")
+    think_level_options = (
+        settings_data.get("think_level_options", [])
+        if isinstance(settings_data.get("think_level_options", []), list)
+        else []
+    )
+    if supports_think_level and not think_level_options:
+        if think_level_param_name == "reasoning_effort":
+            think_level_options = ["minimal", "low", "medium", "high", "xhigh"]
+        elif think_level_param_name == "thinking_level":
+            think_level_options = ["minimal", "low", "medium", "high"]
+        else:
+            think_level_options = ["low", "medium", "high"]
+
     context_length = (
         settings_data.get("context_length")
         or settings_data.get("max_context_window")
@@ -2183,11 +2262,11 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
         "context_length": int(context_length),
         "defaults": defaults,
         "supports_thinking": bool(settings_data.get("supports_thinking", False)),
-        "supports_think_toggle": bool(settings_data.get("supports_think_toggle", settings_data.get("supports_thinking", False))),
-        "supports_think_level": bool(settings_data.get("supports_think_level", False)),
+        "supports_think_toggle": bool(settings_data.get("supports_think_toggle", False)),
+        "supports_think_level": supports_think_level,
         "think_param_name": settings_data.get("think_param_name", "think"),
-        "think_level_param_name": settings_data.get("think_level_param_name", "think_level"),
-        "think_level_options": settings_data.get("think_level_options", []) if isinstance(settings_data.get("think_level_options", []), list) else [],
+        "think_level_param_name": think_level_param_name,
+        "think_level_options": think_level_options,
         "supported_parameters": settings_data.get("supported_parameters", []) if isinstance(settings_data.get("supported_parameters", []), list) else [],
         "supports_vision": "vision" in normalized_capabilities or bool(settings_data.get("supports_vision", False)),
         "supports_tool_calling": bool(settings_data.get("supports_tool_calling", False)),
@@ -2333,7 +2412,7 @@ def _build_inference_info_payload(
             "items": capabilities,
             "supports_thinking": bool(model_info_payload.get("supports_thinking", False)),
             "supports_think_toggle": bool(
-                model_info_payload.get("supports_think_toggle", model_info_payload.get("supports_thinking", False))
+                model_info_payload.get("supports_think_toggle", False)
             ),
             "supports_think_level": bool(model_info_payload.get("supports_think_level", False)),
             "supports_vision": bool(model_info_payload.get("supports_vision", False)),
@@ -3350,6 +3429,8 @@ def _build_generate_kwargs(
             "model_name": model_name,
             "module_dir": str(settings.BASE_DIR),
             "project_dir": str(settings.BASE_DIR),
+            "selected_tool_server_ids": [s["id"] for s in selected_tool_servers],
+            "sandbox_enabled": _selected_tools_include_sandbox(selected_tool_servers),
         }
 
     return generate_kwargs
@@ -3800,6 +3881,16 @@ def upload_files_api(request):
 
     scope = request.POST.get("chat_id") or request.POST.get("scope") or "pending"
     model_supports_vision = str(request.POST.get("supports_vision", "")).lower() in {"1", "true", "yes"}
+    tool_server_ids = request.POST.getlist("tool_server_ids")
+    if not tool_server_ids:
+        raw_tool_server_ids = str(request.POST.get("tool_server_ids") or "").strip()
+        if raw_tool_server_ids.startswith("["):
+            try:
+                parsed_tool_server_ids = json.loads(raw_tool_server_ids)
+            except json.JSONDecodeError:
+                parsed_tool_server_ids = []
+            if isinstance(parsed_tool_server_ids, list):
+                tool_server_ids = [str(item) for item in parsed_tool_server_ids if str(item).strip()]
     public_files: list[dict[str, Any]] = []
     for uploaded_file in uploaded_files:
         try:
@@ -3807,6 +3898,7 @@ def upload_files_api(request):
                 uploaded_file,
                 scope=scope,
                 model_supports_vision=model_supports_vision,
+                tool_server_ids=tool_server_ids,
             )
             public_files.append(public_payload)
         except Exception as exc:
@@ -3837,7 +3929,6 @@ def chat_api(request):
         # Read request payload and validate required inputs.
         user_message = data.get("message", "")
         model_name = data.get("model", "")
-        system_prompt = _compose_system_prompt(data.get("system_prompt", ""))
         options = data.get("options", {}) or {}
         chat_id = data.get("chat_id", "")
         attachments = _normalize_request_attachments(data)
@@ -3897,6 +3988,11 @@ def chat_api(request):
             chat = _resolve_chat(chat_id, user_message, attachments or upload_manifests)
         except LookupError as exc:
             return JsonResponse({"error": str(exc)}, status=404)
+
+        system_prompt = _compose_system_prompt(
+            data.get("system_prompt", ""),
+            include_skills_baseline=_chat_is_first_user_turn(chat),
+        )
 
         import json as _json
         active_slug = _json.dumps([s["id"] for s in selected_tool_servers], ensure_ascii=False)
@@ -4019,9 +4115,7 @@ def _path_is_within(path: Path, root: Path) -> bool:
 
 def _shared_file_allowed_roots() -> list[Path]:
     roots = [
-        settings.BASE_DIR,
         settings.BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox",
-        Path.home() / "Downloads",
     ]
 
     sandbox_host_workspace = os.getenv("SANDBOX_HOST_WORKSPACE", "").strip()
@@ -4099,20 +4193,152 @@ def _resolve_shared_file_path(raw_path: str) -> Path:
     raise FileNotFoundError("Shared file not found or not allowed.")
 
 
+def _resolve_uploaded_file_content_path(manifest: dict[str, Any]) -> Path:
+    """Return the local path for one uploaded file manifest."""
+
+    return resolve_uploaded_file_host_path(manifest)
+
+
+MEDIA_RANGE_CHUNK_BYTES = 64 * 1024 * 1024
+MEDIA_STREAM_READ_BYTES = 1024 * 1024
+
+
+def _range_not_satisfiable_response(file_size: int) -> HttpResponse:
+    resp = HttpResponse(status=416)
+    resp["Content-Range"] = "bytes */" + str(max(0, int(file_size or 0)))
+    resp["Accept-Ranges"] = "bytes"
+    return resp
+
+
+def _parse_single_byte_range(range_header: str, file_size: int) -> tuple[int, int] | None:
+    """Return one satisfiable byte range, including suffix ranges."""
+
+    if file_size <= 0:
+        return None
+    range_match = re.fullmatch(r"bytes=(\d*)-(\d*)", str(range_header or "").strip())
+    if not range_match:
+        return None
+
+    raw_start, raw_end = range_match.group(1), range_match.group(2)
+    if not raw_start and not raw_end:
+        return None
+
+    if not raw_start:
+        suffix_length = int(raw_end)
+        if suffix_length <= 0:
+            return None
+        start = max(file_size - suffix_length, 0)
+        end = file_size - 1
+        return start, end
+
+    start = int(raw_start)
+    if start >= file_size:
+        return None
+
+    if raw_end:
+        end = min(int(raw_end), file_size - 1)
+    else:
+        end = min(start + MEDIA_RANGE_CHUNK_BYTES - 1, file_size - 1)
+    if start > end:
+        return None
+    return start, end
+
+
+def _stream_local_file_response(
+    request,
+    target: Path,
+    *,
+    mime_type: str,
+    safe_name: str,
+    disposition: str = "inline",
+):
+    """Stream a local file with HTTP Range support for media playback."""
+
+    file_size = target.stat().st_size
+    range_header = request.META.get("HTTP_RANGE", "").strip()
+    is_head = request.method == "HEAD"
+
+    if range_header:
+        parsed_range = _parse_single_byte_range(range_header, file_size)
+        if parsed_range is None:
+            return _range_not_satisfiable_response(file_size)
+        start, end = parsed_range
+        chunk_size = end - start + 1
+        if is_head:
+            response = HttpResponse(status=206, content_type=mime_type)
+        else:
+            fh = target.open("rb")
+            fh.seek(start)
+
+            def _range_iter(fh, remaining):
+                try:
+                    while remaining > 0:
+                        data = fh.read(min(MEDIA_STREAM_READ_BYTES, remaining))
+                        if not data:
+                            break
+                        remaining -= len(data)
+                        yield data
+                finally:
+                    fh.close()
+
+            response = StreamingHttpResponse(_range_iter(fh, chunk_size), status=206, content_type=mime_type)
+        response["Content-Range"] = "bytes " + str(start) + "-" + str(end) + "/" + str(file_size)
+        response["Content-Length"] = str(chunk_size)
+    else:
+        if is_head:
+            response = HttpResponse(content_type=mime_type)
+        else:
+            response = FileResponse(target.open("rb"), content_type=mime_type)
+        response["Content-Length"] = str(file_size)
+
+    response["Accept-Ranges"] = "bytes"
+    response["Cache-Control"] = "private, max-age=300"
+    response["Content-Disposition"] = f'{disposition}; filename="{safe_name}"'
+    return response
+
+
+# Return uploaded file bytes on demand.
+def uploaded_file_content_api(request, file_id: str):
+    """Stream one uploaded file by id with HTTP Range support for media playback."""
+
+    if request.method not in {"GET", "HEAD"}:
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        manifest = load_upload_manifest(file_id)
+        if not manifest:
+            return JsonResponse({"error": "Uploaded file not found"}, status=404)
+        target = _resolve_uploaded_file_content_path(manifest)
+        safe_name = re.sub(r"[\"\\\r\n]", "_", Path(str(manifest.get("name") or target.name)).name or "download")
+        mime_type = str(manifest.get("mime") or mimetypes.guess_type(str(target))[0] or "application/octet-stream")
+        return _stream_local_file_response(request, target, mime_type=mime_type, safe_name=safe_name)
+    except FileNotFoundError:
+        return JsonResponse({"error": "Uploaded file not found"}, status=404)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Failed to stream uploaded file")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
 def shared_file_download_api(request):
     """Download a model-shared local file after validating its workspace path."""
 
-    if request.method != "GET":
+    if request.method not in {"GET", "HEAD"}:
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
     try:
         target = _resolve_shared_file_path(request.GET.get("path", ""))
         safe_name = re.sub(r'["\\\r\n]', "_", Path(request.GET.get("name") or target.name).name or "download")
         mime_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        response = FileResponse(target.open("rb"), content_type=mime_type)
-        response["Cache-Control"] = "private, max-age=300"
-        response["Content-Disposition"] = f'attachment; filename="{safe_name}"'
-        return response
+        disposition = "inline" if str(request.GET.get("preview") or "").lower() in {"1", "true", "yes"} else "attachment"
+        return _stream_local_file_response(
+            request,
+            target,
+            mime_type=mime_type,
+            safe_name=safe_name,
+            disposition=disposition,
+        )
     except FileNotFoundError:
         return JsonResponse({"error": "Shared file not found"}, status=404)
     except ValueError as exc:
@@ -4248,7 +4474,6 @@ def regenerate_chat_api(request, chat_id):
         data = _read_json_request_body(request)
 
         model_name = data.get("model", "")
-        system_prompt = _compose_system_prompt(data.get("system_prompt", ""))
         options = data.get("options", {}) or {}
         engine = _get_active_engine(data.get("engine"))
         raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
@@ -4264,6 +4489,11 @@ def regenerate_chat_api(request, chat_id):
         except Chat.DoesNotExist:
             return JsonResponse({"error": "Chat not found"}, status=404)
 
+        system_prompt = _compose_system_prompt(
+            data.get("system_prompt", ""),
+            include_skills_baseline=False,
+        )
+
         target_id = data.get("user_message_id")
         ordered = list(chat.messages.order_by("created_at", "id"))
         if target_id:
@@ -4277,7 +4507,7 @@ def regenerate_chat_api(request, chat_id):
         if user_message_record is None:
             return JsonResponse({"error": "No user message to regenerate"}, status=400)
 
-        # Drop every message that came after the targeted user turn — including
+        # Drop every message that came after the targeted user turn, including
         # the assistant reply we are about to replace.
         preserve_context_compression = bool(data.get("preserve_context_compression"))
         for message in ordered:
@@ -4609,6 +4839,190 @@ def get_models_api(request):
 
 
 # Return discovered tool servers.
+def mcp_config_api(request):
+    """Read or replace ``MCP/mcp.json`` (LM Studio / Cursor style user MCP servers)."""
+
+    mcp_json.ensure_default_mcp_json()
+
+    if request.method == "GET":
+        return JsonResponse({"content": mcp_json.load_raw_text()})
+
+    if request.method not in {"PUT", "PATCH"}:
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    content = payload.get("content")
+    if not isinstance(content, str):
+        return JsonResponse({"error": "Expected JSON object with string field 'content'"}, status=400)
+
+    try:
+        mcp_json.save_raw_text(content)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    tool_registry.reset_cache()
+    _clear_tool_server_cache()
+
+    return JsonResponse({"ok": True, "content": mcp_json.load_raw_text()})
+
+
+def _skills_error_response(exc: Exception) -> JsonResponse:
+    """Return a normalized JSON error for skills APIs."""
+
+    if isinstance(exc, FileNotFoundError):
+        return JsonResponse({"error": str(exc)}, status=404)
+    if isinstance(exc, ValueError):
+        return JsonResponse({"error": str(exc)}, status=400)
+    logger.exception("Unhandled skills API error")
+    return JsonResponse({"error": str(exc)}, status=500)
+
+
+def skills_api(request):
+    """List skills or create a new skill folder."""
+
+    if request.method == "GET":
+        try:
+            return JsonResponse(skills_config.list_skills())
+        except Exception as exc:
+            return _skills_error_response(exc)
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        return JsonResponse(skills_config.create_skill_folder(str(payload.get("name") or "")))
+    except Exception as exc:
+        return _skills_error_response(exc)
+
+
+def skills_folder_api(request):
+    """Rename or delete one skill folder."""
+
+    if request.method not in {"PATCH", "DELETE"}:
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        if request.method == "PATCH":
+            return JsonResponse(
+                skills_config.rename_skill_folder(
+                    str(payload.get("old_name") or payload.get("name") or ""),
+                    str(payload.get("new_name") or ""),
+                )
+            )
+        return JsonResponse(skills_config.delete_skill_folder(str(payload.get("name") or "")))
+    except Exception as exc:
+        return _skills_error_response(exc)
+
+
+def skills_file_api(request):
+    """Read, write, or delete one skill file."""
+
+    if request.method == "GET":
+        try:
+            return JsonResponse(
+                skills_config.read_skill_file(
+                    str(request.GET.get("folder") or ""),
+                    str(request.GET.get("file") or ""),
+                )
+            )
+        except Exception as exc:
+            return _skills_error_response(exc)
+
+    if request.method not in {"PUT", "DELETE"}:
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        folder = str(payload.get("folder") or "")
+        file_path = str(payload.get("file") or "")
+        if request.method == "PUT":
+            return JsonResponse(skills_config.write_skill_file(folder, file_path, str(payload.get("content") or "")))
+        return JsonResponse(skills_config.delete_skill_file(folder, file_path))
+    except Exception as exc:
+        return _skills_error_response(exc)
+
+
+def skills_enabled_api(request):
+    """Enable or disable one skill."""
+
+    if request.method not in {"PATCH", "POST"}:
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        return JsonResponse(
+            skills_config.set_skill_enabled(
+                str(payload.get("folder") or payload.get("name") or ""),
+                skills_config.parse_enabled_flag(payload.get("enabled")),
+            )
+        )
+    except Exception as exc:
+        return _skills_error_response(exc)
+
+
+def skills_directory_api(request):
+    """Create or delete a subdirectory inside a skill folder."""
+
+    if request.method not in {"POST", "DELETE"}:
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        folder = str(payload.get("folder") or "")
+        path = str(payload.get("path") or "")
+        if request.method == "DELETE":
+            return JsonResponse(skills_config.delete_skill_subdirectory(folder, path))
+        return JsonResponse(skills_config.create_skill_subdirectory(folder, path))
+    except Exception as exc:
+        return _skills_error_response(exc)
+
+
+def skills_import_api(request):
+    """Import a skill folder from a list of {path, content} file entries."""
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        skill_name = str(payload.get("name") or "")
+        files = payload.get("files")
+        if not isinstance(files, list):
+            return JsonResponse({"error": "files must be a list"}, status=400)
+        return JsonResponse(skills_config.import_skill_files(skill_name, files))
+    except ValueError as exc:
+        status = 409 if "already exists" in str(exc).lower() else 400
+        return JsonResponse({"error": str(exc)}, status=status)
+    except Exception as exc:
+        return _skills_error_response(exc)
+
+
+def skills_path_api(request):
+    """Rename a file or directory inside a skill folder."""
+
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        return JsonResponse(
+            skills_config.rename_skill_item(
+                str(payload.get("folder") or ""),
+                str(payload.get("old_path") or ""),
+                str(payload.get("new_path") or ""),
+                str(payload.get("kind") or "file"),
+            )
+        )
+    except Exception as exc:
+        return _skills_error_response(exc)
+
+
 def get_tools_api(request):
     """Return locally discovered MCP-style tool servers for the requested engine/model."""
 
@@ -4697,7 +5111,6 @@ def get_context_usage_api(request):
         model_name = str(request.GET.get("model") or _get_remembered_active_model(engine) or "").strip()
         chat_id = str(request.GET.get("chat_id") or "").strip()
         draft_text = str(request.GET.get("draft") or "")
-        system_prompt = _compose_system_prompt(str(request.GET.get("system_prompt") or ""))
 
         model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
         chat: Chat | None = None
@@ -4706,6 +5119,12 @@ def get_context_usage_api(request):
                 chat = Chat.objects.get(id=chat_id)
             except Chat.DoesNotExist:
                 chat = None
+
+        system_prompt = _compose_system_prompt(
+            str(request.GET.get("system_prompt") or ""),
+            consume_skill_notifications=False,
+            include_skills_baseline=_chat_is_first_user_turn(chat),
+        )
 
         estimate = _estimate_context_usage(
             chat=chat,
@@ -4758,13 +5177,18 @@ def context_compress_api(request):
         if not chat_id:
             return JsonResponse({"ok": True, "applied": False, "reason": "missing_chat_id"})
         force = bool(data.get("force"))
-        system_prompt = _compose_system_prompt(str(data.get("system_prompt") or ""))
         draft_text = str(data.get("draft") or data.get("draft_text") or "")
 
         try:
             chat = Chat.objects.get(id=chat_id)
         except Chat.DoesNotExist:
             return JsonResponse({"ok": True, "applied": False, "reason": "chat_not_found"})
+
+        system_prompt = _compose_system_prompt(
+            str(data.get("system_prompt") or ""),
+            consume_skill_notifications=False,
+            include_skills_baseline=False,
+        )
 
         with _generation_state_lock:
             active_generation_id = str(_active_generation_id_by_chat_id.get(str(chat.id)) or "")
@@ -5109,7 +5533,7 @@ def runtime_settings_api(request):
             return False
 
         # Password placeholders often arrive as repeated mask glyphs.
-        if all(char in {"*", "•", "●", "∙", "·", "◦"} for char in stripped):
+        if all(char in {"*", "\u2022", "\u25cf", "\u2219", "\u00b7", "\u25e6"} for char in stripped):
             return True
 
         lowered = stripped.lower()
@@ -5144,6 +5568,263 @@ def runtime_settings_api(request):
     _clear_model_metadata_caches()
 
     return JsonResponse(_build_runtime_settings_payload())
+
+
+# Browser portal control APIs.
+
+_frame404_burst_log_count = 0
+_frame404_burst_log_last_ts = 0.0
+
+
+def _browser_portal_roots() -> list[Path]:
+    return [
+        settings.BASE_DIR / "Data" / "runtime" / "browser_portal",
+    ]
+
+
+def _browser_portal_debug_log_path(root: Path | None = None) -> Path:
+    return (root or _browser_portal_roots()[0]) / "debug.jsonl"
+
+
+def _browser_portal_debug_safe(value: Any, *, depth: int = 0) -> Any:
+    if depth > 4:
+        return repr(value)[:4000]
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    if isinstance(value, str):
+        return value[:4000]
+    if isinstance(value, dict):
+        return {
+            str(key)[:200]: _browser_portal_debug_safe(child, depth=depth + 1)
+            for key, child in value.items()
+            if str(key) not in {"data_base64", "preview"}
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_browser_portal_debug_safe(child, depth=depth + 1) for child in list(value)[:50]]
+    return repr(value)[:4000]
+
+
+def _browser_portal_http_event_body_for_log(data: dict[str, Any] | None) -> dict[str, Any]:
+    """Compact portal POST body for debug.jsonl (typing floods the log otherwise)."""
+
+    if not isinstance(data, dict):
+        return {}
+    event_type = str(data.get("type") or "").strip().lower()
+    slim: dict[str, Any] = {}
+    for key in ("id", "created_at", "type", "version", "session_id"):
+        if key in data:
+            slim[key] = data[key]
+    client_meta = data.get("client_meta")
+    if isinstance(client_meta, dict):
+        slim["client_meta_keys"] = list(client_meta.keys())[:40]
+    if event_type == "type":
+        text = data.get("text")
+        slim["text_len"] = len(text) if isinstance(text, str) else 0
+    elif event_type == "key":
+        slim["key"] = str(data.get("key") or "")[:120]
+    else:
+        for key in ("x", "y", "delta_x", "delta_y", "viewport_width", "viewport_height"):
+            if key in data:
+                slim[key] = data[key]
+    return slim
+
+
+def _write_browser_portal_debug_event(root: Path | None, event: str, **fields: Any) -> None:
+    """Browser portal debug logging is intentionally disabled."""
+
+    return None
+
+
+def _read_browser_portal_state_from(root: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads((root / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _is_active_browser_portal_state(payload: dict[str, Any]) -> bool:
+    if str(payload.get("status") or "").lower() != "waiting":
+        return False
+    try:
+        updated_at = float(payload.get("updated_at") or 0)
+        timeout_seconds = float(payload.get("timeout_seconds") or 45)
+        deadline_at = float(payload.get("deadline_at") or 0)
+    except (TypeError, ValueError):
+        return False
+    if deadline_at > 0:
+        return time.time() <= deadline_at + 10
+    return updated_at > 0 and time.time() <= updated_at + timeout_seconds + 10
+
+
+def _active_browser_portal_root() -> Path | None:
+    candidates: list[tuple[float, Path]] = []
+    for root in _browser_portal_roots():
+        payload = _read_browser_portal_state_from(root)
+        if payload and _is_active_browser_portal_state(payload):
+            try:
+                candidates.append((float(payload.get("updated_at") or 0), root))
+            except (TypeError, ValueError):
+                continue
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
+def _browser_portal_state_path() -> Path:
+    root = _active_browser_portal_root()
+    if root is None:
+        return _browser_portal_roots()[0] / "state.json"
+    return root / "state.json"
+
+
+def _browser_portal_events_dir() -> Path:
+    root = _active_browser_portal_root()
+    if root is None:
+        return _browser_portal_roots()[0] / "events"
+    return root / "events"
+
+
+def _read_browser_portal_state() -> dict[str, Any]:
+    root = _active_browser_portal_root()
+    if root is None:
+        return {"ok": False, "error": "No active browser_wait_for_user session is available."}
+    payload = _read_browser_portal_state_from(root)
+    return payload if payload else {"ok": False, "error": "Invalid browser portal state."}
+
+
+def browser_portal_frame_api(request):
+    """Return the latest frame published by browser_wait_for_user."""
+
+    global _frame404_burst_log_count, _frame404_burst_log_last_ts
+
+    if request.method != "GET":
+        _write_browser_portal_debug_event(None, "frame_rejected_method", method=request.method)
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+    payload = _read_browser_portal_state()
+    status = 200 if payload.get("ok") else 404
+    if status == 200:
+        _frame404_burst_log_count = 0
+    if status != 200:
+        should_log_frame = True
+        if status == 404:
+            now_ts = time.time()
+            _frame404_burst_log_count += 1
+            if _frame404_burst_log_count <= 8:
+                should_log_frame = True
+            elif now_ts - _frame404_burst_log_last_ts >= 5.0:
+                _frame404_burst_log_last_ts = now_ts
+                should_log_frame = True
+            else:
+                should_log_frame = False
+        if should_log_frame:
+            _write_browser_portal_debug_event(
+                _active_browser_portal_root(),
+                "frame_response",
+                status_code=status,
+                payload_status=payload.get("status"),
+                session_id=payload.get("session_id"),
+                ok=payload.get("ok"),
+                error=payload.get("error"),
+                has_frame=isinstance(payload.get("frame"), dict),
+                url=payload.get("url"),
+            )
+    return JsonResponse(payload, status=status)
+
+
+def browser_portal_event_api(request):
+    """Queue one human portal event for the active browser_wait_for_user loop."""
+
+    if request.method != "POST":
+        _write_browser_portal_debug_event(None, "event_rejected_method", method=request.method)
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+    except ValueError as exc:
+        _write_browser_portal_debug_event(None, "event_rejected_invalid_json", error=str(exc))
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    event_type = str(data.get("type") or "").strip().lower()
+    _write_browser_portal_debug_event(
+        _active_browser_portal_root(),
+        "event_received",
+        event_type=event_type,
+        payload=_browser_portal_http_event_body_for_log(data),
+        request_path=request.path,
+    )
+    if event_type not in {"click", "scroll", "key", "type", "finish", "click_ref"}:
+        _write_browser_portal_debug_event(None, "event_rejected_unsupported_type", event_type=event_type, payload=_browser_portal_http_event_body_for_log(data))
+        return JsonResponse({"error": "Unsupported browser portal event type."}, status=400)
+
+    active_root = _active_browser_portal_root()
+    if active_root is None:
+        _write_browser_portal_debug_event(None, "event_rejected_no_active_session", event_type=event_type, payload=_browser_portal_http_event_body_for_log(data))
+        return JsonResponse({"error": "No active browser_wait_for_user session is available."}, status=409)
+
+    active_state = _read_browser_portal_state_from(active_root) or {}
+    active_session_id = str(active_state.get("session_id") or "").strip()
+    requested_session_id = str(data.get("session_id") or "").strip()
+    if requested_session_id and active_session_id and requested_session_id != active_session_id:
+        _write_browser_portal_debug_event(
+            active_root,
+            "event_rejected_session_mismatch",
+            event_type=event_type,
+            requested_session_id=requested_session_id,
+            active_session_id=active_session_id,
+            payload=_browser_portal_http_event_body_for_log(data),
+        )
+        return JsonResponse({"error": "This browser_wait_for_user session is no longer active."}, status=409)
+
+    events_dir = active_root / "events"
+    events_dir.mkdir(parents=True, exist_ok=True)
+    event_id = uuid.uuid4().hex
+    event_payload = {
+        "id": event_id,
+        "created_at": time.time(),
+        **data,
+        "type": event_type,
+    }
+    if active_session_id:
+        event_payload["session_id"] = active_session_id
+    event_path = events_dir / f"event_{int(time.time() * 1000)}_{event_id}.json"
+    event_path.write_text(json.dumps(event_payload, ensure_ascii=False), encoding="utf-8")
+    _write_browser_portal_debug_event(
+        active_root,
+        "event_written",
+        event_id=event_id,
+        event_type=event_type,
+        event_path=str(event_path),
+        active_session_id=active_session_id,
+        requested_session_id=requested_session_id,
+        payload=_browser_portal_http_event_body_for_log(event_payload),
+    )
+
+    if event_type == "finish":
+        payload = {
+            **active_state,
+            "ok": True,
+            "status": "done",
+            "updated_at": time.time(),
+            "version": int(time.time() * 1000),
+        }
+    else:
+        payload = _read_browser_portal_state()
+    if not payload.get("ok"):
+        payload = {"ok": True, "event_id": event_id, "queued": True}
+    else:
+        payload = {**payload, "event_id": event_id, "queued": True}
+    _write_browser_portal_debug_event(
+        active_root,
+        "event_response",
+        event_id=event_id,
+        event_type=event_type,
+        queued=True,
+        response_status=payload.get("status"),
+        response_session_id=payload.get("session_id"),
+    )
+    return JsonResponse(payload)
 
 
 # Additional page views.

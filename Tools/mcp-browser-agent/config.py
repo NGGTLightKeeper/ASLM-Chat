@@ -1,14 +1,17 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from pathlib import Path
+import os
 
 # Base paths
 BROWSER_AGENT_ROOT = Path(__file__).resolve().parent
-DOWNLOADS_DIR = BROWSER_AGENT_ROOT.parent.parent / "task"
+SANDBOX_DIR = BROWSER_AGENT_ROOT.parent / "mcp-sandbox" / "_sandbox"
+DOWNLOADS_DIR = Path(os.getenv("ASLM_BROWSER_WORKSPACE_DIR", SANDBOX_DIR)).resolve()
 
 # Browser window settings
 BROWSER_WIDTH = 1280
 BROWSER_HEIGHT = 800
+BROWSER_HEADLESS = os.getenv("ASLM_BROWSER_HEADLESS", "0").strip().lower() not in {"0", "false", "no", "off"}
 
 # Accessibility snapshot limits
 MAX_A11Y_DEPTH = 15

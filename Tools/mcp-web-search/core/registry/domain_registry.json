@@ -472,6 +472,19 @@
       ]
     },
     {
+      "pattern": "cursor.com",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.5,
+      "burst": 4,
+      "response_time_ms": 1200,
+      "parsing_mode": "nextjs_rsc",
+      "notes": "Docs pages embed useful Next.js RSC payloads in SSR HTML. Prefer direct RSC extraction on plain HTTP before generic HTML normalization or browser fallback.",
+      "topics": [
+        "tech"
+      ]
+    },
+    {
       "pattern": "platform.openai.com",
       "tier": "friendly",
       "method": "http",

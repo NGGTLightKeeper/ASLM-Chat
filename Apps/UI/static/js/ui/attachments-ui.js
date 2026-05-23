@@ -49,8 +49,10 @@ export function createAttachmentsUi(context) {
   function updateAttachmentControls() {
     dom.$attachBtn.show();
     dom.$attachBtnConv.show();
-    dom.$visionBadge.toggle(state.visionState.supported);
-    dom.$visionBadgeConv.toggle(state.visionState.supported);
+    if (dom.$modelVisionIndicator && dom.$modelVisionIndicator.length) {
+      dom.$modelVisionIndicator.toggleClass('is-visible', state.visionState.supported);
+    }
+    $(document).trigger('aslm:modelCapabilitiesChanged');
   }
 
   // Clear all pending attachments from both composers.
@@ -87,7 +89,15 @@ export function createAttachmentsUi(context) {
       };
     }
 
-    const contentUrl = attachment.contentUrl || attachment.content_url || '';
+    const fileId = String(attachment.fileId || attachment.file_id || '').trim();
+    let contentUrl = String(attachment.contentUrl || attachment.content_url || '').trim();
+
+    // If the server didn't return a content_url but we have a file_id, derive it
+    // from the known upload serving endpoint so media players get a valid src.
+    if (!contentUrl && fileId) {
+      contentUrl = `/api/uploads/${encodeURIComponent(fileId)}/content/`;
+    }
+
     const dataUrl = attachment.dataUrl || attachment.data_url || contentUrl || '';
     const previewDataUrl = attachment.previewDataUrl || attachment.preview_data_url || '';
     const mimeType = attachment.mimeType || attachment.mime_type || 'application/octet-stream';
@@ -96,7 +106,7 @@ export function createAttachmentsUi(context) {
     return {
       id: attachment.id || null,
       kind: attachment.kind || 'file',
-      fileId: attachment.fileId || attachment.file_id || '',
+      fileId,
       name: attachment.name || '',
       mimeType,
       size: attachment.size || attachment.size_bytes || 0,
@@ -156,6 +166,12 @@ export function createAttachmentsUi(context) {
     if (kind === 'image') {
       return 'IMG';
     }
+    if (kind === 'audio') {
+      return 'AUDIO';
+    }
+    if (kind === 'video') {
+      return 'VIDEO';
+    }
     if (kind === 'archive') {
       return 'ZIP';
     }
@@ -183,6 +199,12 @@ export function createAttachmentsUi(context) {
     const mimeType = String(file && file.type ? file.type : '').toLowerCase();
     if (isImageFile(file)) {
       return ['image', 'Image'];
+    }
+    if (mimeType.startsWith('audio/') || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)$/i.test(name)) {
+      return ['audio', 'Audio'];
+    }
+    if (mimeType.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogv|avi|mkv)$/i.test(name)) {
+      return ['video', 'Video'];
     }
     if (name.endsWith('.zip') || mimeType === 'application/zip' || mimeType === 'application/x-zip-compressed') {
       return ['archive', 'ZIP archive'];
@@ -287,6 +309,12 @@ export function createAttachmentsUi(context) {
     formData.append('files', file, file.name || 'file');
     formData.append('scope', state.currentChatId || 'pending');
     formData.append('supports_vision', state.visionState.supported ? '1' : '0');
+    Array.from(state.selectedToolServerIds || []).forEach(function appendToolServerId(serverId) {
+      const normalized = String(serverId || '').trim();
+      if (normalized) {
+        formData.append('tool_server_ids', normalized);
+      }
+    });
 
     const response = await fetch('/api/uploads/', {
       method: 'POST',
@@ -309,10 +337,12 @@ export function createAttachmentsUi(context) {
     Object.assign(pendingAttachment, {
       fileId: uploadedFile.file_id || '',
       name: uploadedFile.name || pendingAttachment.name,
+      mimeType: uploadedFile.mime_type || pendingAttachment.mimeType,
       size: uploadedFile.size_bytes || pendingAttachment.size,
       status: uploadedFile.status || 'ready',
       displayKind: uploadedFile.display_kind || pendingAttachment.displayKind,
-      typeLabel: uploadedFile.type_label || pendingAttachment.typeLabel
+      typeLabel: uploadedFile.type_label || pendingAttachment.typeLabel,
+      contentUrl: uploadedFile.content_url || pendingAttachment.contentUrl || ''
     });
   }
 
@@ -334,6 +364,10 @@ export function createAttachmentsUi(context) {
         return;
       }
 
+      const canPreviewAsMedia = displayKind === 'audio' || displayKind === 'video';
+      const objectPreviewUrl = canPreviewAsMedia && typeof URL !== 'undefined' && URL.createObjectURL
+        ? URL.createObjectURL(file)
+        : '';
       const pendingAttachment = {
         kind: isImage && state.visionState.supported ? 'image' : 'file',
         fileId: '',
@@ -342,7 +376,7 @@ export function createAttachmentsUi(context) {
         size: file.size || 0,
         base64: '',
         dataUrl: '',
-        previewDataUrl: '',
+        previewDataUrl: objectPreviewUrl,
         status: 'uploading',
         displayKind,
         typeLabel

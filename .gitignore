@@ -189,25 +189,13 @@ Tools/tests
 deploy.bat
 task
 *.pid
-
-# Deep Think
-Tools/mcp-deep-think/_out/
-Tools/mcp-deep-think/benchmarks/
-Tools/mcp-deep-think/logs/
-Tools/mcp-deep-think/tests/
-
-# web search tools logs and source code
-*.db
 *.log
-Tools/mcp-web-search/deep-research/_out/
-Tools/mcp-web-search/deep-research/_cache/
-Tools/mcp-web-search/deep-research/downloaded_files/
-Tools/mcp-web-search/deep-research/latest_logs/
-Tools/mcp-web-search/tests/
-Tools/mcp-web-search/latest_logs
+*.db
 
 # UI
 staticfiles
 Settings/settings.json
-Data/downloads_bridge_cache/
-Data/venvs/
+Settings/host_theme.json
+Settings/host_locale.json
+MCP/mcp.json
+Data/

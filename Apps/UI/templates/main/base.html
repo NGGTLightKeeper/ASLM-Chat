@@ -1,7 +1,7 @@
 {% load static %}
 {% comment %} Copyright NGGT.LightKeeper. All Rights Reserved. {% endcomment %}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" style="color-scheme: {% if host_theme_effective == 'light' %}light{% else %}dark{% endif %};">
 
 <head>
     <meta charset="UTF-8" />
@@ -14,8 +14,13 @@
     <link rel="shortcut icon" type="image/x-icon" href="{% static 'favicon.ico' %}">
 
     <link rel="stylesheet" href="{% static 'css/main/base.css' %}" />
-    <link rel="stylesheet" href="{% static 'css/main/main.css' %}" />
+    <link rel="stylesheet" href="{% static 'css/main/main.css' %}?v=reasoning-selector-7" />
     <link rel="stylesheet" href="{% static 'css/main/markdown.css' %}" />
+    <link rel="stylesheet" href="{% static 'css/main/browser-portal.css' %}" />
+    {% if host_theme_available %}
+    <style id="aslm-host-theme">{{ host_theme_css_variables|safe }}</style>
+    {% endif %}
+    <script type="application/json" id="aslmHostThemeData">{{ host_theme_json|safe }}</script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
     {% block extra_css %}{% endblock %}
 </head>
@@ -88,6 +93,7 @@
 {
   "stopSquare": "{% static 'img/ui/stop-square.svg' %}",
   "send": "{% static 'img/ui/send.svg' %}",
+  "addMenu": "{% static 'img/ui/add-2.svg' %}",
   "removeAttachment": "{% static 'img/ui/x.svg' %}",
   "copy": "{% static 'img/ui/copy.svg' %}",
   "refresh": "{% static 'img/ui/refresh.svg' %}",
@@ -95,16 +101,38 @@
   "check": "{% static 'img/ui/check.svg' %}",
   "arrowLeft": "{% static 'img/ui/arrow-left.svg' %}",
   "chatBubble": "{% static 'img/ui/chat-bubble.svg' %}",
+  "eye": "{% static 'img/ui/eye.svg' %}",
   "globe": "{% static 'img/ui/globe.svg' %}",
   "webSearch": "{% static 'img/ui/web-search.svg' %}",
   "webSearchError": "{% static 'img/ui/web-search-error.svg' %}",
   "toolBash": "{% static 'img/ui/tools/bash.svg' %}",
+  "toolCode": "{% static 'img/ui/tools/code.svg' %}",
   "toolTerminal": "{% static 'img/ui/tools/terminal.svg' %}",
   "toolMakeFile": "{% static 'img/ui/tools/make_file.svg' %}",
   "toolEditFile": "{% static 'img/ui/tools/edit_file.svg' %}",
   "toolSearch": "{% static 'img/ui/tools/search.svg' %}",
   "toolImageView": "{% static 'img/ui/tools/eye_tracking.svg' %}",
-  "ellipsisVertical": "{% static 'img/ui/ellipsis-vertical.svg' %}"
+  "browserCursor": "{% static 'img/ui/tools/browser/cursor.svg' %}",
+  "browserKeyboard": "{% static 'img/ui/tools/browser/keyboard.svg' %}",
+  "browserNavigate": "{% static 'img/ui/tools/browser/navigate.svg' %}",
+  "browserScroll": "{% static 'img/ui/tools/browser/scroll.svg' %}",
+  "browserType": "{% static 'img/ui/tools/browser/type.svg' %}",
+  "browserDisconnected": "{% static 'img/ui/tools/browser/disconnected.svg' %}",
+  "ellipsisVertical": "{% static 'img/ui/ellipsis-vertical.svg' %}",
+  "play": "{% static 'img/ui/play.svg' %}",
+  "pause": "{% static 'img/ui/pause.svg' %}",
+  "volume": "{% static 'img/ui/volume.svg' %}",
+  "volumeMuted": "{% static 'img/ui/volume-muted.svg' %}",
+  "fullscreen": "{% static 'img/ui/fullscreen.svg' %}",
+  "fullscreenExit": "{% static 'img/ui/fullscreen-exit.svg' %}",
+  "popout": "{% static 'img/ui/popout.svg' %}",
+  "dock": "{% static 'img/ui/dock.svg' %}",
+  "download": "{% static 'img/ui/download.svg' %}",
+  "audio": "{% static 'img/ui/audio.svg' %}",
+  "video": "{% static 'img/ui/video.svg' %}",
+  "skillsFolder": "{% static 'img/ui/skills/folder.svg' %}",
+  "skillsFolderOpen": "{% static 'img/ui/skills/folder-open.svg' %}",
+  "skillsFile": "{% static 'img/ui/skills/file.svg' %}"
 }
 </script>
 
@@ -113,7 +141,9 @@
 <script src="{% static 'js/vendor/marked.min.js' %}"></script>
 <script src="{% static 'js/vendor/purify.min.js' %}"></script>
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="{% static 'js/vendor/mermaid.min.js' %}"></script>
 <!-- Syntax highlighting -->
+<!-- Syntax highlighting: vendor theme is fixed (dark); swapping for host light/dark is deferred. -->
 <link rel="stylesheet" href="{% static 'css/vendor/atom-one-dark.min.css' %}">
 <script src="{% static 'js/vendor/highlight.min.js' %}"></script>
 
