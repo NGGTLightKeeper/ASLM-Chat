@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM - Mô hình ngôn ngữ hệ thống nâng cao",
+    "profileTitle": "Hồ sơ - ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "Cuộc trò chuyện",
+    "newChat": "Cuộc trò chuyện mới",
+    "noPreviousChats": "Chưa có cuộc trò chuyện nào",
+    "chatOptions": "Tùy chọn cuộc trò chuyện",
+    "rename": "Đổi tên",
+    "delete": "Xóa",
+    "account": "Tài khoản",
+    "ago": "{time} trước"
+  },
+  "chat": {
+    "newChat": "Cuộc trò chuyện mới",
+    "attachmentChat": "Cuộc trò chuyện có tệp đính kèm",
+    "howCanIHelp": "Tôi có thể giúp gì?",
+    "welcomeTitle": "Tôi có thể giúp gì?"
+  },
+  "composer": {
+    "placeholder": "Nhắn tin cho ASLM...",
+    "menu": "Menu soạn tin",
+    "attachFiles": "Đính kèm tệp",
+    "tools": "Công cụ",
+    "other": "Khác",
+    "reasoningEffort": "Mức suy luận",
+    "intelligence": "Trí tuệ",
+    "off": "Tắt",
+    "sendMessage": "Gửi tin nhắn",
+    "queueMessage": "Xếp hàng tin nhắn",
+    "stopGeneration": "Dừng tạo nội dung",
+    "contextUsage": "Mức sử dụng ngữ cảnh"
+  },
+  "reasoning": {
+    "panel": "Bảng suy luận",
+    "title": "Suy luận",
+    "closePanel": "Đóng bảng suy luận"
+  },
+  "settings": {
+    "modelSettings": "Cài đặt mô hình",
+    "collapse": "Thu gọn cài đặt",
+    "expand": "Mở rộng cài đặt",
+    "connection": "Kết nối",
+    "engine": "Bộ máy",
+    "address": "Địa chỉ",
+    "saved": "Đã lưu",
+    "engineAddressPlaceholder": "Địa chỉ bộ máy",
+    "engineAddressHint": "Cấu hình điểm cuối của bộ máy đã chọn.",
+    "apiKey": "Khóa API",
+    "off": "Tắt",
+    "useSavedKey": "Dùng khóa đã lưu",
+    "pasteApiKey": "Dán khóa API",
+    "apiKeyHint": "Chỉ cần cho các endpoint được bảo mật.",
+    "model": "Mô hình",
+    "modelsLoadOnDemand": "Mô hình tải theo yêu cầu",
+    "visionModel": "Mô hình thị giác",
+    "preset": "Cấu hình sẵn",
+    "default": "Mặc định",
+    "presetNew": "Mới",
+    "presetRename": "Đổi tên",
+    "presetDelete": "Xóa",
+    "sandboxDefault": "Hộp cát mặc định",
+    "mode": "Chế độ",
+    "tools": "Công cụ",
+    "mcp": "MCP",
+    "skills": "Kỹ năng",
+    "systemPrompt": "Lời nhắc hệ thống",
+    "systemPromptPlaceholder": "vd. \"Chỉ trả lời bằng thơ lục bát\"",
+    "load": "Tải",
+    "customFields": "Trường tùy chỉnh",
+    "settings": "Cài đặt",
+    "sampling": "Lấy mẫu",
+    "advanced": "Nâng cao",
+    "custom": "Tùy chỉnh"
+  },
+  "profile": {
+    "backToChat": "Quay lại trò chuyện",
+    "account": "Tài khoản",
+    "user": "Người dùng",
+    "localAccount": "Tài khoản cục bộ",
+    "general": "Chung",
+    "username": "Tên người dùng",
+    "email": "Thư điện tử",
+    "memberSince": "Thành viên từ",
+    "dangerZone": "Vùng nguy hiểm",
+    "signOut": "Đăng xuất"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "Tương thích OpenAI",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "Cửa sổ ngữ cảnh:",
+    "usageLabel": "Ngữ cảnh: đã dùng {percent}%, còn lại {remaining}%. {used} / {window} token.",
+    "used": "Đã dùng",
+    "remaining": "Còn lại",
+    "compressing": "Đang nén ngữ cảnh",
+    "compressionInProgress": "Đang nén ngữ cảnh",
+    "compressedActive": "Ngữ cảnh đã nén đang hoạt động.",
+    "compressedActiveTooltip": "Ngữ cảnh đã nén đang hoạt động",
+    "compressContext": "Nén ngữ cảnh",
+    "autoCompress": "Tự động nén ở {percent}%"
+  },
+  "think": {
+    "off": "Tắt",
+    "low": "Thấp",
+    "medium": "Trung bình",
+    "high": "Cao",
+    "minimal": "Tối thiểu",
+    "extraHigh": "Rất cao"
+  },
+  "messages": {
+    "more": "Xem thêm",
+    "hide": "Ẩn",
+    "copyCode": "Sao chép mã",
+    "copyDiagram": "Sao chép nguồn sơ đồ",
+    "noContent": "Không có nội dung.",
+    "noDiff": "Không có diff.",
+    "file": "Tệp",
+    "audio": "Âm thanh",
+    "video": "Băng hình",
+    "image": "Hình ảnh",
+    "download": "Tải xuống",
+    "playAudio": "Phát âm thanh",
+    "playVideo": "Phát video",
+    "pauseMedia": "Tạm dừng phát",
+    "playMedia": "Phát",
+    "muteMedia": "Tắt tiếng",
+    "unmuteMedia": "Bật tiếng",
+    "fullscreen": "Toàn màn hình",
+    "exitFullscreen": "Thoát toàn màn hình",
+    "audioProgress": "Tiến độ âm thanh",
+    "videoProgress": "Tiến độ video",
+    "openMiniPlayer": "Mở trình phát thu nhỏ",
+    "returnToMessage": "Quay lại tin nhắn",
+    "closeMiniPlayer": "Đóng trình phát thu nhỏ",
+    "renderingDiagram": "Đang vẽ sơ đồ...",
+    "mermaidEmpty": "Nguồn sơ đồ Mermaid trống.",
+    "mermaidUnavailable": "Trình vẽ Mermaid không khả dụng.",
+    "mermaidError": "Không thể vẽ sơ đồ Mermaid: {error}",
+    "running": "Đang chạy...",
+    "noOutput": "Không có đầu ra.",
+    "python": "Python",
+    "sandbox": "Hộp cát",
+    "write": "Ghi",
+    "writePath": "Ghi {path}",
+    "edit": "Sửa",
+    "editPath": "Sửa {path}",
+    "viewedImage": "Đã xem hình ảnh",
+    "viewedPath": "Đã xem {path}",
+    "imagePreview": "Xem trước hình ảnh",
+    "imagePreviewFor": "Xem trước hình ảnh cho {path}",
+    "readSource": "Đã đọc nguồn:",
+    "readSources": "Đã đọc các nguồn:",
+    "searchedFor": "Đã tìm {query}",
+    "noSourcesFor": "Không tìm thấy nguồn cho {query}",
+    "searchingFor": "Đang tìm {query}",
+    "badQuery": "Truy vấn không hợp lệ: {query}"
+  },
+  "skills": {
+    "title": "Kỹ năng",
+    "refresh": "Làm mới",
+    "noSkills": "Không tìm thấy kỹ năng",
+    "loadError": "Không thể tải kỹ năng",
+    "manage": "Quản lý kỹ năng",
+    "customizeAria": "Tùy chỉnh kỹ năng",
+    "errorTitle": "Lỗi kỹ năng",
+    "personalSkillOne": "1 kỹ năng cá nhân",
+    "personalSkillMany": "{count} kỹ năng cá nhân",
+    "noSkillsYet": "Chưa có kỹ năng",
+    "composerMenuAria": "Kỹ năng",
+    "closeManagerAria": "Đóng trình quản lý kỹ năng",
+    "searchPlaceholder": "Tìm kỹ năng",
+    "addSkillAria": "Thêm kỹ năng",
+    "skillActionsAria": "Thao tác kỹ năng",
+    "toggleSkillFilesAria": "Hiện hoặc ẩn tệp kỹ năng",
+    "toggleFolderAria": "Hiện hoặc ẩn thư mục",
+    "toggleKindAria": "Chuyển thư mục hoặc tệp",
+    "newFileAria": "Tệp mới trong thư mục",
+    "renameFolderAria": "Đổi tên thư mục",
+    "renameFileAria": "Đổi tên tệp",
+    "deleteFileAria": "Xóa tệp",
+    "dialogOk": "OK",
+    "dialogCancel": "Hủy",
+    "dialogConfirm": "Xác nhận",
+    "dialogInput": "Nhập",
+    "valueRequired": "Giá trị là bắt buộc.",
+    "createSkill": "Tạo kỹ năng",
+    "skillNamePlaceholder": "ten-ky-nang",
+    "create": "Tạo",
+    "importSkillFolder": "Nhập thư mục kỹ năng",
+    "dropzoneAria": "Thả thư mục kỹ năng vào đây",
+    "dropzoneText": "Thả thư mục kỹ năng vào đây (thư mục cha)",
+    "or": "hoặc",
+    "browseFolder": "Chọn thư mục…",
+    "skillNameRequired": "Tên kỹ năng là bắt buộc.",
+    "importing": "Đang nhập…",
+    "newSkill": "Kỹ năng mới",
+    "skillFolderName": "Tên thư mục kỹ năng",
+    "skillFolderNamePlaceholder": "tao-ky-nang",
+    "renameSkill": "Đổi tên kỹ năng",
+    "newSkillFolderName": "Tên thư mục mới",
+    "deleteSkill": "Xóa kỹ năng",
+    "deleteSkillConfirm": "Xóa kỹ năng \"{name}\"?",
+    "newSkillFile": "Tệp kỹ năng mới",
+    "filePathInSkill": "Đường dẫn tệp trong kỹ năng",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "Xóa tệp",
+    "deleteFileConfirm": "Bạn có chắc không?",
+    "renameFolder": "Đổi tên thư mục",
+    "folderName": "Tên thư mục",
+    "renameFile": "Đổi tên tệp",
+    "fileName": "Tên tệp",
+    "editSkill": "Chỉnh sửa kỹ năng",
+    "doneEditing": "Hoàn tất chỉnh sửa",
+    "newFilePlaceholder": "Tên tệp mới (vd. grader.md)",
+    "newFolderPlaceholder": "Tên thư mục mới",
+    "noFileSelected": "Chưa chọn tệp",
+    "noFileSelectedPath": "Chưa chọn tệp.",
+    "emptyState": "Tạo kỹ năng để bắt đầu.",
+    "preview": "Xem trước",
+    "created": "Đã tạo",
+    "unknown": "Không rõ",
+    "readFileFailed": "Không đọc được {name}",
+    "importNameHintDropOne": "Nhập tên ở trên hoặc thả từng thư mục kỹ năng.",
+    "importNameHintSelect": "Nhập tên, chọn kỹ năng trên cây hoặc chọn một thư mục.",
+    "importNoFiles": "Không tìm thấy tệp.",
+    "importNoSupported": "Không có tệp văn bản hỗ trợ (.md, .txt, .py, …).",
+    "importNoSupportedFor": "Không có tệp hỗ trợ cho \"{name}\"."
+  },
+  "errors": {
+    "generic": "Đã xảy ra lỗi",
+    "network": "Lỗi mạng"
+  },
+  "confirm": {
+    "deleteChat": "Xóa cuộc trò chuyện này?",
+    "deleteChatNamed": "Xóa \"{title}\"?",
+    "deletePreset": "Xóa cấu hình sẵn \"{name}\"?",
+    "unsaved": "Bạn có thay đổi chưa lưu."
+  },
+  "toolInspector": {
+    "title": "Trình kiểm tra công cụ",
+    "close": "Đóng",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Nhiệt độ"
+    },
+    "num_ctx": {
+      "label": "Độ dài ngữ cảnh",
+      "note": "Cửa sổ ngữ cảnh tính bằng token."
+    },
+    "num_predict": {
+      "label": "Số token đầu ra tối đa",
+      "note": "Số token sinh ra tối đa."
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "Bố trí bộ nhớ nhận biết NUMA."
+    },
+    "num_batch": {
+      "label": "Kích thước batch",
+      "note": "Kích thước batch cho prompt."
+    },
+    "num_gpu": {
+      "label": "Lớp GPU",
+      "note": "Số lớp chuyển sang GPU."
+    },
+    "main_gpu": {
+      "label": "GPU chính",
+      "note": "GPU chính"
+    },
+    "low_vram": {
+      "label": "VRAM thấp",
+      "note": "Giảm mức sử dụng VRAM."
+    },
+    "f16_kv": {
+      "label": "Dùng bộ nhớ đệm KV FP16",
+      "note": "Dùng bộ nhớ đệm KV FP16."
+    },
+    "logits_all": {
+      "label": "Trả về toàn bộ logits",
+      "note": "Trả về logits cho mọi token."
+    },
+    "vocab_only": {
+      "label": "Chỉ từ vựng",
+      "note": "Chỉ tải từ vựng."
+    },
+    "use_mmap": {
+      "label": "Dùng memory map",
+      "note": "Dùng ánh xạ bộ nhớ."
+    },
+    "use_mlock": {
+      "label": "Khóa bộ nhớ",
+      "note": "Khóa các trang mô hình trong RAM."
+    },
+    "embedding_only": {
+      "label": "Chỉ embedding",
+      "note": "Chỉ tải embedding."
+    },
+    "num_thread": {
+      "label": "Luồng CPU",
+      "note": "Số luồng CPU"
+    },
+    "num_keep": {
+      "label": "Giữ token prompt",
+      "note": "-1 giữ tất cả, 0 là tự động."
+    },
+    "seed": {
+      "label": "Seed",
+      "note": "Seed xác định."
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "Cửa sổ lặp"
+    },
+    "repeat_penalty": {
+      "label": "Hình phạt lặp"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "Lấy mẫu tail-free."
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "Hình phạt hiện diện"
+    },
+    "frequency_penalty": {
+      "label": "Hình phạt tần suất"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "Chuỗi dừng"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top Logprobs",
+      "note": "Logprobs của token thay thế."
+    },
+    "keep_alive": {
+      "label": "Giữ hoạt động",
+      "note": "Thời gian giữ mô hình được tải."
+    },
+    "format": {
+      "label": "Định dạng phản hồi",
+      "note": "Chế độ JSON hoặc JSON schema."
+    },
+    "penalize_newline": {
+      "label": "Phạt xuống dòng",
+      "note": "Phạt cả token xuống dòng."
+    },
+    "maxTokens": {
+      "label": "Số token đầu ra tối đa"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "Hình phạt lặp"
+    },
+    "xtcProbability": {
+      "label": "Xác suất XTC"
+    },
+    "xtcThreshold": {
+      "label": "Ngưỡng XTC"
+    },
+    "cpuThreads": {
+      "label": "Luồng CPU"
+    },
+    "stopStrings": {
+      "label": "Chuỗi dừng"
+    },
+    "toolCallStopStrings": {
+      "label": "Chuỗi dừng công cụ"
+    },
+    "contextOverflowPolicy": {
+      "label": "Chính sách tràn ngữ cảnh"
+    },
+    "draftModel": {
+      "label": "Mô hình nháp"
+    },
+    "max_output_tokens": {
+      "label": "Số token đầu ra tối đa"
+    },
+    "candidate_count": {
+      "label": "Ứng viên"
+    },
+    "stop_sequences": {
+      "label": "Chuỗi dừng"
+    },
+    "response_logprobs": {
+      "label": "Logprobs phản hồi"
+    },
+    "response_mime_type": {
+      "label": "Kiểu MIME phản hồi"
+    },
+    "max_completion_tokens": {
+      "label": "Số token hoàn thành tối đa"
+    },
+    "n": {
+      "label": "Ứng viên"
+    },
+    "reasoning_effort": {
+      "label": "Mức suy luận"
+    },
+    "verbosity": {
+      "label": "Độ chi tiết"
+    },
+    "response_format": {
+      "label": "Định dạng phản hồi"
+    },
+    "logit_bias": {
+      "label": "Độ lệch logit"
+    }
+  },
+  "mcp": {
+    "editConfig": "Chỉnh sửa mcp.json",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name} ({count} công cụ)",
+    "cancel": "Hủy",
+    "save": "Lưu"
+  }
+}

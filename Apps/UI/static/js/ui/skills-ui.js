@@ -1,6 +1,7 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { getJson, patchJson, postJson, requestJson } from '../main/api.js';
+import { intlLocaleTag, t } from '../main/i18n.js';
 
 // Skills manager UI.
 // Create the settings-sidebar entry and the modal customize surface.
@@ -87,9 +88,9 @@ export function createSkillsUi(context) {
     }
     const count = folderList().length;
     dom.$skillsSettingsContent.empty();
-    const $btn = $('<button type="button" class="preset-action-btn skills-open-btn">').text('Manage skills');
+    const $btn = $('<button type="button" class="preset-action-btn skills-open-btn">').text(t('skills.manage'));
     const $summary = $('<div class="skills-settings-summary">').text(
-      count === 1 ? '1 personal skill' : `${count} personal skills`
+      count === 1 ? t('skills.personalSkillOne') : t('skills.personalSkillMany', { count })
     );
     $btn.on('click', openManager);
     dom.$skillsSettingsContent.append($btn).append($summary);
@@ -99,7 +100,8 @@ export function createSkillsUi(context) {
     if ($overlay && $overlay.length) {
       return;
     }
-    $overlay = $('<div class="skills-manager-backdrop" role="dialog" aria-modal="true" aria-label="Customize skills">');
+    $overlay = $('<div class="skills-manager-backdrop" role="dialog" aria-modal="true">')
+      .attr('aria-label', t('skills.customizeAria'));
     const $shell = $('<div class="skills-manager-shell">');
 
     $middle = $('<aside class="skills-tree-pane">');
@@ -134,7 +136,7 @@ export function createSkillsUi(context) {
       $detail.find('.skills-detail-error').remove();
       $detail.prepend($('<div class="skills-detail-error" role="alert">').text(message));
     } else {
-      showMessageDialog('Skills error', message);
+      showMessageDialog(t('skills.errorTitle'), message);
     }
   }
 
@@ -142,7 +144,7 @@ export function createSkillsUi(context) {
     return showConfirmDialog({
       title,
       message,
-      confirmText: 'OK',
+      confirmText: t('skills.dialogOk'),
       cancelText: '',
       danger: false
     });
@@ -154,15 +156,15 @@ export function createSkillsUi(context) {
       const dialogOptions = options || {};
       const $backdrop = $('<div class="skills-inline-dialog-backdrop" role="dialog" aria-modal="true">');
       const $dialog = $('<div class="skills-inline-dialog">');
-      const $title = $('<div class="skills-inline-dialog-title">').text(dialogOptions.title || 'Input');
+      const $title = $('<div class="skills-inline-dialog-title">').text(dialogOptions.title || t('skills.dialogInput'));
       const $label = $('<label class="skills-inline-dialog-label">').text(dialogOptions.label || '');
       const $input = $('<input class="skills-inline-dialog-input" type="text">')
         .val(dialogOptions.value || '')
         .attr('placeholder', dialogOptions.placeholder || '');
       const $error = $('<div class="skills-inline-dialog-error" role="alert">').hide();
       const $actions = $('<div class="skills-inline-dialog-actions">');
-      const $cancel = $('<button type="button" class="preset-action-btn">').text('Cancel');
-      const $confirm = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text(dialogOptions.confirmText || 'OK');
+      const $cancel = $('<button type="button" class="preset-action-btn">').text(t('skills.dialogCancel'));
+      const $confirm = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text(dialogOptions.confirmText || t('skills.dialogOk'));
 
       function close(value) {
         $backdrop.remove();
@@ -172,7 +174,7 @@ export function createSkillsUi(context) {
       function submit() {
         const value = String($input.val() || '').trim();
         if (!value) {
-          $error.text('Value is required.').show();
+          $error.text(t('skills.valueRequired')).show();
           return;
         }
         close(value);
@@ -212,13 +214,13 @@ export function createSkillsUi(context) {
       const dialogOptions = options || {};
       const $backdrop = $('<div class="skills-inline-dialog-backdrop" role="dialog" aria-modal="true">');
       const $dialog = $('<div class="skills-inline-dialog">');
-      const $title = $('<div class="skills-inline-dialog-title">').text(dialogOptions.title || 'Confirm');
+      const $title = $('<div class="skills-inline-dialog-title">').text(dialogOptions.title || t('skills.dialogConfirm'));
       const $message = $('<div class="skills-inline-dialog-message">').text(dialogOptions.message || '');
       const $actions = $('<div class="skills-inline-dialog-actions">');
-      const cancelText = dialogOptions.cancelText === undefined ? 'Cancel' : String(dialogOptions.cancelText || '');
+      const cancelText = dialogOptions.cancelText === undefined ? t('skills.dialogCancel') : String(dialogOptions.cancelText || '');
       const $confirm = $('<button type="button" class="preset-action-btn preset-action-btn-primary">')
         .toggleClass('preset-action-btn-danger', Boolean(dialogOptions.danger))
-        .text(dialogOptions.confirmText || 'OK');
+        .text(dialogOptions.confirmText || t('skills.dialogOk'));
 
       function close(value) {
         $backdrop.remove();
@@ -258,7 +260,9 @@ export function createSkillsUi(context) {
     return new Promise(function readPromise(resolve, reject) {
       const reader = new FileReader();
       reader.onload = function onLoad(ev) { resolve(ev.target.result || ''); };
-      reader.onerror = function onErr() { reject(new Error(`Failed to read ${file.name}`)); };
+      reader.onerror = function onErr() {
+        reject(new Error(t('skills.readFileFailed', { name: file.name })));
+      };
       reader.readAsText(file);
     });
   }
@@ -452,7 +456,7 @@ export function createSkillsUi(context) {
 
       const skillName = nameHint;
       if (!skillName) {
-        throw new Error('Enter a skill name in the field above, or drop one skill folder at a time.');
+        throw new Error(t('skills.importNameHintDropOne'));
       }
       const files = [];
       for (const entry of entries) {
@@ -479,25 +483,25 @@ export function createSkillsUi(context) {
       if (grouped.length) {
         return grouped;
       }
-      throw new Error('Enter a skill name above, select a skill in the tree, or pick a single skill folder.');
+      throw new Error(t('skills.importNameHintSelect'));
     }
 
-    throw new Error('No files found.');
+    throw new Error(t('skills.importNoFiles'));
   }
 
   async function importSkillFromSource(source, explicitName) {
     const payloads = await resolveImportPayloads(source, explicitName);
     if (!payloads.length) {
-      throw new Error('No supported text files found (.md, .txt, .py, …).');
+      throw new Error(t('skills.importNoSupported'));
     }
 
     for (const payload of payloads) {
       const skillName = String(payload.skillName || '').trim();
       if (!skillName) {
-        throw new Error('Skill name is required.');
+        throw new Error(t('skills.skillNameRequired'));
       }
       if (!payload.files || !payload.files.length) {
-        throw new Error(`No supported text files found for "${skillName}".`);
+        throw new Error(t('skills.importNoSupportedFor', { name: skillName }));
       }
       await postJson('/api/skills/import/', {
         name: skillName,
@@ -522,11 +526,11 @@ export function createSkillsUi(context) {
 
       // --- Create section ---
       const $createSection = $('<div class="skills-add-section">');
-      const $createLabel = $('<div class="skills-add-section-title">').text('Create skill');
+      const $createLabel = $('<div class="skills-add-section-title">').text(t('skills.createSkill'));
       const $createRow = $('<div class="skills-add-create-row">');
       const $nameInput = $('<input class="skills-inline-dialog-input" type="text" autocomplete="off" spellcheck="false">')
-        .attr('placeholder', 'skill-name');
-      const $createBtn = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text('Create');
+        .attr('placeholder', t('skills.skillNamePlaceholder'));
+      const $createBtn = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text(t('skills.create'));
       const $createError = $('<div class="skills-inline-dialog-error" role="alert">').hide();
       $createRow.append($nameInput).append($createBtn);
       $createSection.append($createLabel).append($createRow).append($createError);
@@ -536,11 +540,12 @@ export function createSkillsUi(context) {
 
       // --- Import section ---
       const $importSection = $('<div class="skills-add-section">');
-      const $importLabel = $('<div class="skills-add-section-title">').text('Import skill folder');
-      const $dropzone = $('<div class="skills-import-dropzone" role="button" tabindex="0" aria-label="Drop a skill folder here">');
-      const $dropzoneText = $('<div class="skills-import-dropzone-text">').text('Drop the skill folder here (parent directory)');
-      const $dropzoneHint = $('<div class="skills-import-dropzone-hint">').text('or');
-      const $browseBtn = $('<button type="button" class="preset-action-btn">').text('Browse folder…');
+      const $importLabel = $('<div class="skills-add-section-title">').text(t('skills.importSkillFolder'));
+      const $dropzone = $('<div class="skills-import-dropzone" role="button" tabindex="0">')
+        .attr('aria-label', t('skills.dropzoneAria'));
+      const $dropzoneText = $('<div class="skills-import-dropzone-text">').text(t('skills.dropzoneText'));
+      const $dropzoneHint = $('<div class="skills-import-dropzone-hint">').text(t('skills.or'));
+      const $browseBtn = $('<button type="button" class="preset-action-btn">').text(t('skills.browseFolder'));
       const $fileInput = $('<input type="file" style="display:none">').attr('webkitdirectory', '').attr('multiple', '');
       const $importStatus = $('<div class="skills-inline-dialog-error" role="status">').hide();
       $dropzone.append($dropzoneText).append($dropzoneHint).append($browseBtn);
@@ -559,7 +564,7 @@ export function createSkillsUi(context) {
       async function doCreate() {
         const name = String($nameInput.val() || '').trim();
         if (!name) {
-          $createError.text('Skill name is required.').show();
+          $createError.text(t('skills.skillNameRequired')).show();
           return;
         }
         $createError.hide();
@@ -576,7 +581,7 @@ export function createSkillsUi(context) {
       }
 
       async function doImport(source) {
-        $importStatus.text('Importing…').removeClass('is-error').show();
+        $importStatus.text(t('skills.importing')).removeClass('is-error').show();
         try {
           const explicitName = String($nameInput.val() || '').trim();
           const name = await importSkillFromSource(source, explicitName);
@@ -654,10 +659,10 @@ export function createSkillsUi(context) {
 
   async function createSkill() {
     const name = await showTextDialog({
-      title: 'New skill',
-      label: 'Skill folder name',
-      placeholder: 'skill-creator',
-      confirmText: 'Create'
+      title: t('skills.newSkill'),
+      label: t('skills.skillFolderName'),
+      placeholder: t('skills.skillFolderNamePlaceholder'),
+      confirmText: t('skills.create')
     });
     if (!name) {
       return;
@@ -671,10 +676,10 @@ export function createSkillsUi(context) {
 
   async function renameSkill(folderName) {
     const nextName = await showTextDialog({
-      title: 'Rename skill',
-      label: 'New skill folder name',
+      title: t('skills.renameSkill'),
+      label: t('skills.newSkillFolderName'),
       value: folderName,
-      confirmText: 'Rename'
+      confirmText: t('sidebar.rename')
     });
     if (!nextName || nextName === folderName) {
       return;
@@ -687,9 +692,9 @@ export function createSkillsUi(context) {
 
   async function deleteSkill(folderName) {
     const confirmed = await showConfirmDialog({
-      title: 'Delete skill',
-      message: `Delete skill "${folderName}"?`,
-      confirmText: 'Delete',
+      title: t('skills.deleteSkill'),
+      message: t('skills.deleteSkillConfirm', { name: folderName }),
+      confirmText: t('sidebar.delete'),
       danger: true
     });
     if (!confirmed) {
@@ -709,11 +714,11 @@ export function createSkillsUi(context) {
 
   async function createFile(folderName) {
     const filePath = await showTextDialog({
-      title: 'New skill file',
-      label: 'File path inside the skill',
+      title: t('skills.newSkillFile'),
+      label: t('skills.filePathInSkill'),
       value: 'SKILL.md',
-      placeholder: 'agents/grader.md',
-      confirmText: 'Create'
+      placeholder: t('skills.filePathPlaceholder'),
+      confirmText: t('skills.create')
     });
     if (!filePath) {
       return;
@@ -738,9 +743,9 @@ export function createSkillsUi(context) {
     const opts = options || {};
     if (!opts.skipConfirm) {
       const confirmed = await showConfirmDialog({
-        title: 'Delete file',
-        message: 'Are you sure?',
-        confirmText: 'Delete',
+        title: t('skills.deleteFile'),
+        message: t('skills.deleteFileConfirm'),
+        confirmText: t('sidebar.delete'),
         danger: true
       });
       if (!confirmed) {
@@ -807,10 +812,10 @@ export function createSkillsUi(context) {
   async function renameTreeDirectory(folderName, dirPath) {
     const baseName = dirPath.split('/').pop() || dirPath;
     const newName = await showTextDialog({
-      title: 'Rename folder',
-      label: 'Folder name',
+      title: t('skills.renameFolder'),
+      label: t('skills.folderName'),
       value: baseName,
-      confirmText: 'Rename'
+      confirmText: t('sidebar.rename')
     });
     if (!newName || newName === baseName) {
       return;
@@ -835,10 +840,10 @@ export function createSkillsUi(context) {
   async function renameTreeFile(folderName, filePath) {
     const baseName = filePath.split('/').pop() || filePath;
     const newName = await showTextDialog({
-      title: 'Rename file',
-      label: 'File name',
+      title: t('skills.renameFile'),
+      label: t('skills.fileName'),
       value: baseName,
-      confirmText: 'Rename'
+      confirmText: t('sidebar.rename')
     });
     if (!newName || newName === baseName) {
       return;
@@ -859,9 +864,13 @@ export function createSkillsUi(context) {
 
   function renderDirTools(folderName, dirPath) {
     const $tools = $('<div class="skills-tree-node-tools">');
-    const $newFile = $('<button type="button" class="skills-tree-tool-btn" title="New file" aria-label="New file in folder">')
+    const $newFile = $('<button type="button" class="skills-tree-tool-btn">')
+      .attr('title', t('skills.newFileAria'))
+      .attr('aria-label', t('skills.newFileAria'))
       .html(icons.SKILLS_FILE_ICON || '+');
-    const $rename = $('<button type="button" class="skills-tree-tool-btn" title="Rename folder" aria-label="Rename folder">')
+    const $rename = $('<button type="button" class="skills-tree-tool-btn">')
+      .attr('title', t('skills.renameFolderAria'))
+      .attr('aria-label', t('skills.renameFolderAria'))
       .text('Aa');
     $newFile.on('click', function onNewFile(ev) {
       ev.stopPropagation();
@@ -876,7 +885,9 @@ export function createSkillsUi(context) {
 
   function renderFileTools(folderName, filePath) {
     const $tools = $('<div class="skills-tree-node-tools">');
-    const $rename = $('<button type="button" class="skills-tree-tool-btn" title="Rename file" aria-label="Rename file">')
+    const $rename = $('<button type="button" class="skills-tree-tool-btn">')
+      .attr('title', t('skills.renameFileAria'))
+      .attr('aria-label', t('skills.renameFileAria'))
       .text('Aa');
     $rename.on('click', function onRename(ev) {
       ev.stopPropagation();
@@ -919,15 +930,16 @@ export function createSkillsUi(context) {
       const $entry = $('<div class="composer-skills-entry">');
       const $trigger = $('<button type="button" class="composer-tool-row composer-skills-trigger" aria-haspopup="menu">');
       const $icon = $('<span class="composer-tool-icon is-skills" aria-hidden="true">');
-      const $name = $('<span class="tool-server-name">').text('Skills');
+      const $name = $('<span class="tool-server-name">').text(t('skills.title'));
       const $chev = $('<span class="composer-skills-chevron" aria-hidden="true">').html(chevron);
       $trigger.append($icon).append($name).append($chev);
 
-      const $flyout = $('<div class="composer-skills-flyout" role="menu" aria-label="Skills">');
+      const $flyout = $('<div class="composer-skills-flyout" role="menu">')
+        .attr('aria-label', t('skills.composerMenuAria'));
       const $list = $('<div class="composer-skills-flyout-list">');
 
       if (!folders.length) {
-        $list.append($('<div class="composer-skills-empty">').text('No skills yet'));
+        $list.append($('<div class="composer-skills-empty">').text(t('skills.noSkillsYet')));
       } else {
         folders.forEach(function renderSkillRow(folder) {
           const folderName = String(folder.name || '');
@@ -958,7 +970,7 @@ export function createSkillsUi(context) {
 
       const $manage = $('<button type="button" class="composer-menu-action composer-skills-manage" role="menuitem">')
         .append($('<span class="composer-tool-icon is-skills" aria-hidden="true">'))
-        .append($('<span>').text('Manage skills'));
+        .append($('<span>').text(t('skills.manage')));
       $manage.on('click', function onManageClick(ev) {
         ev.preventDefault();
         ev.stopPropagation();
@@ -1024,17 +1036,23 @@ export function createSkillsUi(context) {
     }
     $middle.empty();
     const $head = $('<div class="skills-tree-head">');
-    const $closeBtn = $('<button type="button" class="skills-manager-close skills-tree-close" aria-label="Close skills manager">')
+    const $closeBtn = $('<button type="button" class="skills-manager-close skills-tree-close">')
+      .attr('aria-label', t('skills.closeManagerAria'))
       .html(icons.CLOSE_ICON || '<span aria-hidden="true">×</span>');
-    const $title = $('<div class="skills-tree-title">').text('Skills');
+    const $title = $('<div class="skills-tree-title">').text(t('skills.title'));
     const $actions = $('<div class="skills-tree-actions">');
-    const $addBtn = $('<button type="button" class="skills-icon-btn" title="Add skill" aria-label="Add skill">').html(icons.ADD_ICON || '+');
+    const $addBtn = $('<button type="button" class="skills-icon-btn">')
+      .attr('title', t('skills.addSkillAria'))
+      .attr('aria-label', t('skills.addSkillAria'))
+      .html(icons.ADD_ICON || '+');
     $actions.append($addBtn);
     $head.append($closeBtn).append($title).append($actions);
 
     $closeBtn.on('click', closeManager);
 
-    const $search = $('<input class="skills-search-input" type="search" placeholder="Search skills">').val(state.query);
+    const $search = $('<input class="skills-search-input" type="search">')
+      .attr('placeholder', t('skills.searchPlaceholder'))
+      .val(state.query);
     $search.on('input', function onSearch() {
       state.query = String(this.value || '').toLowerCase();
       renderTreeList();
@@ -1057,8 +1075,11 @@ export function createSkillsUi(context) {
     const folderIcon = isExpanded ? (icons.SKILLS_FOLDER_OPEN_ICON || '') : (icons.SKILLS_FOLDER_ICON || '');
     const $icon = $('<span class="skills-tree-icon" aria-hidden="true">').html(folderIcon);
     const $name = $('<span class="skills-folder-name">').text(folder.title || folderName);
-    const $actions = $('<button type="button" class="skills-folder-actions" aria-label="Skill actions">').text('...');
-    const $toggle = $('<button type="button" class="skills-tree-caret" aria-label="Toggle skill files">')
+    const $actions = $('<button type="button" class="skills-folder-actions">')
+      .attr('aria-label', t('skills.skillActionsAria'))
+      .text('...');
+    const $toggle = $('<button type="button" class="skills-tree-caret">')
+      .attr('aria-label', t('skills.toggleSkillFilesAria'))
       .toggleClass('is-expanded', isExpanded);
     $button.append($icon).append($name);
     $row.append($button).append($actions).append($toggle);
@@ -1130,7 +1151,8 @@ export function createSkillsUi(context) {
     const $rowWrap = $('<div class="skills-tree-node-row skills-tree-dir-row">')
       .css('--skills-tree-depth', String(depth || 0));
     const $row = $('<button type="button" class="skills-tree-node is-dir">');
-    const $toggle = $('<button type="button" class="skills-tree-caret" aria-label="Toggle folder">')
+    const $toggle = $('<button type="button" class="skills-tree-caret">')
+      .attr('aria-label', t('skills.toggleFolderAria'))
       .toggleClass('is-expanded', expanded);
     function toggleExpanded(ev) {
       if (ev) {
@@ -1159,7 +1181,9 @@ export function createSkillsUi(context) {
       .css('--skills-tree-depth', String(depth || 0))
       .toggleClass('is-active', selected);
     const $file = $('<button type="button" class="skills-tree-node is-file">');
-    const $delete = $('<button type="button" class="skills-tree-delete-btn" title="Delete file" aria-label="Delete file">')
+    const $delete = $('<button type="button" class="skills-tree-delete-btn">')
+      .attr('title', t('skills.deleteFileAria'))
+      .attr('aria-label', t('skills.deleteFileAria'))
       .html(icons.CLOSE_ICON || '×');
     $delete.on('click', function onDelete(ev) {
       ev.stopPropagation();
@@ -1186,10 +1210,11 @@ export function createSkillsUi(context) {
     const $row = $('<div class="skills-edit-composer">')
       .css('--skills-tree-depth', String(depth || 0));
     const kindIcon = isFile ? (icons.SKILLS_FILE_ICON || '') : (icons.SKILLS_FOLDER_ICON || '');
-    const $kindBtn = $('<button type="button" class="skills-edit-kind-toggle" aria-label="Toggle folder or file">')
+    const $kindBtn = $('<button type="button" class="skills-edit-kind-toggle">')
+      .attr('aria-label', t('skills.toggleKindAria'))
       .html(kindIcon);
     const $input = $('<input class="skills-edit-input" type="text" autocomplete="off" spellcheck="false">')
-      .attr('placeholder', isFile ? 'New file name (e.g. grader.md)' : 'New folder name');
+      .attr('placeholder', isFile ? t('skills.newFilePlaceholder') : t('skills.newFolderPlaceholder'));
     const $error = $('<div class="skills-edit-error" role="alert">').hide();
 
     $kindBtn.on('click', function onKindToggle(ev) {
@@ -1233,7 +1258,7 @@ export function createSkillsUi(context) {
     const folder = String(folderName || '').trim();
     const file = String(filePath || '').trim().replace(/^\/+/, '');
     if (!folder) {
-      return file || 'No file selected';
+      return file || t('skills.noFileSelected');
     }
     if (!file) {
       return folder;
@@ -1248,14 +1273,16 @@ export function createSkillsUi(context) {
     const folder = findFolder(state.selectedFolder);
     $detail.empty();
     if (!folder) {
-      $detail.append($('<div class="skills-empty-state">').text('Create a skill to get started.'));
+      $detail.append($('<div class="skills-empty-state">').text(t('skills.emptyState')));
       return;
     }
 
     const $top = $('<div class="skills-detail-topbar">');
     const $title = $('<div class="skills-detail-title">').text(folder.title || folder.name);
     const $controls = $('<div class="skills-detail-controls skills-panel-tools">');
-    const $previewBtn = $('<button type="button" class="skills-panel-toggle">').toggleClass('is-active', state.mode === 'preview').html(icons.EYE_ICON || 'Preview');
+    const $previewBtn = $('<button type="button" class="skills-panel-toggle">')
+      .toggleClass('is-active', state.mode === 'preview')
+      .html(icons.EYE_ICON || t('skills.preview'));
     const $sourceBtn = $('<button type="button" class="skills-panel-toggle">').toggleClass('is-active', state.mode === 'source').text('</>');
     $previewBtn.on('click', function onPreview() {
       state.mode = 'preview';
@@ -1269,7 +1296,7 @@ export function createSkillsUi(context) {
     $top.append($title).append($controls);
 
     const $meta = $('<div class="skills-meta-grid skills-meta-grid--created">').append(
-      metaBlock('Created', formatCreatedAt(folder.created_at))
+      metaBlock(t('skills.created'), formatCreatedAt(folder.created_at))
     );
 
     const $panel = $('<div class="skills-content-panel">');
@@ -1295,13 +1322,13 @@ export function createSkillsUi(context) {
   function formatCreatedAt(timestamp) {
     const value = Number(timestamp);
     if (!Number.isFinite(value) || value <= 0) {
-      return 'Unknown';
+      return t('skills.unknown');
     }
     const date = new Date(value * 1000);
     if (Number.isNaN(date.getTime())) {
-      return 'Unknown';
+      return t('skills.unknown');
     }
-    return date.toLocaleString('en-US', {
+    return date.toLocaleString(intlLocaleTag(), {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -1373,19 +1400,19 @@ export function createSkillsUi(context) {
     const $menu = $('<div class="skills-action-menu" role="menu">');
     const isEditing = state.editMode && state.editMode.skillName === folder.name;
     const actions = [
-      [isEditing ? 'Done editing' : 'Edit skill', () => {
+      [isEditing ? t('skills.doneEditing') : t('skills.editSkill'), () => {
         if (isEditing) {
           exitEditMode();
         } else {
           enterEditMode(folder.name);
         }
       }],
-      ['Rename skill', () => renameSkill(folder.name)],
-      ['Delete skill', () => deleteSkill(folder.name)]
+      [t('skills.renameSkill'), () => renameSkill(folder.name)],
+      [t('skills.deleteSkill'), () => deleteSkill(folder.name)]
     ];
     actions.forEach(function addAction([label, handler]) {
       const $item = $('<button type="button" role="menuitem">').text(label);
-      if (label.startsWith('Delete')) {
+      if (label === t('skills.deleteSkill')) {
         $item.addClass('is-danger');
       }
       $item.on('click', function onAction(ev) {
@@ -1417,7 +1444,7 @@ export function createSkillsUi(context) {
     const selected = state.selectedFile || '';
     const $preview = $('<div class="skills-preview markdown-body">');
     if (!selected) {
-      $preview.text('No file selected.');
+      $preview.text(t('skills.noFileSelectedPath'));
     } else if (selected.toLowerCase().endsWith('.md') && typeof marked !== 'undefined') {
       const rawHtml = marked.parse(stripFrontMatter(content));
       $preview.html(typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(rawHtml) : rawHtml);
@@ -1445,7 +1472,7 @@ export function createSkillsUi(context) {
     const $path = $('<div class="skills-source-path">').text(
       formatDetailFilePath(state.selectedFolder, state.selectedFile)
     );
-    const $save = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text('Save');
+    const $save = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text(t('mcp.save'));
 
     function buildGutterLines(lineCount) {
       return Array.from({ length: lineCount }, function (_v, index) {

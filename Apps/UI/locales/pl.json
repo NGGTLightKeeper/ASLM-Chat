@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM — Zaawansowane Systemowe Modele Językowe",
+    "profileTitle": "Profil — ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "Czaty",
+    "newChat": "Nowy czat",
+    "noPreviousChats": "Brak wcześniejszych czatów",
+    "chatOptions": "Opcje czatu",
+    "rename": "Zmień nazwę",
+    "delete": "Usuń",
+    "account": "Konto",
+    "ago": "{time} temu"
+  },
+  "chat": {
+    "newChat": "Nowy czat",
+    "attachmentChat": "Czat z załącznikami",
+    "howCanIHelp": "W czym mogę pomóc?",
+    "welcomeTitle": "W czym mogę pomóc?"
+  },
+  "composer": {
+    "placeholder": "Wiadomość do ASLM...",
+    "menu": "Menu kompozytora",
+    "attachFiles": "Dołącz pliki",
+    "tools": "Narzędzia",
+    "other": "Inne",
+    "reasoningEffort": "Nakład rozumowania",
+    "intelligence": "Głębokość rozumowania",
+    "off": "Wył.",
+    "sendMessage": "Wyślij wiadomość",
+    "queueMessage": "Dodaj do kolejki",
+    "stopGeneration": "Zatrzymaj generowanie",
+    "contextUsage": "Wykorzystanie kontekstu"
+  },
+  "reasoning": {
+    "panel": "Panel rozumowania",
+    "title": "Rozumowanie",
+    "closePanel": "Zamknij panel rozumowania"
+  },
+  "settings": {
+    "modelSettings": "Ustawienia modelu",
+    "collapse": "Zwiń ustawienia",
+    "expand": "Rozwiń ustawienia",
+    "connection": "Połączenie",
+    "engine": "Silnik",
+    "address": "Adres",
+    "saved": "Zapisano",
+    "engineAddressPlaceholder": "Adres silnika",
+    "engineAddressHint": "Skonfiguruj punkt końcowy wybranego silnika.",
+    "apiKey": "Klucz API",
+    "off": "Wył.",
+    "useSavedKey": "Użyj zapisanego klucza",
+    "pasteApiKey": "Wklej klucz API",
+    "apiKeyHint": "Wymagany tylko dla zabezpieczonych punktów końcowych.",
+    "model": "Model",
+    "modelsLoadOnDemand": "Modele ładują się na żądanie",
+    "visionModel": "Model wizji",
+    "preset": "Ustawienie wstępne",
+    "default": "Domyślny",
+    "presetNew": "Nowy",
+    "presetRename": "Zmień nazwę",
+    "presetDelete": "Usuń",
+    "sandboxDefault": "Domyślna piaskownica",
+    "mode": "Tryb",
+    "tools": "Narzędzia",
+    "mcp": "MCP",
+    "skills": "Umiejętności",
+    "systemPrompt": "Prompt systemowy",
+    "systemPromptPlaceholder": "np. „Odpowiadaj tylko rymami”",
+    "load": "Wczytaj",
+    "customFields": "Pola niestandardowe",
+    "settings": "Ustawienia",
+    "sampling": "Próbkowanie",
+    "advanced": "Zaawansowane",
+    "custom": "Niestandardowe"
+  },
+  "profile": {
+    "backToChat": "Wróć do czatu",
+    "account": "Konto",
+    "user": "Użytkownik",
+    "localAccount": "Konto lokalne",
+    "general": "Ogólne",
+    "username": "Nazwa użytkownika",
+    "email": "E-mail",
+    "memberSince": "Członek od",
+    "dangerZone": "Strefa niebezpieczna",
+    "signOut": "Wyloguj się"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "Zgodny z OpenAI",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "Okno kontekstu:",
+    "usageLabel": "Kontekst: wykorzystano {percent}%, pozostało {remaining}%. {used} / {window} tokenów.",
+    "used": "Wykorzystane",
+    "remaining": "Pozostałe",
+    "compressing": "Kompresowanie kontekstu",
+    "compressionInProgress": "Trwa kompresja kontekstu",
+    "compressedActive": "Aktywny skompresowany kontekst.",
+    "compressedActiveTooltip": "Aktywny skompresowany kontekst",
+    "compressContext": "Skompresuj kontekst",
+    "autoCompress": "Automatyczna kompresja przy {percent}%"
+  },
+  "think": {
+    "off": "Wył.",
+    "low": "Niski",
+    "medium": "Średni",
+    "high": "Wysoki",
+    "minimal": "Minimalny",
+    "extraHigh": "Bardzo wysoki"
+  },
+  "messages": {
+    "more": "Więcej",
+    "hide": "Ukryj",
+    "copyCode": "Kopiuj kod",
+    "copyDiagram": "Kopiuj źródło diagramu",
+    "noContent": "Brak treści.",
+    "noDiff": "Brak diffa.",
+    "file": "Plik",
+    "audio": "Dźwięk",
+    "video": "Wideo",
+    "image": "Obraz",
+    "download": "Pobierz",
+    "playAudio": "Odtwórz audio",
+    "playVideo": "Odtwórz wideo",
+    "pauseMedia": "Wstrzymaj multimedia",
+    "playMedia": "Odtwórz multimedia",
+    "muteMedia": "Wycisz multimedia",
+    "unmuteMedia": "Włącz dźwięk multimediów",
+    "fullscreen": "Pełny ekran",
+    "exitFullscreen": "Wyjdź z pełnego ekranu",
+    "audioProgress": "Postęp audio",
+    "videoProgress": "Postęp wideo",
+    "openMiniPlayer": "Otwórz mini odtwarzacz",
+    "returnToMessage": "Wróć do wiadomości",
+    "closeMiniPlayer": "Zamknij mini odtwarzacz",
+    "renderingDiagram": "Renderowanie diagramu...",
+    "mermaidEmpty": "Źródło diagramu Mermaid jest puste.",
+    "mermaidUnavailable": "Renderer Mermaid jest niedostępny.",
+    "mermaidError": "Nie udało się wyrenderować diagramu Mermaid: {error}",
+    "running": "Uruchamianie...",
+    "noOutput": "Brak wyniku.",
+    "python": "Python",
+    "sandbox": "Piaskownica",
+    "write": "Zapis",
+    "writePath": "Zapis {path}",
+    "edit": "Edycja",
+    "editPath": "Edycja {path}",
+    "viewedImage": "Wyświetlony obraz",
+    "viewedPath": "Wyświetlono {path}",
+    "imagePreview": "Podgląd obrazu",
+    "imagePreviewFor": "Podgląd obrazu dla {path}",
+    "readSource": "Odczytano źródło:",
+    "readSources": "Odczytano źródła:",
+    "searchedFor": "Wyszukano: {query}",
+    "noSourcesFor": "Nie znaleziono źródeł dla: {query}",
+    "searchingFor": "Wyszukiwanie: {query}",
+    "badQuery": "Nieprawidłowe zapytanie: {query}"
+  },
+  "skills": {
+    "title": "Umiejętności",
+    "refresh": "Odśwież",
+    "noSkills": "Nie znaleziono umiejętności",
+    "loadError": "Nie udało się wczytać umiejętności",
+    "manage": "Zarządzaj umiejętnościami",
+    "customizeAria": "Dostosuj umiejętności",
+    "errorTitle": "Błąd umiejętności",
+    "personalSkillOne": "1 osobista umiejętność",
+    "personalSkillMany": "{count} osobistych umiejętności",
+    "noSkillsYet": "Brak umiejętności",
+    "composerMenuAria": "Umiejętności",
+    "closeManagerAria": "Zamknij menedżer umiejętności",
+    "searchPlaceholder": "Szukaj umiejętności",
+    "addSkillAria": "Dodaj umiejętność",
+    "skillActionsAria": "Akcje umiejętności",
+    "toggleSkillFilesAria": "Pokaż lub ukryj pliki umiejętności",
+    "toggleFolderAria": "Pokaż lub ukryj folder",
+    "toggleKindAria": "Przełącz folder lub plik",
+    "newFileAria": "Nowy plik w folderze",
+    "renameFolderAria": "Zmień nazwę folderu",
+    "renameFileAria": "Zmień nazwę pliku",
+    "deleteFileAria": "Usuń plik",
+    "dialogOk": "OK",
+    "dialogCancel": "Anuluj",
+    "dialogConfirm": "Potwierdź",
+    "dialogInput": "Wprowadzanie",
+    "valueRequired": "Wartość jest wymagana.",
+    "createSkill": "Utwórz umiejętność",
+    "skillNamePlaceholder": "nazwa-umiejetnosci",
+    "create": "Utwórz",
+    "importSkillFolder": "Importuj folder umiejętności",
+    "dropzoneAria": "Upuść folder umiejętności tutaj",
+    "dropzoneText": "Upuść folder tutaj (katalog nadrzędny)",
+    "or": "lub",
+    "browseFolder": "Przeglądaj folder…",
+    "skillNameRequired": "Nazwa umiejętności jest wymagana.",
+    "importing": "Importowanie…",
+    "newSkill": "Nowa umiejętność",
+    "skillFolderName": "Nazwa folderu umiejętności",
+    "skillFolderNamePlaceholder": "tworca-umiejetnosci",
+    "renameSkill": "Zmień nazwę umiejętności",
+    "newSkillFolderName": "Nowa nazwa folderu",
+    "deleteSkill": "Usuń umiejętność",
+    "deleteSkillConfirm": "Usunąć umiejętność „{name}”?",
+    "newSkillFile": "Nowy plik umiejętności",
+    "filePathInSkill": "Ścieżka pliku w umiejętności",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "Usuń plik",
+    "deleteFileConfirm": "Na pewno?",
+    "renameFolder": "Zmień nazwę folderu",
+    "folderName": "Nazwa folderu",
+    "renameFile": "Zmień nazwę pliku",
+    "fileName": "Nazwa pliku",
+    "editSkill": "Edytuj umiejętność",
+    "doneEditing": "Zakończ edycję",
+    "newFilePlaceholder": "Nazwa pliku (np. grader.md)",
+    "newFolderPlaceholder": "Nazwa nowego folderu",
+    "noFileSelected": "Nie wybrano pliku",
+    "noFileSelectedPath": "Nie wybrano pliku.",
+    "emptyState": "Utwórz umiejętność, aby zacząć.",
+    "preview": "Podgląd",
+    "created": "Utworzono",
+    "unknown": "Nieznane",
+    "readFileFailed": "Nie udało się odczytać {name}",
+    "importNameHintDropOne": "Wpisz nazwę powyżej lub upuść jeden folder naraz.",
+    "importNameHintSelect": "Wpisz nazwę, wybierz umiejętność w drzewie lub jeden folder.",
+    "importNoFiles": "Nie znaleziono plików.",
+    "importNoSupported": "Brak obsługiwanych plików tekstowych (.md, .txt, .py, …).",
+    "importNoSupportedFor": "Brak obsługiwanych plików dla „{name}”."
+  },
+  "errors": {
+    "generic": "Coś poszło nie tak",
+    "network": "Błąd sieci"
+  },
+  "confirm": {
+    "deleteChat": "Usunąć ten czat?",
+    "deleteChatNamed": "Usunąć „{title}”?",
+    "deletePreset": "Usunąć ustawienie wstępne „{name}”?",
+    "unsaved": "Masz niezapisane zmiany."
+  },
+  "toolInspector": {
+    "title": "Inspektor narzędzi",
+    "close": "Zamknij",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Temperatura"
+    },
+    "num_ctx": {
+      "label": "Długość kontekstu",
+      "note": "Okno kontekstu w tokenach."
+    },
+    "num_predict": {
+      "label": "Maks. tokenów wyjściowych",
+      "note": "Maksymalna liczba generowanych tokenów."
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "Alokacja pamięci z uwzględnieniem NUMA."
+    },
+    "num_batch": {
+      "label": "Rozmiar partii",
+      "note": "Rozmiar partii promptu."
+    },
+    "num_gpu": {
+      "label": "Warstwy GPU",
+      "note": "Warstwy przeniesione na GPU."
+    },
+    "main_gpu": {
+      "label": "Główne GPU",
+      "note": "Główne GPU"
+    },
+    "low_vram": {
+      "label": "Niski VRAM",
+      "note": "Niższe zużycie VRAM."
+    },
+    "f16_kv": {
+      "label": "Pamięć podręczna KV FP16",
+      "note": "Użyj pamięci podręcznej KV w FP16."
+    },
+    "logits_all": {
+      "label": "Zwróć pełne logity",
+      "note": "Zwróć logity dla wszystkich tokenów."
+    },
+    "vocab_only": {
+      "label": "Tylko słownik",
+      "note": "Wczytanie tylko słownika."
+    },
+    "use_mmap": {
+      "label": "Mapowanie pamięci",
+      "note": "Użyj mapowania pamięci."
+    },
+    "use_mlock": {
+      "label": "Blokada pamięci",
+      "note": "Zablokuj strony modelu w RAM."
+    },
+    "embedding_only": {
+      "label": "Tylko embeddingi",
+      "note": "Wczytanie tylko embeddingów."
+    },
+    "num_thread": {
+      "label": "Wątki CPU",
+      "note": "Wątki CPU"
+    },
+    "num_keep": {
+      "label": "Zachowaj tokeny promptu",
+      "note": "-1 zachowuje wszystkie, 0 to automatycznie."
+    },
+    "seed": {
+      "label": "Ziarno losowości",
+      "note": "Deterministyczne ziarno."
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "Okno powtórzeń"
+    },
+    "repeat_penalty": {
+      "label": "Kara za powtórzenia"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "Próbkowanie tail-free."
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "Kara za obecność"
+    },
+    "frequency_penalty": {
+      "label": "Kara za częstotliwość"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "Sekwencje stop"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top logprobs",
+      "note": "Logprobs alternatywnych tokenów."
+    },
+    "keep_alive": {
+      "label": "Utrzymanie aktywności",
+      "note": "Jak długo utrzymywać model w pamięci."
+    },
+    "format": {
+      "label": "Format odpowiedzi",
+      "note": "Tryb JSON lub schemat JSON."
+    },
+    "penalize_newline": {
+      "label": "Kara za nową linię",
+      "note": "Kara także za tokeny nowej linii."
+    },
+    "maxTokens": {
+      "label": "Maks. tokenów wyjściowych"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "Kara za powtórzenia"
+    },
+    "xtcProbability": {
+      "label": "Prawdopodobieństwo XTC"
+    },
+    "xtcThreshold": {
+      "label": "Próg XTC"
+    },
+    "cpuThreads": {
+      "label": "Wątki CPU"
+    },
+    "stopStrings": {
+      "label": "Sekwencje stop"
+    },
+    "toolCallStopStrings": {
+      "label": "Sekwencje stop narzędzi"
+    },
+    "contextOverflowPolicy": {
+      "label": "Polityka przepełnienia kontekstu"
+    },
+    "draftModel": {
+      "label": "Model roboczy"
+    },
+    "max_output_tokens": {
+      "label": "Maks. tokenów wyjściowych"
+    },
+    "candidate_count": {
+      "label": "Kandydaci"
+    },
+    "stop_sequences": {
+      "label": "Sekwencje stop"
+    },
+    "response_logprobs": {
+      "label": "Logprobs odpowiedzi"
+    },
+    "response_mime_type": {
+      "label": "Typ MIME odpowiedzi"
+    },
+    "max_completion_tokens": {
+      "label": "Maks. tokenów uzupełnienia"
+    },
+    "n": {
+      "label": "Kandydaci"
+    },
+    "reasoning_effort": {
+      "label": "Nakład rozumowania"
+    },
+    "verbosity": {
+      "label": "Szczegółowość"
+    },
+    "response_format": {
+      "label": "Format odpowiedzi"
+    },
+    "logit_bias": {
+      "label": "Bias logitów"
+    }
+  },
+  "mcp": {
+    "editConfig": "Edytuj mcp.json",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name} ({count} narzędzi)",
+    "cancel": "Anuluj",
+    "save": "Zapisz"
+  }
+}

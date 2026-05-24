@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM - उन्नत सिस्टम भाषा मॉडल",
+    "profileTitle": "प्रोफ़ाइल - ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "चैट",
+    "newChat": "नई चैट",
+    "noPreviousChats": "कोई पिछली चैट नहीं",
+    "chatOptions": "चैट विकल्प",
+    "rename": "नाम बदलें",
+    "delete": "हटाएँ",
+    "account": "खाता",
+    "ago": "{time} पहले"
+  },
+  "chat": {
+    "newChat": "नई चैट",
+    "attachmentChat": "अटैचमेंट चैट",
+    "howCanIHelp": "मैं कैसे मदद कर सकता हूँ?",
+    "welcomeTitle": "मैं कैसे मदद कर सकता हूँ?"
+  },
+  "composer": {
+    "placeholder": "ASLM को संदेश भेजें...",
+    "menu": "कंपोज़र मेनू",
+    "attachFiles": "फ़ाइलें संलग्न करें",
+    "tools": "उपकरण",
+    "other": "अन्य",
+    "reasoningEffort": "तर्क प्रयास",
+    "intelligence": "बुद्धिमत्ता",
+    "off": "बंद",
+    "sendMessage": "संदेश भेजें",
+    "queueMessage": "संदेश कतार में डालें",
+    "stopGeneration": "जनरेशन रोकें",
+    "contextUsage": "संदर्भ उपयोग"
+  },
+  "reasoning": {
+    "panel": "तर्क पैनल",
+    "title": "तर्क",
+    "closePanel": "तर्क पैनल बंद करें"
+  },
+  "settings": {
+    "modelSettings": "मॉडल सेटिंग्स",
+    "collapse": "सेटिंग्स संक्षिप्त करें",
+    "expand": "सेटिंग्स विस्तृत करें",
+    "connection": "कनेक्शन",
+    "engine": "इंजन",
+    "address": "पता",
+    "saved": "सहेजा गया",
+    "engineAddressPlaceholder": "इंजन पता",
+    "engineAddressHint": "चयनित इंजन एंडपॉइंट कॉन्फ़िगर करें।",
+    "apiKey": "API कुंजी",
+    "off": "बंद",
+    "useSavedKey": "सहेजी कुंजी उपयोग करें",
+    "pasteApiKey": "API कुंजी चिपकाएँ",
+    "apiKeyHint": "केवल सुरक्षित एंडपॉइंट के लिए आवश्यक।",
+    "model": "मॉडल",
+    "modelsLoadOnDemand": "मॉडल आवश्यकता पर लोड होते हैं",
+    "visionModel": "विज़न मॉडल",
+    "preset": "प्रीसेट",
+    "default": "डिफ़ॉल्ट",
+    "presetNew": "नया",
+    "presetRename": "नाम बदलें",
+    "presetDelete": "हटाएँ",
+    "sandboxDefault": "सैंडबॉक्स डिफ़ॉल्ट",
+    "mode": "मोड",
+    "tools": "उपकरण",
+    "mcp": "MCP",
+    "skills": "कौशल",
+    "systemPrompt": "सिस्टम प्रॉम्प्ट",
+    "systemPromptPlaceholder": "उदा. \"केवल तुकबंदी में उत्तर दें\"",
+    "load": "लोड करें",
+    "customFields": "कस्टम फ़ील्ड",
+    "settings": "सेटिंग्स",
+    "sampling": "सैंपलिंग",
+    "advanced": "उन्नत",
+    "custom": "कस्टम"
+  },
+  "profile": {
+    "backToChat": "चैट पर वापस",
+    "account": "खाता",
+    "user": "उपयोगकर्ता",
+    "localAccount": "स्थानीय खाता",
+    "general": "सामान्य",
+    "username": "उपयोगकर्ता नाम",
+    "email": "ईमेल",
+    "memberSince": "सदस्यता से",
+    "dangerZone": "खतरा क्षेत्र",
+    "signOut": "साइन आउट"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "OpenAI-संगत",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "संदर्भ विंडो:",
+    "usageLabel": "संदर्भ: {percent}% उपयोग, {remaining}% शेष। {used} / {window} टोकन।",
+    "used": "उपयोग",
+    "remaining": "शेष",
+    "compressing": "संदर्भ संपीड़ित हो रहा है",
+    "compressionInProgress": "संदर्भ संपीड़न प्रगति में",
+    "compressedActive": "संपीड़ित संदर्भ सक्रिय है।",
+    "compressedActiveTooltip": "संपीड़ित संदर्भ सक्रिय",
+    "compressContext": "संदर्भ संपीड़ित करें",
+    "autoCompress": "{percent}% पर स्वतः संपीड़न"
+  },
+  "think": {
+    "off": "बंद",
+    "low": "कम",
+    "medium": "मध्यम",
+    "high": "उच्च",
+    "minimal": "न्यूनतम",
+    "extraHigh": "अत्यधिक उच्च"
+  },
+  "messages": {
+    "more": "और",
+    "hide": "छिपाएँ",
+    "copyCode": "कोड कॉपी करें",
+    "copyDiagram": "आरेख स्रोत कॉपी करें",
+    "noContent": "कोई सामग्री नहीं।",
+    "noDiff": "कोई अंतर नहीं।",
+    "file": "फ़ाइल",
+    "audio": "ऑडियो",
+    "video": "वीडियो",
+    "image": "छवि",
+    "download": "डाउनलोड",
+    "playAudio": "ऑडियो चलाएँ",
+    "playVideo": "वीडियो चलाएँ",
+    "pauseMedia": "मीडिया रोकें",
+    "playMedia": "मीडिया चलाएँ",
+    "muteMedia": "मीडिया म्यूट करें",
+    "unmuteMedia": "मीडिया अनम्यूट करें",
+    "fullscreen": "पूर्ण स्क्रीन",
+    "exitFullscreen": "पूर्ण स्क्रीन से बाहर",
+    "audioProgress": "ऑडियो प्रगति",
+    "videoProgress": "वीडियो प्रगति",
+    "openMiniPlayer": "मिनी प्लेयर खोलें",
+    "returnToMessage": "संदेश पर वापस",
+    "closeMiniPlayer": "मिनी प्लेयर बंद करें",
+    "renderingDiagram": "आरेख रेंडर हो रहा है...",
+    "mermaidEmpty": "Mermaid आरेख स्रोत खाली है।",
+    "mermaidUnavailable": "Mermaid रेंडरर उपलब्ध नहीं है।",
+    "mermaidError": "Mermaid आरेख रेंडर नहीं हो सका: {error}",
+    "running": "चल रहा है...",
+    "noOutput": "कोई आउटपुट नहीं।",
+    "python": "Python",
+    "sandbox": "सैंडबॉक्स",
+    "write": "लिखें",
+    "writePath": "{path} लिखें",
+    "edit": "संपादित करें",
+    "editPath": "{path} संपादित करें",
+    "viewedImage": "छवि देखी",
+    "viewedPath": "{path} देखा",
+    "imagePreview": "छवि पूर्वावलोकन",
+    "imagePreviewFor": "{path} के लिए छवि पूर्वावलोकन",
+    "readSource": "स्रोत पढ़ा:",
+    "readSources": "स्रोत पढ़े:",
+    "searchedFor": "{query} खोजा",
+    "noSourcesFor": "{query} के लिए कोई स्रोत नहीं मिला",
+    "searchingFor": "{query} खोज रहे हैं",
+    "badQuery": "अमान्य क्वेरी: {query}"
+  },
+  "skills": {
+    "title": "कौशल",
+    "refresh": "रीफ़्रेश",
+    "noSkills": "कोई कौशल नहीं मिला",
+    "loadError": "कौशल लोड नहीं हो सके",
+    "manage": "कौशल प्रबंधित करें",
+    "customizeAria": "कौशल अनुकूलित करें",
+    "errorTitle": "कौशल त्रुटि",
+    "personalSkillOne": "1 व्यक्तिगत कौशल",
+    "personalSkillMany": "{count} व्यक्तिगत कौशल",
+    "noSkillsYet": "अभी कोई कौशल नहीं",
+    "composerMenuAria": "कौशल",
+    "closeManagerAria": "कौशल प्रबंधक बंद करें",
+    "searchPlaceholder": "कौशल खोजें",
+    "addSkillAria": "कौशल जोड़ें",
+    "skillActionsAria": "कौशल क्रियाएँ",
+    "toggleSkillFilesAria": "कौशल फ़ाइलें दिखाएँ या छिपाएँ",
+    "toggleFolderAria": "फ़ोल्डर दिखाएँ या छिपाएँ",
+    "toggleKindAria": "फ़ोल्डर या फ़ाइल बदलें",
+    "newFileAria": "फ़ोल्डर में नई फ़ाइल",
+    "renameFolderAria": "फ़ोल्डर का नाम बदलें",
+    "renameFileAria": "फ़ाइल का नाम बदलें",
+    "deleteFileAria": "फ़ाइल हटाएँ",
+    "dialogOk": "ठीक",
+    "dialogCancel": "रद्द करें",
+    "dialogConfirm": "पुष्टि",
+    "dialogInput": "इनपुट",
+    "valueRequired": "मान आवश्यक है।",
+    "createSkill": "कौशल बनाएँ",
+    "skillNamePlaceholder": "कौशल-नाम",
+    "create": "बनाएँ",
+    "importSkillFolder": "कौशल फ़ोल्डर आयात करें",
+    "dropzoneAria": "कौशल फ़ोल्डर यहाँ छोड़ें",
+    "dropzoneText": "कौशल फ़ोल्डर यहाँ छोड़ें (पैरेंट निर्देशिका)",
+    "or": "या",
+    "browseFolder": "फ़ोल्डर ब्राउज़ करें…",
+    "skillNameRequired": "कौशल नाम आवश्यक है।",
+    "importing": "आयात हो रहा है…",
+    "newSkill": "नया कौशल",
+    "skillFolderName": "कौशल फ़ोल्डर नाम",
+    "skillFolderNamePlaceholder": "कौशल-निर्माता",
+    "renameSkill": "कौशल का नाम बदलें",
+    "newSkillFolderName": "नया फ़ोल्डर नाम",
+    "deleteSkill": "कौशल हटाएँ",
+    "deleteSkillConfirm": "कौशल \"{name}\" हटाएँ?",
+    "newSkillFile": "नई कौशल फ़ाइल",
+    "filePathInSkill": "कौशल के अंदर फ़ाइल पथ",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "फ़ाइल हटाएँ",
+    "deleteFileConfirm": "क्या आप सुनिश्चित हैं?",
+    "renameFolder": "फ़ोल्डर का नाम बदलें",
+    "folderName": "फ़ोल्डर नाम",
+    "renameFile": "फ़ाइल का नाम बदलें",
+    "fileName": "फ़ाइल नाम",
+    "editSkill": "कौशल संपादित करें",
+    "doneEditing": "संपादन समाप्त करें",
+    "newFilePlaceholder": "नई फ़ाइल नाम (उदा. grader.md)",
+    "newFolderPlaceholder": "नया फ़ोल्डर नाम",
+    "noFileSelected": "कोई फ़ाइल चयनित नहीं",
+    "noFileSelectedPath": "कोई फ़ाइल चयनित नहीं।",
+    "emptyState": "शुरू करने के लिए कौशल बनाएँ।",
+    "preview": "पूर्वावलोकन",
+    "created": "बनाया गया",
+    "unknown": "अज्ञात",
+    "readFileFailed": "{name} पढ़ने में विफल",
+    "importNameHintDropOne": "ऊपर नाम दर्ज करें या एक बार में एक फ़ोल्डर छोड़ें।",
+    "importNameHintSelect": "नाम दर्ज करें, वृक्ष में कौशल चुनें या एक फ़ोल्डर चुनें।",
+    "importNoFiles": "कोई फ़ाइल नहीं मिली।",
+    "importNoSupported": "कोई समर्थित पाठ फ़ाइल नहीं (.md, .txt, .py, …)।",
+    "importNoSupportedFor": "\"{name}\" के लिए कोई समर्थित फ़ाइल नहीं।"
+  },
+  "errors": {
+    "generic": "कुछ गलत हो गया",
+    "network": "नेटवर्क त्रुटि"
+  },
+  "confirm": {
+    "deleteChat": "यह चैट हटाएँ?",
+    "deleteChatNamed": "\"{title}\" हटाएँ?",
+    "deletePreset": "प्रीसेट \"{name}\" हटाएँ?",
+    "unsaved": "आपके पास असहेजे परिवर्तन हैं।"
+  },
+  "toolInspector": {
+    "title": "उपकरण निरीक्षक",
+    "close": "बंद करें",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "तापमान"
+    },
+    "num_ctx": {
+      "label": "संदर्भ लंबाई",
+      "note": "टोकन में संदर्भ विंडो।"
+    },
+    "num_predict": {
+      "label": "अधिकतम आउटपुट टोकन",
+      "note": "अधिकतम उत्पन्न टोकन।"
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "NUMA-जागरूक मेमोरी प्लेसमेंट।"
+    },
+    "num_batch": {
+      "label": "बैच आकार",
+      "note": "प्रॉम्प्ट बैच आकार।"
+    },
+    "num_gpu": {
+      "label": "GPU परतें",
+      "note": "GPU पर ऑफ़लोड की गई परतें।"
+    },
+    "main_gpu": {
+      "label": "मुख्य GPU",
+      "note": "प्राथमिक GPU"
+    },
+    "low_vram": {
+      "label": "कम VRAM",
+      "note": "कम VRAM उपयोग।"
+    },
+    "f16_kv": {
+      "label": "FP16 KV कैश उपयोग करें",
+      "note": "FP16 KV कैश उपयोग करें।"
+    },
+    "logits_all": {
+      "label": "पूर्ण लॉजिट्स लौटाएँ",
+      "note": "सभी टोकन के लिए लॉजिट्स लौटाएँ।"
+    },
+    "vocab_only": {
+      "label": "केवल शब्दावली",
+      "note": "केवल शब्दावली लोड।"
+    },
+    "use_mmap": {
+      "label": "मेमोरी मैप उपयोग करें",
+      "note": "मेमोरी मैपिंग उपयोग करें।"
+    },
+    "use_mlock": {
+      "label": "मेमोरी लॉक उपयोग करें",
+      "note": "मॉडल पेज RAM में लॉक करें।"
+    },
+    "embedding_only": {
+      "label": "केवल एम्बेडिंग",
+      "note": "केवल एम्बेडिंग लोड।"
+    },
+    "num_thread": {
+      "label": "CPU थ्रेड",
+      "note": "CPU थ्रेड"
+    },
+    "num_keep": {
+      "label": "प्रॉम्प्ट टोकन रखें",
+      "note": "-1 सभी रखता है, 0 स्वचालित है।"
+    },
+    "seed": {
+      "label": "सीड",
+      "note": "निर्धारक सीड।"
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "दोहराव विंडो"
+    },
+    "repeat_penalty": {
+      "label": "दोहराव दंड"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "टेल-फ्री सैंपलिंग।"
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "उपस्थिति दंड"
+    },
+    "frequency_penalty": {
+      "label": "आवृत्ति दंड"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "स्टॉप अनुक्रम"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top Logprobs",
+      "note": "वैकल्पिक टोकन logprobs।"
+    },
+    "keep_alive": {
+      "label": "Keep Alive",
+      "note": "मॉडल कितने समय तक लोड रखना है।"
+    },
+    "format": {
+      "label": "प्रतिक्रिया प्रारूप",
+      "note": "JSON मोड या JSON स्कीमा।"
+    },
+    "penalize_newline": {
+      "label": "नई पंक्ति दंडित करें",
+      "note": "नई पंक्ति टोकन पर भी दंड।"
+    },
+    "maxTokens": {
+      "label": "अधिकतम आउटपुट टोकन"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "दोहराव दंड"
+    },
+    "xtcProbability": {
+      "label": "XTC संभावना"
+    },
+    "xtcThreshold": {
+      "label": "XTC सीमा"
+    },
+    "cpuThreads": {
+      "label": "CPU थ्रेड"
+    },
+    "stopStrings": {
+      "label": "स्टॉप अनुक्रम"
+    },
+    "toolCallStopStrings": {
+      "label": "उपकरण स्टॉप अनुक्रम"
+    },
+    "contextOverflowPolicy": {
+      "label": "संदर्भ ओवरफ़्लो नीति"
+    },
+    "draftModel": {
+      "label": "ड्राफ़्ट मॉडल"
+    },
+    "max_output_tokens": {
+      "label": "अधिकतम आउटपुट टोकन"
+    },
+    "candidate_count": {
+      "label": "उम्मीदवार"
+    },
+    "stop_sequences": {
+      "label": "स्टॉप अनुक्रम"
+    },
+    "response_logprobs": {
+      "label": "प्रतिक्रिया Logprobs"
+    },
+    "response_mime_type": {
+      "label": "प्रतिक्रिया MIME प्रकार"
+    },
+    "max_completion_tokens": {
+      "label": "अधिकतम पूर्णता टोकन"
+    },
+    "n": {
+      "label": "उम्मीदवार"
+    },
+    "reasoning_effort": {
+      "label": "तर्क प्रयास"
+    },
+    "verbosity": {
+      "label": "विस्तार"
+    },
+    "response_format": {
+      "label": "प्रतिक्रिया प्रारूप"
+    },
+    "logit_bias": {
+      "label": "Logit Bias"
+    }
+  },
+  "mcp": {
+    "editConfig": "mcp.json संपादित करें",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name} ({count} उपकरण)",
+    "cancel": "रद्द करें",
+    "save": "सहेजें"
+  }
+}

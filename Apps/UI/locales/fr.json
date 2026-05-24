@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM - Modèles de langage système avancés",
+    "profileTitle": "Profil - ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "Discussions",
+    "newChat": "Nouvelle discussion",
+    "noPreviousChats": "Aucune discussion précédente",
+    "chatOptions": "Options de la discussion",
+    "rename": "Renommer",
+    "delete": "Supprimer",
+    "account": "Compte",
+    "ago": "il y a {time}"
+  },
+  "chat": {
+    "newChat": "Nouvelle discussion",
+    "attachmentChat": "Discussion avec pièces jointes",
+    "howCanIHelp": "Comment puis-je vous aider ?",
+    "welcomeTitle": "Comment puis-je vous aider ?"
+  },
+  "composer": {
+    "placeholder": "Message à ASLM...",
+    "menu": "Menu du compositeur",
+    "attachFiles": "Joindre des fichiers",
+    "tools": "Outils",
+    "other": "Autre",
+    "reasoningEffort": "Effort de raisonnement",
+    "intelligence": "Profondeur de raisonnement",
+    "off": "Désactivé",
+    "sendMessage": "Envoyer le message",
+    "queueMessage": "Mettre le message en file d'attente",
+    "stopGeneration": "Arrêter la génération",
+    "contextUsage": "Utilisation du contexte"
+  },
+  "reasoning": {
+    "panel": "Panneau de raisonnement",
+    "title": "Raisonnement",
+    "closePanel": "Fermer le panneau de raisonnement"
+  },
+  "settings": {
+    "modelSettings": "Paramètres du modèle",
+    "collapse": "Réduire les paramètres",
+    "expand": "Développer les paramètres",
+    "connection": "Connexion",
+    "engine": "Moteur",
+    "address": "Adresse",
+    "saved": "Enregistré",
+    "engineAddressPlaceholder": "Adresse du moteur",
+    "engineAddressHint": "Configurez le point de terminaison du moteur sélectionné.",
+    "apiKey": "Clé API",
+    "off": "Désactivé",
+    "useSavedKey": "Utiliser la clé enregistrée",
+    "pasteApiKey": "Coller la clé API",
+    "apiKeyHint": "Nécessaire uniquement pour les points de terminaison sécurisés.",
+    "model": "Modèle",
+    "modelsLoadOnDemand": "Les modèles se chargent à la demande",
+    "visionModel": "Modèle de vision",
+    "preset": "Préréglage",
+    "default": "Par défaut",
+    "presetNew": "Nouveau",
+    "presetRename": "Renommer",
+    "presetDelete": "Supprimer",
+    "sandboxDefault": "Bac à sable par défaut",
+    "mode": "Mode d'utilisation",
+    "tools": "Outils",
+    "mcp": "MCP",
+    "skills": "Compétences",
+    "systemPrompt": "Invite système",
+    "systemPromptPlaceholder": "p. ex. « Répondre uniquement en rimes »",
+    "load": "Charger",
+    "customFields": "Champs personnalisés",
+    "settings": "Paramètres",
+    "sampling": "Échantillonnage",
+    "advanced": "Avancé",
+    "custom": "Personnalisé"
+  },
+  "profile": {
+    "backToChat": "Retour à la discussion",
+    "account": "Compte",
+    "user": "Utilisateur",
+    "localAccount": "Compte local",
+    "general": "Général",
+    "username": "Nom d'utilisateur",
+    "email": "E-mail",
+    "memberSince": "Membre depuis",
+    "dangerZone": "Zone dangereuse",
+    "signOut": "Se déconnecter"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "Compatible OpenAI",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "Fenêtre de contexte :",
+    "usageLabel": "Contexte : {percent} % utilisé, {remaining} % restant. {used} / {window} jetons.",
+    "used": "Utilisé",
+    "remaining": "Restant",
+    "compressing": "Compression du contexte",
+    "compressionInProgress": "Compression du contexte en cours",
+    "compressedActive": "Le contexte compressé est actif.",
+    "compressedActiveTooltip": "Contexte compressé actif",
+    "compressContext": "Compresser le contexte",
+    "autoCompress": "Compression automatique à {percent} %"
+  },
+  "think": {
+    "off": "Désactivé",
+    "low": "Faible",
+    "medium": "Moyen",
+    "high": "Élevé",
+    "minimal": "Minimal",
+    "extraHigh": "Très élevé"
+  },
+  "messages": {
+    "more": "Plus",
+    "hide": "Masquer",
+    "copyCode": "Copier le code",
+    "copyDiagram": "Copier la source du diagramme",
+    "noContent": "Aucun contenu.",
+    "noDiff": "Aucune différence.",
+    "file": "Fichier",
+    "audio": "Son",
+    "video": "Vidéo",
+    "image": "Photo",
+    "download": "Télécharger",
+    "playAudio": "Lire l'audio",
+    "playVideo": "Lire la vidéo",
+    "pauseMedia": "Mettre le média en pause",
+    "playMedia": "Lire le média",
+    "muteMedia": "Couper le son",
+    "unmuteMedia": "Réactiver le son",
+    "fullscreen": "Plein écran",
+    "exitFullscreen": "Quitter le plein écran",
+    "audioProgress": "Progression audio",
+    "videoProgress": "Progression vidéo",
+    "openMiniPlayer": "Ouvrir le mini lecteur",
+    "returnToMessage": "Revenir au message",
+    "closeMiniPlayer": "Fermer le mini lecteur",
+    "renderingDiagram": "Rendu du diagramme...",
+    "mermaidEmpty": "La source du diagramme Mermaid est vide.",
+    "mermaidUnavailable": "Le moteur de rendu Mermaid est indisponible.",
+    "mermaidError": "Impossible de rendre le diagramme Mermaid : {error}",
+    "running": "Exécution...",
+    "noOutput": "Aucune sortie.",
+    "python": "Python",
+    "sandbox": "Bac à sable",
+    "write": "Écrire",
+    "writePath": "Écrire {path}",
+    "edit": "Modifier",
+    "editPath": "Modifier {path}",
+    "viewedImage": "Image consultée",
+    "viewedPath": "Consulté {path}",
+    "imagePreview": "Aperçu de l'image",
+    "imagePreviewFor": "Aperçu de l'image pour {path}",
+    "readSource": "Source lue :",
+    "readSources": "Sources lues :",
+    "searchedFor": "Recherche de {query}",
+    "noSourcesFor": "Aucune source trouvée pour {query}",
+    "searchingFor": "Recherche de {query}",
+    "badQuery": "Requête invalide : {query}"
+  },
+  "skills": {
+    "title": "Compétences",
+    "refresh": "Actualiser",
+    "noSkills": "Aucune compétence trouvée",
+    "loadError": "Impossible de charger les compétences",
+    "manage": "Gérer les compétences",
+    "customizeAria": "Personnaliser les compétences",
+    "errorTitle": "Erreur des compétences",
+    "personalSkillOne": "1 compétence personnelle",
+    "personalSkillMany": "{count} compétences personnelles",
+    "noSkillsYet": "Aucune compétence pour l’instant",
+    "composerMenuAria": "Compétences",
+    "closeManagerAria": "Fermer le gestionnaire de compétences",
+    "searchPlaceholder": "Rechercher des compétences",
+    "addSkillAria": "Ajouter une compétence",
+    "skillActionsAria": "Actions sur la compétence",
+    "toggleSkillFilesAria": "Afficher ou masquer les fichiers",
+    "toggleFolderAria": "Afficher ou masquer le dossier",
+    "toggleKindAria": "Basculer dossier ou fichier",
+    "newFileAria": "Nouveau fichier dans le dossier",
+    "renameFolderAria": "Renommer le dossier",
+    "renameFileAria": "Renommer le fichier",
+    "deleteFileAria": "Supprimer le fichier",
+    "dialogOk": "OK",
+    "dialogCancel": "Annuler",
+    "dialogConfirm": "Confirmer",
+    "dialogInput": "Saisie",
+    "valueRequired": "La valeur est obligatoire.",
+    "createSkill": "Créer une compétence",
+    "skillNamePlaceholder": "nom-competence",
+    "create": "Créer",
+    "importSkillFolder": "Importer un dossier de compétence",
+    "dropzoneAria": "Déposez un dossier de compétence ici",
+    "dropzoneText": "Déposez le dossier ici (répertoire parent)",
+    "or": "ou",
+    "browseFolder": "Parcourir le dossier…",
+    "skillNameRequired": "Le nom de la compétence est obligatoire.",
+    "importing": "Importation…",
+    "newSkill": "Nouvelle compétence",
+    "skillFolderName": "Nom du dossier de compétence",
+    "skillFolderNamePlaceholder": "createur-competences",
+    "renameSkill": "Renommer la compétence",
+    "newSkillFolderName": "Nouveau nom du dossier",
+    "deleteSkill": "Supprimer la compétence",
+    "deleteSkillConfirm": "Supprimer la compétence « {name} » ?",
+    "newSkillFile": "Nouveau fichier de compétence",
+    "filePathInSkill": "Chemin du fichier dans la compétence",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "Supprimer le fichier",
+    "deleteFileConfirm": "Êtes-vous sûr ?",
+    "renameFolder": "Renommer le dossier",
+    "folderName": "Nom du dossier",
+    "renameFile": "Renommer le fichier",
+    "fileName": "Nom du fichier",
+    "editSkill": "Modifier la compétence",
+    "doneEditing": "Terminer la modification",
+    "newFilePlaceholder": "Nom du fichier (ex. grader.md)",
+    "newFolderPlaceholder": "Nom du nouveau dossier",
+    "noFileSelected": "Aucun fichier sélectionné",
+    "noFileSelectedPath": "Aucun fichier sélectionné.",
+    "emptyState": "Créez une compétence pour commencer.",
+    "preview": "Aperçu",
+    "created": "Créé",
+    "unknown": "Inconnu",
+    "readFileFailed": "Impossible de lire {name}",
+    "importNameHintDropOne": "Saisissez un nom ci-dessus ou déposez un dossier à la fois.",
+    "importNameHintSelect": "Saisissez un nom, sélectionnez une compétence dans l’arborescence ou un dossier.",
+    "importNoFiles": "Aucun fichier trouvé.",
+    "importNoSupported": "Aucun fichier texte pris en charge (.md, .txt, .py, …).",
+    "importNoSupportedFor": "Aucun fichier pris en charge pour « {name} »."
+  },
+  "errors": {
+    "generic": "Une erreur s'est produite",
+    "network": "Erreur réseau"
+  },
+  "confirm": {
+    "deleteChat": "Supprimer cette discussion ?",
+    "deleteChatNamed": "Supprimer « {title} » ?",
+    "deletePreset": "Supprimer le préréglage « {name} » ?",
+    "unsaved": "Vous avez des modifications non enregistrées."
+  },
+  "toolInspector": {
+    "title": "Inspecteur d'outils",
+    "close": "Fermer",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Température"
+    },
+    "num_ctx": {
+      "label": "Longueur du contexte",
+      "note": "Fenêtre de contexte en jetons."
+    },
+    "num_predict": {
+      "label": "Jetons de sortie max.",
+      "note": "Nombre maximal de jetons générés."
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "Placement mémoire compatible NUMA."
+    },
+    "num_batch": {
+      "label": "Taille du lot",
+      "note": "Taille du lot pour l'invite."
+    },
+    "num_gpu": {
+      "label": "Couches GPU",
+      "note": "Couches déchargées sur le GPU."
+    },
+    "main_gpu": {
+      "label": "GPU principal",
+      "note": "GPU principal"
+    },
+    "low_vram": {
+      "label": "VRAM faible",
+      "note": "Réduit l'utilisation de la VRAM."
+    },
+    "f16_kv": {
+      "label": "Cache KV en FP16",
+      "note": "Utiliser le cache KV en FP16."
+    },
+    "logits_all": {
+      "label": "Logits complets",
+      "note": "Renvoyer les logits pour tous les jetons."
+    },
+    "vocab_only": {
+      "label": "Vocabulaire uniquement",
+      "note": "Chargement du vocabulaire uniquement."
+    },
+    "use_mmap": {
+      "label": "Mappage mémoire",
+      "note": "Utiliser le mappage mémoire."
+    },
+    "use_mlock": {
+      "label": "Verrouillage mémoire",
+      "note": "Verrouiller les pages du modèle en RAM."
+    },
+    "embedding_only": {
+      "label": "Embeddings uniquement",
+      "note": "Chargement des embeddings uniquement."
+    },
+    "num_thread": {
+      "label": "Threads CPU",
+      "note": "Threads CPU"
+    },
+    "num_keep": {
+      "label": "Jetons d'invite conservés",
+      "note": "-1 conserve tout, 0 est automatique."
+    },
+    "seed": {
+      "label": "Graine",
+      "note": "Graine déterministe."
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "Fenêtre de répétition"
+    },
+    "repeat_penalty": {
+      "label": "Pénalité de répétition"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "Échantillonnage tail-free."
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "Pénalité de présence"
+    },
+    "frequency_penalty": {
+      "label": "Pénalité de fréquence"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "Séquences d'arrêt"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top Logprobs",
+      "note": "Logprobs des jetons alternatifs."
+    },
+    "keep_alive": {
+      "label": "Maintien actif",
+      "note": "Durée de maintien du modèle en mémoire."
+    },
+    "format": {
+      "label": "Format de réponse",
+      "note": "Mode JSON ou schéma JSON."
+    },
+    "penalize_newline": {
+      "label": "Pénaliser les retours à la ligne",
+      "note": "Pénaliser également les jetons de retour à la ligne."
+    },
+    "maxTokens": {
+      "label": "Jetons de sortie max."
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "Pénalité de répétition"
+    },
+    "xtcProbability": {
+      "label": "Probabilité XTC"
+    },
+    "xtcThreshold": {
+      "label": "Seuil XTC"
+    },
+    "cpuThreads": {
+      "label": "Threads CPU"
+    },
+    "stopStrings": {
+      "label": "Séquences d'arrêt"
+    },
+    "toolCallStopStrings": {
+      "label": "Séquences d'arrêt des outils"
+    },
+    "contextOverflowPolicy": {
+      "label": "Politique de dépassement de contexte"
+    },
+    "draftModel": {
+      "label": "Modèle brouillon"
+    },
+    "max_output_tokens": {
+      "label": "Jetons de sortie max."
+    },
+    "candidate_count": {
+      "label": "Candidats"
+    },
+    "stop_sequences": {
+      "label": "Séquences d'arrêt"
+    },
+    "response_logprobs": {
+      "label": "Logprobs de réponse"
+    },
+    "response_mime_type": {
+      "label": "Type MIME de la réponse"
+    },
+    "max_completion_tokens": {
+      "label": "Jetons de complétion max."
+    },
+    "n": {
+      "label": "Candidats"
+    },
+    "reasoning_effort": {
+      "label": "Effort de raisonnement"
+    },
+    "verbosity": {
+      "label": "Verbosité"
+    },
+    "response_format": {
+      "label": "Format de réponse"
+    },
+    "logit_bias": {
+      "label": "Biais de logit"
+    }
+  },
+  "mcp": {
+    "editConfig": "Modifier mcp.json",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name} ({count} outils)",
+    "cancel": "Annuler",
+    "save": "Enregistrer"
+  }
+}

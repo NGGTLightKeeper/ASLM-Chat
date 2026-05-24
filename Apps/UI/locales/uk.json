@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM — розширені системні мовні моделі",
+    "profileTitle": "Профіль — ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "Чати",
+    "newChat": "Новий чат",
+    "noPreviousChats": "Немає попередніх чатів",
+    "chatOptions": "Параметри чату",
+    "rename": "Перейменувати",
+    "delete": "Видалити",
+    "account": "Обліковий запис",
+    "ago": "{time} тому"
+  },
+  "chat": {
+    "newChat": "Новий чат",
+    "attachmentChat": "Чат з вкладеннями",
+    "howCanIHelp": "Чим можу допомогти?",
+    "welcomeTitle": "Чим можу допомогти?"
+  },
+  "composer": {
+    "placeholder": "Напишіть ASLM...",
+    "menu": "Меню введення",
+    "attachFiles": "Додати файли",
+    "tools": "Інструменти",
+    "other": "Інше",
+    "reasoningEffort": "Глибина міркувань",
+    "intelligence": "Глибина міркувань",
+    "off": "Вимк.",
+    "sendMessage": "Надіслати",
+    "queueMessage": "Поставити в чергу",
+    "stopGeneration": "Зупинити генерацію",
+    "contextUsage": "Використання контексту"
+  },
+  "reasoning": {
+    "panel": "Панель міркувань",
+    "title": "Міркування",
+    "closePanel": "Закрити панель міркувань"
+  },
+  "settings": {
+    "modelSettings": "Налаштування моделі",
+    "collapse": "Згорнути налаштування",
+    "expand": "Розгорнути налаштування",
+    "connection": "З'єднання",
+    "engine": "Рушій",
+    "address": "Адреса",
+    "saved": "Збережено",
+    "engineAddressPlaceholder": "Адреса рушія",
+    "engineAddressHint": "Налаштуйте кінцеву точку обраного рушія.",
+    "apiKey": "API-ключ",
+    "off": "Вимк.",
+    "useSavedKey": "Використати збережений ключ",
+    "pasteApiKey": "Вставити API-ключ",
+    "apiKeyHint": "Потрібен лише для захищених кінцевих точок.",
+    "model": "Модель",
+    "modelsLoadOnDemand": "Моделі завантажуються за запитом",
+    "visionModel": "Модель зору",
+    "preset": "Шаблон",
+    "default": "Типовий",
+    "presetNew": "Новий",
+    "presetRename": "Перейменувати",
+    "presetDelete": "Видалити",
+    "sandboxDefault": "Песочниця за замовчуванням",
+    "mode": "Режим",
+    "tools": "Інструменти",
+    "mcp": "MCP",
+    "skills": "Навички",
+    "systemPrompt": "Системний промпт",
+    "systemPromptPlaceholder": "напр., «Відповідай лише римами»",
+    "load": "Завантажити",
+    "customFields": "Додаткові поля",
+    "settings": "Налаштування",
+    "sampling": "Семплінг",
+    "advanced": "Розширені",
+    "custom": "Власні"
+  },
+  "profile": {
+    "backToChat": "Назад до чату",
+    "account": "Обліковий запис",
+    "user": "Користувач",
+    "localAccount": "Локальний обліковий запис",
+    "general": "Загальні",
+    "username": "Ім'я користувача",
+    "email": "Електронна пошта",
+    "memberSince": "Учасник з",
+    "dangerZone": "Небезпечна зона",
+    "signOut": "Вийти"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "OpenAI-сумісний",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "Вікно контексту:",
+    "usageLabel": "Контекст: {percent}% використано, {remaining}% залишилось. {used} / {window} токенів.",
+    "used": "Використано",
+    "remaining": "Залишилось",
+    "compressing": "Стиснення контексту",
+    "compressionInProgress": "Триває стиснення контексту",
+    "compressedActive": "Активний стиснутий контекст.",
+    "compressedActiveTooltip": "Активний стиснутий контекст",
+    "compressContext": "Стиснути контекст",
+    "autoCompress": "Автостиснення при {percent}%"
+  },
+  "think": {
+    "off": "Вимк.",
+    "low": "Низька",
+    "medium": "Середня",
+    "high": "Висока",
+    "minimal": "Мінімальна",
+    "extraHigh": "Найвища"
+  },
+  "messages": {
+    "more": "Більше",
+    "hide": "Приховати",
+    "copyCode": "Копіювати код",
+    "copyDiagram": "Копіювати джерело діаграми",
+    "noContent": "Немає вмісту.",
+    "noDiff": "Немає різниці.",
+    "file": "Файл",
+    "audio": "Аудіо",
+    "video": "Відео",
+    "image": "Зображення",
+    "download": "Завантажити",
+    "playAudio": "Відтворити аудіо",
+    "playVideo": "Відтворити відео",
+    "pauseMedia": "Призупинити",
+    "playMedia": "Відтворити",
+    "muteMedia": "Вимкнути звук",
+    "unmuteMedia": "Увімкнути звук",
+    "fullscreen": "На весь екран",
+    "exitFullscreen": "Вийти з повноекранного режиму",
+    "audioProgress": "Прогрес аудіо",
+    "videoProgress": "Прогрес відео",
+    "openMiniPlayer": "Відкрити міні-плеєр",
+    "returnToMessage": "Повернутися до повідомлення",
+    "closeMiniPlayer": "Закрити міні-плеєр",
+    "renderingDiagram": "Відображення діаграми...",
+    "mermaidEmpty": "Джерело діаграми Mermaid порожнє.",
+    "mermaidUnavailable": "Рендерер Mermaid недоступний.",
+    "mermaidError": "Не вдалося відобразити діаграму Mermaid: {error}",
+    "running": "Виконується...",
+    "noOutput": "Немає виводу.",
+    "python": "Python",
+    "sandbox": "Песочниця",
+    "write": "Записати",
+    "writePath": "Записати {path}",
+    "edit": "Редагувати",
+    "editPath": "Редагувати {path}",
+    "viewedImage": "Переглянуте зображення",
+    "viewedPath": "Переглянуто {path}",
+    "imagePreview": "Попередній перегляд зображення",
+    "imagePreviewFor": "Попередній перегляд зображення для {path}",
+    "readSource": "Прочитане джерело:",
+    "readSources": "Прочитані джерела:",
+    "searchedFor": "Пошук: {query}",
+    "noSourcesFor": "Джерел не знайдено для {query}",
+    "searchingFor": "Пошук: {query}",
+    "badQuery": "Невірний запит: {query}"
+  },
+  "skills": {
+    "title": "Навички",
+    "refresh": "Оновити",
+    "noSkills": "Навичок не знайдено",
+    "loadError": "Не вдалося завантажити навички",
+    "manage": "Керувати навичками",
+    "customizeAria": "Налаштування навичок",
+    "errorTitle": "Помилка навичок",
+    "personalSkillOne": "1 особиста навичка",
+    "personalSkillMany": "{count} особистих навичок",
+    "noSkillsYet": "Навичок ще немає",
+    "composerMenuAria": "Навички",
+    "closeManagerAria": "Закрити менеджер навичок",
+    "searchPlaceholder": "Пошук навичок",
+    "addSkillAria": "Додати навичку",
+    "skillActionsAria": "Дії з навичкою",
+    "toggleSkillFilesAria": "Показати або приховати файли навички",
+    "toggleFolderAria": "Показати або приховати теку",
+    "toggleKindAria": "Перемкнути теку або файл",
+    "newFileAria": "Новий файл у теці",
+    "renameFolderAria": "Перейменувати теку",
+    "renameFileAria": "Перейменувати файл",
+    "deleteFileAria": "Видалити файл",
+    "dialogOk": "Гаразд",
+    "dialogCancel": "Скасувати",
+    "dialogConfirm": "Підтвердження",
+    "dialogInput": "Введення",
+    "valueRequired": "Вкажіть значення.",
+    "createSkill": "Створити навичку",
+    "skillNamePlaceholder": "ім'я-навички",
+    "create": "Створити",
+    "importSkillFolder": "Імпорт теки навички",
+    "dropzoneAria": "Перетягніть теку навички сюди",
+    "dropzoneText": "Перетягніть теку навички сюди (батьківська директорія)",
+    "or": "або",
+    "browseFolder": "Обрати теку…",
+    "skillNameRequired": "Вкажіть ім'я навички.",
+    "importing": "Імпорт…",
+    "newSkill": "Нова навичка",
+    "skillFolderName": "Ім'я теки навички",
+    "skillFolderNamePlaceholder": "творець-навичок",
+    "renameSkill": "Перейменувати навичку",
+    "newSkillFolderName": "Нове ім'я теки навички",
+    "deleteSkill": "Видалити навичку",
+    "deleteSkillConfirm": "Видалити навичку «{name}»?",
+    "newSkillFile": "Новий файл навички",
+    "filePathInSkill": "Шлях до файлу в навичці",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "Видалити файл",
+    "deleteFileConfirm": "Ви впевнені?",
+    "renameFolder": "Перейменувати теку",
+    "folderName": "Ім'я теки",
+    "renameFile": "Перейменувати файл",
+    "fileName": "Ім'я файлу",
+    "editSkill": "Редагувати навичку",
+    "doneEditing": "Завершити редагування",
+    "newFilePlaceholder": "Ім'я файлу (напр. grader.md)",
+    "newFolderPlaceholder": "Ім'я нової теки",
+    "noFileSelected": "Файл не обрано",
+    "noFileSelectedPath": "Файл не обрано.",
+    "emptyState": "Створіть навичку, щоб почати.",
+    "preview": "Перегляд",
+    "created": "Створено",
+    "unknown": "Невідомо",
+    "readFileFailed": "Не вдалося прочитати {name}",
+    "importNameHintDropOne": "Введіть ім'я навички в полі вище або перетягніть одну теку навички.",
+    "importNameHintSelect": "Введіть ім'я навички, оберіть навичку в дереві або вкажіть одну теку навички.",
+    "importNoFiles": "Файлів не знайдено.",
+    "importNoSupported": "Підтримувані текстові файли не знайдено (.md, .txt, .py, …).",
+    "importNoSupportedFor": "Для «{name}» не знайдено підтримуваних текстових файлів."
+  },
+  "errors": {
+    "generic": "Щось пішло не так",
+    "network": "Помилка мережі"
+  },
+  "confirm": {
+    "deleteChat": "Видалити цей чат?",
+    "deleteChatNamed": "Видалити «{title}»?",
+    "deletePreset": "Видалити шаблон «{name}»?",
+    "unsaved": "У вас є незбережені зміни."
+  },
+  "toolInspector": {
+    "title": "Інспектор інструментів",
+    "close": "Закрити",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Температура"
+    },
+    "num_ctx": {
+      "label": "Довжина контексту",
+      "note": "Вікно контексту в токенах."
+    },
+    "num_predict": {
+      "label": "Макс. токенів виводу",
+      "note": "Максимальна кількість згенерованих токенів."
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "Розміщення пам'яті з урахуванням NUMA."
+    },
+    "num_batch": {
+      "label": "Розмір пакета",
+      "note": "Розмір пакета промпта."
+    },
+    "num_gpu": {
+      "label": "Шарів на GPU",
+      "note": "Шари, вивантажені на GPU."
+    },
+    "main_gpu": {
+      "label": "Основний GPU",
+      "note": "Основний GPU"
+    },
+    "low_vram": {
+      "label": "Мало VRAM",
+      "note": "Зменшене використання VRAM."
+    },
+    "f16_kv": {
+      "label": "Кеш KV у FP16",
+      "note": "Використовувати кеш KV у FP16."
+    },
+    "logits_all": {
+      "label": "Повні logits",
+      "note": "Повертати logits для всіх токенів."
+    },
+    "vocab_only": {
+      "label": "Лише словник",
+      "note": "Завантаження лише словника."
+    },
+    "use_mmap": {
+      "label": "Memory map",
+      "note": "Використовувати memory mapping."
+    },
+    "use_mlock": {
+      "label": "Блокування пам'яті",
+      "note": "Блокувати сторінки моделі в RAM."
+    },
+    "embedding_only": {
+      "label": "Лише ембединги",
+      "note": "Завантаження лише ембедингів."
+    },
+    "num_thread": {
+      "label": "Потоки CPU",
+      "note": "Потоки CPU"
+    },
+    "num_keep": {
+      "label": "Зберегти токени промпта",
+      "note": "-1 зберігає всі, 0 — автоматично."
+    },
+    "seed": {
+      "label": "Seed",
+      "note": "Детермінований seed."
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "Вікно повторів"
+    },
+    "repeat_penalty": {
+      "label": "Штраф за повтори"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "Tail-free sampling."
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "Штраф за присутність"
+    },
+    "frequency_penalty": {
+      "label": "Штраф за частоту"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "Стоп-послідовності"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top Logprobs",
+      "note": "Logprobs альтернативних токенів."
+    },
+    "keep_alive": {
+      "label": "Keep Alive",
+      "note": "Як довго тримати модель завантаженою."
+    },
+    "format": {
+      "label": "Формат відповіді",
+      "note": "Режим JSON або JSON schema."
+    },
+    "penalize_newline": {
+      "label": "Штраф за перенос рядка",
+      "note": "Штрафувати також токени переносу рядка."
+    },
+    "maxTokens": {
+      "label": "Макс. токенів виводу"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "Штраф за повтори"
+    },
+    "xtcProbability": {
+      "label": "Ймовірність XTC"
+    },
+    "xtcThreshold": {
+      "label": "Поріг XTC"
+    },
+    "cpuThreads": {
+      "label": "Потоки CPU"
+    },
+    "stopStrings": {
+      "label": "Стоп-послідовності"
+    },
+    "toolCallStopStrings": {
+      "label": "Стоп-послідовності інструментів"
+    },
+    "contextOverflowPolicy": {
+      "label": "Політика переповнення контексту"
+    },
+    "draftModel": {
+      "label": "Чернеткова модель"
+    },
+    "max_output_tokens": {
+      "label": "Макс. токенів виводу"
+    },
+    "candidate_count": {
+      "label": "Кандидати"
+    },
+    "stop_sequences": {
+      "label": "Стоп-послідовності"
+    },
+    "response_logprobs": {
+      "label": "Logprobs відповіді"
+    },
+    "response_mime_type": {
+      "label": "MIME-тип відповіді"
+    },
+    "max_completion_tokens": {
+      "label": "Макс. токенів завершення"
+    },
+    "n": {
+      "label": "Кандидати"
+    },
+    "reasoning_effort": {
+      "label": "Глибина міркувань"
+    },
+    "verbosity": {
+      "label": "Деталізація"
+    },
+    "response_format": {
+      "label": "Формат відповіді"
+    },
+    "logit_bias": {
+      "label": "Logit Bias"
+    }
+  },
+  "mcp": {
+    "editConfig": "Редагувати mcp.json",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name} ({count} інстр.)",
+    "cancel": "Скасувати",
+    "save": "Зберегти"
+  }
+}

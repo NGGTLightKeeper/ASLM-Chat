@@ -65,6 +65,7 @@ from Apps.Data.models import (
     OllamaPreset,
 )
 from Apps.UI.host_theme_bridge import build_host_theme_template_context
+from Apps.UI.host_locale_bridge import build_host_locale_template_context
 from Apps.UI.upload_storage import (
     load_upload_manifest,
     model_upload_payload,
@@ -1627,6 +1628,7 @@ def _build_base_context() -> dict[str, Any]:
         "chats": Chat.objects.all(),
     }
     base.update(build_host_theme_template_context())
+    base.update(build_host_locale_template_context())
     return base
 
 
@@ -1650,11 +1652,13 @@ def _build_runtime_settings_payload() -> dict[str, Any]:
 def _build_chat_title(message: str, has_attachments: bool) -> str:
     """Generate a stable title for a new chat thread."""
 
+    from Apps.UI.locale_catalog import translate
+
     if message:
         return message[:30] + ("..." if len(message) > 30 else "")
     if has_attachments:
-        return "Attachment chat"
-    return "New Chat"
+        return translate("chat.attachmentChat")
+    return translate("chat.newChat")
 
 
 # Detect image MIME type

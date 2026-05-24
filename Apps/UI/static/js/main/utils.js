@@ -1,6 +1,7 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { THINK_PARAMETER_KEYS } from './constants.js';
+import { intlLocaleTag } from './i18n.js';
 
 // JSON helpers.
 // Parse one JSON payload embedded in a script tag.
@@ -103,7 +104,7 @@ export function isLocalHostname(hostname) {
 // Format one timestamp in chat-friendly HH:MM form.
 export function timeNow(dateInput) {
   const date = dateInput ? new Date(dateInput) : new Date();
-  return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return date.toLocaleTimeString(intlLocaleTag(), { hour: '2-digit', minute: '2-digit' });
 }
 
 // Escape plain text for HTML content.

@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM - Geavanceerde systeemtaalmodellen",
+    "profileTitle": "Profiel - ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "Gesprekken",
+    "newChat": "Nieuwe chat",
+    "noPreviousChats": "Geen eerdere chats",
+    "chatOptions": "Chatopties",
+    "rename": "Hernoemen",
+    "delete": "Verwijderen",
+    "account": "Profiel",
+    "ago": "{time} geleden"
+  },
+  "chat": {
+    "newChat": "Nieuwe chat",
+    "attachmentChat": "Bijlagechat",
+    "howCanIHelp": "Hoe kan ik helpen?",
+    "welcomeTitle": "Hoe kan ik helpen?"
+  },
+  "composer": {
+    "placeholder": "Bericht aan ASLM...",
+    "menu": "Composermenu",
+    "attachFiles": "Bestanden bijvoegen",
+    "tools": "Hulpmiddelen",
+    "other": "Overig",
+    "reasoningEffort": "Redeneerinspanning",
+    "intelligence": "Redeneerdiepte",
+    "off": "Uit",
+    "sendMessage": "Bericht verzenden",
+    "queueMessage": "Bericht in wachtrij",
+    "stopGeneration": "Generatie stoppen",
+    "contextUsage": "Contextgebruik"
+  },
+  "reasoning": {
+    "panel": "Redeneerpaneel",
+    "title": "Redeneren",
+    "closePanel": "Redeneerpaneel sluiten"
+  },
+  "settings": {
+    "modelSettings": "Modelinstellingen",
+    "collapse": "Instellingen inklappen",
+    "expand": "Instellingen uitklappen",
+    "connection": "Verbinding",
+    "engine": "Engine",
+    "address": "Adres",
+    "saved": "Opgeslagen",
+    "engineAddressPlaceholder": "Engine-adres",
+    "engineAddressHint": "Configureer het eindpunt van de geselecteerde engine.",
+    "apiKey": "API-sleutel",
+    "off": "Uit",
+    "useSavedKey": "Opgeslagen sleutel gebruiken",
+    "pasteApiKey": "API-sleutel plakken",
+    "apiKeyHint": "Alleen nodig voor beveiligde eindpunten.",
+    "model": "Model",
+    "modelsLoadOnDemand": "Modellen worden op aanvraag geladen",
+    "visionModel": "Visionmodel",
+    "preset": "Voorinstelling",
+    "default": "Standaard",
+    "presetNew": "Nieuw",
+    "presetRename": "Hernoemen",
+    "presetDelete": "Verwijderen",
+    "sandboxDefault": "Standaard zandbak",
+    "mode": "Modus",
+    "tools": "Hulpmiddelen",
+    "mcp": "MCP",
+    "skills": "Vaardigheden",
+    "systemPrompt": "Systeemprompt",
+    "systemPromptPlaceholder": "bijv. \"Antwoord alleen in rijm\"",
+    "load": "Laden",
+    "customFields": "Aangepaste velden",
+    "settings": "Instellingen",
+    "sampling": "Steekproef",
+    "advanced": "Geavanceerd",
+    "custom": "Aangepast"
+  },
+  "profile": {
+    "backToChat": "Terug naar chat",
+    "account": "Profiel",
+    "user": "Gebruiker",
+    "localAccount": "Lokaal account",
+    "general": "Algemeen",
+    "username": "Gebruikersnaam",
+    "email": "E-mail",
+    "memberSince": "Lid sinds",
+    "dangerZone": "Gevarenzone",
+    "signOut": "Uitloggen"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "OpenAI-compatibel",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "Contextvenster:",
+    "usageLabel": "Context: {percent}% gebruikt, {remaining}% resterend. {used} / {window} tokens.",
+    "used": "Gebruikt",
+    "remaining": "Resterend",
+    "compressing": "Context comprimeren",
+    "compressionInProgress": "Contextcompressie bezig",
+    "compressedActive": "Gecomprimeerde context is actief.",
+    "compressedActiveTooltip": "Gecomprimeerde context actief",
+    "compressContext": "Context comprimeren",
+    "autoCompress": "Automatisch comprimeren bij {percent}%"
+  },
+  "think": {
+    "off": "Uit",
+    "low": "Laag",
+    "medium": "Gemiddeld",
+    "high": "Hoog",
+    "minimal": "Minimaal",
+    "extraHigh": "Extra hoog"
+  },
+  "messages": {
+    "more": "Meer",
+    "hide": "Verbergen",
+    "copyCode": "Code kopiëren",
+    "copyDiagram": "Diagrambron kopiëren",
+    "noContent": "Geen inhoud.",
+    "noDiff": "Geen diff.",
+    "file": "Bestand",
+    "audio": "Geluid",
+    "video": "Beeld",
+    "image": "Afbeelding",
+    "download": "Downloaden",
+    "playAudio": "Audio afspelen",
+    "playVideo": "Video afspelen",
+    "pauseMedia": "Media pauzeren",
+    "playMedia": "Media afspelen",
+    "muteMedia": "Media dempen",
+    "unmuteMedia": "Media dempen opheffen",
+    "fullscreen": "Volledig scherm",
+    "exitFullscreen": "Volledig scherm verlaten",
+    "audioProgress": "Audiovoortgang",
+    "videoProgress": "Videovoortgang",
+    "openMiniPlayer": "Minispeler openen",
+    "returnToMessage": "Terug naar bericht",
+    "closeMiniPlayer": "Minispeler sluiten",
+    "renderingDiagram": "Diagram renderen...",
+    "mermaidEmpty": "Mermaid-diagrambron is leeg.",
+    "mermaidUnavailable": "Mermaid-renderer is niet beschikbaar.",
+    "mermaidError": "Mermaid-diagram kon niet worden gerenderd: {error}",
+    "running": "Bezig...",
+    "noOutput": "Geen uitvoer.",
+    "python": "Python",
+    "sandbox": "Zandbak",
+    "write": "Schrijven",
+    "writePath": "Schrijven naar {path}",
+    "edit": "Bewerken",
+    "editPath": "Bewerken {path}",
+    "viewedImage": "Afbeelding bekeken",
+    "viewedPath": "{path} bekeken",
+    "imagePreview": "Afbeeldingsvoorbeeld",
+    "imagePreviewFor": "Afbeeldingsvoorbeeld voor {path}",
+    "readSource": "Bron gelezen:",
+    "readSources": "Bronnen gelezen:",
+    "searchedFor": "Gezocht naar {query}",
+    "noSourcesFor": "Geen bronnen gevonden voor {query}",
+    "searchingFor": "Zoeken naar {query}",
+    "badQuery": "Ongeldige query: {query}"
+  },
+  "skills": {
+    "title": "Vaardigheden",
+    "refresh": "Vernieuwen",
+    "noSkills": "Geen vaardigheden gevonden",
+    "loadError": "Vaardigheden laden mislukt",
+    "manage": "Vaardigheden beheren",
+    "customizeAria": "Vaardigheden aanpassen",
+    "errorTitle": "Vaardighedenfout",
+    "personalSkillOne": "1 persoonlijke vaardigheid",
+    "personalSkillMany": "{count} persoonlijke vaardigheden",
+    "noSkillsYet": "Nog geen vaardigheden",
+    "composerMenuAria": "Vaardigheden",
+    "closeManagerAria": "Vaardighedenbeheer sluiten",
+    "searchPlaceholder": "Vaardigheden zoeken",
+    "addSkillAria": "Vaardigheid toevoegen",
+    "skillActionsAria": "Acties voor vaardigheid",
+    "toggleSkillFilesAria": "Bestanden van vaardigheid tonen of verbergen",
+    "toggleFolderAria": "Map tonen of verbergen",
+    "toggleKindAria": "Map of bestand wisselen",
+    "newFileAria": "Nieuw bestand in map",
+    "renameFolderAria": "Map hernoemen",
+    "renameFileAria": "Bestand hernoemen",
+    "deleteFileAria": "Bestand verwijderen",
+    "dialogOk": "OK",
+    "dialogCancel": "Annuleren",
+    "dialogConfirm": "Bevestigen",
+    "dialogInput": "Invoer",
+    "valueRequired": "Waarde is verplicht.",
+    "createSkill": "Vaardigheid maken",
+    "skillNamePlaceholder": "vaardigheid-naam",
+    "create": "Maken",
+    "importSkillFolder": "Vaardigheidsmap importeren",
+    "dropzoneAria": "Sleep een vaardigheidsmap hierheen",
+    "dropzoneText": "Sleep de vaardigheidsmap hierheen (bovenliggende map)",
+    "or": "of",
+    "browseFolder": "Map bladeren…",
+    "skillNameRequired": "Naam van vaardigheid is verplicht.",
+    "importing": "Importeren…",
+    "newSkill": "Nieuwe vaardigheid",
+    "skillFolderName": "Naam vaardigheidsmap",
+    "skillFolderNamePlaceholder": "vaardigheid-maker",
+    "renameSkill": "Vaardigheid hernoemen",
+    "newSkillFolderName": "Nieuwe mapnaam",
+    "deleteSkill": "Vaardigheid verwijderen",
+    "deleteSkillConfirm": "Vaardigheid \"{name}\" verwijderen?",
+    "newSkillFile": "Nieuw vaardigheidsbestand",
+    "filePathInSkill": "Bestandspad in vaardigheid",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "Bestand verwijderen",
+    "deleteFileConfirm": "Weet u het zeker?",
+    "renameFolder": "Map hernoemen",
+    "folderName": "Mapnaam",
+    "renameFile": "Bestand hernoemen",
+    "fileName": "Bestandsnaam",
+    "editSkill": "Vaardigheid bewerken",
+    "doneEditing": "Bewerken voltooien",
+    "newFilePlaceholder": "Nieuwe bestandsnaam (bijv. grader.md)",
+    "newFolderPlaceholder": "Nieuwe mapnaam",
+    "noFileSelected": "Geen bestand geselecteerd",
+    "noFileSelectedPath": "Geen bestand geselecteerd.",
+    "emptyState": "Maak een vaardigheid om te beginnen.",
+    "preview": "Voorbeeld",
+    "created": "Gemaakt",
+    "unknown": "Onbekend",
+    "readFileFailed": "Kan {name} niet lezen",
+    "importNameHintDropOne": "Voer hierboven een naam in of sleep één vaardigheidsmap tegelijk.",
+    "importNameHintSelect": "Voer een naam in, selecteer een vaardigheid in de boom of kies een map.",
+    "importNoFiles": "Geen bestanden gevonden.",
+    "importNoSupported": "Geen ondersteunde tekstbestanden (.md, .txt, .py, …).",
+    "importNoSupportedFor": "Geen ondersteunde bestanden voor \"{name}\"."
+  },
+  "errors": {
+    "generic": "Er is iets misgegaan",
+    "network": "Netwerkfout"
+  },
+  "confirm": {
+    "deleteChat": "Deze chat verwijderen?",
+    "deleteChatNamed": "\"{title}\" verwijderen?",
+    "deletePreset": "Voorinstelling \"{name}\" verwijderen?",
+    "unsaved": "Je hebt niet-opgeslagen wijzigingen."
+  },
+  "toolInspector": {
+    "title": "Toolinspecteur",
+    "close": "Sluiten",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Temperatuur"
+    },
+    "num_ctx": {
+      "label": "Contextlengte",
+      "note": "Contextvenster in tokens."
+    },
+    "num_predict": {
+      "label": "Max. uitvoertokens",
+      "note": "Maximaal aantal gegenereerde tokens."
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "NUMA-bewuste geheugenplaatsing."
+    },
+    "num_batch": {
+      "label": "Batchgrootte",
+      "note": "Batchgrootte voor prompts."
+    },
+    "num_gpu": {
+      "label": "GPU-lagen",
+      "note": "Lagen naar GPU uitgeladen."
+    },
+    "main_gpu": {
+      "label": "Hoofd-GPU",
+      "note": "Primaire GPU"
+    },
+    "low_vram": {
+      "label": "Weinig VRAM",
+      "note": "Lager VRAM-gebruik."
+    },
+    "f16_kv": {
+      "label": "FP16 KV-cache gebruiken",
+      "note": "FP16 KV-cache gebruiken."
+    },
+    "logits_all": {
+      "label": "Volledige logits retourneren",
+      "note": "Logits voor alle tokens retourneren."
+    },
+    "vocab_only": {
+      "label": "Alleen vocabulaire",
+      "note": "Alleen vocabulaire laden."
+    },
+    "use_mmap": {
+      "label": "Geheugenmapping gebruiken",
+      "note": "Geheugenmapping gebruiken."
+    },
+    "use_mlock": {
+      "label": "Geheugenvergrendeling gebruiken",
+      "note": "Modelpagina's in RAM vergrendelen."
+    },
+    "embedding_only": {
+      "label": "Alleen embeddings",
+      "note": "Alleen embeddings laden."
+    },
+    "num_thread": {
+      "label": "CPU-threads",
+      "note": "CPU-threads"
+    },
+    "num_keep": {
+      "label": "Prompttokens behouden",
+      "note": "-1 behoudt alles, 0 is automatisch."
+    },
+    "seed": {
+      "label": "Seed",
+      "note": "Deterministische seed."
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "Herhaalvenster"
+    },
+    "repeat_penalty": {
+      "label": "Herhaalstraf"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "Tail-free sampling."
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "Aanwezigheidsstraf"
+    },
+    "frequency_penalty": {
+      "label": "Frequentiestraf"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "Stopreeksen"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top logprobs",
+      "note": "Alternatieve token-logprobs."
+    },
+    "keep_alive": {
+      "label": "Actief houden",
+      "note": "Hoe lang het model geladen blijft."
+    },
+    "format": {
+      "label": "Antwoordformaat",
+      "note": "JSON-modus of JSON-schema."
+    },
+    "penalize_newline": {
+      "label": "Nieuwe regel bestraffen",
+      "note": "Ook tokens voor nieuwe regels bestraffen."
+    },
+    "maxTokens": {
+      "label": "Max. uitvoertokens"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "Herhaalstraf"
+    },
+    "xtcProbability": {
+      "label": "XTC-waarschijnlijkheid"
+    },
+    "xtcThreshold": {
+      "label": "XTC-drempel"
+    },
+    "cpuThreads": {
+      "label": "CPU-threads"
+    },
+    "stopStrings": {
+      "label": "Stopreeksen"
+    },
+    "toolCallStopStrings": {
+      "label": "Tool-stopreeksen"
+    },
+    "contextOverflowPolicy": {
+      "label": "Beleid bij contextoverflow"
+    },
+    "draftModel": {
+      "label": "Conceptmodel"
+    },
+    "max_output_tokens": {
+      "label": "Max. uitvoertokens"
+    },
+    "candidate_count": {
+      "label": "Kandidaten"
+    },
+    "stop_sequences": {
+      "label": "Stopreeksen"
+    },
+    "response_logprobs": {
+      "label": "Antwoord-logprobs"
+    },
+    "response_mime_type": {
+      "label": "Antwoord-MIME-type"
+    },
+    "max_completion_tokens": {
+      "label": "Max. completion-tokens"
+    },
+    "n": {
+      "label": "Kandidaten"
+    },
+    "reasoning_effort": {
+      "label": "Redeneerinspanning"
+    },
+    "verbosity": {
+      "label": "Uitvoerigheid"
+    },
+    "response_format": {
+      "label": "Antwoordformaat"
+    },
+    "logit_bias": {
+      "label": "Logit-bias"
+    }
+  },
+  "mcp": {
+    "editConfig": "mcp.json bewerken",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name} ({count} tools)",
+    "cancel": "Annuleren",
+    "save": "Opslaan"
+  }
+}

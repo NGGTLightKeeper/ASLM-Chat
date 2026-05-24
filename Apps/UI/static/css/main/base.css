@@ -288,3 +288,39 @@ select {
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
 }
+
+/* RTL: mirror shell chrome; keep technical content LTR. */
+[dir="rtl"] .sidebar-left {
+  border-inline-end: 1px solid var(--c-border);
+  border-inline-start: none;
+}
+
+[dir="rtl"] .sidebar-right {
+  border-inline-start: 1px solid var(--c-border);
+  border-inline-end: none;
+}
+
+[dir="rtl"] .topbar,
+[dir="rtl"] .sidebar-header,
+[dir="rtl"] .setting-label,
+[dir="rtl"] .chat-item-body {
+  text-align: start;
+}
+
+[dir="rtl"] .msg.user {
+  flex-direction: row;
+}
+
+.bidi-ltr,
+pre,
+code,
+.hljs,
+.msg pre,
+.msg code,
+.tool-inspector-pre,
+.setting-input[type="text"],
+.setting-input[type="password"],
+.setting-input[type="number"] {
+  direction: ltr;
+  unicode-bidi: isolate;
+}

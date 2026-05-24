@@ -10,6 +10,7 @@ import {
   normalizeCitationSpacing as normalizeCitationHandleSpacing
 } from './citations-ui.js';
 import { bindCitationPreviewCards } from './citation-preview-ui.js';
+import { t } from '../main/i18n.js';
 
 // marked's default GFM `del` allows single-tilde pairs (~x~), which breaks ~ for "approximately".
 // GitHub-style strikethrough is ~~ only; install tokenizer override once.
@@ -20,8 +21,8 @@ let markedStrikethroughDoubleTildeOnlyInstalled = false;
 export function createMessagesUi(context, dependencies) {
   const { attachmentUi, browserPortalUi, toolInspector } = dependencies;
   const { dom, icons, state } = context;
-  const MORE_LABEL = 'More';
-  const HIDE_LABEL = 'Hide';
+  const MORE_LABEL = t('messages.more', {}, 'More');
+  const HIDE_LABEL = t('messages.hide', {}, 'Hide');
   const SEARCH_BATCH_FIRST_CALL_HOLD_MS = 0;
   const SEARCH_BATCH_MULTI_CALL_SETTLE_MS = 0;
   const PRE_TOOL_TEXT_HOLD_MS = 0;
@@ -91,14 +92,14 @@ export function createMessagesUi(context, dependencies) {
           .prop('disabled', false)
           .addClass('stop-btn')
           .html(icons.STOP_ICON)
-          .attr('aria-label', 'Stop generation');
+          .attr('aria-label', t('composer.stopGeneration', {}, 'Stop generation'));
         return;
       }
 
       $button
         .removeClass('stop-btn')
         .html(icons.SEND_ICON)
-        .attr('aria-label', state.isChatGenerating ? 'Queue message' : 'Send Message')
+        .attr('aria-label', state.isChatGenerating ? t('composer.queueMessage', {}, 'Queue message') : t('composer.sendMessage', {}, 'Send Message'))
         .prop('disabled', !hasDraft || hasBlockedAttachments);
     }
 
