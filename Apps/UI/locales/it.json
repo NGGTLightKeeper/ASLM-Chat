@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM - Modelli linguistici di sistema avanzati",
+    "profileTitle": "Profilo - ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "Chat",
+    "newChat": "Nuova chat",
+    "noPreviousChats": "Nessuna chat precedente",
+    "chatOptions": "Opzioni chat",
+    "rename": "Rinomina",
+    "delete": "Elimina",
+    "account": "Profilo",
+    "ago": "{time} fa"
+  },
+  "chat": {
+    "newChat": "Nuova chat",
+    "attachmentChat": "Chat con allegati",
+    "howCanIHelp": "Come posso aiutarti?",
+    "welcomeTitle": "Come posso aiutarti?"
+  },
+  "composer": {
+    "placeholder": "Scrivi ad ASLM...",
+    "menu": "Menu compositore",
+    "attachFiles": "Allega file",
+    "tools": "Strumenti",
+    "other": "Altro",
+    "reasoningEffort": "Sforzo di ragionamento",
+    "intelligence": "Profondità di ragionamento",
+    "off": "Disattivato",
+    "sendMessage": "Invia messaggio",
+    "queueMessage": "Metti in coda",
+    "stopGeneration": "Interrompi generazione",
+    "contextUsage": "Utilizzo del contesto"
+  },
+  "reasoning": {
+    "panel": "Pannello di ragionamento",
+    "title": "Ragionamento",
+    "closePanel": "Chiudi pannello di ragionamento"
+  },
+  "settings": {
+    "modelSettings": "Impostazioni modello",
+    "collapse": "Comprimi impostazioni",
+    "expand": "Espandi impostazioni",
+    "connection": "Connessione",
+    "engine": "Motore",
+    "address": "Indirizzo",
+    "saved": "Salvato",
+    "engineAddressPlaceholder": "Indirizzo del motore",
+    "engineAddressHint": "Configura l'endpoint del motore selezionato.",
+    "apiKey": "Chiave API",
+    "off": "Disattivato",
+    "useSavedKey": "Usa chiave salvata",
+    "pasteApiKey": "Incolla chiave API",
+    "apiKeyHint": "Necessaria solo per endpoint protetti.",
+    "model": "Modello",
+    "modelsLoadOnDemand": "I modelli si caricano su richiesta",
+    "visionModel": "Modello visione",
+    "preset": "Preimpostazione",
+    "default": "Predefinito",
+    "presetNew": "Nuovo",
+    "presetRename": "Rinomina",
+    "presetDelete": "Elimina",
+    "sandboxDefault": "Sandbox predefinita",
+    "mode": "Modalità",
+    "tools": "Strumenti",
+    "mcp": "MCP",
+    "skills": "Competenze",
+    "systemPrompt": "Prompt di sistema",
+    "systemPromptPlaceholder": "es. \"Rispondi solo in rima\"",
+    "load": "Carica",
+    "customFields": "Campi personalizzati",
+    "settings": "Impostazioni",
+    "sampling": "Campionamento",
+    "advanced": "Avanzate",
+    "custom": "Personalizzato"
+  },
+  "profile": {
+    "backToChat": "Torna alla chat",
+    "account": "Profilo",
+    "user": "Utente",
+    "localAccount": "Profilo locale",
+    "general": "Generale",
+    "username": "Nome utente",
+    "email": "Posta elettronica",
+    "memberSince": "Membro dal",
+    "dangerZone": "Zona pericolosa",
+    "signOut": "Esci"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "Compatibile OpenAI",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "Finestra di contesto:",
+    "usageLabel": "Contesto: {percent}% usato, {remaining}% rimanente. {used} / {window} token.",
+    "used": "Usato",
+    "remaining": "Rimanente",
+    "compressing": "Compressione del contesto",
+    "compressionInProgress": "Compressione del contesto in corso",
+    "compressedActive": "Contesto compresso attivo.",
+    "compressedActiveTooltip": "Contesto compresso attivo",
+    "compressContext": "Comprimi contesto",
+    "autoCompress": "Compressione automatica al {percent}%"
+  },
+  "think": {
+    "off": "Disattivato",
+    "low": "Basso",
+    "medium": "Medio",
+    "high": "Alto",
+    "minimal": "Minimo",
+    "extraHigh": "Molto alto"
+  },
+  "messages": {
+    "more": "Altro",
+    "hide": "Nascondi",
+    "copyCode": "Copia codice",
+    "copyDiagram": "Copia sorgente diagramma",
+    "noContent": "Nessun contenuto.",
+    "noDiff": "Nessuna differenza.",
+    "file": "File",
+    "audio": "Suono",
+    "video": "Video",
+    "image": "Immagine",
+    "download": "Scarica",
+    "playAudio": "Riproduci audio",
+    "playVideo": "Riproduci video",
+    "pauseMedia": "Metti in pausa",
+    "playMedia": "Riproduci",
+    "muteMedia": "Disattiva audio",
+    "unmuteMedia": "Riattiva audio",
+    "fullscreen": "Schermo intero",
+    "exitFullscreen": "Esci da schermo intero",
+    "audioProgress": "Avanzamento audio",
+    "videoProgress": "Avanzamento video",
+    "openMiniPlayer": "Apri mini player",
+    "returnToMessage": "Torna al messaggio",
+    "closeMiniPlayer": "Chiudi mini player",
+    "renderingDiagram": "Rendering del diagramma...",
+    "mermaidEmpty": "Il sorgente del diagramma Mermaid è vuoto.",
+    "mermaidUnavailable": "Il renderer Mermaid non è disponibile.",
+    "mermaidError": "Impossibile renderizzare il diagramma Mermaid: {error}",
+    "running": "In esecuzione...",
+    "noOutput": "Nessun output.",
+    "python": "Python",
+    "sandbox": "Ambiente isolato",
+    "write": "Scrivi",
+    "writePath": "Scrivi {path}",
+    "edit": "Modifica",
+    "editPath": "Modifica {path}",
+    "viewedImage": "Immagine visualizzata",
+    "viewedPath": "Visualizzato {path}",
+    "imagePreview": "Anteprima immagine",
+    "imagePreviewFor": "Anteprima immagine per {path}",
+    "readSource": "Leggi sorgente:",
+    "readSources": "Leggi sorgenti:",
+    "searchedFor": "Cercato {query}",
+    "noSourcesFor": "Nessuna fonte trovata per {query}",
+    "searchingFor": "Ricerca di {query}",
+    "badQuery": "Query non valida: {query}"
+  },
+  "skills": {
+    "title": "Competenze",
+    "refresh": "Aggiorna",
+    "noSkills": "Nessuna competenza trovata",
+    "loadError": "Impossibile caricare le competenze",
+    "manage": "Gestisci competenze",
+    "customizeAria": "Personalizza competenze",
+    "errorTitle": "Errore competenze",
+    "personalSkillOne": "1 competenza personale",
+    "personalSkillMany": "{count} competenze personali",
+    "noSkillsYet": "Nessuna competenza ancora",
+    "composerMenuAria": "Competenze",
+    "closeManagerAria": "Chiudi gestore competenze",
+    "searchPlaceholder": "Cerca competenze",
+    "addSkillAria": "Aggiungi competenza",
+    "skillActionsAria": "Azioni competenza",
+    "toggleSkillFilesAria": "Mostra o nascondi file della competenza",
+    "toggleFolderAria": "Mostra o nascondi cartella",
+    "toggleKindAria": "Alterna cartella o file",
+    "newFileAria": "Nuovo file nella cartella",
+    "renameFolderAria": "Rinomina cartella",
+    "renameFileAria": "Rinomina file",
+    "deleteFileAria": "Elimina file",
+    "dialogOk": "OK",
+    "dialogCancel": "Annulla",
+    "dialogConfirm": "Conferma",
+    "dialogInput": "Input",
+    "valueRequired": "Il valore è obbligatorio.",
+    "createSkill": "Crea competenza",
+    "skillNamePlaceholder": "nome-competenza",
+    "create": "Crea",
+    "importSkillFolder": "Importa cartella competenza",
+    "dropzoneAria": "Trascina qui la cartella competenza",
+    "dropzoneText": "Trascina qui la cartella competenza (directory padre)",
+    "or": "oppure",
+    "browseFolder": "Sfoglia cartella…",
+    "skillNameRequired": "Il nome della competenza è obbligatorio.",
+    "importing": "Importazione…",
+    "newSkill": "Nuova competenza",
+    "skillFolderName": "Nome cartella competenza",
+    "skillFolderNamePlaceholder": "creatore-competenze",
+    "renameSkill": "Rinomina competenza",
+    "newSkillFolderName": "Nuovo nome cartella competenza",
+    "deleteSkill": "Elimina competenza",
+    "deleteSkillConfirm": "Eliminare la competenza «{name}»?",
+    "newSkillFile": "Nuovo file competenza",
+    "filePathInSkill": "Percorso file nella competenza",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "Elimina file",
+    "deleteFileConfirm": "Sei sicuro?",
+    "renameFolder": "Rinomina cartella",
+    "folderName": "Nome cartella",
+    "renameFile": "Rinomina file",
+    "fileName": "Nome file",
+    "editSkill": "Modifica competenza",
+    "doneEditing": "Termina modifica",
+    "newFilePlaceholder": "Nome file (es. grader.md)",
+    "newFolderPlaceholder": "Nome nuova cartella",
+    "noFileSelected": "Nessun file selezionato",
+    "noFileSelectedPath": "Nessun file selezionato.",
+    "emptyState": "Crea una competenza per iniziare.",
+    "preview": "Anteprima",
+    "created": "Creato",
+    "unknown": "Sconosciuto",
+    "readFileFailed": "Impossibile leggere {name}",
+    "importNameHintDropOne": "Inserisci un nome sopra o trascina una cartella competenza alla volta.",
+    "importNameHintSelect": "Inserisci un nome, seleziona una competenza nell’albero o una cartella.",
+    "importNoFiles": "Nessun file trovato.",
+    "importNoSupported": "Nessun file di testo supportato (.md, .txt, .py, …).",
+    "importNoSupportedFor": "Nessun file supportato per «{name}»."
+  },
+  "errors": {
+    "generic": "Si è verificato un errore",
+    "network": "Errore di rete"
+  },
+  "confirm": {
+    "deleteChat": "Eliminare questa chat?",
+    "deleteChatNamed": "Eliminare \"{title}\"?",
+    "deletePreset": "Eliminare la preimpostazione \"{name}\"?",
+    "unsaved": "Hai modifiche non salvate."
+  },
+  "toolInspector": {
+    "title": "Ispezione strumenti",
+    "close": "Chiudi",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Temperatura"
+    },
+    "num_ctx": {
+      "label": "Lunghezza contesto",
+      "note": "Finestra di contesto in token."
+    },
+    "num_predict": {
+      "label": "Token di output massimi",
+      "note": "Numero massimo di token generati."
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "Allocazione memoria con consapevolezza NUMA."
+    },
+    "num_batch": {
+      "label": "Dimensione batch",
+      "note": "Dimensione del batch del prompt."
+    },
+    "num_gpu": {
+      "label": "Livelli GPU",
+      "note": "Livelli scaricati sulla GPU."
+    },
+    "main_gpu": {
+      "label": "GPU principale",
+      "note": "GPU primaria"
+    },
+    "low_vram": {
+      "label": "VRAM ridotta",
+      "note": "Riduce l'utilizzo della VRAM."
+    },
+    "f16_kv": {
+      "label": "Usa cache KV FP16",
+      "note": "Usa cache KV in FP16."
+    },
+    "logits_all": {
+      "label": "Restituisci tutti i logit",
+      "note": "Restituisce i logit per tutti i token."
+    },
+    "vocab_only": {
+      "label": "Solo vocabolario",
+      "note": "Caricamento solo del vocabolario."
+    },
+    "use_mmap": {
+      "label": "Usa memory map",
+      "note": "Usa il memory mapping."
+    },
+    "use_mlock": {
+      "label": "Usa memory lock",
+      "note": "Blocca le pagine del modello in RAM."
+    },
+    "embedding_only": {
+      "label": "Solo embedding",
+      "note": "Caricamento solo degli embedding."
+    },
+    "num_thread": {
+      "label": "Thread CPU",
+      "note": "Thread CPU"
+    },
+    "num_keep": {
+      "label": "Mantieni token del prompt",
+      "note": "-1 mantiene tutti, 0 è automatico."
+    },
+    "seed": {
+      "label": "Seed",
+      "note": "Seed deterministico."
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "Finestra ripetizione"
+    },
+    "repeat_penalty": {
+      "label": "Penalità ripetizione"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "Campionamento tail-free."
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "Penalità presenza"
+    },
+    "frequency_penalty": {
+      "label": "Penalità frequenza"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "Sequenze di stop"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top logprobs",
+      "note": "Logprobs dei token alternativi."
+    },
+    "keep_alive": {
+      "label": "Keep alive",
+      "note": "Per quanto tempo mantenere il modello caricato."
+    },
+    "format": {
+      "label": "Formato risposta",
+      "note": "Modalità JSON o schema JSON."
+    },
+    "penalize_newline": {
+      "label": "Penalizza a capo",
+      "note": "Penalizza anche i token di a capo."
+    },
+    "maxTokens": {
+      "label": "Token di output massimi"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "Penalità ripetizione"
+    },
+    "xtcProbability": {
+      "label": "Probabilità XTC"
+    },
+    "xtcThreshold": {
+      "label": "Soglia XTC"
+    },
+    "cpuThreads": {
+      "label": "Thread CPU"
+    },
+    "stopStrings": {
+      "label": "Sequenze di stop"
+    },
+    "toolCallStopStrings": {
+      "label": "Sequenze di stop strumenti"
+    },
+    "contextOverflowPolicy": {
+      "label": "Politica overflow contesto"
+    },
+    "draftModel": {
+      "label": "Modello draft"
+    },
+    "max_output_tokens": {
+      "label": "Token di output massimi"
+    },
+    "candidate_count": {
+      "label": "Candidati"
+    },
+    "stop_sequences": {
+      "label": "Sequenze di stop"
+    },
+    "response_logprobs": {
+      "label": "Logprobs risposta"
+    },
+    "response_mime_type": {
+      "label": "Tipo MIME risposta"
+    },
+    "max_completion_tokens": {
+      "label": "Token di completamento massimi"
+    },
+    "n": {
+      "label": "Candidati"
+    },
+    "reasoning_effort": {
+      "label": "Sforzo di ragionamento"
+    },
+    "verbosity": {
+      "label": "Verbosità"
+    },
+    "response_format": {
+      "label": "Formato risposta"
+    },
+    "logit_bias": {
+      "label": "Bias logit"
+    }
+  },
+  "mcp": {
+    "editConfig": "Modifica mcp.json",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name} ({count} strumenti)",
+    "cancel": "Annulla",
+    "save": "Salva"
+  }
+}

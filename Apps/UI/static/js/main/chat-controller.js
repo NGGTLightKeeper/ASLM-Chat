@@ -1,6 +1,7 @@
 ﻿// Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { deleteJson, getCsrfToken, getJson, patchJson, postJson } from './api.js';
+import { intlLocaleTag, t } from './i18n.js';
 
 // Chat controller.
 // Create the chat workflow controller for sending, loading, and mutating chats.
@@ -32,13 +33,13 @@ export function createChatController(context, dependencies) {
       return text.substring(0, 40) + (text.length > 40 ? '...' : '');
     }
 
-    return hasAttachments ? 'Attachment chat' : 'New Chat';
+    return hasAttachments ? t('chat.attachmentChat', {}, 'Attachment chat') : t('chat.newChat', {}, 'New Chat');
   }
 
   // Reset the page into a fresh chat state.
   function startNewChat() {
-    dom.$chatTitle.text('New Chat');
-    document.title = 'ASLM Chat';
+    dom.$chatTitle.text(t('chat.newChat', {}, 'New Chat'));
+    document.title = t('meta.appTitle', {}, 'ASLM Chat');
     dom.$messagesInner.find('.msg').remove();
     dom.$conversationInput.hide();
     dom.$welcomeScreen.show();
@@ -78,24 +79,29 @@ export function createChatController(context, dependencies) {
     if (numericValue >= 1000) {
       return `${Math.round(numericValue / 1000)} K`;
     }
-    return numericValue.toLocaleString();
+    return numericValue.toLocaleString(intlLocaleTag());
   }
 
   function formatDetailedTokens(value) {
-    return (Number(value) || 0).toLocaleString();
+    return (Number(value) || 0).toLocaleString(intlLocaleTag());
   }
 
   function buildContextUsageLabel(percent, used, windowTokens) {
     const remaining = Math.max(0, 100 - percent);
-    return `Context: ${percent}% used, ${remaining}% remaining. ${formatCompactTokens(used)} / ${formatCompactTokens(windowTokens)} tokens.`;
+    return t('context.usageLabel', {
+      percent,
+      remaining,
+      used: formatCompactTokens(used),
+      window: formatCompactTokens(windowTokens)
+    }, `Context: ${percent}% used, ${remaining}% remaining. ${formatCompactTokens(used)} / ${formatCompactTokens(windowTokens)} tokens.`);
   }
 
   function buildContextUsageTooltip(percent, used, windowTokens) {
     const remaining = Math.max(0, 100 - percent);
     return [
-      'Context window:',
-      `${percent}% used`,
-      `${remaining}% remaining`,
+      t('context.windowTitle', {}, 'Context window:'),
+      t('context.used', {}, 'Used') + `: ${percent}%`,
+      t('context.remaining', {}, 'Remaining') + `: ${remaining}%`,
       `${formatDetailedTokens(used)} / ${formatDetailedTokens(windowTokens)} tokens`
     ].join('\n');
   }
@@ -128,8 +134,8 @@ export function createChatController(context, dependencies) {
           .css('--context-usage-progress', '37.7')
           .removeAttr('title')
           .removeAttr('data-tooltip')
-          .attr('data-context-tooltip', 'Context window:\nCompressing context')
-          .attr('aria-label', 'Context compression in progress');
+          .attr('data-context-tooltip', `${t('context.windowTitle', {}, 'Context window:')}\n${t('context.compressing', {}, 'Compressing context')}`)
+          .attr('aria-label', t('context.compressionInProgress', {}, 'Context compression in progress'));
       });
       syncContextCompressionButtons();
       return;
@@ -137,10 +143,10 @@ export function createChatController(context, dependencies) {
     const compressedActive = payload && payload.compressed_context_active === true;
     const showCompressedIndicator = compressedActive && !hideCompressedIndicator;
     const label = showCompressedIndicator
-      ? `${buildContextUsageLabel(percent, used, windowTokens)} Compressed context is active.`
+      ? `${buildContextUsageLabel(percent, used, windowTokens)} ${t('context.compressedActive', {}, 'Compressed context is active.')}`
       : buildContextUsageLabel(percent, used, windowTokens);
     const tooltip = showCompressedIndicator
-      ? `${buildContextUsageTooltip(percent, used, windowTokens)}\nCompressed context active`
+      ? `${buildContextUsageTooltip(percent, used, windowTokens)}\n${t('context.compressedActiveTooltip', {}, 'Compressed context active')}`
       : buildContextUsageTooltip(percent, used, windowTokens);
 
     contextUsageButtons().forEach(function updateOne($btn) {
@@ -168,8 +174,8 @@ export function createChatController(context, dependencies) {
           .css('--context-usage-progress', '37.7')
           .removeAttr('title')
           .removeAttr('data-tooltip')
-          .attr('data-context-tooltip', 'Context window:\nCompressing context')
-          .attr('aria-label', 'Context compression in progress');
+          .attr('data-context-tooltip', `${t('context.windowTitle', {}, 'Context window:')}\n${t('context.compressing', {}, 'Compressing context')}`)
+          .attr('aria-label', t('context.compressionInProgress', {}, 'Context compression in progress'));
       });
       syncContextCompressionButtons();
       return;
@@ -1007,7 +1013,7 @@ export function createChatController(context, dependencies) {
     const title = $item.find('.chat-item-title').text();
     historyUi.closeChatMenu();
 
-    if (!window.confirm(`Delete "${title}"?`)) {
+    if (!window.confirm(t('confirm.deleteChatNamed', { title }, `Delete "${title}"?`))) {
       return;
     }
 

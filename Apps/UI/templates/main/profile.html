@@ -1,7 +1,8 @@
 {% extends "main/base.html" %}
 {% load static %}
+{% load i18n_tags %}
 
-{% block title %}Profile - ASLM Chat{% endblock %}
+{% block title %}{% t "meta.profileTitle" %}{% endblock %}
 
 {% block body %}
 {% comment %} Copyright NGGT.LightKeeper. All Rights Reserved. {% endcomment %}
@@ -9,12 +10,12 @@
 {# Profile layout. #}
 <div class="profile-shell">
     <header class="topbar">
-        <a class="back-btn" href="/" aria-label="Back to chat">
+        <a class="back-btn" href="/" aria-label="{% t "profile.backToChat" %}">
             <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
                 <use href="{% static 'img/ui/arrow-left.svg' %}#icon"></use>
             </svg>
         </a>
-        <h2 class="page-title">Account</h2>
+        <h2 class="page-title">{% t "profile.account" %}</h2>
     </header>
 
     {# Static account summary. #}
@@ -26,34 +27,34 @@
                 </svg>
             </div>
             <div class="profile-info">
-                <h1 class="profile-name">User</h1>
-                <p class="profile-sub">Local account</p>
+                <h1 class="profile-name">{% t "profile.user" %}</h1>
+                <p class="profile-sub">{% t "profile.localAccount" %}</p>
             </div>
         </div>
 
         {# General account metadata. #}
         <div class="profile-section">
-            <h2 class="section-title">General</h2>
+            <h2 class="section-title">{% t "profile.general" %}</h2>
             <div class="profile-row">
-                <span class="row-label">Username</span>
+                <span class="row-label">{% t "profile.username" %}</span>
                 <span class="row-value row-placeholder">-</span>
             </div>
             <div class="profile-row">
-                <span class="row-label">Email</span>
+                <span class="row-label">{% t "profile.email" %}</span>
                 <span class="row-value row-placeholder">-</span>
             </div>
             <div class="profile-row">
-                <span class="row-label">Member since</span>
+                <span class="row-label">{% t "profile.memberSince" %}</span>
                 <span class="row-value row-placeholder">-</span>
             </div>
         </div>
 
         {# Reserved account actions. #}
         <div class="profile-section">
-            <h2 class="section-title">Danger Zone</h2>
+            <h2 class="section-title">{% t "profile.dangerZone" %}</h2>
             <div class="profile-row">
-                <span class="row-label">Sign out</span>
-                <button class="danger-btn" disabled>Sign out</button>
+                <span class="row-label">{% t "profile.signOut" %}</span>
+                <button class="danger-btn" disabled>{% t "profile.signOut" %}</button>
             </div>
         </div>
     </div>

@@ -14,6 +14,7 @@ import {
   setNestedValue
 } from '../main/utils.js';
 import { getJson, patchJson, postJson } from '../main/api.js';
+import { t } from '../main/i18n.js';
 
 // Parameters UI.
 // Create helpers for model controls, tool selection, and option payloads.
@@ -302,7 +303,7 @@ export function createParametersUi(context) {
       return;
     }
 
-    const $btn = $('<button type="button" class="preset-action-btn mcp-json-open-btn">').text('Edit mcp.json');
+    const $btn = $('<button type="button" class="preset-action-btn mcp-json-open-btn">').text(t('mcp.editConfig'));
     $btn.on('click', function onOpenMcp() {
       openMcpJsonEditor();
     });
@@ -314,7 +315,10 @@ export function createParametersUi(context) {
       userList.forEach(function renderUserMcpServer(server) {
         const serverId = normalizeToolServerId(server.id);
         const toolCount = Number(server.tool_count || (server.tools || []).length || 0);
-        const label = toolCount > 0 ? `${server.name || serverId} (${toolCount} tools)` : (server.name || serverId);
+        const displayName = server.name || serverId;
+        const label = toolCount > 0
+          ? t('mcp.serverTools', { name: displayName, count: toolCount })
+          : displayName;
         const checked = state.selectedToolServerIds.has(serverId);
 
         const $row = $('<label class="tool-server-row mcp-user-tool-server-row">');
@@ -385,7 +389,7 @@ export function createParametersUi(context) {
 
     const $modal = $('<div class="mcp-json-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="mcpJsonModalTitle">');
     const $box = $('<div class="mcp-json-modal">');
-    const $title = $('<div class="mcp-json-modal-title" id="mcpJsonModalTitle">').text('mcp.json');
+    const $title = $('<div class="mcp-json-modal-title" id="mcpJsonModalTitle">').text(t('mcp.modalTitle'));
     const $editor = $('<div class="mcp-json-editor">');
     const $body = $('<div class="mcp-json-editor-body">');
     const $gutter = $('<div class="mcp-json-editor-gutter" aria-hidden="true">');
@@ -405,8 +409,8 @@ export function createParametersUi(context) {
 
     const $err = $('<div class="mcp-json-modal-error" role="alert">').hide();
     const $actions = $('<div class="mcp-json-modal-actions">');
-    const $cancel = $('<button type="button" class="preset-action-btn">').text('Cancel');
-    const $save = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text('Save');
+    const $cancel = $('<button type="button" class="preset-action-btn">').text(t('mcp.cancel'));
+    const $save = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text(t('mcp.save'));
     $actions.append($cancel).append($save);
 
     function syncLayers() {
@@ -565,10 +569,26 @@ export function createParametersUi(context) {
       });
   }
 
+  function localizedParamLabel(key, config) {
+    const fallback = (config && config.label) || formatExperimentalParameterLabel(key);
+    return t(`parameters.${key}.label`, {}, fallback);
+  }
+
+  function localizedParamNote(key, config) {
+    if (config && config.note) {
+      return t(`parameters.${key}.note`, {}, config.note);
+    }
+    return getParameterNote(config, key);
+  }
+
   // Build the help text shown under a parameter control.
-  function getParameterNote(config) {
+  function getParameterNote(config, paramKey) {
     if (!config) {
       return '';
+    }
+
+    if (config.note && paramKey) {
+      return t(`parameters.${paramKey}.note`, {}, config.note);
     }
 
     if (config.note) {
@@ -731,7 +751,7 @@ export function createParametersUi(context) {
     const paramPath = options.paramPath || key;
     const compactClass = options.compact ? ' setting-control-compact' : '';
     const switchRowClass = options.compact ? ' setting-switch-row-compact' : '';
-    const noteText = getParameterNote(config);
+    const noteText = localizedParamNote(key, config);
     const noteHtml = noteText ? `<p class="setting-note">${noteText}</p>` : '';
     const metaHtml = renderParameterMeta(config);
     let html = '';
@@ -742,7 +762,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
           </label>
           <select
             class="model-selector setting-select${compactClass} ${paramClass}"
@@ -765,7 +785,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
           </label>
           <label class="setting-switch-row${switchRowClass}" for="dyn_${key}">
             <span class="setting-switch-text">Enabled</span>
@@ -792,7 +812,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
           </label>
           <label class="setting-switch-row${switchRowClass}" for="toggle_${key}">
             <span class="setting-switch-text">Specify value</span>
@@ -832,7 +852,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
           </label>
           <textarea
             class="setting-textarea${compactClass} ${paramClass}"
@@ -851,7 +871,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
           </label>
           <input
             type="text"
@@ -877,7 +897,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
             <input
               type="number"
               class="setting-number"
@@ -913,7 +933,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
             <input
               type="number"
               class="setting-number"

@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM - Modelos de Linguagem de Sistema Avançados",
+    "profileTitle": "Perfil - ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "Conversas",
+    "newChat": "Nova conversa",
+    "noPreviousChats": "Nenhuma conversa anterior",
+    "chatOptions": "Opções da conversa",
+    "rename": "Renomear",
+    "delete": "Excluir",
+    "account": "Conta",
+    "ago": "há {time}"
+  },
+  "chat": {
+    "newChat": "Nova conversa",
+    "attachmentChat": "Conversa com anexos",
+    "howCanIHelp": "Como posso ajudar?",
+    "welcomeTitle": "Como posso ajudar?"
+  },
+  "composer": {
+    "placeholder": "Mensagem para o ASLM...",
+    "menu": "Menu do compositor",
+    "attachFiles": "Anexar arquivos",
+    "tools": "Ferramentas",
+    "other": "Outros",
+    "reasoningEffort": "Esforço de raciocínio",
+    "intelligence": "Inteligência",
+    "off": "Desligado",
+    "sendMessage": "Enviar mensagem",
+    "queueMessage": "Enfileirar mensagem",
+    "stopGeneration": "Parar geração",
+    "contextUsage": "Uso do contexto"
+  },
+  "reasoning": {
+    "panel": "Painel de raciocínio",
+    "title": "Raciocínio",
+    "closePanel": "Fechar painel de raciocínio"
+  },
+  "settings": {
+    "modelSettings": "Configurações do modelo",
+    "collapse": "Recolher configurações",
+    "expand": "Expandir configurações",
+    "connection": "Conexão",
+    "engine": "Motor",
+    "address": "Endereço",
+    "saved": "Salvo",
+    "engineAddressPlaceholder": "Endereço do motor",
+    "engineAddressHint": "Configure o endpoint do motor selecionado.",
+    "apiKey": "Chave de API",
+    "off": "Desligado",
+    "useSavedKey": "Usar chave salva",
+    "pasteApiKey": "Colar chave de API",
+    "apiKeyHint": "Necessária apenas para endpoints protegidos.",
+    "model": "Modelo",
+    "modelsLoadOnDemand": "Modelos carregados sob demanda",
+    "visionModel": "Modelo de visão",
+    "preset": "Predefinição",
+    "default": "Padrão",
+    "presetNew": "Novo",
+    "presetRename": "Renomear",
+    "presetDelete": "Excluir",
+    "sandboxDefault": "Sandbox padrão",
+    "mode": "Modo",
+    "tools": "Ferramentas",
+    "mcp": "MCP",
+    "skills": "Habilidades",
+    "systemPrompt": "Prompt do sistema",
+    "systemPromptPlaceholder": "ex.: \"Responda apenas em rimas\"",
+    "load": "Carregar",
+    "customFields": "Campos personalizados",
+    "settings": "Configurações",
+    "sampling": "Amostragem",
+    "advanced": "Avançado",
+    "custom": "Personalizado"
+  },
+  "profile": {
+    "backToChat": "Voltar ao chat",
+    "account": "Conta",
+    "user": "Usuário",
+    "localAccount": "Conta local",
+    "general": "Geral",
+    "username": "Nome de usuário",
+    "email": "E-mail",
+    "memberSince": "Membro desde",
+    "dangerZone": "Zona de perigo",
+    "signOut": "Sair"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "Compatível com OpenAI",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "Janela de contexto:",
+    "usageLabel": "Contexto: {percent}% usado, {remaining}% restante. {used} / {window} tokens.",
+    "used": "Usado",
+    "remaining": "Restante",
+    "compressing": "Comprimindo contexto",
+    "compressionInProgress": "Compressão de contexto em andamento",
+    "compressedActive": "O contexto comprimido está ativo.",
+    "compressedActiveTooltip": "Contexto comprimido ativo",
+    "compressContext": "Comprimir contexto",
+    "autoCompress": "Comprimir automaticamente em {percent}%"
+  },
+  "think": {
+    "off": "Desligado",
+    "low": "Baixo",
+    "medium": "Médio",
+    "high": "Alto",
+    "minimal": "Mínimo",
+    "extraHigh": "Muito alto"
+  },
+  "messages": {
+    "more": "Mais",
+    "hide": "Ocultar",
+    "copyCode": "Copiar código",
+    "copyDiagram": "Copiar fonte do diagrama",
+    "noContent": "Sem conteúdo.",
+    "noDiff": "Sem diff.",
+    "file": "Arquivo",
+    "audio": "Áudio",
+    "video": "Vídeo",
+    "image": "Imagem",
+    "download": "Baixar",
+    "playAudio": "Reproduzir áudio",
+    "playVideo": "Reproduzir vídeo",
+    "pauseMedia": "Pausar mídia",
+    "playMedia": "Reproduzir mídia",
+    "muteMedia": "Silenciar mídia",
+    "unmuteMedia": "Ativar som da mídia",
+    "fullscreen": "Tela cheia",
+    "exitFullscreen": "Sair da tela cheia",
+    "audioProgress": "Progresso do áudio",
+    "videoProgress": "Progresso do vídeo",
+    "openMiniPlayer": "Abrir mini player",
+    "returnToMessage": "Voltar à mensagem",
+    "closeMiniPlayer": "Fechar mini player",
+    "renderingDiagram": "Renderizando diagrama...",
+    "mermaidEmpty": "A fonte do diagrama Mermaid está vazia.",
+    "mermaidUnavailable": "O renderizador Mermaid não está disponível.",
+    "mermaidError": "Não foi possível renderizar o diagrama Mermaid: {error}",
+    "running": "Executando...",
+    "noOutput": "Sem saída.",
+    "python": "Python",
+    "sandbox": "Ambiente isolado",
+    "write": "Escrever",
+    "writePath": "Escrever {path}",
+    "edit": "Editar",
+    "editPath": "Editar {path}",
+    "viewedImage": "Imagem visualizada",
+    "viewedPath": "Visualizado {path}",
+    "imagePreview": "Pré-visualização da imagem",
+    "imagePreviewFor": "Pré-visualização da imagem para {path}",
+    "readSource": "Ler fonte:",
+    "readSources": "Ler fontes:",
+    "searchedFor": "Pesquisou por {query}",
+    "noSourcesFor": "Nenhuma fonte encontrada para {query}",
+    "searchingFor": "Pesquisando por {query}",
+    "badQuery": "Consulta inválida: {query}"
+  },
+  "skills": {
+    "title": "Habilidades",
+    "refresh": "Atualizar",
+    "noSkills": "Nenhuma habilidade encontrada",
+    "loadError": "Não foi possível carregar as habilidades",
+    "manage": "Gerenciar habilidades",
+    "customizeAria": "Personalizar habilidades",
+    "errorTitle": "Erro de habilidades",
+    "personalSkillOne": "1 habilidade pessoal",
+    "personalSkillMany": "{count} habilidades pessoais",
+    "noSkillsYet": "Ainda não há habilidades",
+    "composerMenuAria": "Habilidades",
+    "closeManagerAria": "Fechar gerenciador de habilidades",
+    "searchPlaceholder": "Pesquisar habilidades",
+    "addSkillAria": "Adicionar habilidade",
+    "skillActionsAria": "Ações da habilidade",
+    "toggleSkillFilesAria": "Mostrar ou ocultar arquivos",
+    "toggleFolderAria": "Mostrar ou ocultar pasta",
+    "toggleKindAria": "Alternar pasta ou arquivo",
+    "newFileAria": "Novo arquivo na pasta",
+    "renameFolderAria": "Renomear pasta",
+    "renameFileAria": "Renomear arquivo",
+    "deleteFileAria": "Excluir arquivo",
+    "dialogOk": "OK",
+    "dialogCancel": "Cancelar",
+    "dialogConfirm": "Confirmar",
+    "dialogInput": "Entrada",
+    "valueRequired": "O valor é obrigatório.",
+    "createSkill": "Criar habilidade",
+    "skillNamePlaceholder": "nome-habilidade",
+    "create": "Criar",
+    "importSkillFolder": "Importar pasta de habilidade",
+    "dropzoneAria": "Solte a pasta de habilidade aqui",
+    "dropzoneText": "Solte a pasta aqui (diretório pai)",
+    "or": "ou",
+    "browseFolder": "Procurar pasta…",
+    "skillNameRequired": "O nome da habilidade é obrigatório.",
+    "importing": "Importando…",
+    "newSkill": "Nova habilidade",
+    "skillFolderName": "Nome da pasta de habilidade",
+    "skillFolderNamePlaceholder": "criador-habilidades",
+    "renameSkill": "Renomear habilidade",
+    "newSkillFolderName": "Novo nome da pasta",
+    "deleteSkill": "Excluir habilidade",
+    "deleteSkillConfirm": "Excluir a habilidade \"{name}\"?",
+    "newSkillFile": "Novo arquivo de habilidade",
+    "filePathInSkill": "Caminho do arquivo na habilidade",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "Excluir arquivo",
+    "deleteFileConfirm": "Tem certeza?",
+    "renameFolder": "Renomear pasta",
+    "folderName": "Nome da pasta",
+    "renameFile": "Renomear arquivo",
+    "fileName": "Nome do arquivo",
+    "editSkill": "Editar habilidade",
+    "doneEditing": "Concluir edição",
+    "newFilePlaceholder": "Nome do arquivo (ex. grader.md)",
+    "newFolderPlaceholder": "Nome da nova pasta",
+    "noFileSelected": "Nenhum arquivo selecionado",
+    "noFileSelectedPath": "Nenhum arquivo selecionado.",
+    "emptyState": "Crie uma habilidade para começar.",
+    "preview": "Visualização",
+    "created": "Criado",
+    "unknown": "Desconhecido",
+    "readFileFailed": "Falha ao ler {name}",
+    "importNameHintDropOne": "Digite um nome acima ou solte uma pasta de cada vez.",
+    "importNameHintSelect": "Digite um nome, selecione uma habilidade na árvore ou uma pasta.",
+    "importNoFiles": "Nenhum arquivo encontrado.",
+    "importNoSupported": "Nenhum arquivo de texto suportado (.md, .txt, .py, …).",
+    "importNoSupportedFor": "Nenhum arquivo suportado para \"{name}\"."
+  },
+  "errors": {
+    "generic": "Algo deu errado",
+    "network": "Erro de rede"
+  },
+  "confirm": {
+    "deleteChat": "Excluir esta conversa?",
+    "deleteChatNamed": "Excluir \"{title}\"?",
+    "deletePreset": "Excluir a predefinição \"{name}\"?",
+    "unsaved": "Você tem alterações não salvas."
+  },
+  "toolInspector": {
+    "title": "Inspetor de ferramentas",
+    "close": "Fechar",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Temperatura"
+    },
+    "num_ctx": {
+      "label": "Tamanho do contexto",
+      "note": "Janela de contexto em tokens."
+    },
+    "num_predict": {
+      "label": "Máximo de tokens de saída",
+      "note": "Máximo de tokens gerados."
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "Alocação de memória com suporte a NUMA."
+    },
+    "num_batch": {
+      "label": "Tamanho do lote",
+      "note": "Tamanho do lote do prompt."
+    },
+    "num_gpu": {
+      "label": "Camadas na GPU",
+      "note": "Camadas descarregadas para a GPU."
+    },
+    "main_gpu": {
+      "label": "GPU principal",
+      "note": "GPU primária"
+    },
+    "low_vram": {
+      "label": "VRAM baixa",
+      "note": "Menor uso de VRAM."
+    },
+    "f16_kv": {
+      "label": "Usar cache KV em FP16",
+      "note": "Usar cache KV em FP16."
+    },
+    "logits_all": {
+      "label": "Retornar logits completos",
+      "note": "Retornar logits de todos os tokens."
+    },
+    "vocab_only": {
+      "label": "Somente vocabulário",
+      "note": "Carregamento somente do vocabulário."
+    },
+    "use_mmap": {
+      "label": "Usar mapeamento de memória",
+      "note": "Usar mapeamento de memória."
+    },
+    "use_mlock": {
+      "label": "Usar bloqueio de memória",
+      "note": "Bloquear páginas do modelo na RAM."
+    },
+    "embedding_only": {
+      "label": "Somente embeddings",
+      "note": "Carregamento somente de embeddings."
+    },
+    "num_thread": {
+      "label": "Threads da CPU",
+      "note": "Threads da CPU"
+    },
+    "num_keep": {
+      "label": "Manter tokens do prompt",
+      "note": "-1 mantém todos, 0 é automático."
+    },
+    "seed": {
+      "label": "Semente",
+      "note": "Semente determinística."
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "Janela de repetição"
+    },
+    "repeat_penalty": {
+      "label": "Penalidade de repetição"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "Amostragem tail-free."
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "Penalidade de presença"
+    },
+    "frequency_penalty": {
+      "label": "Penalidade de frequência"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "Sequências de parada"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top Logprobs",
+      "note": "Logprobs de tokens alternativos."
+    },
+    "keep_alive": {
+      "label": "Manter ativo",
+      "note": "Por quanto tempo manter o modelo carregado."
+    },
+    "format": {
+      "label": "Formato da resposta",
+      "note": "Modo JSON ou esquema JSON."
+    },
+    "penalize_newline": {
+      "label": "Penalizar quebra de linha",
+      "note": "Penalizar também tokens de quebra de linha."
+    },
+    "maxTokens": {
+      "label": "Máximo de tokens de saída"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "Penalidade de repetição"
+    },
+    "xtcProbability": {
+      "label": "Probabilidade XTC"
+    },
+    "xtcThreshold": {
+      "label": "Limite XTC"
+    },
+    "cpuThreads": {
+      "label": "Threads da CPU"
+    },
+    "stopStrings": {
+      "label": "Sequências de parada"
+    },
+    "toolCallStopStrings": {
+      "label": "Sequências de parada de ferramentas"
+    },
+    "contextOverflowPolicy": {
+      "label": "Política de estouro de contexto"
+    },
+    "draftModel": {
+      "label": "Modelo rascunho"
+    },
+    "max_output_tokens": {
+      "label": "Máximo de tokens de saída"
+    },
+    "candidate_count": {
+      "label": "Candidatos"
+    },
+    "stop_sequences": {
+      "label": "Sequências de parada"
+    },
+    "response_logprobs": {
+      "label": "Logprobs da resposta"
+    },
+    "response_mime_type": {
+      "label": "Tipo MIME da resposta"
+    },
+    "max_completion_tokens": {
+      "label": "Máximo de tokens de conclusão"
+    },
+    "n": {
+      "label": "Candidatos"
+    },
+    "reasoning_effort": {
+      "label": "Esforço de raciocínio"
+    },
+    "verbosity": {
+      "label": "Verbosidade"
+    },
+    "response_format": {
+      "label": "Formato da resposta"
+    },
+    "logit_bias": {
+      "label": "Viés de logit"
+    }
+  },
+  "mcp": {
+    "editConfig": "Editar mcp.json",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name} ({count} ferramentas)",
+    "cancel": "Cancelar",
+    "save": "Salvar"
+  }
+}

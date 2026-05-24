@@ -223,8 +223,13 @@ def _resolve_enabled_engine_from_settings(
 def get_supported_engines() -> list[dict[str, str]]:
     """Return the enabled engines that ASLM-Chat can expose in the UI."""
 
+    from Apps.UI.locale_catalog import translate
+
     return [
-        {"id": engine_id, "label": ENGINE_LABELS[engine_id]}
+        {
+            "id": engine_id,
+            "label": translate(f"engines.{engine_id}", fallback=ENGINE_LABELS[engine_id]),
+        }
         for engine_id in get_enabled_engine_ids()
     ]
 

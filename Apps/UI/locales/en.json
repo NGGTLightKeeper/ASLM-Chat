@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM - Advanced System Language Models",
+    "profileTitle": "Profile - ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "Chats",
+    "newChat": "New Chat",
+    "noPreviousChats": "No previous chats",
+    "chatOptions": "Chat options",
+    "rename": "Rename",
+    "delete": "Delete",
+    "account": "Account",
+    "ago": "{time} ago"
+  },
+  "chat": {
+    "newChat": "New Chat",
+    "attachmentChat": "Attachment chat",
+    "howCanIHelp": "How can I help?",
+    "welcomeTitle": "How can I help?"
+  },
+  "composer": {
+    "placeholder": "Message ASLM...",
+    "menu": "Composer menu",
+    "attachFiles": "Attach files",
+    "tools": "Tools",
+    "other": "Other",
+    "reasoningEffort": "Reasoning effort",
+    "intelligence": "Intelligence",
+    "off": "Off",
+    "sendMessage": "Send Message",
+    "queueMessage": "Queue message",
+    "stopGeneration": "Stop generation",
+    "contextUsage": "Context usage"
+  },
+  "reasoning": {
+    "panel": "Reasoning panel",
+    "title": "Reasoning",
+    "closePanel": "Close reasoning panel"
+  },
+  "settings": {
+    "modelSettings": "Model Settings",
+    "collapse": "Collapse settings",
+    "expand": "Expand settings",
+    "connection": "Connection",
+    "engine": "Engine",
+    "address": "Address",
+    "saved": "Saved",
+    "engineAddressPlaceholder": "Engine address",
+    "engineAddressHint": "Configure the selected engine endpoint.",
+    "apiKey": "API Key",
+    "off": "Off",
+    "useSavedKey": "Use saved key",
+    "pasteApiKey": "Paste API key",
+    "apiKeyHint": "Needed only for secured endpoints.",
+    "model": "Model",
+    "modelsLoadOnDemand": "Models load on demand",
+    "visionModel": "Vision model",
+    "preset": "Preset",
+    "default": "Default",
+    "presetNew": "New",
+    "presetRename": "Rename",
+    "presetDelete": "Delete",
+    "sandboxDefault": "Sandbox Default",
+    "mode": "Mode",
+    "tools": "Tools",
+    "mcp": "MCP",
+    "skills": "Skills",
+    "systemPrompt": "System Prompt",
+    "systemPromptPlaceholder": "e.g. \"Only answer in rhymes\"",
+    "load": "Load",
+    "customFields": "Custom Fields",
+    "settings": "Settings",
+    "sampling": "Sampling",
+    "advanced": "Advanced",
+    "custom": "Custom"
+  },
+  "profile": {
+    "backToChat": "Back to chat",
+    "account": "Account",
+    "user": "User",
+    "localAccount": "Local account",
+    "general": "General",
+    "username": "Username",
+    "email": "Email",
+    "memberSince": "Member since",
+    "dangerZone": "Danger Zone",
+    "signOut": "Sign out"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "OpenAI-Compatible",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "Context window:",
+    "usageLabel": "Context: {percent}% used, {remaining}% remaining. {used} / {window} tokens.",
+    "used": "Used",
+    "remaining": "Remaining",
+    "compressing": "Compressing context",
+    "compressionInProgress": "Context compression in progress",
+    "compressedActive": "Compressed context is active.",
+    "compressedActiveTooltip": "Compressed context active",
+    "compressContext": "Compress context",
+    "autoCompress": "Auto-compress at {percent}%"
+  },
+  "think": {
+    "off": "Off",
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "minimal": "Minimal",
+    "extraHigh": "Extra High"
+  },
+  "messages": {
+    "more": "More",
+    "hide": "Hide",
+    "copyCode": "Copy code",
+    "copyDiagram": "Copy diagram source",
+    "noContent": "No content.",
+    "noDiff": "No diff.",
+    "file": "File",
+    "audio": "Audio",
+    "video": "Video",
+    "image": "Image",
+    "download": "Download",
+    "playAudio": "Play audio",
+    "playVideo": "Play video",
+    "pauseMedia": "Pause media",
+    "playMedia": "Play media",
+    "muteMedia": "Mute media",
+    "unmuteMedia": "Unmute media",
+    "fullscreen": "Fullscreen",
+    "exitFullscreen": "Exit fullscreen",
+    "audioProgress": "Audio progress",
+    "videoProgress": "Video progress",
+    "openMiniPlayer": "Open mini player",
+    "returnToMessage": "Return to message",
+    "closeMiniPlayer": "Close mini player",
+    "renderingDiagram": "Rendering diagram...",
+    "mermaidEmpty": "Mermaid diagram source is empty.",
+    "mermaidUnavailable": "Mermaid renderer is unavailable.",
+    "mermaidError": "Could not render Mermaid diagram: {error}",
+    "running": "Running...",
+    "noOutput": "No output.",
+    "python": "Python",
+    "sandbox": "Sandbox",
+    "write": "Write",
+    "writePath": "Write {path}",
+    "edit": "Edit",
+    "editPath": "Edit {path}",
+    "viewedImage": "Viewed image",
+    "viewedPath": "Viewed {path}",
+    "imagePreview": "Image preview",
+    "imagePreviewFor": "Image preview for {path}",
+    "readSource": "Read source:",
+    "readSources": "Read sources:",
+    "searchedFor": "Searched for {query}",
+    "noSourcesFor": "No sources found for {query}",
+    "searchingFor": "Searching for {query}",
+    "badQuery": "Bad query: {query}"
+  },
+  "mcp": {
+    "editConfig": "Edit mcp.json",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name} ({count} tools)",
+    "cancel": "Cancel",
+    "save": "Save"
+  },
+  "skills": {
+    "title": "Skills",
+    "refresh": "Refresh",
+    "noSkills": "No skills found",
+    "loadError": "Could not load skills",
+    "manage": "Manage skills",
+    "customizeAria": "Customize skills",
+    "errorTitle": "Skills error",
+    "personalSkillOne": "1 personal skill",
+    "personalSkillMany": "{count} personal skills",
+    "noSkillsYet": "No skills yet",
+    "composerMenuAria": "Skills",
+    "closeManagerAria": "Close skills manager",
+    "searchPlaceholder": "Search skills",
+    "addSkillAria": "Add skill",
+    "skillActionsAria": "Skill actions",
+    "toggleSkillFilesAria": "Toggle skill files",
+    "toggleFolderAria": "Toggle folder",
+    "toggleKindAria": "Toggle folder or file",
+    "newFileAria": "New file in folder",
+    "renameFolderAria": "Rename folder",
+    "renameFileAria": "Rename file",
+    "deleteFileAria": "Delete file",
+    "dialogOk": "OK",
+    "dialogCancel": "Cancel",
+    "dialogConfirm": "Confirm",
+    "dialogInput": "Input",
+    "valueRequired": "Value is required.",
+    "createSkill": "Create skill",
+    "skillNamePlaceholder": "skill-name",
+    "create": "Create",
+    "importSkillFolder": "Import skill folder",
+    "dropzoneAria": "Drop a skill folder here",
+    "dropzoneText": "Drop the skill folder here (parent directory)",
+    "or": "or",
+    "browseFolder": "Browse folder…",
+    "skillNameRequired": "Skill name is required.",
+    "importing": "Importing…",
+    "newSkill": "New skill",
+    "skillFolderName": "Skill folder name",
+    "skillFolderNamePlaceholder": "skill-creator",
+    "renameSkill": "Rename skill",
+    "newSkillFolderName": "New skill folder name",
+    "deleteSkill": "Delete skill",
+    "deleteSkillConfirm": "Delete skill \"{name}\"?",
+    "newSkillFile": "New skill file",
+    "filePathInSkill": "File path inside the skill",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "Delete file",
+    "deleteFileConfirm": "Are you sure?",
+    "renameFolder": "Rename folder",
+    "folderName": "Folder name",
+    "renameFile": "Rename file",
+    "fileName": "File name",
+    "editSkill": "Edit skill",
+    "doneEditing": "Done editing",
+    "newFilePlaceholder": "New file name (e.g. grader.md)",
+    "newFolderPlaceholder": "New folder name",
+    "noFileSelected": "No file selected",
+    "noFileSelectedPath": "No file selected.",
+    "emptyState": "Create a skill to get started.",
+    "preview": "Preview",
+    "created": "Created",
+    "unknown": "Unknown",
+    "readFileFailed": "Failed to read {name}",
+    "importNameHintDropOne": "Enter a skill name in the field above, or drop one skill folder at a time.",
+    "importNameHintSelect": "Enter a skill name above, select a skill in the tree, or pick a single skill folder.",
+    "importNoFiles": "No files found.",
+    "importNoSupported": "No supported text files found (.md, .txt, .py, …).",
+    "importNoSupportedFor": "No supported text files found for \"{name}\"."
+  },
+  "errors": {
+    "generic": "Something went wrong",
+    "network": "Network error"
+  },
+  "confirm": {
+    "deleteChat": "Delete this chat?",
+    "deleteChatNamed": "Delete \"{title}\"?",
+    "deletePreset": "Delete preset \"{name}\"?",
+    "unsaved": "You have unsaved changes."
+  },
+  "toolInspector": {
+    "title": "Tool Inspector",
+    "close": "Close",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Temperature"
+    },
+    "num_ctx": {
+      "label": "Context Length",
+      "note": "Context window in tokens."
+    },
+    "num_predict": {
+      "label": "Max Output Tokens",
+      "note": "Maximum generated tokens."
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "NUMA-aware memory placement."
+    },
+    "num_batch": {
+      "label": "Batch Size",
+      "note": "Prompt batch size."
+    },
+    "num_gpu": {
+      "label": "GPU Layers",
+      "note": "Layers offloaded to GPU."
+    },
+    "main_gpu": {
+      "label": "Main GPU",
+      "note": "Primary GPU"
+    },
+    "low_vram": {
+      "label": "Low VRAM",
+      "note": "Lower VRAM usage."
+    },
+    "f16_kv": {
+      "label": "Use FP16 KV Cache",
+      "note": "Use FP16 KV cache."
+    },
+    "logits_all": {
+      "label": "Return Full Logits",
+      "note": "Return logits for all tokens."
+    },
+    "vocab_only": {
+      "label": "Vocabulary Only",
+      "note": "Vocabulary-only load."
+    },
+    "use_mmap": {
+      "label": "Use Memory Map",
+      "note": "Use memory mapping."
+    },
+    "use_mlock": {
+      "label": "Use Memory Lock",
+      "note": "Lock model pages in RAM."
+    },
+    "embedding_only": {
+      "label": "Embedding Only",
+      "note": "Embedding-only load."
+    },
+    "num_thread": {
+      "label": "CPU Threads",
+      "note": "CPU threads"
+    },
+    "num_keep": {
+      "label": "Keep Prompt Tokens",
+      "note": "-1 keeps all, 0 is automatic."
+    },
+    "seed": {
+      "label": "Seed",
+      "note": "Deterministic seed."
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "Repeat Window"
+    },
+    "repeat_penalty": {
+      "label": "Repeat Penalty"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "Tail-free sampling."
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "Presence Penalty"
+    },
+    "frequency_penalty": {
+      "label": "Frequency Penalty"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "Stop Sequences"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top Logprobs",
+      "note": "Alternative token logprobs."
+    },
+    "keep_alive": {
+      "label": "Keep Alive",
+      "note": "How long to keep the model loaded."
+    },
+    "format": {
+      "label": "Response Format",
+      "note": "JSON mode or JSON schema."
+    },
+    "penalize_newline": {
+      "label": "Penalize Newline",
+      "note": "Penalize newline tokens too."
+    },
+    "maxTokens": {
+      "label": "Max Output Tokens"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "Repeat Penalty"
+    },
+    "xtcProbability": {
+      "label": "XTC Probability"
+    },
+    "xtcThreshold": {
+      "label": "XTC Threshold"
+    },
+    "cpuThreads": {
+      "label": "CPU Threads"
+    },
+    "stopStrings": {
+      "label": "Stop Sequences"
+    },
+    "toolCallStopStrings": {
+      "label": "Tool Stop Sequences"
+    },
+    "contextOverflowPolicy": {
+      "label": "Context Overflow Policy"
+    },
+    "draftModel": {
+      "label": "Draft Model"
+    },
+    "max_output_tokens": {
+      "label": "Max Output Tokens"
+    },
+    "candidate_count": {
+      "label": "Candidates"
+    },
+    "stop_sequences": {
+      "label": "Stop Sequences"
+    },
+    "response_logprobs": {
+      "label": "Response Logprobs"
+    },
+    "response_mime_type": {
+      "label": "Response MIME Type"
+    },
+    "max_completion_tokens": {
+      "label": "Max Completion Tokens"
+    },
+    "n": {
+      "label": "Candidates"
+    },
+    "reasoning_effort": {
+      "label": "Reasoning Effort"
+    },
+    "verbosity": {
+      "label": "Verbosity"
+    },
+    "response_format": {
+      "label": "Response Format"
+    },
+    "logit_bias": {
+      "label": "Logit Bias"
+    }
+  }
+}

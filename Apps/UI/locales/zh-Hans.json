@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM - 高级系统语言模型",
+    "profileTitle": "个人资料 - ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "对话",
+    "newChat": "新对话",
+    "noPreviousChats": "暂无历史对话",
+    "chatOptions": "对话选项",
+    "rename": "重命名",
+    "delete": "删除",
+    "account": "账户",
+    "ago": "{time}前"
+  },
+  "chat": {
+    "newChat": "新对话",
+    "attachmentChat": "附件对话",
+    "howCanIHelp": "有什么可以帮您的？",
+    "welcomeTitle": "有什么可以帮您的？"
+  },
+  "composer": {
+    "placeholder": "向 ASLM 发送消息...",
+    "menu": "输入菜单",
+    "attachFiles": "附加文件",
+    "tools": "工具",
+    "other": "其他",
+    "reasoningEffort": "推理强度",
+    "intelligence": "智能程度",
+    "off": "关闭",
+    "sendMessage": "发送消息",
+    "queueMessage": "排队发送",
+    "stopGeneration": "停止生成",
+    "contextUsage": "上下文用量"
+  },
+  "reasoning": {
+    "panel": "推理面板",
+    "title": "推理",
+    "closePanel": "关闭推理面板"
+  },
+  "settings": {
+    "modelSettings": "模型设置",
+    "collapse": "收起设置",
+    "expand": "展开设置",
+    "connection": "连接",
+    "engine": "引擎",
+    "address": "地址",
+    "saved": "已保存",
+    "engineAddressPlaceholder": "引擎地址",
+    "engineAddressHint": "配置所选引擎的端点。",
+    "apiKey": "API 密钥",
+    "off": "关闭",
+    "useSavedKey": "使用已保存的密钥",
+    "pasteApiKey": "粘贴 API 密钥",
+    "apiKeyHint": "仅在使用安全端点时需要。",
+    "model": "模型",
+    "modelsLoadOnDemand": "模型按需加载",
+    "visionModel": "视觉模型",
+    "preset": "预设",
+    "default": "默认",
+    "presetNew": "新建",
+    "presetRename": "重命名",
+    "presetDelete": "删除",
+    "sandboxDefault": "默认沙箱",
+    "mode": "模式",
+    "tools": "工具",
+    "mcp": "MCP",
+    "skills": "技能",
+    "systemPrompt": "系统提示词",
+    "systemPromptPlaceholder": "例如：\"只用押韵的方式回答\"",
+    "load": "加载",
+    "customFields": "自定义字段",
+    "settings": "设置",
+    "sampling": "采样",
+    "advanced": "高级",
+    "custom": "自定义"
+  },
+  "profile": {
+    "backToChat": "返回对话",
+    "account": "账户",
+    "user": "用户",
+    "localAccount": "本地账户",
+    "general": "常规",
+    "username": "用户名",
+    "email": "电子邮箱",
+    "memberSince": "注册时间",
+    "dangerZone": "危险操作",
+    "signOut": "退出登录"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "OpenAI 兼容",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "上下文窗口：",
+    "usageLabel": "上下文：已用 {percent}%，剩余 {remaining}%。{used} / {window} 个 token。",
+    "used": "已用",
+    "remaining": "剩余",
+    "compressing": "正在压缩上下文",
+    "compressionInProgress": "上下文压缩进行中",
+    "compressedActive": "已启用压缩上下文。",
+    "compressedActiveTooltip": "压缩上下文已启用",
+    "compressContext": "压缩上下文",
+    "autoCompress": "在 {percent}% 时自动压缩"
+  },
+  "think": {
+    "off": "关闭",
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+    "minimal": "最低",
+    "extraHigh": "极高"
+  },
+  "messages": {
+    "more": "更多",
+    "hide": "收起",
+    "copyCode": "复制代码",
+    "copyDiagram": "复制图表源码",
+    "noContent": "无内容。",
+    "noDiff": "无差异。",
+    "file": "文件",
+    "audio": "音频",
+    "video": "视频",
+    "image": "图片",
+    "download": "下载",
+    "playAudio": "播放音频",
+    "playVideo": "播放视频",
+    "pauseMedia": "暂停媒体",
+    "playMedia": "播放媒体",
+    "muteMedia": "静音",
+    "unmuteMedia": "取消静音",
+    "fullscreen": "全屏",
+    "exitFullscreen": "退出全屏",
+    "audioProgress": "音频进度",
+    "videoProgress": "视频进度",
+    "openMiniPlayer": "打开迷你播放器",
+    "returnToMessage": "返回消息",
+    "closeMiniPlayer": "关闭迷你播放器",
+    "renderingDiagram": "正在渲染图表...",
+    "mermaidEmpty": "Mermaid 图表源码为空。",
+    "mermaidUnavailable": "Mermaid 渲染器不可用。",
+    "mermaidError": "无法渲染 Mermaid 图表：{error}",
+    "running": "运行中...",
+    "noOutput": "无输出。",
+    "python": "Python",
+    "sandbox": "沙箱",
+    "write": "写入",
+    "writePath": "写入 {path}",
+    "edit": "编辑",
+    "editPath": "编辑 {path}",
+    "viewedImage": "已查看图片",
+    "viewedPath": "已查看 {path}",
+    "imagePreview": "图片预览",
+    "imagePreviewFor": "{path} 的图片预览",
+    "readSource": "读取来源：",
+    "readSources": "读取来源：",
+    "searchedFor": "已搜索 {query}",
+    "noSourcesFor": "未找到 {query} 的来源",
+    "searchingFor": "正在搜索 {query}",
+    "badQuery": "无效查询：{query}"
+  },
+  "skills": {
+    "title": "技能",
+    "refresh": "刷新",
+    "noSkills": "未找到技能",
+    "loadError": "无法加载技能",
+    "manage": "管理技能",
+    "customizeAria": "自定义技能",
+    "errorTitle": "技能错误",
+    "personalSkillOne": "1 个个人技能",
+    "personalSkillMany": "{count} 个个人技能",
+    "noSkillsYet": "尚无技能",
+    "composerMenuAria": "技能",
+    "closeManagerAria": "关闭技能管理器",
+    "searchPlaceholder": "搜索技能",
+    "addSkillAria": "添加技能",
+    "skillActionsAria": "技能操作",
+    "toggleSkillFilesAria": "显示或隐藏技能文件",
+    "toggleFolderAria": "显示或隐藏文件夹",
+    "toggleKindAria": "切换文件夹或文件",
+    "newFileAria": "在文件夹中新建文件",
+    "renameFolderAria": "重命名文件夹",
+    "renameFileAria": "重命名文件",
+    "deleteFileAria": "删除文件",
+    "dialogOk": "确定",
+    "dialogCancel": "取消",
+    "dialogConfirm": "确认",
+    "dialogInput": "输入",
+    "valueRequired": "必须填写值。",
+    "createSkill": "创建技能",
+    "skillNamePlaceholder": "skill-name",
+    "create": "创建",
+    "importSkillFolder": "导入技能文件夹",
+    "dropzoneAria": "将技能文件夹拖放到此处",
+    "dropzoneText": "将技能文件夹拖放到此处（父目录）",
+    "or": "或",
+    "browseFolder": "浏览文件夹…",
+    "skillNameRequired": "必须填写技能名称。",
+    "importing": "正在导入…",
+    "newSkill": "新技能",
+    "skillFolderName": "技能文件夹名称",
+    "skillFolderNamePlaceholder": "skill-creator",
+    "renameSkill": "重命名技能",
+    "newSkillFolderName": "新文件夹名称",
+    "deleteSkill": "删除技能",
+    "deleteSkillConfirm": "删除技能「{name}」？",
+    "newSkillFile": "新技能文件",
+    "filePathInSkill": "技能内的文件路径",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "删除文件",
+    "deleteFileConfirm": "确定吗？",
+    "renameFolder": "重命名文件夹",
+    "folderName": "文件夹名称",
+    "renameFile": "重命名文件",
+    "fileName": "文件名",
+    "editSkill": "编辑技能",
+    "doneEditing": "完成编辑",
+    "newFilePlaceholder": "新文件名（例如 grader.md）",
+    "newFolderPlaceholder": "新文件夹名称",
+    "noFileSelected": "未选择文件",
+    "noFileSelectedPath": "未选择文件。",
+    "emptyState": "创建技能以开始。",
+    "preview": "预览",
+    "created": "创建时间",
+    "unknown": "未知",
+    "readFileFailed": "无法读取 {name}",
+    "importNameHintDropOne": "在上方输入名称，或每次拖放一个技能文件夹。",
+    "importNameHintSelect": "输入名称、在树中选择技能或选择一个文件夹。",
+    "importNoFiles": "未找到文件。",
+    "importNoSupported": "未找到支持的文本文件（.md、.txt、.py 等）。",
+    "importNoSupportedFor": "未找到「{name}」的支持文件。"
+  },
+  "errors": {
+    "generic": "出了点问题",
+    "network": "网络错误"
+  },
+  "confirm": {
+    "deleteChat": "删除此对话？",
+    "deleteChatNamed": "删除「{title}」？",
+    "deletePreset": "删除预设「{name}」？",
+    "unsaved": "您有未保存的更改。"
+  },
+  "toolInspector": {
+    "title": "工具检查器",
+    "close": "关闭",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Temperature"
+    },
+    "num_ctx": {
+      "label": "上下文长度",
+      "note": "上下文窗口的 token 数量。"
+    },
+    "num_predict": {
+      "label": "最大输出 Token 数",
+      "note": "生成的最大 token 数量。"
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "NUMA 感知的内存分配。"
+    },
+    "num_batch": {
+      "label": "批处理大小",
+      "note": "提示词的批处理大小。"
+    },
+    "num_gpu": {
+      "label": "GPU 层数",
+      "note": "卸载到 GPU 的层数。"
+    },
+    "main_gpu": {
+      "label": "主 GPU",
+      "note": "主 GPU"
+    },
+    "low_vram": {
+      "label": "低 VRAM 模式",
+      "note": "降低 VRAM 占用。"
+    },
+    "f16_kv": {
+      "label": "使用 FP16 KV 缓存",
+      "note": "使用 FP16 KV 缓存。"
+    },
+    "logits_all": {
+      "label": "返回完整 Logits",
+      "note": "返回所有 token 的 logits。"
+    },
+    "vocab_only": {
+      "label": "仅加载词表",
+      "note": "仅加载词表。"
+    },
+    "use_mmap": {
+      "label": "使用内存映射",
+      "note": "使用内存映射。"
+    },
+    "use_mlock": {
+      "label": "使用内存锁定",
+      "note": "将模型页面锁定在 RAM 中。"
+    },
+    "embedding_only": {
+      "label": "仅嵌入模式",
+      "note": "仅加载嵌入层。"
+    },
+    "num_thread": {
+      "label": "CPU 线程数",
+      "note": "CPU 线程数"
+    },
+    "num_keep": {
+      "label": "保留提示 Token 数",
+      "note": "-1 表示全部保留，0 表示自动。"
+    },
+    "seed": {
+      "label": "随机种子",
+      "note": "确定性随机种子。"
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "重复检测窗口"
+    },
+    "repeat_penalty": {
+      "label": "重复惩罚"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "尾部自由采样。"
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "存在惩罚"
+    },
+    "frequency_penalty": {
+      "label": "频率惩罚"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "停止序列"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top Logprobs",
+      "note": "备选 token 的 logprobs。"
+    },
+    "keep_alive": {
+      "label": "保持加载",
+      "note": "模型保持加载的时长。"
+    },
+    "format": {
+      "label": "响应格式",
+      "note": "JSON 模式或 JSON schema。"
+    },
+    "penalize_newline": {
+      "label": "惩罚换行符",
+      "note": "同时惩罚换行 token。"
+    },
+    "maxTokens": {
+      "label": "最大输出 Token 数"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "重复惩罚"
+    },
+    "xtcProbability": {
+      "label": "XTC 概率"
+    },
+    "xtcThreshold": {
+      "label": "XTC 阈值"
+    },
+    "cpuThreads": {
+      "label": "CPU 线程数"
+    },
+    "stopStrings": {
+      "label": "停止序列"
+    },
+    "toolCallStopStrings": {
+      "label": "工具停止序列"
+    },
+    "contextOverflowPolicy": {
+      "label": "上下文溢出策略"
+    },
+    "draftModel": {
+      "label": "草稿模型"
+    },
+    "max_output_tokens": {
+      "label": "最大输出 Token 数"
+    },
+    "candidate_count": {
+      "label": "候选数量"
+    },
+    "stop_sequences": {
+      "label": "停止序列"
+    },
+    "response_logprobs": {
+      "label": "响应 Logprobs"
+    },
+    "response_mime_type": {
+      "label": "响应 MIME 类型"
+    },
+    "max_completion_tokens": {
+      "label": "最大补全 Token 数"
+    },
+    "n": {
+      "label": "候选数量"
+    },
+    "reasoning_effort": {
+      "label": "推理强度"
+    },
+    "verbosity": {
+      "label": "详细程度"
+    },
+    "response_format": {
+      "label": "响应格式"
+    },
+    "logit_bias": {
+      "label": "Logit 偏置"
+    }
+  },
+  "mcp": {
+    "editConfig": "编辑 mcp.json",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name}（{count} 个工具）",
+    "cancel": "取消",
+    "save": "保存"
+  }
+}
