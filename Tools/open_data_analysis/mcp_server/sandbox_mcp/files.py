@@ -18,7 +18,7 @@ import zipfile
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_TMP_ROOT = Path(tempfile.gettempdir()) / "ada-sandbox"
+DEFAULT_TMP_ROOT = Path(tempfile.gettempdir()) / "oda-sandbox"
 DEFAULT_SHARED_ROOT = _REPO_ROOT / "tmp" / "_sandbox"
 SHARED_DIR_NAME = "_sandbox"
 MODEL_SHARED_ROOT = "/mnt/data/_sandbox"

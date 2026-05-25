@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate or update mcp.json for the sandbox MCP server."""
+"""Generate or update mcp.json for the ODA MCP server."""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def _configured_daemon_port() -> int:
 
 
 def _detect_python() -> Path:
-    managed_venv = ASLM_ROOT / "Data" / "venvs" / "tools" / "ODA"
+    managed_venv = ASLM_ROOT / "Data" / "venvs" / "tools" / "open_data_analysis"
     if sys.platform.startswith("win"):
         candidates = [
             managed_venv / "Scripts" / "python.exe",
@@ -158,7 +158,7 @@ def _server_entry(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate or update mcp.json for the sandbox MCP server."
+        description="Generate or update mcp.json for the ODA MCP server."
     )
     parser.add_argument(
         "--target",
@@ -172,8 +172,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--server-name",
-        default="sandbox",
-        help="Server key inside mcpServers. Default: sandbox",
+        default="oda",
+        help="Server key inside mcpServers. Default: oda",
     )
     parser.add_argument(
         "--image",
@@ -193,7 +193,7 @@ def main() -> None:
         "--shared-root",
         type=Path,
         default=SHARED_ROOT,
-        help="Host-visible _sandbox directory. Default: <repo>/tmp/_sandbox",
+        help="Host-visible _sandbox directory. Default: <repo>/Tools/open_data_analysis/tmp/_sandbox",
     )
     parser.add_argument(
         "--timeout",
@@ -283,7 +283,7 @@ def main() -> None:
 
     print(f"Python   : {python_exe}")
     print(f"MCP root : {MCP_SERVER}")
-    print(f"Tmp root : {tmp_root or Path(tempfile.gettempdir()) / 'ada-sandbox'}")
+    print(f"Tmp root : {tmp_root or Path(tempfile.gettempdir()) / 'oda-sandbox'}")
     print(f"Shared   : {shared_root}")
     print(f"Image    : {args.image}")
     if args.use_daemon or args.daemon_autostart or args.daemon_url:

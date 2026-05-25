@@ -76,7 +76,7 @@ _BACKGROUND_CLEANUP_INTERVAL_SECONDS = 5 * 60   # run background reaper every 5 
 _BACKGROUND_CLEANUP_STARTED = False
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_TMP_ROOT = Path(tempfile.gettempdir()) / "ada-sandbox"
+DEFAULT_TMP_ROOT = Path(tempfile.gettempdir()) / "oda-sandbox"
 DEFAULT_RUNS_ROOT = DEFAULT_TMP_ROOT / "runs"
 HOLDER_UID = "999:999"
 COMMAND_UID = "1000:1000"
