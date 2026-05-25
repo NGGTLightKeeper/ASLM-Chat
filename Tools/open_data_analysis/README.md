@@ -8,11 +8,11 @@ The persistent shared workspace on the host is:
 <Tools/open_data_analysis>/tmp/_sandbox/
 ```
 
-Inside ephemeral Docker run containers it is mounted as:
+Inside persistent pool containers it is mounted as:
 
 ```text
-/mnt/data/_sandbox/   (read/write, user-visible)
-/mnt/data/work/       (read/write, per-run scratch — not for user delivery)
+/mnt/data/_sandbox/   (read/write, user-visible, shared across all calls in a chat)
+/mnt/data/work/       (read/write, per-chat scratch)
 ```
 
 ---
@@ -40,27 +40,37 @@ Chat requests pass `sandbox_default_mode: "data_analysis"` in `tool_context`.
         │
         ▼
   Tools/open_data_analysis/mcp-server.py
-        │
-        ├── (optional) sandboxd daemon — reuses warm containers
-        │
+        │  (always via HTTP — daemon is auto-started on first call)
         ▼
-  Docker container (sandbox:latest or configured image)
+  sandboxd (sandbox_mcp.daemon) — per-scope container pool
+        │  one container per chat_id, reused for every oda_python in that chat
+        ▼
+  Docker container  oda-chat-<chat_id>  (persistent, long-lived)
         │
         ├── /mnt/data/_sandbox  ← host tmp/_sandbox (shared, persistent)
-        └── /mnt/data/work      ← per-run temp (private scratch)
+        └── /mnt/data/work      ← host tmp/pool/<chat_id>/work (per-chat)
+            /home/sandbox/.local ← host tmp/pool/<chat_id>/.local (pip cache)
+            /home/sandbox/.cache ← host tmp/pool/<chat_id>/.cache (pip cache)
 ```
 
-Each `oda_python` invocation typically runs `python3 -u -c <code>` with the working directory `/mnt/data/work`. Code should read/write **user-visible** artifacts under `/mnt/data/_sandbox`.
+**Key properties:**
+- **sandboxd always required** — `mcp-server.py` sets `SANDBOX_USE_DAEMON=1` and `SANDBOX_DAEMON_AUTOSTART=1` by default.
+- **One container per chat** — named `oda-chat-<chat_id>`. Created once, reused for all `oda_python` calls in the session. Idle timeout default: **24 h** (`SANDBOX_POOL_IDLE_SECONDS`).
+- **pip packages persist** — `.local`/`.cache` are bind-mounted from `tmp/pool/<chat_id>/`, surviving restarts of mcp-server.
+- **Timeout kills only the command** — on `SANDBOX_TIMEOUT` the running command is killed but the container stays up; the next call reuses the same container.
 
 Configuration is driven by environment variables set in `setup_mcp.py` / MCP `mcp.json`:
 
-| Variable | Typical value | Meaning |
-|----------|----------------|---------|
+| Variable | Default | Meaning |
+|----------|---------|---------|
 | `SANDBOX_SHARED_ROOT` | `<repo>/Tools/open_data_analysis/tmp/_sandbox` | Host bind for shared folder |
 | `SANDBOX_IMAGE` | `sandbox:latest` | Container image |
-| `SANDBOX_TIMEOUT` | `60` | Command timeout (seconds) |
-| `SANDBOX_MAX_CONCURRENT` | `1` | Parallel runs |
-| `SANDBOX_USE_DAEMON` | optional | Route via `sandboxd` for lower latency |
+| `SANDBOX_TIMEOUT` | `300` | Per-command timeout (seconds) |
+| `SANDBOX_POOL_IDLE_SECONDS` | `86400` (24 h) | Evict idle pool containers after N seconds |
+| `SANDBOX_USE_DAEMON` | `1` | Route via `sandboxd` (mandatory in production) |
+| `SANDBOX_DAEMON_AUTOSTART` | `1` | Auto-start sandboxd on first call |
+| `SANDBOX_DAEMON_PORT` | `20002` | sandboxd listen port |
+| `SANDBOX_POOL_ROOT` | `{tmp}/pool/` | Host dir for per-chat work/.local/.cache |
 
 ---
 
@@ -83,7 +93,13 @@ This mounts `./tmp/_sandbox` → `/mnt/data/_sandbox` for manual inspection.
 python Tools/open_data_analysis/setup_mcp.py --target project
 ```
 
-Adjust `--image`, `--shared-root`, `--use-daemon`, `--daemon-autostart` as needed. ASLM exposes the server as tool id **`oda`**.
+Daemon and autostart are **on by default** (no flags needed). Adjust `--image`, `--shared-root`, `--daemon-port` as needed. Timeout defaults to **300 s**. ASLM exposes the server as tool id **`oda`**.
+
+To disable the daemon temporarily (direct Docker mode, no pip cache):
+
+```bash
+python Tools/open_data_analysis/setup_mcp.py --target project --no-daemon
+```
 
 ---
 
@@ -199,16 +215,25 @@ Beyond `_sandbox`, the runner may use OS temp directories for per-run layout (`S
 | Area | Location |
 |------|----------|
 | MCP wrapper | `mcp-server.py` |
-| Runner / Docker | `mcp_server/sandbox_mcp/runner.py` |
+| Container pool | `mcp_server/sandbox_mcp/container_pool.py` |
+| HTTP daemon | `mcp_server/sandbox_mcp/daemon.py` |
+| Daemon client | `mcp_server/sandbox_mcp/daemon_client.py` |
+| Runner / Docker (legacy / fallback) | `mcp_server/sandbox_mcp/runner.py` |
 | File bridge | `mcp_server/sandbox_mcp/files.py` |
 | MCP generator | `setup_mcp.py` |
 | Tests | `mcp_server/tests/` |
 
-Example tests (Docker required for integration):
+Unit tests (no Docker required):
 
 ```bash
 cd Tools/open_data_analysis/mcp_server
-pytest tests/
+pytest tests/ -m "not integration"
+```
+
+Integration tests (Docker + `sandbox:latest` required):
+
+```bash
+pytest tests/ -m integration
 ```
 
 ---

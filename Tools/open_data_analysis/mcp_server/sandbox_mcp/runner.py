@@ -64,9 +64,9 @@ def _container_utf8_env_flags() -> list[str]:
 DEFAULT_IMAGE = "sandbox:latest"
 REQUIRED_IMAGE_LABEL = "org.aslm.oda.sandbox-runtime"
 REQUIRED_IMAGE_LABEL_VALUE = "container-v1"
-DEFAULT_TIMEOUT = 60
+DEFAULT_TIMEOUT = 300
 MIN_TIMEOUT = 1
-MAX_TIMEOUT = 120
+MAX_TIMEOUT = 1800
 DEFAULT_MEMORY = "2g"
 DEFAULT_CPUS = "1"
 DEFAULT_PIDS_LIMIT = 256
@@ -622,18 +622,23 @@ def _exec_container_sync(
         completed = subprocess.run(
             [_docker_bin(), *supervisor],
             capture_output=True,
-            timeout=limit + 10,
+            timeout=limit + 15,
         )
         stdout = _decode_subprocess_output(completed.stdout)
         stderr = _decode_subprocess_output(completed.stderr)
         exit_code = completed.returncode
     except subprocess.TimeoutExpired as exc:
+        # Outer wall-clock expired — the docker exec client itself hung.
+        # Do NOT remove the container; only the running command is lost.
+        # The supervisor already SIGKILL'd the user process inside the container.
         timed_out = True
-        _stop_container(container_name)
-        _remove_container(container_name)
         stdout = _decode_subprocess_output(exc.stdout)
         stderr = _decode_subprocess_output(exc.stderr)
         exit_code = 124
+        log.warning(
+            "exec outer timeout container=%s; container preserved for reuse",
+            container_name,
+        )
     except FileNotFoundError as exc:
         raise DockerNotFoundError(str(exc)) from exc
     stdout, _ = truncate_output(stdout)
@@ -886,7 +891,6 @@ def _cleanup_old_state() -> None:
 
 def run_sandbox(request: SandboxRunRequest) -> str:
     _ensure_background_cleanup_started()
-    _cleanup_old_state()
     shared_before = shared_file_snapshot()
     image = _image()
     try:
@@ -908,7 +912,6 @@ def run_sandbox(request: SandboxRunRequest) -> str:
                 run_dir, request.session_id or "", request.input_files
             )
 
-        log.info("sandbox used network", extra={"run_id": run_id, "image": image})
         if err := _ensure_container(container_name=container_name, image=image, run_dir=run_dir):
             return format_result(1, "", err)
         exit_code, stdout, stderr, timed_out = _exec_container_sync(
@@ -976,7 +979,6 @@ def max_concurrent() -> int:
 
 
 def share_sandbox_file(path: object, filename: object | None = None) -> dict:
-    _cleanup_old_state()
     with _SESSION_LOCK:
         run_dir = _ACTIVE_RUN_DIR
     if not run_dir or not run_dir.exists():
@@ -987,7 +989,6 @@ def share_sandbox_file(path: object, filename: object | None = None) -> dict:
 
 
 def list_sandbox_files() -> dict:
-    _cleanup_old_state()
     result = list_shared_files()
     _touch_active_session()
     return result

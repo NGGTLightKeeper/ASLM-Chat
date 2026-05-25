@@ -14,6 +14,15 @@ MCP_SERVER_ROOT = SERVER_ROOT / "mcp_server"
 if str(MCP_SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(MCP_SERVER_ROOT))
 
+# Enable daemon + raise timeout defaults if not already overridden by env/mcp.json.
+# These must be set before sandbox_mcp.config is imported.
+import os as _os
+_os.environ.setdefault("SANDBOX_USE_DAEMON", "1")
+_os.environ.setdefault("SANDBOX_DAEMON_AUTOSTART", "1")
+_os.environ.setdefault("SANDBOX_TIMEOUT", "300")
+_os.environ.setdefault("SANDBOX_MCP_SERVER_ROOT", str(MCP_SERVER_ROOT))
+_os.environ.setdefault("SANDBOX_PYTHON", sys.executable)
+
 from sandbox_mcp import daemon_client
 from sandbox_mcp.files import FileBridgeError, read_shared_image
 from sandbox_mcp.runner import max_concurrent, parse_run_request, run_sandbox, share_sandbox_file
@@ -112,12 +121,29 @@ def _use_daemon() -> bool:
     return daemon_client.daemon_url() is not None
 
 
-async def _run_python(code: object) -> str:
+def _scope_from_context(context: dict[str, Any] | None) -> str | None:
+    """Extract chat_id from tool context to use as container scope."""
+    if not context:
+        return None
+    chat_id = context.get("chat_id")
+    if isinstance(chat_id, str) and chat_id.strip():
+        return chat_id.strip()
+    return None
+
+
+async def _run_python(
+    code: object,
+    *,
+    scope: str | None = None,
+    timeout_s: int | None = None,
+) -> str:
     if not isinstance(code, str) or not code.strip():
         raise ValueError("code must be a non-empty string")
 
     if _use_daemon():
-        return await asyncio.to_thread(daemon_client.run_python, code)
+        return await asyncio.to_thread(
+            daemon_client.run_python, code, scope=scope, timeout_s=timeout_s
+        )
 
     request = parse_run_request({"cmd": ["python3", "-u", "-c", code]})
     async with _RUN_SEMAPHORE:
@@ -146,10 +172,15 @@ async def call_tool(
     context: dict[str, Any] | None = None,
 ) -> str:
     args = dict(arguments or {})
+    scope = _scope_from_context(context)
 
     try:
         if tool_id in ("oda_python", "sandbox_python"):
-            return await _run_python(args.get("code"))
+            return await _run_python(
+                args.get("code"),
+                scope=scope,
+                timeout_s=args.get("timeout_s") if isinstance(args.get("timeout_s"), int) else None,
+            )
 
         if tool_id in ("oda_share_file", "share_file"):
             return await _share_file(args.get("path"), args.get("filename"))

@@ -297,10 +297,13 @@ def test_cleanup_orphan_containers_removes_stopped_container(monkeypatch):
 
 
 def test_run_sandbox_missing_image(monkeypatch, bridge_dirs):
-    from sandbox_mcp.runner import run_sandbox
+    from sandbox_mcp import runner as r
 
+    # Patch _ensure_image to return an error directly (avoids real Docker or
+    # setup-sandbox.py being called, which can succeed on dev machines).
+    monkeypatch.setattr(r, "_ensure_image", lambda img: f"image not found locally: {img}")
     monkeypatch.setenv("SANDBOX_IMAGE", "sandbox:definitely-not-built-xyz")
-    result = run_sandbox(SandboxRunRequest(cmd=["true"]))
+    result = r.run_sandbox(SandboxRunRequest(cmd=["true"]))
     assert "exit_code: 1" in result
     assert "image not found" in result
 
