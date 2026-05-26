@@ -43,6 +43,8 @@ from core.fetch.hosted_clients import async_hosted_search, available_hosted_engi
 from core.query import (
     build_provider_query,
     filter_results_by_domain_constraints,
+    infer_query_types_from_rules,
+    journalistic_intent_terms,
     parse_domain_constraints,
 )
 from core.extract.content_processor import (
@@ -408,304 +410,13 @@ def _strip_trailing_year(query: str) -> str:
 
     return query
 
-_JOURNALISTIC_HINTS = frozenset({
-    # English
-    "latest", "news", "today", "yesterday", "breaking", "headline", "current",
-    "update", "updates", "right now", "now",
-    # Russian / Ukrainian
-    "новости", "последние", "срочно", "сейчас", "сегодня", "прямо сейчас",
-    "новини", "зараз", "сьогодні", "останні", "терміново",
-    # German / Dutch
-    "nachrichten", "aktuell", "heute", "neueste", "meldung",
-    "nieuws", "vandaag", "laatste", "nu",
-    # French
-    "actualité", "aujourd'hui", "nouvelles", "dernières",
-    # Spanish / Portuguese
-    "noticias", "hoy", "últimas", "ahora",
-    "notícias", "hoje", "agora",
-    # Italian
-    "notizie", "oggi", "ultime", "adesso",
-    # Polish
-    "wiadomości", "dziś", "dzisiaj", "ostatnie", "pilne",
-    # Turkish
-    "haberler", "bugün", "son dakika", "şimdi",
-    # Arabic / Hebrew / Persian
-    "أخبار", "اليوم", "عاجل", "آخر",
-    "חדשות", "היום", "עכשיו", "אחרון",
-    "اخبار", "امروز", "الان", "آخرین",
-    # Japanese / Chinese / Korean
-    "ニュース", "速報", "今日",
-    "新闻", "今天", "快讯",
-    "뉴스", "오늘", "속보",
-    # Hindi / Greek / Thai
-    "समाचार", "आज", "अभी", "ताज़ा",
-    "νέα", "σήμερα", "τώρα", "τελευταία",
-    "ข่าว", "วันนี้", "ล่าสุด", "ด่วน",
-})
 
-_TECHNICAL_HINTS = frozenset({
-    # Languages / runtimes (language-agnostic proper nouns)
-    "python", "javascript", "typescript", "java", "golang", "rust", "cpp",
-    "c++", "ruby", "php", "swift", "kotlin", "scala", "bash", "shell",
-    # Infra / tooling (proper nouns)
-    "docker", "kubernetes", "k8s", "linux", "ubuntu", "git", "github",
-    "gitlab", "sql", "postgresql", "mysql", "mongodb", "redis",
-    "pytorch", "torch", "tensorflow", "jax", "numpy", "pandas", "scipy",
-    # Universal technical acronyms
-    "api", "sdk", "cli", "gui", "ide",
-    # English — concepts
-    "library", "package", "module", "framework", "function", "method",
-    "class", "syntax", "interface", "type",
-    # English — actions / doc keywords
-    "install", "configure", "setup", "deploy", "build", "compile",
-    "tutorial", "docs", "documentation", "reference", "guide", "howto",
-    "example", "snippet", "changelog", "readme",
-    # Russian / Ukrainian
-    "установка", "настройка", "конфигурация", "документация",
-    "руководство", "пример", "библиотека",
-    "встановлення", "налаштування", "документація", "бібліотека",
-    # German / Dutch
-    "installieren", "konfigurieren", "dokumentation", "anleitung", "beispiel",
-    "bibliothek", "entwicklung", "einrichten", "kompilieren",
-    "installeren", "configureren", "handleiding", "voorbeeld",
-    # French
-    "installer", "configurer", "tutoriel", "exemple", "bibliothèque", "développement",
-    # Spanish / Portuguese / Italian
-    "instalar", "configurar", "documentación", "guía", "ejemplo", "biblioteca",
-    "instalação", "documentação", "tutorial",
-    "installare", "configurare", "documentazione", "guida", "libreria",
-    # Polish / Turkish
-    "instalacja", "konfiguracja", "dokumentacja", "poradnik", "przykład",
-    "kurulum", "yapılandırma", "belge", "rehber", "kütüphane",
-    # Arabic / Hebrew / Persian
-    "تثبيت", "إعداد", "توثيق", "مكتبة",
-    "התקנה", "תיעוד", "מדריך", "ספרייה",
-    "نصب", "پیکربندی", "مستندات", "کتابخانه",
-    # Chinese / Japanese / Korean
-    "安装", "配置", "文档", "教程", "示例", "开发", "框架",
-    "インストール", "設定", "ドキュメント", "チュートリアル", "ライブラリ",
-    "설치", "설정", "문서", "튜토리얼", "라이브러리",
-    # Hindi / Greek / Thai
-    "स्थापना", "दस्तावेज़", "उदाहरण",
-    "εγκατάσταση", "τεκμηρίωση", "παράδειγμα",
-    "ติดตั้ง", "เอกสาร", "คู่มือ",
-})
 
-_TROUBLESHOOTING_HINTS = frozenset({
-    # English
-    "fix", "fixing", "fixed", "broken", "not working", "doesn't work",
-    "won't", "can't", "cannot", "failed", "failure", "crash", "crashes",
-    "issue", "bug", "bugs", "solve", "solution", "debug", "debugging",
-    "troubleshoot", "workaround", "patch",
-    # Russian / Ukrainian
-    "не работает", "сломан", "проблема", "исправить", "решение",
-    "не працює", "зламаний", "виправити", "рішення",
-    # German / Dutch
-    "fehler", "funktioniert nicht", "problem", "lösung", "beheben", "absturz",
-    "fout", "werkt niet", "oplossing", "repareren",
-    # French
-    "erreur", "ne fonctionne pas", "problème", "solution", "corriger", "débogage",
-    # Spanish / Portuguese / Italian
-    "error", "no funciona", "problema", "solución", "arreglar", "depurar",
-    "não funciona", "solução", "corrigir",
-    "non funziona", "problema", "soluzione", "correggere",
-    # Polish / Turkish
-    "błąd", "nie działa", "rozwiązanie", "naprawić",
-    "hata", "çalışmıyor", "sorun", "çözüm", "düzeltme",
-    # Arabic / Hebrew / Persian
-    "خطأ", "لا يعمل", "مشكلة", "حل", "إصلاح",
-    "שגיאה", "לא עובד", "בעיה", "פתרון",
-    "خطا", "کار نمی‌کند", "مشکل", "راه‌حل",
-    # Chinese / Japanese / Korean
-    "错误", "不工作", "故障", "问题", "修复", "调试",
-    "エラー", "動かない", "バグ", "修正", "デバッグ",
-    "오류", "작동 안 함", "버그", "수정", "디버그",
-    # Hindi / Greek / Thai
-    "त्रुटि", "काम नहीं", "समस्या", "समाधान",
-    "σφάλμα", "δεν λειτουργεί", "πρόβλημα", "λύση",
-    "ข้อผิดพลาด", "ไม่ทำงาน", "ปัญหา", "แก้ไข",
-})
 
-_ACADEMIC_HINTS = frozenset({
-    # English
-    "research", "study", "studies", "paper", "papers", "journal",
-    "citation", "abstract", "hypothesis", "methodology", "dataset",
-    "arxiv", "pubmed", "doi", "proceedings", "conference",
-    "dissertation", "thesis", "peer-reviewed", "meta-analysis",
-    # Russian / Ukrainian
-    "исследование", "статья", "диссертация", "научный", "публикация",
-    "дослідження", "наукова", "дисертація",
-    # German / Dutch
-    "forschung", "studie", "artikel", "zeitschrift", "dissertation", "wissenschaft",
-    "onderzoek", "tijdschrift", "scriptie", "wetenschappelijk",
-    # French
-    "recherche", "étude", "revue", "thèse", "scientifique", "publication",
-    # Spanish / Portuguese / Italian
-    "investigación", "revista", "tesis", "científico",
-    "pesquisa", "dissertação",
-    "ricerca", "rivista", "scientifico",
-    # Polish / Turkish
-    "badania", "czasopismo", "naukowy",
-    "araştırma", "makale", "dergi", "bilimsel",
-    # Arabic / Hebrew / Persian
-    "بحث", "دراسة", "مجلة", "أطروحة", "علمي",
-    "מחקר", "מאמר", "עיתון", "עיוני",
-    "پژوهش", "مطالعه", "مقاله", "رساله", "علمی",
-    # Chinese / Japanese / Korean
-    "研究", "论文", "期刊", "学术", "发表", "科学",
-    "論文", "学術", "ジャーナル", "科学",
-    "연구", "논문", "학술", "저널", "과학",
-    # Hindi / Greek / Thai
-    "शोध", "अध्ययन", "लेख", "वैज्ञानिक",
-    "έρευνα", "μελέτη", "άρθρο", "επιστημονικός",
-    "การวิจัย", "การศึกษา", "บทความ", "วิทยานิพนธ์",
-})
 
-_FORUM_HINTS = frozenset({
-    # English
-    "reddit", "stackoverflow", "forum", "discussion", "community",
-    "opinion", "opinions", "thoughts", "experience", "experiences",
-    "recommend", "recommendation", "advice", "suggest",
-    "vs", "versus", "comparison", "compare", "anyone", "someone",
-    # Russian / Ukrainian
-    "форум", "обсуждение", "мнение", "советую", "рекомендую", "сравнение",
-    "обговорення", "думка", "порада", "порівняння",
-    # German / Dutch
-    "forum", "diskussion", "meinung", "erfahrung", "empfehlung", "vergleich",
-    "discussie", "mening", "ervaring", "aanbeveling", "vergelijking",
-    # French
-    "discussion", "opinion", "avis", "expérience", "recommandation", "comparaison",
-    # Spanish / Portuguese / Italian
-    "foro", "discusión", "opinión", "experiencia", "recomendación", "comparación",
-    "fórum", "opinião", "experiência", "comparação",
-    "discussione", "opinione", "esperienza", "confronto",
-    # Polish / Turkish
-    "dyskusja", "opinia", "doświadczenie", "rekomendacja", "porównanie",
-    "tartışma", "görüş", "deneyim", "öneri", "karşılaştırma",
-    # Arabic / Hebrew / Persian
-    "منتدى", "نقاش", "رأي", "تجربة", "مقارنة",
-    "פורום", "דיון", "דעה", "המלצה", "השוואה",
-    "انجمن", "بحث", "نظر", "تجربه", "مقایسه",
-    # Chinese / Japanese / Korean
-    "论坛", "讨论", "意见", "经验", "推荐", "比较",
-    "フォーラム", "意見", "経験", "おすすめ", "比較",
-    "포럼", "토론", "의견", "경험", "추천", "비교",
-    # Hindi / Greek / Thai
-    "मंच", "चर्चा", "राय", "अनुभव", "सिफारिश", "तुलना",
-    "φόρουμ", "συζήτηση", "γνώμη", "εμπειρία", "σύγκριση",
-    "ฟอรั่ม", "การสนทนา", "ความคิดเห็น", "ประสบการณ์", "เปรียบเทียบ",
-})
 
-_SHOPPING_HINTS = frozenset({
-    # English
-    "buy", "purchase", "order", "price", "prices", "cheap", "cheapest",
-    "affordable", "deal", "deals", "discount", "coupon", "sale",
-    "amazon", "ebay", "shop", "store", "shipping", "delivery",
-    # Russian / Ukrainian
-    "купить", "цена", "стоимость", "заказать", "магазин", "скидка",
-    "купити", "ціна", "вартість", "замовити", "знижка",
-    # German / Dutch
-    "kaufen", "preis", "günstig", "billig", "angebot", "rabatt", "bestellen",
-    "kopen", "goedkoop", "aanbieding", "korting", "bestelling", "levering",
-    # French
-    "acheter", "prix", "pas cher", "offre", "réduction", "commander", "livraison",
-    # Spanish / Portuguese / Italian
-    "comprar", "precio", "barato", "oferta", "descuento", "tienda", "envío",
-    "preço", "entrega",
-    "comprare", "prezzo", "economico", "sconto", "negozio", "consegna",
-    # Polish / Turkish
-    "kupić", "cena", "tanie", "oferta", "rabat", "sklep", "zamówienie", "dostawa",
-    "satın al", "fiyat", "ucuz", "teklif", "indirim", "sipariş", "teslimat",
-    # Arabic / Hebrew / Persian
-    "شراء", "سعر", "رخيص", "عرض", "خصم", "متجر", "توصيل",
-    "לקנות", "מחיר", "זול", "הנחה", "חנות", "משלוח",
-    "خرید", "قیمت", "ارزان", "تخفیف", "فروشگاه", "تحویل",
-    # Chinese / Japanese / Korean
-    "购买", "价格", "便宜", "折扣", "商店", "配送",
-    "購入", "価格", "安い", "割引", "注文", "送料",
-    "구매", "가격", "저렴", "할인", "주문", "배송",
-    # Hindi / Greek / Thai
-    "खरीदना", "कीमत", "सस्ता", "छूट", "डिलीवरी",
-    "αγορά", "τιμή", "φθηνό", "έκπτωση", "παράδοση",
-    "ซื้อ", "ราคา", "ถูก", "ส่วนลด", "จัดส่ง",
-})
 
-_FINANCE_HINTS = frozenset({
-    # English
-    "stock", "stocks", "market", "markets", "crypto", "bitcoin", "ethereum",
-    "btc", "eth", "trading", "invest", "investment", "portfolio",
-    "nasdaq", "nyse", "s&p", "sp500", "dow", "forex", "currency",
-    "bond", "etf", "dividend", "earnings", "ipo",
-    # Russian / Ukrainian
-    "акции", "биржа", "курс", "рубль", "доллар", "инвестиции",
-    "акції", "ринок", "крипто", "інвестиції", "валюта",
-    # German / Dutch
-    "aktie", "aktien", "markt", "krypto", "investition", "börse", "währung",
-    "aandeel", "markt", "crypto", "investering", "beurs", "valuta",
-    # French
-    "action", "actions", "marché", "crypto", "investissement", "bourse", "devise",
-    # Spanish / Portuguese / Italian
-    "acción", "acciones", "mercado", "inversión", "bolsa", "divisa",
-    "ação", "ações", "investimento",
-    "azione", "azioni", "mercato", "investimento", "borsa",
-    # Polish / Turkish
-    "akcja", "rynek", "krypto", "inwestycja", "giełda", "waluta",
-    "hisse", "piyasa", "kripto", "yatırım", "borsa",
-    # Arabic / Hebrew / Persian
-    "أسهم", "سوق", "استثمار", "بورصة", "عملة",
-    "מניות", "שוק", "השקעה", "בורסה", "מטבע",
-    "سهام", "بازار", "سرمایه‌گذاری", "بورس",
-    # Chinese / Japanese / Korean
-    "股票", "市场", "加密货币", "投资", "交易所", "货币",
-    "株式", "仮想通貨", "投資", "取引所", "通貨",
-    "주식", "시장", "암호화폐", "투자", "거래소",
-    # Hindi / Greek / Thai
-    "शेयर", "बाजार", "निवेश", "क्रिप्टो",
-    "μετοχές", "αγορά", "επένδυση", "κρυπτό",
-    "หุ้น", "ตลาด", "ลงทุน", "คริปโต",
-})
 
-_MEDICAL_HINTS = frozenset({
-    # English
-    "symptom", "symptoms", "disease", "condition", "treatment",
-    "medicine", "medication", "drug", "dose", "dosage",
-    "diagnosis", "therapy", "syndrome", "cancer", "diabetes",
-    "infection", "vaccine", "surgery", "doctor", "physician", "health",
-    "medical", "clinical", "clinical trial", "clinical trials", "biotechnology",
-    "biotech", "crispr", "gene therapy", "gene editing", "implant", "implants",
-    "neuralink", "brain-computer", "brain computer",
-    # Russian / Ukrainian
-    "симптом", "болезнь", "лечение", "препарат", "диагноз", "здоровье",
-    "симптом", "хвороба", "лікування", "препарат", "діагноз",
-    "медицинские", "медицина", "рак", "вакцины", "вакцина",
-    "генная терапия", "биотехнологии", "биотехнология", "редактирование генов",
-    "клинические испытания", "нейроинтерфейс", "нейроинтерфейсы",
-    "имплантат", "имплантаты", "мозг-компьютер", "мозг компьютер",
-    # German / Dutch
-    "symptom", "krankheit", "behandlung", "medikament", "diagnose", "therapie", "arzt",
-    "ziekte", "behandeling", "medicijn", "gezondheid", "dokter",
-    # French
-    "symptôme", "maladie", "traitement", "médicament", "diagnostic", "santé", "médecin",
-    # Spanish / Portuguese / Italian
-    "síntoma", "enfermedad", "tratamiento", "medicamento", "diagnóstico", "salud", "médico",
-    "sintoma", "doença", "tratamento", "saúde",
-    "sintomo", "malattia", "trattamento", "farmaco", "diagnosi", "salute",
-    # Polish / Turkish
-    "objaw", "choroba", "leczenie", "lek", "diagnoza", "zdrowie", "lekarz",
-    "belirti", "hastalık", "tedavi", "ilaç", "teşhis", "sağlık",
-    # Arabic / Hebrew / Persian
-    "مرض", "علاج", "دواء", "تشخيص", "صحة", "طبيب",
-    "מחלה", "טיפול", "תרופה", "אבחנה", "בריאות", "רופא",
-    "بیماری", "درمان", "دارو", "تشخیص", "سلامت",
-    # Chinese / Japanese / Korean
-    "症状", "疾病", "治疗", "药物", "诊断", "健康", "医生",
-    "症状", "病気", "治療", "薬", "診断", "健康", "医師",
-    "증상", "질병", "치료", "약물", "진단", "건강",
-    # Hindi / Greek / Thai
-    "लक्षण", "बीमारी", "उपचार", "स्वास्थ्य",
-    "σύμπτωμα", "ασθένεια", "θεραπεία", "υγεία",
-    "อาการ", "โรค", "การรักษา", "ยา", "สุขภาพ",
-})
 
 # ---------------------------------------------------------------------------
 # Query quality gate — SEO spam words & word-count ceiling
@@ -1047,45 +758,22 @@ def infer_query_language(query: str) -> str:
     return "en"
 
 
-_ORDERED_QUERY_TYPES: list[tuple[str, frozenset]] = [
-    ("finance",         _FINANCE_HINTS),
-    ("medical",         _MEDICAL_HINTS),
-    ("journalistic",    _JOURNALISTIC_HINTS),
-    ("academic",        _ACADEMIC_HINTS),
-    ("shopping",        _SHOPPING_HINTS),
-    ("troubleshooting", _TROUBLESHOOTING_HINTS),
-    ("forum",           _FORUM_HINTS),
-    ("technical",       _TECHNICAL_HINTS),
-]
 
 
 def infer_query_types(query: str) -> list[str]:
-    """Classify query into all matching routing-aware types (up to 3).
+    """Classify query into routing-aware types (up to 3), priority-ordered.
 
-    Returns types in priority order — the first entry is the primary type.
-    Having multiple types enables combinatorial backend/TTL selection:
-    "activated charcoal price" → ["shopping", "medical"] routes through
-    both backends and uses the shorter (shopping) TTL.
-
-    Priority order (most specific → least):
-        finance > medical > journalistic > academic > shopping
-        > troubleshooting > forum > technical > general
+    Rule profiles live in ``core/query/class_profiles/``. For Granite query-classifier
+    output, use ``infer_query_types_hybrid(query, model_scores=...)`` from ``core.query``.
     """
-    q = str(query or "").lower()
-    tokens = set(q.split())
-
-    def _matches(hints: frozenset) -> bool:
-        return bool(tokens & hints) or any(h in q for h in hints if " " in h)
-
-    matched = [qt for qt, hints in _ORDERED_QUERY_TYPES if _matches(hints)]
-    return matched[:3] if matched else ["general"]
+    return infer_query_types_from_rules(query, limit=3)
 
 
 def _parse_query_profile(query: str) -> dict:
     q = (query or "").lower()
     years = _YEAR_RE.findall(query)
     tokens = set(q.split())
-    has_intent = bool(tokens & _JOURNALISTIC_HINTS)
+    has_intent = bool(tokens & journalistic_intent_terms())
     return {"years": years, "has_intent": has_intent, "terms": _query_terms(query)}
 
 
