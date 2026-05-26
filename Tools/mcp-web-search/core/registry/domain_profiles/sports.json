@@ -1,0 +1,1442 @@
+{
+  "profile": "sports",
+  "description": "Live scores, fixtures, standings, and sports league coverage.",
+  "defaults": {
+    "base_weight": 1.0,
+    "tier": "moderate",
+    "method": "http",
+    "rps": 1.0,
+    "burst": 3
+  },
+  "domains": [
+    {
+      "pattern": "championat.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "sports"
+      ],
+      "source_types": [
+        "scores",
+        "standings",
+        "fixtures"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "sports": 1.5,
+        "journalistic": 1.1,
+        "entertainment": 0.95,
+        "forum": 0.7,
+        "general": 0.9,
+        "finance": 0.55,
+        "medical": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "finance": 0.45,
+        "weather": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/sports/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/sport/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/match/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/matches/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scores/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/standings/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/table/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixture/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixtures/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/league/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/futbol/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/football/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "espn.com",
+      "aliases": [],
+      "tier": "hardened",
+      "method": "http",
+      "rps": 0.6,
+      "burst": 2,
+      "topics": [
+        "sports"
+      ],
+      "source_types": [
+        "scores",
+        "standings",
+        "fixtures"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "sports": 1.5,
+        "journalistic": 1.1,
+        "entertainment": 0.95,
+        "forum": 0.7,
+        "general": 0.9,
+        "finance": 0.55,
+        "medical": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "finance": 0.45,
+        "weather": 0.5
+      },
+      "try_preview_bot": true,
+      "path_weights": [
+        {
+          "path_prefix": "/sports/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/sport/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/match/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/matches/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scores/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/standings/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/table/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixture/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixtures/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/league/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/futbol/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/football/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "fifa.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "sports"
+      ],
+      "source_types": [
+        "scores",
+        "standings",
+        "fixtures"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "sports": 1.5,
+        "journalistic": 1.1,
+        "entertainment": 0.95,
+        "forum": 0.7,
+        "general": 0.9,
+        "finance": 0.55,
+        "medical": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "finance": 0.45,
+        "weather": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/sports/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/sport/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/match/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/matches/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scores/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/standings/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/table/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixture/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixtures/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/league/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/futbol/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/football/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "flashscore.com",
+      "aliases": [],
+      "tier": "hardened",
+      "method": "camoufox",
+      "rps": 0.3,
+      "burst": 1,
+      "topics": [
+        "sports"
+      ],
+      "source_types": [
+        "scores",
+        "standings",
+        "fixtures"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "sports": 1.5,
+        "journalistic": 1.1,
+        "entertainment": 0.95,
+        "forum": 0.7,
+        "general": 0.9,
+        "finance": 0.55,
+        "medical": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "finance": 0.45,
+        "weather": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/sports/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/sport/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/match/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/matches/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scores/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/standings/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/table/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixture/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixtures/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/league/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/futbol/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/football/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "mlb.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "sports"
+      ],
+      "source_types": [
+        "scores",
+        "standings",
+        "fixtures"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "sports": 1.5,
+        "journalistic": 1.1,
+        "entertainment": 0.95,
+        "forum": 0.7,
+        "general": 0.9,
+        "finance": 0.55,
+        "medical": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "finance": 0.45,
+        "weather": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/sports/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/sport/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/match/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/matches/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scores/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/standings/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/table/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixture/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixtures/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/league/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/futbol/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/football/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "nba.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "sports"
+      ],
+      "source_types": [
+        "scores",
+        "standings",
+        "fixtures"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "sports": 1.5,
+        "journalistic": 1.1,
+        "entertainment": 0.95,
+        "forum": 0.7,
+        "general": 0.9,
+        "finance": 0.55,
+        "medical": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "finance": 0.45,
+        "weather": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/sports/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/sport/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/match/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/matches/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scores/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/standings/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/table/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixture/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixtures/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/league/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/futbol/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/football/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "nfl.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "sports"
+      ],
+      "source_types": [
+        "scores",
+        "standings",
+        "fixtures"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "sports": 1.5,
+        "journalistic": 1.1,
+        "entertainment": 0.95,
+        "forum": 0.7,
+        "general": 0.9,
+        "finance": 0.55,
+        "medical": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "finance": 0.45,
+        "weather": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/sports/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/sport/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/match/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/matches/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scores/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/standings/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/table/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixture/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixtures/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/league/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/futbol/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/football/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "skysports.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "sports"
+      ],
+      "source_types": [
+        "scores",
+        "standings",
+        "fixtures"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "sports": 1.5,
+        "journalistic": 1.1,
+        "entertainment": 0.95,
+        "forum": 0.7,
+        "general": 0.9,
+        "finance": 0.55,
+        "medical": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "finance": 0.45,
+        "weather": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/sports/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/sport/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/match/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/matches/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scores/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/standings/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/table/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixture/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixtures/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/league/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/futbol/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/football/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "sofascore.com",
+      "aliases": [],
+      "tier": "hardened",
+      "method": "camoufox",
+      "rps": 0.3,
+      "burst": 1,
+      "topics": [
+        "sports"
+      ],
+      "source_types": [
+        "scores",
+        "standings",
+        "fixtures"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "sports": 1.5,
+        "journalistic": 1.1,
+        "entertainment": 0.95,
+        "forum": 0.7,
+        "general": 0.9,
+        "finance": 0.55,
+        "medical": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "finance": 0.45,
+        "weather": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/sports/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/sport/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/match/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/matches/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scores/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/standings/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/table/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixture/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixtures/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/league/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/futbol/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/football/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "sports.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "sports"
+      ],
+      "source_types": [
+        "scores",
+        "standings",
+        "fixtures"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "sports": 1.5,
+        "journalistic": 1.1,
+        "entertainment": 0.95,
+        "forum": 0.7,
+        "general": 0.9,
+        "finance": 0.55,
+        "medical": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "finance": 0.45,
+        "weather": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/sports/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/sport/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/match/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/matches/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scores/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/standings/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/table/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixture/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixtures/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/league/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/futbol/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/football/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "transfermarkt.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "sports"
+      ],
+      "source_types": [
+        "scores",
+        "standings",
+        "fixtures"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "sports": 1.5,
+        "journalistic": 1.1,
+        "entertainment": 0.95,
+        "forum": 0.7,
+        "general": 0.9,
+        "finance": 0.55,
+        "medical": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "finance": 0.45,
+        "weather": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/sports/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/sport/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/match/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/matches/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scores/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/standings/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/table/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixture/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixtures/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/league/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/futbol/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/football/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "uefa.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "sports"
+      ],
+      "source_types": [
+        "scores",
+        "standings",
+        "fixtures"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "sports": 1.5,
+        "journalistic": 1.1,
+        "entertainment": 0.95,
+        "forum": 0.7,
+        "general": 0.9,
+        "finance": 0.55,
+        "medical": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "finance": 0.45,
+        "weather": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/sports/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/sport/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/match/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/matches/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scores/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/standings/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/table/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixture/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/fixtures/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/league/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/futbol/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        },
+        {
+          "path_prefix": "/football/",
+          "class_weights": {
+            "sports": 1.55
+          }
+        }
+      ]
+    }
+  ]
+}

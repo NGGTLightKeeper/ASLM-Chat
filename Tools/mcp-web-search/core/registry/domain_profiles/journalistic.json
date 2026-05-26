@@ -1,0 +1,518 @@
+{
+  "profile": "journalistic",
+  "description": "News outlets, wire services, and editorial journalism (distinct from community forums).",
+  "defaults": {
+    "base_weight": 1.0,
+    "tier": "moderate",
+    "method": "http",
+    "rps": 1.0,
+    "burst": 3
+  },
+  "domains": [
+    {
+      "pattern": "arstechnica.com",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "notes": "In-depth tech journalism with strong editorial quality.",
+      "topics": [
+        "news",
+        "tech",
+        "academic"
+      ],
+      "response_time_ms": 1030,
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.82,
+        "medical": 0.55,
+        "journalistic": 1.5,
+        "academic": 0.78,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.5,
+        "technical": 1.22,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "forum": 0.25,
+        "shopping": 0.38,
+        "entertainment": 0.42
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/news",
+          "class_weights": {
+            "journalistic": 1.58
+          }
+        },
+        {
+          "path_prefix": "/article",
+          "class_weights": {
+            "journalistic": 1.55
+          }
+        },
+        {
+          "path_prefix": "/world",
+          "class_weights": {
+            "journalistic": 1.52
+          }
+        },
+        {
+          "path_prefix": "/politics",
+          "class_weights": {
+            "journalistic": 1.5
+          }
+        },
+        {
+          "path_prefix": "/business",
+          "class_weights": {
+            "journalistic": 1.48,
+            "finance": 1.05
+          }
+        },
+        {
+          "path_prefix": "/markets",
+          "class_weights": {
+            "journalistic": 1.35,
+            "finance": 1.25
+          }
+        },
+        {
+          "path_prefix": "/live",
+          "class_weights": {
+            "journalistic": 1.5
+          }
+        },
+        {
+          "path_prefix": "/quote",
+          "class_weights": {
+            "finance": 1.45,
+            "journalistic": 1.2
+          }
+        }
+      ],
+      "source_types": [
+        "news",
+        "wire",
+        "editorial"
+      ]
+    },
+    {
+      "pattern": "bbc.com",
+      "aliases": [
+        "bbc.co.uk"
+      ],
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.5,
+      "burst": 4,
+      "notes": "High-quality international news source. Structured article pages with predictable layouts.",
+      "topics": [
+        "news",
+        "general"
+      ],
+      "response_time_ms": 580,
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.82,
+        "medical": 0.55,
+        "journalistic": 1.5,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.72,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "forum": 0.25,
+        "shopping": 0.38,
+        "entertainment": 0.42
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/news",
+          "class_weights": {
+            "journalistic": 1.58
+          }
+        },
+        {
+          "path_prefix": "/article",
+          "class_weights": {
+            "journalistic": 1.55
+          }
+        },
+        {
+          "path_prefix": "/world",
+          "class_weights": {
+            "journalistic": 1.52
+          }
+        },
+        {
+          "path_prefix": "/politics",
+          "class_weights": {
+            "journalistic": 1.5
+          }
+        },
+        {
+          "path_prefix": "/business",
+          "class_weights": {
+            "journalistic": 1.48,
+            "finance": 1.05
+          }
+        },
+        {
+          "path_prefix": "/markets",
+          "class_weights": {
+            "journalistic": 1.35,
+            "finance": 1.25
+          }
+        },
+        {
+          "path_prefix": "/live",
+          "class_weights": {
+            "journalistic": 1.5
+          }
+        },
+        {
+          "path_prefix": "/quote",
+          "class_weights": {
+            "finance": 1.45,
+            "journalistic": 1.2
+          }
+        }
+      ],
+      "source_types": [
+        "news",
+        "wire",
+        "editorial"
+      ]
+    },
+    {
+      "pattern": "lenta.ru",
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "notes": "High-traffic Russian news outlet. Has some anti-bot measures but standard HTTP generally works.",
+      "topics": [
+        "news",
+        "ru"
+      ],
+      "response_time_ms": 1380,
+      "try_preview_bot": true,
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.82,
+        "medical": 0.55,
+        "journalistic": 1.5,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.72,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "forum": 0.25,
+        "shopping": 0.38,
+        "entertainment": 0.42
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/news",
+          "class_weights": {
+            "journalistic": 1.58
+          }
+        },
+        {
+          "path_prefix": "/article",
+          "class_weights": {
+            "journalistic": 1.55
+          }
+        },
+        {
+          "path_prefix": "/world",
+          "class_weights": {
+            "journalistic": 1.52
+          }
+        },
+        {
+          "path_prefix": "/politics",
+          "class_weights": {
+            "journalistic": 1.5
+          }
+        },
+        {
+          "path_prefix": "/business",
+          "class_weights": {
+            "journalistic": 1.48,
+            "finance": 1.05
+          }
+        },
+        {
+          "path_prefix": "/markets",
+          "class_weights": {
+            "journalistic": 1.35,
+            "finance": 1.25
+          }
+        },
+        {
+          "path_prefix": "/live",
+          "class_weights": {
+            "journalistic": 1.5
+          }
+        },
+        {
+          "path_prefix": "/quote",
+          "class_weights": {
+            "finance": 1.45,
+            "journalistic": 1.2
+          }
+        }
+      ],
+      "source_types": [
+        "news",
+        "wire",
+        "editorial"
+      ]
+    },
+    {
+      "pattern": "tass.ru",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "notes": "Russian state wire service. Well-structured pages, minimal bot protection.",
+      "topics": [
+        "news",
+        "ru"
+      ],
+      "response_time_ms": 320,
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.82,
+        "medical": 0.55,
+        "journalistic": 1.5,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.72,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "forum": 0.25,
+        "shopping": 0.38,
+        "entertainment": 0.42
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/news",
+          "class_weights": {
+            "journalistic": 1.58
+          }
+        },
+        {
+          "path_prefix": "/article",
+          "class_weights": {
+            "journalistic": 1.55
+          }
+        },
+        {
+          "path_prefix": "/world",
+          "class_weights": {
+            "journalistic": 1.52
+          }
+        },
+        {
+          "path_prefix": "/politics",
+          "class_weights": {
+            "journalistic": 1.5
+          }
+        },
+        {
+          "path_prefix": "/business",
+          "class_weights": {
+            "journalistic": 1.48,
+            "finance": 1.05
+          }
+        },
+        {
+          "path_prefix": "/markets",
+          "class_weights": {
+            "journalistic": 1.35,
+            "finance": 1.25
+          }
+        },
+        {
+          "path_prefix": "/live",
+          "class_weights": {
+            "journalistic": 1.5
+          }
+        },
+        {
+          "path_prefix": "/quote",
+          "class_weights": {
+            "finance": 1.45,
+            "journalistic": 1.2
+          }
+        }
+      ],
+      "source_types": [
+        "news",
+        "wire",
+        "editorial"
+      ]
+    },
+    {
+      "pattern": "theverge.com",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "notes": "Tech and consumer electronics journalism. Good signal for product launches and industry news.",
+      "topics": [
+        "news",
+        "tech"
+      ],
+      "response_time_ms": 560,
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.82,
+        "medical": 0.55,
+        "journalistic": 1.48,
+        "academic": 0.55,
+        "shopping": 0.7,
+        "troubleshooting": 0.55,
+        "forum": 0.52,
+        "technical": 1.25,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "forum": 0.28,
+        "shopping": 0.38,
+        "entertainment": 0.42
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/news",
+          "class_weights": {
+            "journalistic": 1.58
+          }
+        },
+        {
+          "path_prefix": "/article",
+          "class_weights": {
+            "journalistic": 1.55
+          }
+        },
+        {
+          "path_prefix": "/world",
+          "class_weights": {
+            "journalistic": 1.52
+          }
+        },
+        {
+          "path_prefix": "/politics",
+          "class_weights": {
+            "journalistic": 1.5
+          }
+        },
+        {
+          "path_prefix": "/business",
+          "class_weights": {
+            "journalistic": 1.48,
+            "finance": 1.05
+          }
+        },
+        {
+          "path_prefix": "/markets",
+          "class_weights": {
+            "journalistic": 1.35,
+            "finance": 1.25
+          }
+        },
+        {
+          "path_prefix": "/live",
+          "class_weights": {
+            "journalistic": 1.5
+          }
+        },
+        {
+          "path_prefix": "/quote",
+          "class_weights": {
+            "finance": 1.45,
+            "journalistic": 1.2
+          }
+        }
+      ],
+      "source_types": [
+        "news",
+        "wire",
+        "editorial"
+      ]
+    }
+  ]
+}

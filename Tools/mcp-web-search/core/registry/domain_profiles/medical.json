@@ -1,0 +1,86 @@
+{
+  "profile": "medical",
+  "description": "Clinical and biomedical literature indexes and health-science databases.",
+  "defaults": {
+    "base_weight": 1.0,
+    "tier": "moderate",
+    "method": "http",
+    "rps": 1.0,
+    "burst": 3
+  },
+  "domains": [
+    {
+      "pattern": "pubmed.ncbi.nlm.nih.gov",
+      "tier": "friendly",
+      "method": "json_api",
+      "rps": 2.0,
+      "burst": 4,
+      "response_time_ms": 940,
+      "json_api_hint": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=<q>&retmode=json",
+      "notes": "NCBI E-utilities are fully public without API key (3 req/sec unauthenticated).",
+      "class_weights": {
+        "medical": 1.52,
+        "academic": 1.08
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/",
+          "class_weights": {
+            "medical": 1.52,
+            "academic": 1.05
+          },
+          "source_types": [
+            "journal",
+            "api"
+          ]
+        }
+      ],
+      "source_types": [
+        "api",
+        "journal"
+      ]
+    },
+    {
+      "pattern": "ncbi.nlm.nih.gov",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "response_time_ms": 940,
+      "notes": "General NCBI host. Do not route the whole host through PubMed E-utilities; PMC, Books, Gene and other sections use normal page access.",
+      "class_weights": {
+        "medical": 1.35,
+        "academic": 1.05,
+        "general": 1.0
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/pmc/",
+          "class_weights": {
+            "medical": 1.45,
+            "academic": 1.1
+          },
+          "source_types": [
+            "fulltext",
+            "article"
+          ]
+        },
+        {
+          "path_prefix": "/books/",
+          "class_weights": {
+            "medical": 1.25,
+            "academic": 1.05
+          },
+          "source_types": [
+            "book",
+            "reference"
+          ]
+        }
+      ],
+      "source_types": [
+        "biomedical",
+        "reference"
+      ]
+    }
+  ]
+}

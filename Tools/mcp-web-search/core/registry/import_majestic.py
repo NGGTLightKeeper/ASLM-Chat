@@ -66,7 +66,16 @@ def _existing_patterns(registry: dict) -> set[str]:
 
 
 def _blocked_fragments(registry: dict) -> list[str]:
-    return registry.get("blacklist", {}).get("blocked_domain_contains", [])
+    legacy = registry.get("blacklist", {}).get("blocked_domain_contains", [])
+    if legacy:
+        return legacy
+    try:
+        from core.registry.trust_registry import load_trust_registry
+
+        _, blacklist, _ = load_trust_registry()
+        return blacklist.get("blocked_domain_contains", [])
+    except Exception:
+        return []
 
 
 def run(dry_run: bool = False, stats: bool = False) -> None:

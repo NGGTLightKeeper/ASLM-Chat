@@ -53,6 +53,45 @@ def test_obvious_technical_scores_high() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "cat behavior",
+        "connect phone to wifi",
+        "netflix subscription",
+        "rustic furniture",
+        "reactive oxygen species",
+    ],
+)
+def test_technical_special_terms_do_not_match_unrelated_substrings(query: str) -> None:
+    technical = next(
+        r for r in score_query_against_profiles(query)
+        if r.class_name == "technical"
+    )
+
+    assert technical.score < 0.12
+    assert not any("c++" in reason or "rust" in reason or "react" in reason for reason in technical.reasons)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "c++ vector docs",
+        "c# async await",
+        ".net dependency injection",
+        "dotnet dependency injection",
+        "cplusplus templates guide",
+    ],
+)
+def test_technical_symbol_terms_match_explicit_forms(query: str) -> None:
+    technical = next(
+        r for r in score_query_against_profiles(query)
+        if r.class_name == "technical"
+    )
+
+    assert technical.score >= 0.12
+
+
 def test_obvious_weather_scores_high() -> None:
     scores = {r.class_name: r.score for r in score_query_against_profiles(
         "weather forecast temperature humidity погода на завтра прогноз"
@@ -70,6 +109,12 @@ def test_model_split_technical_academic_keeps_both() -> None:
     classes = [c for c, _, _ in hybrid]
     assert "technical" in classes
     assert "academic" in classes
+
+
+def test_rule_only_order_prefers_score_before_class_priority() -> None:
+    classes = infer_query_types_from_rules("Tesla Model 3 price")
+
+    assert classes[:2] == ["shopping", "automotive"]
 
 
 def test_model_only_technical_adds_general_secondary() -> None:

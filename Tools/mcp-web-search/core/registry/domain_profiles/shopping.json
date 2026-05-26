@@ -1,0 +1,286 @@
+{
+  "profile": "shopping",
+  "description": "Retailers, marketplaces, price comparison, and product catalog crawl targets.",
+  "defaults": {
+    "base_weight": 1.0,
+    "tier": "moderate",
+    "method": "http",
+    "rps": 1.0,
+    "burst": 3
+  },
+  "domains": [
+    {
+      "pattern": "geizhals.at",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "notes": "Useful for EU price comparison and product specs. .at TLD accessible; .de and .eu block automated access.",
+      "topics": [
+        "shopping",
+        "tech"
+      ],
+      "response_time_ms": 450,
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.58,
+        "academic": 0.55,
+        "shopping": 1.5,
+        "troubleshooting": 0.55,
+        "forum": 0.62,
+        "technical": 1.05,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55,
+        "general": 0.55
+      },
+      "hard_demotions": {
+        "journalistic": 0.38,
+        "forum": 0.4,
+        "academic": 0.42
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/product",
+          "class_weights": {
+            "shopping": 1.58
+          }
+        },
+        {
+          "path_prefix": "/products",
+          "class_weights": {
+            "shopping": 1.55
+          }
+        },
+        {
+          "path_prefix": "/dp/",
+          "class_weights": {
+            "shopping": 1.55
+          }
+        },
+        {
+          "path_prefix": "/gp/product",
+          "class_weights": {
+            "shopping": 1.55
+          }
+        },
+        {
+          "path_prefix": "/item",
+          "class_weights": {
+            "shopping": 1.5
+          }
+        },
+        {
+          "path_prefix": "/catalog",
+          "class_weights": {
+            "shopping": 1.48
+          }
+        },
+        {
+          "path_prefix": "/search",
+          "class_weights": {
+            "shopping": 1.42
+          }
+        }
+      ],
+      "source_types": [
+        "price_comparison",
+        "retailer"
+      ]
+    },
+    {
+      "pattern": "ixbt.com",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "notes": "Long-running Russian hardware and tech review site. Detailed product benchmarks and comparisons.",
+      "topics": [
+        "tech",
+        "shopping",
+        "ru"
+      ],
+      "response_time_ms": 700,
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 1.05,
+        "academic": 0.55,
+        "shopping": 1.28,
+        "troubleshooting": 0.55,
+        "forum": 0.65,
+        "technical": 1.2,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55,
+        "general": 0.55
+      },
+      "hard_demotions": {
+        "journalistic": 0.38,
+        "forum": 0.4,
+        "academic": 0.42
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/product",
+          "class_weights": {
+            "shopping": 1.58
+          }
+        },
+        {
+          "path_prefix": "/products",
+          "class_weights": {
+            "shopping": 1.55
+          }
+        },
+        {
+          "path_prefix": "/dp/",
+          "class_weights": {
+            "shopping": 1.55
+          }
+        },
+        {
+          "path_prefix": "/gp/product",
+          "class_weights": {
+            "shopping": 1.55
+          }
+        },
+        {
+          "path_prefix": "/item",
+          "class_weights": {
+            "shopping": 1.5
+          }
+        },
+        {
+          "path_prefix": "/catalog",
+          "class_weights": {
+            "shopping": 1.48
+          }
+        },
+        {
+          "path_prefix": "/search",
+          "class_weights": {
+            "shopping": 1.42
+          }
+        }
+      ],
+      "source_types": [
+        "review",
+        "retailer_adjacent"
+      ]
+    },
+    {
+      "pattern": "newegg.com",
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "notes": "Catalog pages are generally usable; reduce rate to avoid throttling.",
+      "topics": [
+        "shopping",
+        "tech"
+      ],
+      "response_time_ms": 1360,
+      "try_preview_bot": true,
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.58,
+        "academic": 0.55,
+        "shopping": 1.5,
+        "troubleshooting": 0.55,
+        "forum": 0.62,
+        "technical": 0.95,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55,
+        "general": 0.55
+      },
+      "hard_demotions": {
+        "journalistic": 0.38,
+        "forum": 0.4,
+        "academic": 0.42
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/product",
+          "class_weights": {
+            "shopping": 1.58
+          }
+        },
+        {
+          "path_prefix": "/products",
+          "class_weights": {
+            "shopping": 1.55
+          }
+        },
+        {
+          "path_prefix": "/dp/",
+          "class_weights": {
+            "shopping": 1.55
+          }
+        },
+        {
+          "path_prefix": "/gp/product",
+          "class_weights": {
+            "shopping": 1.55
+          }
+        },
+        {
+          "path_prefix": "/item",
+          "class_weights": {
+            "shopping": 1.5
+          }
+        },
+        {
+          "path_prefix": "/catalog",
+          "class_weights": {
+            "shopping": 1.48
+          }
+        },
+        {
+          "path_prefix": "/search",
+          "class_weights": {
+            "shopping": 1.42
+          }
+        }
+      ],
+      "source_types": [
+        "retailer",
+        "marketplace",
+        "price_comparison"
+      ]
+    }
+  ]
+}

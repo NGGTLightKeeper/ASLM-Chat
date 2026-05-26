@@ -63,6 +63,8 @@ _OVERRIDE_MODEL_MAX = 0.45
 
 _TEXT_SIG_RE = re.compile(r"[\W_]+", re.UNICODE)
 _SPECIAL_TERM_RE = re.compile(r"[+#.]")
+_MIN_FUZZY_TERM_LEN = 4
+_TOKEN_BOUNDARY = r"(?<![0-9A-Za-z]){}(?![0-9A-Za-z])"
 
 
 @dataclass(slots=True)
@@ -168,8 +170,9 @@ def _term_in_query(
     term: str, query_norm: str, tokens: set[str], query_raw_lower: str = ""
 ) -> bool:
     raw_term = (term or "").lower()
-    if _SPECIAL_TERM_RE.search(raw_term) and raw_term in (query_raw_lower or query_norm):
-        return True
+    if _SPECIAL_TERM_RE.search(raw_term):
+        pattern = _TOKEN_BOUNDARY.format(re.escape(raw_term))
+        return bool(re.search(pattern, query_raw_lower or ""))
     term_norm = _normalize_text(term)
     if not term_norm:
         return False
@@ -177,21 +180,29 @@ def _term_in_query(
         return term_norm in query_norm
     if term_norm in tokens:
         return True
-    if len(term_norm) <= 3:
-        return term_norm in query_norm.split()
-    return term_norm in query_norm
+    return False
 
 
 def _fuzzy_term_match(term: str, query_norm: str) -> tuple[bool, float]:
+    if _SPECIAL_TERM_RE.search(term or ""):
+        return False, 0.0
     term_norm = _normalize_text(term)
     if not term_norm or len(term_norm) > _FUZZY_TERM_MAX_LEN:
         return False, 0.0
-    if term_norm in query_norm:
-        return True, 1.0
+    if len(term_norm) < _MIN_FUZZY_TERM_LEN:
+        return False, 0.0
+    if " " in term_norm:
+        if abs(len(query_norm) - len(term_norm)) <= max(4, len(term_norm) // 3):
+            whole = _trigram_similarity(term_norm, query_norm)
+            if whole >= _TRIGRAM_THRESHOLD:
+                return True, whole
+        return False, 0.0
     # Compare against each query word of similar length
     words = query_norm.split()
     best = 0.0
     for word in words:
+        if word.startswith(term_norm) or term_norm.startswith(word):
+            continue
         if abs(len(word) - len(term_norm)) > max(3, len(term_norm) // 2):
             continue
         sim = _trigram_similarity(term_norm, word)
@@ -200,9 +211,10 @@ def _fuzzy_term_match(term: str, query_norm: str) -> tuple[bool, float]:
     if best >= _TRIGRAM_THRESHOLD:
         return True, best
     # Whole-query fuzzy for aliases
-    whole = _trigram_similarity(term_norm, query_norm)
-    if whole >= _TRIGRAM_THRESHOLD:
-        return True, whole
+    if abs(len(query_norm) - len(term_norm)) <= max(4, len(term_norm) // 3):
+        whole = _trigram_similarity(term_norm, query_norm)
+        if whole >= _TRIGRAM_THRESHOLD:
+            return True, whole
     return False, best
 
 
@@ -286,11 +298,11 @@ def _rule_scores_map(query: str) -> dict[str, float]:
 
 
 def _top_rule_classes(scores: list[ClassRuleScore], limit: int = 3, min_score: float = 0.12) -> list[str]:
-    picked = [r.class_name for r in scores if r.score >= min_score and r.class_name != "general"]
+    picked = [r for r in scores if r.score >= min_score and r.class_name != "general"]
     if not picked:
         return ["general"]
-    ordered = sorted(picked, key=lambda c: _PRIORITY_INDEX.get(c, 999))[:limit]
-    return ordered
+    ordered = sorted(picked, key=lambda r: (-r.score, _PRIORITY_INDEX.get(r.class_name, 999)))[:limit]
+    return [r.class_name for r in ordered]
 
 
 def infer_query_types_from_rules(query: str, limit: int = 3) -> list[str]:

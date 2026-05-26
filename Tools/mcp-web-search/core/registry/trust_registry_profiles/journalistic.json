@@ -1,0 +1,1697 @@
+{
+  "profile": "journalistic",
+  "description": "News outlets, wire services, and editorial journalism.",
+  "defaults": {
+    "tier": "B",
+    "cat": "news"
+  },
+  "domains": [
+    {
+      "pattern": "74.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "abcnews.go.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "aif.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "aljazeera.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "apnews.com",
+      "tier": "A",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news."
+    },
+    {
+      "pattern": "arabnews.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "arstechnica.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "technical": 0.86,
+        "finance": 0.81,
+        "academic": 0.8,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65,
+        "shopping": 0.68
+      },
+      "notes": "In-depth tech journalism with strong editorial quality."
+    },
+    {
+      "pattern": "axios.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "bbc.co.uk",
+      "tier": "A",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news."
+    },
+    {
+      "pattern": "bbc.com",
+      "tier": "A",
+      "cat": "news",
+      "aliases": [
+        "bbc.co.uk"
+      ],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.81,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news. High-quality international news source. Structured article pages with predictable layouts."
+    },
+    {
+      "pattern": "bellingcat.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "bfm.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "bloomberg.com",
+      "tier": "A",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news."
+    },
+    {
+      "pattern": "breakingdefense.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "buzzfeednews.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "caixin.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "cbsnews.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "chicagotribune.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "cnbc.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "cnn.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "corriere.it",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "dailybeast.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "defensenews.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "defenseone.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "dw.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "e1.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "echo.msk.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "economist.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "elmundo.es",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "elpais.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "faz.net",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "fontanka.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "forbes.ru",
+      "tier": "B",
+      "cat": "news_ru",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news_ru."
+    },
+    {
+      "pattern": "foreignaffairs.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "foreignpolicy.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "foxnews.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "france24.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "ft.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "gazeta.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "globaltimes.cn",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "haaretz.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "huffpost.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "independent.co.uk",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "indianexpress.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "interfax.ru",
+      "tier": "A",
+      "cat": "news_ru",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news_ru."
+    },
+    {
+      "pattern": "iz.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "janes.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "japantimes.co.jp",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "kommersant.ru",
+      "tier": "A",
+      "cat": "news_ru",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news_ru."
+    },
+    {
+      "pattern": "kp.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "latimes.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "lefigaro.fr",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "lemonde.fr",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "lenta.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.81,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "High-traffic Russian news outlet. Has some anti-bot measures but standard HTTP generally works."
+    },
+    {
+      "pattern": "livemint.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "marketwatch.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "meduza.io",
+      "tier": "B",
+      "cat": "news_ru",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news_ru."
+    },
+    {
+      "pattern": "middleeasteye.net",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "mk.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "motherjones.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "msnbc.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "nbcnews.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "ndtv.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "newsweek.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "newyorker.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "ngs.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "nikkei.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "novayagazeta.eu",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "npr.org",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "nytimes.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "occrp.org",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "pbs.org",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "people.com.cn",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "politico.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "propublica.org",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "rbc.ru",
+      "tier": "A",
+      "cat": "news_ru",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news_ru."
+    },
+    {
+      "pattern": "repubblica.it",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "reuters.com",
+      "tier": "A",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news."
+    },
+    {
+      "pattern": "rg.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "ria.ru",
+      "tier": "B",
+      "cat": "news_ru",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news_ru."
+    },
+    {
+      "pattern": "rosbalt.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "rt.com",
+      "tier": "C",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "salon.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "scmp.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "sky.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "slate.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "snob.ru",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "spiegel.de",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "sputniknews.com",
+      "tier": "C",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "straitstimes.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "sueddeutsche.de",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "tass.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "tass.ru",
+      "tier": "A",
+      "cat": "news_ru",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.81,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news_ru. Russian state wire service. Well-structured pages, minimal bot protection."
+    },
+    {
+      "pattern": "telegraph.co.uk",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "theatlantic.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "thebell.io",
+      "tier": "B",
+      "cat": "news_ru",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news_ru."
+    },
+    {
+      "pattern": "theguardian.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "thehill.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "thehindu.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "theintercept.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "thenationalnews.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "theverge.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "technical": 0.87,
+        "finance": 0.81,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65,
+        "shopping": 0.68
+      },
+      "notes": "Tech and consumer electronics journalism. Good signal for product launches and industry news."
+    },
+    {
+      "pattern": "time.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "timesofisrael.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "usatoday.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "vedomosti.ru",
+      "tier": "A",
+      "cat": "news_ru",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": "Migrated from trust_registry.json cat=news_ru."
+    },
+    {
+      "pattern": "vice.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "vox.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "washingtonpost.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "wsj.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "xinhuanet.com",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "zeit.de",
+      "tier": "B",
+      "cat": "news",
+      "aliases": [],
+      "class_affinity": {
+        "journalistic": 1.0,
+        "general": 0.88,
+        "finance": 0.78,
+        "government": 0.72,
+        "legal": 0.68,
+        "local": 0.65
+      },
+      "notes": ""
+    }
+  ]
+}
