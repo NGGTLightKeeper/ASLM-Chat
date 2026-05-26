@@ -199,3 +199,4 @@ Settings/host_theme.json
 Settings/host_locale.json
 MCP/mcp.json
 Data/
+!Apps/Data/
