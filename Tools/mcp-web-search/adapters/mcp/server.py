@@ -360,6 +360,7 @@ web_search = mcp.tool()(web_search)
 
 async def read_page(
     url: str | list[str],
+    focus: str = "",
     context: FastMCPContext | dict[str, Any] | None = None,
 ) -> CallToolResult:
     logger.info(
@@ -395,7 +396,7 @@ async def read_page(
                 structuredContent=payload,
                 isError=True,
             )
-        tasks = [run_read_page(u) for u in urls[:_BATCH_QUERY_LIMIT]]
+        tasks = [run_read_page(u, focus=focus) for u in urls[:_BATCH_QUERY_LIMIT]]
         results = await _keepalive(context, "reading...", asyncio.gather(*tasks))
         logger.info("mcp.read_page.done batch=True urls=%d", len(urls))
         payload = _read_page_payload(urls[:_BATCH_QUERY_LIMIT], results)
@@ -416,7 +417,7 @@ async def read_page(
         )
 
     url_text = url.strip()
-    result = await _keepalive(context, "reading...", run_read_page(url_text))
+    result = await _keepalive(context, "reading...", run_read_page(url_text, focus=focus))
     logger.info("mcp.read_page.done batch=False")
     payload = _read_page_payload([url_text], [result])
     write_search_io_event(

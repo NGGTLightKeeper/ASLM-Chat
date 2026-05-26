@@ -12,15 +12,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
+from .config import DOMAIN_PROFILES_DIR, DOMAIN_REGISTRY_PATH
 from .endpoint_overlay import EndpointStrategy, get_endpoint_overlay, normalize_domain
 
 logger = logging.getLogger("core.registry.domain_registry")
 
 _REGISTRY_DIR = Path(__file__).resolve().parent
-_PROFILES_DIR = _REGISTRY_DIR / "domain_profiles"
+_PROFILES_DIR = DOMAIN_PROFILES_DIR
 _MANIFEST_NAME = "manifest.json"
 _LEGACY_CANDIDATES = (
-    _REGISTRY_DIR / "domain_registry.json",
+    DOMAIN_REGISTRY_PATH,
     _REGISTRY_DIR / "config" / "domain_registry.json",
     _REGISTRY_DIR.parent / "config" / "domain_registry.json",
     _REGISTRY_DIR.parent / "domain_registry.json",

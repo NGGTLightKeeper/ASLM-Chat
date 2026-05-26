@@ -55,6 +55,9 @@ def iter_venv_configs() -> list[dict[str, Any]]:
         packages = raw_item.get("packages", [])
         if not isinstance(packages, list):
             packages = []
+        packages_no_deps = raw_item.get("packagesNoDeps", [])
+        if not isinstance(packages_no_deps, list):
+            packages_no_deps = []
 
         venvs.append(
             {
@@ -62,6 +65,9 @@ def iter_venv_configs() -> list[dict[str, Any]]:
                 "path": relative_path,
                 "tool": str(raw_item.get("tool", "") or "").strip(),
                 "packages": [str(package).strip() for package in packages if str(package).strip()],
+                "packages_no_deps": [
+                    str(package).strip() for package in packages_no_deps if str(package).strip()
+                ],
             }
         )
 
@@ -148,10 +154,14 @@ def _run(command: list[str], *, log: bool, cwd: Path | None = None) -> bool:
 
 
 # Compute a dependency signature.
-def _packages_signature(packages: list[str]) -> str:
-    """Return a stable signature for one package list."""
+def _packages_signature(packages: list[str], packages_no_deps: list[str] | None = None) -> str:
+    """Return a stable signature for one venv package manifest."""
 
-    payload = json.dumps(packages, ensure_ascii=True, sort_keys=True)
+    payload = json.dumps(
+        {"packages": packages, "packagesNoDeps": packages_no_deps or []},
+        ensure_ascii=True,
+        sort_keys=True,
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -172,13 +182,14 @@ def _read_state(venv_path: Path) -> dict[str, Any]:
 
 
 # Write the stored venv state.
-def _write_state(venv_path: Path, packages: list[str]) -> None:
+def _write_state(venv_path: Path, packages: list[str], packages_no_deps: list[str] | None = None) -> None:
     """Persist the package signature for one venv."""
 
     state_path = venv_path / STATE_FILE_NAME
+    no_deps = packages_no_deps or []
     payload = {
-        "packagesHash": _packages_signature(packages),
-        "packageCount": len(packages),
+        "packagesHash": _packages_signature(packages, no_deps),
+        "packageCount": len(packages) + len(no_deps),
     }
     state_path.write_text(json.dumps(payload, indent=4, ensure_ascii=False), encoding="utf-8")
 
@@ -202,42 +213,59 @@ def _create_venv(venv_id: str, log: bool) -> bool:
 
 
 # Install packages into one venv.
-def _install_packages(venv_id: str, packages: list[str], log: bool) -> bool:
+def _pip_install(
+    python_path: Path,
+    packages: list[str],
+    *,
+    no_deps: bool,
+    log: bool,
+    label: str,
+) -> bool:
+    if not packages:
+        return True
+
+    command = [
+        str(python_path),
+        "-m",
+        "pip",
+        "install",
+        "--no-warn-script-location",
+    ]
+    if no_deps:
+        command.append("--no-deps")
+    command.extend(packages)
+
+    if log:
+        suffix = " (no deps)" if no_deps else ""
+        print(f"[ASLM-Chat] Installing {len(packages)} package(s){suffix} into venv '{label}'")
+
+    return _run(command, log=log)
+
+
+def _install_packages(
+    venv_id: str,
+    packages: list[str],
+    packages_no_deps: list[str],
+    log: bool,
+) -> bool:
     """Install the configured packages into one venv."""
 
-    if not packages:
+    if not packages and not packages_no_deps:
         return True
 
     python_path = get_venv_python(venv_id)
     if not python_path.exists():
         return False
 
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, suffix=".txt") as requirements_file:
-        requirements_file.write("\n".join(packages))
-        requirements_file.write("\n")
-        requirements_path = requirements_file.name
+    if packages and not _pip_install(python_path, packages, no_deps=False, log=log, label=venv_id):
+        return False
 
-    try:
-        if log:
-            print(f"[ASLM-Chat] Installing {len(packages)} package(s) into venv '{venv_id}'")
+    if packages_no_deps and not _pip_install(
+        python_path, packages_no_deps, no_deps=True, log=log, label=venv_id
+    ):
+        return False
 
-        return _run(
-            [
-                str(python_path),
-                "-m",
-                "pip",
-                "install",
-                "--no-warn-script-location",
-                "-r",
-                requirements_path,
-            ],
-            log=log,
-        )
-    finally:
-        try:
-            Path(requirements_path).unlink(missing_ok=True)
-        except OSError:
-            pass
+    return True
 
 
 # Ensure one configured venv exists and has its packages.
@@ -253,20 +281,21 @@ def ensure_venv(venv_id: str, *, log: bool = True) -> bool:
     venv_path = get_venv_path(venv_id)
     python_path = get_venv_python(venv_id)
     packages = list(config.get("packages", []))
+    packages_no_deps = list(config.get("packages_no_deps", []))
 
     if not python_path.exists() and not _create_venv(venv_id, log):
         return False
 
     state = _read_state(venv_path)
-    if state.get("packagesHash") == _packages_signature(packages):
+    if state.get("packagesHash") == _packages_signature(packages, packages_no_deps):
         if log:
             print(f"[ASLM-Chat] Venv '{venv_id}' is up to date.")
         return True
 
-    if not _install_packages(venv_id, packages, log):
+    if not _install_packages(venv_id, packages, packages_no_deps, log):
         return False
 
-    _write_state(venv_path, packages)
+    _write_state(venv_path, packages, packages_no_deps)
     return True
 
 

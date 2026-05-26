@@ -130,7 +130,7 @@
       "rps": 5.0,
       "burst": 10,
       "response_time_ms": 400,
-      "json_api_hint": "https://api.core.ac.uk/v3/search/works?q=<q>&limit=10",
+      "json_api_hint": "https://api.core.ac.uk/v3/search/works/?q=<q>&limit=10",
       "notes": "230M+ open access papers. REST API v3 is free (no key required for basic use, API key unlocks higher limits). Returns structured JSON with title, authors, abstract, full-text URL, and direct PDF download links. Strictly prefer API over web UI.",
       "topics": [
         "academic"

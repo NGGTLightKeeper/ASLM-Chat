@@ -1,22 +1,34 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 """
-Import Majestic Million domains into trust_registry.json.
+Import Majestic Million domains into trust_registry_profiles/majestic_web.json.
 
-Usage:
-    python core/registry/import_majestic.py [--dry-run] [--stats]
+Usage
+-----
+    python core/registry/import_majestic.py            # dry-run (no writes)
+    python core/registry/import_majestic.py --write    # write to profiles
+    python core/registry/import_majestic.py --stats    # alias for dry-run
 
-What it does:
-    1. Extracts majestic_million.csv from majestic_million.zip (same directory)
-    2. Maps domains to tiers by RefSubNets:
-         A  — RefSubNets > 50 000  (global giants, major publishers)
-         B  — RefSubNets >  5 000
-         C  — RefSubNets >    500
-       Below 500 → skipped (too low authority)
-    3. Merges into trust_registry.json:
-         - Manual entries (already in the file) always win
-         - Blacklisted domains are never promoted
-         - New domains are appended under cat "web"
+What it does
+------------
+1. Extracts majestic_million.csv from majestic_million.zip (same directory)
+2. Maps domains to tiers by RefSubNets:
+     A  — RefSubNets > 50 000  (global giants, major publishers)
+     B  — RefSubNets >  5 000
+     C  — RefSubNets >    500
+   Below 500 → skipped (too low authority)
+3. Deduplicates against the already-merged registry (profiles + monolith)
+   so running twice is safe — existing entries always win
+4. Writes new entries to trust_registry_profiles/majestic_web.json
+   (NOT to trust_registry.json — monolith is frozen)
+5. Never writes tiers or blacklist — those belong in _global.json only
+
+Notes
+-----
+- Manual entries in any profile file always win over Majestic data
+  (dedup is against the merged view, not just the output file)
+- Blacklisted domains (blocked_domain_contains) are never promoted
+- The output file has profile/defaults/domains structure matching other profiles
 """
 
 from __future__ import annotations
@@ -27,16 +39,17 @@ import json
 import zipfile
 from pathlib import Path
 
+from .config import TRUST_PROFILES_DIR, TRUST_REGISTRY_PATH
+
 HERE = Path(__file__).resolve().parent
 ZIP_PATH = HERE / "majestic_million.zip"
 CSV_NAME = "majestic_million.csv"
-REGISTRY_PATH = HERE / "trust_registry.json"
+OUTPUT_PROFILE = TRUST_PROFILES_DIR / "majestic_web.json"
 
-# RefSubNets thresholds → tier
 TIER_THRESHOLDS: list[tuple[int, str]] = [
     (50_000, "A"),
-    (5_000,  "B"),
-    (500,    "C"),
+    (5_000, "B"),
+    (500, "C"),
 ]
 
 
@@ -56,19 +69,26 @@ def _extract_csv(zip_path: Path) -> io.TextIOWrapper:
     return io.TextIOWrapper(zf.open(csv_name), encoding="utf-8")
 
 
-def _load_registry(path: Path) -> dict:
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+def _existing_patterns() -> set[str]:
+    """Return all patterns already in the merged registry (profiles + monolith)."""
+    try:
+        from core.registry.trust_registry import load_trust_registry
+
+        _, _, domains = load_trust_registry()
+        return set(domains.keys())
+    except Exception:
+        pass
+    # Fallback: read monolith only
+    if TRUST_REGISTRY_PATH.is_file():
+        try:
+            data = json.loads(TRUST_REGISTRY_PATH.read_text(encoding="utf-8"))
+            return {str(e.get("pattern", "")).lower() for e in data.get("domains", []) if e.get("pattern")}
+        except Exception:
+            pass
+    return set()
 
 
-def _existing_patterns(registry: dict) -> set[str]:
-    return {entry["pattern"] for entry in registry.get("domains", [])}
-
-
-def _blocked_fragments(registry: dict) -> list[str]:
-    legacy = registry.get("blacklist", {}).get("blocked_domain_contains", [])
-    if legacy:
-        return legacy
+def _blocked_fragments() -> list[str]:
     try:
         from core.registry.trust_registry import load_trust_registry
 
@@ -78,13 +98,30 @@ def _blocked_fragments(registry: dict) -> list[str]:
         return []
 
 
-def run(dry_run: bool = False, stats: bool = False) -> None:
-    print(f"Reading zip: {ZIP_PATH}")
-    registry = _load_registry(REGISTRY_PATH)
-    existing = _existing_patterns(registry)
-    blocked_fragments = _blocked_fragments(registry)
+def _load_existing_output() -> list[dict]:
+    """Return already-written Majestic profile entries if the output file exists."""
+    if OUTPUT_PROFILE.is_file():
+        try:
+            data = json.loads(OUTPUT_PROFILE.read_text(encoding="utf-8"))
+            return [e for e in data.get("domains", []) if isinstance(e, dict) and "pattern" in e]
+        except Exception:
+            pass
+    return []
 
-    tier_counts: dict[str, int] = {"A": 0, "B": 0, "C": 0, "skip_low": 0, "skip_existing": 0, "skip_blocked": 0}
+
+def run(write: bool = False, stats: bool = False) -> None:
+    if not ZIP_PATH.is_file():
+        print(f"[skip] Majestic zip not found: {ZIP_PATH}")
+        return
+
+    print(f"Reading: {ZIP_PATH}")
+    existing = _existing_patterns()
+    blocked_fragments = _blocked_fragments()
+
+    tier_counts: dict[str, int] = {
+        "A": 0, "B": 0, "C": 0,
+        "skip_low": 0, "skip_existing": 0, "skip_blocked": 0,
+    }
     new_entries: list[dict] = []
 
     csv_file = _extract_csv(ZIP_PATH)
@@ -106,11 +143,9 @@ def run(dry_run: bool = False, stats: bool = False) -> None:
         if tier is None:
             tier_counts["skip_low"] += 1
             continue
-
         if domain in existing:
             tier_counts["skip_existing"] += 1
             continue
-
         if any(frag in domain for frag in blocked_fragments):
             tier_counts["skip_blocked"] += 1
             continue
@@ -123,31 +158,52 @@ def run(dry_run: bool = False, stats: bool = False) -> None:
     print(f"  New A: {tier_counts['A']:>7,}")
     print(f"  New B: {tier_counts['B']:>7,}")
     print(f"  New C: {tier_counts['C']:>7,}")
-    print(f"  Skipped (low authority): {tier_counts['skip_low']:>7,}")
-    print(f"  Skipped (already in registry): {tier_counts['skip_existing']:>7,}")
-    print(f"  Skipped (blacklisted): {tier_counts['skip_blocked']:>7,}")
+    print(f"  Skipped (low authority):          {tier_counts['skip_low']:>7,}")
+    print(f"  Skipped (already in registry):    {tier_counts['skip_existing']:>7,}")
+    print(f"  Skipped (blacklisted):            {tier_counts['skip_blocked']:>7,}")
     print(f"  Total new entries: {total_new:,}")
 
-    if dry_run:
-        print("\n[dry-run] No changes written.")
+    if not write:
+        print("\n[dry-run] No changes written. Pass --write to apply.")
         return
 
-    # Sort new entries: A first, then B, then C; alphabetically within tier
+    if total_new == 0:
+        print("\n[skip] Nothing new to write.")
+        return
+
     tier_order = {"A": 0, "B": 1, "C": 2}
     new_entries.sort(key=lambda e: (tier_order[e["tier"]], e["pattern"]))
 
-    registry["domains"].extend(new_entries)
+    existing_output = _load_existing_output()
+    existing_output_patterns = {str(e.get("pattern", "")).lower() for e in existing_output}
+    truly_new = [e for e in new_entries if e["pattern"] not in existing_output_patterns]
 
-    with open(REGISTRY_PATH, "w", encoding="utf-8") as f:
-        json.dump(registry, f, ensure_ascii=False, indent=4)
+    all_entries = existing_output + truly_new
 
-    print(f"\nWritten {total_new:,} new entries to {REGISTRY_PATH}")
-    print(f"Registry now has {len(registry['domains']):,} domain entries.")
+    profile_data = {
+        "profile": "majestic_web",
+        "description": "Auto-imported from Majestic Million. Manual entries in other profiles override these.",
+        "defaults": {"cat": "web"},
+        "domains": all_entries,
+    }
+
+    OUTPUT_PROFILE.write_text(
+        json.dumps(profile_data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(f"\nWritten {len(truly_new):,} new entries ({len(all_entries):,} total) to {OUTPUT_PROFILE}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Import Majestic Million into trust_registry_profiles/majestic_web.json"
+    )
+    parser.add_argument("--write", action="store_true", help="Write output (default: dry-run)")
+    parser.add_argument("--stats", action="store_true", help="Alias for dry-run")
+    args = parser.parse_args()
+    run(write=args.write and not args.stats, stats=args.stats)
+    return 0
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Import Majestic Million into trust_registry.json")
-    parser.add_argument("--dry-run", action="store_true", help="Parse and report without writing")
-    parser.add_argument("--stats", action="store_true", help="(alias for --dry-run)")
-    args = parser.parse_args()
-    run(dry_run=args.dry_run or args.stats)
+    raise SystemExit(main())

@@ -7,6 +7,7 @@ from typing import Awaitable, Callable
 from urllib.parse import urlparse
 
 from custom_domains.amazon import fetch_amazon_snapshot
+from custom_domains.github import fetch_github_page, is_github_url
 from custom_domains.reddit import fetch_reddit_json, is_reddit
 from custom_domains.x import fetch_x_post, is_x_post
 
@@ -75,6 +76,13 @@ async def _x_fetch(url: str, timeout: float) -> str | None:
     return None
 
 
+async def _github_fetch(url: str, timeout: float) -> str | None:
+    text = await fetch_github_page(url, timeout)
+    if text and not text.lstrip().lower().startswith("error:"):
+        return text
+    return None
+
+
 async def _heavy_noop(url: str, timeout: float) -> str | None:
     return None
 
@@ -90,6 +98,13 @@ _ROUTES: list[CustomRoute] = [
         quality_score=0.80,
         matches=lambda url: _host(url) in _AMAZON_HOSTS,
         _fetch=_amazon_fetch,
+    ),
+    CustomRoute(
+        name="github",
+        is_heavy=False,
+        quality_score=0.90,
+        matches=is_github_url,
+        _fetch=_github_fetch,
     ),
     CustomRoute(
         name="reddit",

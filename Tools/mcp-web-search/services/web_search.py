@@ -25,10 +25,14 @@ run_web_search(query, ...)  -- top-level convenience coroutine
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 import html as html_lib
+import json
 import logging
+import os
 import re
 import secrets
+import threading
 import time
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -43,9 +47,19 @@ from core.fetch.hosted_clients import async_hosted_search, available_hosted_engi
 from core.query import (
     build_provider_query,
     filter_results_by_domain_constraints,
+    infer_query_types_hybrid,
     infer_query_types_from_rules,
     journalistic_intent_terms,
     parse_domain_constraints,
+    score_query_against_profiles,
+)
+from core.query.aslm_embedding_runtime import SearchModelSession
+from core.query.routing_score import (
+    QueryClassWeight,
+    allocate_source_budget,
+    compute_routing_score,
+    ensure_general_fallback,
+    normalize_class_mix,
 )
 from core.extract.content_processor import (
     build_preview_payload, get_preview_settings, warm_preview_models, PreviewPayload,
@@ -56,6 +70,7 @@ from core.registry.domain_reputation import get_reputation_store, domain_from_ur
 from core.registry.domain_registry import get_registry
 from core.fetch.antibot import is_antibot
 from core.fetch.stackexchange_fetcher import fetch_stackexchange_question, is_stackexchange_question_url
+from custom_domains.github import fetch_github_page, is_github_url
 from core.fetch.url_utils import (
     UnsafeFetchUrl,
     max_safe_redirects,
@@ -763,7 +778,7 @@ def infer_query_language(query: str) -> str:
 def infer_query_types(query: str) -> list[str]:
     """Classify query into routing-aware types (up to 3), priority-ordered.
 
-    Rule profiles live in ``core/query/class_profiles/``. For Granite query-classifier
+    Rule profiles live in ``core/query/class_profiles/``. For ASLM embedding classifier
     output, use ``infer_query_types_hybrid(query, model_scores=...)`` from ``core.query``.
     """
     return infer_query_types_from_rules(query, limit=3)
@@ -818,6 +833,225 @@ class TriageResult:
     score: float        # triage relevance score [0, 1]
 
 
+@dataclass
+class SearchCycleContext:
+    raw_query: str
+    analysis_query: str
+    provider_query: str
+    lang: str
+    year_hint: str | None
+    query_types: list[str]
+    class_mix: list[QueryClassWeight]
+    source_budget: dict[str, int]
+    debug_trace: dict = field(default_factory=dict)
+
+
+def _pipeline_mode() -> str:
+    from core.config.pipeline_modes import normalize_pipeline_mode
+
+    env = os.environ.get("ASLM_WEB_SEARCH_PIPELINE")
+    if env is not None:
+        return normalize_pipeline_mode(env)
+    return normalize_pipeline_mode(load_search_config().models.pipeline)
+
+
+def _models_config():
+    return load_search_config().models
+
+
+def _neural_stack_enabled(effort: str | None = None) -> bool:
+    """Neural stack may run only on high effort when pipeline is ``aslm_embedding``."""
+    if _pipeline_mode() == "rules":
+        return False
+    return _normalize_search_effort(effort) == "high"
+
+
+def _neural_encoder_enabled(effort: str | None = None) -> bool:
+    if not _neural_stack_enabled(effort):
+        return False
+    return _env_enabled(
+        "ASLM_WEB_SEARCH_NEURAL_ENCODER",
+        default=bool(_models_config().enable_encoder),
+    )
+
+
+def _neural_decoder_enabled(effort: str | None = None) -> bool:
+    if not _neural_stack_enabled(effort):
+        return False
+    return _env_enabled(
+        "ASLM_WEB_SEARCH_NEURAL_DECODER",
+        default=bool(_models_config().enable_decoder),
+    )
+
+
+def _use_neural_pipeline(effort: str | None = None) -> bool:
+    """True when at least one neural component is active for this effort."""
+    return _neural_encoder_enabled(effort) or _neural_decoder_enabled(effort)
+
+
+def _model_session_components(effort: str | None = None) -> tuple[bool, bool]:
+    return _neural_encoder_enabled(effort), _neural_decoder_enabled(effort)
+
+
+def _env_enabled(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+
+def _keep_search_models_loaded() -> bool:
+    return _env_enabled(
+        "ASLM_WEB_SEARCH_KEEP_MODELS",
+        default=bool(load_search_config().models.keep_loaded),
+    )
+
+
+def _search_model_device() -> str:
+    return (os.environ.get("ASLM_WEB_SEARCH_MODEL_DEVICE") or load_search_config().models.search_device or "cpu").strip().lower()
+
+
+_MODEL_SESSION_LOCK = threading.RLock()
+_SHARED_MODEL_SESSION: SearchModelSession | None = None
+
+
+def clear_shared_search_model_session() -> None:
+    """Release the optional process-wide neural model session."""
+    global _SHARED_MODEL_SESSION
+    with _MODEL_SESSION_LOCK:
+        if _SHARED_MODEL_SESSION is not None:
+            _SHARED_MODEL_SESSION.close()
+        _SHARED_MODEL_SESSION = None
+
+
+def _session_matches_components(
+    session: SearchModelSession,
+    *,
+    load_encoder: bool,
+    load_decoder: bool,
+    device: str,
+) -> bool:
+    if session.device != device:
+        return False
+    return (
+        (session.encoder is not None) == load_encoder
+        and (session.decoder is not None) == load_decoder
+    )
+
+
+def _get_shared_search_model_session(
+    effort: str | None = None,
+    *,
+    load_encoder: bool,
+    load_decoder: bool,
+) -> SearchModelSession:
+    global _SHARED_MODEL_SESSION
+    with _MODEL_SESSION_LOCK:
+        device = _search_model_device()
+        if (
+            _SHARED_MODEL_SESSION is None
+            or not _SHARED_MODEL_SESSION.ready
+            or not _session_matches_components(
+                _SHARED_MODEL_SESSION,
+                load_encoder=load_encoder,
+                load_decoder=load_decoder,
+                device=device,
+            )
+        ):
+            if _SHARED_MODEL_SESSION is not None:
+                _SHARED_MODEL_SESSION.close()
+            session = SearchModelSession(
+                load=True,
+                device=device,
+                load_encoder=load_encoder,
+                load_decoder=load_decoder,
+            )
+            session.__enter__()
+            _SHARED_MODEL_SESSION = session
+        return _SHARED_MODEL_SESSION
+
+
+@contextmanager
+def _search_model_session_scope(effort: str | None = None):
+    load_encoder, load_decoder = _model_session_components(effort)
+    if not load_encoder and not load_decoder:
+        if not _keep_search_models_loaded():
+            clear_shared_search_model_session()
+        with SearchModelSession(load=False) as model_session:
+            yield model_session
+        return
+    if _keep_search_models_loaded():
+        yield _get_shared_search_model_session(
+            effort,
+            load_encoder=load_encoder,
+            load_decoder=load_decoder,
+        )
+        return
+    with SearchModelSession(
+        load=True,
+        device=_search_model_device(),
+        load_encoder=load_encoder,
+        load_decoder=load_decoder,
+    ) as model_session:
+        yield model_session
+
+
+def _class_mix_to_legacy_types(class_mix: list[QueryClassWeight]) -> list[str]:
+    return [item.name for item in class_mix] or ["general"]
+
+
+def _build_legacy_class_mix(query: str) -> list[QueryClassWeight]:
+    types = infer_query_types_from_rules(query, limit=3)
+    if not types:
+        return [QueryClassWeight("general", 1.0, "rules-empty")]
+    return normalize_class_mix([
+        QueryClassWeight(name, 1.0 / len(types), "rules-only")
+        for name in types
+    ])
+
+
+def _build_neural_class_mix(query: str, model_session: SearchModelSession | None, effort: str | None = None) -> tuple[list[QueryClassWeight], dict]:
+    if not _neural_encoder_enabled(effort) or model_session is None or model_session.encoder is None:
+        mix = _build_legacy_class_mix(query)
+        return mix, {"mode": "rules", "classes": [asdict(item) for item in mix]}
+    prediction = model_session.classify_query(query)
+    if prediction is None:
+        mix = _build_legacy_class_mix(query)
+        return mix, {"mode": "neural-unavailable", "classes": [asdict(item) for item in mix]}
+    rule_scores = score_query_against_profiles(query)
+    has_rule_support = any(item.score >= 0.08 for item in rule_scores)
+    best_rule_score = max((item.score for item in rule_scores), default=0.0)
+    if prediction.score < 0.50 and best_rule_score >= 0.15:
+        mix = _build_legacy_class_mix(query)
+        return mix, {
+            "mode": "rules-override-weak-encoder",
+            "model_score": round(prediction.score, 4),
+            "model_top": prediction.top(8),
+            "best_rule_score": round(best_rule_score, 4),
+            "classes": [asdict(item) for item in mix],
+        }
+    if prediction.score < 0.50 and not has_rule_support:
+        mix = [QueryClassWeight("general", 1.0, "weak-model-no-rule-support")]
+        return mix, {
+            "mode": "aslm-embedding-weak-general-fallback",
+            "model_score": round(prediction.score, 4),
+            "model_top": prediction.top(8),
+            "classes": [asdict(item) for item in mix],
+        }
+    hybrid = infer_query_types_hybrid(query, prediction.labels)
+    mix = ensure_general_fallback(normalize_class_mix([
+        QueryClassWeight(name, weight, reason)
+        for name, weight, reason in hybrid
+    ]))
+    return mix, {
+        "mode": "aslm_embedding",
+        "model_score": round(prediction.score, 4),
+        "model_top": prediction.top(8),
+        "hybrid": hybrid,
+        "classes": [asdict(item) for item in mix],
+    }
+
+
 def _triage_soft_score(
     result: SearchResult,
     query: str,
@@ -834,12 +1068,16 @@ def _triage_soft_score(
     tier_trust = _TIER_TRUST_SCORES.get(result.trust_tier or "unknown", 0.5)
     date_boost = 0.08 if _DATE_SIGNAL_RE.search(snippet) else 0.0
     hub_pen = _hub_penalty(result.url, title, snippet)
+    routing = max(0.45, min(1.65, float(getattr(result, "routing_score", 1.0) or 1.0)))
+    snippet_rel = max(0.0, min(1.0, float(getattr(result, "snippet_relevance_score", 0.0) or 0.0)))
 
     score = (
         0.25 * pos_score
         + 0.10 * snip_score
         + 0.40 * lex
         + 0.15 * tier_trust
+        + 0.10 * snippet_rel
+        + 0.08 * ((routing - 1.0) / 0.65)
         + date_boost
         - 0.20 * hub_pen
     )
@@ -932,6 +1170,95 @@ def _triage_results(results: list[SearchResult], query: str) -> list[TriageResul
         )
 
     return out
+
+
+# How many results from a single domain are allowed in the candidate pool
+# before the cap kicks in. A lower number forces source diversity; 2 is safe
+# for most cases and prevents arxiv (or any single aggregator) from flooding
+# the top of academic/medical results when other sources are also relevant.
+_DOMAIN_CAP_DEFAULT = 3
+_DOMAIN_CAP_OVERRIDES: dict[str, int] = {
+    "arxiv.org": 2,
+}
+
+
+def _apply_domain_cap(results: list[SearchResult]) -> list[SearchResult]:
+    """Enforce per-domain result cap to prevent any single source monopolising the pool."""
+    from urllib.parse import urlparse as _up
+    counts: dict[str, int] = {}
+    out: list[SearchResult] = []
+    for result in results:
+        host = _up(result.url or "").netloc.lower().removeprefix("www.")
+        cap = _DOMAIN_CAP_OVERRIDES.get(host, _DOMAIN_CAP_DEFAULT)
+        if counts.get(host, 0) >= cap:
+            continue
+        counts[host] = counts.get(host, 0) + 1
+        out.append(result)
+    return out
+
+
+def _apply_registry_routing(results: list[SearchResult], class_mix: list[QueryClassWeight]) -> None:
+    for result in results:
+        try:
+            routing = compute_routing_score(result.url, class_mix)
+            result.routing_score = routing.multiplier
+            result.routing_debug = routing.debug
+        except Exception as exc:
+            logger.debug("routing_score failed url=%s: %s", result.url, exc)
+            result.routing_score = 1.0
+            result.routing_debug = {}
+
+
+def _apply_snippet_decoder(
+    results: list[SearchResult],
+    query: str,
+    model_session: SearchModelSession | None,
+    effort: str | None = None,
+) -> None:
+    if not _neural_decoder_enabled(effort) or model_session is None or model_session.decoder is None or not results:
+        return
+    candidates = [
+        {"title": r.title or "", "url": r.url or "", "snippet": r.snippet or ""}
+        for r in results
+    ]
+    try:
+        predictions = model_session.score_snippet_candidates(query, candidates)
+    except Exception as exc:
+        logger.debug("snippet decoder failed: %s", exc)
+        return
+    for result, prediction in zip(results, predictions, strict=False):
+        result.snippet_relevance_score = max(0.0, min(1.0, float(prediction.score or 0.0)))
+        result.routing_debug = dict(result.routing_debug or {})
+        result.routing_debug["snippet_decoder_top"] = prediction.top(5)
+
+
+def _apply_parsed_decoder(
+    results: list[SearchResult],
+    payloads: list[PreviewPayload],
+    query: str,
+    model_session: SearchModelSession | None,
+    effort: str | None = None,
+) -> None:
+    if not _neural_decoder_enabled(effort) or model_session is None or model_session.decoder is None or not results:
+        return
+    candidates = [
+        {
+            "title": r.title or "",
+            "url": r.url or "",
+            "snippet": r.snippet or "",
+            "preview": p.text or "",
+        }
+        for r, p in zip(results, payloads, strict=False)
+    ]
+    try:
+        predictions = model_session.score_parsed_candidates(query, candidates)
+    except Exception as exc:
+        logger.debug("parsed decoder failed: %s", exc)
+        return
+    for result, prediction in zip(results, predictions, strict=False):
+        result.parsed_relevance_score = max(0.0, min(1.0, float(prediction.score or 0.0)))
+        result.routing_debug = dict(result.routing_debug or {})
+        result.routing_debug["parsed_decoder_top"] = prediction.top(5)
 
 
 def _dedup_results(results: list[SearchResult]) -> list[SearchResult]:
@@ -1053,11 +1380,23 @@ def _result_score(
 
     full_text = " ".join(filter(None, [result.title, result.snippet, payload.text or ""]))
     year_score = _year_match_score(full_text, profile["years"]) if profile["years"] else 0.0
+    routing = max(0.45, min(1.65, float(getattr(result, "routing_score", 1.0) or 1.0)))
+    snippet_rel = max(0.0, min(1.0, float(getattr(result, "snippet_relevance_score", 0.0) or 0.0)))
+    parsed_rel = max(0.0, min(1.0, float(getattr(result, "parsed_relevance_score", 0.0) or 0.0)))
+    decoder_rel = parsed_rel if payload.text else snippet_rel
+    semantic_component = max(
+        0.0,
+        min(
+            1.0,
+            0.55 * max(0.0, min(payload.semantic_score, 1.0))
+            + 0.45 * decoder_rel,
+        ),
+    )
 
     score = (
         0.20 * original_rank
         + 0.20 * lex
-        + 0.35 * max(0.0, min(payload.semantic_score, 1.0))
+        + 0.35 * semantic_component
         + 0.12 * trust
         + 0.08 * max(0.0, min(payload.quality_score, 1.0))
     )
@@ -1065,6 +1404,7 @@ def _result_score(
         score += 0.20 * year_score
     score -= 0.30 * hub_pen
     score += _academic_engine_bonus(result, query_type)
+    score *= max(0.85, min(1.20, routing))
     return max(0.0, score)
 
 
@@ -1302,6 +1642,15 @@ async def _fetch_preview_one(
             _trace(req_id, "preview_fetch.blocked", url=url, reason=str(exc))
             return PreviewPayload()
 
+        # Domain registry: honour method=skip and json_api_hint early.
+        try:
+            _dom_strategy = get_registry().resolve_access_strategy(url)
+            if _dom_strategy.method == "skip":
+                _trace(req_id, "preview_fetch.skip_domain", url=url, reason="method=skip")
+                return PreviewPayload()
+        except Exception as _dom_exc:
+            logger.debug("domain registry access strategy failed for %s: %s", url, _dom_exc)
+
         # PDF fast-path: skip HTML fetch entirely, download bytes and densify
         if looks_like_pdf_url(url):
             return await _fetch_pdf_preview(url, query, loop, req_id=req_id)
@@ -1324,6 +1673,24 @@ async def _fetch_preview_one(
                 return PreviewPayload(text=text, quality_score=0.85, strategy_used="stackexchange_api")
             _trace(req_id, "preview_fetch.empty", url=url, policy="stackexchange_api", elapsed=round(time.perf_counter() - t0, 3))
             return PreviewPayload()
+
+        if is_github_url(url):
+            text = await fetch_github_page(url, timeout=fetch_timeout)
+            if text and not text.lstrip().lower().startswith("error:"):
+                _cache.cache_page(url, result.title or "", clean_text=text)
+                _trace(
+                    req_id,
+                    "preview_fetch.done",
+                    url=url,
+                    policy="github_api",
+                    elapsed=round(time.perf_counter() - t0, 3),
+                    chars=len(text),
+                    quality=0.90,
+                    semantic=0.0,
+                    strategy="github_api",
+                )
+                return PreviewPayload(text=text, quality_score=0.90, strategy_used="github_api")
+            _trace(req_id, "preview_fetch.empty", url=url, policy="github_api", elapsed=round(time.perf_counter() - t0, 3))
 
         from custom_domains.router import get_custom_route
         _route = get_custom_route(url)
@@ -1469,7 +1836,11 @@ async def _fetch_previews(
 
     sem = asyncio.Semaphore(concurrency)
     timeout = aiohttp.ClientTimeout(total=fetch_timeout)
-    connector = await _get_http_connector(concurrency)
+    connector = aiohttp.TCPConnector(
+        limit=max(1, concurrency) * 4,
+        limit_per_host=2,
+        ttl_dns_cache=120,
+    )
     t0 = time.perf_counter()
     _trace(
         req_id,
@@ -1494,7 +1865,7 @@ async def _fetch_previews(
 
     try:
         async with aiohttp.ClientSession(
-            timeout=timeout, connector=connector, connector_owner=False,
+            timeout=timeout, connector=connector, connector_owner=True,
             headers={"User-Agent": _UA}
         ) as session:
             tasks = [
@@ -1558,6 +1929,8 @@ async def _fetch_previews(
             # Cancel any tasks still pending (deadline exceeded without early-return)
             for t in pending:
                 t.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
 
     except Exception as exc:
         logger.debug("preview batch failed: %s", exc, exc_info=True)
@@ -1625,84 +1998,6 @@ def _normalize_search_effort(effort: str | None) -> str:
     value = str(effort or "").strip().lower()
     value = _SEARCH_EFFORT_ALIASES.get(value, value)
     return value if value in _SEARCH_EFFORT_VALUES else "medium"
-
-
-@dataclass(frozen=True)
-class _QueryQualityDecision:
-    effort: str
-    filler_hits: tuple[str, ...] = ()
-    original_effort: str = "medium"
-
-    @property
-    def downgraded(self) -> bool:
-        return bool(self.filler_hits) and self.effort != self.original_effort
-
-
-def _filler_low_effort_hits(query: str, qcfg: object) -> tuple[str, ...]:
-    if not bool(getattr(qcfg, "filler_low_effort_enabled", False)):
-        return ()
-
-    scan_text = _spam_scan_text(query)
-    for phrase in getattr(qcfg, "filler_low_effort_exempt_phrases", ()) or ():
-        if _contains_spam_keyword(scan_text, str(phrase)):
-            return ()
-
-    terms = getattr(qcfg, "filler_low_effort_terms", ()) or ()
-    hits = sorted({term for term in terms if _contains_spam_keyword(scan_text, str(term))})
-    min_hits = max(1, int(getattr(qcfg, "filler_low_effort_min_hits", 1) or 1))
-    return tuple(hits) if len(hits) >= min_hits else ()
-
-
-def _apply_query_quality_effort_policy(query: str, effort: str, qcfg: object) -> _QueryQualityDecision:
-    original_effort = _normalize_search_effort(effort)
-    hits = _filler_low_effort_hits(query, qcfg)
-    if not hits:
-        return _QueryQualityDecision(effort=original_effort, original_effort=original_effort)
-
-    target = _normalize_search_effort(getattr(qcfg, "filler_low_effort_target", "low"))
-    return _QueryQualityDecision(effort=target, filler_hits=hits, original_effort=original_effort)
-
-
-def _query_quality_notice(decision: _QueryQualityDecision) -> str:
-    if not decision.downgraded:
-        return ""
-    shown = ", ".join(f"'{hit}'" for hit in decision.filler_hits[:5])
-    if len(decision.filler_hits) > 5:
-        shown += ", ..."
-    return (
-        f"Query quality note: filler-like wording detected ({shown}); "
-        f"search ran with effort='{decision.effort}' instead of "
-        f"effort='{decision.original_effort}'."
-    )
-
-
-def _apply_query_quality_notice_text(text: str, decision: _QueryQualityDecision, qcfg: object) -> str:
-    if not bool(getattr(qcfg, "filler_low_effort_notice", True)):
-        return text
-    notice = _query_quality_notice(decision)
-    return f"{notice}\n\n{text}" if notice else text
-
-
-def _apply_query_quality_notice_payload(
-    payload: dict[str, object],
-    decision: _QueryQualityDecision,
-    qcfg: object,
-) -> dict[str, object]:
-    if not bool(getattr(qcfg, "filler_low_effort_notice", True)):
-        return payload
-    notice = _query_quality_notice(decision)
-    if not notice:
-        return payload
-    patched = dict(payload)
-    model_context = str(patched.get("model_context", "") or "")
-    patched["model_context"] = f"{notice}\n\n{model_context}" if model_context else notice
-    patched["query_quality"] = {
-        "filler_low_effort_applied": True,
-        "filler_hits": list(decision.filler_hits),
-        "original_effort": decision.original_effort,
-        "effective_effort": decision.effort,
-    }
-    return patched
 
 
 def _is_low_effort(opts: WebSearchOptions) -> bool:
@@ -2168,6 +2463,23 @@ def _format_results(
             query_type=_qtypes[0], rep_store=rep_store,
         )
         result.score = score
+        try:
+            _cache.record_query_source_classes(
+                query,
+                result.url,
+                class_mix_json=json.dumps((result.routing_debug or {}).get("class_mix", {}), ensure_ascii=False),
+                content_classes_json=json.dumps(
+                    {
+                        "snippet": (result.routing_debug or {}).get("snippet_decoder_top", []),
+                        "parsed": (result.routing_debug or {}).get("parsed_decoder_top", []),
+                    },
+                    ensure_ascii=False,
+                ),
+                snippet_score=float(getattr(result, "snippet_relevance_score", 0.0) or 0.0),
+                parsed_score=float(getattr(result, "parsed_relevance_score", 0.0) or 0.0),
+            )
+        except Exception as _e:
+            logger.debug("source class cache write failed url=%s: %s", result.url, _e)
         scored.append((score, idx, result, payload))
 
         # Record content quality for domains that returned actual content.
@@ -2289,6 +2601,23 @@ def _select_output_sources(
             rep_store=rep_store,
         )
         result.score = score
+        try:
+            _cache.record_query_source_classes(
+                query,
+                result.url,
+                class_mix_json=json.dumps((result.routing_debug or {}).get("class_mix", {}), ensure_ascii=False),
+                content_classes_json=json.dumps(
+                    {
+                        "snippet": (result.routing_debug or {}).get("snippet_decoder_top", []),
+                        "parsed": (result.routing_debug or {}).get("parsed_decoder_top", []),
+                    },
+                    ensure_ascii=False,
+                ),
+                snippet_score=float(getattr(result, "snippet_relevance_score", 0.0) or 0.0),
+                parsed_score=float(getattr(result, "parsed_relevance_score", 0.0) or 0.0),
+            )
+        except Exception as _e:
+            logger.debug("source class cache write failed url=%s: %s", result.url, _e)
         scored.append((score, idx, result, payload))
 
     scored.sort(key=lambda x: (-x[0], x[1]))
@@ -2364,6 +2693,9 @@ class WebSearchService:
         out_profile: _OutputProfile,
         opts: WebSearchOptions,
         req_id: str = "-",
+        class_mix: list[QueryClassWeight] | None = None,
+        source_budget: dict[str, int] | None = None,
+        model_session: SearchModelSession | None = None,
     ) -> tuple[list[SearchResult], list]:
         """Shared provider fetch → merge → dedup → triage. Returns (deduped, triage)."""
         pool_multiplier = max(
@@ -2388,7 +2720,8 @@ class WebSearchService:
             else max(1, 2 - n_hosted),
         )
         hosted_max = fetch_max
-        academic_max = min(fetch_max, 8)
+        academic_budget = sum((source_budget or {}).get(name, 0) for name in ("academic", "medical"))
+        academic_max = min(fetch_max, max(3, academic_budget or 8))
 
         _trace(req_id, "providers.config",
                n_hosted=n_hosted, ddgs_multiplier=ddgs_multiplier,
@@ -2460,7 +2793,10 @@ class WebSearchService:
             merged = merged + academic_results
         merged = merged[: fetch_max * pool_multiplier * 2]
         merged = _enrich_pdf_urls(merged)
-        deduped = _dedup_results(merged)
+        deduped = _apply_domain_cap(_dedup_results(merged))
+        effective_mix = class_mix or _build_legacy_class_mix(query)
+        _apply_registry_routing(deduped, effective_mix)
+        _apply_snippet_decoder(deduped, query, model_session, effort=opts.effort)
         _trace(req_id, "merge.done",
                elapsed=round(time.perf_counter() - merge_t0, 3),
                merged=len(merged), deduped=len(deduped))
@@ -2509,6 +2845,9 @@ class WebSearchService:
         out_profile: _OutputProfile,
         opts: WebSearchOptions,
         req_id: str,
+        class_mix: list[QueryClassWeight] | None = None,
+        source_budget: dict[str, int] | None = None,
+        model_session: SearchModelSession | None = None,
     ) -> tuple[list[SearchResult], list[_TriageResult], str]:
         """Run search pipeline and retry with degraded query variants if empty."""
         lang = infer_query_language(analysis_query)
@@ -2521,6 +2860,9 @@ class WebSearchService:
             out_profile,
             opts,
             req_id,
+            class_mix=class_mix,
+            source_budget=source_budget,
+            model_session=model_session,
         )
         if deduped:
             return deduped, triage, analysis_query
@@ -2569,6 +2911,9 @@ class WebSearchService:
                 variant_profile or fallback_profile,
                 fallback_opts,
                 req_id,
+                class_mix=_build_legacy_class_mix(variant),
+                source_budget=allocate_source_budget(_build_legacy_class_mix(variant), fallback_profile.max_results),
+                model_session=model_session,
             )
             if deduped:
                 _trace(req_id, "search.fallback.hit", index=index, variant=variant, count=len(deduped))
@@ -2576,7 +2921,12 @@ class WebSearchService:
 
         return [], [], analysis_query
 
-    async def search(self, query: str, deadline: float | None = None) -> str:
+    async def search(
+        self,
+        query: str,
+        deadline: float | None = None,
+        model_session: SearchModelSession | None = None,
+    ) -> str:
         """Run web search and return formatted text result."""
         opts = self._opts
         req_id = _make_request_id()
@@ -2596,10 +2946,12 @@ class WebSearchService:
         provider_query = build_provider_query(original_query, constraints) or analysis_query
         query = analysis_query
         lang = infer_query_language(query)
-        query_types = infer_query_types(query)
+        class_mix, class_debug = _build_neural_class_mix(query, model_session, effort=opts.effort)
+        query_types = _class_mix_to_legacy_types(class_mix)
         query_type = query_types[0]
         query_profile = _parse_query_profile(query)
         out_profile = _apply_effort_to_output_profile(_get_output_profile(query_types), opts)
+        source_budget = allocate_source_budget(class_mix, out_profile.max_results)
 
         # Per-type profile overrides config defaults for fetch depth and output count.
         # preview_fetch_limit: how many pages to scrape (depth-first types scrape more)
@@ -2620,6 +2972,9 @@ class WebSearchService:
             lang=lang,
             query_type=query_type,
             query_types=query_types,
+            class_mix=[asdict(item) for item in class_mix],
+            source_budget=source_budget,
+            class_debug=class_debug,
             include_domains=constraints.include_domains,
             exclude_domains=constraints.exclude_domains,
             out_max_results=out_profile.max_results,
@@ -2636,6 +2991,9 @@ class WebSearchService:
             out_profile=out_profile,
             opts=opts,
             req_id=req_id,
+            class_mix=class_mix,
+            source_budget=source_budget,
+            model_session=model_session,
         )
         query = effective_query
         if constraints.has_constraints:
@@ -2733,6 +3091,7 @@ class WebSearchService:
             )
             for i, payload in zip(to_fetch_indices, fetched):
                 payloads[i] = payload
+        _apply_parsed_decoder(deduped, payloads, query, model_session, effort=opts.effort)
 
         adapted_post_profile, post_meta = _adapt_output_profile(
             deduped,
@@ -2811,6 +3170,7 @@ class WebSearchService:
         self,
         query: str,
         deadline: float | None = None,
+        model_session: SearchModelSession | None = None,
     ) -> list[SearchResult]:
         """Run the safe search pipeline and return ranked SearchResult items.
 
@@ -2824,7 +3184,8 @@ class WebSearchService:
         provider_query = build_provider_query(query, constraints) or analysis_query
         query = analysis_query
         lang = infer_query_language(query)
-        query_types = infer_query_types(query)
+        class_mix, _class_debug = _build_neural_class_mix(query, model_session, effort=opts.effort)
+        query_types = _class_mix_to_legacy_types(class_mix)
         query_type = query_types[0]
         out_profile = _apply_effort_to_output_profile(_get_output_profile(query_types), opts)
 
@@ -2836,6 +3197,9 @@ class WebSearchService:
             out_profile=out_profile,
             opts=opts,
             req_id=req_id,
+            class_mix=class_mix,
+            source_budget=allocate_source_budget(class_mix, out_profile.max_results),
+            model_session=model_session,
         )
         query = effective_query
         if constraints.has_constraints:
@@ -2881,6 +3245,7 @@ class WebSearchService:
         self,
         query: str,
         deadline: float | None = None,
+        model_session: SearchModelSession | None = None,
     ) -> SearchRichResult:
         """Run web search and return a UI/model friendly structured payload.
 
@@ -2900,8 +3265,10 @@ class WebSearchService:
         provider_query = build_provider_query(query, constraints) or analysis_query
         query = analysis_query
         lang = infer_query_language(query)
-        query_types = infer_query_types(query)
+        class_mix, class_debug = _build_neural_class_mix(query, model_session, effort=opts.effort)
+        query_types = _class_mix_to_legacy_types(class_mix)
         query_type = query_types[0]
+        source_budget = allocate_source_budget(class_mix, opts.max_results)
         query_profile = _parse_query_profile(query)
         out_profile = _apply_effort_to_output_profile(_get_output_profile(query_types), opts)
         preview_fetch_limit = out_profile.preview_fetch_limit
@@ -2915,6 +3282,9 @@ class WebSearchService:
             out_profile=out_profile,
             opts=opts,
             req_id=req_id,
+            class_mix=class_mix,
+            source_budget=source_budget,
+            model_session=model_session,
         )
         query = effective_query
         if constraints.has_constraints:
@@ -2986,6 +3356,7 @@ class WebSearchService:
             )
             for i, payload in zip(to_fetch_indices, fetched):
                 payloads[i] = payload
+        _apply_parsed_decoder(deduped, payloads, query, model_session, effort=opts.effort)
 
         # --- 6. Post-fetch adaptive profile ---
         adapted_post, post_meta = _adapt_output_profile(
@@ -3265,8 +3636,7 @@ async def run_web_search(
         or timelimit
     )
     resolved_timelimit = explicit_timelimit or auto_timelimit
-    quality_decision = _apply_query_quality_effort_policy(query_for_search, effort, cfg.query_quality)
-    search_effort = quality_decision.effort
+    search_effort = _normalize_search_effort(effort)
     effective_hard_timeout = _effort_hard_timeout(search_effort, hard_timeout)
     opts = _build_effort_options(
         cfg,
@@ -3284,11 +3654,12 @@ async def run_web_search(
     try:
         loop = asyncio.get_event_loop()
         deadline = loop.time() + effective_hard_timeout
-        result_text = await asyncio.wait_for(
-            service.search(query, deadline=deadline),
-            timeout=effective_hard_timeout,
-        )
-        return _apply_query_quality_notice_text(result_text, quality_decision, cfg.query_quality)
+        with _search_model_session_scope(effort=search_effort) as model_session:
+            result_text = await asyncio.wait_for(
+                service.search(query, deadline=deadline, model_session=model_session),
+                timeout=effective_hard_timeout,
+            )
+        return result_text
     except asyncio.TimeoutError:
         elapsed = round(time.perf_counter() - init_t0, 1)
         logger.warning(
@@ -3296,8 +3667,10 @@ async def run_web_search(
             query[:80], elapsed, effective_hard_timeout,
         )
         if search_effort == "low":
-            timeout_text = f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) for: {query_for_search}"
-            return _apply_query_quality_notice_text(timeout_text, quality_decision, cfg.query_quality)
+            return (
+                f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) "
+                f"for: {query_for_search}"
+            )
         try:
             fallback_results = await run_web_search_structured(
                 query=query,
@@ -3311,10 +3684,11 @@ async def run_web_search(
             logger.warning("web_search.timeout_fallback_failed query=%r err=%s", query[:80], fallback_exc)
             fallback_results = []
         if fallback_results:
-            fallback_text = _format_timeout_fallback_text(query_for_search, fallback_results, limit=max_results)
-            return _apply_query_quality_notice_text(fallback_text, quality_decision, cfg.query_quality)
-        timeout_text = f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) for: {query_for_search}"
-        return _apply_query_quality_notice_text(timeout_text, quality_decision, cfg.query_quality)
+            return _format_timeout_fallback_text(query_for_search, fallback_results, limit=max_results)
+        return (
+            f"Search timed out after {elapsed}s (limit {effective_hard_timeout:.0f}s) "
+            f"for: {query_for_search}"
+        )
 
 
 async def run_web_search_structured(
@@ -3341,8 +3715,7 @@ async def run_web_search_structured(
         or timelimit
     )
     resolved_timelimit = explicit_timelimit or auto_timelimit
-    quality_decision = _apply_query_quality_effort_policy(query_for_search, effort, cfg.query_quality)
-    search_effort = quality_decision.effort
+    search_effort = _normalize_search_effort(effort)
     effective_hard_timeout = _effort_hard_timeout(search_effort, hard_timeout)
     opts = _build_effort_options(
         cfg,
@@ -3355,10 +3728,11 @@ async def run_web_search_structured(
     loop = asyncio.get_event_loop()
     deadline = loop.time() + effective_hard_timeout
     try:
-        return await asyncio.wait_for(
-            service.search_structured(query, deadline=deadline),
-            timeout=effective_hard_timeout,
-        )
+        with _search_model_session_scope(effort=search_effort) as model_session:
+            return await asyncio.wait_for(
+                service.search_structured(query, deadline=deadline, model_session=model_session),
+                timeout=effective_hard_timeout,
+            )
     except asyncio.TimeoutError:
         logger.warning(
             "web_search_structured.hard_timeout query=%r limit=%.0fs",
@@ -3391,8 +3765,7 @@ async def run_web_search_rich(
         or timelimit
     )
     resolved_timelimit = explicit_timelimit or auto_timelimit
-    quality_decision = _apply_query_quality_effort_policy(query_for_search, effort, cfg.query_quality)
-    search_effort = quality_decision.effort
+    search_effort = _normalize_search_effort(effort)
     effective_hard_timeout = _effort_hard_timeout(search_effort, hard_timeout)
     opts = _build_effort_options(
         cfg,
@@ -3405,15 +3778,12 @@ async def run_web_search_rich(
     loop = asyncio.get_event_loop()
     deadline = loop.time() + effective_hard_timeout
     try:
-        rich = await asyncio.wait_for(
-            service.search_rich(query.strip(), deadline=deadline),
-            timeout=effective_hard_timeout,
-        )
-        return _apply_query_quality_notice_payload(
-            _rich_result_to_dict(rich),
-            quality_decision,
-            cfg.query_quality,
-        )
+        with _search_model_session_scope(effort=search_effort) as model_session:
+            rich = await asyncio.wait_for(
+                service.search_rich(query.strip(), deadline=deadline, model_session=model_session),
+                timeout=effective_hard_timeout,
+            )
+        return _rich_result_to_dict(rich)
     except asyncio.TimeoutError:
         logger.warning(
             "web_search_rich.hard_timeout query=%r limit=%.0fs",
@@ -3421,7 +3791,7 @@ async def run_web_search_rich(
         )
         if search_effort == "low":
             search_id = f"srch_{_make_request_id()}"
-            payload = {
+            return {
                 "query": query_for_search,
                 "search_id": search_id,
                 "sources": [],
@@ -3436,7 +3806,6 @@ async def run_web_search_rich(
                     },
                 },
             }
-            return _apply_query_quality_notice_payload(payload, quality_decision, cfg.query_quality)
         fallback_results: list[SearchResult] = []
         try:
             fallback_results = await run_web_search_structured(
@@ -3451,14 +3820,10 @@ async def run_web_search_rich(
             logger.warning("web_search_rich.timeout_fallback_failed query=%r err=%s", query[:80], fallback_exc)
 
         if fallback_results:
-            return _apply_query_quality_notice_payload(
-                _timeout_fallback_rich_payload(query_for_search, fallback_results),
-                quality_decision,
-                cfg.query_quality,
-            )
+            return _timeout_fallback_rich_payload(query_for_search, fallback_results)
 
         search_id = f"srch_{_make_request_id()}"
-        payload = {
+        return {
             "query": query_for_search,
             "search_id": search_id,
             "sources": [],
@@ -3473,4 +3838,3 @@ async def run_web_search_rich(
                 },
             },
         }
-        return _apply_query_quality_notice_payload(payload, quality_decision, cfg.query_quality)

@@ -58,6 +58,11 @@ class SearchResult:
     # Debugging fields (filled by service layer, stripped in MCP adapter)
     extract_debug_stage: str = ""
     extract_debug_timeout_sec: float = 0.0
+    # Neural/routing debug fields (internal; stripped by adapters unless copied explicitly)
+    snippet_relevance_score: float = 0.0
+    parsed_relevance_score: float = 0.0
+    routing_score: float = 1.0
+    routing_debug: dict = field(default_factory=dict)
 
 
 @dataclass

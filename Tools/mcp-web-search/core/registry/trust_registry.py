@@ -12,12 +12,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-from .config import TRUST_REGISTRY_PATH
+from .config import TRUST_PROFILES_DIR, TRUST_REGISTRY_PATH
 
 logger = logging.getLogger("core.registry.trust_registry")
 
 _REGISTRY_DIR = Path(__file__).resolve().parent
-_PROFILES_DIR = _REGISTRY_DIR / "trust_registry_profiles"
+_PROFILES_DIR = TRUST_PROFILES_DIR
 _MANIFEST_NAME = "manifest.json"
 _GLOBAL_NAME = "_global.json"
 _SKIP_PROFILE_NAMES = frozenset({_MANIFEST_NAME.lower(), _GLOBAL_NAME.lower()})
@@ -362,15 +362,18 @@ class TrustRegistry:
                 self._source,
             )
 
-    def get_tier(self, url: str) -> Optional[str]:
-        """Return the configured trust tier for a URL, if any."""
-
+    def get_entry(self, url: str) -> Optional[TrustDomainEntry]:
+        """Return the matching TrustDomainEntry for a URL, or None."""
         netloc = urlparse(url).netloc.lower()
         for pattern, entry in self._lookup.items():
             if netloc == pattern or netloc.endswith("." + pattern):
-                return entry.tier
-
+                return entry
         return None
+
+    def get_tier(self, url: str) -> Optional[str]:
+        """Return the configured trust tier for a URL, if any."""
+        entry = self.get_entry(url)
+        return entry.tier if entry is not None else None
 
     def get_weight(self, url: str) -> float:
         """Return the numeric trust weight for a URL."""

@@ -1,0 +1,55 @@
+name: Registry & Pipeline Tests
+
+on:
+  push:
+    paths:
+      - "Tools/mcp-web-search/core/registry/**"
+      - "Tools/mcp-web-search/core/query/class_profiles/**"
+      - "Tools/mcp-web-search/core/query/class_profiles.py"
+      - "Tools/mcp-web-search/core/config/**"
+      - "Tools/mcp-web-search/services/web_search.py"
+      - "Tools/mcp-web-search/tests/test_class_profiles.py"
+      - "Tools/mcp-web-search/tests/test_domain_constraints.py"
+      - "Tools/mcp-web-search/tests/test_domain_registry_profiles.py"
+      - "Tools/mcp-web-search/tests/test_domain_registry_nextjs.py"
+      - "Tools/mcp-web-search/tests/test_trust_registry_profiles.py"
+      - "Tools/mcp-web-search/tests/test_neural_pipeline_components.py"
+      - "Tools/mcp-web-search/tests/test_ddgs_partial_buffer.py"
+  pull_request:
+    paths:
+      - "Tools/mcp-web-search/**"
+
+defaults:
+  run:
+    working-directory: Tools/mcp-web-search
+
+jobs:
+  registry-fast-gate:
+    name: Registry fast gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Registry Doctor verify
+        run: python -m core.registry.doctor verify --quiet
+
+      - name: Registry & pipeline tests
+        run: |
+          python -m pytest \
+            tests/test_class_profiles.py \
+            tests/test_domain_constraints.py \
+            tests/test_domain_registry_profiles.py \
+            tests/test_domain_registry_nextjs.py \
+            tests/test_trust_registry_profiles.py \
+            tests/test_neural_pipeline_components.py \
+            tests/test_ddgs_partial_buffer.py \
+            -q --tb=short

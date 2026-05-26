@@ -314,7 +314,11 @@ def infer_query_types_from_rules(query: str, limit: int = 3) -> list[str]:
 def _normalize_model_scores(model_scores: dict[str, float] | None) -> dict[str, float]:
     if not model_scores:
         return {}
-    cleaned = {str(k).strip(): float(v) for k, v in model_scores.items() if str(k).strip()}
+    cleaned = {
+        str(k).strip(): float(v)
+        for k, v in model_scores.items()
+        if str(k).strip() and float(v) >= 0.01
+    }
     total = sum(max(0.0, v) for v in cleaned.values())
     if total <= 0:
         return {}
@@ -345,7 +349,7 @@ def infer_query_types_hybrid(
     for class_name, model_w in model_norm.items():
         rule_w = rule_map.get(class_name, 0.0)
         delta = max(-_RULE_PENALTY_CAP, min(_RULE_BOOST_CAP, (rule_w - 0.25) * _RULE_BLEND))
-        blended[class_name] = model_w * _MODEL_BLEND + rule_w * _RULE_BLEND + delta
+        blended[class_name] = max(0.0, model_w * _MODEL_BLEND + rule_w * _RULE_BLEND + delta)
         reasons[class_name] = f"model={model_w:.2f},rule={rule_w:.2f},delta={delta:+.2f}"
 
     # Soft split: keep secondary model classes above threshold
