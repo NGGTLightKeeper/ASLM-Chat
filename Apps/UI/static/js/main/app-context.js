@@ -1,7 +1,10 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { normalizeEngineValue } from '../engines/engine-registry.js';
+import { initI18n } from './i18n.js';
 import { parseJsonScript } from './utils.js';
+
+initI18n();
 
 // Icon helpers.
 // Build one SVG sprite reference string.
@@ -49,6 +52,10 @@ export function createAppContext() {
     $presetCreateBtn: $('#ollamaPresetCreateBtn'),
     $presetRenameBtn: $('#ollamaPresetRenameBtn'),
     $presetDeleteBtn: $('#ollamaPresetDeleteBtn'),
+    $groupSandboxDefault: $('#group-sandbox-default'),
+    $dividerSandboxDefault: $('#divider-sandbox-default'),
+    $sandboxDefaultToggle: $('#sandboxDefaultToggle'),
+    $sandboxDefaultValue: $('#sandboxDefaultValue'),
     $groupTools: $('#group-tools'),
     $dividerTools: $('#divider-tools'),
     $groupMcp: $('#group-mcp'),
@@ -199,7 +206,8 @@ export function createAppContext() {
       },
       toolState: {
         supported: false
-      }
+      },
+      pendingSandboxModeSwitch: null
     }
   };
 }

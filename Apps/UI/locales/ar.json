@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM - نماذج لغوية نظامية متقدمة",
+    "profileTitle": "الملف الشخصي - ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "المحادثات",
+    "newChat": "محادثة جديدة",
+    "noPreviousChats": "لا توجد محادثات سابقة",
+    "chatOptions": "خيارات المحادثة",
+    "rename": "إعادة التسمية",
+    "delete": "حذف",
+    "account": "الحساب",
+    "ago": "منذ {time}"
+  },
+  "chat": {
+    "newChat": "محادثة جديدة",
+    "attachmentChat": "محادثة مرفقات",
+    "howCanIHelp": "كيف يمكنني المساعدة؟",
+    "welcomeTitle": "كيف يمكنني المساعدة؟"
+  },
+  "composer": {
+    "placeholder": "راسل ASLM...",
+    "menu": "قائمة المحرر",
+    "attachFiles": "إرفاق ملفات",
+    "tools": "الأدوات",
+    "other": "أخرى",
+    "reasoningEffort": "جهد الاستدلال",
+    "intelligence": "عمق التفكير",
+    "off": "إيقاف",
+    "sendMessage": "إرسال الرسالة",
+    "queueMessage": "إدراج الرسالة في الطابور",
+    "stopGeneration": "إيقاف التوليد",
+    "contextUsage": "استخدام السياق"
+  },
+  "reasoning": {
+    "panel": "لوحة الاستدلال",
+    "title": "الاستدلال",
+    "closePanel": "إغلاق لوحة الاستدلال"
+  },
+  "settings": {
+    "modelSettings": "إعدادات النموذج",
+    "collapse": "طي الإعدادات",
+    "expand": "توسيع الإعدادات",
+    "connection": "الاتصال",
+    "engine": "المحرك",
+    "address": "العنوان",
+    "saved": "محفوظ",
+    "engineAddressPlaceholder": "عنوان المحرك",
+    "engineAddressHint": "اضبط نقطة نهاية المحرك المحدد.",
+    "apiKey": "مفتاح API",
+    "off": "إيقاف",
+    "useSavedKey": "استخدام المفتاح المحفوظ",
+    "pasteApiKey": "لصق مفتاح API",
+    "apiKeyHint": "مطلوب فقط لنقاط النهاية المؤمّنة.",
+    "model": "النموذج",
+    "modelsLoadOnDemand": "تُحمَّل النماذج عند الطلب",
+    "visionModel": "نموذج الرؤية",
+    "preset": "الإعداد المسبق",
+    "default": "افتراضي",
+    "presetNew": "جديد",
+    "presetRename": "إعادة التسمية",
+    "presetDelete": "حذف",
+    "sandboxDefault": "صندوق الرمل الافتراضي",
+    "mode": "الوضع",
+    "tools": "الأدوات",
+    "mcp": "MCP",
+    "skills": "المهارات",
+    "systemPrompt": "موجّه النظام",
+    "systemPromptPlaceholder": "مثال: \"أجب فقط بالقافية\"",
+    "load": "تحميل",
+    "customFields": "حقول مخصّصة",
+    "settings": "الإعدادات",
+    "sampling": "أخذ العينات",
+    "advanced": "متقدّم",
+    "custom": "مخصّص"
+  },
+  "profile": {
+    "backToChat": "العودة إلى المحادثة",
+    "account": "الحساب",
+    "user": "المستخدم",
+    "localAccount": "حساب محلي",
+    "general": "عام",
+    "username": "اسم المستخدم",
+    "email": "البريد الإلكتروني",
+    "memberSince": "عضو منذ",
+    "dangerZone": "منطقة الخطر",
+    "signOut": "تسجيل الخروج"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "متوافق مع OpenAI",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "نافذة السياق:",
+    "usageLabel": "السياق: {percent}% مستخدم، {remaining}% متبقٍ. {used} / {window} رمزًا.",
+    "used": "مستخدم",
+    "remaining": "متبقٍ",
+    "compressing": "جارٍ ضغط السياق",
+    "compressionInProgress": "ضغط السياق قيد التنفيذ",
+    "compressedActive": "السياق المضغوط نشط.",
+    "compressedActiveTooltip": "السياق المضغوط نشط",
+    "compressContext": "ضغط السياق",
+    "autoCompress": "ضغط تلقائي عند {percent}%"
+  },
+  "think": {
+    "off": "إيقاف",
+    "low": "منخفض",
+    "medium": "متوسط",
+    "high": "مرتفع",
+    "minimal": "أدنى",
+    "extraHigh": "مرتفع جدًا"
+  },
+  "messages": {
+    "more": "المزيد",
+    "hide": "إخفاء",
+    "copyCode": "نسخ الكود",
+    "copyDiagram": "نسخ مصدر المخطط",
+    "noContent": "لا محتوى.",
+    "noDiff": "لا فرق.",
+    "file": "ملف",
+    "audio": "صوت",
+    "video": "فيديو",
+    "image": "صورة",
+    "download": "تنزيل",
+    "playAudio": "تشغيل الصوت",
+    "playVideo": "تشغيل الفيديو",
+    "pauseMedia": "إيقاف الوسائط مؤقتًا",
+    "playMedia": "تشغيل الوسائط",
+    "muteMedia": "كتم الوسائط",
+    "unmuteMedia": "إلغاء كتم الوسائط",
+    "fullscreen": "ملء الشاشة",
+    "exitFullscreen": "الخروج من ملء الشاشة",
+    "audioProgress": "تقدّم الصوت",
+    "videoProgress": "تقدّم الفيديو",
+    "openMiniPlayer": "فتح المشغّل المصغّر",
+    "returnToMessage": "العودة إلى الرسالة",
+    "closeMiniPlayer": "إغلاق المشغّل المصغّر",
+    "renderingDiagram": "جارٍ عرض المخطط...",
+    "mermaidEmpty": "مصدر مخطط Mermaid فارغ.",
+    "mermaidUnavailable": "عارض Mermaid غير متاح.",
+    "mermaidError": "تعذّر عرض مخطط Mermaid: {error}",
+    "running": "قيد التشغيل...",
+    "noOutput": "لا مخرجات.",
+    "python": "Python",
+    "sandbox": "صندوق الرمل",
+    "write": "كتابة",
+    "writePath": "كتابة {path}",
+    "edit": "تحرير",
+    "editPath": "تحرير {path}",
+    "viewedImage": "صورة معروضة",
+    "viewedPath": "عُرض {path}",
+    "imagePreview": "معاينة الصورة",
+    "imagePreviewFor": "معاينة الصورة لـ {path}",
+    "readSource": "قراءة المصدر:",
+    "readSources": "قراءة المصادر:",
+    "searchedFor": "بحث عن {query}",
+    "noSourcesFor": "لم تُعثر على مصادر لـ {query}",
+    "searchingFor": "جارٍ البحث عن {query}",
+    "badQuery": "استعلام غير صالح: {query}"
+  },
+  "skills": {
+    "title": "المهارات",
+    "refresh": "تحديث",
+    "noSkills": "لم تُعثر على مهارات",
+    "loadError": "تعذّر تحميل المهارات",
+    "manage": "إدارة المهارات",
+    "customizeAria": "تخصيص المهارات",
+    "errorTitle": "خطأ في المهارات",
+    "personalSkillOne": "مهارة شخصية واحدة",
+    "personalSkillMany": "{count} مهارات شخصية",
+    "noSkillsYet": "لا توجد مهارات بعد",
+    "composerMenuAria": "المهارات",
+    "closeManagerAria": "إغلاق مدير المهارات",
+    "searchPlaceholder": "البحث في المهارات",
+    "addSkillAria": "إضافة مهارة",
+    "skillActionsAria": "إجراءات المهارة",
+    "toggleSkillFilesAria": "إظهار أو إخفاء ملفات المهارة",
+    "toggleFolderAria": "إظهار أو إخفاء المجلد",
+    "toggleKindAria": "التبديل بين مجلد أو ملف",
+    "newFileAria": "ملف جديد في المجلد",
+    "renameFolderAria": "إعادة تسمية المجلد",
+    "renameFileAria": "إعادة تسمية الملف",
+    "deleteFileAria": "حذف الملف",
+    "dialogOk": "موافق",
+    "dialogCancel": "إلغاء",
+    "dialogConfirm": "تأكيد",
+    "dialogInput": "إدخال",
+    "valueRequired": "القيمة مطلوبة.",
+    "createSkill": "إنشاء مهارة",
+    "skillNamePlaceholder": "اسم-المهارة",
+    "create": "إنشاء",
+    "importSkillFolder": "استيراد مجلد مهارة",
+    "dropzoneAria": "أسقط مجلد المهارة هنا",
+    "dropzoneText": "أسقط مجلد المهارة هنا (المجلد الأب)",
+    "or": "أو",
+    "browseFolder": "استعراض المجلد…",
+    "skillNameRequired": "اسم المهارة مطلوب.",
+    "importing": "جارٍ الاستيراد…",
+    "newSkill": "مهارة جديدة",
+    "skillFolderName": "اسم مجلد المهارة",
+    "skillFolderNamePlaceholder": "منشئ-المهارات",
+    "renameSkill": "إعادة تسمية المهارة",
+    "newSkillFolderName": "اسم مجلد جديد",
+    "deleteSkill": "حذف المهارة",
+    "deleteSkillConfirm": "حذف المهارة \"{name}\"؟",
+    "newSkillFile": "ملف مهارة جديد",
+    "filePathInSkill": "مسار الملف داخل المهارة",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "حذف الملف",
+    "deleteFileConfirm": "هل أنت متأكد؟",
+    "renameFolder": "إعادة تسمية المجلد",
+    "folderName": "اسم المجلد",
+    "renameFile": "إعادة تسمية الملف",
+    "fileName": "اسم الملف",
+    "editSkill": "تحرير المهارة",
+    "doneEditing": "إنهاء التحرير",
+    "newFilePlaceholder": "اسم ملف جديد (مثال grader.md)",
+    "newFolderPlaceholder": "اسم مجلد جديد",
+    "noFileSelected": "لم يُحدد ملف",
+    "noFileSelectedPath": "لم يُحدد ملف.",
+    "emptyState": "أنشئ مهارة للبدء.",
+    "preview": "معاينة",
+    "created": "تاريخ الإنشاء",
+    "unknown": "غير معروف",
+    "readFileFailed": "تعذّر قراءة {name}",
+    "importNameHintDropOne": "أدخل اسمًا في الحقل أعلاه أو أسقط مجلد مهارة واحدًا في كل مرة.",
+    "importNameHintSelect": "أدخل اسمًا أو اختر مهارة من الشجرة أو مجلدًا واحدًا.",
+    "importNoFiles": "لم يُعثر على ملفات.",
+    "importNoSupported": "لم يُعثر على ملفات نصية مدعومة (.md و.txt و.py …).",
+    "importNoSupportedFor": "لم يُعثر على ملفات مدعومة لـ \"{name}\"."
+  },
+  "errors": {
+    "generic": "حدث خطأ ما",
+    "network": "خطأ في الشبكة"
+  },
+  "confirm": {
+    "deleteChat": "حذف هذه المحادثة؟",
+    "deleteChatNamed": "حذف \"{title}\"؟",
+    "deletePreset": "حذف الإعداد المسبق \"{name}\"؟",
+    "unsaved": "لديك تغييرات غير محفوظة."
+  },
+  "toolInspector": {
+    "title": "مفتش الأدوات",
+    "close": "إغلاق",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "درجة الحرارة"
+    },
+    "num_ctx": {
+      "label": "طول السياق",
+      "note": "نافذة السياق بالرموز."
+    },
+    "num_predict": {
+      "label": "الحد الأقصى لرموز المخرجات",
+      "note": "الحد الأقصى للرموز المُولَّدة."
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "تخصيص ذاكرة مدرك لـ NUMA."
+    },
+    "num_batch": {
+      "label": "حجم الدفعة",
+      "note": "حجم دفعة الموجّه."
+    },
+    "num_gpu": {
+      "label": "طبقات GPU",
+      "note": "الطبقات المُحمَّلة على GPU."
+    },
+    "main_gpu": {
+      "label": "GPU الرئيسي",
+      "note": "وحدة معالجة الرسوميات الأساسية"
+    },
+    "low_vram": {
+      "label": "ذاكرة فيديو منخفضة",
+      "note": "استخدام أقل لذاكرة الفيديو."
+    },
+    "f16_kv": {
+      "label": "استخدام ذاكرة تخزين KV بصيغة FP16",
+      "note": "استخدام ذاكرة تخزين KV بصيغة FP16."
+    },
+    "logits_all": {
+      "label": "إرجاع اللوغيتات الكاملة",
+      "note": "إرجاع اللوغيتات لجميع الرموز."
+    },
+    "vocab_only": {
+      "label": "المفردات فقط",
+      "note": "تحميل المفردات فقط."
+    },
+    "use_mmap": {
+      "label": "استخدام تعيين الذاكرة",
+      "note": "استخدام تعيين الذاكرة."
+    },
+    "use_mlock": {
+      "label": "استخدام قفل الذاكرة",
+      "note": "قفل صفحات النموذج في RAM."
+    },
+    "embedding_only": {
+      "label": "التضمين فقط",
+      "note": "تحميل التضمين فقط."
+    },
+    "num_thread": {
+      "label": "خيوط المعالج",
+      "note": "خيوط المعالج"
+    },
+    "num_keep": {
+      "label": "الاحتفاظ برموز الموجّه",
+      "note": "-1 يحتفظ بالكل، 0 تلقائي."
+    },
+    "seed": {
+      "label": "البذرة",
+      "note": "بذرة حتمية."
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "نافذة التكرار"
+    },
+    "repeat_penalty": {
+      "label": "عقوبة التكرار"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "أخذ عينات بلا ذيل."
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "عقوبة الوجود"
+    },
+    "frequency_penalty": {
+      "label": "عقوبة التكرار"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "تسلسلات الإيقاف"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "أعلى Logprobs",
+      "note": "لوغيتات الرموز البديلة."
+    },
+    "keep_alive": {
+      "label": "إبقاء النموذج محمّلًا",
+      "note": "مدة إبقاء النموذج محمّلًا."
+    },
+    "format": {
+      "label": "صيغة الاستجابة",
+      "note": "وضع JSON أو مخطط JSON."
+    },
+    "penalize_newline": {
+      "label": "معاقبة سطر جديد",
+      "note": "معاقبة رموز سطر جديد أيضًا."
+    },
+    "maxTokens": {
+      "label": "الحد الأقصى لرموز المخرجات"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "عقوبة التكرار"
+    },
+    "xtcProbability": {
+      "label": "احتمال XTC"
+    },
+    "xtcThreshold": {
+      "label": "عتبة XTC"
+    },
+    "cpuThreads": {
+      "label": "خيوط المعالج"
+    },
+    "stopStrings": {
+      "label": "تسلسلات الإيقاف"
+    },
+    "toolCallStopStrings": {
+      "label": "تسلسلات إيقاف الأدوات"
+    },
+    "contextOverflowPolicy": {
+      "label": "سياسة تجاوز السياق"
+    },
+    "draftModel": {
+      "label": "النموذج المسودّ"
+    },
+    "max_output_tokens": {
+      "label": "الحد الأقصى لرموز المخرجات"
+    },
+    "candidate_count": {
+      "label": "المرشّحون"
+    },
+    "stop_sequences": {
+      "label": "تسلسلات الإيقاف"
+    },
+    "response_logprobs": {
+      "label": "Logprobs الاستجابة"
+    },
+    "response_mime_type": {
+      "label": "نوع MIME للاستجابة"
+    },
+    "max_completion_tokens": {
+      "label": "الحد الأقصى لرموز الإكمال"
+    },
+    "n": {
+      "label": "المرشّحون"
+    },
+    "reasoning_effort": {
+      "label": "جهد الاستدلال"
+    },
+    "verbosity": {
+      "label": "الإسهاب"
+    },
+    "response_format": {
+      "label": "صيغة الاستجابة"
+    },
+    "logit_bias": {
+      "label": "انحياز Logit"
+    }
+  },
+  "mcp": {
+    "editConfig": "تحرير mcp.json",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name} ({count} أدوات)",
+    "cancel": "إلغاء",
+    "save": "حفظ"
+  }
+}

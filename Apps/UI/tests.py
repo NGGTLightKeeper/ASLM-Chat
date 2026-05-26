@@ -75,7 +75,12 @@ from Apps.UI.views import (
     _parse_active_tool_slugs,
     _resolve_history_char_budget,
     _serialize_attachment_record,
+    _build_sandbox_mode_switch_notice,
+    _inject_ephemeral_system_notice,
+    _maybe_inject_sandbox_mode_switch_notice,
+    _parse_sandbox_mode_switch,
     _selected_tools_include_sandbox,
+    _sync_sandbox_roots,
     _stream_chat_response,
     _strip_llm_control_tokens,
 )
@@ -1250,6 +1255,22 @@ class UploadFilesApiTests(SimpleTestCase):
         finally:
             sandbox_file.unlink(missing_ok=True)
 
+    # Test legacy ODA mounts remain downloadable while old containers drain.
+    def test_shared_file_download_allows_legacy_oda_mount_path(self):
+        sandbox_file = Path("Tools/ODA/tmp/_sandbox/test-hosted-cache.md")
+        sandbox_file.parent.mkdir(parents=True, exist_ok=True)
+        sandbox_file.write_text("legacy oda ok", encoding="utf-8")
+        try:
+            response = self.client.get(
+                reverse("shared_file_download_api"),
+                {"path": "/mnt/data/_sandbox/test-hosted-cache.md"},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(b"".join(response.streaming_content), b"legacy oda ok")
+        finally:
+            sandbox_file.unlink(missing_ok=True)
+
     # Test empty upload requests fail before returning a card payload.
     def test_upload_api_requires_files(self):
         response = self.client.post(reverse("uploads_api"), {})
@@ -2296,6 +2317,7 @@ class ViewFormattingTests(SimpleTestCase):
         payload = {
             "kind": "shared_file",
             "path": "/workspace/_sandbox/wave_graph.svg",
+            "host_path": str(Path("C:/tmp/oda/wave_graph.svg")),
             "filename": "wave_graph.svg",
             "mime_type": "image/svg+xml",
             "size_bytes": 123,
@@ -2311,6 +2333,7 @@ class ViewFormattingTests(SimpleTestCase):
         self.assertEqual(model_text, "Shared file ready for download: wave_graph.svg")
         self.assertEqual(extras["structured_content"]["kind"], "shared_file")
         self.assertEqual(extras["structured_content"]["file"]["render"]["type"], "image")
+        self.assertIn("/api/shared-file/download/?", extras["structured_content"]["file"]["download_url"])
         self.assertEqual(extras["tool_ui"]["kind"], "shared_file")
 
     # Test repeated tool aliases preserve all shared files in activity segments.
@@ -2488,6 +2511,84 @@ class ContextCompressionBudgetTests(SimpleTestCase):
         )
 
 
+class SandboxDefaultSyncTests(SimpleTestCase):
+    """Cover progress handoff between sandbox default roots."""
+
+    def test_sync_sandbox_roots_merges_files_without_deleting_target_progress(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "source"
+            target = root / "target"
+            (source / "nested").mkdir(parents=True)
+            (target / "target-only").mkdir(parents=True)
+            (source / "nested" / "fresh.txt").write_text("fresh", encoding="utf-8")
+            (target / "target-only" / "keep.txt").write_text("keep", encoding="utf-8")
+
+            stats = _sync_sandbox_roots(source, target)
+
+            self.assertEqual((target / "nested" / "fresh.txt").read_text(encoding="utf-8"), "fresh")
+            self.assertEqual((target / "target-only" / "keep.txt").read_text(encoding="utf-8"), "keep")
+            self.assertGreaterEqual(stats["copied"], 1)
+
+    def test_sync_sandbox_roots_keeps_newer_target_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "source"
+            target = root / "target"
+            source.mkdir()
+            target.mkdir()
+            source_file = source / "result.txt"
+            target_file = target / "result.txt"
+            source_file.write_text("old", encoding="utf-8")
+            target_file.write_text("new", encoding="utf-8")
+            os.utime(source_file, (100, 100))
+            os.utime(target_file, (200, 200))
+
+            stats = _sync_sandbox_roots(source, target)
+
+            self.assertEqual(target_file.read_text(encoding="utf-8"), "new")
+            self.assertEqual(stats["copied"], 0)
+
+
+class SandboxModeSwitchNoticeTests(SimpleTestCase):
+    """Cover one-shot sandbox mode switch guidance for the model."""
+
+    def test_build_notice_mentions_workspace_prefixes(self):
+        notice = _build_sandbox_mode_switch_notice("linux_sandbox", "data_analysis")
+        self.assertIn("/workspace/_sandbox", notice)
+        self.assertIn("/mnt/data/_sandbox", notice)
+        self.assertIn("Continue the current task seamlessly", notice)
+
+    def test_parse_switch_rejects_invalid_payload(self):
+        self.assertIsNone(_parse_sandbox_mode_switch({}))
+        self.assertIsNone(
+            _parse_sandbox_mode_switch(
+                {"sandbox_mode_switch": {"source_mode": "linux_sandbox", "target_mode": "linux_sandbox"}}
+            )
+        )
+
+    def test_inject_inserts_after_main_system_prompt(self):
+        messages = [{"role": "system", "content": "base"}]
+        _inject_ephemeral_system_notice(messages, "switch notice")
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[1]["content"], "switch notice")
+
+    def test_maybe_inject_skips_without_sandbox_tool(self):
+        messages = [{"role": "system", "content": "base"}]
+        _maybe_inject_sandbox_mode_switch_notice(
+            messages,
+            data={
+                "sandbox_mode_switch": {
+                    "source_mode": "linux_sandbox",
+                    "target_mode": "data_analysis",
+                }
+            },
+            sandbox_enabled=False,
+            sandbox_default_mode="data_analysis",
+        )
+        self.assertEqual(len(messages), 1)
+
+
 # Exercise chat API basics without calling a real model backend.
 class ChatApiTests(ToolRegistryTestMixin, TestCase):
     """Exercise chat API basics without calling a real model backend."""
@@ -2622,6 +2723,113 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(mock_generate.call_args.kwargs["tool_server_ids"], ["time_suite"])
         self.assertEqual(mock_generate.call_args.kwargs["tool_context"]["engine"], "ollama-service")
         self.assertEqual(Chat.objects.first().active_tool_slug, '["time_suite"]')
+
+    # Test sandbox default is available to tools such as Browser Screenshot.
+    @patch(
+        "Apps.UI.views.llm_api.get_model_settings",
+        return_value={
+            "capabilities": ["tools"],
+            "template": "{{ if .Tools }}{{ end }}{{ if .ToolCalls }}{{ end }}",
+        },
+    )
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_api_passes_sandbox_default_mode_to_tool_context(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+        _mock_model_settings,
+    ):
+        self.write_server(
+            'browser_agent',
+            '''
+            MCP_SERVER = {"id": "browser_agent", "name": "Browser Agent"}
+            TOOLS = [
+                {"id": "browser_screenshot", "name": "Browser Screenshot", "parameters": {"type": "object", "properties": {}}},
+            ]
+            def call_tool(tool_id, arguments, context=None):
+                return "ok"
+            ''',
+        )
+        mock_generate.return_value = [{"message": {"content": "Done"}}]
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data=json.dumps(
+                {
+                    "message": "Look",
+                    "model": "llama3.1",
+                    "tool_server_ids": ["browser_agent"],
+                    "sandbox_default_mode": "data_analysis",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b''.join(response.streaming_content), b'Done')
+        self.assertEqual(mock_generate.call_args.kwargs["tool_context"]["sandbox_default_mode"], "data_analysis")
+
+    @patch(
+        "Apps.UI.views.llm_api.get_model_settings",
+        return_value={
+            "capabilities": ["tools"],
+            "template": "{{ if .Tools }}{{ end }}{{ if .ToolCalls }}{{ end }}",
+        },
+    )
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")
+    def test_chat_api_injects_sandbox_mode_switch_notice(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+        _mock_model_settings,
+    ):
+        self.write_server(
+            "sandbox",
+            '''
+            MCP_SERVER = {"id": "sandbox", "name": "Sandbox"}
+            TOOLS = [
+                {"id": "write", "name": "Write", "parameters": {"type": "object", "properties": {}}},
+            ]
+            def call_tool(tool_id, arguments, context=None):
+                return "ok"
+            ''',
+        )
+        mock_generate.return_value = [{"message": {"content": "Done"}}]
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data=json.dumps(
+                {
+                    "message": "Continue",
+                    "model": "llama3.1",
+                    "tool_server_ids": ["sandbox"],
+                    "sandbox_default_mode": "data_analysis",
+                    "sandbox_mode_switch": {
+                        "source_mode": "linux_sandbox",
+                        "target_mode": "data_analysis",
+                    },
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), b"Done")
+        messages = mock_generate.call_args.kwargs["messages"]
+        notices = [
+            message
+            for message in messages
+            if message.get("role") == "system"
+            and "Sandbox default changed by the user in the UI" in str(message.get("content") or "")
+        ]
+        self.assertEqual(len(notices), 1)
+        self.assertIn("/mnt/data/_sandbox", notices[0]["content"])
 
     # Test chat API rejects unknown tool server.
     @patch("Apps.UI.views._get_active_engine", return_value="ollama-service")

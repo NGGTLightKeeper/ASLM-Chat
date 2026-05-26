@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import stat
+import struct
 import tempfile
 import time
 import uuid
@@ -17,7 +18,7 @@ import zipfile
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_TMP_ROOT = Path(tempfile.gettempdir()) / "ada-sandbox"
+DEFAULT_TMP_ROOT = Path(tempfile.gettempdir()) / "oda-sandbox"
 DEFAULT_SHARED_ROOT = _REPO_ROOT / "tmp" / "_sandbox"
 SHARED_DIR_NAME = "_sandbox"
 MODEL_SHARED_ROOT = "/mnt/data/_sandbox"
@@ -40,9 +41,18 @@ ALLOWED_EXTENSIONS = frozenset(
         ".yml",
         ".log",
         ".ndjson",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".svg",
     }
 )
 
+IMAGE_MIME_PREFIX = "image/"
+DEFAULT_MAX_IMAGE_PREVIEW_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_FILE_BYTES = 50 * 1024 * 1024
 DEFAULT_MAX_OUTPUT_TOTAL_BYTES = 50 * 1024 * 1024
 DEFAULT_MAX_FILES_PER_LIST = 20
@@ -193,6 +203,10 @@ def max_file_bytes() -> int:
 
 def max_output_total_bytes() -> int:
     return _env_bytes("SANDBOX_MAX_OUTPUT_TOTAL_BYTES", DEFAULT_MAX_OUTPUT_TOTAL_BYTES)
+
+
+def max_image_preview_bytes() -> int:
+    return _env_bytes("SANDBOX_MAX_IMAGE_PREVIEW_BYTES", DEFAULT_MAX_IMAGE_PREVIEW_BYTES)
 
 
 def max_files_per_list() -> int:
@@ -426,7 +440,7 @@ def describe_shared_file(path: object, filename: object | None = None) -> dict:
         mime_type = "text/tab-separated-values"
     else:
         mime_type, _ = mimetypes.guess_type(display_name or full_path.name)
-    return {
+    result = {
         "kind": "shared_file",
         "path": rel,
         "container_path": f"{MODEL_SHARED_ROOT}/{rel}" if rel != "." else MODEL_SHARED_ROOT,
@@ -436,6 +450,139 @@ def describe_shared_file(path: object, filename: object | None = None) -> dict:
         "size_bytes": st.st_size,
         "model_context": f"Shared file ready: {display_name or full_path.name}",
     }
+    render, warnings = build_shared_file_render(full_path, rel, result["mime_type"])
+    if render is not None:
+        result["render"] = render
+    if warnings:
+        result["warnings"] = warnings
+    return result
+
+
+def _image_dimensions(data: bytes, mime_type: str) -> dict[str, int] | None:
+    try:
+        if mime_type == "image/png" and data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+            width, height = struct.unpack(">II", data[16:24])
+            return {"width": width, "height": height}
+        if mime_type == "image/gif" and data[:6] in (b"GIF87a", b"GIF89a") and len(data) >= 10:
+            width, height = struct.unpack("<HH", data[6:10])
+            return {"width": width, "height": height}
+        if mime_type == "image/jpeg" and data.startswith(b"\xff\xd8"):
+            offset = 2
+            sof_markers = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+            standalone_markers = {0x01, *range(0xD0, 0xD9)}
+            while offset + 4 <= len(data):
+                if data[offset] != 0xFF:
+                    offset += 1
+                    continue
+                while offset < len(data) and data[offset] == 0xFF:
+                    offset += 1
+                if offset >= len(data):
+                    break
+                marker = data[offset]
+                offset += 1
+                if marker in standalone_markers:
+                    continue
+                if offset + 2 > len(data):
+                    break
+                segment_length = int.from_bytes(data[offset : offset + 2], "big")
+                if segment_length < 2 or offset + segment_length > len(data):
+                    break
+                if marker in sof_markers and segment_length >= 7:
+                    height = int.from_bytes(data[offset + 3 : offset + 5], "big")
+                    width = int.from_bytes(data[offset + 5 : offset + 7], "big")
+                    return {"width": width, "height": height}
+                offset += segment_length
+        if mime_type == "image/webp" and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            chunk = data[12:16]
+            if chunk == b"VP8X" and len(data) >= 30:
+                width = int.from_bytes(data[24:27], "little") + 1
+                height = int.from_bytes(data[27:30], "little") + 1
+                return {"width": width, "height": height}
+            if chunk == b"VP8L" and len(data) >= 25 and data[20] == 0x2F:
+                bits = int.from_bytes(data[21:25], "little")
+                width = (bits & 0x3FFF) + 1
+                height = ((bits >> 14) & 0x3FFF) + 1
+                return {"width": width, "height": height}
+    except (struct.error, ValueError):
+        return None
+    return None
+
+
+def read_shared_image(
+    path: object,
+    *,
+    include_preview: bool = True,
+    max_preview_bytes: int | None = None,
+) -> dict:
+    full_path, rel = resolve_shared_file(path)
+    shared_dir = shared_root().resolve()
+    try:
+        st = full_path.lstat()
+    except FileNotFoundError as exc:
+        raise FileBridgeError(f"shared file not found: {rel}") from exc
+    if _is_link_or_reparse_point(full_path, st):
+        raise FileBridgeError(f"shared file is a symlink: {rel}")
+    if not stat.S_ISREG(st.st_mode):
+        raise FileBridgeError(f"shared path is not a regular file: {rel}")
+    resolved = full_path.resolve(strict=True)
+    try:
+        resolved.relative_to(shared_dir)
+    except ValueError as exc:
+        raise FileBridgeError("shared file escapes _sandbox") from exc
+
+    mime_type = _shared_mime_type(full_path.name)
+    if not mime_type.startswith(IMAGE_MIME_PREFIX):
+        raise FileBridgeError(f"shared file is not an image: {rel}")
+    data = full_path.read_bytes()
+    limit = max_image_preview_bytes() if max_preview_bytes is None else max(0, int(max_preview_bytes))
+    warnings: list[str] = []
+    preview = None
+    if include_preview:
+        if len(data) <= limit:
+            preview = {
+                "type": "inline_base64",
+                "mime_type": mime_type,
+                "data_base64": base64.b64encode(data).decode("utf-8"),
+            }
+        else:
+            warnings.append(f"Image preview omitted because the file is larger than {limit} bytes.")
+
+    result = {
+        "path": rel,
+        "kind": "image",
+        "mime": mime_type,
+        "size_bytes": st.st_size,
+        "encoding": None,
+        "preview": preview,
+    }
+    dimensions = _image_dimensions(data, mime_type)
+    if dimensions is not None:
+        result.update(dimensions)
+    return {
+        "ok": True,
+        "tool": "oda_view_image",
+        "result": result,
+        "error": None,
+        "warnings": warnings,
+        "truncated": False,
+    }
+
+
+def build_shared_file_render(full_path: Path, rel: str, mime_type: str) -> tuple[dict | None, list[str]]:
+    if not mime_type.startswith(IMAGE_MIME_PREFIX):
+        return None, []
+    payload = read_shared_image(rel, include_preview=True, max_preview_bytes=max_image_preview_bytes())
+    result = payload.get("result", {})
+    render: dict[str, object] = {
+        "type": "image",
+        "mime_type": mime_type,
+        "preview": result.get("preview"),
+    }
+    if "width" in result:
+        render["width"] = result.get("width")
+    if "height" in result:
+        render["height"] = result.get("height")
+    return render, list(payload.get("warnings") or [])
 
 
 def _shared_mime_type(name: str) -> str:

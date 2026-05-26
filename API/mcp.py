@@ -19,7 +19,7 @@ from pathlib import Path
 from queue import Queue
 from types import ModuleType
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from Services import user_mcp_client
 from Settings import mcp_json
@@ -1467,6 +1467,12 @@ def _extract_shared_file_payload(result: Any) -> dict[str, Any] | None:
     payload["kind"] = "shared_file"
     payload["path"] = path
     payload["filename"] = filename
+    if not payload.get("download_url") and not payload.get("downloadUrl"):
+        host_path = str(payload.get("host_path") or "").strip()
+        if host_path:
+            payload["download_url"] = "/api/shared-file/download/?" + urlencode(
+                {"path": host_path, "name": filename}
+            )
     return payload
 
 

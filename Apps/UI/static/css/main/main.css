@@ -791,6 +791,53 @@
   outline-offset: 2px;
 }
 
+.sandbox-default-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  width: 100%;
+  padding: 3px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  background: var(--surface-tertiary);
+}
+
+.sandbox-default-option {
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: calc(var(--r-md) - 3px);
+  background: transparent;
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-2);
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.sandbox-default-option:hover:not(:disabled) {
+  color: var(--c-text);
+  background: var(--surface-hover);
+}
+
+.sandbox-default-option.is-active {
+  color: var(--c-text);
+  background: var(--surface-elevated);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+}
+
+.sandbox-default-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.sandbox-default-option:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--c-primary) 34%, transparent);
+  outline-offset: 2px;
+}
+
 .setting-label {
   display: flex;
   align-items: center;

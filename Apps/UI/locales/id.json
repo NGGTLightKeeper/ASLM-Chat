@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM - Model Bahasa Sistem Lanjutan",
+    "profileTitle": "Profil - ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "Obrolan",
+    "newChat": "Obrolan Baru",
+    "noPreviousChats": "Tidak ada obrolan sebelumnya",
+    "chatOptions": "Opsi obrolan",
+    "rename": "Ubah nama",
+    "delete": "Hapus",
+    "account": "Akun",
+    "ago": "{time} lalu"
+  },
+  "chat": {
+    "newChat": "Obrolan Baru",
+    "attachmentChat": "Obrolan lampiran",
+    "howCanIHelp": "Apa yang bisa saya bantu?",
+    "welcomeTitle": "Apa yang bisa saya bantu?"
+  },
+  "composer": {
+    "placeholder": "Kirim pesan ke ASLM...",
+    "menu": "Menu komposer",
+    "attachFiles": "Lampirkan file",
+    "tools": "Alat",
+    "other": "Lainnya",
+    "reasoningEffort": "Upaya penalaran",
+    "intelligence": "Kedalaman penalaran",
+    "off": "Nonaktif",
+    "sendMessage": "Kirim Pesan",
+    "queueMessage": "Antre pesan",
+    "stopGeneration": "Hentikan generasi",
+    "contextUsage": "Penggunaan konteks"
+  },
+  "reasoning": {
+    "panel": "Panel penalaran",
+    "title": "Penalaran",
+    "closePanel": "Tutup panel penalaran"
+  },
+  "settings": {
+    "modelSettings": "Pengaturan Model",
+    "collapse": "Tutup pengaturan",
+    "expand": "Buka pengaturan",
+    "connection": "Koneksi",
+    "engine": "Mesin",
+    "address": "Alamat",
+    "saved": "Tersimpan",
+    "engineAddressPlaceholder": "Alamat mesin",
+    "engineAddressHint": "Atur endpoint mesin yang dipilih.",
+    "apiKey": "Kunci API",
+    "off": "Nonaktif",
+    "useSavedKey": "Gunakan kunci tersimpan",
+    "pasteApiKey": "Tempel kunci API",
+    "apiKeyHint": "Hanya diperlukan untuk endpoint yang diamankan.",
+    "model": "Model AI",
+    "modelsLoadOnDemand": "Model dimuat sesuai permintaan",
+    "visionModel": "Model visi",
+    "preset": "Prasetel",
+    "default": "Bawaan",
+    "presetNew": "Baru",
+    "presetRename": "Ubah nama",
+    "presetDelete": "Hapus",
+    "sandboxDefault": "Bawaan kotak pasir",
+    "mode": "Mode operasi",
+    "tools": "Alat",
+    "mcp": "MCP",
+    "skills": "Keterampilan",
+    "systemPrompt": "Prompt Sistem",
+    "systemPromptPlaceholder": "mis. \"Hanya jawab dengan sajak\"",
+    "load": "Muat",
+    "customFields": "Field Kustom",
+    "settings": "Pengaturan",
+    "sampling": "Pengambilan sampel",
+    "advanced": "Lanjutan",
+    "custom": "Kustom"
+  },
+  "profile": {
+    "backToChat": "Kembali ke obrolan",
+    "account": "Akun",
+    "user": "Pengguna",
+    "localAccount": "Akun lokal",
+    "general": "Umum",
+    "username": "Nama pengguna",
+    "email": "Surel",
+    "memberSince": "Anggota sejak",
+    "dangerZone": "Zona Bahaya",
+    "signOut": "Keluar"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "Kompatibel OpenAI",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "Jendela konteks:",
+    "usageLabel": "Konteks: {percent}% terpakai, {remaining}% tersisa. {used} / {window} token.",
+    "used": "Terpakai",
+    "remaining": "Tersisa",
+    "compressing": "Mengompresi konteks",
+    "compressionInProgress": "Kompresi konteks sedang berlangsung",
+    "compressedActive": "Konteks terkompresi aktif.",
+    "compressedActiveTooltip": "Konteks terkompresi aktif",
+    "compressContext": "Kompresi konteks",
+    "autoCompress": "Kompresi otomatis pada {percent}%"
+  },
+  "think": {
+    "off": "Nonaktif",
+    "low": "Rendah",
+    "medium": "Sedang",
+    "high": "Tinggi",
+    "minimal": "Minimal",
+    "extraHigh": "Sangat Tinggi"
+  },
+  "messages": {
+    "more": "Selengkapnya",
+    "hide": "Sembunyikan",
+    "copyCode": "Salin kode",
+    "copyDiagram": "Salin sumber diagram",
+    "noContent": "Tidak ada konten.",
+    "noDiff": "Tidak ada diff.",
+    "file": "Berkas",
+    "audio": "Suara",
+    "video": "Video",
+    "image": "Gambar",
+    "download": "Unduh",
+    "playAudio": "Putar audio",
+    "playVideo": "Putar video",
+    "pauseMedia": "Jeda media",
+    "playMedia": "Putar media",
+    "muteMedia": "Bisukan media",
+    "unmuteMedia": "Nyalakan suara media",
+    "fullscreen": "Layar penuh",
+    "exitFullscreen": "Keluar layar penuh",
+    "audioProgress": "Progres audio",
+    "videoProgress": "Progres video",
+    "openMiniPlayer": "Buka pemutar mini",
+    "returnToMessage": "Kembali ke pesan",
+    "closeMiniPlayer": "Tutup pemutar mini",
+    "renderingDiagram": "Merender diagram...",
+    "mermaidEmpty": "Sumber diagram Mermaid kosong.",
+    "mermaidUnavailable": "Renderer Mermaid tidak tersedia.",
+    "mermaidError": "Tidak dapat merender diagram Mermaid: {error}",
+    "running": "Berjalan...",
+    "noOutput": "Tidak ada output.",
+    "python": "Python",
+    "sandbox": "Kotak pasir",
+    "write": "Tulis",
+    "writePath": "Tulis {path}",
+    "edit": "Sunting",
+    "editPath": "Sunting {path}",
+    "viewedImage": "Gambar dilihat",
+    "viewedPath": "Dilihat {path}",
+    "imagePreview": "Pratinjau gambar",
+    "imagePreviewFor": "Pratinjau gambar untuk {path}",
+    "readSource": "Baca sumber:",
+    "readSources": "Baca sumber:",
+    "searchedFor": "Mencari {query}",
+    "noSourcesFor": "Tidak ada sumber ditemukan untuk {query}",
+    "searchingFor": "Mencari {query}",
+    "badQuery": "Kueri tidak valid: {query}"
+  },
+  "skills": {
+    "title": "Keterampilan",
+    "refresh": "Muat ulang",
+    "noSkills": "Tidak ada keterampilan ditemukan",
+    "loadError": "Tidak dapat memuat keterampilan",
+    "manage": "Kelola keterampilan",
+    "customizeAria": "Sesuaikan keterampilan",
+    "errorTitle": "Kesalahan keterampilan",
+    "personalSkillOne": "1 keterampilan pribadi",
+    "personalSkillMany": "{count} keterampilan pribadi",
+    "noSkillsYet": "Belum ada keterampilan",
+    "composerMenuAria": "Keterampilan",
+    "closeManagerAria": "Tutup pengelola keterampilan",
+    "searchPlaceholder": "Cari keterampilan",
+    "addSkillAria": "Tambah keterampilan",
+    "skillActionsAria": "Tindakan keterampilan",
+    "toggleSkillFilesAria": "Tampilkan atau sembunyikan berkas",
+    "toggleFolderAria": "Tampilkan atau sembunyikan folder",
+    "toggleKindAria": "Alihkan folder atau berkas",
+    "newFileAria": "Berkas baru di folder",
+    "renameFolderAria": "Ganti nama folder",
+    "renameFileAria": "Ganti nama berkas",
+    "deleteFileAria": "Hapus berkas",
+    "dialogOk": "OK",
+    "dialogCancel": "Batal",
+    "dialogConfirm": "Konfirmasi",
+    "dialogInput": "Masukan",
+    "valueRequired": "Nilai wajib diisi.",
+    "createSkill": "Buat keterampilan",
+    "skillNamePlaceholder": "nama-keterampilan",
+    "create": "Buat",
+    "importSkillFolder": "Impor folder keterampilan",
+    "dropzoneAria": "Letakkan folder keterampilan di sini",
+    "dropzoneText": "Letakkan folder di sini (direktori induk)",
+    "or": "atau",
+    "browseFolder": "Telusuri folder…",
+    "skillNameRequired": "Nama keterampilan wajib diisi.",
+    "importing": "Mengimpor…",
+    "newSkill": "Keterampilan baru",
+    "skillFolderName": "Nama folder keterampilan",
+    "skillFolderNamePlaceholder": "pembuat-keterampilan",
+    "renameSkill": "Ganti nama keterampilan",
+    "newSkillFolderName": "Nama folder baru",
+    "deleteSkill": "Hapus keterampilan",
+    "deleteSkillConfirm": "Hapus keterampilan \"{name}\"?",
+    "newSkillFile": "Berkas keterampilan baru",
+    "filePathInSkill": "Jalur berkas dalam keterampilan",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "Hapus berkas",
+    "deleteFileConfirm": "Anda yakin?",
+    "renameFolder": "Ganti nama folder",
+    "folderName": "Nama folder",
+    "renameFile": "Ganti nama berkas",
+    "fileName": "Nama berkas",
+    "editSkill": "Edit keterampilan",
+    "doneEditing": "Selesai mengedit",
+    "newFilePlaceholder": "Nama berkas baru (mis. grader.md)",
+    "newFolderPlaceholder": "Nama folder baru",
+    "noFileSelected": "Tidak ada berkas dipilih",
+    "noFileSelectedPath": "Tidak ada berkas dipilih.",
+    "emptyState": "Buat keterampilan untuk memulai.",
+    "preview": "Pratinjau",
+    "created": "Dibuat",
+    "unknown": "Tidak diketahui",
+    "readFileFailed": "Gagal membaca {name}",
+    "importNameHintDropOne": "Masukkan nama di atas atau letakkan satu folder sekaligus.",
+    "importNameHintSelect": "Masukkan nama, pilih keterampilan di pohon, atau pilih satu folder.",
+    "importNoFiles": "Tidak ada berkas ditemukan.",
+    "importNoSupported": "Tidak ada berkas teks yang didukung (.md, .txt, .py, …).",
+    "importNoSupportedFor": "Tidak ada berkas didukung untuk \"{name}\"."
+  },
+  "errors": {
+    "generic": "Terjadi kesalahan",
+    "network": "Kesalahan jaringan"
+  },
+  "confirm": {
+    "deleteChat": "Hapus obrolan ini?",
+    "deleteChatNamed": "Hapus \"{title}\"?",
+    "deletePreset": "Hapus prasetel \"{name}\"?",
+    "unsaved": "Anda memiliki perubahan yang belum disimpan."
+  },
+  "toolInspector": {
+    "title": "Inspektor Alat",
+    "close": "Tutup",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Temperature"
+    },
+    "num_ctx": {
+      "label": "Panjang Konteks",
+      "note": "Jendela konteks dalam token."
+    },
+    "num_predict": {
+      "label": "Token Output Maksimum",
+      "note": "Token yang dihasilkan maksimum."
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "Penempatan memori aware NUMA."
+    },
+    "num_batch": {
+      "label": "Ukuran Batch",
+      "note": "Ukuran batch prompt."
+    },
+    "num_gpu": {
+      "label": "Lapisan GPU",
+      "note": "Lapisan yang di-offload ke GPU."
+    },
+    "main_gpu": {
+      "label": "GPU Utama",
+      "note": "GPU primer"
+    },
+    "low_vram": {
+      "label": "VRAM Rendah",
+      "note": "Penggunaan VRAM lebih rendah."
+    },
+    "f16_kv": {
+      "label": "Gunakan Cache KV FP16",
+      "note": "Gunakan cache KV FP16."
+    },
+    "logits_all": {
+      "label": "Kembalikan Logits Lengkap",
+      "note": "Kembalikan logits untuk semua token."
+    },
+    "vocab_only": {
+      "label": "Hanya Kosakata",
+      "note": "Muat hanya kosakata."
+    },
+    "use_mmap": {
+      "label": "Gunakan Memory Map",
+      "note": "Gunakan memory mapping."
+    },
+    "use_mlock": {
+      "label": "Gunakan Memory Lock",
+      "note": "Kunci halaman model di RAM."
+    },
+    "embedding_only": {
+      "label": "Hanya Embedding",
+      "note": "Muat hanya embedding."
+    },
+    "num_thread": {
+      "label": "Thread CPU",
+      "note": "Thread CPU"
+    },
+    "num_keep": {
+      "label": "Pertahankan Token Prompt",
+      "note": "-1 mempertahankan semua, 0 otomatis."
+    },
+    "seed": {
+      "label": "Seed",
+      "note": "Seed deterministik."
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "Jendela Pengulangan"
+    },
+    "repeat_penalty": {
+      "label": "Penalti Pengulangan"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "Sampling tail-free."
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "Penalti Kehadiran"
+    },
+    "frequency_penalty": {
+      "label": "Penalti Frekuensi"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "Urutan Stop"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top Logprobs",
+      "note": "Logprobs token alternatif."
+    },
+    "keep_alive": {
+      "label": "Keep Alive",
+      "note": "Berapa lama model tetap dimuat."
+    },
+    "format": {
+      "label": "Format Respons",
+      "note": "Mode JSON atau skema JSON."
+    },
+    "penalize_newline": {
+      "label": "Penalti Baris Baru",
+      "note": "Juga beri penalti pada token baris baru."
+    },
+    "maxTokens": {
+      "label": "Token Output Maksimum"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "Penalti Pengulangan"
+    },
+    "xtcProbability": {
+      "label": "Probabilitas XTC"
+    },
+    "xtcThreshold": {
+      "label": "Ambang XTC"
+    },
+    "cpuThreads": {
+      "label": "Thread CPU"
+    },
+    "stopStrings": {
+      "label": "Urutan Stop"
+    },
+    "toolCallStopStrings": {
+      "label": "Urutan Stop Alat"
+    },
+    "contextOverflowPolicy": {
+      "label": "Kebijakan Overflow Konteks"
+    },
+    "draftModel": {
+      "label": "Model Draft"
+    },
+    "max_output_tokens": {
+      "label": "Token Output Maksimum"
+    },
+    "candidate_count": {
+      "label": "Kandidat"
+    },
+    "stop_sequences": {
+      "label": "Urutan Stop"
+    },
+    "response_logprobs": {
+      "label": "Logprobs Respons"
+    },
+    "response_mime_type": {
+      "label": "Tipe MIME Respons"
+    },
+    "max_completion_tokens": {
+      "label": "Token Penyelesaian Maksimum"
+    },
+    "n": {
+      "label": "Kandidat"
+    },
+    "reasoning_effort": {
+      "label": "Upaya Penalaran"
+    },
+    "verbosity": {
+      "label": "Verbositas"
+    },
+    "response_format": {
+      "label": "Format Respons"
+    },
+    "logit_bias": {
+      "label": "Logit Bias"
+    }
+  },
+  "mcp": {
+    "editConfig": "Sunting mcp.json",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name} ({count} alat)",
+    "cancel": "Batal",
+    "save": "Simpan"
+  }
+}

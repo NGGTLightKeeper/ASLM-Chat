@@ -10,6 +10,7 @@ import {
   normalizeCitationSpacing as normalizeCitationHandleSpacing
 } from './citations-ui.js';
 import { bindCitationPreviewCards } from './citation-preview-ui.js';
+import { t } from '../main/i18n.js';
 
 // marked's default GFM `del` allows single-tilde pairs (~x~), which breaks ~ for "approximately".
 // GitHub-style strikethrough is ~~ only; install tokenizer override once.
@@ -20,8 +21,8 @@ let markedStrikethroughDoubleTildeOnlyInstalled = false;
 export function createMessagesUi(context, dependencies) {
   const { attachmentUi, browserPortalUi, toolInspector } = dependencies;
   const { dom, icons, state } = context;
-  const MORE_LABEL = 'More';
-  const HIDE_LABEL = 'Hide';
+  const MORE_LABEL = t('messages.more', {}, 'More');
+  const HIDE_LABEL = t('messages.hide', {}, 'Hide');
   const SEARCH_BATCH_FIRST_CALL_HOLD_MS = 0;
   const SEARCH_BATCH_MULTI_CALL_SETTLE_MS = 0;
   const PRE_TOOL_TEXT_HOLD_MS = 0;
@@ -91,14 +92,14 @@ export function createMessagesUi(context, dependencies) {
           .prop('disabled', false)
           .addClass('stop-btn')
           .html(icons.STOP_ICON)
-          .attr('aria-label', 'Stop generation');
+          .attr('aria-label', t('composer.stopGeneration', {}, 'Stop generation'));
         return;
       }
 
       $button
         .removeClass('stop-btn')
         .html(icons.SEND_ICON)
-        .attr('aria-label', state.isChatGenerating ? 'Queue message' : 'Send Message')
+        .attr('aria-label', state.isChatGenerating ? t('composer.queueMessage', {}, 'Queue message') : t('composer.sendMessage', {}, 'Send Message'))
         .prop('disabled', !hasDraft || hasBlockedAttachments);
     }
 
@@ -3813,10 +3814,10 @@ export function createMessagesUi(context, dependencies) {
       return 'Read page';
     }
     if (isOdaPythonToolSegment(segment)) {
-      return 'ODA Python';
+      return 'Python';
     }
     if (isOdaShareFileToolSegment(segment)) {
-      return 'ODA file';
+      return 'File';
     }
     if (isSharedFileToolSegment(segment)) {
       return 'Shared file';
@@ -3905,7 +3906,7 @@ export function createMessagesUi(context, dependencies) {
       return icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON || '';
     }
     if (isOdaToolSegment(segment)) {
-      return icons.ODA_TOOL_CODE_ICON || icons.TOOL_CODE_EXEC_ICON || '';
+      return icons.TOOL_CODE_EXEC_ICON || icons.ODA_TOOL_CODE_ICON || '';
     }
     if (isSharedFileToolSegment(segment)) {
       return DOWNLOAD_FILE_ICON;
@@ -3958,6 +3959,9 @@ export function createMessagesUi(context, dependencies) {
     if (isReadPageToolSegment(segment)) {
       return renderReadPageToolCard([{ segment, index: toolIndex }]);
     }
+    if (isImageViewToolSegment(segment)) {
+      return renderSandboxImageToolBlock(segment, toolIndex) || renderReasoningToolRow(segment, toolIndex);
+    }
     if (isOdaToolSegment(segment)) {
       if (isOdaShareFileToolSegment(segment) || isSharedFileToolSegment(segment)) {
         return renderOdaSharedFileCard(segment);
@@ -3992,11 +3996,11 @@ export function createMessagesUi(context, dependencies) {
       return 'Reading source page';
     }
     if (isOdaPythonToolSegment(segment)) {
-      return toolStatusText(segment) === 'Done' ? 'Ran ODA Python' : 'Running ODA Python';
+      return toolStatusText(segment) === 'Done' ? 'Ran Python' : 'Running Python';
     }
     if (isOdaShareFileToolSegment(segment) || (isOdaToolSegment(segment) && isSharedFileToolSegment(segment))) {
       const file = sharedFileFromSegment(segment);
-      return file && file.filename ? `ODA shared ${file.filename}` : 'ODA shared file';
+      return file && file.filename ? `Shared ${file.filename}` : 'Shared file';
     }
     if (isSharedFileToolSegment(segment)) {
       const file = sharedFileFromSegment(segment);

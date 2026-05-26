@@ -16,6 +16,7 @@ from sandbox_mcp.files import (
     list_shared_files,
     normalize_shared_path,
     prepare_run_layout,
+    read_shared_image,
     read_output_file,
     safe_filename,
     save_artifacts,
@@ -144,6 +145,38 @@ def test_shared_file_description_stays_inside_sandbox(bridge_dirs):
     assert meta["host_path"] == str(target.resolve())
     assert meta["mime_type"] == "text/csv"
     assert meta["size_bytes"] == target.stat().st_size
+
+
+def test_shared_image_description_includes_inline_render(bridge_dirs):
+    png_bytes = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    target = bridge_dirs["shared"] / "pixel.png"
+    target.write_bytes(png_bytes)
+
+    meta = describe_shared_file("pixel.png")
+
+    assert meta["kind"] == "shared_file"
+    assert meta["mime_type"] == "image/png"
+    assert meta["render"]["type"] == "image"
+    assert meta["render"]["mime_type"] == "image/png"
+    assert meta["render"]["preview"]["type"] == "inline_base64"
+    assert meta["render"]["preview"]["data_base64"] == base64.b64encode(png_bytes).decode("utf-8")
+
+
+def test_read_shared_image_returns_sandbox_style_envelope(bridge_dirs):
+    png_bytes = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    (bridge_dirs["shared"] / "pixel.png").write_bytes(png_bytes)
+
+    payload = read_shared_image("/mnt/data/_sandbox/pixel.png")
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "oda_view_image"
+    assert payload["result"]["kind"] == "image"
+    assert payload["result"]["mime"] == "image/png"
+    assert payload["result"]["preview"]["type"] == "inline_base64"
 
 
 def test_shared_file_rejects_traversal_and_absolute_host_paths(bridge_dirs):

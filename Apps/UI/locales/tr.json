@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM - Gelişmiş Sistem Dil Modelleri",
+    "profileTitle": "Profil - ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "Sohbetler",
+    "newChat": "Yeni Sohbet",
+    "noPreviousChats": "Önceki sohbet yok",
+    "chatOptions": "Sohbet seçenekleri",
+    "rename": "Yeniden adlandır",
+    "delete": "Sil",
+    "account": "Hesap",
+    "ago": "{time} önce"
+  },
+  "chat": {
+    "newChat": "Yeni Sohbet",
+    "attachmentChat": "Ek dosyalı sohbet",
+    "howCanIHelp": "Size nasıl yardımcı olabilirim?",
+    "welcomeTitle": "Size nasıl yardımcı olabilirim?"
+  },
+  "composer": {
+    "placeholder": "ASLM'e mesaj yazın...",
+    "menu": "Yazma alanı menüsü",
+    "attachFiles": "Dosya ekle",
+    "tools": "Araçlar",
+    "other": "Diğer",
+    "reasoningEffort": "Akıl yürütme düzeyi",
+    "intelligence": "Zeka",
+    "off": "Kapalı",
+    "sendMessage": "Mesaj Gönder",
+    "queueMessage": "Mesajı kuyruğa al",
+    "stopGeneration": "Üretimi durdur",
+    "contextUsage": "Bağlam kullanımı"
+  },
+  "reasoning": {
+    "panel": "Akıl yürütme paneli",
+    "title": "Akıl yürütme",
+    "closePanel": "Akıl yürütme panelini kapat"
+  },
+  "settings": {
+    "modelSettings": "Model Ayarları",
+    "collapse": "Ayarları daralt",
+    "expand": "Ayarları genişlet",
+    "connection": "Bağlantı",
+    "engine": "Motor",
+    "address": "Adres",
+    "saved": "Kaydedildi",
+    "engineAddressPlaceholder": "Motor adresi",
+    "engineAddressHint": "Seçili motor uç noktasını yapılandırın.",
+    "apiKey": "API Anahtarı",
+    "off": "Kapalı",
+    "useSavedKey": "Kayıtlı anahtarı kullan",
+    "pasteApiKey": "API anahtarını yapıştır",
+    "apiKeyHint": "Yalnızca güvenli uç noktalar için gereklidir.",
+    "model": "Model",
+    "modelsLoadOnDemand": "Modeller isteğe bağlı yüklenir",
+    "visionModel": "Görü modeli",
+    "preset": "Ön ayar",
+    "default": "Varsayılan",
+    "presetNew": "Yeni",
+    "presetRename": "Yeniden adlandır",
+    "presetDelete": "Sil",
+    "sandboxDefault": "Korumalı Alan Varsayılanı",
+    "mode": "Mod",
+    "tools": "Araçlar",
+    "mcp": "MCP",
+    "skills": "Beceriler",
+    "systemPrompt": "Sistem İstemi",
+    "systemPromptPlaceholder": "ör. \"Yalnızca kafiyeli yanıt ver\"",
+    "load": "Yükle",
+    "customFields": "Özel Alanlar",
+    "settings": "Ayarlar",
+    "sampling": "Örnekleme",
+    "advanced": "Gelişmiş",
+    "custom": "Özel"
+  },
+  "profile": {
+    "backToChat": "Sohbete dön",
+    "account": "Hesap",
+    "user": "Kullanıcı",
+    "localAccount": "Yerel hesap",
+    "general": "Genel",
+    "username": "Kullanıcı adı",
+    "email": "E-posta",
+    "memberSince": "Üyelik tarihi",
+    "dangerZone": "Tehlikeli Bölge",
+    "signOut": "Oturumu kapat"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "OpenAI Uyumlu",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "Bağlam penceresi:",
+    "usageLabel": "Bağlam: {percent}% kullanıldı, {remaining}% kaldı. {used} / {window} jeton.",
+    "used": "Kullanılan",
+    "remaining": "Kalan",
+    "compressing": "Bağlam sıkıştırılıyor",
+    "compressionInProgress": "Bağlam sıkıştırması devam ediyor",
+    "compressedActive": "Sıkıştırılmış bağlam etkin.",
+    "compressedActiveTooltip": "Sıkıştırılmış bağlam etkin",
+    "compressContext": "Bağlamı sıkıştır",
+    "autoCompress": "{percent}% seviyesinde otomatik sıkıştır"
+  },
+  "think": {
+    "off": "Kapalı",
+    "low": "Düşük",
+    "medium": "Orta",
+    "high": "Yüksek",
+    "minimal": "Minimal",
+    "extraHigh": "Çok Yüksek"
+  },
+  "messages": {
+    "more": "Daha fazla",
+    "hide": "Gizle",
+    "copyCode": "Kodu kopyala",
+    "copyDiagram": "Diyagram kaynağını kopyala",
+    "noContent": "İçerik yok.",
+    "noDiff": "Fark yok.",
+    "file": "Dosya",
+    "audio": "Ses",
+    "video": "Video",
+    "image": "Görüntü",
+    "download": "İndir",
+    "playAudio": "Sesi oynat",
+    "playVideo": "Videoyu oynat",
+    "pauseMedia": "Medyayı duraklat",
+    "playMedia": "Medyayı oynat",
+    "muteMedia": "Medyayı sessize al",
+    "unmuteMedia": "Medyanın sesini aç",
+    "fullscreen": "Tam ekran",
+    "exitFullscreen": "Tam ekrandan çık",
+    "audioProgress": "Ses ilerlemesi",
+    "videoProgress": "Video ilerlemesi",
+    "openMiniPlayer": "Mini oynatıcıyı aç",
+    "returnToMessage": "Mesaja dön",
+    "closeMiniPlayer": "Mini oynatıcıyı kapat",
+    "renderingDiagram": "Diyagram oluşturuluyor...",
+    "mermaidEmpty": "Mermaid diyagram kaynağı boş.",
+    "mermaidUnavailable": "Mermaid oluşturucu kullanılamıyor.",
+    "mermaidError": "Mermaid diyagramı oluşturulamadı: {error}",
+    "running": "Çalışıyor...",
+    "noOutput": "Çıktı yok.",
+    "python": "Python",
+    "sandbox": "Korumalı Alan",
+    "write": "Yaz",
+    "writePath": "{path} yaz",
+    "edit": "Düzenle",
+    "editPath": "{path} düzenle",
+    "viewedImage": "Görüntü görüntülendi",
+    "viewedPath": "{path} görüntülendi",
+    "imagePreview": "Görüntü önizlemesi",
+    "imagePreviewFor": "{path} için görüntü önizlemesi",
+    "readSource": "Kaynak okundu:",
+    "readSources": "Kaynaklar okundu:",
+    "searchedFor": "{query} arandı",
+    "noSourcesFor": "{query} için kaynak bulunamadı",
+    "searchingFor": "{query} aranıyor",
+    "badQuery": "Geçersiz sorgu: {query}"
+  },
+  "skills": {
+    "title": "Beceriler",
+    "refresh": "Yenile",
+    "noSkills": "Beceri bulunamadı",
+    "loadError": "Beceriler yüklenemedi",
+    "manage": "Becerileri yönet",
+    "customizeAria": "Becerileri özelleştir",
+    "errorTitle": "Beceri hatası",
+    "personalSkillOne": "1 kişisel beceri",
+    "personalSkillMany": "{count} kişisel beceri",
+    "noSkillsYet": "Henüz beceri yok",
+    "composerMenuAria": "Beceriler",
+    "closeManagerAria": "Beceri yöneticisini kapat",
+    "searchPlaceholder": "Beceri ara",
+    "addSkillAria": "Beceri ekle",
+    "skillActionsAria": "Beceri eylemleri",
+    "toggleSkillFilesAria": "Beceri dosyalarını göster veya gizle",
+    "toggleFolderAria": "Klasörü göster veya gizle",
+    "toggleKindAria": "Klasör veya dosya arasında geç",
+    "newFileAria": "Klasörde yeni dosya",
+    "renameFolderAria": "Klasörü yeniden adlandır",
+    "renameFileAria": "Dosyayı yeniden adlandır",
+    "deleteFileAria": "Dosyayı sil",
+    "dialogOk": "Tamam",
+    "dialogCancel": "İptal",
+    "dialogConfirm": "Onayla",
+    "dialogInput": "Giriş",
+    "valueRequired": "Değer gerekli.",
+    "createSkill": "Beceri oluştur",
+    "skillNamePlaceholder": "beceri-adi",
+    "create": "Oluştur",
+    "importSkillFolder": "Beceri klasörünü içe aktar",
+    "dropzoneAria": "Beceri klasörünü buraya bırakın",
+    "dropzoneText": "Beceri klasörünü buraya bırakın (üst dizin)",
+    "or": "veya",
+    "browseFolder": "Klasöre göz at…",
+    "skillNameRequired": "Beceri adı gerekli.",
+    "importing": "İçe aktarılıyor…",
+    "newSkill": "Yeni beceri",
+    "skillFolderName": "Beceri klasör adı",
+    "skillFolderNamePlaceholder": "beceri-olusturucu",
+    "renameSkill": "Beceriyi yeniden adlandır",
+    "newSkillFolderName": "Yeni klasör adı",
+    "deleteSkill": "Beceriyi sil",
+    "deleteSkillConfirm": "\"{name}\" becerisi silinsin mi?",
+    "newSkillFile": "Yeni beceri dosyası",
+    "filePathInSkill": "Beceri içindeki dosya yolu",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "Dosyayı sil",
+    "deleteFileConfirm": "Emin misiniz?",
+    "renameFolder": "Klasörü yeniden adlandır",
+    "folderName": "Klasör adı",
+    "renameFile": "Dosyayı yeniden adlandır",
+    "fileName": "Dosya adı",
+    "editSkill": "Beceriyi düzenle",
+    "doneEditing": "Düzenlemeyi bitir",
+    "newFilePlaceholder": "Yeni dosya adı (ör. grader.md)",
+    "newFolderPlaceholder": "Yeni klasör adı",
+    "noFileSelected": "Dosya seçilmedi",
+    "noFileSelectedPath": "Dosya seçilmedi.",
+    "emptyState": "Başlamak için bir beceri oluşturun.",
+    "preview": "Önizleme",
+    "created": "Oluşturuldu",
+    "unknown": "Bilinmiyor",
+    "readFileFailed": "{name} okunamadı",
+    "importNameHintDropOne": "Yukarıya bir ad girin veya her seferinde bir klasör bırakın.",
+    "importNameHintSelect": "Ad girin, ağaçtan beceri seçin veya tek klasör seçin.",
+    "importNoFiles": "Dosya bulunamadı.",
+    "importNoSupported": "Desteklenen metin dosyası yok (.md, .txt, .py, …).",
+    "importNoSupportedFor": "\"{name}\" için desteklenen dosya yok."
+  },
+  "errors": {
+    "generic": "Bir şeyler ters gitti",
+    "network": "Ağ hatası"
+  },
+  "confirm": {
+    "deleteChat": "Bu sohbet silinsin mi?",
+    "deleteChatNamed": "\"{title}\" silinsin mi?",
+    "deletePreset": "\"{name}\" ön ayarı silinsin mi?",
+    "unsaved": "Kaydedilmemiş değişiklikleriniz var."
+  },
+  "toolInspector": {
+    "title": "Araç Denetleyicisi",
+    "close": "Kapat",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Sıcaklık"
+    },
+    "num_ctx": {
+      "label": "Bağlam Uzunluğu",
+      "note": "Jeton cinsinden bağlam penceresi."
+    },
+    "num_predict": {
+      "label": "Maks. Çıktı Jetonu",
+      "note": "Üretilebilecek maksimum jeton sayısı."
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "NUMA uyumlu bellek yerleşimi."
+    },
+    "num_batch": {
+      "label": "Toplu İş Boyutu",
+      "note": "İstem toplu iş boyutu."
+    },
+    "num_gpu": {
+      "label": "GPU Katmanları",
+      "note": "GPU'ya aktarılan katmanlar."
+    },
+    "main_gpu": {
+      "label": "Ana GPU",
+      "note": "Birincil GPU"
+    },
+    "low_vram": {
+      "label": "Düşük VRAM",
+      "note": "Daha düşük VRAM kullanımı."
+    },
+    "f16_kv": {
+      "label": "FP16 KV Önbelleği Kullan",
+      "note": "FP16 KV önbelleği kullan."
+    },
+    "logits_all": {
+      "label": "Tam Logit Döndür",
+      "note": "Tüm jetonlar için logit döndür."
+    },
+    "vocab_only": {
+      "label": "Yalnızca Sözlük",
+      "note": "Yalnızca sözlük yükleme."
+    },
+    "use_mmap": {
+      "label": "Bellek Eşlemesi Kullan",
+      "note": "Bellek eşlemesi kullan."
+    },
+    "use_mlock": {
+      "label": "Bellek Kilidi Kullan",
+      "note": "Model sayfalarını RAM'de kilitle."
+    },
+    "embedding_only": {
+      "label": "Yalnızca Gömme",
+      "note": "Yalnızca gömme yükleme."
+    },
+    "num_thread": {
+      "label": "CPU İş Parçacıkları",
+      "note": "CPU iş parçacıkları"
+    },
+    "num_keep": {
+      "label": "İstem Jetonlarını Koru",
+      "note": "-1 hepsini korur, 0 otomatiktir."
+    },
+    "seed": {
+      "label": "Tohum",
+      "note": "Deterministik tohum."
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "Tekrar Penceresi"
+    },
+    "repeat_penalty": {
+      "label": "Tekrar Cezası"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "Kuyruksuz örnekleme."
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "Varlık Cezası"
+    },
+    "frequency_penalty": {
+      "label": "Sıklık Cezası"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "Durdurma Dizileri"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top Logprobs",
+      "note": "Alternatif jeton logprobs değerleri."
+    },
+    "keep_alive": {
+      "label": "Canlı Tut",
+      "note": "Modelin yüklü kalma süresi."
+    },
+    "format": {
+      "label": "Yanıt Biçimi",
+      "note": "JSON modu veya JSON şeması."
+    },
+    "penalize_newline": {
+      "label": "Satır Sonunu Cezalandır",
+      "note": "Satır sonu jetonlarını da cezalandır."
+    },
+    "maxTokens": {
+      "label": "Maks. Çıktı Jetonu"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "Tekrar Cezası"
+    },
+    "xtcProbability": {
+      "label": "XTC Olasılığı"
+    },
+    "xtcThreshold": {
+      "label": "XTC Eşiği"
+    },
+    "cpuThreads": {
+      "label": "CPU İş Parçacıkları"
+    },
+    "stopStrings": {
+      "label": "Durdurma Dizileri"
+    },
+    "toolCallStopStrings": {
+      "label": "Araç Durdurma Dizileri"
+    },
+    "contextOverflowPolicy": {
+      "label": "Bağlam Taşma Politikası"
+    },
+    "draftModel": {
+      "label": "Taslak Model"
+    },
+    "max_output_tokens": {
+      "label": "Maks. Çıktı Jetonu"
+    },
+    "candidate_count": {
+      "label": "Adaylar"
+    },
+    "stop_sequences": {
+      "label": "Durdurma Dizileri"
+    },
+    "response_logprobs": {
+      "label": "Yanıt Logprobs"
+    },
+    "response_mime_type": {
+      "label": "Yanıt MIME Türü"
+    },
+    "max_completion_tokens": {
+      "label": "Maks. Tamamlama Jetonu"
+    },
+    "n": {
+      "label": "Adaylar"
+    },
+    "reasoning_effort": {
+      "label": "Akıl Yürütme Düzeyi"
+    },
+    "verbosity": {
+      "label": "Ayrıntı Düzeyi"
+    },
+    "response_format": {
+      "label": "Yanıt Biçimi"
+    },
+    "logit_bias": {
+      "label": "Logit Önyargısı"
+    }
+  },
+  "mcp": {
+    "editConfig": "mcp.json düzenle",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name} ({count} araç)",
+    "cancel": "İptal",
+    "save": "Kaydet"
+  }
+}

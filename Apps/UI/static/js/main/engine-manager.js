@@ -1,6 +1,7 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { getJson, postJson } from './api.js';
+import { t } from './i18n.js';
 import { LLM_PARAMETER_OPTION_SETS } from './constants.js';
 import { getEngineAdapter, normalizeEngineValue } from '../engines/engine-registry.js';
 import { isLocalHostname, normalizeAddressForParsing } from './utils.js';
@@ -795,7 +796,7 @@ export function createEngineManager(context, dependencies) {
       return;
     }
 
-    if (!window.confirm(`Delete preset "${activePreset.name}"?`)) {
+    if (!window.confirm(t('confirm.deletePreset', { name: activePreset.name }, `Delete preset "${activePreset.name}"?`))) {
       return;
     }
 

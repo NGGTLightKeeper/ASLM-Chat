@@ -29,6 +29,7 @@ def _build_initial_settings(
             "ui-port": existing.get("ui-port", ui_port),
             "api-port": existing.get("api-port", api_port),
             "oda-daemon-port": existing.get("oda-daemon-port", oda_daemon_port),
+            "ollama-service_port": existing.get("ollama-service_port", 20003),
             "allowed_hosts": existing.get("allowed_hosts", ["127.0.0.1", "localhost"]),
             "debug": existing.get("debug", False),
             "llm-engine": existing.get("llm-engine", "ollama-service"),
@@ -190,6 +191,7 @@ def _print_summary(settings_file: Path, initial: dict[str, Any]) -> None:
     print(f"[ASLM-Chat]   ui-port    : {initial['ui-port']}")
     print(f"[ASLM-Chat]   api-port   : {initial['api-port']}")
     print(f"[ASLM-Chat]   oda-port   : {initial['oda-daemon-port']}")
+    print(f"[ASLM-Chat]   ollama-port: {initial.get('ollama-service_port', 20003)}")
     print(f"[ASLM-Chat]   debug      : {initial['debug']}")
     print(f"[ASLM-Chat]   llm-engine : {initial['llm-engine']}")
     print(f"[ASLM-Chat]   lms_url    : {initial['lms_url']}")

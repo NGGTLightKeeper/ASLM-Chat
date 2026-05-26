@@ -58,3 +58,64 @@ def load_host_locale() -> dict[str, Any] | None:
         logger.warning("Could not parse host locale file %s: %s", HOST_LOCALE_FILE, exc)
         return None
     return raw if isinstance(raw, dict) else None
+
+
+# Sync with ASLM AppPersonalizationConfig.SupportedLanguageCodes / AppLocalizationService.
+HOST_SUPPORTED_LANGUAGE_CODES: frozenset[str] = frozenset(
+    {
+        "en",
+        "zh-Hans",
+        "es",
+        "ar",
+        "hi",
+        "pt-BR",
+        "ru",
+        "ja",
+        "de",
+        "fr",
+        "ko",
+        "it",
+        "zh-Hant",
+        "pt",
+        "tr",
+        "pl",
+        "uk",
+        "id",
+        "vi",
+        "nl",
+    }
+)
+
+
+def normalize_host_language(value: str | None) -> str:
+    """Return a canonical ASLM host language code, falling back to English."""
+
+    if not value or not str(value).strip():
+        return "en"
+    trimmed = str(value).strip()
+    for code in HOST_SUPPORTED_LANGUAGE_CODES:
+        if code.lower() == trimmed.lower():
+            return code
+    return "en"
+
+
+def get_language() -> str:
+    """Return the BCP-47 language code from the snapshot."""
+
+    payload = load_host_locale()
+    if payload:
+        return normalize_host_language(str(payload.get("language", "en")))
+    return "en"
+
+
+def get_display_name() -> str | None:
+    """Return the host-provided display name for the current language, if any."""
+
+    payload = load_host_locale()
+    if not payload:
+        return None
+    name = payload.get("displayName")
+    if name is None:
+        return None
+    text = str(name).strip()
+    return text or None

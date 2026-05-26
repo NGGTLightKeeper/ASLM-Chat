@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM - 高度なシステム言語モデル",
+    "profileTitle": "プロフィール - ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "チャット",
+    "newChat": "新しいチャット",
+    "noPreviousChats": "過去のチャットはありません",
+    "chatOptions": "チャットのオプション",
+    "rename": "名前を変更",
+    "delete": "削除",
+    "account": "アカウント",
+    "ago": "{time}前"
+  },
+  "chat": {
+    "newChat": "新しいチャット",
+    "attachmentChat": "添付ファイル付きチャット",
+    "howCanIHelp": "何をお手伝いしましょうか？",
+    "welcomeTitle": "何をお手伝いしましょうか？"
+  },
+  "composer": {
+    "placeholder": "ASLM にメッセージ...",
+    "menu": "入力メニュー",
+    "attachFiles": "ファイルを添付",
+    "tools": "ツール",
+    "other": "その他",
+    "reasoningEffort": "推論の深さ",
+    "intelligence": "思考の深さ",
+    "off": "オフ",
+    "sendMessage": "メッセージを送信",
+    "queueMessage": "メッセージをキューに追加",
+    "stopGeneration": "生成を停止",
+    "contextUsage": "コンテキストの使用量"
+  },
+  "reasoning": {
+    "panel": "推論パネル",
+    "title": "推論",
+    "closePanel": "推論パネルを閉じる"
+  },
+  "settings": {
+    "modelSettings": "モデル設定",
+    "collapse": "設定を折りたたむ",
+    "expand": "設定を展開",
+    "connection": "接続",
+    "engine": "エンジン",
+    "address": "アドレス",
+    "saved": "保存済み",
+    "engineAddressPlaceholder": "エンジンのアドレス",
+    "engineAddressHint": "選択したエンジンのエンドポイントを設定します。",
+    "apiKey": "API キー",
+    "off": "オフ",
+    "useSavedKey": "保存済みのキーを使用",
+    "pasteApiKey": "API キーを貼り付け",
+    "apiKeyHint": "保護されたエンドポイントでのみ必要です。",
+    "model": "モデル",
+    "modelsLoadOnDemand": "モデルは必要時に読み込まれます",
+    "visionModel": "ビジョンモデル",
+    "preset": "プリセット",
+    "default": "デフォルト",
+    "presetNew": "新規",
+    "presetRename": "名前を変更",
+    "presetDelete": "削除",
+    "sandboxDefault": "サンドボックスのデフォルト",
+    "mode": "モード",
+    "tools": "ツール",
+    "mcp": "MCP",
+    "skills": "スキル",
+    "systemPrompt": "システムプロンプト",
+    "systemPromptPlaceholder": "例: 「韻文だけで答えて」",
+    "load": "読み込む",
+    "customFields": "カスタムフィールド",
+    "settings": "設定",
+    "sampling": "サンプリング",
+    "advanced": "詳細",
+    "custom": "カスタム"
+  },
+  "profile": {
+    "backToChat": "チャットに戻る",
+    "account": "アカウント",
+    "user": "ユーザー",
+    "localAccount": "ローカルアカウント",
+    "general": "一般",
+    "username": "ユーザー名",
+    "email": "メール",
+    "memberSince": "登録日",
+    "dangerZone": "危険な操作",
+    "signOut": "サインアウト"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "OpenAI 互換",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "コンテキストウィンドウ:",
+    "usageLabel": "コンテキスト: {percent}% 使用、{remaining}% 残り。{used} / {window} トークン。",
+    "used": "使用済み",
+    "remaining": "残り",
+    "compressing": "コンテキストを圧縮中",
+    "compressionInProgress": "コンテキストの圧縮を実行中",
+    "compressedActive": "圧縮されたコンテキストが有効です。",
+    "compressedActiveTooltip": "圧縮コンテキストが有効",
+    "compressContext": "コンテキストを圧縮",
+    "autoCompress": "{percent}% で自動圧縮"
+  },
+  "think": {
+    "off": "オフ",
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+    "minimal": "最小",
+    "extraHigh": "最高"
+  },
+  "messages": {
+    "more": "もっと見る",
+    "hide": "非表示",
+    "copyCode": "コードをコピー",
+    "copyDiagram": "図のソースをコピー",
+    "noContent": "コンテンツがありません。",
+    "noDiff": "差分がありません。",
+    "file": "ファイル",
+    "audio": "音声",
+    "video": "動画",
+    "image": "画像",
+    "download": "ダウンロード",
+    "playAudio": "音声を再生",
+    "playVideo": "動画を再生",
+    "pauseMedia": "メディアを一時停止",
+    "playMedia": "メディアを再生",
+    "muteMedia": "メディアをミュート",
+    "unmuteMedia": "ミュートを解除",
+    "fullscreen": "全画面",
+    "exitFullscreen": "全画面を終了",
+    "audioProgress": "音声の再生位置",
+    "videoProgress": "動画の再生位置",
+    "openMiniPlayer": "ミニプレーヤーを開く",
+    "returnToMessage": "メッセージに戻る",
+    "closeMiniPlayer": "ミニプレーヤーを閉じる",
+    "renderingDiagram": "図を描画中...",
+    "mermaidEmpty": "Mermaid 図のソースが空です。",
+    "mermaidUnavailable": "Mermaid レンダラーが利用できません。",
+    "mermaidError": "Mermaid 図を描画できませんでした: {error}",
+    "running": "実行中...",
+    "noOutput": "出力がありません。",
+    "python": "Python",
+    "sandbox": "サンドボックス",
+    "write": "書き込み",
+    "writePath": "{path} に書き込み",
+    "edit": "編集",
+    "editPath": "{path} を編集",
+    "viewedImage": "表示した画像",
+    "viewedPath": "{path} を表示",
+    "imagePreview": "画像プレビュー",
+    "imagePreviewFor": "{path} の画像プレビュー",
+    "readSource": "読み取ったソース:",
+    "readSources": "読み取ったソース:",
+    "searchedFor": "「{query}」を検索",
+    "noSourcesFor": "「{query}」のソースが見つかりませんでした",
+    "searchingFor": "「{query}」を検索中",
+    "badQuery": "不正なクエリ: {query}"
+  },
+  "skills": {
+    "title": "スキル",
+    "refresh": "更新",
+    "noSkills": "スキルが見つかりません",
+    "loadError": "スキルを読み込めませんでした",
+    "manage": "スキルを管理",
+    "customizeAria": "スキルをカスタマイズ",
+    "errorTitle": "スキルエラー",
+    "personalSkillOne": "個人スキル 1 件",
+    "personalSkillMany": "個人スキル {count} 件",
+    "noSkillsYet": "スキルはまだありません",
+    "composerMenuAria": "スキル",
+    "closeManagerAria": "スキルマネージャーを閉じる",
+    "searchPlaceholder": "スキルを検索",
+    "addSkillAria": "スキルを追加",
+    "skillActionsAria": "スキルの操作",
+    "toggleSkillFilesAria": "スキルファイルの表示切替",
+    "toggleFolderAria": "フォルダーの表示切替",
+    "toggleKindAria": "フォルダーとファイルを切替",
+    "newFileAria": "フォルダー内に新規ファイル",
+    "renameFolderAria": "フォルダー名を変更",
+    "renameFileAria": "ファイル名を変更",
+    "deleteFileAria": "ファイルを削除",
+    "dialogOk": "OK",
+    "dialogCancel": "キャンセル",
+    "dialogConfirm": "確認",
+    "dialogInput": "入力",
+    "valueRequired": "値は必須です。",
+    "createSkill": "スキルを作成",
+    "skillNamePlaceholder": "skill-name",
+    "create": "作成",
+    "importSkillFolder": "スキルフォルダーをインポート",
+    "dropzoneAria": "スキルフォルダーをここにドロップ",
+    "dropzoneText": "スキルフォルダーをここにドロップ（親ディレクトリ）",
+    "or": "または",
+    "browseFolder": "フォルダーを参照…",
+    "skillNameRequired": "スキル名は必須です。",
+    "importing": "インポート中…",
+    "newSkill": "新しいスキル",
+    "skillFolderName": "スキルフォルダー名",
+    "skillFolderNamePlaceholder": "skill-creator",
+    "renameSkill": "スキル名を変更",
+    "newSkillFolderName": "新しいフォルダー名",
+    "deleteSkill": "スキルを削除",
+    "deleteSkillConfirm": "スキル「{name}」を削除しますか？",
+    "newSkillFile": "新しいスキルファイル",
+    "filePathInSkill": "スキル内のファイルパス",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "ファイルを削除",
+    "deleteFileConfirm": "よろしいですか？",
+    "renameFolder": "フォルダー名を変更",
+    "folderName": "フォルダー名",
+    "renameFile": "ファイル名を変更",
+    "fileName": "ファイル名",
+    "editSkill": "スキルを編集",
+    "doneEditing": "編集を終了",
+    "newFilePlaceholder": "新しいファイル名（例: grader.md）",
+    "newFolderPlaceholder": "新しいフォルダー名",
+    "noFileSelected": "ファイル未選択",
+    "noFileSelectedPath": "ファイルが選択されていません。",
+    "emptyState": "スキルを作成して始めましょう。",
+    "preview": "プレビュー",
+    "created": "作成日",
+    "unknown": "不明",
+    "readFileFailed": "{name} を読み込めませんでした",
+    "importNameHintDropOne": "上に名前を入力するか、スキルフォルダーを1つずつドロップしてください。",
+    "importNameHintSelect": "名前を入力するか、ツリーでスキルを選ぶか、フォルダーを1つ選んでください。",
+    "importNoFiles": "ファイルが見つかりません。",
+    "importNoSupported": "対応テキストファイルがありません（.md、.txt、.py など）。",
+    "importNoSupportedFor": "「{name}」に対応ファイルがありません。"
+  },
+  "errors": {
+    "generic": "問題が発生しました",
+    "network": "ネットワークエラー"
+  },
+  "confirm": {
+    "deleteChat": "このチャットを削除しますか？",
+    "deleteChatNamed": "「{title}」を削除しますか？",
+    "deletePreset": "プリセット「{name}」を削除しますか？",
+    "unsaved": "保存されていない変更があります。"
+  },
+  "toolInspector": {
+    "title": "ツールインスペクター",
+    "close": "閉じる",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Temperature"
+    },
+    "num_ctx": {
+      "label": "コンテキスト長",
+      "note": "コンテキストウィンドウ（トークン数）。"
+    },
+    "num_predict": {
+      "label": "最大出力トークン数",
+      "note": "生成されるトークンの上限。"
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "NUMA 対応のメモリ配置。"
+    },
+    "num_batch": {
+      "label": "バッチサイズ",
+      "note": "プロンプトのバッチサイズ。"
+    },
+    "num_gpu": {
+      "label": "GPU レイヤー数",
+      "note": "GPU にオフロードするレイヤー数。"
+    },
+    "main_gpu": {
+      "label": "メイン GPU",
+      "note": "プライマリ GPU"
+    },
+    "low_vram": {
+      "label": "低 VRAM",
+      "note": "VRAM の使用量を抑えます。"
+    },
+    "f16_kv": {
+      "label": "FP16 KV キャッシュを使用",
+      "note": "FP16 KV キャッシュを使用します。"
+    },
+    "logits_all": {
+      "label": "全 Logits を返す",
+      "note": "すべてのトークンの logits を返します。"
+    },
+    "vocab_only": {
+      "label": "語彙のみ",
+      "note": "語彙のみを読み込みます。"
+    },
+    "use_mmap": {
+      "label": "メモリマップを使用",
+      "note": "メモリマッピングを使用します。"
+    },
+    "use_mlock": {
+      "label": "メモリロックを使用",
+      "note": "モデルページを RAM に固定します。"
+    },
+    "embedding_only": {
+      "label": "埋め込みのみ",
+      "note": "埋め込みのみを読み込みます。"
+    },
+    "num_thread": {
+      "label": "CPU スレッド数",
+      "note": "CPU スレッド数"
+    },
+    "num_keep": {
+      "label": "プロンプトトークン保持数",
+      "note": "-1 はすべて保持、0 は自動。"
+    },
+    "seed": {
+      "label": "シード",
+      "note": "再現性のあるシード値。"
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "繰り返しウィンドウ"
+    },
+    "repeat_penalty": {
+      "label": "繰り返しペナルティ"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "テイルフリー・サンプリング。"
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "存在ペナルティ"
+    },
+    "frequency_penalty": {
+      "label": "頻度ペナルティ"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "停止シーケンス"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top Logprobs",
+      "note": "代替トークンの logprobs。"
+    },
+    "keep_alive": {
+      "label": "Keep Alive",
+      "note": "モデルをメモリに保持する時間。"
+    },
+    "format": {
+      "label": "応答形式",
+      "note": "JSON モードまたは JSON スキーマ。"
+    },
+    "penalize_newline": {
+      "label": "改行をペナルティ",
+      "note": "改行トークンにもペナルティを適用します。"
+    },
+    "maxTokens": {
+      "label": "最大出力トークン数"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "繰り返しペナルティ"
+    },
+    "xtcProbability": {
+      "label": "XTC 確率"
+    },
+    "xtcThreshold": {
+      "label": "XTC しきい値"
+    },
+    "cpuThreads": {
+      "label": "CPU スレッド数"
+    },
+    "stopStrings": {
+      "label": "停止シーケンス"
+    },
+    "toolCallStopStrings": {
+      "label": "ツール停止シーケンス"
+    },
+    "contextOverflowPolicy": {
+      "label": "コンテキストオーバーフロー方針"
+    },
+    "draftModel": {
+      "label": "ドラフトモデル"
+    },
+    "max_output_tokens": {
+      "label": "最大出力トークン数"
+    },
+    "candidate_count": {
+      "label": "候補数"
+    },
+    "stop_sequences": {
+      "label": "停止シーケンス"
+    },
+    "response_logprobs": {
+      "label": "応答 Logprobs"
+    },
+    "response_mime_type": {
+      "label": "応答 MIME タイプ"
+    },
+    "max_completion_tokens": {
+      "label": "最大完了トークン数"
+    },
+    "n": {
+      "label": "候補数"
+    },
+    "reasoning_effort": {
+      "label": "推論の深さ"
+    },
+    "verbosity": {
+      "label": "詳細度"
+    },
+    "response_format": {
+      "label": "応答形式"
+    },
+    "logit_bias": {
+      "label": "Logit Bias"
+    }
+  },
+  "mcp": {
+    "editConfig": "mcp.json を編集",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name}（{count} ツール）",
+    "cancel": "キャンセル",
+    "save": "保存"
+  }
+}

@@ -226,8 +226,7 @@ TOOLS = [
         "id": "browser_screenshot",
         "name": "Browser Screenshot",
         "description": (
-            "Take a PNG screenshot of the current browser page and save it to the active workspace "
-            "(the browser agent workspace defaults to Tools/mcp-sandbox/_sandbox). "
+            "Take a PNG screenshot of the current browser page and save it to the currently active sandbox workspace. "
             "full_page=False (default) captures only the visible viewport. "
             "full_page=True captures the entire scrollable page height. "
             "For vision-capable models, returns an inline image preview that can be inspected visually. "

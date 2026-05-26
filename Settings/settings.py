@@ -58,7 +58,8 @@ DEFAULTS: dict[str, Any] = {
     "secret_key": "",
     "allowed_hosts": ["127.0.0.1", "localhost"],
     "llm-engine": "ollama-service",
-    "ollama-service_port": 20002,
+    # Must differ from oda-daemon-port (20002); matches ASLM_Module.json.
+    "ollama-service_port": 20003,
     "ollama-service": False,
     "ollama-service_path": None,
     "ollama-service_data": None,
@@ -223,8 +224,13 @@ def _resolve_enabled_engine_from_settings(
 def get_supported_engines() -> list[dict[str, str]]:
     """Return the enabled engines that ASLM-Chat can expose in the UI."""
 
+    from Apps.UI.locale_catalog import translate
+
     return [
-        {"id": engine_id, "label": ENGINE_LABELS[engine_id]}
+        {
+            "id": engine_id,
+            "label": translate(f"engines.{engine_id}", fallback=ENGINE_LABELS[engine_id]),
+        }
         for engine_id in get_enabled_engine_ids()
     ]
 
@@ -275,6 +281,30 @@ def _apply_environment_overrides(data: dict[str, Any]) -> dict[str, Any]:
     return updated
 
 # Normalize the loaded settings snapshot.
+_PORT_SETTING_KEYS = ("ui-port", "api-port", "oda-daemon-port", "ollama-service_port")
+
+
+def _warn_port_collisions(settings: dict[str, Any]) -> None:
+    """Log when two services are configured on the same TCP port."""
+    by_port: dict[int, list[str]] = {}
+    for key in _PORT_SETTING_KEYS:
+        raw = settings.get(key)
+        try:
+            port = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if port <= 0 or port > 65535:
+            continue
+        by_port.setdefault(port, []).append(key)
+    for port, keys in sorted(by_port.items()):
+        if len(keys) > 1:
+            logger.warning(
+                "Settings port collision on %s: %s — assign unique ports in Settings/settings.json",
+                port,
+                ", ".join(keys),
+            )
+
+
 def _normalize_loaded_settings(data: dict[str, Any]) -> dict[str, Any]:
     """Return a normalized settings snapshot ready for use."""
 
@@ -289,6 +319,7 @@ def _normalize_loaded_settings(data: dict[str, Any]) -> dict[str, Any]:
         normalized.get("llm-engine"),
         DEFAULTS["llm-engine"],
     )
+    _warn_port_collisions(normalized)
     return normalized
 
 

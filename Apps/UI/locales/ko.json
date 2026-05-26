@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM - 고급 시스템 언어 모델",
+    "profileTitle": "프로필 - ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "채팅",
+    "newChat": "새 채팅",
+    "noPreviousChats": "이전 채팅 없음",
+    "chatOptions": "채팅 옵션",
+    "rename": "이름 바꾸기",
+    "delete": "삭제",
+    "account": "계정",
+    "ago": "{time} 전"
+  },
+  "chat": {
+    "newChat": "새 채팅",
+    "attachmentChat": "첨부 파일 채팅",
+    "howCanIHelp": "무엇을 도와드릴까요?",
+    "welcomeTitle": "무엇을 도와드릴까요?"
+  },
+  "composer": {
+    "placeholder": "ASLM에게 메시지 보내기...",
+    "menu": "작성 메뉴",
+    "attachFiles": "파일 첨부",
+    "tools": "도구",
+    "other": "기타",
+    "reasoningEffort": "추론 강도",
+    "intelligence": "추론 깊이",
+    "off": "끔",
+    "sendMessage": "메시지 보내기",
+    "queueMessage": "메시지 대기열에 추가",
+    "stopGeneration": "생성 중지",
+    "contextUsage": "컨텍스트 사용량"
+  },
+  "reasoning": {
+    "panel": "추론 패널",
+    "title": "추론",
+    "closePanel": "추론 패널 닫기"
+  },
+  "settings": {
+    "modelSettings": "모델 설정",
+    "collapse": "설정 접기",
+    "expand": "설정 펼치기",
+    "connection": "연결",
+    "engine": "엔진",
+    "address": "주소",
+    "saved": "저장됨",
+    "engineAddressPlaceholder": "엔진 주소",
+    "engineAddressHint": "선택한 엔진 엔드포인트를 구성합니다.",
+    "apiKey": "API 키",
+    "off": "끔",
+    "useSavedKey": "저장된 키 사용",
+    "pasteApiKey": "API 키 붙여넣기",
+    "apiKeyHint": "보안 엔드포인트에서만 필요합니다.",
+    "model": "모델",
+    "modelsLoadOnDemand": "모델은 필요 시 로드됩니다",
+    "visionModel": "비전 모델",
+    "preset": "프리셋",
+    "default": "기본값",
+    "presetNew": "새로 만들기",
+    "presetRename": "이름 바꾸기",
+    "presetDelete": "삭제",
+    "sandboxDefault": "샌드박스 기본값",
+    "mode": "모드",
+    "tools": "도구",
+    "mcp": "MCP",
+    "skills": "스킬",
+    "systemPrompt": "시스템 프롬프트",
+    "systemPromptPlaceholder": "예: \"항상 운율로만 답하기\"",
+    "load": "불러오기",
+    "customFields": "사용자 정의 필드",
+    "settings": "설정",
+    "sampling": "샘플링",
+    "advanced": "고급",
+    "custom": "사용자 정의"
+  },
+  "profile": {
+    "backToChat": "채팅으로 돌아가기",
+    "account": "계정",
+    "user": "사용자",
+    "localAccount": "로컬 계정",
+    "general": "일반",
+    "username": "사용자 이름",
+    "email": "이메일",
+    "memberSince": "가입일",
+    "dangerZone": "위험 구역",
+    "signOut": "로그아웃"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "OpenAI 호환",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "컨텍스트 창:",
+    "usageLabel": "컨텍스트: {percent}% 사용, {remaining}% 남음. {used} / {window} 토큰.",
+    "used": "사용됨",
+    "remaining": "남음",
+    "compressing": "컨텍스트 압축 중",
+    "compressionInProgress": "컨텍스트 압축 진행 중",
+    "compressedActive": "압축된 컨텍스트가 활성화되어 있습니다.",
+    "compressedActiveTooltip": "압축된 컨텍스트 활성",
+    "compressContext": "컨텍스트 압축",
+    "autoCompress": "{percent}%에서 자동 압축"
+  },
+  "think": {
+    "off": "끔",
+    "low": "낮음",
+    "medium": "보통",
+    "high": "높음",
+    "minimal": "최소",
+    "extraHigh": "매우 높음"
+  },
+  "messages": {
+    "more": "더 보기",
+    "hide": "숨기기",
+    "copyCode": "코드 복사",
+    "copyDiagram": "다이어그램 소스 복사",
+    "noContent": "내용 없음.",
+    "noDiff": "차이 없음.",
+    "file": "파일",
+    "audio": "오디오",
+    "video": "동영상",
+    "image": "이미지",
+    "download": "다운로드",
+    "playAudio": "오디오 재생",
+    "playVideo": "동영상 재생",
+    "pauseMedia": "미디어 일시 정지",
+    "playMedia": "미디어 재생",
+    "muteMedia": "미디어 음소거",
+    "unmuteMedia": "미디어 음소거 해제",
+    "fullscreen": "전체 화면",
+    "exitFullscreen": "전체 화면 종료",
+    "audioProgress": "오디오 진행률",
+    "videoProgress": "동영상 진행률",
+    "openMiniPlayer": "미니 플레이어 열기",
+    "returnToMessage": "메시지로 돌아가기",
+    "closeMiniPlayer": "미니 플레이어 닫기",
+    "renderingDiagram": "다이어그램 렌더링 중...",
+    "mermaidEmpty": "Mermaid 다이어그램 소스가 비어 있습니다.",
+    "mermaidUnavailable": "Mermaid 렌더러를 사용할 수 없습니다.",
+    "mermaidError": "Mermaid 다이어그램을 렌더링할 수 없습니다: {error}",
+    "running": "실행 중...",
+    "noOutput": "출력 없음.",
+    "python": "Python",
+    "sandbox": "샌드박스",
+    "write": "쓰기",
+    "writePath": "{path} 쓰기",
+    "edit": "편집",
+    "editPath": "{path} 편집",
+    "viewedImage": "이미지 보기",
+    "viewedPath": "{path} 보기",
+    "imagePreview": "이미지 미리보기",
+    "imagePreviewFor": "{path} 이미지 미리보기",
+    "readSource": "소스 읽기:",
+    "readSources": "소스 읽기:",
+    "searchedFor": "{query} 검색함",
+    "noSourcesFor": "{query}에 대한 소스를 찾을 수 없음",
+    "searchingFor": "{query} 검색 중",
+    "badQuery": "잘못된 쿼리: {query}"
+  },
+  "skills": {
+    "title": "스킬",
+    "refresh": "새로고침",
+    "noSkills": "스킬을 찾을 수 없음",
+    "loadError": "스킬을 불러올 수 없습니다",
+    "manage": "스킬 관리",
+    "customizeAria": "스킬 사용자 지정",
+    "errorTitle": "스킬 오류",
+    "personalSkillOne": "개인 스킬 1개",
+    "personalSkillMany": "개인 스킬 {count}개",
+    "noSkillsYet": "아직 스킬이 없습니다",
+    "composerMenuAria": "스킬",
+    "closeManagerAria": "스킬 관리자 닫기",
+    "searchPlaceholder": "스킬 검색",
+    "addSkillAria": "스킬 추가",
+    "skillActionsAria": "스킬 작업",
+    "toggleSkillFilesAria": "스킬 파일 표시/숨기기",
+    "toggleFolderAria": "폴더 표시/숨기기",
+    "toggleKindAria": "폴더 또는 파일 전환",
+    "newFileAria": "폴더에 새 파일",
+    "renameFolderAria": "폴더 이름 바꾸기",
+    "renameFileAria": "파일 이름 바꾸기",
+    "deleteFileAria": "파일 삭제",
+    "dialogOk": "확인",
+    "dialogCancel": "취소",
+    "dialogConfirm": "확인",
+    "dialogInput": "입력",
+    "valueRequired": "값이 필요합니다.",
+    "createSkill": "스킬 만들기",
+    "skillNamePlaceholder": "skill-name",
+    "create": "만들기",
+    "importSkillFolder": "스킬 폴더 가져오기",
+    "dropzoneAria": "스킬 폴더를 여기에 놓으세요",
+    "dropzoneText": "스킬 폴더를 여기에 놓으세요(상위 디렉터리)",
+    "or": "또는",
+    "browseFolder": "폴더 찾아보기…",
+    "skillNameRequired": "스킬 이름이 필요합니다.",
+    "importing": "가져오는 중…",
+    "newSkill": "새 스킬",
+    "skillFolderName": "스킬 폴더 이름",
+    "skillFolderNamePlaceholder": "skill-creator",
+    "renameSkill": "스킬 이름 바꾸기",
+    "newSkillFolderName": "새 폴더 이름",
+    "deleteSkill": "스킬 삭제",
+    "deleteSkillConfirm": "스킬 \"{name}\"을(를) 삭제하시겠습니까?",
+    "newSkillFile": "새 스킬 파일",
+    "filePathInSkill": "스킬 내부 파일 경로",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "파일 삭제",
+    "deleteFileConfirm": "확실합니까?",
+    "renameFolder": "폴더 이름 바꾸기",
+    "folderName": "폴더 이름",
+    "renameFile": "파일 이름 바꾸기",
+    "fileName": "파일 이름",
+    "editSkill": "스킬 편집",
+    "doneEditing": "편집 완료",
+    "newFilePlaceholder": "새 파일 이름(예: grader.md)",
+    "newFolderPlaceholder": "새 폴더 이름",
+    "noFileSelected": "선택된 파일 없음",
+    "noFileSelectedPath": "선택된 파일이 없습니다.",
+    "emptyState": "시작하려면 스킬을 만드세요.",
+    "preview": "미리보기",
+    "created": "생성됨",
+    "unknown": "알 수 없음",
+    "readFileFailed": "{name}을(를) 읽지 못했습니다",
+    "importNameHintDropOne": "위에 이름을 입력하거나 스킬 폴더를 하나씩 놓으세요.",
+    "importNameHintSelect": "이름을 입력하거나 트리에서 스킬을 선택하거나 폴더 하나를 고르세요.",
+    "importNoFiles": "파일을 찾을 수 없습니다.",
+    "importNoSupported": "지원되는 텍스트 파일이 없습니다(.md, .txt, .py, …).",
+    "importNoSupportedFor": "\"{name}\"에 대한 지원 파일이 없습니다."
+  },
+  "errors": {
+    "generic": "문제가 발생했습니다",
+    "network": "네트워크 오류"
+  },
+  "confirm": {
+    "deleteChat": "이 채팅을 삭제하시겠습니까?",
+    "deleteChatNamed": "\"{title}\"을(를) 삭제하시겠습니까?",
+    "deletePreset": "프리셋 \"{name}\"을(를) 삭제하시겠습니까?",
+    "unsaved": "저장하지 않은 변경 사항이 있습니다."
+  },
+  "toolInspector": {
+    "title": "도구 검사기",
+    "close": "닫기",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Temperature"
+    },
+    "num_ctx": {
+      "label": "컨텍스트 길이",
+      "note": "토큰 단위의 컨텍스트 창 크기입니다."
+    },
+    "num_predict": {
+      "label": "최대 출력 토큰",
+      "note": "생성할 수 있는 최대 토큰 수입니다."
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "NUMA 인식 메모리 배치입니다."
+    },
+    "num_batch": {
+      "label": "배치 크기",
+      "note": "프롬프트 배치 크기입니다."
+    },
+    "num_gpu": {
+      "label": "GPU 레이어",
+      "note": "GPU로 오프로드할 레이어 수입니다."
+    },
+    "main_gpu": {
+      "label": "주 GPU",
+      "note": "기본 GPU입니다."
+    },
+    "low_vram": {
+      "label": "낮은 VRAM",
+      "note": "VRAM 사용량을 줄입니다."
+    },
+    "f16_kv": {
+      "label": "FP16 KV 캐시 사용",
+      "note": "FP16 KV 캐시를 사용합니다."
+    },
+    "logits_all": {
+      "label": "전체 Logits 반환",
+      "note": "모든 토큰에 대한 logits를 반환합니다."
+    },
+    "vocab_only": {
+      "label": "어휘만",
+      "note": "어휘만 로드합니다."
+    },
+    "use_mmap": {
+      "label": "메모리 맵 사용",
+      "note": "메모리 매핑을 사용합니다."
+    },
+    "use_mlock": {
+      "label": "메모리 잠금 사용",
+      "note": "모델 페이지를 RAM에 고정합니다."
+    },
+    "embedding_only": {
+      "label": "임베딩만",
+      "note": "임베딩만 로드합니다."
+    },
+    "num_thread": {
+      "label": "CPU 스레드",
+      "note": "CPU 스레드 수입니다."
+    },
+    "num_keep": {
+      "label": "프롬프트 토큰 유지",
+      "note": "-1은 모두 유지, 0은 자동입니다."
+    },
+    "seed": {
+      "label": "시드",
+      "note": "결정론적 시드입니다."
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "반복 창"
+    },
+    "repeat_penalty": {
+      "label": "반복 페널티"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "테일 프리 샘플링입니다."
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "존재 페널티"
+    },
+    "frequency_penalty": {
+      "label": "빈도 페널티"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "중지 시퀀스"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top Logprobs",
+      "note": "대체 토큰 logprobs입니다."
+    },
+    "keep_alive": {
+      "label": "Keep Alive",
+      "note": "모델을 메모리에 유지하는 시간입니다."
+    },
+    "format": {
+      "label": "응답 형식",
+      "note": "JSON 모드 또는 JSON 스키마입니다."
+    },
+    "penalize_newline": {
+      "label": "줄바꿈 페널티",
+      "note": "줄바꿈 토큰에도 페널티를 적용합니다."
+    },
+    "maxTokens": {
+      "label": "최대 출력 토큰"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "반복 페널티"
+    },
+    "xtcProbability": {
+      "label": "XTC 확률"
+    },
+    "xtcThreshold": {
+      "label": "XTC 임계값"
+    },
+    "cpuThreads": {
+      "label": "CPU 스레드"
+    },
+    "stopStrings": {
+      "label": "중지 시퀀스"
+    },
+    "toolCallStopStrings": {
+      "label": "도구 중지 시퀀스"
+    },
+    "contextOverflowPolicy": {
+      "label": "컨텍스트 오버플로 정책"
+    },
+    "draftModel": {
+      "label": "드래프트 모델"
+    },
+    "max_output_tokens": {
+      "label": "최대 출력 토큰"
+    },
+    "candidate_count": {
+      "label": "후보 수"
+    },
+    "stop_sequences": {
+      "label": "중지 시퀀스"
+    },
+    "response_logprobs": {
+      "label": "응답 Logprobs"
+    },
+    "response_mime_type": {
+      "label": "응답 MIME 유형"
+    },
+    "max_completion_tokens": {
+      "label": "최대 완료 토큰"
+    },
+    "n": {
+      "label": "후보 수"
+    },
+    "reasoning_effort": {
+      "label": "추론 강도"
+    },
+    "verbosity": {
+      "label": "상세도"
+    },
+    "response_format": {
+      "label": "응답 형식"
+    },
+    "logit_bias": {
+      "label": "Logit Bias"
+    }
+  },
+  "mcp": {
+    "editConfig": "mcp.json 편집",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name}({count}개 도구)",
+    "cancel": "취소",
+    "save": "저장"
+  }
+}

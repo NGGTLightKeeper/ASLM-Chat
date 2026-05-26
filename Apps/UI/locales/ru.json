@@ -1,0 +1,456 @@
+{
+  "meta": {
+    "appTitle": "ASLM Chat",
+    "appDescription": "ASLM — продвинутые системные языковые модели",
+    "profileTitle": "Профиль — ASLM Chat"
+  },
+  "sidebar": {
+    "chats": "Чаты",
+    "newChat": "Новый чат",
+    "noPreviousChats": "Нет предыдущих чатов",
+    "chatOptions": "Параметры чата",
+    "rename": "Переименовать",
+    "delete": "Удалить",
+    "account": "Аккаунт",
+    "ago": "{time} назад"
+  },
+  "chat": {
+    "newChat": "Новый чат",
+    "attachmentChat": "Чат с вложениями",
+    "howCanIHelp": "Чем могу помочь?",
+    "welcomeTitle": "Чем могу помочь?"
+  },
+  "composer": {
+    "placeholder": "Сообщение для ASLM...",
+    "menu": "Меню ввода",
+    "attachFiles": "Прикрепить файлы",
+    "tools": "Инструменты",
+    "other": "Прочее",
+    "reasoningEffort": "Уровень рассуждений",
+    "intelligence": "Глубина мышления",
+    "off": "Выкл.",
+    "sendMessage": "Отправить сообщение",
+    "queueMessage": "Поставить в очередь",
+    "stopGeneration": "Остановить генерацию",
+    "contextUsage": "Использование контекста"
+  },
+  "reasoning": {
+    "panel": "Панель рассуждений",
+    "title": "Рассуждения",
+    "closePanel": "Закрыть панель рассуждений"
+  },
+  "settings": {
+    "modelSettings": "Настройки модели",
+    "collapse": "Свернуть настройки",
+    "expand": "Развернуть настройки",
+    "connection": "Подключение",
+    "engine": "Движок",
+    "address": "Адрес",
+    "saved": "Сохранено",
+    "engineAddressPlaceholder": "Адрес движка",
+    "engineAddressHint": "Настройте конечную точку выбранного движка.",
+    "apiKey": "API-ключ",
+    "off": "Выкл.",
+    "useSavedKey": "Использовать сохранённый ключ",
+    "pasteApiKey": "Вставить API-ключ",
+    "apiKeyHint": "Требуется только для защищённых конечных точек.",
+    "model": "Модель",
+    "modelsLoadOnDemand": "Модели загружаются по запросу",
+    "visionModel": "Модель зрения",
+    "preset": "Шаблон",
+    "default": "По умолчанию",
+    "presetNew": "Создать",
+    "presetRename": "Переименовать",
+    "presetDelete": "Удалить",
+    "sandboxDefault": "Песочница по умолчанию",
+    "mode": "Режим",
+    "tools": "Инструменты",
+    "mcp": "MCP",
+    "skills": "Навыки",
+    "systemPrompt": "Системный промпт",
+    "systemPromptPlaceholder": "например: «Отвечай только рифмами»",
+    "load": "Загрузить",
+    "customFields": "Пользовательские поля",
+    "settings": "Настройки",
+    "sampling": "Сэмплирование",
+    "advanced": "Дополнительно",
+    "custom": "Своё"
+  },
+  "profile": {
+    "backToChat": "Вернуться в чат",
+    "account": "Аккаунт",
+    "user": "Пользователь",
+    "localAccount": "Локальный аккаунт",
+    "general": "Общие",
+    "username": "Имя пользователя",
+    "email": "Эл. почта",
+    "memberSince": "В системе с",
+    "dangerZone": "Опасная зона",
+    "signOut": "Выйти"
+  },
+  "engines": {
+    "ollama-service": "Ollama",
+    "lms": "LM Studio",
+    "openai": "Совместимый с OpenAI",
+    "google-genai": "Google GenAI"
+  },
+  "context": {
+    "windowTitle": "Окно контекста:",
+    "usageLabel": "Контекст: использовано {percent}%, осталось {remaining}%. {used} / {window} токенов.",
+    "used": "Использовано",
+    "remaining": "Осталось",
+    "compressing": "Сжатие контекста",
+    "compressionInProgress": "Выполняется сжатие контекста",
+    "compressedActive": "Активен сжатый контекст.",
+    "compressedActiveTooltip": "Активен сжатый контекст",
+    "compressContext": "Сжать контекст",
+    "autoCompress": "Автосжатие при {percent}%"
+  },
+  "think": {
+    "off": "Выкл.",
+    "low": "Низкий",
+    "medium": "Средний",
+    "high": "Высокий",
+    "minimal": "Минимальный",
+    "extraHigh": "Очень высокий"
+  },
+  "messages": {
+    "more": "Ещё",
+    "hide": "Скрыть",
+    "copyCode": "Копировать код",
+    "copyDiagram": "Копировать исходник диаграммы",
+    "noContent": "Нет содержимого.",
+    "noDiff": "Нет diff.",
+    "file": "Файл",
+    "audio": "Аудио",
+    "video": "Видео",
+    "image": "Изображение",
+    "download": "Скачать",
+    "playAudio": "Воспроизвести аудио",
+    "playVideo": "Воспроизвести видео",
+    "pauseMedia": "Приостановить",
+    "playMedia": "Воспроизвести",
+    "muteMedia": "Выключить звук",
+    "unmuteMedia": "Включить звук",
+    "fullscreen": "На весь экран",
+    "exitFullscreen": "Выйти из полноэкранного режима",
+    "audioProgress": "Прогресс аудио",
+    "videoProgress": "Прогресс видео",
+    "openMiniPlayer": "Открыть мини-плеер",
+    "returnToMessage": "Вернуться к сообщению",
+    "closeMiniPlayer": "Закрыть мини-плеер",
+    "renderingDiagram": "Отрисовка диаграммы...",
+    "mermaidEmpty": "Исходник диаграммы Mermaid пуст.",
+    "mermaidUnavailable": "Рендерер Mermaid недоступен.",
+    "mermaidError": "Не удалось отрисовать диаграмму Mermaid: {error}",
+    "running": "Выполняется...",
+    "noOutput": "Нет вывода.",
+    "python": "Python",
+    "sandbox": "Песочница",
+    "write": "Запись",
+    "writePath": "Запись {path}",
+    "edit": "Правка",
+    "editPath": "Правка {path}",
+    "viewedImage": "Просмотрено изображение",
+    "viewedPath": "Просмотрено {path}",
+    "imagePreview": "Предпросмотр изображения",
+    "imagePreviewFor": "Предпросмотр изображения для {path}",
+    "readSource": "Прочитан источник:",
+    "readSources": "Прочитаны источники:",
+    "searchedFor": "Поиск: {query}",
+    "noSourcesFor": "Источники не найдены: {query}",
+    "searchingFor": "Поиск: {query}",
+    "badQuery": "Некорректный запрос: {query}"
+  },
+  "skills": {
+    "title": "Навыки",
+    "refresh": "Обновить",
+    "noSkills": "Навыки не найдены",
+    "loadError": "Не удалось загрузить навыки",
+    "manage": "Управление навыками",
+    "customizeAria": "Настройка навыков",
+    "errorTitle": "Ошибка навыков",
+    "personalSkillOne": "1 личный навык",
+    "personalSkillMany": "{count} личных навыков",
+    "noSkillsYet": "Пока нет навыков",
+    "composerMenuAria": "Навыки",
+    "closeManagerAria": "Закрыть менеджер навыков",
+    "searchPlaceholder": "Поиск навыков",
+    "addSkillAria": "Добавить навык",
+    "skillActionsAria": "Действия с навыком",
+    "toggleSkillFilesAria": "Показать или скрыть файлы навыка",
+    "toggleFolderAria": "Показать или скрыть папку",
+    "toggleKindAria": "Переключить папку или файл",
+    "newFileAria": "Новый файл в папке",
+    "renameFolderAria": "Переименовать папку",
+    "renameFileAria": "Переименовать файл",
+    "deleteFileAria": "Удалить файл",
+    "dialogOk": "ОК",
+    "dialogCancel": "Отмена",
+    "dialogConfirm": "Подтверждение",
+    "dialogInput": "Ввод",
+    "valueRequired": "Укажите значение.",
+    "createSkill": "Создать навык",
+    "skillNamePlaceholder": "имя-навыка",
+    "create": "Создать",
+    "importSkillFolder": "Импорт папки навыка",
+    "dropzoneAria": "Перетащите папку навыка сюда",
+    "dropzoneText": "Перетащите папку навыка сюда (родительская директория)",
+    "or": "или",
+    "browseFolder": "Выбрать папку…",
+    "skillNameRequired": "Укажите имя навыка.",
+    "importing": "Импорт…",
+    "newSkill": "Новый навык",
+    "skillFolderName": "Имя папки навыка",
+    "skillFolderNamePlaceholder": "создатель-навыков",
+    "renameSkill": "Переименовать навык",
+    "newSkillFolderName": "Новое имя папки навыка",
+    "deleteSkill": "Удалить навык",
+    "deleteSkillConfirm": "Удалить навык «{name}»?",
+    "newSkillFile": "Новый файл навыка",
+    "filePathInSkill": "Путь к файлу внутри навыка",
+    "filePathPlaceholder": "agents/grader.md",
+    "deleteFile": "Удалить файл",
+    "deleteFileConfirm": "Вы уверены?",
+    "renameFolder": "Переименовать папку",
+    "folderName": "Имя папки",
+    "renameFile": "Переименовать файл",
+    "fileName": "Имя файла",
+    "editSkill": "Редактировать навык",
+    "doneEditing": "Завершить редактирование",
+    "newFilePlaceholder": "Имя файла (напр. grader.md)",
+    "newFolderPlaceholder": "Имя новой папки",
+    "noFileSelected": "Файл не выбран",
+    "noFileSelectedPath": "Файл не выбран.",
+    "emptyState": "Создайте навык, чтобы начать.",
+    "preview": "Просмотр",
+    "created": "Создан",
+    "unknown": "Неизвестно",
+    "readFileFailed": "Не удалось прочитать {name}",
+    "importNameHintDropOne": "Введите имя навыка в поле выше или перетащите одну папку навыка.",
+    "importNameHintSelect": "Введите имя навыка, выберите навык в дереве или укажите одну папку навыка.",
+    "importNoFiles": "Файлы не найдены.",
+    "importNoSupported": "Поддерживаемые текстовые файлы не найдены (.md, .txt, .py, …).",
+    "importNoSupportedFor": "Для «{name}» не найдено поддерживаемых текстовых файлов."
+  },
+  "errors": {
+    "generic": "Что-то пошло не так",
+    "network": "Сетевая ошибка"
+  },
+  "confirm": {
+    "deleteChat": "Удалить этот чат?",
+    "deleteChatNamed": "Удалить «{title}»?",
+    "deletePreset": "Удалить шаблон «{name}»?",
+    "unsaved": "Есть несохранённые изменения."
+  },
+  "toolInspector": {
+    "title": "Инспектор инструментов",
+    "close": "Закрыть",
+    "in": "_in_",
+    "out": "_out_"
+  },
+  "parameters": {
+    "temperature": {
+      "label": "Температура"
+    },
+    "num_ctx": {
+      "label": "Длина контекста",
+      "note": "Окно контекста в токенах."
+    },
+    "num_predict": {
+      "label": "Макс. токенов вывода",
+      "note": "Максимум сгенерированных токенов."
+    },
+    "numa": {
+      "label": "NUMA",
+      "note": "Размещение памяти с учётом NUMA."
+    },
+    "num_batch": {
+      "label": "Размер пакета",
+      "note": "Размер пакета промпта."
+    },
+    "num_gpu": {
+      "label": "Слои на GPU",
+      "note": "Слои, выгруженные на GPU."
+    },
+    "main_gpu": {
+      "label": "Основной GPU",
+      "note": "Основной GPU"
+    },
+    "low_vram": {
+      "label": "Мало VRAM",
+      "note": "Сниженное использование VRAM."
+    },
+    "f16_kv": {
+      "label": "KV-кэш FP16",
+      "note": "Использовать KV-кэш FP16."
+    },
+    "logits_all": {
+      "label": "Все логиты",
+      "note": "Возвращать логиты для всех токенов."
+    },
+    "vocab_only": {
+      "label": "Только словарь",
+      "note": "Загрузка только словаря."
+    },
+    "use_mmap": {
+      "label": "Отображение в память",
+      "note": "Использовать memory mapping."
+    },
+    "use_mlock": {
+      "label": "Блокировка в RAM",
+      "note": "Фиксировать страницы модели в RAM."
+    },
+    "embedding_only": {
+      "label": "Только эмбеддинги",
+      "note": "Загрузка только для эмбеддингов."
+    },
+    "num_thread": {
+      "label": "Потоки CPU",
+      "note": "Потоки CPU"
+    },
+    "num_keep": {
+      "label": "Сохранять токены промпта",
+      "note": "−1 — сохранить все, 0 — автоматически."
+    },
+    "seed": {
+      "label": "Seed",
+      "note": "Детерминированный seed."
+    },
+    "top_p": {
+      "label": "Top P"
+    },
+    "top_k": {
+      "label": "Top K"
+    },
+    "min_p": {
+      "label": "Min P"
+    },
+    "repeat_last_n": {
+      "label": "Окно повторов"
+    },
+    "repeat_penalty": {
+      "label": "Штраф за повторы"
+    },
+    "tfs_z": {
+      "label": "TFS Z",
+      "note": "Tail-free sampling."
+    },
+    "typical_p": {
+      "label": "Typical P"
+    },
+    "presence_penalty": {
+      "label": "Штраф присутствия"
+    },
+    "frequency_penalty": {
+      "label": "Штраф частоты"
+    },
+    "mirostat": {
+      "label": "Mirostat"
+    },
+    "mirostat_eta": {
+      "label": "Mirostat Eta"
+    },
+    "mirostat_tau": {
+      "label": "Mirostat Tau"
+    },
+    "stop": {
+      "label": "Стоп-последовательности"
+    },
+    "logprobs": {
+      "label": "Logprobs"
+    },
+    "top_logprobs": {
+      "label": "Top Logprobs",
+      "note": "Логиты альтернативных токенов."
+    },
+    "keep_alive": {
+      "label": "Keep Alive",
+      "note": "Как долго держать модель загруженной."
+    },
+    "format": {
+      "label": "Формат ответа",
+      "note": "Режим JSON или JSON-схема."
+    },
+    "penalize_newline": {
+      "label": "Штраф за перевод строки",
+      "note": "Штрафовать также токены перевода строки."
+    },
+    "maxTokens": {
+      "label": "Макс. токенов вывода"
+    },
+    "topPSampling": {
+      "label": "Top P"
+    },
+    "topKSampling": {
+      "label": "Top K"
+    },
+    "minPSampling": {
+      "label": "Min P"
+    },
+    "repeatPenalty": {
+      "label": "Штраф за повторы"
+    },
+    "xtcProbability": {
+      "label": "Вероятность XTC"
+    },
+    "xtcThreshold": {
+      "label": "Порог XTC"
+    },
+    "cpuThreads": {
+      "label": "Потоки CPU"
+    },
+    "stopStrings": {
+      "label": "Стоп-последовательности"
+    },
+    "toolCallStopStrings": {
+      "label": "Стоп-последовательности инструментов"
+    },
+    "contextOverflowPolicy": {
+      "label": "Политика переполнения контекста"
+    },
+    "draftModel": {
+      "label": "Черновая модель"
+    },
+    "max_output_tokens": {
+      "label": "Макс. токенов вывода"
+    },
+    "candidate_count": {
+      "label": "Кандидаты"
+    },
+    "stop_sequences": {
+      "label": "Стоп-последовательности"
+    },
+    "response_logprobs": {
+      "label": "Logprobs ответа"
+    },
+    "response_mime_type": {
+      "label": "MIME-тип ответа"
+    },
+    "max_completion_tokens": {
+      "label": "Макс. токенов завершения"
+    },
+    "n": {
+      "label": "Кандидаты"
+    },
+    "reasoning_effort": {
+      "label": "Уровень рассуждений"
+    },
+    "verbosity": {
+      "label": "Подробность"
+    },
+    "response_format": {
+      "label": "Формат ответа"
+    },
+    "logit_bias": {
+      "label": "Смещение логитов"
+    }
+  },
+  "mcp": {
+    "editConfig": "Редактировать mcp.json",
+    "modalTitle": "mcp.json",
+    "serverTools": "{name} ({count} инстр.)",
+    "cancel": "Отмена",
+    "save": "Сохранить"
+  }
+}

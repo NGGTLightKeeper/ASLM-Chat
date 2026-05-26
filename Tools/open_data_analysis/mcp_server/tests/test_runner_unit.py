@@ -114,7 +114,7 @@ def test_persistent_container_create_argv(bridge_dirs, tmp_path):
     )
     joined = " ".join(argv)
     assert "-d" in argv
-    assert "--rm" not in argv
+    assert "--rm" in argv
     assert "--label ada.sandbox=1" in joined
     assert "--label ada.sandbox.run_id=run1" in joined
     assert "-u 999:999" in joined
@@ -255,6 +255,8 @@ def test_cleanup_orphan_containers_removes_missing_run_dir(monkeypatch, tmp_path
                 ),
                 "stderr": "",
             })()
+        if args[:3] == ["inspect", "-f", "{{.State.Running}}"]:
+            return type("Completed", (), {"returncode": 0, "stdout": "true\n", "stderr": ""})()
         if args[:2] == ["rm", "-f"]:
             removed.append(args[2])
             return type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
@@ -268,17 +270,46 @@ def test_cleanup_orphan_containers_removes_missing_run_dir(monkeypatch, tmp_path
     assert removed == [f"sandbox-{rid}"]
 
 
-def test_run_sandbox_missing_image(monkeypatch, bridge_dirs):
-    from sandbox_mcp.runner import run_sandbox
+def test_cleanup_orphan_containers_removes_stopped_container(monkeypatch):
+    removed: list[str] = []
+    rid = "c" * 32
 
+    def fake_docker(args, **kwargs):
+        if args[:4] == ["ps", "-a", "--filter", "label=ada.sandbox=1"]:
+            return type("Completed", (), {"returncode": 0, "stdout": f"sandbox-{rid}\n", "stderr": ""})()
+        if args[:3] == ["inspect", "-f", "{{json .Config.Labels}}"]:
+            return type("Completed", (), {
+                "returncode": 0,
+                "stdout": '{"ada.sandbox.run_id": "' + rid + '"}',
+                "stderr": "",
+            })()
+        if args[:3] == ["inspect", "-f", "{{.State.Running}}"]:
+            return type("Completed", (), {"returncode": 0, "stdout": "false\n", "stderr": ""})()
+        if args[:2] == ["rm", "-f"]:
+            removed.append(args[2])
+            return type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        raise AssertionError(args)
+
+    monkeypatch.setattr("sandbox_mcp.runner._docker", fake_docker)
+
+    assert _cleanup_orphan_containers() == 1
+    assert removed == [f"sandbox-{rid}"]
+
+
+def test_run_sandbox_missing_image(monkeypatch, bridge_dirs):
+    from sandbox_mcp import runner as r
+
+    # Patch _ensure_image to return an error directly (avoids real Docker or
+    # setup-sandbox.py being called, which can succeed on dev machines).
+    monkeypatch.setattr(r, "_ensure_image", lambda img: f"image not found locally: {img}")
     monkeypatch.setenv("SANDBOX_IMAGE", "sandbox:definitely-not-built-xyz")
-    result = run_sandbox(SandboxRunRequest(cmd=["true"]))
+    result = r.run_sandbox(SandboxRunRequest(cmd=["true"]))
     assert "exit_code: 1" in result
     assert "image not found" in result
 
 
-def test_model_facing_tools_are_python_and_share_file_only():
+def test_model_facing_tools_include_file_and_image_tools():
     from sandbox_mcp.server import list_tools
 
     tools = asyncio.run(list_tools())
-    assert {tool.name for tool in tools} == {"oda_python", "oda_share_file"}
+    assert {tool.name for tool in tools} == {"oda_python", "oda_share_file", "oda_view_image"}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate or update mcp.json for the sandbox MCP server."""
+"""Generate or update mcp.json for the ODA MCP server."""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def _configured_daemon_port() -> int:
 
 
 def _detect_python() -> Path:
-    managed_venv = ASLM_ROOT / "Data" / "venvs" / "tools" / "ODA"
+    managed_venv = ASLM_ROOT / "Data" / "venvs" / "tools" / "open_data_analysis"
     if sys.platform.startswith("win"):
         candidates = [
             managed_venv / "Scripts" / "python.exe",
@@ -135,6 +135,8 @@ def _server_entry(
         "SANDBOX_SHARED_ROOT": str(shared_root.resolve()),
         "SANDBOX_TIMEOUT": str(timeout_sec),
         "SANDBOX_MAX_CONCURRENT": "1",
+        "SANDBOX_MCP_SERVER_ROOT": str(MCP_SERVER.resolve()),
+        "SANDBOX_PYTHON": str(python_exe),
     }
     if tmp_root is not None:
         env["SANDBOX_TMP_ROOT"] = str(tmp_root.resolve())
@@ -158,7 +160,7 @@ def _server_entry(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate or update mcp.json for the sandbox MCP server."
+        description="Generate or update mcp.json for the ODA MCP server."
     )
     parser.add_argument(
         "--target",
@@ -172,8 +174,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--server-name",
-        default="sandbox",
-        help="Server key inside mcpServers. Default: sandbox",
+        default="oda",
+        help="Server key inside mcpServers. Default: oda",
     )
     parser.add_argument(
         "--image",
@@ -193,29 +195,43 @@ def main() -> None:
         "--shared-root",
         type=Path,
         default=SHARED_ROOT,
-        help="Host-visible _sandbox directory. Default: <repo>/tmp/_sandbox",
+        help="Host-visible _sandbox directory. Default: <repo>/Tools/open_data_analysis/tmp/_sandbox",
     )
     parser.add_argument(
         "--timeout",
         type=int,
-        default=60,
-        help="Sandbox command timeout in seconds. Default: 60",
+        default=300,
+        help="Sandbox command timeout in seconds. Default: 300",
     )
     parser.add_argument(
         "--mcp-timeout-ms",
         type=int,
-        default=120_000,
-        help="MCP server timeout in milliseconds. Default: 120000",
+        default=360_000,
+        help="MCP server timeout in milliseconds. Default: 360000",
     )
     parser.add_argument(
         "--use-daemon",
         action="store_true",
-        help="Route MCP calls through sandboxd.",
+        default=True,
+        help="Route MCP calls through sandboxd (default: on).",
+    )
+    parser.add_argument(
+        "--no-daemon",
+        dest="use_daemon",
+        action="store_false",
+        help="Disable daemon routing.",
     )
     parser.add_argument(
         "--daemon-autostart",
         action="store_true",
-        help="Let MCP lazily start sandboxd on the first sandbox call.",
+        default=True,
+        help="Let MCP lazily start sandboxd on the first sandbox call (default: on).",
+    )
+    parser.add_argument(
+        "--no-daemon-autostart",
+        dest="daemon_autostart",
+        action="store_false",
+        help="Disable daemon autostart.",
     )
     parser.add_argument(
         "--daemon-host",
@@ -283,12 +299,12 @@ def main() -> None:
 
     print(f"Python   : {python_exe}")
     print(f"MCP root : {MCP_SERVER}")
-    print(f"Tmp root : {tmp_root or Path(tempfile.gettempdir()) / 'ada-sandbox'}")
+    print(f"Tmp root : {tmp_root or Path(tempfile.gettempdir()) / 'oda-sandbox'}")
     print(f"Shared   : {shared_root}")
     print(f"Image    : {args.image}")
-    if args.use_daemon or args.daemon_autostart or args.daemon_url:
-        print(f"Daemon   : {args.daemon_url or f'http://{args.daemon_host}:{daemon_port}'}")
-        print(f"Autostart: {bool(args.daemon_autostart)}")
+    daemon_enabled = args.use_daemon or args.daemon_autostart or bool(args.daemon_url)
+    print(f"Daemon   : {args.daemon_url or f'http://{args.daemon_host}:{daemon_port}'} (enabled={daemon_enabled})")
+    print(f"Autostart: {bool(args.daemon_autostart)}")
     print(f"Target   : {target}")
     print(f"Server   : {args.server_name}")
     print("Done.")

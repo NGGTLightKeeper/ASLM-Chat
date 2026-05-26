@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -20,6 +22,46 @@ class SandboxDaemonError(RuntimeError):
 
 _START_LOCK = threading.Lock()
 _DAEMON_PROCESS: subprocess.Popen | None = None
+
+
+def _mcp_server_root() -> Path:
+    """Directory that contains the ``sandbox_mcp`` package (…/mcp_server)."""
+    raw = os.environ.get("SANDBOX_MCP_SERVER_ROOT", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def _daemon_python() -> str:
+    """Python executable used to launch sandboxd."""
+    explicit = os.environ.get("SANDBOX_PYTHON", "").strip()
+    return explicit or sys.executable
+
+
+def _daemon_subprocess_env() -> dict[str, str]:
+    """Environment for the sandboxd child process."""
+    root = _mcp_server_root()
+    env = os.environ.copy()
+    sep = os.pathsep
+    existing = env.get("PYTHONPATH", "")
+    prefix = str(root)
+    env["PYTHONPATH"] = prefix if not existing else f"{prefix}{sep}{existing}"
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
+def _tail_log_excerpt(log_path: Path, *, max_lines: int = 8) -> str:
+    if not log_path.is_file():
+        return ""
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    if not lines:
+        return ""
+    tail = lines[-max_lines:]
+    return "\n".join(tail)
 
 
 @contextmanager
@@ -87,10 +129,13 @@ def ensure_daemon() -> str | None:
             }
             if sys.platform == "win32":
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+            mcp_root = _mcp_server_root()
+            kwargs["env"] = _daemon_subprocess_env()
+            kwargs["cwd"] = str(mcp_root)
             global _DAEMON_PROCESS
             _DAEMON_PROCESS = subprocess.Popen(
                 [
-                    sys.executable,
+                    _daemon_python(),
                     "-m",
                     "sandbox_mcp.daemon",
                     "--host",
@@ -109,8 +154,10 @@ def ensure_daemon() -> str | None:
                         _validate_health(health(base_url=cfg.url), cfg.url)
                         return cfg.url
                     except SandboxDaemonError:
+                        excerpt = _tail_log_excerpt(cfg.log_path)
+                        detail = f"\n{excerpt}" if excerpt else ""
                         raise SandboxDaemonError(
-                            f"sandbox daemon exited during startup; see log: {cfg.log_path}"
+                            f"sandbox daemon exited during startup; see log: {cfg.log_path}{detail}"
                         )
                 try:
                     _validate_health(health(base_url=cfg.url), cfg.url)
@@ -161,16 +208,50 @@ def status(*, base_url: str | None = None) -> dict[str, Any]:
     return _request("GET", "/status", base_url=base_url)["status"]
 
 
-def run(arguments: dict[str, Any], *, base_url: str | None = None) -> str:
+def run(
+    arguments: dict[str, Any],
+    *,
+    scope: str | None = None,
+    timeout_s: int | None = None,
+    base_url: str | None = None,
+) -> str:
     if base_url is None:
         ensure_daemon()
-    return str(_request("POST", "/run", arguments, base_url=base_url)["text"])
+    payload = dict(arguments)
+    if scope is not None:
+        payload["scope"] = scope
+    if timeout_s is not None:
+        payload["timeout_s"] = timeout_s
+    return str(_request("POST", "/run", payload, base_url=base_url)["text"])
 
 
-def run_python(code: str, *, base_url: str | None = None) -> str:
+def run_python(
+    code: str,
+    *,
+    scope: str | None = None,
+    timeout_s: int | None = None,
+    base_url: str | None = None,
+) -> str:
     if base_url is None:
         ensure_daemon()
-    return str(_request("POST", "/python", {"code": code}, base_url=base_url)["text"])
+    payload: dict[str, Any] = {"code": code}
+    if scope is not None:
+        payload["scope"] = scope
+    if timeout_s is not None:
+        payload["timeout_s"] = timeout_s
+    return str(_request("POST", "/python", payload, base_url=base_url)["text"])
+
+
+def pool_status(*, base_url: str | None = None) -> list[dict[str, Any]]:
+    if base_url is None:
+        ensure_daemon()
+    return _request("GET", "/pool/status", base_url=base_url)["pool"]
+
+
+def pool_evict(scope: str, *, base_url: str | None = None) -> dict[str, Any]:
+    if base_url is None:
+        ensure_daemon()
+    return _request("POST", "/pool/evict", {"scope": scope}, base_url=base_url)
 
 
 def share(path: object, filename: object | None = None, *, base_url: str | None = None) -> dict[str, Any]:

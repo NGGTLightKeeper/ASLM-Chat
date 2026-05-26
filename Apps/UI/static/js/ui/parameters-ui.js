@@ -13,17 +13,136 @@ import {
   isThinkingParameterKey,
   setNestedValue
 } from '../main/utils.js';
-import { getJson, patchJson } from '../main/api.js';
+import { getJson, patchJson, postJson } from '../main/api.js';
+import { t } from '../main/i18n.js';
 
 // Parameters UI.
 // Create helpers for model controls, tool selection, and option payloads.
 export function createParametersUi(context) {
   const { dom, state } = context;
+  const sandboxDefaultStorageKey = 'aslm.sandboxDefaultMode';
+  const sandboxDefaultModes = [
+    { mode: 'linux_sandbox', serverId: 'sandbox' },
+    { mode: 'data_analysis', serverId: 'oda' }
+  ];
 
   // Tool selection helpers.
   // Normalize one tool server id for Set usage.
   function normalizeToolServerId(serverId) {
     return String(serverId || '').trim();
+  }
+
+  function sandboxModeForServerId(serverId) {
+    const normalized = normalizeToolServerId(serverId);
+    const match = sandboxDefaultModes.find(function findMode(option) {
+      return option.serverId === normalized;
+    });
+    return match ? match.mode : '';
+  }
+
+  function sandboxServerIdForMode(mode) {
+    const normalized = String(mode || '').trim();
+    const match = sandboxDefaultModes.find(function findServer(option) {
+      return option.mode === normalized;
+    });
+    return match ? match.serverId : '';
+  }
+
+  function isSandboxServerId(serverId) {
+    const normalized = normalizeToolServerId(serverId);
+    return sandboxDefaultModes.some(function hasServer(option) {
+      return option.serverId === normalized;
+    });
+  }
+
+  function availableToolServerIds() {
+    return new Set((state.availableToolServers || []).map(function mapServer(server) {
+      return normalizeToolServerId(server && server.id);
+    }).filter(Boolean));
+  }
+
+  function availableSandboxModes() {
+    const validIds = availableToolServerIds();
+    return sandboxDefaultModes.filter(function filterAvailable(option) {
+      return validIds.has(option.serverId);
+    });
+  }
+
+  function selectedSandboxServerId() {
+    const validIds = availableToolServerIds();
+    for (let index = 0; index < sandboxDefaultModes.length; index += 1) {
+      const serverId = sandboxDefaultModes[index].serverId;
+      if (validIds.has(serverId) && state.selectedToolServerIds.has(serverId)) {
+        return serverId;
+      }
+    }
+    return '';
+  }
+
+  function storedSandboxDefaultMode() {
+    try {
+      const value = window.localStorage.getItem(sandboxDefaultStorageKey);
+      return sandboxServerIdForMode(value) ? value : '';
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  function preferredSandboxDefaultMode() {
+    const selected = sandboxModeForServerId(selectedSandboxServerId());
+    if (selected) {
+      return selected;
+    }
+    const stored = storedSandboxDefaultMode();
+    const available = availableSandboxModes();
+    if (stored && available.some(function hasStored(option) { return option.mode === stored; })) {
+      return stored;
+    }
+    if (available.some(function hasDataAnalysis(option) { return option.mode === 'data_analysis'; })) {
+      return 'data_analysis';
+    }
+    return available[0] ? available[0].mode : '';
+  }
+
+  function getSandboxDefaultMode() {
+    return preferredSandboxDefaultMode();
+  }
+
+  function applySandboxDefaultMode(mode, persist, rerender) {
+    const serverId = sandboxServerIdForMode(mode);
+    const validIds = availableToolServerIds();
+    if (!serverId || !validIds.has(serverId)) {
+      return;
+    }
+    const sandboxEnabled = !!selectedSandboxServerId();
+    if (sandboxEnabled) {
+      sandboxDefaultModes.forEach(function removeSandboxOption(option) {
+        state.selectedToolServerIds.delete(option.serverId);
+      });
+      state.selectedToolServerIds.add(serverId);
+    }
+    if (persist !== false) {
+      try {
+        window.localStorage.setItem(sandboxDefaultStorageKey, mode);
+      } catch (_error) {
+        // Ignore storage failures in privacy-restricted contexts.
+      }
+    }
+    if (rerender !== false) {
+      renderToolControls();
+    }
+  }
+
+  async function syncSandboxDefaultProgress(sourceMode, targetMode) {
+    const source = String(sourceMode || '').trim();
+    const target = String(targetMode || '').trim();
+    if (!source || !target || source === target) {
+      return null;
+    }
+    return postJson('/api/sandbox/sync/', {
+      source_mode: source,
+      target_mode: target
+    });
   }
 
   // Replace the available tool server list and prune invalid selections.
@@ -90,8 +209,13 @@ export function createParametersUi(context) {
 
     state.availableToolServers.forEach(function renderServer(server) {
       const serverId = normalizeToolServerId(server.id);
+      if (serverId === 'oda') {
+        return;
+      }
       const label = server.name || serverId;
-      const checked = state.selectedToolServerIds.has(serverId);
+      const checked = isSandboxServerId(serverId)
+        ? !!selectedSandboxServerId()
+        : state.selectedToolServerIds.has(serverId);
 
       const $row = $('<label class="tool-server-row composer-tool-row">');
       const $icon = $('<span class="composer-tool-icon">').addClass(toolServerIconClass(server)).attr('aria-hidden', 'true');
@@ -99,10 +223,19 @@ export function createParametersUi(context) {
       const $name = $('<span class="tool-server-name">').text(label);
 
       $checkbox.on('change', function onChange() {
-        if (this.checked) {
-          state.selectedToolServerIds.add(serverId);
+        if (isSandboxServerId(serverId)) {
+          sandboxDefaultModes.forEach(function removeSandboxOption(option) {
+            state.selectedToolServerIds.delete(option.serverId);
+          });
+          if (this.checked) {
+            state.selectedToolServerIds.add(sandboxServerIdForMode(preferredSandboxDefaultMode()) || serverId);
+          }
         } else {
-          state.selectedToolServerIds.delete(serverId);
+          if (this.checked) {
+            state.selectedToolServerIds.add(serverId);
+          } else {
+            state.selectedToolServerIds.delete(serverId);
+          }
         }
         renderToolControls();
       });
@@ -121,6 +254,7 @@ export function createParametersUi(context) {
     dom.$groupTools.hide();
     dom.$dividerTools.hide();
     dom.$composerToolMenus.toggle(hasToolSupport);
+    renderSandboxDefaultControl(hasToolSupport);
 
     const $content = dom.$groupTools.find('.settings-section-content');
     $content.empty();
@@ -129,6 +263,35 @@ export function createParametersUi(context) {
     });
 
     renderMcpControls();
+  }
+
+  function renderSandboxDefaultControl(hasToolSupport) {
+    const available = hasToolSupport ? availableSandboxModes() : [];
+    const show = available.length > 0;
+    dom.$groupSandboxDefault.toggle(show);
+    dom.$dividerSandboxDefault.toggle(show);
+    if (!show) {
+      return;
+    }
+    dom.$groupSandboxDefault.removeClass('collapsed');
+
+    const mode = preferredSandboxDefaultMode();
+    dom.$sandboxDefaultValue.text(mode || '');
+    dom.$sandboxDefaultToggle.find('.sandbox-default-option').each(function syncOption() {
+      const $btn = $(this);
+      const optionMode = String($btn.data('sandbox-mode') || '').trim();
+      const serverId = sandboxServerIdForMode(optionMode);
+      const availableOption = available.some(function hasOption(option) {
+        return option.mode === optionMode;
+      });
+      const active = optionMode === mode;
+      $btn
+        .prop('disabled', !availableOption)
+        .toggleClass('is-active', active)
+        .attr('aria-pressed', active ? 'true' : 'false')
+        .attr('title', availableOption ? optionMode : `${optionMode} unavailable`)
+        .data('sandbox-server-id', serverId);
+    });
   }
 
   function renderMcpControls() {
@@ -140,7 +303,7 @@ export function createParametersUi(context) {
       return;
     }
 
-    const $btn = $('<button type="button" class="preset-action-btn mcp-json-open-btn">').text('Edit mcp.json');
+    const $btn = $('<button type="button" class="preset-action-btn mcp-json-open-btn">').text(t('mcp.editConfig'));
     $btn.on('click', function onOpenMcp() {
       openMcpJsonEditor();
     });
@@ -152,7 +315,10 @@ export function createParametersUi(context) {
       userList.forEach(function renderUserMcpServer(server) {
         const serverId = normalizeToolServerId(server.id);
         const toolCount = Number(server.tool_count || (server.tools || []).length || 0);
-        const label = toolCount > 0 ? `${server.name || serverId} (${toolCount} tools)` : (server.name || serverId);
+        const displayName = server.name || serverId;
+        const label = toolCount > 0
+          ? t('mcp.serverTools', { name: displayName, count: toolCount })
+          : displayName;
         const checked = state.selectedToolServerIds.has(serverId);
 
         const $row = $('<label class="tool-server-row mcp-user-tool-server-row">');
@@ -223,7 +389,7 @@ export function createParametersUi(context) {
 
     const $modal = $('<div class="mcp-json-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="mcpJsonModalTitle">');
     const $box = $('<div class="mcp-json-modal">');
-    const $title = $('<div class="mcp-json-modal-title" id="mcpJsonModalTitle">').text('mcp.json');
+    const $title = $('<div class="mcp-json-modal-title" id="mcpJsonModalTitle">').text(t('mcp.modalTitle'));
     const $editor = $('<div class="mcp-json-editor">');
     const $body = $('<div class="mcp-json-editor-body">');
     const $gutter = $('<div class="mcp-json-editor-gutter" aria-hidden="true">');
@@ -243,8 +409,8 @@ export function createParametersUi(context) {
 
     const $err = $('<div class="mcp-json-modal-error" role="alert">').hide();
     const $actions = $('<div class="mcp-json-modal-actions">');
-    const $cancel = $('<button type="button" class="preset-action-btn">').text('Cancel');
-    const $save = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text('Save');
+    const $cancel = $('<button type="button" class="preset-action-btn">').text(t('mcp.cancel'));
+    const $save = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text(t('mcp.save'));
     $actions.append($cancel).append($save);
 
     function syncLayers() {
@@ -327,10 +493,11 @@ export function createParametersUi(context) {
         && this.id !== 'group-connection'
         && this.id !== 'group-skills'
         && this.id !== 'group-system'
-        && this.id !== 'group-model';
+        && this.id !== 'group-model'
+        && this.id !== 'group-sandbox-default';
     }).hide().find('.settings-section-content').empty();
 
-    $('.settings-divider[id^="divider-"]').not('#divider-connection, #divider-skills').hide();
+    $('.settings-divider[id^="divider-"]').not('#divider-connection, #divider-skills, #divider-sandbox-default').hide();
   }
 
 
@@ -402,10 +569,26 @@ export function createParametersUi(context) {
       });
   }
 
+  function localizedParamLabel(key, config) {
+    const fallback = (config && config.label) || formatExperimentalParameterLabel(key);
+    return t(`parameters.${key}.label`, {}, fallback);
+  }
+
+  function localizedParamNote(key, config) {
+    if (config && config.note) {
+      return t(`parameters.${key}.note`, {}, config.note);
+    }
+    return getParameterNote(config, key);
+  }
+
   // Build the help text shown under a parameter control.
-  function getParameterNote(config) {
+  function getParameterNote(config, paramKey) {
     if (!config) {
       return '';
+    }
+
+    if (config.note && paramKey) {
+      return t(`parameters.${paramKey}.note`, {}, config.note);
     }
 
     if (config.note) {
@@ -568,7 +751,7 @@ export function createParametersUi(context) {
     const paramPath = options.paramPath || key;
     const compactClass = options.compact ? ' setting-control-compact' : '';
     const switchRowClass = options.compact ? ' setting-switch-row-compact' : '';
-    const noteText = getParameterNote(config);
+    const noteText = localizedParamNote(key, config);
     const noteHtml = noteText ? `<p class="setting-note">${noteText}</p>` : '';
     const metaHtml = renderParameterMeta(config);
     let html = '';
@@ -579,7 +762,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
           </label>
           <select
             class="model-selector setting-select${compactClass} ${paramClass}"
@@ -602,7 +785,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
           </label>
           <label class="setting-switch-row${switchRowClass}" for="dyn_${key}">
             <span class="setting-switch-text">Enabled</span>
@@ -629,7 +812,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
           </label>
           <label class="setting-switch-row${switchRowClass}" for="toggle_${key}">
             <span class="setting-switch-text">Specify value</span>
@@ -669,7 +852,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
           </label>
           <textarea
             class="setting-textarea${compactClass} ${paramClass}"
@@ -688,7 +871,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
           </label>
           <input
             type="text"
@@ -714,7 +897,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
             <input
               type="number"
               class="setting-number"
@@ -750,7 +933,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${config.label}
+            ${localizedParamLabel(key, config)}
             <input
               type="number"
               class="setting-number"
@@ -1321,9 +1504,51 @@ export function createParametersUi(context) {
     });
   }
 
+  dom.$sandboxDefaultToggle.on('click', '.sandbox-default-option', async function onSandboxDefaultClick() {
+    if ($(this).prop('disabled')) {
+      return;
+    }
+    const sourceMode = preferredSandboxDefaultMode();
+    const mode = String($(this).data('sandbox-mode') || '').trim();
+    dom.$sandboxDefaultToggle.find('.sandbox-default-option').prop('disabled', true);
+    try {
+      await syncSandboxDefaultProgress(sourceMode, mode);
+      if (sourceMode && mode && sourceMode !== mode) {
+        state.pendingSandboxModeSwitch = {
+          source_mode: sourceMode,
+          target_mode: mode
+        };
+      }
+    } catch (error) {
+      console.error('Failed to sync sandbox progress:', error);
+    } finally {
+      dom.$sandboxDefaultToggle.find('.sandbox-default-option').prop('disabled', false);
+    }
+    applySandboxDefaultMode(mode, true, true);
+  });
+
+  function takePendingSandboxModeSwitch() {
+    const pending = state.pendingSandboxModeSwitch;
+    state.pendingSandboxModeSwitch = null;
+    if (!pending || typeof pending !== 'object') {
+      return null;
+    }
+    const sourceMode = String(pending.source_mode || '').trim();
+    const targetMode = String(pending.target_mode || '').trim();
+    if (!sourceMode || !targetMode || sourceMode === targetMode) {
+      return null;
+    }
+    return {
+      source_mode: sourceMode,
+      target_mode: targetMode
+    };
+  }
+
   return {
     applySelectedToolServerIds,
     collectOptionsPayload,
+    getSandboxDefaultMode,
+    takePendingSandboxModeSwitch,
     getSelectedToolServerIds,
     getSupportedParameterDefinitions,
     handleNumberInput,

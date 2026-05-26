@@ -18,7 +18,7 @@ from .file_manifests import guess_upload_mime
 
 SANDBOX_ROOT = settings.BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox"
 USER_UPLOAD_ROOT = SANDBOX_ROOT / "User"
-ODA_SANDBOX_ROOT = settings.BASE_DIR / "Tools" / "ODA" / "tmp" / "_sandbox"
+ODA_SANDBOX_ROOT = settings.BASE_DIR / "Tools" / "open_data_analysis" / "tmp" / "_sandbox"
 USER_FILE_MANIFEST_ROOT = settings.BASE_DIR / "Tools" / "user_files"
 SANDBOX_MODEL_PREFIX = "/workspace/_sandbox/User"
 ODA_MODEL_PREFIX = "/mnt/data/_sandbox"
