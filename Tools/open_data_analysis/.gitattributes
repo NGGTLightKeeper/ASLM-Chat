@@ -1,7 +1,0 @@
-* text=auto
-*.sh text eol=lf
-sandbox/pip-guard text eol=lf
-sandbox/sandbox-run text eol=lf
-sandbox/python3-shim text eol=lf
-sandbox/pip-wrapper text eol=lf
-sandbox/scripts/* text eol=lf

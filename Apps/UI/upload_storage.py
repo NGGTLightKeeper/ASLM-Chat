@@ -18,10 +18,8 @@ from .file_manifests import guess_upload_mime
 
 SANDBOX_ROOT = settings.BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox"
 USER_UPLOAD_ROOT = SANDBOX_ROOT / "User"
-ODA_SANDBOX_ROOT = settings.BASE_DIR / "Tools" / "open_data_analysis" / "tmp" / "_sandbox"
 USER_FILE_MANIFEST_ROOT = settings.BASE_DIR / "Tools" / "user_files"
 SANDBOX_MODEL_PREFIX = "/workspace/_sandbox/User"
-ODA_MODEL_PREFIX = "/mnt/data/_sandbox"
 UPLOAD_MANIFEST_SUFFIX = ".manifest.json"
 MAX_UPLOAD_BYTES = 16 * 1024 * 1024 * 1024
 INLINE_MANIFEST_MAX_BYTES = 64 * 1024 * 1024
@@ -53,10 +51,9 @@ def normalize_tool_server_ids(tool_server_ids: list[str] | None) -> list[str]:
 
 
 def resolve_upload_storage_target(tool_server_ids: list[str] | None = None) -> UploadStorageTarget:
-    """Route UI uploads to ODA or the default mcp-sandbox tree."""
+    """Route UI uploads to the mcp-sandbox tree."""
 
-    if "oda" in normalize_tool_server_ids(tool_server_ids):
-        return UploadStorageTarget("oda", ODA_SANDBOX_ROOT, ODA_MODEL_PREFIX)
+    _ = tool_server_ids
     return UploadStorageTarget("sandbox", USER_UPLOAD_ROOT, SANDBOX_MODEL_PREFIX)
 
 
@@ -142,7 +139,7 @@ def model_upload_payload(manifest: dict[str, Any], *, sandbox_enabled: bool = Fa
         recommended_tools = payload.get("recommended_tools")
         if isinstance(recommended_tools, list):
             payload["recommended_tools"] = [
-                tool for tool in recommended_tools if tool not in {"sandbox", "oda"}
+                tool for tool in recommended_tools if tool != "sandbox"
             ]
     return payload
 
@@ -187,16 +184,11 @@ def resolve_uploaded_file_host_path(manifest: dict[str, Any]) -> Path:
     if not sandbox_path:
         raise FileNotFoundError("Uploaded file content is not available")
 
-    oda_prefix = f"{ODA_MODEL_PREFIX}/"
-    if sandbox_path.startswith(oda_prefix):
-        relative = sandbox_path[len(oda_prefix):].lstrip("/")
-        root = ODA_SANDBOX_ROOT.resolve()
-    else:
-        mcp_prefix = f"{SANDBOX_MODEL_PREFIX}/"
-        if not sandbox_path.startswith(mcp_prefix):
-            raise FileNotFoundError("Uploaded file content is not available")
-        relative = sandbox_path[len(mcp_prefix):].lstrip("/")
-        root = USER_UPLOAD_ROOT.resolve()
+    mcp_prefix = f"{SANDBOX_MODEL_PREFIX}/"
+    if not sandbox_path.startswith(mcp_prefix):
+        raise FileNotFoundError("Uploaded file content is not available")
+    relative = sandbox_path[len(mcp_prefix):].lstrip("/")
+    root = USER_UPLOAD_ROOT.resolve()
 
     target = (root / relative).resolve()
     if root != target and root not in target.parents:
@@ -565,7 +557,7 @@ def load_upload_manifest(file_id: str) -> dict[str, Any] | None:
 
     # Legacy fallback for uploads created before manifests were moved out of
     # the sandbox file tree.
-    for upload_root in (USER_UPLOAD_ROOT, ODA_SANDBOX_ROOT):
+    for upload_root in (USER_UPLOAD_ROOT,):
         for sidecar in upload_root.glob(f"**/*{UPLOAD_MANIFEST_SUFFIX}"):
             manifest = _load_manifest_from_sidecar(sidecar)
             if manifest and str(manifest.get("file_id") or "") == normalized_id:

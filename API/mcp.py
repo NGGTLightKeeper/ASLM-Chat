@@ -1445,7 +1445,7 @@ def _extract_shared_file_payload(result: Any) -> dict[str, Any] | None:
         return None
 
     candidate: Any = result
-    if result.get("tool") in {"share_file", "oda_share_file"} and isinstance(result.get("result"), dict):
+    if result.get("tool") == "share_file" and isinstance(result.get("result"), dict):
         candidate = result["result"]
     elif result.get("kind") != "shared_file" and isinstance(result.get("file"), dict):
         candidate = result["file"]

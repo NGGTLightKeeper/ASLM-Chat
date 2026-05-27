@@ -1,6 +1,6 @@
 # Linux Sandbox (`mcp-sandbox`)
 
-General-purpose **Linux container sandbox** for ASLM-Chat. This is the default when the UI **Sandbox default** is set to `linux_sandbox` and the **Sandbox** tool server (`sandbox`) is enabled.
+General-purpose **Linux container sandbox** for ASLM-Chat. Enable the **Sandbox** tool server (`sandbox`) in the chat UI to use it.
 
 The persistent workspace lives on the host at:
 
@@ -18,13 +18,13 @@ Inside the container the same tree is mounted as:
 
 ## Role in ASLM-Chat
 
-| UI setting | Value | Tool server id |
-|------------|--------|----------------|
-| Sandbox default | `linux_sandbox` | `sandbox` |
-| Host workspace root | `Tools/mcp-sandbox/_sandbox` | — |
-| Model path prefix | `/workspace/_sandbox/...` | — |
+| Item | Value |
+|------|--------|
+| Tool server id | `sandbox` |
+| Host workspace root | `Tools/mcp-sandbox/_sandbox` |
+| Model path prefix | `/workspace/_sandbox/...` |
 
-The chat API sends `sandbox_default_mode: "linux_sandbox"` in `tool_context` so tools (including Browser Agent screenshots) pick the correct host directory.
+When sandbox tools are enabled, `tool_context.sandbox_enabled` is true so tools (including Browser Agent screenshots) use this workspace.
 
 **Skills** from the project `Skills/` folder are mirrored into `_sandbox/Skills/` before sandbox tool calls (`Settings/skills.py` → `sync_skills_to_sandbox()`). The model sees them under `/workspace/_sandbox/Skills/...`.
 
@@ -122,16 +122,6 @@ Large `cat`/`less`/`more` on a single file may return a structured preview inste
 
 ## UI integration
 
-### Switching to Data Analysis sandbox
-
-When the user changes **Sandbox default** to `data_analysis` in Settings:
-
-1. The UI calls `POST /api/sandbox/sync/` with `source_mode` / `target_mode`.
-2. Host files are **merge-copied** from `Tools/mcp-sandbox/_sandbox` → `Tools/open_data_analysis/tmp/_sandbox` (see [ODA README](../open_data_analysis/README.md#cross-sandbox-sync)).
-3. On the **next chat message** (with sandbox tools enabled), a one-shot **system notice** is injected telling the model that files were merged and that new paths must use `/mnt/data/_sandbox/...`.
-
-Files are **not deleted** on the target side; newer files in the target win by `mtime`.
-
 ### Downloads
 
 Shared files uploaded or created here are downloadable via the UI using paths such as:
@@ -146,7 +136,7 @@ The backend maps these to the host tree under `Tools/mcp-sandbox/_sandbox/`.
 
 ## Browser Agent screenshots
 
-When `tool_context.sandbox_default_mode` is `linux_sandbox` (or sandbox is enabled and ODA is not selected), screenshots are saved to:
+When sandbox tools are enabled, screenshots are saved to:
 
 - **Host**: `Tools/mcp-sandbox/_sandbox/screens/`
 - **Model path**: `screens/screenshot_<timestamp>.png`
@@ -181,6 +171,5 @@ pytest
 
 ## Related documentation
 
-- [Data Analysis sandbox (`open_data_analysis`)](../open_data_analysis/README.md) — Python/ODA mode and `/mnt/data/_sandbox`
-- ASLM UI: `Apps/UI/views.py` (`SANDBOX_DEFAULT_ROOTS`, `sandbox_sync_api`, sandbox mode switch notice)
+- ASLM UI: `Apps/UI/views.py` (shared file download paths)
 - Upload routing: `Apps/UI/upload_storage.py`
