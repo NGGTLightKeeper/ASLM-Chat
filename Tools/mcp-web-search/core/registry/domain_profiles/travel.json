@@ -1,0 +1,3805 @@
+{
+  "profile": "travel",
+  "description": "Flights, hotels, trips, visas, destinations, and travel booking platforms.",
+  "defaults": {
+    "base_weight": 1.0,
+    "tier": "moderate",
+    "method": "http",
+    "rps": 0.8,
+    "burst": 2
+  },
+  "domains": [
+    {
+      "pattern": "booking.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "expedia.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "kayak.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "skyscanner.net",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "google.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/maps",
+          "class_weights": {
+            "local": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel/",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "tripadvisor.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "agoda.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "hotels.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "hostelworld.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "airbnb.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "aviasales.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "tutu.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "one.two.trip",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "omio.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "trainline.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "rome2rio.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "lonelyplanet.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "visa.gov",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "vfsglobal.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "tlscontact.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "seatguru.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "flightaware.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "marriott.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "hilton.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "ihg.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "accor.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "ryanair.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "easyjet.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "lufthansa.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "emirates.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "qatarairways.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "turkishairlines.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "aeroflot.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "s7.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "booking.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "travel"
+      ],
+      "source_types": [
+        "booking",
+        "flights",
+        "hotels",
+        "visa",
+        "destination"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "finance": 0.9,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "academic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "technical": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 1.5,
+        "weather": 0.55,
+        "local": 1.15,
+        "careers": 0.55,
+        "education": 0.55,
+        "documentation": 0.55,
+        "entertainment": 0.85,
+        "sports": 0.55,
+        "general": 0.95
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "troubleshooting": 0.45
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/flights",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/hotels",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/travel",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/trips",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/vacations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/visa",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/destinations",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/car-rental",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/cruises",
+          "class_weights": {
+            "travel": 1.55
+          }
+        },
+        {
+          "path_prefix": "/packages",
+          "class_weights": {
+            "travel": 1.55
+          }
+        }
+      ]
+    }
+  ]
+}

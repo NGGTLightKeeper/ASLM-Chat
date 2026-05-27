@@ -1,0 +1,508 @@
+{
+  "profile": "education",
+  "description": "Online courses, MOOCs, admissions, exams, and learning platforms.",
+  "defaults": {
+    "tier": "B",
+    "cat": "education"
+  },
+  "domains": [
+    {
+      "pattern": "britishcouncil.org",
+      "tier": "A",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "government": 0.82,
+        "academic": 0.88,
+        "general": 0.72
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "cambridgeenglish.org",
+      "tier": "A",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "government": 0.82,
+        "academic": 0.88,
+        "general": 0.72
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "chegg.com",
+      "tier": "C",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "codecademy.com",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "collegeboard.org",
+      "tier": "A",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "government": 0.82,
+        "academic": 0.88,
+        "general": 0.72
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "commonapp.org",
+      "tier": "A",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "government": 0.82,
+        "academic": 0.88,
+        "general": 0.72
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "coursehero.com",
+      "tier": "C",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "coursera.org",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "duolingo.com",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "edx.org",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "ets.org",
+      "tier": "A",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "government": 0.82,
+        "academic": 0.88,
+        "general": 0.72
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "freecodecamp.org",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "futurelearn.com",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "geekbrains.ru",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "khanacademy.org",
+      "tier": "A",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "masterclass.com",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "mit.edu",
+      "tier": "A",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "netology.ru",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "nic.gov.ru",
+      "tier": "A",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "government": 0.82,
+        "academic": 0.88,
+        "general": 0.72
+      },
+      "notes": "Government education portal."
+    },
+    {
+      "pattern": "ocw.mit.edu",
+      "tier": "A",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "open.edu",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "openedu.ru",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "pluralsight.com",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "postupi.online",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "quizlet.com",
+      "tier": "C",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "skillbox.ru",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "skillshare.com",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "stepik.org",
+      "tier": "A",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "studocu.com",
+      "tier": "C",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "topuniversities.com",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "ucheba.ru",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "udacity.com",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "udemy.com",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "usnews.com",
+      "tier": "B",
+      "cat": "education",
+      "aliases": [],
+      "class_affinity": {
+        "education": 1.0,
+        "academic": 0.9,
+        "documentation": 0.8,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.75
+      },
+      "notes": ""
+    }
+  ]
+}

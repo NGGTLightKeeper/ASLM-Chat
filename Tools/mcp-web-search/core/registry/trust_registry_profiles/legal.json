@@ -1,0 +1,584 @@
+{
+  "profile": "legal",
+  "description": "Courts, statutes, case law, legal research, and regulatory legal publishers.",
+  "defaults": {
+    "tier": "B",
+    "cat": "legal"
+  },
+  "domains": [
+    {
+      "pattern": "bailii.org",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "base.garant.ru",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "bundesgerichtshof.de",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "bundesverfassungsgericht.de",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "canlii.org",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "casetext.com",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "consultant.ru",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "court.gov.ua",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "courtlistener.com",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "curia.europa.eu",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "dejure.org",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "eur-lex.europa.eu",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "europa.eu",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "fas.gov.ru",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "findlaw.com",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "fips.ru",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "fssp.gov.ru",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "garant.ru",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "gesetze-im-internet.de",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "isap.sejm.gov.pl",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "justia.com",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "kodeksy.ru",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "ksrf.ru",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "law.cornell.edu",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "legifrance.gouv.fr",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "legislation.gov.uk",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "lexisnexis.com",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": "Commercial legal database; automated access typically blocked or low-value without subscription."
+    },
+    {
+      "pattern": "minjust.gov.ru",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "orzeczenia.ms.gov.pl",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "pravo.gov.ru",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "rechtsprechung-im-internet.de",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "rospatent.gov.ru",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "sn.pl",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "sudrf.ru",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "supreme.court.gov.ua",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "supremecourt.gov",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "trybunal.gov.pl",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "uscourts.gov",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "vsrf.ru",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "westlaw.com",
+      "tier": "B",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": "Commercial legal database; automated access typically blocked or low-value without subscription."
+    },
+    {
+      "pattern": "zakon.rada.gov.ua",
+      "tier": "A",
+      "cat": "legal",
+      "aliases": [],
+      "class_affinity": {
+        "legal": 1.0,
+        "government": 0.77,
+        "academic": 0.63,
+        "general": 0.63,
+        "journalistic": 0.53
+      },
+      "notes": ""
+    }
+  ]
+}

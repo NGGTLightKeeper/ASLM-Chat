@@ -27,6 +27,7 @@ from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from core.config import load_search_config
+from core.extract.content_processor import compress_read_page_markdown
 from core.extract.nextjs_rsc import extract_nextjs_rsc_text
 from core.extract.page_normalizer import normalize_page
 from core.fetch.antibot import is_antibot
@@ -136,10 +137,25 @@ def _is_weak_extraction(markdown: str, *, min_length: int) -> bool:
     return False
 
 
-def _truncate_markdown(markdown: str, max_chars: int) -> str:
-    if len(markdown) <= max_chars:
-        return markdown
-    return markdown[:max_chars].rsplit("\n", 1)[0] + "\n\n[...truncated]"
+def _apply_read_page_budget(
+    markdown: str,
+    *,
+    url: str,
+    focus: str,
+    cfg,
+    max_chars: int,
+) -> str:
+    ext = cfg.extraction
+    return compress_read_page_markdown(
+        markdown,
+        url=url,
+        focus=focus,
+        max_chars=max_chars,
+        compress_threshold=ext.read_page_compress_threshold_chars,
+        compress_target=ext.read_page_compress_target_chars,
+        enable_compress=ext.enable_read_page_compress,
+        enable_gliner=cfg.search.enable_gliner,
+    )
 
 
 def _fallback_text_to_markdown(url: str, text: str) -> str:
@@ -522,6 +538,7 @@ async def _fetch_race(url: str, timeout: float, tls_verify: bool = True) -> str 
 class ReadPageOptions:
     timeout: float = 20.0
     max_chars: int = 20_000
+    focus: str = ""
 
 
 @dataclass
@@ -545,6 +562,7 @@ class ReadPageService:
             timeout=cfg.extraction.timeout_seconds,
             max_chars=cfg.extraction.max_page_chars,
         )
+        self._focus = (self._opts.focus or "").strip()
 
     async def _fetch_camoufox_raw_html(self, url: str, opts: ReadPageOptions) -> str | None:
         """Fetch raw HTML through Camoufox within read_page's global deadline."""
@@ -608,6 +626,27 @@ class ReadPageService:
         if _is_x_post(url):
             return await _fetch_x_post(url, opts.timeout), attempts
 
+        if _is_github_url(url):
+            markdown = await _fetch_github_page(url, timeout=opts.timeout)
+            markdown = _apply_read_page_budget(
+                markdown,
+                url=url,
+                focus=self._focus,
+                cfg=self._cfg,
+                max_chars=opts.max_chars,
+            )
+            attempt = ReadPageVariantAttempt(
+                url=url,
+                variant="github_api",
+                fetch_method="github_api",
+                markdown_length=len(markdown or ""),
+                weak=markdown.lstrip().lower().startswith("error:"),
+                winner=True,
+            )
+            if collect_attempts:
+                attempts.append(attempt)
+            return markdown, attempts
+
         if _is_skippable(url):
             if has_non_text_extension(url):
                 from core.fetch.download_types import get_download_info
@@ -630,21 +669,6 @@ class ReadPageService:
                 return await _fetch_reddit_json(url), attempts
             except Exception as exc:
                 logger.warning("Reddit fetch failed for %s: %s", url, exc)
-
-        if _is_github_url(url):
-            markdown = await _fetch_github_page(url, timeout=opts.timeout)
-            markdown = _truncate_markdown(markdown, opts.max_chars)
-            attempt = ReadPageVariantAttempt(
-                url=url,
-                variant="github_api",
-                fetch_method="github_api",
-                markdown_length=len(markdown or ""),
-                weak=markdown.lstrip().lower().startswith("error:"),
-                winner=True,
-            )
-            if collect_attempts:
-                attempts.append(attempt)
-            return markdown, attempts
 
         if _host(url) == "amazon.com":
             try:
@@ -881,7 +905,13 @@ class ReadPageService:
         if not markdown or len(markdown.strip()) < self._cfg.extraction.min_content_length:
             return f"Warning: Very little content extracted from: {url}\n\n{markdown}", attempts
 
-        markdown = _truncate_markdown(markdown, opts.max_chars)
+        markdown = _apply_read_page_budget(
+            markdown,
+            url=url,
+            focus=self._focus,
+            cfg=self._cfg,
+            max_chars=opts.max_chars,
+        )
 
         return markdown, attempts
 
@@ -908,11 +938,13 @@ async def run_read_page(
     url: str,
     timeout: float = 20.0,
     max_chars: int = 20_000,
+    focus: str = "",
 ) -> str:
     """Convenience entry point for MCP adapter and CLI."""
     opts = ReadPageOptions(
         timeout=timeout,
         max_chars=max_chars,
+        focus=focus,
     )
     service = ReadPageService(options=opts)
     return await service.read(url)

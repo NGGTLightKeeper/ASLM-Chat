@@ -1,0 +1,746 @@
+{
+  "profile": "forum",
+  "description": "Community forums, Q&A, threads, and discussion-first sources.",
+  "defaults": {
+    "tier": "C",
+    "cat": "forum"
+  },
+  "domains": [
+    {
+      "pattern": "4pda.to",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "general": 0.81,
+        "documentation": 0.78,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": "Major Russian-language tech forum. Root returns 403 to HEAD/bots; article pages accessible via GET with browser UA."
+    },
+    {
+      "pattern": "askubuntu.com",
+      "tier": "B",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.92,
+        "troubleshooting": 0.82,
+        "documentation": 0.9,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "avsforum.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "bicycling.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "bodybuilding.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "community.cloudflare.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "community.openai.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "dev.to",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "discourse.mozilla.org",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "discourse.org",
+      "tier": "B",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "discuss.python.org",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "dpreview.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "flyertalk.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "forum.arduino.cc",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "forum.cursor.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "forum.golangbridge.org",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "forum.nginx.org",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "forum.raspberrypi.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "forum.xda-developers.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "forums.docker.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "gearspace.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "geektimes.ru",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "habr.com",
+      "tier": "B",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.9,
+        "general": 0.82,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": "Primary Russian-language tech blog platform. Well-structured HTML, high-signal articles."
+    },
+    {
+      "pattern": "head-fi.org",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "ixbt.live",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "general": 0.81,
+        "documentation": 0.78,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": "iXBT community blog platform. User-written hardware reviews and discussions."
+    },
+    {
+      "pattern": "linustechtips.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "livejournal.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "lobste.rs",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "mathoverflow.net",
+      "tier": "B",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "medium.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "myfitnesspal.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "news.ycombinator.com",
+      "tier": "B",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "journalistic": 0.85,
+        "general": 0.82,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "shopping": 0.62
+      },
+      "notes": "Hacker News Firebase API is fully public, no key needed."
+    },
+    {
+      "pattern": "old.reddit.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "overclock.net",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "overclockers.ru",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "general": 0.81,
+        "documentation": 0.78,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": "Russian enthusiast hardware forum and news. Strong on CPU/GPU overclocking and PC builds."
+    },
+    {
+      "pattern": "pikabu.ru",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "reddit.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "rust-lang.org",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "serverfault.com",
+      "tier": "B",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.92,
+        "troubleshooting": 0.82,
+        "documentation": 0.9,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "stackexchange.com",
+      "tier": "B",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.92,
+        "troubleshooting": 0.82,
+        "documentation": 0.9,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "stackoverflow.com",
+      "tier": "B",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.92,
+        "troubleshooting": 0.82,
+        "documentation": 0.9,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "superuser.com",
+      "tier": "B",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.92,
+        "troubleshooting": 0.82,
+        "documentation": 0.9,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "tjournal.ru",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "tomshardware.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "tripadvisor.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "vc.ru",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.88,
+        "troubleshooting": 0.82,
+        "documentation": 0.78,
+        "general": 0.72,
+        "shopping": 0.62,
+        "journalistic": 0.55
+      },
+      "notes": ""
+    }
+  ]
+}

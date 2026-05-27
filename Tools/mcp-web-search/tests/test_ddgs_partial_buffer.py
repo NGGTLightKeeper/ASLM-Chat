@@ -200,6 +200,7 @@ def test_zero_result_high_fallback_uses_bounded_snippet_only_options(monkeypatch
         out_profile,
         opts,
         req_id="-",
+        **_kwargs,
     ):
         calls.append(
             {
@@ -266,6 +267,7 @@ def test_zero_result_high_fallback_does_not_repeat_full_high_for_every_variant(m
         out_profile,
         opts,
         req_id="-",
+        **_kwargs,
     ):
         fallback_calls.append((query, opts.effort, opts.fetch_previews, opts.ddgs_worker_timeout))
         return [], []

@@ -1,0 +1,427 @@
+{
+  "profile": "weather",
+  "description": "Weather forecasts, radar, alerts, and meteorological services worldwide.",
+  "defaults": {
+    "tier": "B",
+    "cat": "weather"
+  },
+  "domains": [
+    {
+      "pattern": "accuweather.com",
+      "tier": "B",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "aemet.es",
+      "tier": "A",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "government": 0.85,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Official national meteorological service."
+    },
+    {
+      "pattern": "bom.gov.au",
+      "tier": "A",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "government": 0.85,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Official national meteorological service."
+    },
+    {
+      "pattern": "darksky.net",
+      "tier": "C",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Regional weather aggregator or portal subsection."
+    },
+    {
+      "pattern": "dwd.de",
+      "tier": "A",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "government": 0.85,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Official national meteorological service."
+    },
+    {
+      "pattern": "foreca.com",
+      "tier": "B",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "gismeteo.ru",
+      "tier": "C",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Regional weather aggregator or portal subsection."
+    },
+    {
+      "pattern": "imd.gov.in",
+      "tier": "A",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "government": 0.85,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Official national meteorological service."
+    },
+    {
+      "pattern": "intellicast.com",
+      "tier": "B",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "jma.go.jp",
+      "tier": "A",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "government": 0.85,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Official national meteorological service."
+    },
+    {
+      "pattern": "kma.go.kr",
+      "tier": "A",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "government": 0.85,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Official national meteorological service."
+    },
+    {
+      "pattern": "meteoblue.com",
+      "tier": "B",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "meteofrance.com",
+      "tier": "B",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "meteonovosti.ru",
+      "tier": "C",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Regional weather aggregator or portal subsection."
+    },
+    {
+      "pattern": "metoffice.gov.uk",
+      "tier": "A",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "government": 0.85,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Official national meteorological service."
+    },
+    {
+      "pattern": "noaa.gov",
+      "tier": "A",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "government": 0.85,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Official national meteorological service."
+    },
+    {
+      "pattern": "nws.noaa.gov",
+      "tier": "A",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "government": 0.85,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Official national meteorological service."
+    },
+    {
+      "pattern": "openweathermap.org",
+      "tier": "B",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "rp5.ru",
+      "tier": "C",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Regional weather aggregator or portal subsection."
+    },
+    {
+      "pattern": "ventusky.com",
+      "tier": "B",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "weather.com",
+      "tier": "B",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "weather.gov",
+      "tier": "A",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "government": 0.85,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Official national meteorological service."
+    },
+    {
+      "pattern": "weather.yahoo.com",
+      "tier": "C",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Regional weather aggregator or portal subsection."
+    },
+    {
+      "pattern": "weatherbug.com",
+      "tier": "B",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "weatheronline.co.uk",
+      "tier": "B",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "windy.com",
+      "tier": "B",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "wunderground.com",
+      "tier": "B",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "yandex.ru",
+      "tier": "C",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Regional weather aggregator or portal subsection."
+    },
+    {
+      "pattern": "yr.no",
+      "tier": "A",
+      "cat": "weather",
+      "aliases": [],
+      "class_affinity": {
+        "weather": 1.0,
+        "government": 0.85,
+        "local": 0.85,
+        "travel": 0.8,
+        "journalistic": 0.75,
+        "general": 0.7
+      },
+      "notes": "Official national meteorological service."
+    }
+  ]
+}

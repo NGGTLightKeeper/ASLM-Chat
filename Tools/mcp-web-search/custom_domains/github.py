@@ -196,7 +196,7 @@ async def fetch_github_page(url: str, timeout: float = 20.0) -> str:
                         raw_url,
                         headers={"User-Agent": _UA},
                         timeout=timeout_i,
-                        follow_redirects=False,
+                        follow_redirects=True,
                     )
                     resp.raise_for_status()
                     text = resp.text

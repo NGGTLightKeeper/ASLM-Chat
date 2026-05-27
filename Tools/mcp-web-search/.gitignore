@@ -12,3 +12,5 @@ __pycache__
 .bat
 /archive
 scripts
+models
+ASLM-Embending

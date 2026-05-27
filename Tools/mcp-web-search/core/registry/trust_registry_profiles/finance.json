@@ -1,0 +1,456 @@
+{
+  "profile": "finance",
+  "description": "Markets, investing, corporate finance, and financial data sources.",
+  "defaults": {
+    "tier": "B",
+    "cat": "finance"
+  },
+  "domains": [
+    {
+      "pattern": "bankofengland.co.uk",
+      "tier": "A",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.9,
+        "general": 0.72,
+        "academic": 0.65,
+        "legal": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "barrons.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "bcs-express.ru",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "binance.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65,
+        "technical": 0.72
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "boerse-frankfurt.de",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "boursier.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "boursorama.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "cbr.ru",
+      "tier": "A",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.9,
+        "general": 0.72,
+        "academic": 0.65,
+        "legal": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "coinbase.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65,
+        "technical": 0.72
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "coindesk.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65,
+        "technical": 0.72
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "coingecko.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65,
+        "technical": 0.72
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "coinmarketcap.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65,
+        "technical": 0.72
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "deutsche-boerse.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "ecb.europa.eu",
+      "tier": "A",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.9,
+        "general": 0.72,
+        "academic": 0.65,
+        "legal": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "eleconomista.es",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "expansion.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "federalreserve.gov",
+      "tier": "A",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.9,
+        "general": 0.72,
+        "academic": 0.65,
+        "legal": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "finam.ru",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "finance.yahoo.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "finviz.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "fool.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "investfunds.ru",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "investing.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "kraken.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65,
+        "technical": 0.72
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "moex.com",
+      "tier": "A",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.9,
+        "general": 0.72,
+        "academic": 0.65,
+        "legal": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "morningstar.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "sec.gov",
+      "tier": "A",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.9,
+        "general": 0.72,
+        "academic": 0.65,
+        "legal": 0.75
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "seekingalpha.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "smart-lab.ru",
+      "tier": "C",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "tradingview.com",
+      "tier": "B",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    },
+    {
+      "pattern": "zerohedge.com",
+      "tier": "C",
+      "cat": "finance",
+      "aliases": [],
+      "class_affinity": {
+        "finance": 1.0,
+        "journalistic": 0.82,
+        "government": 0.78,
+        "general": 0.72,
+        "academic": 0.65
+      },
+      "notes": ""
+    }
+  ]
+}

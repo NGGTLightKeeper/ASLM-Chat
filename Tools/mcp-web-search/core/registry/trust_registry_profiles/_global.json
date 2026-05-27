@@ -1,0 +1,53 @@
+{
+  "tiers": {
+    "A": {
+      "weight": 1.0,
+      "label": "Authoritative"
+    },
+    "B": {
+      "weight": 0.75,
+      "label": "Trusted"
+    },
+    "C": {
+      "weight": 0.45,
+      "label": "Community"
+    }
+  },
+  "blacklist": {
+    "blocked_extensions": [
+      ".jpg",
+      ".png",
+      ".gif",
+      ".webp",
+      ".mp4",
+      ".zip",
+      ".exe",
+      ".svg"
+    ],
+    "blocked_domain_contains": [
+      "pinterest.",
+      "vk.com",
+      "ok.ru",
+      "tiktok.com",
+      "instagram.com",
+      "facebook.com",
+      "glarity.app",
+      "deepwiki.com",
+      "pooya.blog",
+      "softpedia.com",
+      "filehorse.com",
+      "uptodown.com",
+      "quora.com"
+    ],
+    "blocked_url_patterns": [
+      "utm_source=",
+      "utm_medium=",
+      "utm_campaign=",
+      "?ref=",
+      "&ref=",
+      "/tag/",
+      "/category/",
+      "?affiliate"
+    ]
+  }
+}
