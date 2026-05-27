@@ -169,15 +169,15 @@ class DomainReputationStore:
             conn.close()
 
     def _protect_static_domains(self) -> None:
-        """Mark A/B domains from trust_registry.json as protected (blacklist-immune)."""
+        """Mark A/B domains from the trust registry as protected (blacklist-immune)."""
         try:
-            from core.registry.config import TRUST_REGISTRY_PATH
-            import json as _json
-            data = _json.loads(TRUST_REGISTRY_PATH.read_text(encoding="utf-8"))
+            from core.registry.trust_registry import load_trust_registry
+
+            _, _, domains = load_trust_registry()
             protected_patterns = {
-                entry["pattern"]
-                for entry in data.get("domains", [])
-                if entry.get("tier") in ("A", "B")
+                entry.pattern
+                for entry in domains.values()
+                if entry.tier in ("A", "B")
             }
         except Exception:
             protected_patterns = set()

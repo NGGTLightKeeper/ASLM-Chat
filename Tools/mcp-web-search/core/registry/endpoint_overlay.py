@@ -236,6 +236,8 @@ class EndpointOverlayStore:
         self.promotion_success_count = max(1, int(promotion_success_count))
         self.deactivate_failure_count = max(1, int(deactivate_failure_count))
         self.recheck_ttl_sec = max(60, int(recheck_ttl_sec))
+        self._lookup_cache: Dict[tuple[str, str], Optional[EndpointStrategy]] = {}
+        self._seed_urls_cache: Dict[str, List[str]] = {}
         db_dir = os.path.dirname(os.path.abspath(self.db_path))
         if db_dir and self.db_path != ":memory:":
             os.makedirs(db_dir, exist_ok=True)
@@ -291,6 +293,9 @@ class EndpointOverlayStore:
         if not normalized_domain:
             return None
         path = normalize_path(url or "")
+        cache_key = (normalized_domain, path)
+        if cache_key in self._lookup_cache:
+            return self._lookup_cache[cache_key]
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -332,7 +337,7 @@ class EndpointOverlayStore:
                 )
             elif scope == "path_exact" and url:
                 rewritten_url = str(row["endpoint_url"])
-            return EndpointStrategy(
+            strategy = EndpointStrategy(
                 domain=normalized_domain,
                 endpoint_url=str(row["endpoint_url"]),
                 endpoint_type=str(row["endpoint_type"]),
@@ -342,6 +347,9 @@ class EndpointOverlayStore:
                 confidence=float(row["confidence"] or 0.0),
                 rewritten_url=rewritten_url,
             )
+            self._lookup_cache[cache_key] = strategy
+            return strategy
+        self._lookup_cache[cache_key] = None
         return None
 
     # Lookup helpers.
@@ -349,6 +357,8 @@ class EndpointOverlayStore:
         normalized_domain = normalize_domain(domain)
         if not normalized_domain:
             return []
+        if normalized_domain in self._seed_urls_cache:
+            return list(self._seed_urls_cache[normalized_domain])
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -360,7 +370,9 @@ class EndpointOverlayStore:
                 """,
                 (normalized_domain,),
             ).fetchall()
-        return [str(row["endpoint_url"]) for row in rows]
+        seed_urls = [str(row["endpoint_url"]) for row in rows]
+        self._seed_urls_cache[normalized_domain] = seed_urls
+        return list(seed_urls)
 
 
 _overlay_store: Optional[EndpointOverlayStore] = None

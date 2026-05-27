@@ -135,6 +135,20 @@ CREATE TABLE IF NOT EXISTS query_sources (
 CREATE INDEX IF NOT EXISTS idx_qs_query    ON query_sources(query);
 CREATE INDEX IF NOT EXISTS idx_qs_url_hash ON query_sources(url_hash);
 
+CREATE TABLE IF NOT EXISTS query_source_classes (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    query                TEXT NOT NULL,
+    url_hash             TEXT NOT NULL,
+    class_mix_json       TEXT DEFAULT '',
+    content_classes_json TEXT DEFAULT '',
+    snippet_score        REAL DEFAULT 0.0,
+    parsed_score         REAL DEFAULT 0.0,
+    recorded_at          REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_qsc_query    ON query_source_classes(query);
+CREATE INDEX IF NOT EXISTS idx_qsc_url_hash ON query_source_classes(url_hash);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
     url_hash UNINDEXED,
     title,
@@ -426,6 +440,45 @@ class SourceCache:
             if self._recover_corrupt_db(exc):
                 return
             logger.warning("source_cache: query source write failed query=%r url=%r: %s", query, url, exc)
+
+    def record_query_source_classes(
+        self,
+        query: str,
+        url: str,
+        *,
+        class_mix_json: str = "",
+        content_classes_json: str = "",
+        snippet_score: float = 0.0,
+        parsed_score: float = 0.0,
+    ) -> None:
+        """Attach class/relevance metadata to a query-source observation."""
+        uhash = url_hash(url)
+        try:
+            with self._write_lock:
+                conn = self._get_conn()
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO query_source_classes (
+                            query, url_hash, class_mix_json, content_classes_json,
+                            snippet_score, parsed_score, recorded_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            query,
+                            uhash,
+                            class_mix_json,
+                            content_classes_json,
+                            float(snippet_score or 0.0),
+                            float(parsed_score or 0.0),
+                            time.time(),
+                        ),
+                    )
+        except sqlite3.DatabaseError as exc:
+            if self._recover_corrupt_db(exc):
+                return
+            logger.warning("source_cache: query source class write failed query=%r url=%r: %s", query, url, exc)
 
     def page_count(self) -> int:
         """Return total number of cached pages."""

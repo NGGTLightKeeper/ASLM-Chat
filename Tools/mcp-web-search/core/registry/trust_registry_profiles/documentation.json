@@ -1,0 +1,567 @@
+{
+  "profile": "documentation",
+  "description": "Official product, language, and platform documentation sites.",
+  "defaults": {
+    "tier": "B",
+    "cat": "docs"
+  },
+  "domains": [
+    {
+      "pattern": "angular.dev",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    },
+    {
+      "pattern": "cursor.com",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Cursor product documentation."
+    },
+    {
+      "pattern": "devdocs.io",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    },
+    {
+      "pattern": "developer.mozilla.org",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    },
+    {
+      "pattern": "doc.rust-lang.org",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    },
+    {
+      "pattern": "docker.com",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [
+        "docs.docker.com"
+      ],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Docker official docs."
+    },
+    {
+      "pattern": "docs.ansible.com",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Ansible documentation."
+    },
+    {
+      "pattern": "docs.anthropic.com",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Anthropic API documentation."
+    },
+    {
+      "pattern": "docs.confluent.io",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Confluent/Kafka documentation."
+    },
+    {
+      "pattern": "docs.databricks.com",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "docs.djangoproject.com",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Django framework documentation."
+    },
+    {
+      "pattern": "docs.elastic.co",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Elastic stack documentation."
+    },
+    {
+      "pattern": "docs.gitlab.com",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "GitLab documentation."
+    },
+    {
+      "pattern": "docs.microsoft.com",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "docs.mongodb.com",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "MongoDB documentation."
+    },
+    {
+      "pattern": "docs.nginx.com",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "docs.oracle.com",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    },
+    {
+      "pattern": "docs.python.org",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    },
+    {
+      "pattern": "docs.redhat.com",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Red Hat product documentation."
+    },
+    {
+      "pattern": "docs.rs",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    },
+    {
+      "pattern": "docs.snowflake.com",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "docs.splunk.com",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "docs.terraform.io",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Terraform documentation."
+    },
+    {
+      "pattern": "docs.vmware.com",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "fastapi.tiangolo.com",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "go.dev",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    },
+    {
+      "pattern": "help.ubuntu.com",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "iec.ch",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "iso.org",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "kubernetes.io",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    },
+    {
+      "pattern": "learn.microsoft.com",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    },
+    {
+      "pattern": "nodejs.org",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    },
+    {
+      "pattern": "playwright.dev",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.92,
+        "troubleshooting": 0.82
+      },
+      "notes": "Playwright test automation docs."
+    },
+    {
+      "pattern": "postgresql.org",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    },
+    {
+      "pattern": "react.dev",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    },
+    {
+      "pattern": "spec.openapis.org",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "vuejs.org",
+      "tier": "A",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.7,
+        "documentation": 1.0,
+        "education": 0.75,
+        "general": 0.78,
+        "technical": 0.9,
+        "troubleshooting": 0.82
+      },
+      "notes": "Migrated from legacy trust_registry.json (docs)."
+    }
+  ]
+}

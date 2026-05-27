@@ -432,6 +432,95 @@ def compress_to_budget(text: str, query: str, max_chars: int) -> str:
     return "\n\n".join(result) if result else text[:max_chars]
 
 
+def derive_read_page_focus(url: str, markdown: str) -> str:
+    """Fallback BM25 query from URL path segments and page title (not for direct use as primary focus)."""
+    from urllib.parse import unquote, urlparse
+
+    parts: list[str] = []
+    if url:
+        parsed = urlparse(url)
+        path = unquote(parsed.path or "")
+        stop = frozenset({
+            "www", "blob", "tree", "raw", "main", "master", "head", "tag", "refs",
+            "pull", "issues", "wiki", "html", "htm", "php", "asp", "aspx",
+        })
+        segments = [
+            seg
+            for seg in re.split(r"[/._\-]+", path)
+            if seg and seg.lower() not in stop and not seg.isdigit()
+        ]
+        if segments:
+            parts.append(" ".join(segments[-5:]))
+
+    for pattern in (r"^#\s+(.+)$", r"^\*\*Title:\*\*\s*(.+)$"):
+        match = re.search(pattern, markdown or "", re.MULTILINE | re.IGNORECASE)
+        if match:
+            title = match.group(1).strip()
+            if title:
+                parts.append(title)
+                break
+
+    return " ".join(parts).strip()
+
+
+def _resolve_read_page_compress_query(focus: str, url: str, markdown: str) -> str:
+    """Prefer explicit focus; otherwise derive from URL/title; else empty (head-truncate in compress_to_budget)."""
+    explicit = (focus or "").strip()
+    if explicit:
+        return explicit
+    try:
+        return derive_read_page_focus(url, markdown)
+    except Exception:
+        logger.debug("derive_read_page_focus failed for url=%r", url, exc_info=True)
+        return ""
+
+
+def compress_read_page_markdown(
+    markdown: str,
+    *,
+    url: str = "",
+    focus: str = "",
+    max_chars: int,
+    compress_threshold: int,
+    compress_target: int,
+    enable_compress: bool = True,
+    enable_gliner: bool = False,
+) -> str:
+    """Shrink long read_page output with BM25 or GLiNER before the hard max_chars cap."""
+    text = markdown or ""
+    if not text:
+        return text
+
+    if enable_compress and compress_threshold > 0 and len(text) > compress_threshold:
+        budget = compress_target if compress_target > 0 else max_chars
+        budget = min(budget, max_chars)
+        query = _resolve_read_page_compress_query(focus, url, text)
+
+        if enable_gliner:
+            from core.config.hardware import get_hardware_profile
+
+            blocks = _split_blocks(text)
+            quality = _estimate_quality(text, len(blocks))
+            run_gliner, device = _should_run_gliner(quality, get_hardware_profile())
+            if run_gliner:
+                query_terms = _bm25_tokenize(query)
+                compressed, used_gliner = _gliner_compress(
+                    blocks, query_terms, budget, device=device
+                )
+                if used_gliner and compressed.strip():
+                    text = compressed
+                else:
+                    text = compress_to_budget(text, query, budget)
+            else:
+                text = compress_to_budget(text, query, budget)
+        else:
+            text = compress_to_budget(text, query, budget)
+
+    if len(text) > max_chars:
+        text = text[:max_chars].rsplit("\n", 1)[0] + "\n\n[...truncated]"
+    return text
+
+
 # ---------------------------------------------------------------------------
 # Tag / noise constants
 # ---------------------------------------------------------------------------
@@ -473,7 +562,7 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     "total_timeout": 12.0,
     "concurrency": 4,
     "rerank": "soft",
-    "mode": "semantic",
+    "mode": "bm25",
     "semantic_require_cuda": False,
     "semantic_min_score": 0.20,
     "enable_gliner": False,
@@ -515,12 +604,12 @@ def get_preview_settings(*, apply_hardware_profile: bool = True) -> dict[str, An
                 settings["semantic_require_cuda"] = False
             elif profile == "partial_gpu":
             # Embeddings OK, GLiNER too memory-hungry
-                settings["mode"] = "semantic"
+                settings["mode"] = "bm25"
                 settings["enable_gliner"] = False
                 settings["semantic_require_cuda"] = False
             else:
             # full_gpu — all layers available
-                settings["mode"] = "semantic"
+                settings["mode"] = "bm25"
             # GLiNER still opt-in via config; don't force-enable here
         except Exception as exc:
             logger.debug("Hardware profile detection failed, using default preview mode: %s", exc)

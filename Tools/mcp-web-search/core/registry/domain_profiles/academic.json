@@ -1,0 +1,81 @@
+{
+  "profile": "academic",
+  "description": "Scholarly publications, preprints, structured knowledge bases, and research indexes.",
+  "defaults": {
+    "base_weight": 1.0,
+    "tier": "moderate",
+    "method": "http",
+    "rps": 1.0,
+    "burst": 3
+  },
+  "domains": [
+    {
+      "pattern": "arxiv.org",
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "response_time_ms": 410,
+      "json_api_hint": "http://export.arxiv.org/api/query",
+      "notes": "Open research source; keep request rate conservative.",
+      "class_weights": {
+        "academic": 1.5,
+        "technical": 0.95
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/abs/",
+          "class_weights": {
+            "academic": 1.55
+          },
+          "source_types": [
+            "preprint"
+          ]
+        },
+        {
+          "path_prefix": "/pdf/",
+          "class_weights": {
+            "academic": 1.5
+          },
+          "source_types": [
+            "preprint"
+          ]
+        }
+      ],
+      "source_types": [
+        "preprint",
+        "api"
+      ]
+    },
+    {
+      "pattern": "wikipedia.org",
+      "aliases": [
+        "wikimedia.org",
+        "wiktionary.org"
+      ],
+      "tier": "friendly",
+      "method": "http",
+      "rps": 5.0,
+      "burst": 10,
+      "response_time_ms": 2000,
+      "json_api_hint": "https://www.mediawiki.org/wiki/API:Main_page",
+      "notes": "High-value general knowledge source with open access patterns. Root HEAD may redirect; individual article pages work fine.",
+      "class_weights": {
+        "academic": 1.35,
+        "general": 1.05
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/wiki/",
+          "class_weights": {
+            "academic": 1.2,
+            "general": 1.1
+          }
+        }
+      ],
+      "source_types": [
+        "encyclopedia"
+      ]
+    }
+  ]
+}

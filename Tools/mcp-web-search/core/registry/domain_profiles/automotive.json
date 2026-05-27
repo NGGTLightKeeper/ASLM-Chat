@@ -1,0 +1,2028 @@
+{
+  "profile": "automotive",
+  "description": "Vehicle listings, reviews, specs, parts, and auto market sources.",
+  "defaults": {
+    "base_weight": 1.0,
+    "tier": "moderate",
+    "method": "http",
+    "rps": 0.8,
+    "burst": 2
+  },
+  "domains": [
+    {
+      "pattern": "edmunds.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "cars.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "kbb.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "carfax.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "autotrader.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "motortrend.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "caranddriver.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "topgear.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "auto.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "drom.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "drive2.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "mobile.de",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "autoscout24.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "autotrader.co.uk",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "whatcar.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "lacentrale.fr",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "automobile.it",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "coches.net",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "tesla.com",
+      "aliases": [],
+      "tier": "hardened",
+      "method": "http",
+      "rps": 0.5,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "repairpal.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "rockauto.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "fcpeuro.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "pelicanparts.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "eeuroparts.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "autozone.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "oreillyauto.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "advanceautoparts.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "napaonline.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "exist.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "emex.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    },
+    {
+      "pattern": "zzap.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "automotive"
+      ],
+      "source_types": [
+        "inventory"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "academic": 1.0,
+        "medical": 1.0,
+        "technical": 1.0,
+        "documentation": 1.0,
+        "forum": 1.0,
+        "shopping": 1.0,
+        "journalistic": 1.0,
+        "finance": 1.0,
+        "government": 1.0,
+        "legal": 1.0,
+        "local": 1.0,
+        "travel": 1.0,
+        "weather": 1.0,
+        "sports": 1.0,
+        "careers": 1.0,
+        "education": 1.0,
+        "entertainment": 1.0,
+        "real_estate": 1.0,
+        "automotive": 1.45,
+        "general": 1.0,
+        "troubleshooting": 1.0
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "real_estate": 0.35
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/cars",
+          "class_weights": {
+            "automotive": 1.55
+          }
+        },
+        {
+          "path_prefix": "/inventory",
+          "class_weights": {
+            "automotive": 1.5
+          }
+        },
+        {
+          "path_prefix": "/parts",
+          "class_weights": {
+            "automotive": 1.45,
+            "troubleshooting": 1.2
+          }
+        }
+      ],
+      "notes": "Seeded from query class domain_hints; not present in legacy monolith."
+    }
+  ]
+}

@@ -1,0 +1,230 @@
+{
+  "profile": "blocked_or_hardened",
+  "description": "Low-trust (tier C) or hardened tier-B hosts with operator notes. Does not duplicate _global.json blacklist rules.",
+  "defaults": {
+    "tier": "C",
+    "cat": "hardened"
+  },
+  "domains": [
+    {
+      "pattern": "baeldung.com",
+      "tier": "B",
+      "cat": "code",
+      "aliases": [],
+      "class_affinity": {
+        "technical": 0.88,
+        "documentation": 0.82,
+        "forum": 0.55
+      },
+      "notes": "Java/Spring tutorial blog; useful but secondary to official documentation."
+    },
+    {
+      "pattern": "readthedocs.io",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "documentation": 1.0,
+        "technical": 0.85
+      },
+      "notes": "Community-hosted documentation; quality varies by project."
+    },
+    {
+      "pattern": "readthedocs.org",
+      "tier": "B",
+      "cat": "docs",
+      "aliases": [],
+      "class_affinity": {
+        "documentation": 1.0,
+        "technical": 0.85
+      },
+      "notes": "Community-hosted documentation; quality varies by project."
+    },
+    {
+      "pattern": "cyberleninka.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.9,
+        "general": 0.55
+      },
+      "notes": "Russian open-access mirror; verify against primary publishers when possible."
+    },
+    {
+      "pattern": "elibrary.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "general": 0.5
+      },
+      "notes": "Russian bibliographic index; metadata useful, full text often restricted."
+    },
+    {
+      "pattern": "alza.cz",
+      "tier": "C",
+      "cat": "shopping",
+      "aliases": [
+        "alza.sk",
+        "alza.hu",
+        "alza.at"
+      ],
+      "class_affinity": {
+        "shopping": 0.9,
+        "technical": 0.55,
+        "forum": 0.5,
+        "general": 0.45
+      },
+      "notes": "Blocks all automated access with 403 across all layers."
+    },
+    {
+      "pattern": "bestbuy.com",
+      "tier": "C",
+      "cat": "shopping",
+      "aliases": [],
+      "class_affinity": {
+        "shopping": 0.9,
+        "technical": 0.55,
+        "forum": 0.5,
+        "general": 0.45
+      },
+      "notes": "Blocks all automated access with 403 across all layers."
+    },
+    {
+      "pattern": "bhphotovideo.com",
+      "tier": "C",
+      "cat": "shopping",
+      "aliases": [],
+      "class_affinity": {
+        "shopping": 0.9,
+        "technical": 0.55,
+        "forum": 0.5,
+        "general": 0.45
+      },
+      "notes": "Blocks all automated access with 403 across all layers."
+    },
+    {
+      "pattern": "microcenter.com",
+      "tier": "C",
+      "cat": "shopping",
+      "aliases": [],
+      "class_affinity": {
+        "shopping": 0.9,
+        "technical": 0.55,
+        "forum": 0.5,
+        "general": 0.45
+      },
+      "notes": "Blocks all automated access with 403 across all layers."
+    },
+    {
+      "pattern": "mysku.club",
+      "tier": "C",
+      "cat": "shopping",
+      "aliases": [
+        "mysku.ru"
+      ],
+      "class_affinity": {
+        "shopping": 0.9,
+        "technical": 0.55,
+        "forum": 0.5,
+        "general": 0.45
+      },
+      "notes": "TLS handshake failure on both aiohttp and curl_cffi — site unreachable. Skip."
+    },
+    {
+      "pattern": "linkedin.com",
+      "tier": "C",
+      "cat": "social",
+      "aliases": [],
+      "class_affinity": {
+        "careers": 0.85,
+        "general": 0.5,
+        "forum": 0.45
+      },
+      "notes": "Skip direct crawling; anti-bot friction not worth it."
+    },
+    {
+      "pattern": "x.com",
+      "tier": "C",
+      "cat": "social",
+      "aliases": [
+        "twitter.com"
+      ],
+      "class_affinity": {
+        "careers": 0.85,
+        "general": 0.5,
+        "forum": 0.45
+      },
+      "notes": "Generic crawling is still low-value due to SPA rendering and anti-bot friction. However, direct status URLs are readable in services.read_page via public syndication/oEmbed-style endpoints; non-status pages still remain skipped unless a browser path is added later."
+    },
+    {
+      "pattern": "ticketmaster.com",
+      "tier": "C",
+      "cat": "shopping",
+      "aliases": [],
+      "class_affinity": {
+        "shopping": 0.9,
+        "technical": 0.55,
+        "forum": 0.5,
+        "general": 0.45
+      },
+      "notes": "Skip; queueing and anti-bot layers make it low-value."
+    },
+    {
+      "pattern": "reddit.com",
+      "tier": "C",
+      "cat": "forum",
+      "aliases": [],
+      "class_affinity": {
+        "forum": 1.0,
+        "technical": 0.55,
+        "general": 0.5
+      },
+      "notes": "Anonymous .json endpoints blocked since mid-2023. Use camoufox to render SPA content."
+    },
+    {
+      "pattern": "aliexpress.com",
+      "tier": "C",
+      "cat": "shopping",
+      "aliases": [
+        "aliexpress.us",
+        "aliexpress.fr"
+      ],
+      "class_affinity": {
+        "shopping": 0.9,
+        "technical": 0.55,
+        "forum": 0.5,
+        "general": 0.45
+      },
+      "notes": "Heavy SPA, requires browser rendering. Use camoufox."
+    },
+    {
+      "pattern": "dns-shop.ru",
+      "tier": "B",
+      "cat": "shopping",
+      "aliases": [],
+      "class_affinity": {
+        "shopping": 0.9,
+        "technical": 0.55,
+        "forum": 0.5,
+        "general": 0.45
+      },
+      "notes": "Major Russian electronics retailer. Direct HTTP fetches commonly return 401, but Camoufox can load product and product-subpages reliably enough for read_page."
+    },
+    {
+      "pattern": "citilink.ru",
+      "tier": "B",
+      "cat": "shopping",
+      "aliases": [],
+      "class_affinity": {
+        "shopping": 0.9,
+        "technical": 0.55,
+        "forum": 0.5,
+        "general": 0.45
+      },
+      "notes": "Major Russian electronics retailer. Direct HTTP fetches commonly hit 429/challenge pages, while Camoufox can render product cards for read_page."
+    }
+  ]
+}

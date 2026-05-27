@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 from urllib.parse import urlparse
-
-from core.models.search import SearchResult
 
 
 _SITE_TOKEN_RE = re.compile(r"(?<!\S)(-?)site:([a-z0-9.-]+\.[a-z]{2,})(?=\s|$)", re.IGNORECASE)
 _BARE_EXCLUDE_RE = re.compile(r"(?<!\S)-([a-z0-9.-]+\.[a-z]{2,})(?=\s|$)", re.IGNORECASE)
-_DOMAIN_CONNECTOR_RE = re.compile(r"(?<!\S)(?:OR|\|)(?=\s|$)", re.IGNORECASE)
 _SPACE_RE = re.compile(r"\s+")
 
 
@@ -43,6 +41,15 @@ def _append_unique(target: list[str], value: str) -> None:
         target.append(value)
 
 
+def _strip_orphan_domain_connectors(text: str) -> str:
+    tokens = (text or "").split()
+    while tokens and tokens[0].lower() in {"or", "|"}:
+        tokens.pop(0)
+    while tokens and tokens[-1].lower() in {"or", "|"}:
+        tokens.pop()
+    return " ".join(tokens)
+
+
 def parse_domain_constraints(query: str) -> DomainConstraints:
     text = query or ""
     include_domains: list[str] = []
@@ -61,11 +68,7 @@ def parse_domain_constraints(query: str) -> DomainConstraints:
 
     cleaned = _SITE_TOKEN_RE.sub(_site_replace, text)
     if raw_tokens:
-        def _connector_replace(match: re.Match[str]) -> str:
-            raw_tokens.append(match.group(0))
-            return " "
-
-        cleaned = _DOMAIN_CONNECTOR_RE.sub(_connector_replace, cleaned)
+        cleaned = _strip_orphan_domain_connectors(cleaned)
 
     def _bare_replace(match: re.Match[str]) -> str:
         domain = _normalize_domain(match.group(1))
@@ -101,7 +104,9 @@ def build_provider_query(raw_query: str, constraints: DomainConstraints) -> str:
         parts.extend(f"-site:{domain}" for domain in constraints.exclude_domains)
         return " ".join(parts).strip()
 
-    return clean
+    parts.append(clean)
+    parts.extend(f"-site:{domain}" for domain in constraints.exclude_domains)
+    return " ".join(part for part in parts if part).strip()
 
 
 def matches_domain_constraints(url: str, constraints: DomainConstraints) -> bool:
@@ -122,9 +127,13 @@ def matches_domain_constraints(url: str, constraints: DomainConstraints) -> bool
 
 
 def filter_results_by_domain_constraints(
-    results: list[SearchResult],
+    results: list[Any],
     constraints: DomainConstraints,
-) -> list[SearchResult]:
+) -> list[Any]:
     if not constraints.has_constraints:
         return results
-    return [result for result in results if matches_domain_constraints(result.url, constraints)]
+    return [
+        result
+        for result in results
+        if matches_domain_constraints(getattr(result, "url", ""), constraints)
+    ]

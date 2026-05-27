@@ -9,7 +9,13 @@ REGISTRY_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = REGISTRY_DIR.parents[1]
 CACHE_DIR = PROJECT_ROOT / "_cache"
 
+# Registry file / directory paths — import from here, do not hardcode elsewhere.
 TRUST_REGISTRY_PATH = REGISTRY_DIR / "trust_registry.json"
+DOMAIN_REGISTRY_PATH = REGISTRY_DIR / "domain_registry.json"
+DOMAIN_PROFILES_DIR = REGISTRY_DIR / "domain_profiles"
+TRUST_PROFILES_DIR = REGISTRY_DIR / "trust_registry_profiles"
+ACADEMIC_REGISTRY_PATH = REGISTRY_DIR / "academic_registry.json"
+
 DISCOVERED_ENDPOINTS_DB = str(CACHE_DIR / "discovered_endpoints.db")
 
 ENDPOINT_PROBE_RECHECK_TTL_SEC = 86_400

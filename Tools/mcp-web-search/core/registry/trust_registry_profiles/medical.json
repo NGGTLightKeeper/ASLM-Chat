@@ -1,0 +1,882 @@
+{
+  "profile": "medical",
+  "description": "Clinical literature, public health agencies, and biomedical indexes.",
+  "defaults": {
+    "tier": "B",
+    "cat": "science"
+  },
+  "domains": [
+    {
+      "pattern": "aerzteblatt.de",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "aetna.com",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "ameli.fr",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "anthem.com",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "apotheken-umschau.de",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "apteka.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "bcbs.com",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "cell.com",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Migrated from legacy trust_registry.json (science)."
+    },
+    {
+      "pattern": "charite.de",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "cigna.com",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "clevelandclinic.org",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Major clinical reference."
+    },
+    {
+      "pattern": "clinicaltrials.gov",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.82,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Trial registry."
+    },
+    {
+      "pattern": "cms.gov",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "cochranelibrary.com",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.9,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Systematic reviews."
+    },
+    {
+      "pattern": "cr.minzdrav.gov.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "dailymed.nlm.nih.gov",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "FDA drug label database."
+    },
+    {
+      "pattern": "docdoc.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "doctolib.fr",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "drugbank.com",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "drugs.com",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Drug information reference."
+    },
+    {
+      "pattern": "ema.europa.eu",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.82,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "EU medicines agency."
+    },
+    {
+      "pattern": "emias.info",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "epocrates.com",
+      "tier": "C",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "europepmc.org",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [
+        "www.europepmc.org"
+      ],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "From academic_registry.json."
+    },
+    {
+      "pattern": "gelbe-liste.de",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "gemotest.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "goodrx.com",
+      "tier": "C",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "has-sante.fr",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "healthcare.gov",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "healthline.com",
+      "tier": "C",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "helix.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "hopkinsmedicine.org",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Academic medical center."
+    },
+    {
+      "pattern": "invitro.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "kff.org",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "mayoclinic.org",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Major clinical reference."
+    },
+    {
+      "pattern": "medlineplus.gov",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Patient-oriented NIH health encyclopedia."
+    },
+    {
+      "pattern": "medportal.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "medscape.com",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Clinical reference for professionals."
+    },
+    {
+      "pattern": "minzdrav.gov.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "napopravku.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "ncbi.nlm.nih.gov",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "NCBI biomedical resource hub."
+    },
+    {
+      "pattern": "nhs.uk",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "UK National Health Service."
+    },
+    {
+      "pattern": "nice.org.uk",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "UK clinical guidelines."
+    },
+    {
+      "pattern": "pharmindex.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "pmc.ncbi.nlm.nih.gov",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Migrated from legacy trust_registry.json (science)."
+    },
+    {
+      "pattern": "prodoctorov.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "pubmed.ncbi.nlm.nih.gov",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Migrated from legacy trust_registry.json (science)."
+    },
+    {
+      "pattern": "rlsnet.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "roszdravnadzor.gov.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "rxlist.com",
+      "tier": "C",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "sechenov.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "thelancet.com",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Migrated from legacy trust_registry.json (science)."
+    },
+    {
+      "pattern": "uhc.com",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "uptodate.com",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "vidal.fr",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "vidal.ru",
+      "tier": "B",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "webmd.com",
+      "tier": "C",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Seeded from query class domain_hints."
+    },
+    {
+      "pattern": "who.int",
+      "tier": "A",
+      "cat": "science",
+      "aliases": [],
+      "class_affinity": {
+        "academic": 0.88,
+        "education": 0.7,
+        "general": 0.75,
+        "government": 0.8,
+        "legal": 0.65,
+        "medical": 1.0
+      },
+      "notes": "Migrated from legacy trust_registry.json (science)."
+    }
+  ]
+}

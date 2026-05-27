@@ -1,0 +1,4884 @@
+{
+  "profile": "education",
+  "description": "Online courses, MOOCs, admissions, exams, and learning platforms.",
+  "defaults": {
+    "base_weight": 1.0,
+    "tier": "moderate",
+    "method": "http",
+    "rps": 1.0,
+    "burst": 3
+  },
+  "domains": [
+    {
+      "pattern": "britishcouncil.org",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "cambridgeenglish.org",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "chegg.com",
+      "aliases": [],
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "codecademy.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "collegeboard.org",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "commonapp.org",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "coursehero.com",
+      "aliases": [],
+      "tier": "fortress",
+      "method": "skip",
+      "rps": 0,
+      "burst": 0,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "coursera.org",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "duolingo.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "edx.org",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 0.8,
+      "burst": 2,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "ets.org",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "freecodecamp.org",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "futurelearn.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "geekbrains.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "khanacademy.org",
+      "aliases": [],
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.5,
+      "burst": 4,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "masterclass.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "mit.edu",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "notes": "Path-specific relevance for /opencourseware/",
+      "path_weights": [
+        {
+          "path_prefix": "/opencourseware/",
+          "class_weights": {
+            "education": 1.6
+          }
+        },
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "netology.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "nic.gov.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ],
+      "notes": "Official government meteorological or public service source."
+    },
+    {
+      "pattern": "ocw.mit.edu",
+      "aliases": [],
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.5,
+      "burst": 4,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "open.edu",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "openedu.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "pluralsight.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "postupi.online",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "quizlet.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "skillbox.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "skillshare.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "stepik.org",
+      "aliases": [],
+      "tier": "friendly",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "studocu.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "topuniversities.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "ucheba.ru",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "udacity.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "udemy.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "path_weights": [
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    },
+    {
+      "pattern": "usnews.com",
+      "aliases": [],
+      "tier": "moderate",
+      "method": "http",
+      "rps": 1.0,
+      "burst": 3,
+      "topics": [
+        "education"
+      ],
+      "source_types": [
+        "course",
+        "mooc",
+        "admissions"
+      ],
+      "base_weight": 1.0,
+      "class_weights": {
+        "education": 1.5,
+        "academic": 1.15,
+        "documentation": 0.95,
+        "technical": 0.85,
+        "careers": 0.7,
+        "general": 0.95,
+        "finance": 0.55,
+        "medical": 0.55,
+        "journalistic": 0.55,
+        "shopping": 0.55,
+        "troubleshooting": 0.55,
+        "forum": 0.55,
+        "legal": 0.55,
+        "government": 0.55,
+        "real_estate": 0.55,
+        "automotive": 0.55,
+        "travel": 0.55,
+        "weather": 0.55,
+        "local": 0.55,
+        "entertainment": 0.55,
+        "sports": 0.55
+      },
+      "hard_demotions": {
+        "shopping": 0.4,
+        "entertainment": 0.45,
+        "forum": 0.5
+      },
+      "notes": "Path-specific relevance for /education/",
+      "path_weights": [
+        {
+          "path_prefix": "/education/",
+          "class_weights": {
+            "education": 1.6
+          }
+        },
+        {
+          "path_prefix": "/courses/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/learn/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/course/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/syllabus/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/curriculum/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/admissions/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/apply/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/programs/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/degrees/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/tuition/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/scholarships/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/exams/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/MOOC/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/specialization/",
+          "class_weights": {
+            "education": 1.55
+          }
+        },
+        {
+          "path_prefix": "/certificate/",
+          "class_weights": {
+            "education": 1.55
+          }
+        }
+      ]
+    }
+  ]
+}
