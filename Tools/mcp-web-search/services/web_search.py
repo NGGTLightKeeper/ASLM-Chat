@@ -36,7 +36,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 from core.models.search import SearchResult, SearchRichResult, SearchSource
@@ -893,6 +893,151 @@ def _model_session_components(effort: str | None = None) -> tuple[bool, bool]:
     return _neural_encoder_enabled(effort), _neural_decoder_enabled(effort)
 
 
+def _format_model_label_top(top: list[tuple[str, float]], limit: int = 5) -> list[list[Any]]:
+    return [[name, round(float(score), 4)] for name, score in top[:limit]]
+
+
+def _component_load_status(
+    *,
+    enabled: bool,
+    requested: bool,
+    loaded: bool,
+    path: Path | None,
+    error: str | None,
+) -> dict[str, Any]:
+    used = enabled and loaded
+    if not enabled:
+        status = "disabled"
+    elif loaded:
+        status = "loaded"
+    elif requested:
+        status = "load_failed"
+    else:
+        status = "not_requested"
+    return {
+        "enabled": enabled,
+        "requested": requested,
+        "loaded": loaded,
+        "used": used,
+        "status": status,
+        "path": str(path) if path else None,
+        "error": error,
+    }
+
+
+def _model_session_snapshot(
+    model_session: SearchModelSession | None,
+    effort: str | None,
+) -> dict[str, Any]:
+    from core.query.aslm_embedding_runtime import (
+        default_query_classifier_path,
+        default_source_relevance_path,
+    )
+
+    enc_enabled, dec_enabled = _model_session_components(effort)
+    if model_session is None:
+        return {
+            "effort": effort,
+            "device": _search_model_device() if (enc_enabled or dec_enabled) else None,
+            "encoder": _component_load_status(
+                enabled=enc_enabled,
+                requested=enc_enabled,
+                loaded=False,
+                path=default_query_classifier_path() if enc_enabled else None,
+                error="model_session_missing",
+            ),
+            "decoder": _component_load_status(
+                enabled=dec_enabled,
+                requested=dec_enabled,
+                loaded=False,
+                path=default_source_relevance_path() if dec_enabled else None,
+                error="model_session_missing",
+            ),
+        }
+    return {
+        "effort": effort,
+        "device": model_session.device,
+        "encoder": _component_load_status(
+            enabled=enc_enabled,
+            requested=model_session.load_encoder,
+            loaded=model_session.encoder is not None,
+            path=getattr(model_session, "encoder_path", None) or (
+                default_query_classifier_path() if model_session.load_encoder else None
+            ),
+            error=getattr(model_session, "encoder_load_error", None),
+        ),
+        "decoder": _component_load_status(
+            enabled=dec_enabled,
+            requested=model_session.load_decoder,
+            loaded=model_session.decoder is not None,
+            path=getattr(model_session, "decoder_path", None) or (
+                default_source_relevance_path() if model_session.load_decoder else None
+            ),
+            error=getattr(model_session, "decoder_load_error", None),
+        ),
+    }
+
+
+def _log_neural_usage(
+    req_id: str,
+    *,
+    effort: str | None,
+    model_session: SearchModelSession | None,
+    class_debug: dict[str, Any] | None = None,
+) -> None:
+    snapshot = _model_session_snapshot(model_session, effort)
+    _trace(req_id, "neural.session", **snapshot)
+
+    enc = snapshot["encoder"]
+    dec = snapshot["decoder"]
+    if enc["status"] == "load_failed":
+        logger.error(
+            "req=%s ASLM encoder enabled but not loaded path=%s error=%s",
+            req_id,
+            enc.get("path"),
+            enc.get("error"),
+        )
+    if dec["status"] == "load_failed":
+        logger.error(
+            "req=%s ASLM decoder enabled but not loaded path=%s error=%s",
+            req_id,
+            dec.get("path"),
+            dec.get("error"),
+        )
+
+    if class_debug:
+        mode = class_debug.get("mode", "unknown")
+        encoder_used = enc["used"] and mode not in {"rules", "neural-unavailable"}
+        _trace(
+            req_id,
+            "neural.encoder",
+            used=encoder_used,
+            mode=mode,
+            model_score=class_debug.get("model_score"),
+            model_top=class_debug.get("model_top"),
+            best_rule_score=class_debug.get("best_rule_score"),
+            classes=class_debug.get("classes"),
+        )
+        if encoder_used:
+            logger.info(
+                "req=%s encoder mode=%s score=%s top=%s classes=%s",
+                req_id,
+                mode,
+                class_debug.get("model_score"),
+                class_debug.get("model_top"),
+                [item.get("name") for item in (class_debug.get("classes") or [])[:3]],
+            )
+        elif enc["enabled"]:
+            reason = class_debug.get("reason") or class_debug.get("encoder_error") or mode
+            level = logger.error if mode == "neural-unavailable" else logger.info
+            level(
+                "req=%s encoder not used mode=%s reason=%s",
+                req_id,
+                mode,
+                reason,
+            )
+
+
 def _env_enabled(name: str, *, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -1011,13 +1156,28 @@ def _build_legacy_class_mix(query: str) -> list[QueryClassWeight]:
 
 
 def _build_neural_class_mix(query: str, model_session: SearchModelSession | None, effort: str | None = None) -> tuple[list[QueryClassWeight], dict]:
-    if not _neural_encoder_enabled(effort) or model_session is None or model_session.encoder is None:
+    if not _neural_encoder_enabled(effort):
         mix = _build_legacy_class_mix(query)
-        return mix, {"mode": "rules", "classes": [asdict(item) for item in mix]}
+        return mix, {"mode": "rules", "encoder_enabled": False, "classes": [asdict(item) for item in mix]}
+    if model_session is None:
+        mix = _build_legacy_class_mix(query)
+        return mix, {
+            "mode": "neural-unavailable",
+            "reason": "no_model_session",
+            "classes": [asdict(item) for item in mix],
+        }
+    if model_session.encoder is None:
+        mix = _build_legacy_class_mix(query)
+        return mix, {
+            "mode": "neural-unavailable",
+            "reason": "encoder_not_loaded",
+            "encoder_error": getattr(model_session, "encoder_load_error", None),
+            "classes": [asdict(item) for item in mix],
+        }
     prediction = model_session.classify_query(query)
     if prediction is None:
         mix = _build_legacy_class_mix(query)
-        return mix, {"mode": "neural-unavailable", "classes": [asdict(item) for item in mix]}
+        return mix, {"mode": "neural-unavailable", "reason": "classify_returned_none", "classes": [asdict(item) for item in mix]}
     rule_scores = score_query_against_profiles(query)
     has_rule_support = any(item.score >= 0.08 for item in rule_scores)
     best_rule_score = max((item.score for item in rule_scores), default=0.0)
@@ -1214,8 +1374,23 @@ def _apply_snippet_decoder(
     query: str,
     model_session: SearchModelSession | None,
     effort: str | None = None,
+    *,
+    req_id: str = "-",
 ) -> None:
-    if not _neural_decoder_enabled(effort) or model_session is None or model_session.decoder is None or not results:
+    if not _neural_decoder_enabled(effort):
+        _trace(req_id, "neural.decoder.snippet", used=False, reason="disabled_by_config")
+        return
+    if model_session is None:
+        _trace(req_id, "neural.decoder.snippet", used=False, reason="no_model_session")
+        logger.warning("req=%s snippet decoder skipped: model_session is None", req_id)
+        return
+    if model_session.decoder is None:
+        error = getattr(model_session, "decoder_load_error", None) or "decoder_not_loaded"
+        _trace(req_id, "neural.decoder.snippet", used=False, reason="decoder_not_loaded", error=error)
+        logger.error("req=%s snippet decoder skipped: %s", req_id, error)
+        return
+    if not results:
+        _trace(req_id, "neural.decoder.snippet", used=False, reason="no_results")
         return
     candidates = [
         {"title": r.title or "", "url": r.url or "", "snippet": r.snippet or ""}
@@ -1224,12 +1399,40 @@ def _apply_snippet_decoder(
     try:
         predictions = model_session.score_snippet_candidates(query, candidates)
     except Exception as exc:
-        logger.debug("snippet decoder failed: %s", exc)
+        _trace(req_id, "neural.decoder.snippet", used=False, reason="inference_failed", error=str(exc))
+        logger.error("req=%s snippet decoder inference failed: %s", req_id, exc, exc_info=True)
         return
+    scores: list[float] = []
+    sample: list[dict[str, Any]] = []
     for result, prediction in zip(results, predictions, strict=False):
-        result.snippet_relevance_score = max(0.0, min(1.0, float(prediction.score or 0.0)))
+        score = max(0.0, min(1.0, float(prediction.score or 0.0)))
+        scores.append(score)
+        result.snippet_relevance_score = score
         result.routing_debug = dict(result.routing_debug or {})
         result.routing_debug["snippet_decoder_top"] = prediction.top(5)
+        if len(sample) < 5:
+            sample.append({
+                "url": (result.url or "")[:100],
+                "score": round(score, 4),
+                "top": _format_model_label_top(prediction.top(8)),
+            })
+    _trace(
+        req_id,
+        "neural.decoder.snippet",
+        used=True,
+        count=len(predictions),
+        score_min=round(min(scores), 4) if scores else None,
+        score_max=round(max(scores), 4) if scores else None,
+        score_avg=round(sum(scores) / len(scores), 4) if scores else None,
+        sample=sample,
+    )
+    logger.info(
+        "req=%s snippet decoder scored=%d avg=%.3f max=%.3f",
+        req_id,
+        len(scores),
+        sum(scores) / len(scores) if scores else 0.0,
+        max(scores) if scores else 0.0,
+    )
 
 
 def _apply_parsed_decoder(
@@ -1238,8 +1441,23 @@ def _apply_parsed_decoder(
     query: str,
     model_session: SearchModelSession | None,
     effort: str | None = None,
+    *,
+    req_id: str = "-",
 ) -> None:
-    if not _neural_decoder_enabled(effort) or model_session is None or model_session.decoder is None or not results:
+    if not _neural_decoder_enabled(effort):
+        _trace(req_id, "neural.decoder.parsed", used=False, reason="disabled_by_config")
+        return
+    if model_session is None:
+        _trace(req_id, "neural.decoder.parsed", used=False, reason="no_model_session")
+        logger.warning("req=%s parsed decoder skipped: model_session is None", req_id)
+        return
+    if model_session.decoder is None:
+        error = getattr(model_session, "decoder_load_error", None) or "decoder_not_loaded"
+        _trace(req_id, "neural.decoder.parsed", used=False, reason="decoder_not_loaded", error=error)
+        logger.error("req=%s parsed decoder skipped: %s", req_id, error)
+        return
+    if not results:
+        _trace(req_id, "neural.decoder.parsed", used=False, reason="no_results")
         return
     candidates = [
         {
@@ -1253,12 +1471,46 @@ def _apply_parsed_decoder(
     try:
         predictions = model_session.score_parsed_candidates(query, candidates)
     except Exception as exc:
-        logger.debug("parsed decoder failed: %s", exc)
+        _trace(req_id, "neural.decoder.parsed", used=False, reason="inference_failed", error=str(exc))
+        logger.error("req=%s parsed decoder inference failed: %s", req_id, exc, exc_info=True)
         return
-    for result, prediction in zip(results, predictions, strict=False):
-        result.parsed_relevance_score = max(0.0, min(1.0, float(prediction.score or 0.0)))
+    scores: list[float] = []
+    sample: list[dict[str, Any]] = []
+    with_preview = 0
+    for result, prediction, payload in zip(results, predictions, payloads, strict=False):
+        score = max(0.0, min(1.0, float(prediction.score or 0.0)))
+        scores.append(score)
+        if (payload.text or "").strip():
+            with_preview += 1
+        result.parsed_relevance_score = score
         result.routing_debug = dict(result.routing_debug or {})
         result.routing_debug["parsed_decoder_top"] = prediction.top(5)
+        if len(sample) < 5:
+            sample.append({
+                "url": (result.url or "")[:100],
+                "score": round(score, 4),
+                "preview_chars": len(payload.text or ""),
+                "top": _format_model_label_top(prediction.top(8)),
+            })
+    _trace(
+        req_id,
+        "neural.decoder.parsed",
+        used=True,
+        count=len(predictions),
+        with_preview=with_preview,
+        score_min=round(min(scores), 4) if scores else None,
+        score_max=round(max(scores), 4) if scores else None,
+        score_avg=round(sum(scores) / len(scores), 4) if scores else None,
+        sample=sample,
+    )
+    logger.info(
+        "req=%s parsed decoder scored=%d with_preview=%d avg=%.3f max=%.3f",
+        req_id,
+        len(scores),
+        with_preview,
+        sum(scores) / len(scores) if scores else 0.0,
+        max(scores) if scores else 0.0,
+    )
 
 
 def _dedup_results(results: list[SearchResult]) -> list[SearchResult]:
@@ -2796,7 +3048,9 @@ class WebSearchService:
         deduped = _apply_domain_cap(_dedup_results(merged))
         effective_mix = class_mix or _build_legacy_class_mix(query)
         _apply_registry_routing(deduped, effective_mix)
-        _apply_snippet_decoder(deduped, query, model_session, effort=opts.effort)
+        _apply_snippet_decoder(
+            deduped, query, model_session, effort=opts.effort, req_id=req_id,
+        )
         _trace(req_id, "merge.done",
                elapsed=round(time.perf_counter() - merge_t0, 3),
                merged=len(merged), deduped=len(deduped))
@@ -2963,6 +3217,12 @@ class WebSearchService:
             query, lang, query_types,
             out_profile.max_results, out_profile.preview_fetch_limit, out_profile.unparsed_bonus,
         )
+        _log_neural_usage(
+            req_id,
+            effort=opts.effort,
+            model_session=model_session,
+            class_debug=class_debug,
+        )
         _trace(
             req_id,
             "search.start",
@@ -3091,7 +3351,9 @@ class WebSearchService:
             )
             for i, payload in zip(to_fetch_indices, fetched):
                 payloads[i] = payload
-        _apply_parsed_decoder(deduped, payloads, query, model_session, effort=opts.effort)
+        _apply_parsed_decoder(
+            deduped, payloads, query, model_session, effort=opts.effort, req_id=req_id,
+        )
 
         adapted_post_profile, post_meta = _adapt_output_profile(
             deduped,
@@ -3257,6 +3519,7 @@ class WebSearchService:
         """
         opts = self._opts
         search_id = f"srch_{_make_request_id()}"
+        req_id = search_id
 
         # --- 1. Query normalisation (mirrors search() / search_structured()) ---
         constraints = parse_domain_constraints(query)
@@ -3272,7 +3535,12 @@ class WebSearchService:
         query_profile = _parse_query_profile(query)
         out_profile = _apply_effort_to_output_profile(_get_output_profile(query_types), opts)
         preview_fetch_limit = out_profile.preview_fetch_limit
-        req_id = search_id
+        _log_neural_usage(
+            req_id,
+            effort=opts.effort,
+            model_session=model_session,
+            class_debug=class_debug,
+        )
 
         # --- 2. Provider fetch → merge → dedup → triage ---
         deduped, triage, effective_query = await self._run_with_zero_result_fallback(
@@ -3356,7 +3624,9 @@ class WebSearchService:
             )
             for i, payload in zip(to_fetch_indices, fetched):
                 payloads[i] = payload
-        _apply_parsed_decoder(deduped, payloads, query, model_session, effort=opts.effort)
+        _apply_parsed_decoder(
+            deduped, payloads, query, model_session, effort=opts.effort, req_id=req_id,
+        )
 
         # --- 6. Post-fetch adaptive profile ---
         adapted_post, post_meta = _adapt_output_profile(

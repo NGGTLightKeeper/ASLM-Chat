@@ -13,11 +13,14 @@ not need the neural stack.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
+
+logger = logging.getLogger("core.query.aslm_embedding_runtime")
 
 
 DEFAULT_MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
@@ -182,15 +185,53 @@ class SearchModelSession:
         )
         self.encoder: AslmEmbeddingRuntime | None = None
         self.decoder: AslmEmbeddingRuntime | None = None
+        self.encoder_load_error: str | None = None
+        self.decoder_load_error: str | None = None
+        self.encoder_path: Path | None = None
+        self.decoder_path: Path | None = None
 
     def __enter__(self) -> "SearchModelSession":
         if self.load:
             # Deliberately bypass the lru-cached helper so production search
             # cycles can unload models at cycle end.
             if self.load_encoder:
-                self.encoder = AslmEmbeddingRuntime(default_query_classifier_path(), device=self.device)
+                self.encoder_path = default_query_classifier_path()
+                try:
+                    self.encoder = AslmEmbeddingRuntime(self.encoder_path, device=self.device)
+                    logger.info(
+                        "ASLM encoder loaded path=%s device=%s labels=%d",
+                        self.encoder_path,
+                        self.device,
+                        len(self.encoder.labels),
+                    )
+                except Exception as exc:
+                    self.encoder_load_error = f"{type(exc).__name__}: {exc}"
+                    logger.error(
+                        "ASLM encoder failed to load path=%s device=%s: %s",
+                        self.encoder_path,
+                        self.device,
+                        exc,
+                        exc_info=True,
+                    )
             if self.load_decoder:
-                self.decoder = AslmEmbeddingRuntime(default_source_relevance_path(), device=self.device)
+                self.decoder_path = default_source_relevance_path()
+                try:
+                    self.decoder = AslmEmbeddingRuntime(self.decoder_path, device=self.device)
+                    logger.info(
+                        "ASLM decoder loaded path=%s device=%s labels=%d",
+                        self.decoder_path,
+                        self.device,
+                        len(self.decoder.labels),
+                    )
+                except Exception as exc:
+                    self.decoder_load_error = f"{type(exc).__name__}: {exc}"
+                    logger.error(
+                        "ASLM decoder failed to load path=%s device=%s: %s",
+                        self.decoder_path,
+                        self.device,
+                        exc,
+                        exc_info=True,
+                    )
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
