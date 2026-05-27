@@ -52,7 +52,7 @@ The chat API sends `sandbox_default_mode: "linux_sandbox"` in `tool_context` so 
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `SANDBOX_IMAGE` | `dima1312313/mcp-sandbox:latest` | Docker image |
+| `SANDBOX_IMAGE` | `nggtlightkeeper/aslm-chat-sandbox:latest` | Docker image |
 | `SANDBOX_DEFAULT_TASK_DIR` | `_sandbox` | Subdirectory under `/workspace` exposed as the model workspace |
 | `SANDBOX_HOST_WORKSPACE` | project `Tools/mcp-sandbox` | Host path bound into the container |
 | `SANDBOX_DEFAULT_TIMEOUT` | `60` | Default bash timeout (seconds) |

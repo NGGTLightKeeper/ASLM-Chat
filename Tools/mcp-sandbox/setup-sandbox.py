@@ -27,7 +27,7 @@ from pathlib import Path
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _ENV_FILE = _SCRIPT_DIR / "sandbox.env"
 
-_DEFAULT_IMAGE = "dima1312313/mcp-sandbox:latest"
+_DEFAULT_IMAGE = "nggtlightkeeper/aslm-chat-sandbox:latest"
 _REQUIRED_LABEL = "org.aslm.sandbox.supervisor-runtime"
 _REQUIRED_LABEL_VALUE = "container-v2"
 
@@ -38,7 +38,7 @@ _CONFIG_TEMPLATE = """\
 
 # === Container identity ===
 #SANDBOX_CONTAINER_NAME=mcp-sandbox
-#SANDBOX_IMAGE=dima1312313/mcp-sandbox:latest
+#SANDBOX_IMAGE=nggtlightkeeper/aslm-chat-sandbox:latest
 #SANDBOX_IMAGE_SOURCE=registry
 
 # === Resource limits (applied at docker run) ===

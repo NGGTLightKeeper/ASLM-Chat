@@ -293,7 +293,7 @@ _CONFIG_TEMPLATE = """\
 
 # === Container identity ===
 #SANDBOX_CONTAINER_NAME=mcp-sandbox
-#SANDBOX_IMAGE=dima1312313/mcp-sandbox:latest
+#SANDBOX_IMAGE=nggtlightkeeper/aslm-chat-sandbox:latest
 #SANDBOX_IMAGE_SOURCE=registry
 
 # === Resource limits (applied at docker run) ===

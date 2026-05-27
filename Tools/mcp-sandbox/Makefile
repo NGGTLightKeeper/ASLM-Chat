@@ -1,4 +1,4 @@
-IMAGE       ?= dima1312313/mcp-sandbox:latest
+IMAGE       ?= nggtlightkeeper/aslm-chat-sandbox:latest
 CONTAINER   ?= mcp-sandbox
 PYTEST_ARGS ?= -q
 
