@@ -292,7 +292,7 @@ _CONFIG_TEMPLATE = """\
 # Changes take effect the next time the container is (re)started.
 
 # === Container identity ===
-#SANDBOX_CONTAINER_NAME=mcp-sandbox
+#SANDBOX_CONTAINER_NAME=aslm-chat-sandbox
 #SANDBOX_IMAGE=nggtlightkeeper/aslm-chat-sandbox:latest
 #SANDBOX_IMAGE_SOURCE=registry
 

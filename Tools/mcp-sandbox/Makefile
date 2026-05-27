@@ -1,5 +1,5 @@
 IMAGE       ?= nggtlightkeeper/aslm-chat-sandbox:latest
-CONTAINER   ?= mcp-sandbox
+CONTAINER   ?= aslm-chat-sandbox
 PYTEST_ARGS ?= -q
 
 # Run all host-side tests (no Docker required).
