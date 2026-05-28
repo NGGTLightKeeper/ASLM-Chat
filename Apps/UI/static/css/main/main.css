@@ -1646,10 +1646,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
+  border-radius: 7px;
   background: var(--c-primary);
-  color: var(--c-text);
+  color: var(--c-white);
   transition: opacity var(--t-fast), background var(--t-fast), transform var(--t-fast);
+}
+
+.send-btn svg {
+  color: var(--c-white);
 }
 
 .send-btn:hover:not(:disabled) {
@@ -2995,12 +2999,12 @@
 
 .msg.user .msg-avatar {
   background: var(--c-primary);
-  color: var(--c-text);
+  color: var(--c-white);
 }
 
 .msg.assistant .msg-avatar {
   background: var(--c-accent-tertiary);
-  color: var(--c-text);
+  color: var(--c-white);
 }
 
 .msg-body {
