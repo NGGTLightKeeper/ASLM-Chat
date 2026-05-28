@@ -4,10 +4,11 @@ import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
 import {
   addSegmentCitationSources,
   addSegmentsCitationSources,
+  bindCitationAnnotationHighlights,
   createCitationRegistry,
   decorateCitationsInHtml as decorateCitationHandlesInHtml,
-  normalizeCitationBrackets as normalizeCitationHandleBrackets,
-  normalizeCitationSpacing as normalizeCitationHandleSpacing
+  normalizeAssistantMarkdown as normalizeCitationHandleMarkdown,
+  scheduleCitationAnnotations
 } from './citations-ui.js';
 import { bindCitationPreviewCards } from './citation-preview-ui.js';
 import { t } from '../main/i18n.js';
@@ -171,7 +172,12 @@ export function createMessagesUi(context, dependencies) {
       if (delimiter.open === '$') {
         const before = index > 0 ? text[index - 1] : '';
         const after = index + 1 < text.length ? text[index + 1] : '';
-        if (/\d/.test(before) || /\s/.test(after || '')) {
+        // Currency ($0.14, $0.028 / M) — not inline math.
+        if (/\d/.test(after) || /\d/.test(before)) {
+          return;
+        }
+        // "$ foo" is almost never intentional TeX; real inline math is $\alpha$ or $\frac12$.
+        if (/\s/.test(after || '')) {
           return;
         }
       }
@@ -224,6 +230,14 @@ export function createMessagesUi(context, dependencies) {
       const latexSource = source.slice(contentStart, closeIndex).trim();
       if (!latexSource) {
         cursor = closeIndex + delimiter.close.length;
+        continue;
+      }
+      if (
+        delimiter.open === '$'
+        && !delimiter.displayMode
+        && !looksLikeLatexSource(latexSource)
+      ) {
+        cursor = delimiter.index + 1;
         continue;
       }
       if (delimiter.index > cursor) {
@@ -472,7 +486,7 @@ export function createMessagesUi(context, dependencies) {
   // Render one visible text segment as sanitized HTML.
   function renderMarkdownSegment(content, citationSources) {
     const normalizedContent = normalizeLooseDisplayLatex(
-      normalizeCitationHandleSpacing(normalizeCitationHandleBrackets(content))
+      normalizeCitationHandleMarkdown(content)
     );
     const visibleContent = normalizedContent;
     const latexBlocks = extractLatexBlocks(visibleContent);
@@ -4999,6 +5013,7 @@ export function createMessagesUi(context, dependencies) {
     const parsed = parseMessageTimeline(rawText);
     renderActivityTimeline($msgRow, parsed.segments, { rawText });
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
+    scheduleCitationAnnotations($msgRow[0]);
   }
 
   // Parse and render one assistant transcript during active streaming.
@@ -5336,6 +5351,7 @@ export function createMessagesUi(context, dependencies) {
         reasoningMode: viewOptions.reasoningMode === true,
         trustThoughtSegments: viewOptions.reasoningMode === true || hasReasoningMarker(text)
       });
+      scheduleCitationAnnotations($row[0]);
     } else {
       renderMessageHtml($row, text);
     }
@@ -5715,6 +5731,7 @@ export function createMessagesUi(context, dependencies) {
   bindReasoningDrawerResize();
   bindAttachmentMediaEvents();
   bindCitationPreviewCards(document);
+  bindCitationAnnotationHighlights(document);
 
   return {
     appendMessage,

@@ -20,6 +20,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+import os
+
 SERVER_DISPATCHER_NAMES = ("call_tool", "run_tool", "execute_tool", "execute")
 SERVER_METADATA_NAMES = ("MCP_SERVER", "SERVER")
 TOOL_HANDLER_NAMES = ("TOOL_HANDLERS", "TOOL_EXECUTORS")
@@ -258,6 +260,7 @@ def _to_jsonable(value: Any) -> Any:
 def describe(server_file: Path) -> dict[str, Any]:
     """Return public metadata for one tool server."""
 
+    os.environ["ASLM_MCP_OPERATION"] = "describe"
     module = _load_module(server_file)
     metadata = _server_metadata(module, server_file.parent.name)
     metadata["tools"] = _server_tools(module, metadata["id"])
@@ -268,6 +271,7 @@ def describe(server_file: Path) -> dict[str, Any]:
 def supports(server_file: Path, payload: dict[str, Any]) -> bool:
     """Return whether the server supports one engine/model pair."""
 
+    os.environ["ASLM_MCP_OPERATION"] = "supports"
     module = _load_module(server_file)
     supports_fn = getattr(module, "supports", None)
     if not callable(supports_fn):
@@ -285,6 +289,7 @@ def supports(server_file: Path, payload: dict[str, Any]) -> bool:
 def call(server_file: Path, payload: dict[str, Any]) -> Any:
     """Execute one tool call."""
 
+    os.environ["ASLM_MCP_OPERATION"] = "call"
     module = _load_module(server_file)
     tool_id = _slugify(str(payload.get("tool_id") or ""))
     arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}

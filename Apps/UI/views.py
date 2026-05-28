@@ -66,6 +66,7 @@ from Apps.Data.models import (
 )
 from Apps.UI.host_theme_bridge import build_host_theme_template_context
 from Apps.UI.host_locale_bridge import build_host_locale_template_context
+from Apps.UI.citation_annotations import annotate_citations
 from Apps.UI.upload_storage import (
     load_upload_manifest,
     model_upload_payload,
@@ -5805,6 +5806,25 @@ def runtime_settings_api(request):
     _clear_model_metadata_caches()
 
     return JsonResponse(_build_runtime_settings_payload())
+
+
+def citation_annotations_api(request):
+    """Return GTE-reranked evidence alignment annotations for rendered citation chips."""
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        items = data.get("citations", [])
+        if not isinstance(items, list):
+            return JsonResponse({"error": "citations must be a list"}, status=400)
+        return JsonResponse(annotate_citations(items))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Citation annotation failed")
+        return JsonResponse({"enabled": True, "error": str(exc), "annotations": []}, status=200)
 
 
 # Browser portal control APIs.

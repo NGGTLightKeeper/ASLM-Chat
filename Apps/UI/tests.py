@@ -84,6 +84,14 @@ from Apps.UI.views import (
     _stream_chat_response,
     _strip_llm_control_tokens,
 )
+from Apps.UI.citation_annotations import (
+    annotate_citations,
+    load_config,
+    unload_citation_models,
+    _is_highlight_worthy_number,
+    _normalize_surface,
+    _direct_quote_matches,
+)
 
 
 # Small structured error helper for Google GenAI adapter tests.
@@ -114,6 +122,267 @@ class FakeGoogleError(Exception):
 
 
 # Shared test helpers.
+
+
+class CitationAnnotationTests(SimpleTestCase):
+    """Cover GTE reranker citation annotation fallback and matching behavior."""
+
+    def setUp(self):
+        super().setUp()
+        self._alignment_env = patch.dict(
+            os.environ,
+            {"ASLM_CITATION_ALIGNMENT_ENABLED": "1"},
+            clear=False,
+        )
+        self._alignment_env.start()
+
+    def tearDown(self):
+        self._alignment_env.stop()
+        unload_citation_models()
+        super().tearDown()
+
+    def test_load_config_defaults_to_legacy_without_alignment_env(self):
+        with patch.dict(os.environ, {}, clear=True):
+            config = load_config()
+        self.assertFalse(config.enabled)
+        self.assertFalse(config.reranker_enabled)
+
+    @patch("Apps.UI.citation_annotations._reranker_scores", return_value=[0.0, 0.0])
+    def test_direct_quote_match_works_without_reranker(self, _mock_rerank):
+        payload = annotate_citations(
+            [
+                {
+                    "id": "S1",
+                    "paragraph_text": "The report says Alpha Labs shipped Orion in March 2026. [S1]",
+                    "source": {
+                        "preview": "Alpha Labs shipped Orion in March 2026 after a limited beta.",
+                    },
+                }
+            ]
+        )
+
+        annotation = payload["annotations"][0]
+        self.assertEqual(annotation["status"], "ready")
+        self.assertTrue(any(match["type"] == "quote" for match in annotation["matches"]))
+
+    @patch("Apps.UI.citation_annotations._reranker_scores")
+    def test_reranker_boosts_matching_source_sentence(self, mock_rerank):
+        mock_rerank.return_value = [0.15, 0.92]
+
+        payload = annotate_citations(
+            [
+                {
+                    "id": "S2",
+                    "paragraph_text": "Alpha Labs said Orion is ready. [S2]",
+                    "source": {
+                        "preview": "Intro filler sentence. Alpha Labs announced Orion is ready for release.",
+                    },
+                }
+            ]
+        )
+
+        annotation = payload["annotations"][0]
+        self.assertEqual(annotation["status"], "ready")
+        self.assertTrue(
+            any("Alpha Labs" in sentence for sentence in annotation.get("sourceSentences", []))
+        )
+        mock_rerank.assert_called()
+
+    def test_endpoint_can_disable_annotation_for_legacy_fallback(self):
+        with patch.dict(os.environ, {"ASLM_CITATION_ALIGNMENT_ENABLED": "0"}):
+            response = Client().post(
+                reverse("citation_annotations_api"),
+                data=json.dumps(
+                    {
+                        "citations": [
+                            {
+                                "id": "S1",
+                                "paragraph_text": "Alpha Labs shipped Orion. [S1]",
+                                "source": {"preview": "Alpha Labs shipped Orion."},
+                            }
+                        ]
+                    }
+                ),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["enabled"])
+
+    @patch("Apps.UI.citation_annotations._reranker_scores", return_value=[0.0, 0.0, 0.0])
+    def test_bm25_price_sentence_is_used_as_parsed_preview(self, _mock_rerank):
+        payload = annotate_citations(
+            [
+                {
+                    "id": "S3",
+                    "paragraph_text": "deepseek-v4-pro: вход — 0,435 ₽ / 1K токенов, выход — 0,87 ₽ / 1K токенов. [S3]",
+                    "source": {
+                        "preview": (
+                            "General intro sentence without prices. "
+                            "deepseek-v4-pro | Вход / 1K токенов | Выход / 1K токенов | "
+                            "0,435 ₽ | 0,87 ₽ | 384000 | 384000."
+                        ),
+                    },
+                }
+            ]
+        )
+
+        annotation = payload["annotations"][0]
+        self.assertEqual(annotation["status"], "ready")
+        self.assertIn("0,435", annotation["previewText"])
+        self.assertTrue(any(match["type"] == "number" for match in annotation["matches"]))
+
+    @patch("Apps.UI.citation_annotations._reranker_scores", return_value=[0.0, 0.0, 0.0, 0.0])
+    def test_adjacent_source_sentences_are_merged(self, _mock_rerank):
+        payload = annotate_citations(
+            [
+                {
+                    "id": "S4",
+                    "paragraph_text": (
+                        "V4 Pro dropped by 75 percent. "
+                        "API prices are 0.0036 per cached input and 0.87 per output. [S4]"
+                    ),
+                    "source": {
+                        "preview": (
+                            "V4 Pro dropped by 75 percent. "
+                            "API prices are 0.0036 per cached input and 0.87 per output. "
+                            "Unrelated footer sentence."
+                        ),
+                    },
+                }
+            ]
+        )
+
+        annotation = payload["annotations"][0]
+        self.assertIn("75 percent. API prices", annotation["previewText"])
+        self.assertEqual(len(annotation["sourceSentences"]), 1)
+
+    def test_normalize_surface_preserves_parentheses(self):
+        self.assertIn("(", _normalize_surface("Revenue grew 15% (compared to 2024)"))
+        self.assertIn(")", _normalize_surface("Revenue grew 15% (compared to 2024)"))
+        # Parenthetical content at start should also be preserved.
+        result = _normalize_surface("(Source: Annual Report.)")
+        self.assertTrue(result.startswith("("))
+        self.assertTrue(result.endswith(")"))
+
+    @patch("Apps.UI.citation_annotations._reranker_scores", return_value=[0.0])
+    def test_direct_quote_match_correct_indices_with_punctuation(self, _mock_rerank):
+        paragraph = "The official API price is $0.0036 per million cached input tokens."
+        source = "Some intro text. The official API price is $0.0036 per million cached input tokens. More footer."
+        quotes = _direct_quote_matches(paragraph, source)
+        self.assertTrue(len(quotes) > 0)
+        # The matched quote should be readable text, not garbled from index mismatch.
+        for quote in quotes:
+            self.assertNotIn("\x00", quote)
+            self.assertGreater(len(quote), 10)
+
+    def test_short_percentage_is_highlight_worthy(self):
+        self.assertTrue(_is_highlight_worthy_number("7%"))
+        self.assertTrue(_is_highlight_worthy_number("$5"))
+        self.assertTrue(_is_highlight_worthy_number("0.87₽"))
+
+    def test_bare_year_is_not_highlight_worthy(self):
+        self.assertFalse(_is_highlight_worthy_number("2026"))
+        self.assertFalse(_is_highlight_worthy_number("2024"))
+        # But a year-like number with currency IS worthy.
+        self.assertTrue(_is_highlight_worthy_number("$2026"))
+
+    @patch("Apps.UI.citation_annotations._reranker_scores", return_value=[0.0, 0.0, 0.0, 0.0, 0.0])
+    def test_preview_text_is_limited_in_length(self, _mock_rerank):
+        long_source = ". ".join([f"Sentence number {i} with some additional text to fill up space" for i in range(20)])
+        payload = annotate_citations(
+            [
+                {
+                    "id": "S5",
+                    "paragraph_text": "Sentence number 5 with some additional text to fill up space. [S5]",
+                    "source": {"preview": long_source},
+                }
+            ]
+        )
+        annotation = payload["annotations"][0]
+        self.assertLessEqual(len(annotation["previewText"]), 400)
+
+    @patch("Apps.UI.citation_annotations._reranker_scores", return_value=[0.0, 0.0])
+    def test_annotation_id_roundtrip_is_preserved(self, _mock_rerank):
+        payload = annotate_citations(
+            [
+                {
+                    "id": "S6",
+                    "annotation_id": "S6-2",
+                    "paragraph_text": "Alpha Labs shipped Orion in March 2026. [S6]",
+                    "source": {
+                        "preview": "Alpha Labs shipped Orion in March 2026 after a limited beta.",
+                    },
+                }
+            ]
+        )
+        annotation = payload["annotations"][0]
+        self.assertEqual(annotation["id"], "S6")
+        self.assertEqual(annotation["annotation_id"], "S6-2")
+
+    @patch("Apps.UI.citation_annotations._reranker_scores", return_value=[0.9])
+    def test_preview_omits_paragraph_quote_when_source_sentence_is_canonical_duplicate(self, _mock_rerank):
+        # The model quotes the source with «» marks; the source sentence has the same
+        # text without the marks.  previewText must contain only ONE copy.
+        source_sentence = "API price is $0.0036 per million cached input tokens."
+        payload = annotate_citations(
+            [
+                {
+                    "id": "S7",
+                    "paragraph_text": f"«{source_sentence}» [S7]",
+                    "source": {"preview": f"Some intro. {source_sentence} Closing note."},
+                }
+            ]
+        )
+        annotation = payload["annotations"][0]
+        preview = annotation["previewText"]
+        # The sentence must appear exactly once in the preview (no duplicate block).
+        self.assertEqual(preview.count("$0.0036"), 1, f"Duplicate in previewText: {preview!r}")
+        # Preview must come from the source, not from the paragraph «» quote.
+        self.assertNotIn("«", preview)
+
+    @patch(
+        "Apps.UI.citation_annotations.reranker_status_snapshot",
+        return_value={
+            "enabled": True,
+            "used": True,
+            "backend": "mcp-web-search-venv",
+            "topScore": 0.58,
+            "error": "",
+        },
+    )
+    @patch("Apps.UI.citation_annotations._reranker_scores", return_value=[0.15, 0.92])
+    def test_annotate_response_includes_reranker_status(self, _mock_rerank, _mock_status):
+        payload = annotate_citations(
+            [
+                {
+                    "id": "S9",
+                    "paragraph_text": "Alpha Labs said Orion is ready. [S9]",
+                    "source": {"preview": "Alpha Labs announced Orion is ready for release."},
+                }
+            ]
+        )
+        self.assertIn("reranker", payload)
+        self.assertTrue(payload["reranker"]["used"])
+        self.assertEqual(payload["reranker"]["backend"], "mcp-web-search-venv")
+
+    @patch("Apps.UI.citation_annotations._reranker_scores", return_value=[0.0])
+    def test_preview_falls_back_to_source_text_when_no_sentences_match(self, _mock_rerank):
+        # When source_sentences is empty (no reranker matches), previewText should
+        # fall back to a truncated source_text snippet rather than being blank.
+        source = "A completely unrelated sentence that shares nothing with the paragraph."
+        payload = annotate_citations(
+            [
+                {
+                    "id": "S8",
+                    "paragraph_text": "Topic X is relevant. [S8]",
+                    "source": {"preview": source},
+                }
+            ]
+        )
+        annotation = payload["annotations"][0]
+        # Should contain something from the source or a fallback — never empty.
+        self.assertTrue(annotation["previewText"].strip(), "previewText must not be blank")
 
 # Patch the local tools directory for endpoint tests.
 class ToolRegistryTestMixin:

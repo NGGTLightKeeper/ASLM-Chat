@@ -130,6 +130,17 @@
             "setExec": "main.py set_setting --key console_log_level --value {value}"
         },
         {
+            "key": "citation-alignment-enabled",
+            "name": "Citation alignment (GTE)",
+            "description": "Off: legacy chips use the search snippet only. On: GTE-parsed excerpts and paragraph highlighting.",
+            "type": "bool",
+            "default": false,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key citation-alignment-enabled",
+            "setExec": "main.py set_setting --key citation-alignment-enabled --value {value}",
+            "value": false
+        },
+        {
             "key": "llm-engine",
             "name": "Active LLM Engine",
             "description": "Engine used for chat generation in the UI",
