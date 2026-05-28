@@ -93,14 +93,6 @@
             "packages": [
                 "mcp==1.26.0"
             ]
-        },
-        {
-            "id": "oda",
-            "path": "Data/venvs/tools/open_data_analysis",
-            "tool": "open_data_analysis",
-            "packages": [
-                "mcp==1.26.0"
-            ]
         }
     ]
 }

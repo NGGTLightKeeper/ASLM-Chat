@@ -48,8 +48,8 @@ def _load_sandbox_env(path: str) -> None:
 if not IN_CONTAINER:
     _load_sandbox_env(CONFIG_FILE_PATH)
 
-CONTAINER_NAME = os.getenv("SANDBOX_CONTAINER_NAME", "mcp-sandbox")
-SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "dima1312313/mcp-sandbox:latest")
+CONTAINER_NAME = os.getenv("SANDBOX_CONTAINER_NAME", "aslm-chat-sandbox")
+SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "nggtlightkeeper/aslm-chat-sandbox:latest")
 SANDBOX_IMAGE_SOURCE = os.getenv("SANDBOX_IMAGE_SOURCE", "auto").strip().lower()
 SNAPSHOT_IMAGE_PREFIX = os.getenv(
     "SANDBOX_SNAPSHOT_PREFIX",

@@ -1,4 +1,0 @@
-#!/bin/sh
-# Per-command timeout; exit 124 on limit (GNU coreutils timeout).
-LIMIT="${SANDBOX_CMD_TIMEOUT:-60}"
-exec timeout -k 3 "$LIMIT" "$@"

@@ -18,7 +18,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-IMAGE = os.getenv("SANDBOX_IMAGE", "dima1312313/mcp-sandbox:latest")
+IMAGE = os.getenv("SANDBOX_IMAGE", "nggtlightkeeper/aslm-chat-sandbox:latest")
 
 
 class DisposableSandbox:

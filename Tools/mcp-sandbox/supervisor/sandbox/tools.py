@@ -11,7 +11,7 @@ from mcp.server.fastmcp import Context
 from sandbox.api import TOOLS, handle_tool
 
 TOOL_META = {
-    "x-aslm-server": "mcp-sandbox",
+    "x-aslm-server": "aslm-chat-sandbox",
     "x-aslm-runtime": "fastmcp-stdio",
     "x-aslm-workspace-root": ".",
 }
