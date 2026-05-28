@@ -417,13 +417,6 @@ export function createChatController(context, dependencies) {
       if (request.toolServerIds && request.toolServerIds.length > 0) {
         payload.tool_server_ids = request.toolServerIds;
       }
-      if (request.sandboxDefaultMode) {
-        payload.sandbox_default_mode = request.sandboxDefaultMode;
-      }
-      if (request.sandboxModeSwitch) {
-        payload.sandbox_mode_switch = request.sandboxModeSwitch;
-      }
-
       if (!isRegenerate) {
         const attachmentPayloads = await buildAttachmentPayloads(request.attachments);
         if (attachmentPayloads.length > 0) {
@@ -731,10 +724,6 @@ export function createChatController(context, dependencies) {
       options,
       reasoningModeEnabled: requestWantsReasoning(options),
       toolServerIds: state.toolState.supported ? parametersUi.getSelectedToolServerIds() : [],
-      sandboxDefaultMode: parametersUi.getSandboxDefaultMode ? parametersUi.getSandboxDefaultMode() : '',
-      sandboxModeSwitch: parametersUi.takePendingSandboxModeSwitch
-        ? parametersUi.takePendingSandboxModeSwitch()
-        : null,
       chatId: state.currentChatId
     };
   }

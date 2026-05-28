@@ -88,17 +88,6 @@
             "setExec": "main.py set_setting --key api-port --value {value}"
         },
         {
-            "key": "oda-daemon-port",
-            "name": "ODA Daemon Port",
-            "description": "Port the ODA sandbox daemon listens on",
-            "type": "port",
-            "default": 20002,
-            "engine": "python-runtime",
-            "getExec": "main.py get_setting --key oda-daemon-port",
-            "setExec": "main.py set_setting --key oda-daemon-port --value {value}",
-            "value": 20002
-        },
-        {
             "key": "aslm-host-theme",
             "name": "ASLM host theme",
             "description": "Theme snapshot from the host ASLM app; applied on each module start. Managed only by ASLM.",
@@ -128,6 +117,17 @@
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key console_log_level",
             "setExec": "main.py set_setting --key console_log_level --value {value}"
+        },
+        {
+            "key": "citation-alignment-enabled",
+            "name": "Citation alignment (GTE)",
+            "description": "Off: legacy chips use the search snippet only. On: GTE-parsed excerpts and paragraph highlighting.",
+            "type": "bool",
+            "default": false,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key citation-alignment-enabled",
+            "setExec": "main.py set_setting --key citation-alignment-enabled --value {value}",
+            "value": false
         },
         {
             "key": "llm-engine",

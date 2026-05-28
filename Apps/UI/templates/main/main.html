@@ -232,27 +232,6 @@
                 </div>
             </div>
 
-            <div class="settings-section" id="group-sandbox-default" style="display:none;">
-                <div class="settings-section-header">
-                    {% t "settings.sandboxDefault" %}
-                    <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/chevron-down-markup.svg' %}#icon"></use></svg>
-                </div>
-                <div class="settings-section-content">
-                    <div class="setting-group">
-                        <label class="setting-label" for="sandboxDefaultToggle">
-                            {% t "settings.mode" %}
-                            <span class="setting-value" id="sandboxDefaultValue">data_analysis</span>
-                        </label>
-                        <div class="sandbox-default-toggle" id="sandboxDefaultToggle" role="group" aria-label="Sandbox default">
-                            <button type="button" class="sandbox-default-option" data-sandbox-mode="linux_sandbox">linux_sandbox</button>
-                            <button type="button" class="sandbox-default-option" data-sandbox-mode="data_analysis">data_analysis</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="settings-divider" id="divider-sandbox-default" style="display:none;"></div>
-
             <div class="settings-section collapsed" id="group-tools" style="display:none;">
                 <div class="settings-section-header">
                     {% t "settings.tools" %}

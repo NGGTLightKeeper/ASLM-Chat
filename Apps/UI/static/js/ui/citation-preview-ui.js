@@ -1,11 +1,28 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { escHtml, escapeAttributeValue } from '../main/utils.js';
+import {
+  collectPreviewHighlightNeedles,
+  findRangesInText,
+} from './citation-highlight-matching.js';
 
 function parseCitationPreviewData(chip) {
   try {
     const parsed = JSON.parse(String(chip && chip.getAttribute('data-citation-preview') || ''));
-    return parsed && typeof parsed === 'object' ? parsed : null;
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    try {
+      const annotation = JSON.parse(String(chip && chip.getAttribute('data-citation-annotation') || ''));
+      if (annotation && annotation.status === 'ready' && Array.isArray(annotation.matches)) {
+        parsed.annotation = annotation;
+      }
+    } catch (_error) {
+      // Annotation data is optional; legacy citation previews still render.
+    }
+    const annotationState = chip && chip.getAttribute('data-citation-annotation-state');
+    parsed.isLoading = chip && (annotationState === 'loading' || chip.classList.contains('is-citation-annotating') || (!annotationState && !parsed.annotation));
+    return parsed;
   } catch (_error) {
     return null;
   }
@@ -28,13 +45,40 @@ function previewEvidenceLabel(value) {
 }
 
 function renderCitationPreviewHtml(data) {
-  const evidenceLabel = previewEvidenceLabel(data.evidenceKind);
+  if (data.isLoading || (!data.annotation && !data.preview)) {
+    return `
+      <div class="msg-citation-preview-head">
+        <div class="msg-citation-preview-skeleton-favicon skeleton-wave"></div>
+        <div class="msg-citation-preview-title-wrap" style="width: 70%; display: flex; flex-direction: column; gap: 6px;">
+          <div class="msg-citation-preview-skeleton-title skeleton-wave"></div>
+          <div class="msg-citation-preview-skeleton-domain skeleton-wave"></div>
+        </div>
+      </div>
+      <div class="msg-citation-preview-text msg-citation-preview-skeleton-body">
+        <div class="msg-citation-preview-skeleton-line skeleton-wave" style="width: 100%;"></div>
+        <div class="msg-citation-preview-skeleton-line skeleton-wave" style="width: 90%;"></div>
+        <div class="msg-citation-preview-skeleton-line skeleton-wave" style="width: 95%;"></div>
+        <div class="msg-citation-preview-skeleton-line skeleton-wave" style="width: 60%;"></div>
+      </div>
+      <div class="msg-citation-preview-footer">
+        <div class="msg-citation-preview-skeleton-footer-left skeleton-wave"></div>
+        <div class="msg-citation-preview-skeleton-footer-right skeleton-wave"></div>
+      </div>
+    `;
+  }
+
+  const annotationPreview = data.annotation && data.annotation.previewText
+    ? String(data.annotation.previewText)
+    : '';
+  const evidenceLabel = previewEvidenceLabel(annotationPreview ? 'parsed' : data.evidenceKind);
   const faviconHtml = data.faviconUrl
     ? `<img class="msg-citation-preview-favicon" src="${escapeAttributeValue(data.faviconUrl)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
     : '';
   const fallbackStyle = data.faviconUrl ? ' style="display:none;"' : '';
-  const previewHtml = data.preview
-    ? `<div class="msg-citation-preview-text">${escHtml(data.preview)}</div>`
+  const rawPreviewText = annotationPreview || data.preview || '';
+  const previewText = rawPreviewText.length > 400 ? rawPreviewText.slice(0, 397) + '...' : rawPreviewText;
+  const previewHtml = previewText
+    ? `<div class="msg-citation-preview-text">${highlightPreviewHtml(previewText, data.annotation)}</div>`
     : '';
   const dateHtml = data.date
     ? `<div class="msg-citation-preview-date">${escHtml(data.date)}</div>`
@@ -65,6 +109,29 @@ function renderCitationPreviewHtml(data) {
       ${statusHtml}
     </div>
   `;
+}
+
+function highlightPreviewHtml(text, annotation) {
+  const source = String(text || '');
+  const needles = collectPreviewHighlightNeedles(annotation, source);
+  if (!needles.length) {
+    return escHtml(source);
+  }
+
+  const ranges = findRangesInText(source, needles);
+  if (!ranges.length) {
+    return escHtml(source);
+  }
+
+  let html = '';
+  let cursor = 0;
+  ranges.forEach(function appendRange(range) {
+    html += escHtml(source.slice(cursor, range.start));
+    html += `<span class="msg-citation-highlight is-active">${escHtml(source.slice(range.start, range.end))}</span>`;
+    cursor = range.end;
+  });
+  html += escHtml(source.slice(cursor));
+  return html;
 }
 
 function fallbackCopyText(text, onDone) {
@@ -237,6 +304,13 @@ export function bindCitationPreviewCards(root) {
   window.addEventListener('resize', function onCitationPreviewResize() {
     if (activeChip && previewEl && previewEl.classList.contains('is-visible')) {
       positionPreview(activeChip);
+    }
+  });
+
+  eventRoot.addEventListener('citation-annotation-updated', function onAnnotationUpdated(event) {
+    const chip = event.target;
+    if (chip && chip === activeChip && previewEl && previewEl.classList.contains('is-visible')) {
+      showPreview(chip);
     }
   });
 }

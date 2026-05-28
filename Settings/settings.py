@@ -52,13 +52,11 @@ ENGINE_API_KEY_KEYS = {
 DEFAULTS: dict[str, Any] = {
     "ui-port": 20000,
     "api-port": 20001,
-    "oda-daemon-port": 20002,
     "debug": True,
     "console_log_level": "debug",
     "secret_key": "",
     "allowed_hosts": ["127.0.0.1", "localhost"],
     "llm-engine": "ollama-service",
-    # Must differ from oda-daemon-port (20002); matches ASLM_Module.json.
     "ollama-service_port": 20003,
     "ollama-service": False,
     "ollama-service_path": None,
@@ -72,6 +70,8 @@ DEFAULTS: dict[str, Any] = {
     "google-genai": False,
     "google_genai_url": "generativelanguage.googleapis.com",
     "google_genai_api_key": "",
+    # False = legacy citation chips (search snippet preview only).
+    "citation-alignment-enabled": False,
 }
 
 CONSOLE_LOG_LEVELS = {"basic", "debug", "trace"}
@@ -281,7 +281,7 @@ def _apply_environment_overrides(data: dict[str, Any]) -> dict[str, Any]:
     return updated
 
 # Normalize the loaded settings snapshot.
-_PORT_SETTING_KEYS = ("ui-port", "api-port", "oda-daemon-port", "ollama-service_port")
+_PORT_SETTING_KEYS = ("ui-port", "api-port", "ollama-service_port")
 
 
 def _warn_port_collisions(settings: dict[str, Any]) -> None:

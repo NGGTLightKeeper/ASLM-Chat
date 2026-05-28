@@ -22,7 +22,6 @@ urlpatterns = [
     path("api/chat/<uuid:chat_id>/regenerate/", views.regenerate_chat_api, name="regenerate_chat_api"),
     path("api/attachment/<str:record_type>/<int:attachment_id>/content/", views.attachment_content_api, name="attachment_content_api"),
     path("api/shared-file/download/", views.shared_file_download_api, name="shared_file_download_api"),
-    path("api/sandbox/sync/", views.sandbox_sync_api, name="sandbox_sync_api"),
     path("api/message/<int:message_id>/delete/", views.delete_message_api, name="delete_message_api"),
     path("api/chat/<uuid:chat_id>/rename/", views.rename_chat_api, name="rename_chat_api"),
     path("api/chat/<uuid:chat_id>/delete/", views.delete_chat_api, name="delete_chat_api"),
@@ -45,6 +44,7 @@ urlpatterns = [
     path("api/skills/import/", views.skills_import_api, name="skills_import_api"),
     path("api/skills/path/", views.skills_path_api, name="skills_path_api"),
     path("api/favicon/", views.favicon_api, name="favicon_api"),
+    path("api/citation_annotations/", views.citation_annotations_api, name="citation_annotations_api"),
     path("api/browser_portal/frame/", views.browser_portal_frame_api, name="browser_portal_frame_api"),
     path("api/browser_portal/event/", views.browser_portal_event_api, name="browser_portal_event_api"),
 

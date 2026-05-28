@@ -12,7 +12,6 @@ SERVER_ROOT = Path(__file__).resolve().parent
 MODEL_RUNTIME_METADATA_PATH = SERVER_ROOT.parent / "model_runtime_metadata.json"
 SANDBOX_SCREEN_TARGETS = {
     "linux_sandbox": (("mcp-sandbox", "_sandbox", "screens"), "screens"),
-    "data_analysis": (("open_data_analysis", "tmp", "_sandbox", "screens"), "/mnt/data/_sandbox/screens"),
 }
 
 
@@ -74,21 +73,16 @@ def _png_dimensions(data: bytes) -> dict[str, int] | None:
 
 def _sandbox_screens_dir(context: dict[str, Any] | None) -> tuple[Path | None, str]:
     safe_context = context or {}
-    selected = safe_context.get("selected_tool_server_ids")
     sandbox_enabled = bool(safe_context.get("sandbox_enabled"))
+    selected = safe_context.get("selected_tool_server_ids")
     if isinstance(selected, list):
-        sandbox_enabled = sandbox_enabled or any(str(item) in {"sandbox", "oda"} for item in selected)
+        sandbox_enabled = sandbox_enabled or any(str(item) == "sandbox" for item in selected)
 
     module_dir = str(safe_context.get("module_dir") or safe_context.get("project_dir") or "").strip()
     if not module_dir:
         return None, ""
 
-    mode = str(safe_context.get("sandbox_default_mode") or "").strip()
-    if mode not in SANDBOX_SCREEN_TARGETS:
-        if isinstance(selected, list) and any(str(item) == "oda" for item in selected):
-            mode = "data_analysis"
-        elif sandbox_enabled:
-            mode = "linux_sandbox"
+    mode = "linux_sandbox" if sandbox_enabled else ""
     target = SANDBOX_SCREEN_TARGETS.get(mode)
     if not target:
         return None, ""

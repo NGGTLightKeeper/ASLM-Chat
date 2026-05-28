@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import secrets
 import sys
 from pathlib import Path
@@ -32,6 +33,7 @@ from adapters.mcp.search_query_contract import (
 from adapters.mcp.logging_setup import setup_logging
 from core.config import load_search_config as _load_cfg
 from core.fetch.thread_pool import io_pool as _io_pool  # noqa: F401 — initialise shared pool
+from core.query.gte_evidence_reranker import warm_up as _gte_warm_up
 
 setup_logging()
 
@@ -39,6 +41,16 @@ _CFG = _load_cfg()
 _MAX_RESULTS = max(1, int(_CFG.search.max_results))
 _BATCH_LIMIT = max(1, int(_CFG.search.batch_query_limit))
 logger = logging.getLogger("mcp_server_bridge")
+
+# Pre-load GTE reranker in background only for real tool calls.  When
+# tool_worker runs a short-lived describe/supports probe, the worker process
+# exits immediately and kills the daemon warm-up thread — so skip it there.
+_MCP_OPERATION = os.getenv("ASLM_MCP_OPERATION", "call").strip().lower()
+if _MCP_OPERATION == "call":
+    try:
+        _gte_warm_up(ttl_seconds=300.0)
+    except Exception:
+        pass
 
 MCP_SERVER = {
     "id": "web_search",
@@ -211,6 +223,8 @@ async def call_tool(
         # ─────────────────────────────────────────────────────────────────────
 
         logger.info("bridge.web_search.start query_preview=%r", query_text[:160])
+        # Refresh GTE TTL so the model stays hot during active search sessions.
+        _gte_warm_up(ttl_seconds=300.0)
         result = await run_web_search_rich(
             query_text,
             max_results=_MAX_RESULTS,
@@ -251,6 +265,8 @@ async def call_tool(
         if isinstance(url, list):
             urls = [u.strip() for u in url if isinstance(u, str) and u.strip()]
             logger.info("bridge.read_page.start batch=True urls=%d", len(urls[:_BATCH_LIMIT]))
+            # Refresh GTE TTL — read_page results are commonly cited.
+            _gte_warm_up(ttl_seconds=300.0)
             results = await asyncio.gather(
                 *[run_read_page(u) for u in urls[:_BATCH_LIMIT]],
                 return_exceptions=True,
@@ -276,6 +292,7 @@ async def call_tool(
             return payload
         url_text = url.strip()
         logger.info("bridge.read_page.start batch=False url=%r", url_text[:220])
+        _gte_warm_up(ttl_seconds=300.0)
         result = await run_read_page(url_text)
         payload = _read_page_payload([url_text], [result])
         write_search_io_event(

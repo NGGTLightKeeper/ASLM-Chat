@@ -1,5 +1,5 @@
-IMAGE       ?= dima1312313/mcp-sandbox:latest
-CONTAINER   ?= mcp-sandbox
+IMAGE       ?= nggtlightkeeper/aslm-chat-sandbox:latest
+CONTAINER   ?= aslm-chat-sandbox
 PYTEST_ARGS ?= -q
 
 # Run all host-side tests (no Docker required).

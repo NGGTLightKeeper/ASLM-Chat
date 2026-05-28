@@ -27,6 +27,7 @@ from adapters.mcp.search_query_contract import (
     coerce_search_query,
 )
 from core.config import load_search_config
+from core.query.gte_evidence_reranker import warm_up as _gte_warm_up
 from services import run_read_page, run_web_search_rich
 from services.web_search import shutdown_web_search
 
@@ -317,6 +318,8 @@ async def web_search(
         )
 
     logger.info("mcp.web_search.start query_preview=%r", query_text[:160])
+    # Warm up GTE reranker in background so it's ready after search completes.
+    _gte_warm_up(ttl_seconds=300.0)
     await _report_progress(context, 0, 100, "search_started")
     try:
         payload = await _keepalive(
@@ -368,6 +371,8 @@ async def read_page(
         isinstance(url, list),
         url[:2] if isinstance(url, list) else str(url)[:160],
     )
+    # Warm up GTE reranker in background — read_page results are often cited.
+    _gte_warm_up(ttl_seconds=300.0)
     started_at = time.perf_counter()
     write_search_io_event(
         {
@@ -453,6 +458,10 @@ if __name__ == "__main__":
             get_hosted_cache().evict_expired()
         except Exception as _e:
             logger.debug("cache eviction at startup failed: %s", _e)
+
+        # Pre-load GTE reranker in background so the first citation annotation
+        # request is fast. TTL=300s — model stays live for 5 min after startup.
+        _gte_warm_up(ttl_seconds=300.0)
 
         mcp.run()
     finally:
