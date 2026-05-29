@@ -1259,10 +1259,7 @@ def _triage_one_result(
     snippet = (result.snippet or "").strip()
     title_lower = title.lower()
 
-    if result.trust_tier == "?" and trust_reg is not None:
-        tier = trust_reg.get_tier(url)
-        if tier:
-            result.trust_tier = tier
+    _resolve_result_trust_tier(result, url, trust_reg=trust_reg, rep_store=rep_store)
 
     if len(snippet) < 30 or (len(snippet) < 60 and len(title) < 20):
         return TriageResult(skip=True, fetch_policy="cheap", score=0.0)
@@ -1597,6 +1594,31 @@ def _year_match_score(text: str, years: list[str]) -> float:
     return 1.0 if hits else -0.3
 
 
+_PARSED_LEX_BODY_CHARS = 4_000
+# Body must beat SERP-only lexical by at least this much to earn a separate boost.
+_PARSED_LEX_MARGIN = 0.04
+
+
+def _parsed_lexical_score(
+    query: str,
+    result: SearchResult,
+    payload: PreviewPayload,
+) -> float:
+    """Lexical overlap using SERP fields plus fetched preview text (not SERP-only)."""
+    body = (payload.text or "").strip()
+    if not body:
+        return 0.0
+    combined_snippet = " ".join(
+        filter(None, [result.snippet or "", body[:_PARSED_LEX_BODY_CHARS]]),
+    )
+    return _lexical_score(
+        query,
+        result.title or "",
+        combined_snippet,
+        result.url or "",
+    )
+
+
 def _result_score(
     result: SearchResult,
     payload: PreviewPayload,
@@ -1610,6 +1632,7 @@ def _result_score(
 ) -> float:
     original_rank = 1.0 if total <= 1 else 1.0 - (index / max(total - 1, 1))
     lex = _lexical_score(query, result.title or "", result.snippet or "", result.url)
+    parsed_lex = _parsed_lexical_score(query, result, payload)
     hub_pen = _hub_penalty(result.url, result.title or "", result.snippet or "")
 
     # Trust component: blend static tier with dynamic reputation score.
@@ -1645,13 +1668,24 @@ def _result_score(
         ),
     )
 
-    score = (
-        0.20 * original_rank
-        + 0.20 * lex
-        + 0.35 * semantic_component
-        + 0.12 * trust
-        + 0.08 * max(0.0, min(payload.quality_score, 1.0))
-    )
+    quality = max(0.0, min(float(payload.quality_score or 0.0), 1.0))
+    if parsed_lex > lex + _PARSED_LEX_MARGIN:
+        score = (
+            0.18 * original_rank
+            + 0.16 * lex
+            + 0.18 * parsed_lex
+            + 0.30 * semantic_component
+            + 0.10 * trust
+            + 0.08 * quality
+        )
+    else:
+        score = (
+            0.20 * original_rank
+            + 0.20 * lex
+            + 0.35 * semantic_component
+            + 0.12 * trust
+            + 0.08 * quality
+        )
     if profile["years"]:
         score += 0.20 * year_score
     score -= 0.30 * hub_pen
@@ -1666,13 +1700,53 @@ def _content_quality_signal(payload: PreviewPayload, result: SearchResult, query
     Deliberately excludes position/trust/rank so that the reputation system
     tracks actual content quality, not search-engine ranking or existing tier.
     Only called when payload.text is non-empty (fetch succeeded).
+
+    BM25-default path must be able to reach PROMOTE_THRESHOLD (0.72) on strong
+    previews, so parsed/snippet relevance is included (aligned with _result_score).
     """
     lex = _lexical_score(query, result.title or "", result.snippet or "", result.url)
-    return (
-        0.45 * max(0.0, min(float(payload.semantic_score or 0.0), 1.0))
-        + 0.35 * max(0.0, min(float(payload.quality_score or 0.0), 1.0))
-        + 0.20 * lex
+    parsed_lex = _parsed_lexical_score(query, result, payload)
+    lex_component = (
+        max(lex, parsed_lex) if parsed_lex > lex + _PARSED_LEX_MARGIN else lex
     )
+    quality = max(0.0, min(float(payload.quality_score or 0.0), 1.0))
+    semantic = max(0.0, min(float(payload.semantic_score or 0.0), 1.0))
+    snippet_rel = max(0.0, min(1.0, float(getattr(result, "snippet_relevance_score", 0.0) or 0.0)))
+    parsed_rel = max(0.0, min(1.0, float(getattr(result, "parsed_relevance_score", 0.0) or 0.0)))
+    relevance = parsed_rel if (payload.text or "").strip() else snippet_rel
+    if not relevance:
+        relevance = snippet_rel
+
+    if semantic > 0.0:
+        return min(
+            1.0,
+            0.35 * semantic + 0.25 * quality + 0.25 * relevance + 0.15 * lex_component,
+        )
+    return min(1.0, 0.30 * quality + 0.40 * relevance + 0.30 * lex_component)
+
+
+def _resolve_result_trust_tier(
+    result: SearchResult,
+    url: str,
+    *,
+    trust_reg,
+    rep_store,
+) -> None:
+    """Fill trust_tier from static registry, then dynamic auto-promote."""
+    if (result.trust_tier or "?") != "?":
+        return
+    if trust_reg is not None:
+        tier = trust_reg.get_tier(url)
+        if tier:
+            result.trust_tier = tier
+            return
+    if rep_store is not None:
+        try:
+            promoted = rep_store.get_promoted_tier(domain_from_url(url))
+            if promoted in {"B", "C"}:
+                result.trust_tier = promoted
+        except Exception as _e:
+            logger.debug("rep_store.get_promoted_tier failed for %s: %s", url, _e)
 
 
 # ---------------------------------------------------------------------------

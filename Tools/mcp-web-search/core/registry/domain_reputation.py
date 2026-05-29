@@ -35,6 +35,9 @@ Effect on scoring
     tier exists), or 100% dynamic reputation for unknown domains.
   - Reputation is only recorded when the result had actual fetched content
     (payload.text non-empty), so fetch failures do not penalise a domain.
+  - Content signal (_content_quality_signal) blends quality, lexical overlap,
+    and parsed/snippet relevance so BM25-default previews can reach promote EMA.
+  - Auto-promoted tier (B/C) is applied to result.trust_tier when still unknown.
 
 Public API
 ----------
