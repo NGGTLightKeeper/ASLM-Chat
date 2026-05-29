@@ -205,6 +205,131 @@ def _looks_like_web_host_path(value: str) -> bool:
     return bool(re.match(r"^(?:www\.)?[^/\\]+\.(?:com|org|net|ru|io|ai|dev|gov|edu|co|tv)(?:[/\\].*)?$", text))
 
 
+# Common method/attribute tails from source code, not real file extensions.
+_CODE_TOKEN_EXTENSIONS = frozenset(
+    {
+        "strip",
+        "match",
+        "split",
+        "join",
+        "find",
+        "read",
+        "write",
+        "append",
+        "extend",
+        "lower",
+        "upper",
+        "format",
+        "draw",
+        "add",
+        "get",
+        "set",
+        "empty",
+        "multiline",
+        "findall",
+        "startswith",
+        "endswith",
+        "enqueue",
+        "isenabled",
+        "visible",
+        "width",
+        "opacity",
+        "count",
+        "take",
+        "text",
+    }
+)
+
+
+def _file_basename(value: str) -> str:
+    return str(value or "").rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+
+
+def _file_extension(value: str) -> str:
+    """Return the extension after the last dot, like Windows Explorer (Path.suffix)."""
+
+    return Path(_file_basename(value)).suffix
+
+
+def _extension_body(value: str) -> str:
+    return _file_extension(value).lstrip(".")
+
+
+def _looks_like_code_fragment(value: str) -> bool:
+    """Reject bare identifier.token shapes produced by the file regex over source code."""
+
+    name = _file_basename(value)
+    if "/" in value or "\\" in value:
+        return False
+    if "." not in name:
+        return True
+
+    stem, _, ext = name.rpartition(".")
+    if not stem or not ext:
+        return True
+    if ext.isupper() and len(ext) > 4:
+        return True
+    if len(stem) <= 2 and stem.isascii() and stem.islower():
+        return True
+    if len(ext) == 1:
+        return True
+    if ext != ext.lower() and ext != ext.upper():
+        return True
+    return ext.lower() in _CODE_TOKEN_EXTENSIONS
+
+
+def _looks_like_valid_path(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if re.search(r"\\[nr]\s", text):
+        return False
+    if "=" in text or "(" in text or ")" in text:
+        return False
+    if re.fullmatch(r"\d+(\.\d+)?", text):
+        return False
+    if re.search(r"\s{2,}", text):
+        return False
+    if len(text.split()) > 4:
+        return False
+    if "/" not in text and "\\" not in text:
+        extension = _file_extension(text)
+        if not re.fullmatch(r"\.[A-Za-z0-9]{1,12}", extension):
+            return False
+        if _looks_like_code_fragment(text):
+            return False
+    return True
+
+
+_ASSISTANT_NAV_PREFIXES = (
+    "assistant: now let me",
+    "assistant: let me",
+    "assistant: let me now",
+    "assistant: let me check",
+    "assistant: let me look",
+    "assistant: let me read",
+    "assistant: let me verify",
+    "assistant: let me do",
+    "assistant: let me continue",
+    "assistant: let me get",
+    "assistant: now i",
+)
+
+
+def _is_assistant_navigation(text: str) -> bool:
+    lowered = str(text or "").lower().strip()
+    return any(lowered.startswith(prefix) for prefix in _ASSISTANT_NAV_PREFIXES)
+
+
+def _passes_semantic_threshold(text: str) -> bool:
+    if len(text) < 15:
+        return False
+    bare = text.rstrip(":").strip()
+    if bare and bare == bare.title():
+        return False
+    return True
+
+
 def _clean_memory_text(text: str) -> str:
     """Remove repeated tool boilerplate while preserving useful facts."""
 
@@ -356,6 +481,7 @@ def _sanitize_semantic_items(
     limit: int,
     max_chars: int,
     allow_tool_memory: bool = False,
+    apply_semantic_threshold: bool = False,
 ) -> list[str]:
     cleaned: list[str] = []
     for value in values:
@@ -365,6 +491,10 @@ def _sanitize_semantic_items(
         if text.strip().lower() in {"assistant:", "assistant: []"}:
             continue
         if not allow_tool_memory and _looks_like_raw_tool_dump(text):
+            continue
+        if _is_assistant_navigation(text):
+            continue
+        if apply_semantic_threshold and not _passes_semantic_threshold(text):
             continue
         if len(text) > max_chars:
             text = text[:max_chars].rstrip() + "..."
@@ -377,6 +507,8 @@ def _sanitize_open_tasks(values: list[Any], *, limit: int = 12) -> list[str]:
     for value in values:
         text = _clean_memory_text(str(value or ""))
         if not text:
+            continue
+        if not _passes_semantic_threshold(text):
             continue
         if len(text) > ANALYTIC_ENTRY_MAX_CHARS:
             text = text[:ANALYTIC_ENTRY_MAX_CHARS].rstrip() + "..."
@@ -457,7 +589,9 @@ def _raw_context_payload(
         files.extend(
             file_name
             for file_name in (match.group(0).strip(".,;:`'\"") for match in file_pattern.finditer(text))
-            if file_name and not _looks_like_web_host_path(file_name)
+            if file_name
+            and not _looks_like_web_host_path(file_name)
+            and _looks_like_valid_path(file_name)
         )
 
         if role == "tool":
@@ -533,11 +667,19 @@ def _sanitize_summary_payload(model_payload: dict[str, Any]) -> dict[str, Any]:
             limit=limit,
             max_chars=max_chars,
             allow_tool_memory=allow_tool_memory,
+            apply_semantic_threshold=(key == "key_facts"),
         )
 
     artifacts = merged.get("artifacts") if isinstance(merged.get("artifacts"), dict) else {}
     merged["artifacts"] = {
-        "files": _dedupe_strings([str(file_name) for file_name in (artifacts.get("files") if isinstance(artifacts.get("files"), list) else []) if not _looks_like_web_host_path(str(file_name))], limit=32),
+        "files": _dedupe_strings(
+            [
+                str(file_name)
+                for file_name in (artifacts.get("files") if isinstance(artifacts.get("files"), list) else [])
+                if not _looks_like_web_host_path(str(file_name)) and _looks_like_valid_path(str(file_name))
+            ],
+            limit=32,
+        ),
         "urls": _dedupe_strings([url for url in (_clean_url(str(url)) for url in (artifacts.get("urls") if isinstance(artifacts.get("urls"), list) else [])) if url], limit=24),
         "tools_used": _dedupe_strings(artifacts.get("tools_used") if isinstance(artifacts.get("tools_used"), list) else [], limit=32),
     }
@@ -562,7 +704,17 @@ def _merge_model_summary_with_raw_context(model_payload: dict[str, Any], raw_pay
     artifacts = merged.get("artifacts") if isinstance(merged.get("artifacts"), dict) else {}
     raw_artifacts = raw_payload.get("artifacts") if isinstance(raw_payload.get("artifacts"), dict) else {}
     merged["artifacts"] = {
-        "files": _dedupe_strings([str(file_name) for file_name in [*(artifacts.get("files") if isinstance(artifacts.get("files"), list) else []), *(raw_artifacts.get("files") or [])] if not _looks_like_web_host_path(str(file_name))], limit=32),
+        "files": _dedupe_strings(
+            [
+                str(file_name)
+                for file_name in [
+                    *(artifacts.get("files") if isinstance(artifacts.get("files"), list) else []),
+                    *(raw_artifacts.get("files") or []),
+                ]
+                if not _looks_like_web_host_path(str(file_name)) and _looks_like_valid_path(str(file_name))
+            ],
+            limit=32,
+        ),
         "urls": _dedupe_strings([url for url in (_clean_url(str(url)) for url in [*(artifacts.get("urls") if isinstance(artifacts.get("urls"), list) else []), *(raw_artifacts.get("urls") or [])]) if url], limit=24),
         "tools_used": _dedupe_strings([*(artifacts.get("tools_used") if isinstance(artifacts.get("tools_used"), list) else []), *(raw_artifacts.get("tools_used") or [])], limit=32),
     }
