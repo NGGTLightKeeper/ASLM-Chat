@@ -2027,11 +2027,16 @@ async def _fetch_preview_one(
             _trace(req_id, "preview_fetch.empty", url=url, policy=policy, elapsed=round(time.perf_counter() - t0, 3))
             return PreviewPayload()
 
+        preview_settings = dict(settings or {})
+        preview_settings["serp_snippet"] = (result.snippet or "").strip()
+        preview_settings["serp_title"] = (result.title or "").strip()
         try:
             payload = await asyncio.wait_for(
                 loop.run_in_executor(
                     _io_pool,
-                    lambda: build_preview_payload(url, raw_html, query=query, settings=settings),
+                    lambda u=url, html=raw_html, q=query, ps=preview_settings: build_preview_payload(
+                        u, html, query=q, settings=ps,
+                    ),
                 ),
                 timeout=fetch_timeout,
             )
@@ -2220,6 +2225,33 @@ class _OutputProfile:
     preview_fetch_limit: int   # max pages to actually scrape
     unparsed_bonus: int        # unparsed results appended if score ≥ threshold
     min_score_unparsed: float  # final-score floor for unparsed bonus results
+
+
+_DEPTH_PREVIEW_TYPES: frozenset[str] = frozenset({
+    "technical", "academic", "medical", "troubleshooting",
+})
+
+
+def _preview_display_limit(query_type: str | None, *, low_effort: bool) -> int:
+    if low_effort:
+        return 320
+    if (query_type or "general").lower() in _DEPTH_PREVIEW_TYPES:
+        return 2400
+    return 1600
+
+
+def _configure_preview_settings(
+    preview_settings: dict,
+    *,
+    query_type: str,
+) -> dict:
+    from core.extract.profile_chunk_selector import resolve_chunk_policy
+
+    settings = dict(preview_settings)
+    settings["query_type"] = query_type
+    policy = resolve_chunk_policy(query_type, char_budget=settings.get("output_chars"))
+    settings["output_chars"] = policy.char_budget
+    return settings
 
 
 _OUTPUT_PROFILES: dict[str, _OutputProfile] = {
@@ -3331,7 +3363,10 @@ class WebSearchService:
         payloads: list[PreviewPayload] = [PreviewPayload()] * len(deduped)
 
         if to_fetch and opts.fetch_previews and self._cfg.search.auto_scrape_preview:
-            preview_settings = get_preview_settings(apply_hardware_profile=False)
+            preview_settings = _configure_preview_settings(
+                get_preview_settings(apply_hardware_profile=False),
+                query_type=query_type,
+            )
             fetched = await _fetch_previews(
                 to_fetch,
                 query=query,
@@ -3604,7 +3639,10 @@ class WebSearchService:
         payloads: list[PreviewPayload] = [PreviewPayload()] * len(deduped)
 
         if to_fetch and opts.fetch_previews and self._cfg.search.auto_scrape_preview:
-            preview_settings = get_preview_settings(apply_hardware_profile=False)
+            preview_settings = _configure_preview_settings(
+                get_preview_settings(apply_hardware_profile=False),
+                query_type=query_type,
+            )
             fetched = await _fetch_previews(
                 to_fetch,
                 query=query,
@@ -3676,6 +3714,8 @@ class WebSearchService:
             max_results_override=top_k,
         )
 
+        low_effort = _is_low_effort(opts)
+        preview_cap = _preview_display_limit(query_type, low_effort=low_effort)
         sources = [
             _source_from_result(
                 result,
@@ -3683,8 +3723,8 @@ class WebSearchService:
                 source_id=_citation_source_id(search_id, rank),
                 score=result.score,
                 preview=payload.text,
-                snippet_limit=320 if _is_low_effort(opts) else 600,
-                preview_limit=320 if _is_low_effort(opts) else 1600,
+                snippet_limit=320 if low_effort else 600,
+                preview_limit=preview_cap,
             )
             for rank, (result, payload) in enumerate(selected_sources, 1)
         ]

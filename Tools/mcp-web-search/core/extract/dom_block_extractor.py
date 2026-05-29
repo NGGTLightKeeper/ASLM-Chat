@@ -1,0 +1,464 @@
+"""DOM-aware block extractor with language-agnostic structural scoring.
+
+Collects paragraph-level blocks after preclean and filters navigation/UI noise
+using link density, clickable density, fragmentation, sibling uniformity, and
+optional per-domain template frequency — not keyword dictionaries.
+
+Public API
+----------
+extract_dom_blocks(cleaned_html, *, domain, url, min_block_chars) -> (blocks, stats)
+structure_ui_score(tag) -> float
+template_frequency_score(domain, dom_path) -> float
+observe_domain_page(domain) -> None
+"""
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
+
+from .fact_signals import fact_signal_score, is_fact_like_text
+
+if TYPE_CHECKING:
+    from bs4 import Tag
+
+# Blocks with ui_score >= this are hard-rejected (unless protected).
+NAV_HARD_REJECT: float = 0.52
+
+_MIN_BLOCK_CHARS: int = 40
+
+_CLICKABLE_TAGS = frozenset({"a", "button", "input", "select", "textarea"})
+_CONTROL_TAGS = frozenset({"button", "input", "select", "textarea"})
+
+# CSS class/id fragments (language-neutral DOM hints)
+_NAV_ATTR_FRAGMENTS: frozenset[str] = frozenset({
+    "menu", "nav", "navigation", "breadcrumb", "breadcrumbs",
+    "sidebar", "widget", "footer", "header", "topbar", "toolbar",
+    "cookie", "banner", "popup", "overlay", "modal",
+    "social", "share", "pagination", "pager", "tabs-nav", "tab-nav",
+    "mega", "dropdown", "submenu", "subnav", "related", "recommend",
+})
+
+_NAV_ROLES: frozenset[str] = frozenset({
+    "navigation", "menubar", "menu", "toolbar", "banner",
+    "complementary", "contentinfo", "search",
+})
+
+_SEPARATOR_RE = re.compile(r"[|›»·•/\\]")
+_TOKEN_RE = re.compile(r"\S+")
+
+# Optional debug-only lexicon (weight ≤ 0.02 in scoring; never sole reject reason).
+_NAV_WORDS_RE = re.compile(
+    r"\b(back|login|sign in|sign up|cart|checkout|home|next|previous|"
+    r"назад|войти|корзина|каталог|главная|zurück|warenkorb|retour|panier|"
+    r"atrás|carrito|voltar|carrinho|geri|sepet|wstecz|koszyk)\b",
+    re.IGNORECASE | re.UNICODE,
+)
+
+# Per-domain DOM-path template stats: domain -> {path -> {seen, total_len, total_link}}
+_domain_stats: dict[str, dict[str, Any]] = {}
+
+
+def observe_domain_page(domain: str) -> None:
+    """Record that one more page was sampled for *domain* (for template frequency)."""
+    if not domain:
+        return
+    bucket = _domain_stats.setdefault(domain, {})
+    bucket["__pages__"] = int(bucket.get("__pages__", 0)) + 1
+
+
+def _record_path_observation(
+    domain: str,
+    dom_path: str,
+    text_len: int,
+    link_density: float,
+) -> None:
+    if not domain or not dom_path:
+        return
+    bucket = _domain_stats.setdefault(domain, {})
+    entry = bucket.setdefault(dom_path, {"seen": 0, "total_len": 0, "total_link": 0.0})
+    entry["seen"] = int(entry.get("seen", 0)) + 1
+    entry["total_len"] = int(entry.get("total_len", 0)) + text_len
+    entry["total_link"] = float(entry.get("total_link", 0.0)) + link_density
+
+
+def template_frequency_score(domain: str, dom_path: str) -> float:
+    """Return [0, 1]: how often this DOM path appeared on sampled pages for the domain."""
+    bucket = _domain_stats.get(domain or "", {})
+    entry = bucket.get(dom_path)
+    if not entry or not isinstance(entry, dict):
+        return 0.0
+    sampled = max(1, int(bucket.get("__pages__", 1)))
+    return min(int(entry.get("seen", 0)) / sampled, 1.0)
+
+
+def _domain_from_url(url: str | None) -> str:
+    if not url:
+        return ""
+    try:
+        host = urlparse(url).netloc.lower()
+        return host[4:] if host.startswith("www.") else host
+    except Exception:
+        return ""
+
+
+def _dom_path(tag: "Tag") -> str:
+    parts: list[str] = []
+    node = tag
+    while node is not None and getattr(node, "name", None):
+        name = node.name
+        if name in {"html", "[document]"}:
+            break
+        parts.append(name)
+        node = node.parent
+    return "/" + "/".join(reversed(parts))
+
+
+def _attr_nav_score(tag: "Tag") -> float:
+    attrs = tag.attrs or {}
+    combined = " ".join(
+        str(v) if not isinstance(v, list) else " ".join(str(x) for x in v)
+        for k, v in attrs.items()
+        if k in {"id", "class", "role", "aria-label", "data-testid", "data-component"}
+    ).lower()
+    if not combined:
+        return 0.0
+    hits = sum(1 for f in _NAV_ATTR_FRAGMENTS if f in combined)
+    role_hit = any(r in combined for r in _NAV_ROLES)
+    return min(hits * 0.20 + (0.25 if role_hit else 0.0), 1.0)
+
+
+def _anchor_density(tag: "Tag", text: str) -> float:
+    if not text:
+        return 0.0
+    anchor_chars = sum(len(a.get_text()) for a in tag.find_all("a", recursive=True))
+    return min(anchor_chars / max(len(text), 1), 1.0)
+
+
+def _clickable_density(tag: "Tag") -> float:
+    descendants = tag.find_all(True, recursive=True)
+    if not descendants:
+        return 0.0
+    clickable = tag.find_all(list(_CLICKABLE_TAGS), recursive=True)
+    return min(len(clickable) / max(len(descendants), 1), 1.0)
+
+
+def _control_density(tag: "Tag") -> float:
+    descendants = tag.find_all(True, recursive=True)
+    if not descendants:
+        return 0.0
+    controls = tag.find_all(list(_CONTROL_TAGS), recursive=True)
+    return min(len(controls) / max(len(descendants), 1), 1.0)
+
+
+def _separator_ratio(text: str) -> float:
+    if not text:
+        return 0.0
+    seps = len(_SEPARATOR_RE.findall(text))
+    return min(seps / max(len(text), 1) * 12, 1.0)
+
+
+def _short_text_node_ratio(tag: "Tag") -> float:
+    nodes = [s.strip() for s in tag.find_all(string=True) if s and str(s).strip()]
+    if not nodes:
+        return 0.0
+    short = sum(1 for s in nodes if len(s) < 30)
+    return short / len(nodes)
+
+
+def _text_density(tag: "Tag", text: str) -> float:
+    descendants = tag.find_all(True, recursive=True)
+    return min(len(text) / max(len(descendants), 1) / 120.0, 1.0)
+
+
+def _sentence_like_ratio(text: str) -> float:
+    """Fraction of clause splits that look like real sentences (not menu labels)."""
+    parts = re.split(r"[.!?;:。！？]+", text or "")
+    parts = [p.strip() for p in parts if p.strip()]
+    if not parts:
+        return 0.0
+    good = sum(1 for p in parts if 8 <= len(p.split()) <= 90)
+    return good / len(parts)
+
+
+def _monolithic_list_score(text: str) -> float:
+    """Long unstructured word lists without facts (mega-menus, category dumps)."""
+    if len(text) < 200:
+        return 0.0
+    words = text.split()
+    if len(words) < 28:
+        return 0.0
+    sent = _sentence_like_ratio(text)
+    digit_ratio = sum(ch.isdigit() for ch in text) / max(len(text), 1)
+    if sent < 0.14 and digit_ratio < 0.04:
+        return min(1.0, len(words) / 65.0)
+    return 0.0
+
+
+def _menu_cluster_score(tag: "Tag") -> float:
+    """Detect menu/list clusters: many same-tag siblings with similar lengths."""
+    parent = tag.parent
+    if parent is None:
+        return 0.0
+    siblings = [
+        s for s in parent.find_all(recursive=False)
+        if getattr(s, "name", None) == tag.name
+    ]
+    if len(siblings) < 3:
+        return 0.0
+    lengths = [len(s.get_text(strip=True)) for s in siblings]
+    if not lengths:
+        return 0.0
+    avg = sum(lengths) / len(lengths)
+    if avg < 20:
+        return 0.0
+    similar = sum(1 for ln in lengths if abs(ln - avg) <= max(25, avg * 0.45))
+    return min(1.0, similar / len(siblings))
+
+
+def _ancestor_menu_hint(tag: "Tag") -> float:
+    node = tag
+    for _ in range(4):
+        if node is None:
+            break
+        attrs = " ".join(
+            str(v) if not isinstance(v, list) else " ".join(str(x) for x in v)
+            for k, v in (node.attrs or {}).items()
+            if k in {"id", "class", "role"}
+        ).lower()
+        if any(f in attrs for f in ("menu", "nav", "breadcrumb", "mega")):
+            return 0.7
+        node = node.parent
+    return 0.0
+
+
+def _sibling_uniformity(tag: "Tag") -> float:
+    parent = tag.parent
+    if parent is None:
+        return 0.0
+    siblings = [
+        s for s in parent.find_all(recursive=False)
+        if getattr(s, "name", None) and s is not tag
+    ]
+    if len(siblings) < 2:
+        return 0.0
+    same_tag = sum(1 for s in siblings if s.name == tag.name) / len(siblings)
+    my_len = len(tag.get_text(strip=True))
+    tol = max(20, my_len * 0.35)
+    similar_len = sum(
+        1 for s in siblings
+        if abs(len(s.get_text(strip=True)) - my_len) <= tol
+    ) / len(siblings)
+    sib_link = []
+    for s in siblings:
+        st = s.get_text(separator=" ", strip=True)
+        sib_link.append(_anchor_density(s, st) if st else 0.0)
+    my_link = _anchor_density(tag, tag.get_text(separator=" ", strip=True))
+    if sib_link:
+        avg_link = sum(sib_link) / len(sib_link)
+        link_sim = 1.0 - min(abs(my_link - avg_link), 1.0)
+    else:
+        link_sim = 0.0
+    return min(1.0, 0.40 * same_tag + 0.35 * similar_len + 0.25 * link_sim)
+
+
+def _nav_word_density_debug(text: str) -> float:
+    if not text:
+        return 0.0
+    matches = _NAV_WORDS_RE.findall(text)
+    tokens = _TOKEN_RE.findall(text)
+    return min(len(matches) / max(len(tokens), 1), 1.0)
+
+
+def structure_ui_score(
+    tag: "Tag",
+    *,
+    domain: str = "",
+    debug_lexicon: bool = False,
+) -> float:
+    """Language-agnostic UI/nav score in [0, 1]. Higher = more likely boilerplate."""
+    text = tag.get_text(separator=" ", strip=True)
+    link_s = _anchor_density(tag, text)
+    click_s = _clickable_density(tag)
+    control_s = _control_density(tag)
+    short_s = _short_text_node_ratio(tag)
+    sep_s = _separator_ratio(text)
+    sib_s = _sibling_uniformity(tag)
+    template_s = template_frequency_score(domain, _dom_path(tag))
+    sentence_s = _sentence_like_ratio(text)
+    text_s = _text_density(tag, text)
+    attr_s = _attr_nav_score(tag)
+    mono_s = _monolithic_list_score(text)
+    cluster_s = _menu_cluster_score(tag)
+    ancestor_s = _ancestor_menu_hint(tag)
+
+    ui = (
+        0.20 * link_s
+        + 0.16 * click_s
+        + 0.14 * control_s
+        + 0.14 * short_s
+        + 0.10 * sib_s
+        + 0.08 * template_s
+        + 0.04 * sep_s
+        + 0.06 * attr_s
+        + 0.14 * mono_s
+        + 0.10 * cluster_s
+        + 0.08 * ancestor_s
+        - 0.10 * sentence_s
+        - 0.08 * text_s
+    )
+    structural_hint = max(attr_s, ancestor_s, cluster_s, mono_s)
+    if structural_hint >= 0.45:
+        ui = max(ui, structural_hint * 0.82)
+    if debug_lexicon:
+        ui += 0.02 * _nav_word_density_debug(text)
+    return max(0.0, min(round(ui, 4), 1.0))
+
+
+def nav_score(tag: "Tag", *, domain: str = "") -> float:
+    """Backward-compatible alias for structure_ui_score."""
+    return structure_ui_score(tag, domain=domain)
+
+
+def _content_score(tag: "Tag", text: str) -> float:
+    sentence_s = _sentence_like_ratio(text)
+    text_s = _text_density(tag, text)
+    link_s = _anchor_density(tag, text)
+    low_link = max(0.0, 1.0 - link_s * 1.4)
+    paragraph_mass = min(len(text) / 600.0, 1.0)
+    return min(
+        1.0,
+        0.26 * text_s
+        + 0.22 * sentence_s
+        + 0.18 * low_link
+        + 0.14 * paragraph_mass
+        + 0.20 * max(0.0, 1.0 - structure_ui_score(tag)),
+    )
+
+
+def block_keep_score(
+    tag: "Tag",
+    text: str,
+    *,
+    domain: str = "",
+    query_relevance: float = 0.0,
+) -> float:
+    """Final keep score: content minus UI, with optional query relevance hook."""
+    ui = structure_ui_score(tag, domain=domain)
+    content = _content_score(tag, text)
+    fact_s = fact_signal_score(text)
+    return (
+        0.60 * content
+        - 0.45 * ui
+        + 0.20 * query_relevance
+        + 0.10 * fact_s
+    )
+
+
+def _is_protected(tag: "Tag", text: str) -> bool:
+    if tag.name in {"td", "th", "tr", "table"}:
+        return bool(text.strip())
+    return is_fact_like_text(text)
+
+
+_CANDIDATE_TAGS = frozenset({
+    "p", "li", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6",
+    "blockquote", "pre", "code",
+})
+_CONTAINER_TAGS = frozenset({"article", "section", "main", "div"})
+
+
+def _collect_leaf_blocks(soup) -> list[tuple["Tag", str]]:
+    results: list[tuple["Tag", str]] = []
+    seen_texts: set[str] = set()
+
+    for tag in soup.find_all(_CANDIDATE_TAGS | _CONTAINER_TAGS):
+        if tag.name in _CONTAINER_TAGS and tag.find(list(_CANDIDATE_TAGS)):
+            continue
+        text = re.sub(r"[ \t\r\f\v]+", " ", tag.get_text(separator=" ", strip=True)).strip()
+        if len(text) < _MIN_BLOCK_CHARS:
+            continue
+        sig = text[:60].lower()
+        if sig in seen_texts:
+            continue
+        seen_texts.add(sig)
+        results.append((tag, text))
+    return results
+
+
+def extract_dom_blocks(
+    cleaned_html: str,
+    *,
+    domain: str | None = None,
+    url: str | None = None,
+    min_block_chars: int = _MIN_BLOCK_CHARS,
+    nav_reject_threshold: float = NAV_HARD_REJECT,
+    debug_lexicon: bool = False,
+) -> tuple[list[str], dict[str, int | str]]:
+    """Extract content blocks, filtering structural UI/nav noise."""
+    empty_stats: dict[str, int | str] = {
+        "total_candidates": 0,
+        "nav_rejected": 0,
+        "protected_kept": 0,
+        "extraction_status": "empty",
+    }
+    if not cleaned_html:
+        return [], empty_stats
+
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return [], empty_stats
+
+    resolved_domain = (domain or _domain_from_url(url)).lower()
+
+    soup = BeautifulSoup(cleaned_html, "html.parser")
+    candidates = _collect_leaf_blocks(soup)
+    total = len(candidates)
+    rejected = 0
+    protected_kept = 0
+    blocks: list[str] = []
+
+    # --- pass 1: score using the OLD (pre-page) template statistics ---
+    path_observations: list[tuple[str, int, float]] = []
+    for tag, text in candidates:
+        if len(text) < min_block_chars:
+            continue
+        dom_path = _dom_path(tag)
+        link_d = _anchor_density(tag, text)
+        if resolved_domain:
+            path_observations.append((dom_path, len(text), link_d))
+
+        ui = structure_ui_score(tag, domain=resolved_domain, debug_lexicon=debug_lexicon)
+        if ui >= nav_reject_threshold:
+            if _is_protected(tag, text):
+                protected_kept += 1
+                blocks.append(text)
+            else:
+                rejected += 1
+        else:
+            blocks.append(text)
+
+    # --- pass 2: update statistics AFTER scoring (avoid self-poisoning) ---
+    if resolved_domain:
+        observe_domain_page(resolved_domain)
+        seen_paths: set[str] = set()
+        for dom_path, text_len, link_d in path_observations:
+            if dom_path not in seen_paths:
+                seen_paths.add(dom_path)
+                _record_path_observation(resolved_domain, dom_path, text_len, link_d)
+
+    status = "ok"
+    if total > 0 and rejected / total > 0.5 and len(blocks) < 2:
+        status = "nav_heavy"
+    elif not blocks:
+        status = "no_blocks"
+
+    stats: dict[str, int | str] = {
+        "total_candidates": total,
+        "nav_rejected": rejected,
+        "protected_kept": protected_kept,
+        "extraction_status": status,
+    }
+    return blocks, stats
