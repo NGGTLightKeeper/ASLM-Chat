@@ -70,8 +70,6 @@ DEFAULTS: dict[str, Any] = {
     "google-genai": False,
     "google_genai_url": "generativelanguage.googleapis.com",
     "google_genai_api_key": "",
-    # False = legacy citation chips (search snippet preview only).
-    "citation-alignment-enabled": False,
 }
 
 CONSOLE_LOG_LEVELS = {"basic", "debug", "trace"}

@@ -14,7 +14,6 @@ logs/web_search_trace.log
 logs/read_page_trace.log
 logs/mcp_trace.log
 logs/core.log
-logs/gte.log
 """
 
 from __future__ import annotations
@@ -34,7 +33,6 @@ _SERVICE_LOGS: dict[str, str] = {
     "adapters.mcp.server": "mcp_trace.log",
     "mcp_server_bridge": "mcp_trace.log",
     "core": "core.log",
-    "core.query.gte_evidence_reranker": "gte.log",
 }
 
 _FORMAT = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
