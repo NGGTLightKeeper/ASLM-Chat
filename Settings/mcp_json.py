@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper. All Rights Reserved.
 
-"""User MCP configuration (LM Studio / Cursor-style ``mcp.json``)."""
-
 from __future__ import annotations
 
 import json
@@ -23,23 +21,22 @@ DEFAULT_MCP_JSON = (
 )
 
 
+# Build a stable slug from a display name for MCP server ids.
 def _slugify(value: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
     return normalized or "mcp"
 
 
+# Create MCP/ and a default mcp.json when the file is missing.
 def ensure_default_mcp_json() -> None:
-    """Create ``MCP/`` and a default ``mcp.json`` when missing."""
-
     MCP_DIR.mkdir(parents=True, exist_ok=True)
     if MCP_JSON_PATH.is_file():
         return
     MCP_JSON_PATH.write_text(DEFAULT_MCP_JSON, encoding="utf-8")
 
 
+# Return path and mtime for cache invalidation, or None when the file is absent.
 def mcp_json_signature() -> tuple[str, int] | None:
-    """Return path and mtime for cache invalidation; None when file is absent."""
-
     if not MCP_JSON_PATH.is_file():
         return None
     try:
@@ -49,16 +46,14 @@ def mcp_json_signature() -> tuple[str, int] | None:
     return (str(MCP_JSON_PATH.resolve()), stat.st_mtime_ns)
 
 
+# Return mcp.json contents, creating a default file when needed.
 def load_raw_text() -> str:
-    """Return file contents, creating a default file when needed."""
-
     ensure_default_mcp_json()
     return MCP_JSON_PATH.read_text(encoding="utf-8")
 
 
+# Parse mcp.json into a dictionary.
 def load_parsed() -> dict[str, Any]:
-    """Parse ``mcp.json`` into a dictionary."""
-
     ensure_default_mcp_json()
     raw = MCP_JSON_PATH.read_text(encoding="utf-8")
     try:
@@ -70,9 +65,8 @@ def load_parsed() -> dict[str, Any]:
     return data
 
 
+# Raise ValueError when the document is not a valid MCP configuration.
 def validate_mcp_document(data: dict[str, Any]) -> None:
-    """Raise ValueError when the document is not a valid mcp config."""
-
     servers = data.get("mcpServers")
     if servers is None:
         raise ValueError("Missing top-level key 'mcpServers'")
@@ -116,10 +110,9 @@ def validate_mcp_document(data: dict[str, Any]) -> None:
 TransportKind = Literal["stdio", "http"]
 
 
+# One normalized MCP server entry from mcpServers.
 @dataclass(frozen=True)
 class UserMcpServerEntry:
-    """One normalized server from ``mcpServers``."""
-
     config_key: str
     server_id: str
     display_name: str
@@ -132,6 +125,7 @@ class UserMcpServerEntry:
     headers: dict[str, str] | None
 
 
+# Pick a unique server id that does not collide with reserved ids.
 def _unique_server_id(base: str, taken: set[str]) -> str:
     candidate = base
     if candidate not in taken:
@@ -147,9 +141,8 @@ def _unique_server_id(base: str, taken: set[str]) -> str:
         index += 1
 
 
+# Parse mcp.json and return user server entries with stable ids.
 def iter_user_mcp_entries(reserved_ids: set[str]) -> list[UserMcpServerEntry]:
-    """Parse ``mcp.json`` and return user server entries with stable ids."""
-
     ensure_default_mcp_json()
     try:
         data = load_parsed()
@@ -232,9 +225,8 @@ def iter_user_mcp_entries(reserved_ids: set[str]) -> list[UserMcpServerEntry]:
     return result
 
 
+# Validate JSON and atomically write mcp.json.
 def save_raw_text(text: str) -> None:
-    """Validate JSON and atomic-write ``mcp.json``."""
-
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:

@@ -14,9 +14,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 HOST_LOCALE_FILE = BASE_DIR / "Settings" / "host_locale.json"
 
 
+# Write JSON atomically via a temporary file and replace on success.
 def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
-    """Write JSON to ``path`` using replace-on-success semantics."""
-
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(path.name + ".tmp")
     try:
@@ -33,17 +32,15 @@ def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
         raise
 
 
+# Persist the ASLM host locale snapshot next to module settings.
 def save_host_locale_payload(data: dict[str, Any]) -> None:
-    """Persist the ASLM host locale snapshot next to module settings."""
-
     if not isinstance(data, dict):
         raise TypeError("host locale payload must be a dict")
     atomic_write_json(HOST_LOCALE_FILE, data)
 
 
+# Load the last persisted host locale snapshot, or None when missing or invalid.
 def load_host_locale() -> dict[str, Any] | None:
-    """Return the last persisted host locale snapshot, or None if missing or invalid."""
-
     if not HOST_LOCALE_FILE.exists():
         return None
     try:
@@ -60,7 +57,7 @@ def load_host_locale() -> dict[str, Any] | None:
     return raw if isinstance(raw, dict) else None
 
 
-# Sync with ASLM AppPersonalizationConfig.SupportedLanguageCodes / AppLocalizationService.
+# Language codes supported by ASLM AppPersonalizationConfig / AppLocalizationService.
 HOST_SUPPORTED_LANGUAGE_CODES: frozenset[str] = frozenset(
     {
         "en",
@@ -87,9 +84,8 @@ HOST_SUPPORTED_LANGUAGE_CODES: frozenset[str] = frozenset(
 )
 
 
+# Normalize a host language code to a supported value, defaulting to English.
 def normalize_host_language(value: str | None) -> str:
-    """Return a canonical ASLM host language code, falling back to English."""
-
     if not value or not str(value).strip():
         return "en"
     trimmed = str(value).strip()
@@ -99,18 +95,16 @@ def normalize_host_language(value: str | None) -> str:
     return "en"
 
 
+# Return the BCP-47 language code from the host locale snapshot.
 def get_language() -> str:
-    """Return the BCP-47 language code from the snapshot."""
-
     payload = load_host_locale()
     if payload:
         return normalize_host_language(str(payload.get("language", "en")))
     return "en"
 
 
+# Return the host-provided display name for the current language, when available.
 def get_display_name() -> str | None:
-    """Return the host-provided display name for the current language, if any."""
-
     payload = load_host_locale()
     if not payload:
         return None

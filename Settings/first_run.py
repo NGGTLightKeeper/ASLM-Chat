@@ -19,8 +19,6 @@ def _build_initial_settings(
     ui_port: int,
     api_port: int,
 ) -> dict[str, Any]:
-    """Return the initial settings payload while preserving existing values."""
-
     initial: dict[str, Any] = dict(existing)
     initial.update(
         {
@@ -43,11 +41,10 @@ def _build_initial_settings(
 
 # Print a standardized bootstrap warning.
 def _print_warning(message: str) -> None:
-    """Print a standardized first-run warning message."""
-
     print(f"[ASLM-Chat] Warning: {message}")
 
-# Run an optional bootstrap command without failing the setup.
+
+# Run an optional bootstrap command without failing the full first-run setup.
 def _run_optional_command(
     command: list[str],
     *,
@@ -55,8 +52,6 @@ def _run_optional_command(
     log: bool,
     cwd: Path | None = None,
 ) -> bool:
-    """Run one optional bootstrap command without failing the full first-run."""
-
     if log:
         print(f"[ASLM-Chat] {description}...")
 
@@ -86,10 +81,8 @@ def _run_optional_command(
     return True
 
 
-# Ensure Playwright browsers are installed.
+# Install Playwright browsers needed by the bundled tools.
 def _ensure_playwright_browsers(venv_id: str, log: bool) -> None:
-    """Install Playwright browsers needed by the bundled tools."""
-
     from Services import venv_manager
 
     python_path = venv_manager.get_venv_python(venv_id)
@@ -103,10 +96,9 @@ def _ensure_playwright_browsers(venv_id: str, log: bool) -> None:
         log=log,
     )
 
-# Ensure the Camoufox browser binary is available.
-def _ensure_camoufox_binary(venv_id: str, log: bool) -> None:
-    """Download the Camoufox browser binary when available."""
 
+# Download the Camoufox browser binary when the venv is available.
+def _ensure_camoufox_binary(venv_id: str, log: bool) -> None:
     from Services import venv_manager
 
     python_path = venv_manager.get_venv_python(venv_id)
@@ -120,10 +112,9 @@ def _ensure_camoufox_binary(venv_id: str, log: bool) -> None:
         log=log,
     )
 
-# Ensure required NLTK datasets are installed.
-def _ensure_nltk_data(log: bool) -> None:
-    """Download the NLTK datasets expected by the tool stack."""
 
+# Download the NLTK datasets expected by the tool stack.
+def _ensure_nltk_data(log: bool) -> None:
     from Services import venv_manager
 
     code = """
@@ -142,10 +133,9 @@ if failed:
     if not venv_manager.run_venv_code("mcp-web-search", code, log=log):
         _print_warning("NLTK data bootstrap did not complete successfully.")
 
-# Ensure the default spaCy English model is installed.
-def _ensure_spacy_model(log: bool) -> None:
-    """Install the default spaCy English model when missing."""
 
+# Install the default spaCy English model when missing.
+def _ensure_spacy_model(log: bool) -> None:
     from Services import venv_manager
 
     code = """
@@ -159,10 +149,9 @@ print("[ASLM-Chat] spaCy model 'en_core_web_sm' is already installed.")
     if not venv_manager.run_venv_code("mcp-web-search", code, log=log):
         _print_warning("spaCy model bootstrap did not complete successfully.")
 
-# Run all optional tool bootstrap steps.
-def _run_tool_bootstrap(log: bool) -> None:
-    """Run post-dependency bootstrap tasks that were previously handled by install.bat."""
 
+# Run post-dependency bootstrap tasks for bundled tools.
+def _run_tool_bootstrap(log: bool) -> None:
     from Services import venv_manager
 
     if not venv_manager.ensure_all(log=log):
@@ -181,10 +170,8 @@ def _run_tool_bootstrap(log: bool) -> None:
     _ensure_spacy_model(log)
 
 
-# Print the first-run summary.
+# Print a short summary of the written first-run settings.
 def _print_summary(settings_file: Path, initial: dict[str, Any]) -> None:
-    """Print a short summary of the written first-run settings."""
-
     print(f"[ASLM-Chat] Settings written to: {settings_file}")
     print(f"[ASLM-Chat]   ui-port    : {initial['ui-port']}")
     print(f"[ASLM-Chat]   api-port   : {initial['api-port']}")
@@ -203,8 +190,6 @@ def run(
     ui_port: int = 20000,
     api_port: int = 20001,
 ) -> None:
-    """Create the initial settings file while preserving existing values."""
-
     from Settings.settings import SETTINGS_FILE, load_settings, save_settings
 
     existing = load_settings()

@@ -14,9 +14,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 HOST_THEME_FILE = BASE_DIR / "Settings" / "host_theme.json"
 
 
+# Write JSON atomically via a temporary file and replace on success.
 def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
-    """Write JSON to ``path`` using replace-on-success semantics."""
-
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(path.name + ".tmp")
     try:
@@ -33,17 +32,15 @@ def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
         raise
 
 
+# Persist the ASLM host theme snapshot next to module settings.
 def save_host_theme_payload(data: dict[str, Any]) -> None:
-    """Persist the ASLM host theme snapshot next to module settings."""
-
     if not isinstance(data, dict):
         raise TypeError("host theme payload must be a dict")
     atomic_write_json(HOST_THEME_FILE, data)
 
 
+# Load the last persisted host theme snapshot, or None when missing or invalid.
 def load_host_theme() -> dict[str, Any] | None:
-    """Return the last persisted host theme snapshot, or None if missing or invalid."""
-
     if not HOST_THEME_FILE.exists():
         return None
     try:
