@@ -27,6 +27,7 @@ export function createParametersUi(context) {
     return String(serverId || '').trim();
   }
 
+  // Collect normalized ids for all bundled tool servers.
   function availableToolServerIds() {
     return new Set((state.availableToolServers || []).map(function mapServer(server) {
       return normalizeToolServerId(server && server.id);
@@ -75,6 +76,7 @@ export function createParametersUi(context) {
     renderToolControls();
   }
 
+  // Tool server list rendering.
   function toolServerIconClass(server) {
     const text = `${server && server.id ? server.id : ''} ${server && server.name ? server.name : ''}`.toLowerCase();
     if (text.includes('browser')) {
@@ -89,6 +91,7 @@ export function createParametersUi(context) {
     return 'is-generic-tool';
   }
 
+  // Render bundled tool server checkboxes into one target.
   function renderToolServerList($target, hasToolSupport) {
     $target.empty();
     if (!hasToolSupport) {
@@ -138,6 +141,7 @@ export function createParametersUi(context) {
     renderMcpControls();
   }
 
+  // Render the user MCP settings section and server list.
   function renderMcpControls() {
     const show = Boolean(state.toolState.supported);
     dom.$groupMcp.toggle(show);
@@ -184,6 +188,7 @@ export function createParametersUi(context) {
     }
   }
 
+  // MCP JSON editor helpers.
   function escapeHtmlPlain(value) {
     return String(value || '')
       .replace(/&/g, '&amp;')
@@ -191,6 +196,7 @@ export function createParametersUi(context) {
       .replace(/>/g, '&gt;');
   }
 
+  // Highlight JSON source for the MCP JSON editor.
   function highlightJsonHtml(source) {
     const text = String(source || '');
     if (typeof hljs === 'undefined' || !hljs.highlight) {
@@ -203,6 +209,7 @@ export function createParametersUi(context) {
     }
   }
 
+  // Build line numbers for the MCP JSON editor gutter.
   function buildGutterLines(lineCount) {
     const lines = [];
     for (let i = 1; i <= lineCount; i += 1) {
@@ -211,6 +218,7 @@ export function createParametersUi(context) {
     return lines.join('\n');
   }
 
+  // Reload tool servers after MCP config is saved.
   async function refreshToolServersAfterMcpSave() {
     const engine = normalizeEngineValue(state.activeEngine || 'ollama-service');
     const modelName = String(dom.$modelSelector.val() || '').trim();
@@ -220,6 +228,7 @@ export function createParametersUi(context) {
     updateAvailableToolServers(data.tool_servers || data.tools || data.servers || []);
   }
 
+  // Open the modal MCP JSON configuration editor.
   async function openMcpJsonEditor() {
     let data;
     try {
@@ -413,11 +422,13 @@ export function createParametersUi(context) {
       });
   }
 
+  // Resolve the localized label for one parameter.
   function localizedParamLabel(key, config) {
     const fallback = (config && config.label) || formatExperimentalParameterLabel(key);
     return t(`parameters.${key}.label`, {}, fallback);
   }
 
+  // Resolve the localized help note for one parameter.
   function localizedParamNote(key, config) {
     if (config && config.note) {
       return t(`parameters.${key}.note`, {}, config.note);
@@ -1000,6 +1011,7 @@ export function createParametersUi(context) {
     dom.$thinkToggleBtnConv = dom.$thinkLevelSelectorConv.find('.think-toggle-btn').first();
   }
 
+  // Resolve the display label for one thinking level value.
   function getThinkLevelLabel(value) {
     const normalizedValue = String(value || '').trim().toLowerCase();
     const $matchingButton = dom.$thinkLevelSelector

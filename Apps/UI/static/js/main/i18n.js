@@ -1,6 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-/** Client-side translations from ``#aslmHostLocaleData`` (see host_locale_bridge). */
+// Client-side translations from #aslmHostLocaleData (see host_locale_bridge).
 
 let effectiveLocale = 'en';
 let isRtlLayout = false;
@@ -8,6 +8,9 @@ let messages = {};
 
 const PLACEHOLDER_RE = /\{(\w+)\}/g;
 
+
+// Catalog lookup helpers.
+// Resolve one dot-separated key against a nested message catalog.
 function lookupNested(catalog, key) {
   const parts = String(key || '').split('.');
   let current = catalog;
@@ -20,6 +23,7 @@ function lookupNested(catalog, key) {
   return current;
 }
 
+// Replace {name} placeholders in one template string.
 function interpolate(template, params) {
   if (!params || typeof template !== 'string') {
     return template;
@@ -32,7 +36,9 @@ function interpolate(template, params) {
   });
 }
 
-/** Load locale bootstrap JSON embedded by Django. */
+
+// Locale bootstrap.
+// Load locale bootstrap JSON embedded by Django.
 export function initI18n() {
   const el = document.getElementById('aslmHostLocaleData');
   if (!el) {
@@ -50,18 +56,19 @@ export function initI18n() {
   }
 }
 
+// Read the active locale code chosen by the host bridge.
 export function getEffectiveLocale() {
   return effectiveLocale;
 }
 
+// Report whether the active locale uses right-to-left layout.
 export function isRtl() {
   return isRtlLayout;
 }
 
-/**
- * Translate a dot-path key. ``fallback`` is used when the key is missing.
- * ``params`` replaces ``{name}`` placeholders.
- */
+
+// Translation API.
+// Translate one dot-path key with optional params and fallback text.
 export function t(key, params, fallback) {
   let value = lookupNested(messages, key);
   if (value == null && fallback !== undefined) {
@@ -76,7 +83,7 @@ export function t(key, params, fallback) {
   return params ? interpolate(value, params) : value;
 }
 
-/** BCP-47 tag for Intl formatters (maps zh-Hans → zh-CN style). */
+// Build a BCP-47 tag for Intl formatters (maps zh-Hans to zh-CN style).
 export function intlLocaleTag() {
   const code = effectiveLocale || 'en';
   if (code === 'zh-Hans') {

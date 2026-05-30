@@ -2,6 +2,9 @@
 
 import { escHtml, escapeAttributeValue } from '../main/utils.js';
 
+
+// Preview data helpers.
+// Parse citation preview JSON stored on one chip element.
 function parseCitationPreviewData(chip) {
   try {
     const parsed = JSON.parse(String(chip && chip.getAttribute('data-citation-preview') || ''));
@@ -11,6 +14,7 @@ function parseCitationPreviewData(chip) {
   }
 }
 
+// Format one evidence-kind label for the preview footer.
 function previewEvidenceLabel(value) {
   const evidence = String(value || '').trim();
   if (!evidence) {
@@ -27,6 +31,7 @@ function previewEvidenceLabel(value) {
     .replace(/\b\w/g, function titleCase(letter) { return letter.toUpperCase(); });
 }
 
+// Build the hover-card HTML for one citation preview payload.
 function renderCitationPreviewHtml(data) {
   const evidenceLabel = previewEvidenceLabel(data.evidenceKind);
   const faviconHtml = data.faviconUrl
@@ -67,6 +72,9 @@ function renderCitationPreviewHtml(data) {
   `;
 }
 
+
+// Clipboard helpers.
+// Copy text with a hidden textarea fallback for older browsers.
 function fallbackCopyText(text, onDone) {
   const textarea = document.createElement('textarea');
   textarea.value = text;
@@ -83,6 +91,7 @@ function fallbackCopyText(text, onDone) {
   document.body.removeChild(textarea);
 }
 
+// Copy text using the Clipboard API with textarea fallback.
 function copyTextToClipboard(text, onDone) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(onDone).catch(function fallbackClipboard() {
@@ -93,6 +102,9 @@ function copyTextToClipboard(text, onDone) {
   fallbackCopyText(text, onDone);
 }
 
+
+// Citation preview cards.
+// Bind hover and focus preview cards for citation chips under one root.
 export function bindCitationPreviewCards(root) {
   const eventRoot = root || document;
   if (!eventRoot || eventRoot.__aslmCitationPreviewBound) {
@@ -105,16 +117,19 @@ export function bindCitationPreviewCards(root) {
   let activeChip = null;
   let previewEl = null;
 
+  // Cancel a pending delayed open timer.
   function cancelOpen() {
     clearTimeout(openTimer);
     openTimer = null;
   }
 
+  // Cancel a pending delayed close timer.
   function cancelClose() {
     clearTimeout(closeTimer);
     closeTimer = null;
   }
 
+  // Hide the floating preview card.
   function hidePreview() {
     if (previewEl) {
       previewEl.classList.remove('is-visible');
@@ -122,12 +137,14 @@ export function bindCitationPreviewCards(root) {
     activeChip = null;
   }
 
+  // Schedule hiding the preview after the pointer leaves the chip.
   function scheduleClose() {
     cancelOpen();
     cancelClose();
     closeTimer = setTimeout(hidePreview, 180);
   }
 
+  // Create or return the singleton preview card element.
   function ensurePreview() {
     if (previewEl) {
       return previewEl;
@@ -161,6 +178,7 @@ export function bindCitationPreviewCards(root) {
     return previewEl;
   }
 
+  // Position the preview card near the active citation chip.
   function positionPreview(chip) {
     const card = ensurePreview();
     const chipRect = chip.getBoundingClientRect();
@@ -177,6 +195,7 @@ export function bindCitationPreviewCards(root) {
     card.style.top = `${Math.max(12, top)}px`;
   }
 
+  // Render and show the preview card for one chip.
   function showPreview(chip) {
     const data = parseCitationPreviewData(chip);
     if (!data || !data.url) {
@@ -189,6 +208,7 @@ export function bindCitationPreviewCards(root) {
     positionPreview(chip);
   }
 
+  // Open the preview after a short hover delay.
   function scheduleOpen(chip) {
     cancelOpen();
     cancelClose();

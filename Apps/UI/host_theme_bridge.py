@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper. All Rights Reserved.
 
-"""Map ASLM ``host_theme.json`` (see ASLM ``ThemePaletteResolver`` / ``ModuleThemePayloadBuilder``) to Django template context and CSS custom properties."""
-
 from __future__ import annotations
 
 import json
@@ -58,9 +56,8 @@ _RGBA_FN_RE = re.compile(
 _LIGHT_SURFACE_LUMINANCE_THRESHOLD: Final[float] = 0.45
 
 
+# Convert MAUI / ASLM hex strings to a CSS color (``#rrggbb`` or ``rgba(...)``).
 def normalize_color_to_css(raw: str | None) -> str | None:
-    """Convert MAUI / ASLM hex strings to a CSS color (``#rrggbb`` or ``rgba(...)``)."""
-
     if raw is None:
         return None
     s = str(raw).strip()
@@ -87,6 +84,7 @@ def normalize_color_to_css(raw: str | None) -> str | None:
     return f"rgba({rr}, {gg}, {bb}, {alpha})"
 
 
+# Effective theme.
 def _effective_theme(payload: dict[str, Any]) -> str:
     theme = str(payload.get("theme") or "").strip().lower()
     if theme in {"light", "dark"}:
@@ -97,13 +95,13 @@ def _effective_theme(payload: dict[str, Any]) -> str:
     return "dark"
 
 
+# Srgb channel to linear.
 def _srgb_channel_to_linear(c: float) -> float:
     return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
 
 
+# WCAG relative luminance for sRGB channels in 0..1.
 def _relative_luminance_srgb(r: float, g: float, b: float) -> float:
-    """WCAG relative luminance for sRGB channels in 0..1."""
-
     return (
         0.2126 * _srgb_channel_to_linear(r)
         + 0.7152 * _srgb_channel_to_linear(g)
@@ -111,9 +109,8 @@ def _relative_luminance_srgb(r: float, g: float, b: float) -> float:
     )
 
 
+# Parse ``#rrggbb`` (from :func:`normalize_color_to_css`) or ``rgba(r,g,b,a)`` into sRGB 0..1.
 def css_color_to_srgb_channels(css: str) -> tuple[float, float, float] | None:
-    """Parse ``#rrggbb`` (from :func:`normalize_color_to_css`) or ``rgba(r,g,b,a)`` into sRGB 0..1."""
-
     s = str(css or "").strip()
     if not s:
         return None
@@ -134,9 +131,8 @@ def css_color_to_srgb_channels(css: str) -> tuple[float, float, float] | None:
     return (r_i / 255.0, g_i / 255.0, b_i / 255.0)
 
 
+# Choose light vs dark activity surfaces from the resolved host canvas (not only ``theme``).
 def infer_prefer_light_activity_surfaces(resolved: dict[str, str], fallback_theme: str) -> bool:
-    """Choose light vs dark activity surfaces from the resolved host canvas (not only ``theme``)."""
-
     bg = resolved.get("--c-bg")
     ch = css_color_to_srgb_channels(bg) if bg else None
     if ch is not None:
@@ -144,9 +140,8 @@ def infer_prefer_light_activity_surfaces(resolved: dict[str, str], fallback_them
     return str(fallback_theme or "").strip().lower() == "light"
 
 
+# Return keys for ``base.html``: CSS variable block, color-scheme, optional JSON.
 def build_host_theme_template_context() -> dict[str, Any]:
-    """Return keys for ``base.html``: CSS variable block, color-scheme, optional JSON."""
-
     raw = load_host_theme()
     if not isinstance(raw, dict):
         return _empty_context()
@@ -197,6 +192,7 @@ def build_host_theme_template_context() -> dict[str, Any]:
     }
 
 
+# Empty context.
 def _empty_context() -> dict[str, Any]:
     return {
         "host_theme_available": False,
@@ -206,9 +202,8 @@ def _empty_context() -> dict[str, Any]:
     }
 
 
+# Return semantic UI variables that should follow the resolved host palette.
 def _derived_theme_declarations(prefer_light_surfaces: bool) -> list[str]:
-    """Return semantic UI variables that should follow the resolved host palette."""
-
     if prefer_light_surfaces:
         activity_card_bg = "var(--surface-secondary)"
         activity_card_bg_hover = "color-mix(in srgb, var(--surface-secondary) 94%, var(--c-primary) 6%)"
@@ -273,9 +268,8 @@ def _derived_theme_declarations(prefer_light_surfaces: bool) -> list[str]:
     ]
 
 
+# Return JSON that is safe to embed in an application/json script tag.
 def _json_for_script_tag(value: dict[str, Any]) -> str:
-    """Return JSON that is safe to embed in an application/json script tag."""
-
     return (
         json.dumps(value, ensure_ascii=False)
         .replace("&", "\\u0026")

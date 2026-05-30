@@ -23,6 +23,9 @@ const CITATION_ATTACHED_PATTERN = new RegExp(String.raw`([^\s\[(])\[(${CITATION_
 const CITATION_TITLE_MAX_CHARS = 180;
 const CITATION_PREVIEW_MAX_CHARS = 520;
 
+
+// Citation glyph helpers.
+// Report whether one Unicode code point is a dash-like citation separator.
 function isCitationDashCodePoint(codePoint) {
   return codePoint === 0x002d
     || codePoint === 0x00ad
@@ -49,6 +52,7 @@ function isCitationDashCodePoint(codePoint) {
     || codePoint === 0x10ead;
 }
 
+// Normalize dash variants and invisible characters in citation handles.
 function normalizeCitationHandleGlyphs(value) {
   return Array.from(String(value || '').replace(CITATION_INLINE_NOISE_PATTERN, ''))
     .map(function normalizeCitationGlyph(character) {
@@ -57,6 +61,9 @@ function normalizeCitationHandleGlyphs(value) {
     .join('');
 }
 
+
+// Public citation normalization API.
+// Normalize one citation handle into canonical uppercase form.
 export function normalizeCitationId(value) {
   return normalizeCitationHandleGlyphs(value)
     .trim()
@@ -65,10 +72,12 @@ export function normalizeCitationId(value) {
     .toUpperCase();
 }
 
+// Report whether a value matches the supported citation handle pattern.
 export function isCitationHandleId(value) {
   return CITATION_ID_PATTERN.test(normalizeCitationId(value));
 }
 
+// Normalize full-width and variant bracket glyphs around citation handles.
 export function normalizeCitationBrackets(value) {
   return String(value || '')
     .replace(/[\u3010\uFF3B]/g, '[')
@@ -81,6 +90,7 @@ export function normalizeCitationBrackets(value) {
     });
 }
 
+// Insert spaces between adjacent citation blocks and attached punctuation.
 export function normalizeCitationSpacing(value) {
   return String(value || '')
     .replace(CITATION_INTER_BLOCK_JUNK_PATTERN, '$1 ')
@@ -91,10 +101,14 @@ export function normalizeCitationSpacing(value) {
     );
 }
 
+// Create an empty citation registry object.
 export function createCitationRegistry() {
   return Object.create(null);
 }
 
+
+// Source URL helpers.
+// Keep only http and https URLs safe for links and favicons.
 function safeExternalUrl(value) {
   try {
     const parsed = new URL(String(value || '').trim());
@@ -104,6 +118,7 @@ function safeExternalUrl(value) {
   }
 }
 
+// Resolve one favicon URL from external links or the local favicon proxy.
 function safeFaviconUrl(value) {
   const rawValue = String(value || '').trim();
   if (!rawValue) {
@@ -115,6 +130,7 @@ function safeFaviconUrl(value) {
   return safeExternalUrl(rawValue);
 }
 
+// Extract a hostname from one URL string.
 function domainFromUrl(value) {
   try {
     return new URL(String(value || '').trim()).hostname.replace(/^www\./i, '');
@@ -123,6 +139,7 @@ function domainFromUrl(value) {
   }
 }
 
+// Build the favicon proxy URL for one domain when the name is safe.
 function faviconUrlForDomain(domain) {
   const cleanDomain = String(domain || '').trim().replace(/^www\./i, '');
   return cleanDomain && !/[^a-z0-9.-]/i.test(cleanDomain)
@@ -130,6 +147,7 @@ function faviconUrlForDomain(domain) {
     : '';
 }
 
+// Read the best display domain from one citation source record.
 function readSourceDomain(source) {
   const safeSource = source && typeof source === 'object' ? source : {};
   return String(
@@ -142,6 +160,7 @@ function readSourceDomain(source) {
   ).trim().replace(/^www\./i, '');
 }
 
+// Read one labeled field from a text citation block.
 function fieldFromCitationBlock(block, fieldName) {
   const knownFields = 'Citation handle|Evidence kind|Title|Domain|URL|Date|Preview|Content';
   const pattern = new RegExp(`(?:^|\\n)${fieldName}:\\s*([\\s\\S]*?)(?=\\n(?:${knownFields}):|$)`, 'i');
@@ -149,6 +168,7 @@ function fieldFromCitationBlock(block, fieldName) {
   return match ? String(match[1] || '').trim() : '';
 }
 
+// Trim long citation text with an ellipsis suffix.
 function compactText(value, maxLength) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
   if (!text || text.length <= maxLength) {
@@ -157,6 +177,7 @@ function compactText(value, maxLength) {
   return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}...`;
 }
 
+// Build a display title with Reddit-specific cleanup when needed.
 function displayTitleForSource(source, domain) {
   const rawTitle = String(source && source.title || domain || '').replace(/\s+/g, ' ').trim();
   if (/reddit\.com$/i.test(domain)) {
@@ -168,6 +189,7 @@ function displayTitleForSource(source, domain) {
   return compactText(rawTitle, CITATION_TITLE_MAX_CHARS);
 }
 
+// Normalize one raw source record into the registry shape.
 function normalizeCitationSource(source, rank) {
   if (typeof source === 'string') {
     const url = safeExternalUrl(source);
@@ -197,6 +219,7 @@ function normalizeCitationSource(source, rank) {
   };
 }
 
+// Collect every known citation id alias from one source record.
 function sourceIds(source) {
   return [
     source.id,
@@ -210,6 +233,7 @@ function sourceIds(source) {
   ].map(normalizeCitationId).filter(isCitationHandleId);
 }
 
+// Flatten nested tool-result containers into source candidate arrays.
 function collectSourceCandidates(container) {
   if (Array.isArray(container)) {
     return container;
@@ -228,6 +252,7 @@ function collectSourceCandidates(container) {
   ].filter(Array.isArray).flat();
 }
 
+// Parse one tool segment result JSON into a plain object.
 function parseToolResultObject(segment) {
   const rawResult = segment && segment.result !== null && segment.result !== undefined ? String(segment.result) : '';
   if (!rawResult) {
@@ -243,6 +268,7 @@ function parseToolResultObject(segment) {
   }
 }
 
+// Parse citation blocks embedded in plain tool-result text.
 function parseTextCitationSources(text) {
   const rawText = String(text || '');
   const starts = [];
@@ -278,6 +304,9 @@ function parseTextCitationSources(text) {
   }).filter(Boolean);
 }
 
+
+// Citation registry API.
+// Look up one normalized source record by citation handle id.
 export function citationSourceForId(citationRegistry, sourceId) {
   if (!citationRegistry || typeof citationRegistry !== 'object') {
     return null;
@@ -286,6 +315,7 @@ export function citationSourceForId(citationRegistry, sourceId) {
   return citationRegistry[normalizedId] || citationRegistry[String(sourceId || '').toLowerCase()] || null;
 }
 
+// Register one source and all of its handle aliases in the registry.
 export function addCitationSource(citationRegistry, source, rank) {
   if (!citationRegistry || !source) {
     return;
@@ -306,6 +336,7 @@ export function addCitationSource(citationRegistry, source, rank) {
   });
 }
 
+// Extract and register citation sources from one activity segment.
 export function addSegmentCitationSources(citationRegistry, segment) {
   if (!citationRegistry || !segment || typeof segment !== 'object') {
     return citationRegistry;
@@ -335,6 +366,7 @@ export function addSegmentCitationSources(citationRegistry, segment) {
   return citationRegistry;
 }
 
+// Register citation sources from every segment in a list.
 export function addSegmentsCitationSources(citationRegistry, segments) {
   (Array.isArray(segments) ? segments : []).forEach(function registerSegment(segment) {
     addSegmentCitationSources(citationRegistry, segment);
@@ -342,10 +374,14 @@ export function addSegmentsCitationSources(citationRegistry, segments) {
   return citationRegistry;
 }
 
+
+// Citation chip rendering.
+// Collect known citation ids referenced in one text fragment.
 function extractCitationIds(value, citationRegistry) {
   const ids = [];
   const seen = Object.create(null);
 
+  // Register one citation handle when it exists in the registry.
   function addId(candidate) {
     const id = normalizeCitationId(candidate);
     if (!id || seen[id] || !citationSourceForId(citationRegistry, id)) {
@@ -367,6 +403,7 @@ function extractCitationIds(value, citationRegistry) {
   return ids;
 }
 
+// Report whether a text fragment contains any citation handle token.
 function hasCitationHandle(value) {
   CITATION_SCAN_PATTERN.lastIndex = 0;
   const found = CITATION_SCAN_PATTERN.test(String(value || ''));
@@ -374,6 +411,7 @@ function hasCitationHandle(value) {
   return found;
 }
 
+// Build one inline citation chip anchor for a registered source.
 function renderCitationChip(source, sourceId) {
   const id = normalizeCitationId(sourceId || (source && source.id));
   if (!id || !source) {
@@ -405,11 +443,13 @@ function renderCitationChip(source, sourceId) {
   return `<a class="msg-citation-chip" aria-label="${escapeAttributeValue(title)}" href="${escapeAttributeValue(url)}" target="_blank" rel="noopener noreferrer" data-citation-id="${escapeAttributeValue(id)}" data-citation-preview="${escapeAttributeValue(JSON.stringify(previewData))}">${faviconHtml}<span class="msg-citation-fallback"${fallbackStyle}>${escHtml(domain.charAt(0).toUpperCase() || 'C')}</span><span class="msg-citation-domain">${escHtml(domain)}</span></a>`;
 }
 
+// Replace bracketed citation handles in HTML with interactive chips.
 export function decorateCitationsInHtml(html, citationRegistry) {
   const template = document.createElement('template');
   template.innerHTML = html;
   const ignoredTags = new Set(['A', 'CODE', 'PRE', 'SCRIPT', 'STYLE', 'TEXTAREA']);
 
+  // Walk the DOM tree and replace citation brackets in text nodes.
   function walk(node) {
     if (!node || (node.nodeType === Node.ELEMENT_NODE && ignoredTags.has(node.tagName))) {
       return;
