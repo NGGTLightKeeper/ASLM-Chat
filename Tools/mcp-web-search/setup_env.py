@@ -5,94 +5,47 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent
-PYPROJECT = ROOT / "pyproject.toml"
+REPO_ROOT = ROOT.parents[1]
 
 
-# Read the project name from pyproject.toml for user-facing output.
-def _load_project_name() -> str:
-    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
-    return str(data.get("project", {}).get("name", ROOT.name))
-
-
-# Resolve the Python executable inside a virtualenv directory.
-def _venv_python(venv_dir: Path) -> Path:
-    if sys.platform.startswith("win"):
-        return venv_dir / "Scripts" / "python.exe"
-    return venv_dir / "bin" / "python"
-
-
-# Run a subprocess command with cwd pinned to the project root.
-def _run(cmd: list[str], *, cwd: Path) -> None:
-    print(">", " ".join(cmd))
-    subprocess.run(cmd, cwd=str(cwd), check=True)
-
-
-# CLI entry: create a venv and install this package from pyproject.toml.
-def main() -> None:
+# Ensure the ASLM-Chat managed venv for this tool exists and is up to date.
+def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Create a venv and install this project from pyproject.toml."
+        description=(
+            "Create or update the mcp-web-search venv defined in "
+            "Settings/venv_requirements.json (ASLM-Chat venv_manager)."
+        )
     )
     parser.add_argument(
-        "--venv",
-        default=".venv",
-        help="Virtual environment directory relative to the project root. Default: .venv",
-    )
-    parser.add_argument(
-        "--python",
-        default=sys.executable,
-        help="Base Python executable used to create the venv. Default: current interpreter",
-    )
-    parser.add_argument(
-        "--dev",
+        "--pytest",
         action="store_true",
-        help="Install optional dev dependencies too (equivalent to .[dev]).",
-    )
-    parser.add_argument(
-        "--recreate",
-        action="store_true",
-        help="Delete and recreate the virtual environment before installing.",
+        help="Install pytest into the tool venv for local test runs.",
     )
     args = parser.parse_args()
 
-    if not PYPROJECT.exists():
-        raise SystemExit(f"pyproject.toml not found at {PYPROJECT}")
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
 
-    project_name = _load_project_name()
-    venv_dir = (ROOT / args.venv).resolve()
+    from Services import venv_manager
 
-    if args.recreate and venv_dir.exists():
-        import shutil
+    if not venv_manager.ensure_venv("mcp-web-search", log=True):
+        return 1
 
-        print(f"Removing existing virtualenv: {venv_dir}")
-        shutil.rmtree(venv_dir)
+    python_path = venv_manager.get_venv_python("mcp-web-search")
+    if args.pytest:
+        subprocess.run([str(python_path), "-m", "pip", "install", "pytest"], check=True)
 
-    if not venv_dir.exists():
-        _run([args.python, "-m", "venv", str(venv_dir)], cwd=ROOT)
-
-    venv_python = _venv_python(venv_dir)
-    if not venv_python.exists():
-        raise SystemExit(f"Virtualenv Python not found: {venv_python}")
-
-    spec = ".[dev]" if args.dev else "."
-
-    print(f"Project : {project_name}")
-    print(f"Root    : {ROOT}")
-    print(f"Venv    : {venv_dir}")
-    print(f"Python  : {venv_python}")
-    print(f"Install : {spec}")
-    print()
-
-    _run([str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], cwd=ROOT)
-    _run([str(venv_python), "-m", "pip", "install", "-e", spec], cwd=ROOT)
-
-    print()
-    print("Done.")
+    print(f"Venv : {venv_manager.get_venv_path('mcp-web-search')}")
+    print(f"Python: {python_path}")
+    print(
+        "Tests: cd Tools/mcp-web-search && "
+        f'"{python_path}" -m pytest -q -m "not gliner and not integration and not live"'
+    )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

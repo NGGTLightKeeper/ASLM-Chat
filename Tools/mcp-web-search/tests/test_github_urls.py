@@ -1,12 +1,4 @@
-import sys
-from pathlib import Path
-
 import pytest
-
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from custom_domains.github import _repo_parts, is_github_url
 from custom_domains.router import get_custom_route
@@ -35,7 +27,7 @@ def test_custom_route_matches_github_blob() -> None:
     assert route.name == "github"
 
 
-@pytest.mark.skip(reason="live network — run manually with: pytest -k live")
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_fetch_github_page_blob_rst_live() -> None:
     """Optional live check — needs network and GitHub API/raw access."""

@@ -193,3 +193,38 @@ def present_auto_preview(
     return _present_text_preview(
         path, head_lines, total_lines, size_bytes, tail_lines, tail_start_line
     )
+
+
+# Format a bounded read slice for legacy controller OPEN responses.
+def present_read_slice(
+    *,
+    path: str,
+    content: str,
+    start_line: int | None,
+    end_line: int | None,
+    total_lines: int,
+    size_bytes: int,
+) -> str:
+    header = f"-- {path} ({total_lines} lines, {_human_size(size_bytes)}) --"
+    if start_line is not None and end_line is not None:
+        header += f"\n[lines {start_line}-{end_line}]"
+    body = content.rstrip("\n")
+    return f"{header}\n{body}" if body else header
+
+
+# Format grep matches for legacy controller LOCATE responses.
+def present_grep_results(
+    *,
+    matches: list[dict[str, object]],
+    pattern: str,
+    path: str,
+) -> str:
+    lines = [f"-- grep {pattern!r} in {path} ({len(matches)} matches) --"]
+    for match in matches[:50]:
+        rel = str(match.get("path", "?"))
+        line_no = match.get("line_number", "?")
+        text = str(match.get("line", "")).rstrip()
+        lines.append(f"{rel}:{line_no}:{text}")
+    if len(matches) > 50:
+        lines.append(f"... ({len(matches) - 50} more)")
+    return "\n".join(lines)

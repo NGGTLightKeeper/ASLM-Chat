@@ -1,14 +1,10 @@
 import asyncio
 import shutil
-import sys
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
-
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from core.cache.source_cache import SourceCache
 from services import read_page as read_page_module

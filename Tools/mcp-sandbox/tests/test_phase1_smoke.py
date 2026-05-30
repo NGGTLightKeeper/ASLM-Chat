@@ -110,8 +110,8 @@ def test_grep_with_few_results():
     print(stdout)
 
 
-def test_grep_clustered():
-    # Create many files with matches to trigger clustering
+def test_grep_falls_through_to_real_bash_with_many_files():
+    # Grep is not routed through the legacy intent controller; exec_bash handles it.
     for i in range(40):
         handle_tool("write", {
             "path": f"pkg/file_{i}.py",
@@ -135,7 +135,7 @@ def test_grep_clustered():
     stdout = result["result"]["stdout"]
     assert "foo" in stdout
     assert not result["result"].get("routed", False)
-    print("PASS: grep fallback")
+    print("PASS: grep falls through to real bash")
     print(stdout[:500])
     print("...")
 
@@ -147,7 +147,7 @@ if __name__ == "__main__":
         test_small_file_metadata_header,
         test_head_metadata,
         test_grep_with_few_results,
-        test_grep_clustered,
+        test_grep_falls_through_to_real_bash_with_many_files,
     ]
     passed = 0
     failed = 0

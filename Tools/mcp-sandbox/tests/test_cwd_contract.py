@@ -6,7 +6,7 @@ Verifies that task_cwd (the model-facing working directory) behaves correctly:
 - cd to container-space paths (/, /tmp, /etc) does NOT update task_cwd
 - cd to workspace-relative paths (src, sub/dir) DOES update task_cwd
 - The next command after a container-space cd still starts from task_cwd
-- cat /etc/os-release falls through to real bash (not blocked by controller)
+- cat /etc/os-release falls through to real bash (not blocked by file-preview routing)
 """
 
 from __future__ import annotations

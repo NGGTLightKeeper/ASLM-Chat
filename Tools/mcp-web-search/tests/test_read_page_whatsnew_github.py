@@ -12,16 +12,9 @@ Include GLiNER (GPU + model download, slow):
 from __future__ import annotations
 
 import asyncio
-import sys
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
-
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 WHATSNEW_URL = "https://github.com/python/cpython/blob/main/Doc/whatsnew/3.13.rst"
 WHATSNEW_FOCUS = "free-threaded GIL"

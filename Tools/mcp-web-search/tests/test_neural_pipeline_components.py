@@ -1,12 +1,9 @@
 import json
-import sys
 from pathlib import Path
 
+import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
+from conftest import requires_aslm_models
 from core.cache.source_cache import SourceCache
 from core.config.pipeline_modes import normalize_pipeline_mode
 from core.query.aslm_embedding_runtime import (
@@ -25,11 +22,18 @@ from core.query.routing_score import (
 import services.web_search as web_search_module
 
 
-def test_model_paths_use_aslm_models_folder() -> None:
+@pytest.mark.unit
+def test_model_paths_resolve_under_models_dir() -> None:
     assert default_query_classifier_path().name == "aslm_embedding_encoder"
     assert default_source_relevance_path().name == "aslm_embedding_decoder"
-    assert default_query_classifier_path().is_dir()
-    assert default_source_relevance_path().is_dir()
+    assert default_query_classifier_path().parent == default_source_relevance_path().parent
+
+
+@requires_aslm_models
+@pytest.mark.unit
+def test_aslm_model_exports_exist_on_disk() -> None:
+    assert (default_query_classifier_path() / "labels.json").is_file()
+    assert (default_source_relevance_path() / "labels.json").is_file()
 
 
 def test_search_model_session_can_be_disabled_and_closed() -> None:
@@ -45,6 +49,20 @@ def test_search_model_session_can_be_disabled_and_closed() -> None:
 def test_search_model_session_respects_component_flags(monkeypatch) -> None:
     monkeypatch.setenv("ASLM_WEB_SEARCH_NEURAL_ENCODER", "0")
     monkeypatch.setenv("ASLM_WEB_SEARCH_NEURAL_DECODER", "0")
+
+    class _FakeRuntime:
+        labels = ("general",)
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "core.query.aslm_embedding_runtime.AslmEmbeddingRuntime",
+        _FakeRuntime,
+    )
     session = SearchModelSession(load=True, load_encoder=True, load_decoder=False)
     with session as active:
         assert active.encoder is not None

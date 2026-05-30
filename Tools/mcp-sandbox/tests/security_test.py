@@ -11,13 +11,19 @@ from pathlib import Path
 # Test environment setup.
 
 ROOT = Path(__file__).resolve().parent
-SRC = ROOT / "src"
-sys.path.insert(0, str(SRC))
+PKG_ROOT = ROOT.parent
+SUPERVISOR = PKG_ROOT / "supervisor"
+SRC = PKG_ROOT / "src"
+for entry in (SUPERVISOR, SRC):
+    path = str(entry)
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
-os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT.parent.parent))
+os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(PKG_ROOT))
 
 from sandbox import config  # noqa: E402
 from sandbox.workspace import (  # noqa: E402
+    describe,
     get_secure_task_path,
     is_allowed_host_import,
     normalize_model_relative_path,
@@ -74,19 +80,6 @@ def check(name: str, *, expect_raise: bool, fn, notes: str = "") -> bool:
 
     results.append((name, ok, symbol))
     return ok
-
-
-# HTTP share helpers.
-
-def _test_serve_app_traversal(base_dir: str, subpath: str) -> bool:
-    """Simulate _serve_app path resolution (mirrors the real implementation)."""
-
-    from urllib.parse import unquote as _unquote
-    # Mirror http_share._serve_app: double-decode + strip leading slashes
-    subpath = _unquote(subpath).lstrip("/")
-    safe_path = os.path.normpath(os.path.join(base_dir, subpath))
-    norm_base = os.path.normpath(base_dir)
-    return safe_path == norm_base or safe_path.startswith(norm_base + os.sep)
 
 
 # Docker helpers.
@@ -236,7 +229,7 @@ except Exception:
 
 # Host import checks.
 
-print_group("GROUP 4 - import_from_host - allowed-roots enforcement")
+print_group("GROUP 4 - is_allowed_host_import - allowed-roots enforcement")
 
 IMPORT_DENIED_PATHS = [
     Path("C:/Windows/System32/cmd.exe"),
@@ -268,34 +261,21 @@ print(
 )
 
 
-# HTTP share path checks.
+# share_file / describe path checks (workspace confinement).
 
-print_group("GROUP 5 - HTTP share _serve_app - subpath traversal")
+print_group("GROUP 5 - describe() - share_file path traversal rejection")
 
-base = str(task_root() / "site")
-TRAVERSAL_SUBPATHS = [
+DESCRIBE_TRAVERSAL = [
     ("../secret.txt", "One level up"),
-    ("../../workspace_root.txt", "Two levels up"),
-    ("%2e%2e%2fsecret", "URL-encoded path"),
-    ("..\\secret.txt", "Backslash traversal"),
-    ("index.html/../../../etc", "Mid-path traversal"),
+    ("../../outside.txt", "Two levels up"),
+    ("sub/../../escape.txt", "Mid-path traversal"),
 ]
 
-for subpath, label in TRAVERSAL_SUBPATHS:
-    allowed = _test_serve_app_traversal(base, subpath)
-    verdict = FAIL if allowed else PASS
-    message = "TRAVERSAL SUCCEEDS" if allowed else "blocked"
-    print(f"  {verdict}  HTTP app traversal [{label}]: {message}")
-    results.append(
-        (f"HTTP traversal: {label}", not allowed, "BLOCKED" if not allowed else "BYPASS")
-    )
-
-if sys.platform == "win32":
-    safe_path = os.path.normpath(os.path.join(base, "../secret"))
-    bypassed = not safe_path.startswith(os.path.normpath(base))
-    print(
-        f"  {INFO}  Windows case-insensitive bypass attempt: "
-        f"{'bypasses' if bypassed else 'blocked'}"
+for path, label in DESCRIBE_TRAVERSAL:
+    check(
+        f"describe blocked: {label}",
+        expect_raise=True,
+        fn=lambda p=path: describe(p),
     )
 
 
@@ -401,16 +381,24 @@ else:
     results.append(("Cannot write to /etc", readonly_etc, "read-only" if readonly_etc else "WRITABLE"))
 
     rc, out, _ = docker_exec(
-        "python3 /workspace/tools/mcp-web-search/src/engine.py 2>/dev/null | head -3"
+        "test -f /workspace/tools/mcp-web-search/mcp-server.py && "
+        "python3 /workspace/tools/mcp-web-search/mcp-server.py --help 2>/dev/null | head -1"
     )
-    # POSSIBLE only if script ran successfully and produced stdout output
+    # POSSIBLE only if the bridge entrypoint exists and runs inside the container mount.
     can_exec_project = rc == 0 and bool(out.strip())
     verdict = FAIL if can_exec_project else PASS
-    print(f"  {verdict}  Can execute project scripts via /workspace/tools: {can_exec_project}")
+    print(
+        f"  {verdict}  Can run mcp-web-search bridge via /workspace/tools mount: "
+        f"{can_exec_project}"
+    )
     if can_exec_project:
-        print("         WARNING  Model can run project code.")
+        print("         WARNING  Model can execute mounted project entrypoints.")
     results.append(
-        ("Execute project scripts from container", not can_exec_project, "POSSIBLE" if can_exec_project else "blocked")
+        (
+            "Execute mcp-web-search bridge from container",
+            not can_exec_project,
+            "POSSIBLE" if can_exec_project else "blocked",
+        )
     )
 
     rc, out, _ = docker_exec("ls /proc/ | grep -E '^[0-9]+$' | wc -l")

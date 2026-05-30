@@ -1,14 +1,19 @@
 from __future__ import annotations
+
 import re
 from pathlib import Path
+
+import pytest
 
 from context_compression.cache_chat_utils import collect_chat_entries, connect_cache_db, load_fattest_chat
 from context_compression.history_compressor import build_structured_history_summary
 
 
-TOOL_DB_PATH = Path(__file__).with_name("db.sqlite3")
-PROJECT_DB_PATH = Path(__file__).resolve().parents[2] / "db.sqlite3"
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+TOOL_DB_PATH = PACKAGE_ROOT / "db.sqlite3"
+PROJECT_DB_PATH = PACKAGE_ROOT.parent.parent / "db.sqlite3"
 DB_PATH = TOOL_DB_PATH if TOOL_DB_PATH.exists() else PROJECT_DB_PATH
+
 RAW_NOISE_MARKERS = (
     "citation rules",
     "cite search evidence",
@@ -114,6 +119,13 @@ def main() -> None:
 
     print("sample:key_facts:", (key_facts[:2] if isinstance(key_facts, list) else []))
     print("sample:source_memory:", (source_memory[:2] if isinstance(source_memory, list) else []))
+
+
+@pytest.mark.integration
+def test_fat_chat_summary_fixture() -> None:
+    if not DB_PATH.exists():
+        pytest.skip(f"Database not found: {DB_PATH}")
+    main()
 
 
 if __name__ == "__main__":

@@ -1,15 +1,8 @@
 import json
 import os
-import sys
-from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
-
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from core.extract.content_processor import PreviewPayload
 from core.models.search import SearchResult

@@ -1,6 +1,11 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Tests for intent classification and compound pipeline normalization."""
+"""Unit tests for sandbox.intent classification (isolated from api.py bash routing).
+
+Production bash supervision in api.py only enhances plain cat/less/more and job
+commands; grep/find/ls/compounds always fall through to real bash. These tests
+document intent parsing used by the legacy controller module, not live MCP paths.
+"""
 
 import os
 import sys

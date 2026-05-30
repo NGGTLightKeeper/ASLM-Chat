@@ -1,0 +1,78 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+name: Tests - Django
+
+on:
+  push:
+  pull_request:
+  issues:
+    types:
+      - opened
+      - reopened
+
+concurrency:
+  group: tests-django-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  django-data:
+    name: Apps.Data
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Cache server venv
+        uses: actions/cache@v5
+        with:
+          path: Data/venvs/server
+          key: aslm-chat-venv-server-${{ hashFiles('Settings/venv_requirements.json') }}
+          restore-keys: |
+            aslm-chat-venv-server-
+
+      - name: Prepare server venv
+        run: |
+          python -c "from Services import venv_manager; import sys; sys.exit(0 if venv_manager.ensure_venv('server', log=True) else 1)"
+
+      - name: Run Django tests
+        env:
+          DJANGO_SETTINGS_MODULE: ASLM.settings
+        run: Data/venvs/server/bin/python manage.py test Apps.Data --verbosity=1
+
+  django-ui:
+    name: Apps.UI
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Cache server venv
+        uses: actions/cache@v5
+        with:
+          path: Data/venvs/server
+          key: aslm-chat-venv-server-${{ hashFiles('Settings/venv_requirements.json') }}
+          restore-keys: |
+            aslm-chat-venv-server-
+
+      - name: Prepare server venv
+        run: |
+          python -c "from Services import venv_manager; import sys; sys.exit(0 if venv_manager.ensure_venv('server', log=True) else 1)"
+
+      - name: Run Django tests
+        env:
+          DJANGO_SETTINGS_MODULE: ASLM.settings
+        run: Data/venvs/server/bin/python manage.py test Apps.UI --verbosity=1
