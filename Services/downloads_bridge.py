@@ -34,18 +34,18 @@ CAPABILITY_FILTER_PREFIX = "capability:"
 
 
 # Search query model
-# Store normalized Ollama search arguments
+
+# Normalized Ollama search request arguments.
 @dataclass(frozen=True)
 class OllamaSearchQuery:
-    """Represent a normalized Ollama search request."""
-
     query_text: str
     sort_key: str
     capabilities: tuple[str, ...]
 
 
 # Response helpers
-# Build a standard bridge response payload
+
+# Build a standard bridge response payload.
 def _response(
     *,
     success: bool = True,
@@ -58,8 +58,6 @@ def _response(
     warnings: list[str] | None = None,
     error: str | None = None,
 ) -> dict[str, Any]:
-    """Return a response payload that matches the bridge contract."""
-
     payload: dict[str, Any] = {
         "protocolVersion": PROTOCOL_VERSION,
         "success": success,
@@ -83,10 +81,9 @@ def _response(
 
 
 # Request helpers
-# Read and validate the JSON request from stdin
-def _read_request() -> dict[str, Any]:
-    """Return the bridge request payload or an empty dict."""
 
+# Read and validate the JSON request from stdin.
+def _read_request() -> dict[str, Any]:
     raw_payload = sys.stdin.read().strip()
     if not raw_payload:
         return {}
@@ -100,32 +97,25 @@ def _read_request() -> dict[str, Any]:
 
 
 # Text normalization helpers
-# Normalize text into a single readable line
-def _normalize_text(value: str | None) -> str:
-    """Collapse whitespace and normalize non-breaking spaces."""
 
+# Normalize text into a single readable line.
+def _normalize_text(value: str | None) -> str:
     return " ".join(str(value or "").replace("\xa0", " ").split())
 
 
-# Normalize bullet-style separators into the bridge format
+# Normalize bullet-style separators into the bridge format.
 def _normalize_separator(value: str) -> str:
-    """Convert visual separators into pipe-delimited text."""
-
     normalized = str(value or "").replace("\u00b7", "|").replace("\u2022", "|")
     return " | ".join(part.strip() for part in normalized.split("|") if part.strip())
 
 
-# Normalize a filter key for comparisons
+# Normalize a filter key for comparisons.
 def _normalize_filter_key(value: str | None) -> str:
-    """Return a lowercase filter key."""
-
     return _normalize_text(value).lower()
 
 
-# Remove duplicates while keeping the first occurrence
+# Remove duplicates while keeping the first occurrence.
 def _deduplicate_preserving_order(values: list[str]) -> list[str]:
-    """Return unique values in their original order."""
-
     seen: set[str] = set()
     deduplicated: list[str] = []
 
@@ -144,29 +134,24 @@ def _deduplicate_preserving_order(values: list[str]) -> list[str]:
     return deduplicated
 
 
-# Parse an integer from mixed text
+# Parse an integer from mixed text.
 def _parse_int(value: str) -> int:
-    """Extract digits from text and return them as an integer."""
-
     digits = re.sub(r"[^0-9]", "", _normalize_text(value))
     return int(digits) if digits else 0
 
 
 # Cache helpers
-# Ensure that all cache directories exist
-def _ensure_cache_dirs() -> None:
-    """Create cache directories used by the bridge."""
 
+# Ensure that all cache directories exist.
+def _ensure_cache_dirs() -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     DETAIL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     DETAIL_HTML_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     SEARCH_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# Read a JSON cache payload
+# Read a JSON cache payload.
 def _read_cache(path: Path) -> Any | None:
-    """Read a JSON cache file and return its payload."""
-
     if not path.exists():
         return None
 
@@ -176,35 +161,28 @@ def _read_cache(path: Path) -> Any | None:
         return None
 
 
-# Write a JSON cache payload
+# Write a JSON cache payload.
 def _write_cache(path: Path, payload: Any) -> None:
-    """Write a JSON payload to the cache."""
-
     _ensure_cache_dirs()
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-# Write a plain text cache file
+# Write a plain text cache file.
 def _write_text_file(path: Path, content: str) -> None:
-    """Write plain text content to disk."""
-
     _ensure_cache_dirs()
     path.write_text(content, encoding="utf-8")
 
 
 # Resource key helpers
-# Build a resource key for a model variant
-def _variant_resource_key(slug: str, tag: str) -> str:
-    """Return a normalized resource key for an Ollama variant."""
 
+# Build a resource key for a model variant.
+def _variant_resource_key(slug: str, tag: str) -> str:
     normalized_tag = _normalize_text(tag)
     return f"ollama:{slug}:{normalized_tag}" if normalized_tag else f"ollama:{slug}"
 
 
-# Extract the slug portion from a resource key
+# Extract the slug portion from a resource key.
 def _resource_key_to_slug(resource_key: str) -> str:
-    """Return the slug part from a bridge resource key."""
-
     normalized = str(resource_key or "").strip()
     if normalized.startswith("ollama:"):
         return normalized.partition(":")[2].strip()
@@ -212,18 +190,15 @@ def _resource_key_to_slug(resource_key: str) -> str:
 
 
 # Cache path helpers
-# Resolve the JSON detail cache path for a slug
-def _detail_cache_path(slug: str) -> Path:
-    """Return the cache path for model detail JSON."""
 
+# Resolve the JSON detail cache path for a slug.
+def _detail_cache_path(slug: str) -> Path:
     safe_slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", slug)
     return DETAIL_CACHE_DIR / f"{safe_slug}.json"
 
 
-# Resolve the HTML detail cache path for a rendered block
+# Resolve the HTML detail cache path for a rendered block.
 def _detail_html_cache_path(slug: str, block_id: str, html_document: str) -> Path:
-    """Return the cache path for a rendered HTML block."""
-
     safe_slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", slug)
     safe_block_id = re.sub(r"[^a-zA-Z0-9._-]+", "_", block_id)
     digest = hashlib.sha256(html_document.encode("utf-8")).hexdigest()[:16]
@@ -231,10 +206,9 @@ def _detail_html_cache_path(slug: str, block_id: str, html_document: str) -> Pat
 
 
 # URL helpers
-# Resolve the Ollama page path for a model slug
-def _resolve_model_page_path(slug: str) -> str:
-    """Return the relative Ollama page path for a slug."""
 
+# Resolve the Ollama page path for a model slug.
+def _resolve_model_page_path(slug: str) -> str:
     normalized_slug = _normalize_text(slug).strip("/")
     if not normalized_slug:
         return "/library"
@@ -242,17 +216,13 @@ def _resolve_model_page_path(slug: str) -> str:
     return f"/{normalized_slug}" if "/" in normalized_slug else f"/library/{normalized_slug}"
 
 
-# Resolve the absolute Ollama page URL for a model slug
+# Resolve the absolute Ollama page URL for a model slug.
 def _resolve_model_page_url(slug: str) -> str:
-    """Return the absolute Ollama page URL for a slug."""
-
     return f"https://ollama.com{_resolve_model_page_path(slug)}"
 
 
-# Build the cache path for a search query
+# Build the cache path for a search query.
 def _search_cache_path(search_query: OllamaSearchQuery) -> Path:
-    """Return the cache path for a search payload."""
-
     identity = json.dumps(
         {
             "q": search_query.query_text,
@@ -267,10 +237,9 @@ def _search_cache_path(search_query: OllamaSearchQuery) -> Path:
 
 
 # HTTP helpers
-# Request text content from a remote page
-def _request_text(url: str, params: list[tuple[str, str]] | None = None) -> str:
-    """Fetch page content from Ollama."""
 
+# Request text content from a remote page.
+def _request_text(url: str, params: list[tuple[str, str]] | None = None) -> str:
     import requests
 
     response = requests.get(
@@ -285,40 +254,31 @@ def _request_text(url: str, params: list[tuple[str, str]] | None = None) -> str:
 
 # Build a BeautifulSoup parser lazily so metadata-only bridge calls stay cheap.
 def _make_soup(markup: str) -> Any:
-    """Return a BeautifulSoup parser for one HTML fragment."""
-
     from bs4 import BeautifulSoup
 
     return BeautifulSoup(markup, "html.parser")
 
 
-# Resolve a relative URL against the current page
+# Resolve a relative URL against the current page.
 def _absolutize_url(candidate: str | None, base_url: str) -> str:
-    """Return an absolute URL or an empty string."""
-
     normalized = _normalize_text(candidate)
     return urljoin(base_url, normalized) if normalized else ""
 
 
 # Payload formatting helpers
-# Build a standard item detail line
-def _build_detail_line(pull_count: str, tag_count: str, updated_text: str) -> str:
-    """Join item metadata into a single detail string."""
 
+# Build a standard item detail line.
+def _build_detail_line(pull_count: str, tag_count: str, updated_text: str) -> str:
     return " | ".join(part for part in (pull_count, tag_count, updated_text) if part)
 
 
-# Build a standard variant detail line
+# Build a standard variant detail line.
 def _build_variant_line(parts: list[str]) -> str:
-    """Join variant metadata into a single detail string."""
-
     return " | ".join(part for part in parts if part)
 
 
-# Build the static Ollama category payload
+# Build the static Ollama category payload.
 def _build_ollama_category() -> dict[str, Any]:
-    """Return the bridge category metadata for Ollama."""
-
     return {
         "id": OLLAMA_CATEGORY_ID,
         "title": OLLAMA_CATEGORY_TITLE,
@@ -331,8 +291,6 @@ def _build_ollama_category() -> dict[str, Any]:
 
 # Build default Ollama filter payloads when live filter data is not available.
 def _build_default_filter_payloads(search_query: OllamaSearchQuery) -> list[dict[str, Any]]:
-    """Return a stable fallback filter list for cache-first catalog loads."""
-
     active_capabilities = set(search_query.capabilities)
     active_sort = search_query.sort_key or DEFAULT_SORT_KEY
     filters: list[dict[str, Any]] = [
@@ -367,10 +325,9 @@ def _build_default_filter_payloads(search_query: OllamaSearchQuery) -> list[dict
 
 
 # HTML rendering helpers
-# Build a standalone HTML document for preview blocks
-def _build_html_document(inner_html: str, page_url: str, title: str) -> str:
-    """Wrap a content block in a styled HTML document."""
 
+# Build a standalone HTML document for preview blocks.
+def _build_html_document(inner_html: str, page_url: str, title: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -549,10 +506,8 @@ def _build_html_document(inner_html: str, page_url: str, title: str) -> str:
 </html>"""
 
 
-# Normalize and cache a rendered HTML block
+# Normalize and cache a rendered HTML block.
 def _create_html_block_file(slug: str, block_id: str, title: str, node_html: str, page_url: str) -> str:
-    """Create a cached HTML file for a rendered detail block."""
-
     fragment = _make_soup(node_html)
 
     # Normalize media links so cached files keep working offline
@@ -585,10 +540,9 @@ def _create_html_block_file(slug: str, block_id: str, title: str, node_html: str
 
 
 # Search query helpers
-# Normalize query text and selected filters
-def _normalize_search_query(query_text: str, filter_keys: list[str] | None) -> OllamaSearchQuery:
-    """Normalize a search request into the internal query model."""
 
+# Normalize query text and selected filters.
+def _normalize_search_query(query_text: str, filter_keys: list[str] | None) -> OllamaSearchQuery:
     normalized_query = _normalize_text(query_text)
     normalized_filters = [_normalize_filter_key(value) for value in filter_keys or [] if _normalize_filter_key(value)]
 
@@ -616,10 +570,8 @@ def _normalize_search_query(query_text: str, filter_keys: list[str] | None) -> O
     )
 
 
-# Build Ollama search parameters from the normalized query
+# Build Ollama search parameters from the normalized query.
 def _build_search_params(search_query: OllamaSearchQuery) -> list[tuple[str, str]]:
-    """Convert a normalized query into Ollama request parameters."""
-
     params: list[tuple[str, str]] = []
 
     if search_query.query_text:
@@ -635,10 +587,9 @@ def _build_search_params(search_query: OllamaSearchQuery) -> list[tuple[str, str
 
 
 # Search parsing helpers
-# Parse filter payloads from the Ollama search page
-def _parse_filter_payloads(soup: BeautifulSoup, search_query: OllamaSearchQuery) -> list[dict[str, Any]]:
-    """Extract available filters from the current search page."""
 
+# Parse filter payloads from the Ollama search page.
+def _parse_filter_payloads(soup: BeautifulSoup, search_query: OllamaSearchQuery) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
     active_capabilities = set(search_query.capabilities)
     active_sort = search_query.sort_key or DEFAULT_SORT_KEY
@@ -688,10 +639,8 @@ def _parse_filter_payloads(soup: BeautifulSoup, search_query: OllamaSearchQuery)
     return payloads
 
 
-# Parse model cards from the Ollama search page
+# Parse model cards from the Ollama search page.
 def _parse_search_items(soup: BeautifulSoup) -> list[dict[str, Any]]:
-    """Extract search result cards from the current page."""
-
     items: list[dict[str, Any]] = []
     seen_slugs: set[str] = set()
 
@@ -762,15 +711,13 @@ def _parse_search_items(soup: BeautifulSoup) -> list[dict[str, Any]]:
     return items
 
 
-# Load search results with cache fallback
+# Load search results with cache fallback.
 def _load_search_payload(
     query_text: str,
     filter_keys: list[str] | None,
     prefer_cached: bool,
     force_refresh: bool,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
-    """Load search items and filters, using cache when requested."""
-
     # Resolve the cache entry for the current search request
     search_query = _normalize_search_query(query_text, filter_keys)
     cache_path = _search_cache_path(search_query)
@@ -805,10 +752,9 @@ def _load_search_payload(
 
 
 # Detail parsing helpers
-# Parse available model variants from the model page
-def _parse_variant_payloads(soup: BeautifulSoup, slug: str) -> list[dict[str, Any]]:
-    """Extract variant payloads from an Ollama model page."""
 
+# Parse available model variants from the model page.
+def _parse_variant_payloads(soup: BeautifulSoup, slug: str) -> list[dict[str, Any]]:
     variants: list[dict[str, Any]] = []
     seen_models: set[str] = set()
     page_path = _resolve_model_page_path(slug)
@@ -891,10 +837,8 @@ def _parse_variant_payloads(soup: BeautifulSoup, slug: str) -> list[dict[str, An
     return variants
 
 
-# Extract the raw markdown readme from the page
+# Extract the raw markdown readme from the page.
 def _extract_readme_markdown(soup: BeautifulSoup) -> str:
-    """Return markdown readme content when the page exposes it."""
-
     editor = soup.select_one("textarea#editor")
     if editor is None:
         return ""
@@ -904,10 +848,8 @@ def _extract_readme_markdown(soup: BeautifulSoup) -> str:
     return "\n".join(lines).strip()
 
 
-# Extract and cache the rendered HTML readme block
+# Extract and cache the rendered HTML readme block.
 def _extract_readme_html_file(slug: str, soup: BeautifulSoup, page_url: str) -> str:
-    """Return a cached HTML file for the rendered readme block."""
-
     readme_node = soup.select_one("#readme #display") or soup.select_one("#display")
     if readme_node is None:
         return ""
@@ -921,10 +863,8 @@ def _extract_readme_html_file(slug: str, soup: BeautifulSoup, page_url: str) -> 
     )
 
 
-# Parse full item details from the model page
+# Parse full item details from the model page.
 def _parse_item_detail(slug: str, html: str) -> dict[str, Any]:
-    """Build the bridge detail payload for a model page."""
-
     soup = _make_soup(html)
     page_url = _resolve_model_page_url(slug)
 
@@ -995,10 +935,8 @@ def _parse_item_detail(slug: str, html: str) -> dict[str, Any]:
     }
 
 
-# Sanitize detail payloads loaded from cache or network
+# Sanitize detail payloads loaded from cache or network.
 def _sanitize_detail_payload(detail: dict[str, Any]) -> dict[str, Any]:
-    """Remove unsupported blocks from a detail payload."""
-
     normalized = dict(detail or {})
     blocks = normalized.get("blocks")
     if isinstance(blocks, list):
@@ -1011,14 +949,12 @@ def _sanitize_detail_payload(detail: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-# Load detail payloads with cache fallback
+# Load detail payloads with cache fallback.
 def _load_item_detail(
     slug: str,
     prefer_cached: bool,
     force_refresh: bool,
 ) -> tuple[dict[str, Any], list[str]]:
-    """Load model details, using cache when requested."""
-
     # Resolve the cache entry for the requested model
     cache_path = _detail_cache_path(slug)
     cached = _read_cache(cache_path) if prefer_cached or not force_refresh else None
@@ -1041,10 +977,9 @@ def _load_item_detail(
 
 
 # Manifest builders
-# Build an install manifest for a selected resource
-def _build_install_manifest(resource_key: str) -> dict[str, Any]:
-    """Return the install manifest for an Ollama resource."""
 
+# Build an install manifest for a selected resource.
+def _build_install_manifest(resource_key: str) -> dict[str, Any]:
     model_name = _resource_key_to_slug(resource_key)
     if not model_name:
         raise ValueError("Missing resourceKey for resolve_install.")
@@ -1067,10 +1002,8 @@ def _build_install_manifest(resource_key: str) -> dict[str, Any]:
     }
 
 
-# Build an uninstall manifest for a selected resource
+# Build an uninstall manifest for a selected resource.
 def _build_uninstall_manifest(resource_key: str) -> dict[str, Any]:
-    """Return the uninstall manifest for an Ollama resource."""
-
     model_name = _resource_key_to_slug(resource_key)
     if not model_name:
         raise ValueError("Missing resourceKey for resolve_uninstall.")
@@ -1094,14 +1027,13 @@ def _build_uninstall_manifest(resource_key: str) -> dict[str, Any]:
 
 
 # Bridge operation handlers
-# Handle the list_categories operation
-def _handle_list_categories() -> dict[str, Any]:
-    """Return the supported download categories."""
 
+# Handle the list_categories operation.
+def _handle_list_categories() -> dict[str, Any]:
     return _response(categories=[_build_ollama_category()])
 
 
-# Handle the list_items operation
+# Handle the list_items operation.
 def _handle_list_items(
     category_id: str,
     query_text: str,
@@ -1109,8 +1041,6 @@ def _handle_list_items(
     prefer_cached: bool,
     force_refresh: bool,
 ) -> dict[str, Any]:
-    """Return catalog items for the requested category."""
-
     if category_id != OLLAMA_CATEGORY_ID:
         return _response(success=False, error=f"Unsupported categoryId: {category_id}")
 
@@ -1118,15 +1048,13 @@ def _handle_list_items(
     return _response(items=items, filters=filters, warnings=warnings)
 
 
-# Handle the describe_item operation
+# Handle the describe_item operation.
 def _handle_describe_item(
     category_id: str,
     resource_key: str,
     prefer_cached: bool,
     force_refresh: bool,
 ) -> dict[str, Any]:
-    """Return detailed metadata for a single item."""
-
     if category_id != OLLAMA_CATEGORY_ID:
         return _response(success=False, error=f"Unsupported categoryId: {category_id}")
 
@@ -1138,20 +1066,16 @@ def _handle_describe_item(
     return _response(item_detail=item_detail, warnings=warnings)
 
 
-# Handle the resolve_install operation
+# Handle the resolve_install operation.
 def _handle_resolve_install(category_id: str, resource_key: str) -> dict[str, Any]:
-    """Return an install manifest for a selected item."""
-
     if category_id != OLLAMA_CATEGORY_ID:
         return _response(success=False, error=f"Unsupported categoryId: {category_id}")
 
     return _response(install_manifest=_build_install_manifest(resource_key))
 
 
-# Handle the resolve_uninstall operation
+# Handle the resolve_uninstall operation.
 def _handle_resolve_uninstall(category_id: str, resource_key: str) -> dict[str, Any]:
-    """Return an uninstall manifest for a selected item."""
-
     if category_id != OLLAMA_CATEGORY_ID:
         return _response(success=False, error=f"Unsupported categoryId: {category_id}")
 
@@ -1159,10 +1083,9 @@ def _handle_resolve_uninstall(category_id: str, resource_key: str) -> dict[str, 
 
 
 # Dispatch helpers
-# Route a bridge request to the matching handler
-def dispatch(request: dict[str, Any]) -> dict[str, Any]:
-    """Dispatch the incoming request to a bridge handler."""
 
+# Route a bridge request to the matching handler.
+def dispatch(request: dict[str, Any]) -> dict[str, Any]:
     # Normalize the incoming request fields first
     operation = _normalize_text(request.get("operation")).lower()
     category_id = _normalize_text(request.get("categoryId"))
@@ -1189,10 +1112,9 @@ def dispatch(request: dict[str, Any]) -> dict[str, Any]:
 
 
 # CLI entry point
-# Execute the bridge in stdin/stdout mode
-def run_cli() -> int:
-    """Run the downloads bridge as a CLI process."""
 
+# Execute the bridge in stdin/stdout mode.
+def run_cli() -> int:
     try:
         response = dispatch(_read_request())
     except Exception as exc:
