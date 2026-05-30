@@ -34,14 +34,17 @@ _ACTIVE_CALLS = 0
 _LAST_ACTIVITY_MONOTONIC = time.monotonic()
 
 
+# Current UTC time.
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# ISO-8601 timestamp for the current instant.
 def _iso_now() -> str:
     return _utc_now().isoformat()
 
 
+# Parse an ISO timestamp string, or return None when invalid.
 def _parse_iso_timestamp(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -54,10 +57,12 @@ def _parse_iso_timestamp(value: object) -> datetime | None:
     return parsed
 
 
+# Generate a unique batch directory name under tmp/.
 def _safe_batch_name() -> str:
     return BATCH_PREFIX + _utc_now().strftime("%Y%m%d-%H%M%S")
 
 
+# Pick a non-colliding child path under parent.
 def _unique_child(parent: Path, name: str) -> Path:
     candidate = parent / name
     if not candidate.exists():
@@ -69,12 +74,14 @@ def _unique_child(parent: Path, name: str) -> Path:
     return parent / f"{name}-{time.time_ns()}"
 
 
+# Atomically write JSON metadata to path.
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
 
 
+# Read JSON metadata from path (empty dict on failure).
 def _read_json(path: Path) -> dict[str, object]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -83,6 +90,7 @@ def _read_json(path: Path) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+# Persist the latest cleanup event for observability.
 def _remember_cleanup_event(root: Path, event: str, **details: object) -> None:
     try:
         _write_json(
@@ -97,6 +105,7 @@ def _remember_cleanup_event(root: Path, event: str, **details: object) -> None:
         pass
 
 
+# List task-root entries eligible for idle staging (excluding reserved names).
 def _iter_stageable_root_entries(root: Path) -> list[Path]:
     try:
         entries = list(root.iterdir())
@@ -109,6 +118,7 @@ def _iter_stageable_root_entries(root: Path) -> list[Path]:
     ]
 
 
+# Return True when any registered background job is still running.
 def _has_running_background_jobs() -> bool:
     try:
         from sandbox.jobs import JOB_REGISTRY
@@ -121,6 +131,7 @@ def _has_running_background_jobs() -> bool:
         return False
 
 
+# Ensure tmp/ exists under task root and cannot escape via symlinks.
 def _safe_tmp_root(root: Path) -> Path:
     tmp_root = root / TMP_DIR_NAME
     if tmp_root.exists() and tmp_root.is_symlink():
@@ -133,9 +144,8 @@ def _safe_tmp_root(root: Path) -> Path:
     return tmp_root
 
 
+# Move current root entries into one tmp batch inside the sandbox.
 def stage_workspace_to_tmp(staged_at: datetime | None = None) -> Path | None:
-    """Move current root entries into one tmp batch inside the sandbox."""
-
     if _has_running_background_jobs():
         return None
 
@@ -182,6 +192,7 @@ def stage_workspace_to_tmp(staged_at: datetime | None = None) -> Path | None:
     return batch_dir
 
 
+# Resolve when a tmp batch was staged (metadata or directory mtime).
 def _batch_staged_at(batch_dir: Path) -> datetime | None:
     metadata = _read_json(batch_dir / BATCH_METADATA)
     staged_at = _parse_iso_timestamp(metadata.get("staged_at"))
@@ -193,6 +204,7 @@ def _batch_staged_at(batch_dir: Path) -> datetime | None:
         return None
 
 
+# Send a path to the Windows recycle bin via SHFileOperationW.
 def _send_to_windows_recycle_bin(path: Path) -> None:
     class SHFILEOPSTRUCTW(ctypes.Structure):
         _fields_ = [
@@ -216,6 +228,7 @@ def _send_to_windows_recycle_bin(path: Path) -> None:
         raise OSError(f"SHFileOperationW failed with code {result}")
 
 
+# Send a path to the platform trash (Windows, send2trash, or gio).
 def _send_to_platform_trash(path: Path) -> None:
     if os.name == "nt":
         _send_to_windows_recycle_bin(path)
@@ -238,9 +251,8 @@ def _send_to_platform_trash(path: Path) -> None:
     raise OSError("No platform trash backend is available.")
 
 
+# Move expired tmp batches to the OS trash without depending on trash name.
 def recycle_due_tmp_batches(now: datetime | None = None) -> list[Path]:
-    """Move expired tmp batches to the OS trash without depending on trash name."""
-
     root = task_root()
     tmp_root = _safe_tmp_root(root)
     if not tmp_root.exists() or not tmp_root.is_dir():
@@ -272,9 +284,8 @@ def recycle_due_tmp_batches(now: datetime | None = None) -> list[Path]:
     return recycled
 
 
+# Perform one cleanup pass if the sandbox is idle.
 def run_cleanup_once() -> None:
-    """Perform one cleanup pass if the sandbox is idle."""
-
     if not WORKSPACE_CLEANUP_ENABLED:
         return
 
@@ -290,6 +301,7 @@ def run_cleanup_once() -> None:
             stage_workspace_to_tmp(staged_at=now)
 
 
+# Background loop that periodically runs idle workspace cleanup.
 def _monitor_loop() -> None:
     interval = max(1, WORKSPACE_CLEANUP_INTERVAL_SECONDS)
     while True:
@@ -298,6 +310,7 @@ def _monitor_loop() -> None:
             run_cleanup_once()
 
 
+# Start the daemon cleanup monitor thread once per process.
 def ensure_cleanup_monitor_started() -> None:
     global _MONITOR_STARTED
     if not WORKSPACE_CLEANUP_ENABLED:
@@ -314,10 +327,9 @@ def ensure_cleanup_monitor_started() -> None:
         _MONITOR_STARTED = True
 
 
+# Track active tool calls so idle cleanup does not race tool execution.
 @contextlib.contextmanager
 def sandbox_tool_activity() -> Iterator[None]:
-    """Track active tool calls so idle cleanup does not race tool execution."""
-
     global _ACTIVE_CALLS, _LAST_ACTIVITY_MONOTONIC
     ensure_cleanup_monitor_started()
     with _LOCK:

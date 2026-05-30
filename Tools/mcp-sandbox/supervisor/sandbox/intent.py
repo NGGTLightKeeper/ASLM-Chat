@@ -1,35 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Intent classification and command normalization.
-
-The core idea: instead of routing by command syntax (cat → handler,
-grep → handler), we classify by *what the model is trying to do*.
-
-All of these are the same intent (OPEN):
-  cat file.py
-  head -n 30 file.py
-  tail -n 20 file.py
-  sed -n '1,30p' file.py
-  less file.py
-  cat file.py | head -n 30
-  python -c "print(open('file.py').read())"   ← partially caught
-
-All of these are the same intent (LOCATE):
-  grep "pattern" .
-  rg "pattern" .
-  egrep -r "pattern" .
-  cat file.py | grep "pattern"
-  grep -n "pattern" file.py
-
-This prevents whack-a-mole with syntax variants.
-
-NormalizedCommand carries everything the handler needs:
-  - the intent class
-  - the resolved target path(s)
-  - optional parameters (line range, pattern, depth, flags)
-  - the original command (for fallback / logging)
-"""
-
 from __future__ import annotations
 
 import re
@@ -92,7 +62,7 @@ class NormalizedCommand:
     was_compound: bool = False
 
 
-# ── Intent tables ─────────────────────────────────────────────────────
+# Intent tables
 
 _OPEN_CMDS = frozenset({
     "cat", "less", "more", "tac",
@@ -132,6 +102,7 @@ _READ_ONLY_RHS_CMDS = frozenset({
 })
 
 
+# Shell-safe tokenization; fall back to whitespace split on parse errors.
 def _safe_split(s: str) -> list[str]:
     try:
         return shlex.split(s)
@@ -139,13 +110,8 @@ def _safe_split(s: str) -> list[str]:
         return s.split()
 
 
+# True for absolute paths outside task-space (e.g. /etc); task paths are routed.
 def _is_container_path(path: str) -> bool:
-    """Return True if path is an absolute container path outside task-space.
-
-    Paths like /etc/os-release, /usr/bin/python, /tmp/foo should go
-    straight to real bash. Paths like /workspace/_sandbox/foo.py are
-    still task-space and should be routed.
-    """
     if not path.startswith("/"):
         return False
     # Inside task-space container mount → not a container path
@@ -154,17 +120,10 @@ def _is_container_path(path: str) -> bool:
     return True
 
 
-# ── Pipeline parser ───────────────────────────────────────────────────
+# Pipeline parser
 
+# Split on | only; None when &&, ||, ;, subshells, or redirections are present.
 def _split_pipeline(command: str) -> list[str] | None:
-    """Split a pipe-only command into stages.
-
-    Returns None if the command contains &&, ||, ;, subshells, or
-    redirections — those always go to real bash.
-    
-    Only plain pipes (|) between simple commands are handled.
-    """
-
     # Reject anything with complex shell constructs
     if re.search(r"&&|\|\||;|`|\$\(|>|<", command):
         return None
@@ -175,9 +134,8 @@ def _split_pipeline(command: str) -> list[str] | None:
     return stages
 
 
+# Map a bare command name to Intent, or None if unknown (→ RUN).
 def _classify_single_command(cmd: str) -> Intent | None:
-    """Classify a bare command name into an intent, or None for unknown."""
-
     if cmd in _OPEN_CMDS:
         return Intent.OPEN
     if cmd in _LOCATE_CMDS:
@@ -189,11 +147,10 @@ def _classify_single_command(cmd: str) -> Intent | None:
     return None
 
 
-# ── Per-intent argument parsers ───────────────────────────────────────
+# Per-intent argument parsers
 
+# Extract target path, line range, and unsupported-flag marker from OPEN commands.
 def _parse_open_args(cmd: str, args: list[str]) -> dict[str, Any]:
-    """Extract target, optional line range, flags from an OPEN command."""
-
     result: dict[str, Any] = {"target": ".", "start_line": None, "end_line": None}
     files: list[str] = []
     i = 0
@@ -258,7 +215,7 @@ def _parse_open_args(cmd: str, args: list[str]) -> dict[str, Any]:
                 return result
 
     else:
-        # cat, less, more, wc, stat, file, strings
+        # cat, less, more, tac — collect positional file paths.
         while i < len(args):
             p = args[i]
             if not p.startswith("-"):
@@ -271,9 +228,8 @@ def _parse_open_args(cmd: str, args: list[str]) -> dict[str, Any]:
     return result
 
 
+# Extract pattern, search path, glob, context, and flags from LOCATE commands.
 def _parse_locate_args(cmd: str, args: list[str]) -> dict[str, Any]:
-    """Extract pattern, path, flags from a LOCATE command."""
-
     result: dict[str, Any] = {
         "pattern": None,
         "target": ".",
@@ -369,9 +325,8 @@ def _parse_locate_args(cmd: str, args: list[str]) -> dict[str, Any]:
     return result
 
 
+# Extract path, depth, hidden/name/type flags from SURVEY (ls/tree/find) commands.
 def _parse_survey_args(cmd: str, args: list[str]) -> dict[str, Any]:
-    """Extract path, depth, hidden flags from a SURVEY command."""
-
     result: dict[str, Any] = {
         "target": ".",
         "depth": 3 if cmd == "tree" else 1,
@@ -451,23 +406,10 @@ def _parse_survey_args(cmd: str, args: list[str]) -> dict[str, Any]:
     return result
 
 
-# ── Pipeline normalization ────────────────────────────────────────────
+# Pipeline normalization
 
+# Collapse read-only pipe chains into one NormalizedCommand; None if unsafe.
 def _normalize_pipeline(stages: list[str], cwd: str) -> NormalizedCommand | None:
-    """Normalize a multi-stage pipe into a single NormalizedCommand.
-
-    Only handles read-only pipelines.  Returns None if the pipeline
-    contains any side-effecting command.
-
-    Examples that are normalized:
-      cat file | head -n 20          → OPEN file [1:20]
-      cat file | tail -n 10          → OPEN file tail 10
-      cat file | grep pattern        → LOCATE pattern in file
-      head -n 50 file | grep pattern → LOCATE pattern in file (0-50)
-      cat file | wc -l               → OPEN file (wc metadata)
-      cat file | sed -n '1,20p'      → OPEN file [1:20]
-    """
-
     if len(stages) < 2:
         return None
 
@@ -482,7 +424,7 @@ def _normalize_pipeline(stages: list[str], cwd: str) -> NormalizedCommand | None
     if primary_intent not in (Intent.OPEN, Intent.SURVEY):
         return None  # Only open/survey as the source
 
-    # Check all right-hand stages are read-only transforms
+    # Every RHS stage must be a read-only transform (head, grep, sed, …).
     for stage in stages[1:]:
         stage_parts = _safe_split(stage)
         if not stage_parts:
@@ -496,7 +438,7 @@ def _normalize_pipeline(stages: list[str], cwd: str) -> NormalizedCommand | None
     start_line = open_args.get("start_line")
     end_line = open_args.get("end_line")
 
-    # Check if the RHS modifies the intent or parameters
+    # Fold RHS stages into intent (OPEN vs LOCATE) and line/pattern parameters.
     final_intent = Intent.OPEN
     pattern: str | None = None
     rhs_start: int | None = None
@@ -563,18 +505,10 @@ def _normalize_pipeline(stages: list[str], cwd: str) -> NormalizedCommand | None
     return nc
 
 
-# ── Main entry point ──────────────────────────────────────────────────
+# Main entry point
 
+# Classify a shell command; None means fall through to real bash.
 def classify(command: str, cwd: str = ".") -> NormalizedCommand | None:
-    """Classify a shell command into a NormalizedCommand.
-
-    Returns None when the command should go to real bash
-    (executes code, has side effects, is too complex to normalize).
-
-    This is the single entry point for intent-based routing.
-    Every command — simple or compound — passes through here.
-    """
-
     command = command.strip()
     if not command:
         return None
@@ -598,7 +532,7 @@ def classify(command: str, cwd: str = ".") -> NormalizedCommand | None:
         else:
             return _normalize_pipeline(stages, cwd)
 
-    # Simple single command
+    # Single command (no pipe, or pipe collapsed to one stage).
     parts = _safe_split(command)
     if not parts:
         return None
@@ -616,7 +550,6 @@ def classify(command: str, cwd: str = ".") -> NormalizedCommand | None:
         if parsed.get("unsupported"):
             return None
         target = parsed.get("target", ".")
-        # Container absolute path → real bash
         if _is_container_path(target):
             return None
         # Multi-file: cat a.txt b.txt — let real bash concatenate correctly

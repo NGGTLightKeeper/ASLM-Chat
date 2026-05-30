@@ -1,17 +1,10 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Standalone sandbox image setup script.
-
-Run this once before first use, or whenever the image needs to be refreshed.
-Works independently of the ASLM / MCP stack — only requires Docker.
-
-Usage:
-    python setup-sandbox.py [--source local|registry|auto] [--force]
-
-Exit codes:
-    0  — image is ready
-    1  — setup failed (details printed to stderr)
-"""
+# Standalone sandbox image setup — run before first use or when refreshing the image.
+# Requires Docker only (independent of ASLM / MCP).
+#
+# Usage: python setup-sandbox.py [--source local|registry|auto] [--force]
+# Exit 0 when the image is ready; exit 1 on failure (details on stderr).
 
 from __future__ import annotations
 
@@ -79,6 +72,7 @@ _CONFIG_TEMPLATE = """\
 """
 
 
+# Create sandbox.env with commented defaults when missing.
 def _ensure_env_file(path: Path) -> None:
     if path.exists():
         return
@@ -88,6 +82,7 @@ def _ensure_env_file(path: Path) -> None:
         pass
 
 
+# Parse key=value lines from a sandbox.env file.
 def _load_env_file(path: Path) -> dict[str, str]:
     result: dict[str, str] = {}
     try:
@@ -106,6 +101,7 @@ _ensure_env_file(_ENV_FILE)
 _env_overrides = _load_env_file(_ENV_FILE)
 
 
+# Resolve a config key from env, sandbox.env, or default.
 def _cfg(key: str, default: str) -> str:
     return os.environ.get(key) or _env_overrides.get(key) or default
 
@@ -115,6 +111,7 @@ SANDBOX_IMAGE = _cfg("SANDBOX_IMAGE", _DEFAULT_IMAGE)
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+# Run a subprocess and capture stdout/stderr as text.
 def _run(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
     return subprocess.run(
         args,
@@ -125,26 +122,30 @@ def _run(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
     )
 
 
+# Run a command with real-time stdout/stderr visible to the user.
 def _stream(args: list[str], timeout: int = 1800) -> int:
-    """Run a command with real-time stdout/stderr visible to the user."""
     proc = subprocess.run(args, timeout=timeout)
     return proc.returncode
 
 
+# Print a success line.
 def _ok(msg: str) -> None:
     print(f"  [ok] {msg}", flush=True)
 
 
+# Print a progress line.
 def _info(msg: str) -> None:
     print(f"  ... {msg}", flush=True)
 
 
+# Print an error line to stderr.
 def _fail(msg: str) -> None:
     print(f"  [!!] {msg}", file=sys.stderr, flush=True)
 
 
 # ── Docker checks ────────────────────────────────────────────────────
 
+# Verify the Docker CLI is installed and responsive.
 def _check_docker() -> bool:
     try:
         r = _run(["docker", "--version"], timeout=5)
@@ -161,6 +162,7 @@ def _check_docker() -> bool:
         return False
 
 
+# Verify the Docker daemon is reachable.
 def _check_daemon() -> bool:
     try:
         r = _run(["docker", "info", "--format", "{{.ServerVersion}}"], timeout=10)
@@ -176,6 +178,7 @@ def _check_daemon() -> bool:
 
 # ── Image checks ─────────────────────────────────────────────────────
 
+# Return True when the local image has the required runtime label.
 def _image_exists_and_valid() -> bool:
     r = _run(["docker", "image", "inspect", SANDBOX_IMAGE], timeout=10)
     if r.returncode != 0:
@@ -191,6 +194,7 @@ def _image_exists_and_valid() -> bool:
 
 # ── Pull / build ─────────────────────────────────────────────────────
 
+# Pull the sandbox image from the registry.
 def _pull() -> bool:
     _info(f"Pulling {SANDBOX_IMAGE} from Docker Hub...")
     code = _stream(["docker", "pull", SANDBOX_IMAGE], timeout=600)
@@ -204,6 +208,7 @@ def _pull() -> bool:
     return False
 
 
+# Build the sandbox image from the local Dockerfile.
 def _build() -> bool:
     dockerfile_path = _SCRIPT_DIR / "Dockerfile"
     if not dockerfile_path.exists():
@@ -223,6 +228,7 @@ def _build() -> bool:
 
 # ── Main ─────────────────────────────────────────────────────────────
 
+# Entry point: pull or build the sandbox image according to --source.
 def main() -> int:
     parser = argparse.ArgumentParser(description="Set up the mcp-sandbox Docker image.")
     parser.add_argument(

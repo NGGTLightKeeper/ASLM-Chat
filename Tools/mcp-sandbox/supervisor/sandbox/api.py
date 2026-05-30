@@ -1,16 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Sandbox tool API.
-
-The public surface is intentionally small: bash, write, edit, view_image,
-share_file.
-
-Most shell commands run as real bash. The supervisor only intercepts the small
-set of commands where plain stdout truncation can mislead the model:
-``cat/less/more <single-file>``. Large files are shown as structured previews;
-all other process output is capped by the execution layer.
-"""
-
 from __future__ import annotations
 
 import json
@@ -58,6 +47,8 @@ from sandbox.workspace import (
 
 logger = logging.getLogger(__name__)
 MODEL_RUNTIME_METADATA_PATH = Path(__file__).resolve().parents[3] / "model_runtime_metadata.json"
+
+# Tool definitions
 
 MCP_SERVER = {
     "id": "sandbox",
@@ -198,6 +189,9 @@ CORE_TOOLS = [
 TOOLS = list(CORE_TOOLS)
 
 
+# Bash routing helpers
+
+# Wrap a workspace helper payload in the sandbox v2 success envelope.
 def _wrap_workspace_payload(tool: str, payload: dict[str, Any]) -> dict[str, Any]:
     return success_response(
         tool,
@@ -207,6 +201,7 @@ def _wrap_workspace_payload(tool: str, payload: dict[str, Any]) -> dict[str, Any
     )
 
 
+# Split a shell command with shlex; return None on malformed quoting.
 def _safe_split(command: str) -> list[str] | None:
     try:
         return shlex.split(command)
@@ -214,6 +209,7 @@ def _safe_split(command: str) -> list[str] | None:
         return None
 
 
+# Normalize bash cwd: empty, None, and "none" map to ".".
 def _normalize_cwd_argument(raw_cwd: Any) -> str:
     if raw_cwd is None:
         return "."
@@ -223,6 +219,7 @@ def _normalize_cwd_argument(raw_cwd: Any) -> str:
     return cwd
 
 
+# Read text for supervised cat/less/more routing.
 def _read_text_for_cat(path: str) -> tuple[str, list[str], bool, dict[str, Any]]:
     result = read(path=path, max_bytes=MAX_READ_BYTES)
     inner = result.get("result", {})
@@ -231,6 +228,7 @@ def _read_text_for_cat(path: str) -> tuple[str, list[str], bool, dict[str, Any]]
     return content, warnings, bool(result.get("truncated", False)), inner
 
 
+# Build a structured preview for large text files routed from cat/less/more.
 def _build_large_file_preview(path: str, meta: dict[str, Any]) -> str:
     head_result = read(path=path, max_bytes=MAX_READ_BYTES)
     head_inner = head_result.get("result", {})
@@ -265,6 +263,7 @@ def _build_large_file_preview(path: str, meta: dict[str, Any]) -> str:
     )
 
 
+# Build a successful routed bash response with output truncation applied.
 def _bash_success(
     stdout: str,
     stderr: str = "",
@@ -291,6 +290,7 @@ def _bash_success(
     )
 
 
+# Build a failed routed bash response that preserves bash result shape.
 def _bash_routed_error(error_type: str, message: str, cwd: str = ".") -> dict[str, Any]:
     return error_response(
         "bash",
@@ -307,6 +307,7 @@ def _bash_routed_error(error_type: str, message: str, cwd: str = ".") -> dict[st
     )
 
 
+# Intercept plain cat/less/more of a single file with structured previews.
 def _try_file_preview_command(command: str, cwd: str) -> dict[str, Any] | None:
     parts = _safe_split(command)
     if not parts:
@@ -328,6 +329,7 @@ def _try_file_preview_command(command: str, cwd: str) -> dict[str, Any] | None:
     if kind == "binary":
         return _bash_success(f"[binary file: {mime}, {size} bytes]\n", cwd=cwd)
 
+    # Large files always get a structured preview instead of raw cat output.
     if size > MAX_CAT_FILE_BYTES:
         preview = _build_large_file_preview(path, meta)
         return _bash_success(
@@ -353,6 +355,7 @@ def _try_file_preview_command(command: str, cwd: str) -> dict[str, Any] | None:
 _JOB_ID_RE = re.compile(r"^bg_[0-9a-f]{8}$")
 
 
+# Intercept jobs/fg/kill commands for background job management.
 def _try_job_command(command: str, cwd: str) -> dict[str, Any] | None:
     parts = _safe_split(command)
     if not parts:
@@ -382,9 +385,8 @@ def _try_job_command(command: str, cwd: str) -> dict[str, Any] | None:
 _SHELL_STRUCTURE_RE = re.compile(r"&&|\|\||;|`|\$\(|>>?|<|\|")
 
 
+# Handle only supervisor-owned commands; everything else runs as bash.
 def _try_supervise(command: str, cwd: str = ".") -> dict[str, Any] | None:
-    """Handle only supervisor-owned commands; everything else runs as bash."""
-
     if _SHELL_STRUCTURE_RE.search(command):
         return None
 
@@ -399,6 +401,10 @@ def _try_supervise(command: str, cwd: str = ".") -> dict[str, Any] | None:
         return None
 
 
+# Tool handlers
+
+
+# Run bash with supervisor routing for cat/less/more and background jobs.
 def _handle_bash(
     arguments: dict[str, Any],
     _context: dict[str, Any] | None = None,
@@ -408,6 +414,7 @@ def _handle_bash(
     command = str(arguments.get("command", ""))
     cwd = _normalize_cwd_argument(arguments.get("cwd", "."))
 
+    # Fast path: supervisor-owned commands never spawn a shell.
     routed = _try_supervise(command, cwd=cwd)
     if routed is not None:
         return routed
@@ -444,6 +451,7 @@ def _handle_bash(
             truncated=bool(execution.get("truncated", False)),
         )
 
+    # Classify non-zero exits and execution failures into typed error codes.
     error_type = "process_error"
     if execution.get("exit_code") is None and execution.get("error"):
         error_type = "execution_failed"
@@ -462,6 +470,7 @@ def _handle_bash(
     )
 
 
+# Create or overwrite a UTF-8 text file in the task workspace.
 def _handle_write(arguments: dict[str, Any], _context: dict[str, Any] | None = None) -> dict[str, Any]:
     return _wrap_workspace_payload(
         "write",
@@ -472,6 +481,7 @@ def _handle_write(arguments: dict[str, Any], _context: dict[str, Any] | None = N
     )
 
 
+# Present a workspace file as a downloadable shared_file card.
 def _handle_share_file(arguments: dict[str, Any], _context: dict[str, Any] | None = None) -> dict[str, Any]:
     raw_path = str(arguments.get("path", "")).strip()
     raw_filename = str(arguments.get("filename", "") or "").strip()
@@ -493,11 +503,15 @@ def _handle_share_file(arguments: dict[str, Any], _context: dict[str, Any] | Non
     return success_response("share_file", result, warnings=render_warnings)
 
 
+# Edit and vision helpers
+
+# Build optional rich render preview for shared images and tabular files.
 def _build_share_render_preview(raw_path: str, meta: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
     mime_type = str(meta.get("mime") or "application/octet-stream")
     file_kind = str(meta.get("kind") or "")
     warnings: list[str] = []
 
+    # Images reuse read_image inline preview when vision metadata allows it downstream.
     if mime_type.startswith("image/") or file_kind == "image":
         image_payload = read_image(raw_path, include_preview=True, max_preview_bytes=MAX_IMAGE_PREVIEW_BYTES)
         image_result = image_payload.get("result", {}) if isinstance(image_payload, dict) else {}
@@ -513,6 +527,7 @@ def _build_share_render_preview(raw_path: str, meta: dict[str, Any]) -> tuple[di
         warnings.extend(image_payload.get("warnings", []) if isinstance(image_payload, dict) else [])
         return render, warnings
 
+    # CSV/TSV files get a small tabular sample for the shared_file card.
     lower_path = str(meta.get("path") or raw_path).lower()
     if mime_type in {"text/csv", "text/tab-separated-values"} or lower_path.endswith((".csv", ".tsv")):
         table_payload = read(raw_path, max_bytes=min(MAX_READ_BYTES, 131072))
@@ -538,6 +553,7 @@ def _build_share_render_preview(raw_path: str, meta: dict[str, Any]) -> tuple[di
     return None, warnings
 
 
+# Return True when an edit argument key is present and non-empty.
 def _has_argument_value(arguments: dict[str, Any], key: str) -> bool:
     if key not in arguments:
         return False
@@ -549,6 +565,7 @@ def _has_argument_value(arguments: dict[str, Any], key: str) -> bool:
     return True
 
 
+# Detect line-range edit mode from explicit mode or range argument presence.
 def _is_lines_edit_arguments(arguments: dict[str, Any]) -> bool:
     mode = str(arguments.get("mode", "") or "").strip().lower()
     if mode == "lines":
@@ -556,10 +573,12 @@ def _is_lines_edit_arguments(arguments: dict[str, Any]) -> bool:
     return _has_argument_value(arguments, "range")
 
 
+# Return the line range argument for mode='lines' edits.
 def _line_range_argument(arguments: dict[str, Any]) -> Any:
     return arguments.get("range", "")
 
 
+# Dispatch match or lines edit modes to workspace helpers.
 def _handle_edit(arguments: dict[str, Any], _context: dict[str, Any] | None = None) -> dict[str, Any]:
     mode = str(arguments.get("mode", "match") or "match").strip().lower()
     if mode == "line":
@@ -569,6 +588,7 @@ def _handle_edit(arguments: dict[str, Any], _context: dict[str, Any] | None = No
     if mode == "match" and _is_lines_edit_arguments(arguments):
         mode = "lines"
 
+    # Line-range replacement or insertion.
     if mode == "lines":
         range_arg = _line_range_argument(arguments)
         if not str(range_arg or "").strip() and not isinstance(range_arg, (list, tuple)):
@@ -594,6 +614,7 @@ def _handle_edit(arguments: dict[str, Any], _context: dict[str, Any] | None = No
             ),
         )
 
+    # Exact old_str/new_str replacement with ambiguity checks.
     if "old_str" not in arguments or "new_str" not in arguments:
         return error_response(
             "edit",
@@ -612,6 +633,7 @@ def _handle_edit(arguments: dict[str, Any], _context: dict[str, Any] | None = No
     )
 
 
+# Load model runtime metadata from the shared JSON file on disk.
 def _load_model_runtime_metadata() -> dict[str, Any]:
     try:
         with MODEL_RUNTIME_METADATA_PATH.open("r", encoding="utf-8") as handle:
@@ -621,6 +643,7 @@ def _load_model_runtime_metadata() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+# Resolve the active model record from context or runtime metadata.
 def _resolve_active_model_record(context: dict[str, Any] | None) -> tuple[dict[str, Any], str]:
     payload = _load_model_runtime_metadata()
     if not payload:
@@ -651,6 +674,7 @@ def _resolve_active_model_record(context: dict[str, Any] | None) -> tuple[dict[s
     return {}, "missing_model_record"
 
 
+# Check whether the active model supports vision from runtime metadata.
 def _model_supports_vision(context: dict[str, Any] | None) -> tuple[bool, dict[str, Any], str]:
     model_record, source = _resolve_active_model_record(context)
     capabilities = model_record.get("capabilities", {}) if isinstance(model_record, dict) else {}
@@ -659,6 +683,7 @@ def _model_supports_vision(context: dict[str, Any] | None) -> tuple[bool, dict[s
     return bool(capabilities.get("vision", False)), model_record, source
 
 
+# Replace inline image preview with a text placeholder when vision is disabled.
 def _view_image_without_visual_preview(
     image_payload: dict[str, Any],
     model_record: dict[str, Any],
@@ -683,6 +708,7 @@ def _view_image_without_visual_preview(
     return result
 
 
+# Read image metadata and gate inline preview on model vision support.
 def _handle_view_image(arguments: dict[str, Any], _context: dict[str, Any] | None = None) -> dict[str, Any]:
     if "path" not in arguments:
         return error_response(
@@ -697,6 +723,7 @@ def _handle_view_image(arguments: dict[str, Any], _context: dict[str, Any] | Non
         max_preview_bytes=int(arguments.get("max_preview_bytes", MAX_IMAGE_PREVIEW_BYTES)),
     )
     supports_vision, model_record, metadata_source = _model_supports_vision(_context)
+    # Withhold base64 preview when runtime metadata reports supports_vision=false.
     if not supports_vision and bool(arguments.get("include_preview", True)):
         image_payload = {
             "result": _view_image_without_visual_preview(
@@ -716,6 +743,8 @@ def _handle_view_image(arguments: dict[str, Any], _context: dict[str, Any] | Non
     )
 
 
+# Dispatch
+
 BASE_TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "bash": _handle_bash,
     "write": _handle_write,
@@ -725,6 +754,7 @@ BASE_TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
 }
 
 
+# Dispatch a sandbox tool call to the registered handler with error wrapping.
 def handle_tool(
     tool_id: str,
     arguments: dict[str, Any] | None = None,

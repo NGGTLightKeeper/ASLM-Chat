@@ -1,22 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Intent-based controller.
-
-Replaces the command-syntax router in api.py with intent-based dispatch.
-
-Flow:
-  command (str)
-    → intent.classify()       — what is the model trying to do?
-    → session_state.check()   — should we break the loop?
-    → backend handler         — run the actual operation
-    → presenter               — choose the right representation
-    → session_state.record()  — update exploration memory
-    → response
-
-The model cannot pick the backend mechanism.
-It picks the *goal*; the controller picks the *how*.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -54,16 +37,15 @@ from sandbox.workspace import (
 logger = logging.getLogger(__name__)
 
 
-# ── Backend handlers ──────────────────────────────────────────────────
+# Backend handlers
 
 
+# OPEN intent: read file content with loop-breaking and preview fallbacks.
 def _handle_open(
     nc: NormalizedCommand,
     state: ExplorationState,
     cwd: str = ".",
 ) -> dict[str, Any]:
-    """Handle OPEN intent: read file content."""
-
     path = resolve_model_path(nc.target, cwd)
     norm_path = normalize_model_relative_path(path)
 
@@ -88,7 +70,7 @@ def _handle_open(
         mime = meta_inner.get("mime", "?")
         return _ok(f"[{kind} file: {mime}, {_human_size(size)}]", norm_path)
 
-    # Large file OR loop broken → auto-preview (never a dead-end refusal)
+    # Large file or read loop → structured preview instead of raw dump.
     if size > MAX_CAT_FILE_BYTES or loop_broken:
         preview = _build_preview(path, meta_inner, size)
         warnings = []
@@ -145,7 +127,7 @@ def _handle_open(
             ],
         )
 
-    # Check overlap — if already read this range, switch to adjacent
+    # Overlap with prior reads → serve adjacent unread window when possible.
     if not loop_broken and start is None:
         overlap = state.get_read_overlap(norm_path, s_line, e_line)
         if overlap > 0.7:
@@ -181,13 +163,12 @@ def _handle_open(
     return _ok(presented, norm_path, warnings=warnings_list)
 
 
+# LOCATE intent: grep-style search via workspace.grep and presenter.
 def _handle_locate(
     nc: NormalizedCommand,
     state: ExplorationState,
     cwd: str = ".",
 ) -> dict[str, Any]:
-    """Handle LOCATE intent: search text in files."""
-
     if not nc.pattern:
         return _err("No search pattern provided.")
 
@@ -216,13 +197,12 @@ def _handle_locate(
     return _ok(presented, norm_path, warnings=result.get("warnings", []))
 
 
+# SURVEY intent (ls/tree): directory listing with optional survey cache.
 def _handle_survey(
     nc: NormalizedCommand,
     state: ExplorationState,
     cwd: str = ".",
 ) -> dict[str, Any]:
-    """Handle SURVEY intent: explore directory structure."""
-
     path = resolve_model_path(nc.target, cwd)
     norm_path = normalize_model_relative_path(path)
 
@@ -268,13 +248,12 @@ def _handle_survey(
     return _ok(output, norm_path, warnings=result.get("warnings", []))
 
 
+# SURVEY intent (find/fd): find files by name/type via workspace.find.
 def _handle_find(
     nc: NormalizedCommand,
     state: ExplorationState,
     cwd: str = ".",
 ) -> dict[str, Any]:
-    """Handle SURVEY/find intent: find files by name/type."""
-
     path = resolve_model_path(nc.target, cwd)
     norm_path = normalize_model_relative_path(path)
 
@@ -293,12 +272,11 @@ def _handle_find(
     return _ok(output, norm_path, warnings=result.get("warnings", []))
 
 
-# ── Helpers ───────────────────────────────────────────────────────────
+# Helpers
 
 
+# Build structured head/tail preview for large or long files.
 def _build_preview(path: str, meta: dict[str, Any], size: int) -> str:
-    """Build structured preview for large files (no refusal)."""
-
     head_result = read(path=path, max_bytes=MAX_READ_BYTES)
     head_inner = head_result.get("result", {})
     content = head_inner.get("content", "")
@@ -333,6 +311,7 @@ def _build_preview(path: str, meta: dict[str, Any], size: int) -> str:
     )
 
 
+# Internal success shape before conversion to bash response.
 def _ok(
     stdout: str,
     path: str = ".",
@@ -346,6 +325,7 @@ def _ok(
     }
 
 
+# Internal error shape before conversion to bash response.
 def _err(message: str) -> dict[str, Any]:
     return {
         "intent_routed": True,
@@ -356,16 +336,17 @@ def _err(message: str) -> dict[str, Any]:
     }
 
 
+# Signal path errors so _try_supervise can fall back to real bash.
 def _not_found(message: str) -> None:
-    """Re-raise as FileNotFoundError so _try_supervise falls back to real bash."""
     raise FileNotFoundError(message)
 
 
-# ── Main dispatch ─────────────────────────────────────────────────────
+# Main dispatch
 
 _FIND_COMMANDS = frozenset({"find", "fd"})
 
 
+# Classify command and dispatch; None means fall through to real bash.
 def dispatch(
     command: str,
     cwd: str,
@@ -373,12 +354,6 @@ def dispatch(
     make_bash_success: Callable,
     make_bash_error: Callable,
 ) -> dict[str, Any] | None:
-    """Classify command and dispatch to the appropriate handler.
-
-    Returns a bash-shaped response dict if handled,
-    or None to fall through to real bash.
-    """
-
     nc = classify(command, cwd)
     if nc is None:
         return None

@@ -14,26 +14,23 @@ os.environ.setdefault("SANDBOX_SUPERVISOR_VENV", "/opt/sandbox-venv")
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
 
+# Prefer the read-only source bind when the image also has a copy.
 def _prefer_supervisor_source() -> None:
-    """Prefer the read-only source bind when the image also has a copy."""
-
     supervisor_src = Path(os.environ["SANDBOX_SUPERVISOR_SRC"])
     if supervisor_src.is_dir() and str(supervisor_src) not in sys.path:
         sys.path.insert(0, str(supervisor_src))
 
 
+# Best-effort supervisor OOM protection.
 def _protect_from_oom() -> None:
-    """Best-effort supervisor OOM protection."""
-
     try:
         Path("/proc/self/oom_score_adj").write_text("-1000\n", encoding="utf-8")
     except OSError:
         pass
 
 
+# Use a stable process title when setproctitle is available.
 def _set_process_title() -> None:
-    """Use a stable process title when setproctitle is available."""
-
     try:
         from setproctitle import setproctitle
     except Exception:
@@ -45,8 +42,8 @@ def _set_process_title() -> None:
         pass
 
 
+# Kill and remove job dirs left from previous supervisor sessions.
 def _cleanup_orphaned_job_dirs() -> None:
-    """Kill and remove job dirs left from previous supervisor sessions."""
     import os
     import signal
     import shutil
@@ -99,6 +96,7 @@ def _cleanup_orphaned_job_dirs() -> None:
         shutil.rmtree(entry, ignore_errors=True)
 
 
+# Start FastMCP with sandbox tools (or healthcheck when requested).
 def main() -> None:
     _prefer_supervisor_source()
     _protect_from_oom()
