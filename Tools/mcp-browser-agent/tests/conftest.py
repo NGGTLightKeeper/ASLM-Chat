@@ -13,6 +13,8 @@ if str(PKG_ROOT) not in sys.path:
     sys.path.insert(0, str(PKG_ROOT))
 
 
+# Module-scoped fixture: load mcp-server.py bridge for contract tests.
+
 @pytest.fixture(scope="module")
 def bridge_module():
     bridge_path = PKG_ROOT / "mcp-server.py"

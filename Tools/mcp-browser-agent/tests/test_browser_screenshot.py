@@ -10,6 +10,8 @@ import pytest
 from browser_screenshot import _load_model_runtime_metadata, _model_supports_vision, _png_dimensions
 
 
+# Build a minimal valid PNG with the given IHDR dimensions (test helper).
+
 def _minimal_png(width: int, height: int) -> bytes:
     signature = b"\x89PNG\r\n\x1a\n"
     ihdr_data = (
@@ -27,6 +29,8 @@ def _minimal_png(width: int, height: int) -> bytes:
     return signature + ihdr_chunk + iend_chunk
 
 
+# _png_dimensions — parse IHDR from bytes or return None for invalid input.
+
 @pytest.mark.unit
 def test_png_dimensions_reads_width_and_height() -> None:
     data = _minimal_png(640, 480)
@@ -34,6 +38,8 @@ def test_png_dimensions_reads_width_and_height() -> None:
     assert dims == {"width": 640, "height": 480}
     assert _png_dimensions(b"not-a-png") is None
 
+
+# _model_supports_vision and _load_model_runtime_metadata — vision flag from runtime JSON.
 
 @pytest.mark.unit
 def test_model_supports_vision_from_runtime_metadata(tmp_path: Path) -> None:

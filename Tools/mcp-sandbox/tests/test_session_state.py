@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Unit tests for session state bookkeeping and loop breaking."""
-
 from __future__ import annotations
 
 import os

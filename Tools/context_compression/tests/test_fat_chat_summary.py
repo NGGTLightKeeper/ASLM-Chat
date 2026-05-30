@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import re
@@ -25,6 +27,8 @@ RAW_NOISE_MARKERS = (
 )
 
 
+# Count summary field values that look like raw tool or search noise.
+
 def _count_noise(values: list[str]) -> int:
     return sum(
         1
@@ -34,6 +38,8 @@ def _count_noise(values: list[str]) -> int:
         or str(value).lower().count("http://") + str(value).lower().count("https://") > 1
     )
 
+
+# Exercise the bundled fat-chat fixture: model path, fallback path, and noise metrics.
 
 def main() -> None:
     if not DB_PATH.exists():
@@ -71,6 +77,7 @@ def main() -> None:
             "- user: real fixture loaded",
         ])
 
+    # Unparseable model output must still preserve raw compressed context.
     _invalid_text, invalid_payload = build_structured_history_summary(
         overflow_entries=entries,
         recent_user_messages=recent,
@@ -81,6 +88,7 @@ def main() -> None:
     if not invalid_payload.get("source_memory"):
         raise AssertionError("Unparseable model output must preserve raw compressed context.")
 
+    # Valid Markdown model output must produce a non-empty semantic summary.
     summary_text, payload = build_structured_history_summary(
         overflow_entries=entries,
         recent_user_messages=recent,
@@ -120,6 +128,8 @@ def main() -> None:
     print("sample:key_facts:", (key_facts[:2] if isinstance(key_facts, list) else []))
     print("sample:source_memory:", (source_memory[:2] if isinstance(source_memory, list) else []))
 
+
+# Pytest entry: skip when the bundled database is absent.
 
 @pytest.mark.integration
 def test_fat_chat_summary_fixture() -> None:

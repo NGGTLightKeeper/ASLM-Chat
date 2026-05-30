@@ -10,6 +10,8 @@ import pytest
 from context_compression.history_compressor import decide_compression, resolve_context_window_tokens
 
 
+# resolve_context_window_tokens — model payload and runtime metadata.
+
 @pytest.mark.unit
 def test_resolve_context_window_tokens_from_model_defaults() -> None:
     payload = {"defaults": {"num_ctx": 8192}}
@@ -37,6 +39,8 @@ def test_resolve_context_window_tokens_from_runtime_metadata(tmp_path: Path) -> 
         == 32768
     )
 
+
+# decide_compression — trigger ratio, thresholds, and debug override.
 
 @pytest.mark.unit
 def test_decide_compression_enables_at_trigger_ratio() -> None:

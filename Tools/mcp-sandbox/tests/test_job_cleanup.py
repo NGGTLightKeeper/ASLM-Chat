@@ -1,14 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Tests for background job dir lifecycle and cleanup behavior.
-
-Covers:
-- should_use_background threshold logic
-- Sync-completed job dirs are removed immediately
-- Truly backgrounded (timed-out) job dirs are kept for polling
-- purge_stale cleans both registry and filesystem
-- Startup orphan cleanup removes dirs from previous sessions
-"""
 from __future__ import annotations
 
 import os
@@ -50,9 +41,8 @@ def _native_bash_available() -> bool:
         return False
 
 
+# should_use_background routing logic.
 class TestShouldUseBackground(unittest.TestCase):
-    """should_use_background routing logic."""
-
     def test_never_mode_always_false(self):
         self.assertFalse(should_use_background("sleep 100", 600, "never"))
 
@@ -79,9 +69,8 @@ class TestShouldUseBackground(unittest.TestCase):
 
 
 @unittest.skipIf(not _native_bash_available(), "native bash is not available in this test environment")
+# Job dirs for synchronously completed commands must be deleted.
 class TestJobDirCleanupOnSyncCompletion(unittest.TestCase):
-    """Job dirs for synchronously completed commands must be deleted."""
-
     def setUp(self):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
@@ -92,16 +81,16 @@ class TestJobDirCleanupOnSyncCompletion(unittest.TestCase):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
 
+    # A command that finishes quickly leaves no .sandbox_jobs entry.
     def test_quick_command_no_leftover_dir(self):
-        """A command that finishes quickly leaves no .sandbox_jobs entry."""
         result = _exec_bash_native_background("echo hello", timeout_s=10)
         self.assertEqual(result["exit_code"], 0)
         self.assertIn("hello", result["stdout"])
         self.assertFalse(_jobs_root().exists() and any(_jobs_root().iterdir()),
                          ".sandbox_jobs should be empty after sync completion")
 
+    # After sync completion no live job directory is retained.
     def test_job_not_in_registry_after_dir_cleanup(self):
-        """After sync completion no live job directory is retained."""
         result = _exec_bash_native_background("echo hi", timeout_s=10)
         self.assertEqual(result["exit_code"], 0)
         job_id = result.get("job_id")
@@ -114,15 +103,15 @@ class TestJobDirCleanupOnSyncCompletion(unittest.TestCase):
         else:
             self.assertFalse(JOB_REGISTRY.list_jobs())
 
+    # Repeated quick commands don't accumulate dirs.
     def test_multiple_quick_commands_no_accumulation(self):
-        """Repeated quick commands don't accumulate dirs."""
         for i in range(5):
             _exec_bash_native_background(f"echo cmd{i}", timeout_s=10)
         dirs = list(_jobs_root().iterdir()) if _jobs_root().exists() else []
         self.assertEqual(len(dirs), 0, f"Expected 0 dirs, found {len(dirs)}: {dirs}")
 
+    # Non-zero exit codes also clean up the dir.
     def test_failed_command_dir_also_cleaned(self):
-        """Non-zero exit codes also clean up the dir."""
         result = _exec_bash_native_background("exit 1", timeout_s=10)
         self.assertEqual(result["exit_code"], 1)
         dirs = list(_jobs_root().iterdir()) if _jobs_root().exists() else []
@@ -130,9 +119,8 @@ class TestJobDirCleanupOnSyncCompletion(unittest.TestCase):
 
 
 @unittest.skipIf(not _native_bash_available(), "native bash is not available in this test environment")
+# Commands that time out must keep their dir for incremental polling.
 class TestJobDirKeptForTrulyBackgrounded(unittest.TestCase):
-    """Commands that time out must keep their dir for incremental polling."""
-
     def setUp(self):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
@@ -143,8 +131,8 @@ class TestJobDirKeptForTrulyBackgrounded(unittest.TestCase):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
 
+    # A command that exceeds timeout_s returns error_type=backgrounded and keeps dir.
     def test_timed_out_job_keeps_dir(self):
-        """A command that exceeds timeout_s returns error_type=backgrounded and keeps dir."""
         result = _exec_bash_native_background("sleep 30", timeout_s=1)
         self.assertIsNone(result["exit_code"])
         self.assertEqual(result.get("error_type"), "backgrounded")
@@ -163,9 +151,8 @@ class TestJobDirKeptForTrulyBackgrounded(unittest.TestCase):
                 job.process.kill()
 
 
+# purge_stale must remove both registry entries and filesystem dirs.
 class TestPurgeStaleFilesystemCleanup(unittest.TestCase):
-    """purge_stale must remove both registry entries and filesystem dirs."""
-
     def setUp(self):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
@@ -176,8 +163,8 @@ class TestPurgeStaleFilesystemCleanup(unittest.TestCase):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
 
+    # purge_stale with ttl=0 removes all done/killed jobs and their dirs.
     def test_purge_stale_removes_done_dirs(self):
-        """purge_stale with ttl=0 removes all done/killed jobs and their dirs."""
         # Create a fake done job with a real dir
         from sandbox.jobs import BackgroundJob
         job_dir = _jobs_root() / "bg_test001"
@@ -199,8 +186,8 @@ class TestPurgeStaleFilesystemCleanup(unittest.TestCase):
         self.assertEqual(removed, 1)
         self.assertFalse(job_dir.exists(), "purge_stale must delete the dir from disk")
 
+    # purge_stale must not touch still-running jobs.
     def test_purge_stale_keeps_running_jobs(self):
-        """purge_stale must not touch still-running jobs."""
         job_dir = _jobs_root() / "bg_test002"
         job_dir.mkdir(parents=True, exist_ok=True)
         JOB_REGISTRY.create(
@@ -215,9 +202,8 @@ class TestPurgeStaleFilesystemCleanup(unittest.TestCase):
         self.assertTrue(job_dir.exists(), "Running job dir must not be removed")
 
 
+# _cleanup_orphaned_job_dirs removes all dirs on supervisor startup.
 class TestStartupOrphanCleanup(unittest.TestCase):
-    """_cleanup_orphaned_job_dirs removes all dirs on supervisor startup."""
-
     def setUp(self):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
@@ -228,8 +214,8 @@ class TestStartupOrphanCleanup(unittest.TestCase):
         JOB_REGISTRY.reset()
         shutil.rmtree(WORKSPACE, ignore_errors=True)
 
+    # Orphaned dirs from previous sessions are removed.
     def test_cleans_all_dirs_on_startup(self):
-        """Orphaned dirs from previous sessions are removed."""
         for i in range(3):
             d = _jobs_root() / f"bg_orphan{i:03d}"
             d.mkdir(parents=True, exist_ok=True)
@@ -240,8 +226,8 @@ class TestStartupOrphanCleanup(unittest.TestCase):
         remaining = list(_jobs_root().iterdir()) if _jobs_root().exists() else []
         self.assertEqual(len(remaining), 0, f"All orphans must be gone, found: {remaining}")
 
+    # No error if .sandbox_jobs doesn't exist yet.
     def test_noop_when_no_jobs_dir(self):
-        """No error if .sandbox_jobs doesn't exist yet."""
         jobs_root = _jobs_root()
         if jobs_root.exists():
             shutil.rmtree(jobs_root)

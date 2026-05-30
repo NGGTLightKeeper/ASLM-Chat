@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Contract tests for the production bash supervision path in api.py."""
-
 from __future__ import annotations
 
 import shutil
@@ -12,6 +10,8 @@ import pytest
 from sandbox.api import handle_tool
 from sandbox.workspace import task_root
 
+
+# Autouse fixture: reset task_root before and after each test.
 
 @pytest.fixture(autouse=True)
 def _clean_task_root() -> None:
@@ -30,6 +30,8 @@ def _clean_task_root() -> None:
             child.unlink(missing_ok=True)
 
 
+# Plain cat on a large workspace file uses structured preview with paging markers.
+
 @pytest.mark.unit
 def test_plain_cat_large_file_uses_structured_preview() -> None:
     content = "\n".join(f"def func_{i}(): pass" for i in range(4000))
@@ -40,6 +42,8 @@ def test_plain_cat_large_file_uses_structured_preview() -> None:
     assert "-- big.py" in stdout
     assert "[next]" in stdout
 
+
+# grep must route to exec_bash, not the legacy workspace controller.
 
 @pytest.mark.unit
 def test_grep_routes_to_real_bash_not_legacy_controller() -> None:
@@ -61,6 +65,8 @@ def test_grep_routes_to_real_bash_not_legacy_controller() -> None:
     assert result["ok"]
     assert not result["result"].get("routed", False)
 
+
+# Compound shell commands must never take the single-file preview shortcut.
 
 @pytest.mark.unit
 def test_compound_shell_command_never_uses_file_preview_shortcut() -> None:

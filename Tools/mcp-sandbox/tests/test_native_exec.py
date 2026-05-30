@@ -22,6 +22,7 @@ from sandbox import workspace  # noqa: E402
 import sandbox.exec as exec_mod  # noqa: E402
 
 
+# Minimal fake Popen for native exec tests.
 class TextProcess:
     def __init__(self, *, stdout: str = "", stderr: str = "", returncode: int | None = 0) -> None:
         self.stdin = io.StringIO()

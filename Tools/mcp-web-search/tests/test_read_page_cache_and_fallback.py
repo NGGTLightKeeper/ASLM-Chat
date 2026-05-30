@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 import asyncio
 import shutil
 import uuid
@@ -16,11 +18,15 @@ from services.read_page import (
 )
 
 
+# _workspace_tmp_dir — create isolated tmp dir for read_page cache tests.
+
 def _workspace_tmp_dir() -> Path:
     path = ROOT / "tmp" / f"pytest_read_page_cache_{uuid.uuid4().hex}"
     path.mkdir(parents=True, exist_ok=False)
     return path
 
+
+# _html — build synthetic HTML page body for cache fixtures.
 
 def _html(body: str = "Cached page body") -> str:
     paragraphs = "".join(f"<p>{body} paragraph {i}</p>" for i in range(80))
@@ -29,6 +35,10 @@ def _html(body: str = "Cached page body") -> str:
         f"<body><main><h1>Cache Test</h1>{paragraphs}</main></body></html>"
     )
 
+
+# SourceCache round-trip and recovery — cache_page, search_local, corrupt DB handling.
+
+# test_source_cache_round_trips_and_searches_cached_pages — cache hit and local search by terms.
 
 def test_source_cache_round_trips_and_searches_cached_pages() -> None:
     tmp_dir = _workspace_tmp_dir()
@@ -54,6 +64,8 @@ def test_source_cache_round_trips_and_searches_cached_pages() -> None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+# test_source_cache_recovers_corrupt_database_and_keeps_working — corrupt file renamed; new DB works.
+
 def test_source_cache_recovers_corrupt_database_and_keeps_working() -> None:
     tmp_dir = _workspace_tmp_dir()
     cache = None
@@ -77,6 +89,10 @@ def test_source_cache_recovers_corrupt_database_and_keeps_working() -> None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+# ReadPageService cache hit and fetch fallback — fresh cache skips network; camoufox only when needed.
+
+# test_read_page_uses_fresh_cache_without_network_or_camoufox — cache hit never calls _fetch_raw_html.
+
 def test_read_page_uses_fresh_cache_without_network_or_camoufox(monkeypatch) -> None:
     tmp_dir = _workspace_tmp_dir()
     cache = None
@@ -92,6 +108,7 @@ def test_read_page_uses_fresh_cache_without_network_or_camoufox(monkeypatch) -> 
         )
         cache.cache_page(cache_key, "", clean_text="", raw_html=_html("served from sqlite cache"))
 
+        # fail_fetch — must not run when cache is fresh.
         async def fail_fetch(*_args, **_kwargs):
             raise AssertionError("network/Camoufox fetch should not run on a fresh cache hit")
 
@@ -109,14 +126,18 @@ def test_read_page_uses_fresh_cache_without_network_or_camoufox(monkeypatch) -> 
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+# test_fetch_raw_html_keeps_camoufox_idle_when_network_succeeds — successful _fetch_race skips browser.
+
 def test_fetch_raw_html_keeps_camoufox_idle_when_network_succeeds(monkeypatch) -> None:
     service = ReadPageService(ReadPageOptions(timeout=1.0))
     calls = {"network": 0, "camoufox": 0}
 
+    # fake_fetch_race — return HTML on first network attempt.
     async def fake_fetch_race(*_args, **_kwargs):
         calls["network"] += 1
         return "<html>network html</html>"
 
+    # fake_camoufox — must not be invoked when network succeeds.
     async def fake_camoufox(*_args, **_kwargs):
         calls["camoufox"] += 1
         raise AssertionError("Camoufox should stay idle when network fetch succeeds")
@@ -132,14 +153,18 @@ def test_fetch_raw_html_keeps_camoufox_idle_when_network_succeeds(monkeypatch) -
     assert calls == {"network": 1, "camoufox": 0}
 
 
+# test_fetch_raw_html_falls_back_to_camoufox_after_empty_network — empty network triggers browser fetch.
+
 def test_fetch_raw_html_falls_back_to_camoufox_after_empty_network(monkeypatch) -> None:
     service = ReadPageService(ReadPageOptions(timeout=1.0))
     calls = {"network": 0, "camoufox": 0}
 
+    # fake_fetch_race — simulate empty network response.
     async def fake_fetch_race(*_args, **_kwargs):
         calls["network"] += 1
         return None
 
+    # fake_camoufox — return HTML when network returns None.
     async def fake_camoufox(*_args, **_kwargs):
         calls["camoufox"] += 1
         return SimpleNamespace(success=True, html="<html>browser html</html>", error=None)

@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import json
@@ -14,12 +16,16 @@ from core.registry.domain_registry import (
 )
 
 
+# _fresh_registry_cache — clear domain registry LRU between tests.
+
 @pytest.fixture(autouse=True)
 def _fresh_registry_cache() -> None:
     clear_domain_registry_cache()
     yield
     clear_domain_registry_cache()
 
+
+# _write_profile — write a minimal domain profile JSON fixture file.
 
 def _write_profile(
     directory: Path,
@@ -39,6 +45,10 @@ def _write_profile(
     (directory / name).write_text(json.dumps(payload), encoding="utf-8")
 
 
+# Production profile JSON — all shipped domain_profiles/*.json parse.
+
+# test_all_production_profile_json_parse — every modular profile has profile name and domains list.
+
 def test_all_production_profile_json_parse() -> None:
     if not _PROFILES_DIR.is_dir():
         pytest.skip("domain_profiles directory not present")
@@ -52,6 +62,10 @@ def test_all_production_profile_json_parse() -> None:
         assert isinstance(data.get("profile"), str)
         assert isinstance(data.get("domains"), list)
 
+
+# Profile merge and defaults — pattern merge, sparse domains, lookup, access strategy.
+
+# test_merge_by_pattern_and_defaults — later profile overrides tier/method; aliases and weights merge.
 
 def test_merge_by_pattern_and_defaults(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "domain_profiles"
@@ -100,6 +114,8 @@ def test_merge_by_pattern_and_defaults(tmp_path: Path) -> None:
     assert info.hard_demotions["shopping"] == 0.4
 
 
+# test_defaults_applied_to_sparse_domain — profile defaults fill tier/method on sparse domain rows.
+
 def test_defaults_applied_to_sparse_domain(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "domain_profiles"
     profiles_dir.mkdir()
@@ -130,6 +146,8 @@ def test_defaults_applied_to_sparse_domain(tmp_path: Path) -> None:
     assert info.class_weights["academic"] == 1.45
 
 
+# test_class_weights_accessible_via_registry_lookup — lookup returns class_weights and parsing_mode.
+
 def test_class_weights_accessible_via_registry_lookup(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "domain_profiles"
     profiles_dir.mkdir()
@@ -151,6 +169,8 @@ def test_class_weights_accessible_via_registry_lookup(tmp_path: Path) -> None:
     assert info.class_weights["technical"] == 1.25
     assert info.parsing_mode == "nextjs_rsc"
 
+
+# test_json_api_hint_is_exposed_as_access_strategy_endpoint — json_api_hint becomes endpoint_url.
 
 def test_json_api_hint_is_exposed_as_access_strategy_endpoint(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "domain_profiles"
@@ -174,6 +194,8 @@ def test_json_api_hint_is_exposed_as_access_strategy_endpoint(tmp_path: Path) ->
     assert strategy.endpoint_url == "https://api.example/search?q=<q>"
 
 
+# test_ncbi_host_does_not_use_pubmed_json_api — pubmed uses json_api; other ncbi hosts use http.
+
 def test_ncbi_host_does_not_use_pubmed_json_api() -> None:
     registry = DomainRegistry()
 
@@ -185,6 +207,10 @@ def test_ncbi_host_does_not_use_pubmed_json_api() -> None:
     assert pmc.domain == "ncbi.nlm.nih.gov"
     assert pmc.method == "http"
 
+
+# Loader cache and legacy fallback — same merged object, empty profiles, profile vs legacy.
+
+# test_loader_cache_returns_same_object — _load_merged_registry returns cached singleton.
 
 def test_loader_cache_returns_same_object(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "domain_profiles"
@@ -203,6 +229,8 @@ def test_loader_cache_returns_same_object(tmp_path: Path) -> None:
     assert loaded_a and loaded_b
     assert a is b
 
+
+# test_legacy_fallback_when_profiles_empty — empty profiles dir falls back to legacy monolith.
 
 def test_legacy_fallback_when_profiles_empty(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "domain_profiles"
@@ -227,6 +255,8 @@ def test_legacy_fallback_when_profiles_empty(tmp_path: Path) -> None:
     assert "legacy.example" in merged
     assert merged["legacy.example"].tier == "friendly"
 
+
+# test_profile_overrides_legacy_for_same_pattern — modular profile wins over legacy for same pattern.
 
 def test_profile_overrides_legacy_for_same_pattern(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "domain_profiles"

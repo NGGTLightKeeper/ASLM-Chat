@@ -14,6 +14,8 @@ from browser import (
 )
 
 
+# _is_noise_element — hide empty footer links outside main content.
+
 @pytest.mark.unit
 def test_is_noise_element_filters_empty_links_outside_main() -> None:
     assert _is_noise_element({"role": "link", "name": "", "landmark": "contentinfo"})
@@ -21,6 +23,8 @@ def test_is_noise_element_filters_empty_links_outside_main() -> None:
         {"role": "button", "name": "Submit", "landmark": "main"},
     )
 
+
+# _format_control_line — ref, role, editable flag, and region in snapshot lines.
 
 @pytest.mark.unit
 def test_format_control_line_includes_editable_and_region() -> None:
@@ -40,6 +44,8 @@ def test_format_control_line_includes_editable_and_region() -> None:
     assert 'region=main' in line
 
 
+# _filter_snapshot_controls — compact mode drops noise; full mode keeps all.
+
 @pytest.mark.unit
 def test_filter_snapshot_controls_hides_noise_in_compact_mode() -> None:
     elements = [
@@ -52,6 +58,8 @@ def test_filter_snapshot_controls_hides_noise_in_compact_mode() -> None:
     full = _filter_snapshot_controls(elements, full=True)
     assert len(full) == 2
 
+
+# _format_parsed_controls — group headings and max_items cap.
 
 @pytest.mark.unit
 def test_format_parsed_controls_groups_and_caps_items() -> None:
@@ -66,6 +74,8 @@ def test_format_parsed_controls_groups_and_caps_items() -> None:
     assert "more controls hidden" in joined
 
 
+# _build_parsed_state — mode and per-role counts for compact snapshot.
+
 @pytest.mark.unit
 def test_build_parsed_state_reports_counts() -> None:
     elements = [
@@ -77,6 +87,8 @@ def test_build_parsed_state_reports_counts() -> None:
     assert state["counts"]["visible_controls"] == 2
     assert state["counts"]["text_inputs"] == 1
 
+
+# is_browser_closed_error — recognize driver/page-closed error messages.
 
 @pytest.mark.unit
 @pytest.mark.parametrize(

@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 
+# MCP server metadata and exposed browser tool ids.
+
 @pytest.mark.unit
 def test_mcp_server_metadata_and_tool_surface(bridge_module) -> None:
     assert bridge_module.MCP_SERVER["id"] == "browser_agent"
@@ -26,6 +28,8 @@ def test_mcp_server_metadata_and_tool_surface(bridge_module) -> None:
     assert set(bridge_module.TOOL_HANDLERS) == tool_ids
 
 
+# supports() — known LLM engines vs unknown.
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "engine",
@@ -35,6 +39,8 @@ def test_supports_known_engines(bridge_module, engine: str) -> None:
     expected = engine in ("ollama-service", "lms", "openai", "google-genai")
     assert bridge_module.supports(engine=engine) is expected
 
+
+# _flatten_content — plain string vs list of text blocks.
 
 @pytest.mark.unit
 def test_flatten_content_joins_text_chunks(bridge_module) -> None:
@@ -46,6 +52,8 @@ def test_flatten_content_joins_text_chunks(bridge_module) -> None:
     assert bridge_module._flatten_content([Block("a"), Block("b")]) == "a\n\nb"
 
 
+# _browser_keepalive_settings — normalize bare host to https for navigate.
+
 @pytest.mark.unit
 def test_browser_keepalive_settings_normalizes_navigate_url(bridge_module) -> None:
     interval, message = bridge_module._browser_keepalive_settings(
@@ -55,6 +63,8 @@ def test_browser_keepalive_settings_normalizes_navigate_url(bridge_module) -> No
     assert interval == 3.0
     assert "https://example.com" in message
 
+
+# call_tool — inline mode delegates to _execute_browser_tool.
 
 @pytest.mark.unit
 def test_call_tool_delegates_to_execute_browser_tool(bridge_module, monkeypatch) -> None:
@@ -71,6 +81,8 @@ def test_call_tool_delegates_to_execute_browser_tool(bridge_module, monkeypatch)
     execute.assert_awaited_once_with("browser_snapshot", {"full": False}, {})
     assert result == "ok"
 
+
+# _execute_browser_tool_local — block interaction while waiting for user.
 
 @pytest.mark.unit
 def test_execute_browser_tool_local_blocked_while_waiting(bridge_module, monkeypatch) -> None:

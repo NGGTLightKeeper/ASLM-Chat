@@ -9,6 +9,8 @@ import pytest
 from context_compression.history_compressor import fit_summary_text
 
 
+# fit_summary_text — within-budget passthrough vs size-fitted truncation.
+
 @pytest.mark.unit
 def test_fit_summary_text_returns_unchanged_when_within_budget() -> None:
     payload = {

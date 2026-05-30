@@ -12,6 +12,8 @@ from adapters.mcp.search_query_contract import (
 )
 
 
+# SEARCH_QUERY_SCHEMA — query required; effort enum and default.
+
 @pytest.mark.unit
 def test_search_query_schema_requires_query_and_allows_effort() -> None:
     props = SEARCH_QUERY_SCHEMA["properties"]
@@ -19,6 +21,8 @@ def test_search_query_schema_requires_query_and_allows_effort() -> None:
     assert props["effort"]["enum"] == ["low", "medium", "high"]
     assert props["effort"]["default"] == "medium"
 
+
+# coerce_search_query — normalize strings, dicts, and JSON payloads.
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
@@ -35,6 +39,8 @@ def test_coerce_search_query(raw: object, expected: str) -> None:
     assert coerce_search_query(raw) == expected
 
 
+# coerce_search_effort — map legacy and invalid values to low/medium/high.
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("raw", "expected"),
@@ -50,6 +56,8 @@ def test_coerce_search_query(raw: object, expected: str) -> None:
 def test_coerce_search_effort(raw: object, expected: str) -> None:
     assert coerce_search_effort(raw) == expected
 
+
+# sanitize_legacy_query — cap length and collapse whitespace.
 
 @pytest.mark.unit
 def test_sanitize_legacy_query_caps_length_and_collapses_whitespace() -> None:

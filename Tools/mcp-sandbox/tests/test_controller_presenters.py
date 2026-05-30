@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Smoke tests for legacy controller presenter helpers."""
-
 from __future__ import annotations
 
 import pytest
@@ -11,6 +9,7 @@ from sandbox.presenters import present_grep_results, present_read_slice
 
 
 @pytest.mark.unit
+# present_read_slice includes line window metadata in output.
 def test_present_read_slice_includes_line_window() -> None:
     text = present_read_slice(
         path="src/main.py",
@@ -26,6 +25,7 @@ def test_present_read_slice_includes_line_window() -> None:
 
 
 @pytest.mark.unit
+# present_grep_results formats match lines for display.
 def test_present_grep_results_formats_matches() -> None:
     text = present_grep_results(
         matches=[{"path": "a.py", "line_number": 3, "line": "needle"}],

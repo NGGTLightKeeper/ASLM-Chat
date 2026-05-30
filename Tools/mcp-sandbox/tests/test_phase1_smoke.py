@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Quick smoke tests for Phase 1 changes."""
-
 import os
 import sys
 import shutil
@@ -17,6 +15,7 @@ from sandbox.api import handle_tool
 from sandbox.config import MAX_CAT_FILE_BYTES
 
 
+# Clear task_root except preserved fixture dirs before smoke tests.
 def setup():
     task = workspace.task_root()
     task.mkdir(parents=True, exist_ok=True)

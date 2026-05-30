@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import json
@@ -16,12 +18,16 @@ from core.registry.trust_registry import (
 )
 
 
+# _fresh_trust_cache — clear trust registry LRU between tests.
+
 @pytest.fixture(autouse=True)
 def _fresh_trust_cache() -> None:
     clear_trust_registry_cache()
     yield
     clear_trust_registry_cache()
 
+
+# _write_global — write _global.json tiers/blacklist fixture.
 
 def _write_global(directory: Path, *, tiers: dict | None = None, blacklist: dict | None = None) -> None:
     payload: dict = {}
@@ -31,6 +37,8 @@ def _write_global(directory: Path, *, tiers: dict | None = None, blacklist: dict
         payload["blacklist"] = blacklist
     (directory / "_global.json").write_text(json.dumps(payload), encoding="utf-8")
 
+
+# _write_profile — write a minimal trust profile JSON fixture file.
 
 def _write_profile(
     directory: Path,
@@ -50,6 +58,10 @@ def _write_profile(
     (directory / name).write_text(json.dumps(payload), encoding="utf-8")
 
 
+# Production profile JSON — all shipped trust_registry_profiles/*.json parse.
+
+# test_all_production_profile_json_parse — every modular profile has profile name and domains list.
+
 def test_all_production_profile_json_parse() -> None:
     if not _PROFILES_DIR.is_dir():
         pytest.skip("trust_registry_profiles directory not present")
@@ -65,6 +77,10 @@ def test_all_production_profile_json_parse() -> None:
         assert isinstance(data.get("profile"), str)
         assert isinstance(data.get("domains"), list)
 
+
+# Global tiers/blacklist and profile merge — _global.json, pattern merge, sparse defaults.
+
+# test_global_blacklist_and_tiers — _global.json tiers and blocked_extensions apply.
 
 def test_global_blacklist_and_tiers(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "trust_registry_profiles"
@@ -83,6 +99,8 @@ def test_global_blacklist_and_tiers(tmp_path: Path) -> None:
     assert reg.is_blacklisted("https://evil.com/file.exe")
     assert reg.get_weight("https://example.com") == 0.0
 
+
+# test_merge_by_pattern_and_defaults — later profile overrides tier; aliases and affinity merge.
 
 def test_merge_by_pattern_and_defaults(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "trust_registry_profiles"
@@ -132,6 +150,8 @@ def test_merge_by_pattern_and_defaults(tmp_path: Path) -> None:
     assert info.class_affinity["general"] == 1.0
 
 
+# test_defaults_applied_to_sparse_domain — profile defaults fill tier/cat on sparse domain rows.
+
 def test_defaults_applied_to_sparse_domain(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "trust_registry_profiles"
     profiles_dir.mkdir()
@@ -154,6 +174,10 @@ def test_defaults_applied_to_sparse_domain(tmp_path: Path) -> None:
     assert info.cat == "science"
     assert info.class_affinity["academic"] == 1.0
 
+
+# Legacy fallback, profile override, production load, loader cache.
+
+# test_legacy_fallback_when_profiles_empty — empty profiles dir falls back to legacy monolith.
 
 def test_legacy_fallback_when_profiles_empty(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "trust_registry_profiles"
@@ -181,6 +205,8 @@ def test_legacy_fallback_when_profiles_empty(tmp_path: Path) -> None:
     assert ".zip" in blacklist.get("blocked_extensions", [])
 
 
+# test_profile_overrides_legacy_for_same_pattern — modular profile wins over legacy for same pattern.
+
 def test_profile_overrides_legacy_for_same_pattern(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "trust_registry_profiles"
     profiles_dir.mkdir()
@@ -206,6 +232,8 @@ def test_profile_overrides_legacy_for_same_pattern(tmp_path: Path) -> None:
     assert info.cat == "science"
 
 
+# test_production_registry_loads_from_legacy_monolith — TrustRegistry() resolves arxiv tier and pinterest block.
+
 def test_production_registry_loads_from_legacy_monolith() -> None:
     if not (ROOT / "core" / "registry" / "trust_registry.json").is_file():
         pytest.skip("production trust_registry.json missing")
@@ -214,6 +242,8 @@ def test_production_registry_loads_from_legacy_monolith() -> None:
     assert reg.get_weight("https://arxiv.org/abs/1234") == 1.0
     assert reg.is_blacklisted("https://pinterest.com/pin/1") is True
 
+
+# test_loader_cache_returns_same_object — _load_merged_registry returns cached singleton.
 
 def test_loader_cache_returns_same_object(tmp_path: Path) -> None:
     profiles_dir = tmp_path / "trust_registry_profiles"

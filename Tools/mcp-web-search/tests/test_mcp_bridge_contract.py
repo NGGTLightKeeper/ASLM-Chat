@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 
+# Module-scoped fixture: load mcp-server.py bridge for contract tests.
+
 @pytest.fixture(scope="module")
 def bridge_module():
     bridge_path = Path(__file__).resolve().parents[1] / "mcp-server.py"
@@ -21,6 +23,8 @@ def bridge_module():
     spec.loader.exec_module(module)
     return module
 
+
+# web_search — reject spam queries before calling the service.
 
 @pytest.mark.unit
 def test_web_search_rejects_spam_before_service(bridge_module) -> None:
@@ -35,6 +39,8 @@ def test_web_search_rejects_spam_before_service(bridge_module) -> None:
     assert result["sources"] == []
     assert str(result["model_context"]).startswith("BAD_QUERY:")
 
+
+# web_search — pass coerced query and effort through to run_web_search_rich.
 
 @pytest.mark.unit
 def test_web_search_passes_coerced_query_and_effort_to_service(bridge_module) -> None:

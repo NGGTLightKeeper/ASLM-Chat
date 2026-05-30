@@ -1,13 +1,11 @@
-"""Integration tests for read_page compression on cpython whatsnew 3.13.rst.
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-Uses the canonical GitHub blob URL as fixture content (live fetch, module-scoped).
-
-Run fast path (BM25 + service, network only):
-  pytest tests/test_read_page_whatsnew_github.py -m "integration and not gliner" -q
-
-Include GLiNER (GPU + model download, slow):
-  pytest tests/test_read_page_whatsnew_github.py -q
-"""
+# Integration tests for read_page compression on cpython whatsnew 3.13.rst.
+# Uses the canonical GitHub blob URL as fixture content (live fetch, module-scoped).
+# Run fast path (BM25 + service, network only):
+#   pytest tests/test_read_page_whatsnew_github.py -m "integration and not gliner" -q
+# Include GLiNER (GPU + model download, slow):
+#   pytest tests/test_read_page_whatsnew_github.py -q
 
 from __future__ import annotations
 
@@ -25,8 +23,11 @@ MAX_PAGE_CHARS = 20_000
 pytestmark = pytest.mark.integration
 
 
+# whatsnew_rst_markdown — module-scoped live fetch of cpython 3.13 whatsnew RST as markdown.
+
 @pytest.fixture(scope="module")
 def whatsnew_rst_markdown() -> str:
+    # _fetch — async github page fetch for fixture setup.
     async def _fetch() -> str:
         from custom_domains.github import fetch_github_page
 
@@ -45,6 +46,8 @@ def whatsnew_rst_markdown() -> str:
         pytest.skip("unexpected page content (not cpython 3.13 whatsnew)")
     return markdown
 
+
+# _compress — run compress_read_page_markdown with BM25 and optional GLiNER.
 
 def _compress(
     markdown: str,
@@ -66,6 +69,8 @@ def _compress(
     )
 
 
+# _gliner_runtime_ready — skip GLiNER tests when package or full_gpu unavailable.
+
 def _gliner_runtime_ready() -> tuple[bool, str]:
     from core.config.hardware import get_hardware_profile
     from core.extract.gliner_wrapper import is_gliner_available
@@ -77,11 +82,17 @@ def _gliner_runtime_ready() -> tuple[bool, str]:
     return True, ""
 
 
+# Live fetch and BM25 compression — document length and focus terms preserved.
+
+# test_github_whatsnew_fetch_is_long_document — fixture markdown exceeds threshold and mentions GIL.
+
 def test_github_whatsnew_fetch_is_long_document(whatsnew_rst_markdown: str) -> None:
     assert len(whatsnew_rst_markdown) > COMPRESS_THRESHOLD * 5
     assert "free-threaded" in whatsnew_rst_markdown
     assert "GIL" in whatsnew_rst_markdown
 
+
+# test_github_whatsnew_bm25_compress_keeps_focus — BM25 compress stays under budget with focus terms.
 
 def test_github_whatsnew_bm25_compress_keeps_focus(whatsnew_rst_markdown: str) -> None:
     out = _compress(whatsnew_rst_markdown, enable_gliner=False)
@@ -91,6 +102,10 @@ def test_github_whatsnew_bm25_compress_keeps_focus(whatsnew_rst_markdown: str) -
     assert "free-threaded" in out
     assert "GIL" in out
 
+
+# GLiNER compression — GPU path when runtime ready.
+
+# test_github_whatsnew_gliner_compress_keeps_focus — GLiNER compress under budget with focus terms.
 
 @pytest.mark.gliner
 def test_github_whatsnew_gliner_compress_keeps_focus(whatsnew_rst_markdown: str) -> None:
@@ -104,6 +119,8 @@ def test_github_whatsnew_gliner_compress_keeps_focus(whatsnew_rst_markdown: str)
     assert len(out) < len(whatsnew_rst_markdown)
     assert "free-threaded" in out
 
+
+# test_github_whatsnew_gliner_and_bm25_both_under_budget — both compressors meet size and focus checks.
 
 @pytest.mark.gliner
 def test_github_whatsnew_gliner_and_bm25_both_under_budget(whatsnew_rst_markdown: str) -> None:
@@ -119,14 +136,20 @@ def test_github_whatsnew_gliner_and_bm25_both_under_budget(whatsnew_rst_markdown
         assert "free-threaded" in text, label
 
 
+# ReadPageService integration — mocked github fetch, BM25 and GLiNER service paths.
+
+# test_read_page_service_whatsnew_bm25_path — service.read compresses fixture via BM25 without live fetch.
+
 def test_read_page_service_whatsnew_bm25_path(
     whatsnew_rst_markdown: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # fake_github — return module fixture instead of network.
     async def fake_github(url: str, timeout: float = 20.0) -> str:
         assert url == WHATSNEW_URL
         return whatsnew_rst_markdown
 
+    # _run — invoke ReadPageService.read with patched github fetch.
     async def _run() -> str:
         monkeypatch.setattr("services.read_page._fetch_github_page", fake_github)
 
@@ -146,6 +169,8 @@ def test_read_page_service_whatsnew_bm25_path(
     assert "GIL" in result
 
 
+# test_read_page_service_whatsnew_gliner_path — service.read with enable_gliner config and mocked fetch.
+
 @pytest.mark.gliner
 def test_read_page_service_whatsnew_gliner_path(
     whatsnew_rst_markdown: str,
@@ -155,6 +180,7 @@ def test_read_page_service_whatsnew_gliner_path(
     if not ready:
         pytest.skip(reason)
 
+    # fake_github — return module fixture instead of network.
     async def fake_github(url: str, timeout: float = 20.0) -> str:
         return whatsnew_rst_markdown
 
@@ -163,6 +189,7 @@ def test_read_page_service_whatsnew_gliner_path(
     cfg = load_search_config()
     cfg_gliner = replace(cfg, search=replace(cfg.search, enable_gliner=True))
 
+    # _run — invoke ReadPageService.read with GLiNER config and patched github fetch.
     async def _run() -> str:
         monkeypatch.setattr("services.read_page.load_search_config", lambda: cfg_gliner)
         monkeypatch.setattr("services.read_page._fetch_github_page", fake_github)

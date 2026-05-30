@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 import asyncio
 import json
 import shutil
@@ -18,11 +20,15 @@ from services.web_search import (
 )
 
 
+# _workspace_tmp_dir — create isolated tmp dir for partial-buffer tests.
+
 def _workspace_tmp_dir() -> Path:
     path = ROOT / "tmp" / f"pytest_partial_buffer_{uuid.uuid4().hex}"
     path.mkdir(parents=True, exist_ok=False)
     return path
 
+
+# _result — build a synthetic SearchResult for fixtures.
 
 def _result(url: str, title: str = "Title", snippet: str = "Snippet") -> SearchResult:
     return SearchResult(
@@ -33,6 +39,10 @@ def _result(url: str, title: str = "Title", snippet: str = "Snippet") -> SearchR
         method_hint="synthetic",
     )
 
+
+# Partial buffer merge, read safety, and deduplication.
+
+# test_partial_buffer_merges_and_dedupes_by_url — append merges and URL dedupe preserve first title.
 
 def test_partial_buffer_merges_and_dedupes_by_url() -> None:
     tmp_dir = _workspace_tmp_dir()
@@ -74,6 +84,8 @@ def test_partial_buffer_merges_and_dedupes_by_url() -> None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+# test_partial_buffer_read_is_safe_for_missing_or_invalid_files — missing or corrupt files yield [].
+
 def test_partial_buffer_read_is_safe_for_missing_or_invalid_files() -> None:
     tmp_dir = _workspace_tmp_dir()
     try:
@@ -88,12 +100,17 @@ def test_partial_buffer_read_is_safe_for_missing_or_invalid_files() -> None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+# async_ddgs_search — subprocess worker timeout returns partial results and cleans buffer files.
+
+# test_async_ddgs_search_returns_partial_results_on_worker_timeout — worker timeout surfaces buffered hits.
+
 def test_async_ddgs_search_returns_partial_results_on_worker_timeout(monkeypatch) -> None:
     captured_paths: list[str] = []
 
     class FakeProcess:
         returncode = None
 
+        # communicate — write partial results then block until killed on timeout.
         async def communicate(self, stdin: bytes) -> tuple[bytes, bytes]:
             payload = json.loads(stdin.decode("utf-8"))
             buffer_path = payload["partial_buffer_path"]
@@ -108,12 +125,15 @@ def test_async_ddgs_search_returns_partial_results_on_worker_timeout(monkeypatch
             await asyncio.sleep(1.0)
             return b"", b""
 
+        # kill — simulate subprocess kill on worker timeout.
         def kill(self) -> None:
             self.returncode = -9
 
+        # wait — return kill exit code after timeout handling.
         async def wait(self) -> int:
             return self.returncode or -9
 
+    # fake_create_subprocess_exec — inject FakeProcess instead of real DDGS worker.
     async def fake_create_subprocess_exec(*_args, **_kwargs):
         return FakeProcess()
 
@@ -140,12 +160,15 @@ def test_async_ddgs_search_returns_partial_results_on_worker_timeout(monkeypatch
     assert not Path(captured_paths[0] + ".tmp").exists()
 
 
+# test_async_ddgs_search_uses_one_buffer_per_request — each search gets a distinct partial buffer path.
+
 def test_async_ddgs_search_uses_one_buffer_per_request(monkeypatch) -> None:
     captured_paths: list[str] = []
 
     class FakeProcess:
         returncode = None
 
+        # communicate — write one partial URL per subprocess invocation.
         async def communicate(self, stdin: bytes) -> tuple[bytes, bytes]:
             payload = json.loads(stdin.decode("utf-8"))
             buffer_path = payload["partial_buffer_path"]
@@ -157,12 +180,15 @@ def test_async_ddgs_search_uses_one_buffer_per_request(monkeypatch) -> None:
             await asyncio.sleep(1.0)
             return b"", b""
 
+        # kill — simulate subprocess kill on worker timeout.
         def kill(self) -> None:
             self.returncode = -9
 
+        # wait — return kill exit code after timeout handling.
         async def wait(self) -> int:
             return self.returncode or -9
 
+    # fake_create_subprocess_exec — inject FakeProcess instead of real DDGS worker.
     async def fake_create_subprocess_exec(*_args, **_kwargs):
         return FakeProcess()
 
@@ -184,9 +210,14 @@ def test_async_ddgs_search_uses_one_buffer_per_request(monkeypatch) -> None:
     assert all(not Path(path).exists() for path in captured_paths)
 
 
+# Zero-result high-effort fallback — bounded snippet-only retries after empty high pass.
+
+# test_zero_result_high_fallback_uses_bounded_snippet_only_options — second pass uses medium effort caps.
+
 def test_zero_result_high_fallback_uses_bounded_snippet_only_options(monkeypatch) -> None:
     calls = []
 
+    # fake_pipeline — record effort/options; succeed on second call with one result.
     async def fake_pipeline(
         self,
         query,
@@ -251,9 +282,12 @@ def test_zero_result_high_fallback_uses_bounded_snippet_only_options(monkeypatch
     assert fallback["max_results"] <= 10
 
 
+# test_zero_result_high_fallback_does_not_repeat_full_high_for_every_variant — variants use medium only.
+
 def test_zero_result_high_fallback_does_not_repeat_full_high_for_every_variant(monkeypatch) -> None:
     fallback_calls = []
 
+    # fake_pipeline — always empty; record each fallback variant effort.
     async def fake_pipeline(
         self,
         query,

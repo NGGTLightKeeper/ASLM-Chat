@@ -84,9 +84,8 @@ def _healthcheck(container: DisposableSandbox, *, check: bool = True) -> subproc
     )
 
 
+# Escalate ordinary-to-destructive actions inside a disposable sandbox container.
 def test_disposable_container_survives_escalating_destructive_actions() -> None:
-    """Escalate ordinary-to-destructive actions inside a disposable sandbox container."""
-
     sandbox = DisposableSandbox()
     try:
         sandbox.start()

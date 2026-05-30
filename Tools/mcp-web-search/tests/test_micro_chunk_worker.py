@@ -1,7 +1,11 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 from core.extract.micro_chunk_worker import prune_micro_chunks
 
+
+# prune_micro_chunks — numeric punctuation variants survive micro-split.
 
 def test_numeric_variants_not_broken_by_micro_split() -> None:
     query = "openssl cve critical patch rce"
@@ -11,12 +15,13 @@ def test_numeric_variants_not_broken_by_micro_split() -> None:
         "and ratio 2/5 and 2 / 5."
     )
     out, _ = prune_micro_chunks(text, query)
-    # Keep numeric punctuation variants present after processing.
     assert "2.5" in out
     assert "2,5" in out
     assert "2 . 5" in out or "2.5" in out
     assert "2 / 5" in out or "2/5" in out
 
+
+# prune_micro_chunks — drop query-dense clauses with poor factual content.
 
 def test_surgically_drops_query_dense_fact_poor_clause() -> None:
     query = "cve openssl critical patch rce"
@@ -30,6 +35,8 @@ def test_surgically_drops_query_dense_fact_poor_clause() -> None:
     assert dbg.clauses_dropped >= 1
 
 
+# prune_micro_chunks — reference overlap prunes SERP-like boilerplate clauses.
+
 def test_reference_overlap_prunes_serp_like_clause() -> None:
     query = "openssl patch"
     reference = "openssl critical patch rce buy now free download"
@@ -41,6 +48,8 @@ def test_reference_overlap_prunes_serp_like_clause() -> None:
     assert "CVE-2024-5535" in out
     assert dbg.clauses_dropped >= 1
 
+
+# prune_micro_chunks — drop entire sentence when only noise clauses remain.
 
 def test_drops_whole_sentence_if_only_tumor_remains() -> None:
     query = "openssl critical patch rce"

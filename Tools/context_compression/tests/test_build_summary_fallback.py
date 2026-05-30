@@ -7,6 +7,8 @@ import pytest
 from context_compression.history_compressor import build_structured_history_summary
 
 
+# Fallback path when the model returns unparseable summary text.
+
 @pytest.mark.unit
 def test_build_structured_history_summary_falls_back_on_unparseable_model_output() -> None:
     entries = [

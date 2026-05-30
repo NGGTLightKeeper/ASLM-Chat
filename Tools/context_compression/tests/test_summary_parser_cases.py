@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import json
@@ -19,6 +21,8 @@ BASE_ENTRIES = [
 BASE_RECENT = ["Check this URL: https://www.youtube.com/watch?v=QknRUGPvsAQ"]
 
 
+# Run model output through the structured summary builder and classify parse status.
+
 def _run_model_output(model_output: str) -> tuple[str, dict]:
     _summary_text, payload = build_structured_history_summary(
         overflow_entries=BASE_ENTRIES,
@@ -33,6 +37,8 @@ def _run_model_output(model_output: str) -> tuple[str, dict]:
 
 
 class SummaryParserCasesTests(unittest.TestCase):
+    # Parser matrix: JSON, Markdown, canonical labels, and fallback cases.
+
     def test_parser_reports_parsed_or_fallback_for_model_outputs(self) -> None:
         json_payload = {
             "summary_version": 1,
@@ -156,6 +162,7 @@ class SummaryParserCasesTests(unittest.TestCase):
             ),
         ]
 
+        # Each case: expected parsed/fallback status, work_summary fragment, and URL normalization.
         for name, model_output, expected_status, expected_work_fragment in cases:
             with self.subTest(name=name):
                 status, payload = _run_model_output(model_output)

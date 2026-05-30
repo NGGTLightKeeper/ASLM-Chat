@@ -42,9 +42,8 @@ results: list[tuple[str, bool, str]] = []
 
 # Output helpers.
 
+# Print a formatted group header.
 def print_group(title: str) -> None:
-    """Print a formatted group header."""
-
     print("\n" + "=" * 70)
     print(title)
     print("=" * 70)
@@ -52,9 +51,8 @@ def print_group(title: str) -> None:
 
 # Assertion helpers.
 
+# Run a check and record whether it raised as expected.
 def check(name: str, *, expect_raise: bool, fn, notes: str = "") -> bool:
-    """Run a check and record whether it raised as expected."""
-
     try:
         result = fn()
         raised = False
@@ -84,9 +82,8 @@ def check(name: str, *, expect_raise: bool, fn, notes: str = "") -> bool:
 
 # Docker helpers.
 
+# Run a command inside the sandbox container.
 def docker_exec(cmd: str, check_output: bool = False) -> tuple[int, str, str]:
-    """Run a command inside the sandbox container."""
-
     result = subprocess.run(
         ["docker", "exec", config.CONTAINER_NAME, "bash", "-c", cmd],
         capture_output=True,

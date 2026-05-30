@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 
 
+# True when both on-disk ASLM export dirs contain labels.json.
+
 def aslm_embedding_exports_available() -> bool:
-    """True when both on-disk ASLM export dirs contain labels.json."""
     from core.query.aslm_embedding_runtime import (
         default_query_classifier_path,
         default_source_relevance_path,
