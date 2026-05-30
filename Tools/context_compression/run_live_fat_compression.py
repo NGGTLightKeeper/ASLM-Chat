@@ -1,4 +1,4 @@
-"""Live compression check against bundled db.sqlite3 using local Ollama/LMS."""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 
+# Point Settings at the compression engine port before importing API modules.
 def _configure_runtime() -> tuple[str, int]:
     port = int(os.environ.get("COMPRESSION_PORT", os.environ.get("OLLAMA_PORT", "20004")))
     engine = os.environ.get("COMPRESSION_ENGINE", "ollama-service").strip() or "ollama-service"
@@ -63,6 +64,7 @@ NAV_PREFIXES = (
 FALSE_PATH_MARKERS = (r"\n ", "=", "readlines", "open(", ".strip", ".match", ".Draw", ".Add")
 
 
+# Count list values that still contain raw tool dumps or noisy URLs.
 def _count_noise(values: list[str]) -> int:
     return sum(
         1
@@ -73,6 +75,7 @@ def _count_noise(values: list[str]) -> int:
     )
 
 
+# Flag artifact file paths that fail validation or look like code fragments.
 def _bad_files(files: list[str]) -> list[str]:
     bad: list[str] = []
     for name in files:
@@ -85,6 +88,7 @@ def _bad_files(files: list[str]) -> list[str]:
     return bad
 
 
+# Flag source_memory lines that are assistant navigation filler.
 def _bad_source_memory(items: list[str]) -> list[str]:
     bad: list[str] = []
     for item in items:
@@ -98,6 +102,7 @@ def _bad_source_memory(items: list[str]) -> list[str]:
     return bad
 
 
+# Choose a local model name from the active engine, preferring smaller local tags.
 def _pick_model(engine: str) -> str:
     models = llm_api.get_models(engine)
     names: list[str] = []
@@ -111,7 +116,6 @@ def _pick_model(engine: str) -> str:
     if not names:
         raise RuntimeError(f"No models from engine {engine!r}")
 
-    # Prefer local, smaller names first.
     preferred = [
         "gpt-oss:20b",
         "gpt-oss",
@@ -132,6 +136,7 @@ def _pick_model(engine: str) -> str:
     return names[0]
 
 
+# Extract visible assistant text from a streamed or dict-shaped LLM chunk.
 def _chunk_visible_text(chunk: object) -> str:
     if isinstance(chunk, tuple) and len(chunk) == 2 and chunk[0] == "message":
         message = chunk[1]
@@ -149,6 +154,7 @@ def _chunk_visible_text(chunk: object) -> str:
     return ""
 
 
+# Build a non-streaming summarize callback for the compression prompt.
 def _summarize_with_model(engine: str, model_name: str):
     def _call(prompt_messages: list[dict[str, str]]) -> str:
         chunks = llm_api.generate(
@@ -172,6 +178,7 @@ def _summarize_with_model(engine: str, model_name: str):
     return _call
 
 
+# Summarize sanitization metrics for one compression payload.
 def _report(label: str, payload: dict) -> dict[str, int | list[str]]:
     artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
     files = artifacts.get("files") if isinstance(artifacts.get("files"), list) else []
@@ -194,6 +201,7 @@ def _report(label: str, payload: dict) -> dict[str, int | list[str]]:
     return report
 
 
+# Run raw-only and model-backed compression against the bundled fat chat and write a report.
 def main() -> None:
     port = _RUNTIME_PORT
     engine = ENGINE
