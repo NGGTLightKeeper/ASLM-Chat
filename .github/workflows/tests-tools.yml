@@ -33,20 +33,25 @@ jobs:
         uses: actions/cache@v5
         with:
           path: Data/venvs/server
-          key: aslm-chat-venv-server-${{ hashFiles('Settings/venv_requirements.json') }}
+          key: aslm-chat-venv-server-${{ runner.os }}-${{ hashFiles('Settings/venv_requirements.json') }}
           restore-keys: |
-            aslm-chat-venv-server-
+            aslm-chat-venv-server-${{ runner.os }}-
 
       - name: Prepare venv
         run: |
           python -c "from Services import venv_manager; import sys; sys.exit(0 if venv_manager.ensure_venv('server', log=True) else 1)"
+          VENV_PYTHON=$(python -c "from Services import venv_manager; print(venv_manager.get_venv_python('server'))")
+          echo "VENV_PYTHON=${VENV_PYTHON}" >> "$GITHUB_ENV"
+          test -x "$VENV_PYTHON"
 
       - name: Install pytest
-        run: Data/venvs/server/bin/python -m pip install pytest
+        run: |
+          "$VENV_PYTHON" -m pip install pytest
 
       - name: Run pytest
         working-directory: Tools/context_compression
-        run: Data/venvs/server/bin/python -m pytest -q -m "not integration"
+        run: |
+          "$VENV_PYTHON" -m pytest -q -m "not integration"
 
   mcp-sandbox:
     name: mcp-sandbox
@@ -66,20 +71,25 @@ jobs:
         uses: actions/cache@v5
         with:
           path: Data/venvs/tools/mcp-sandbox
-          key: aslm-chat-venv-mcp-sandbox-${{ hashFiles('Settings/venv_requirements.json') }}
+          key: aslm-chat-venv-mcp-sandbox-${{ runner.os }}-${{ hashFiles('Settings/venv_requirements.json') }}
           restore-keys: |
-            aslm-chat-venv-mcp-sandbox-
+            aslm-chat-venv-mcp-sandbox-${{ runner.os }}-
 
       - name: Prepare tool venv
         run: |
           python -c "from Services import venv_manager; import sys; sys.exit(0 if venv_manager.ensure_venv('mcp-sandbox', log=True) else 1)"
+          VENV_PYTHON=$(python -c "from Services import venv_manager; print(venv_manager.get_venv_python('mcp-sandbox'))")
+          echo "VENV_PYTHON=${VENV_PYTHON}" >> "$GITHUB_ENV"
+          test -x "$VENV_PYTHON"
 
       - name: Install pytest
-        run: Data/venvs/tools/mcp-sandbox/bin/python -m pip install pytest
+        run: |
+          "$VENV_PYTHON" -m pip install pytest
 
       - name: Run pytest
         working-directory: Tools/mcp-sandbox
-        run: Data/venvs/tools/mcp-sandbox/bin/python -m pytest -q
+        run: |
+          "$VENV_PYTHON" -m pytest -q
 
   mcp-web-search:
     name: mcp-web-search
@@ -99,22 +109,25 @@ jobs:
         uses: actions/cache@v5
         with:
           path: Data/venvs/tools/mcp-web-search
-          key: aslm-chat-venv-mcp-web-search-${{ hashFiles('Settings/venv_requirements.json') }}
+          key: aslm-chat-venv-mcp-web-search-${{ runner.os }}-${{ hashFiles('Settings/venv_requirements.json') }}
           restore-keys: |
-            aslm-chat-venv-mcp-web-search-
+            aslm-chat-venv-mcp-web-search-${{ runner.os }}-
 
       - name: Prepare tool venv
         run: |
           python -c "from Services import venv_manager; import sys; sys.exit(0 if venv_manager.ensure_venv('mcp-web-search', log=True) else 1)"
+          VENV_PYTHON=$(python -c "from Services import venv_manager; print(venv_manager.get_venv_python('mcp-web-search'))")
+          echo "VENV_PYTHON=${VENV_PYTHON}" >> "$GITHUB_ENV"
+          test -x "$VENV_PYTHON"
 
       - name: Install pytest
-        run: Data/venvs/tools/mcp-web-search/bin/python -m pip install pytest
+        run: |
+          "$VENV_PYTHON" -m pip install pytest
 
       - name: Run pytest
         working-directory: Tools/mcp-web-search
         run: |
-          Data/venvs/tools/mcp-web-search/bin/python -m pytest -q \
-            -m "not gliner and not integration and not live"
+          "$VENV_PYTHON" -m pytest -q -m "not gliner and not integration and not live"
 
   mcp-browser-agent:
     name: mcp-browser-agent
@@ -134,17 +147,22 @@ jobs:
         uses: actions/cache@v5
         with:
           path: Data/venvs/tools/mcp-browser-agent
-          key: aslm-chat-venv-mcp-browser-agent-${{ hashFiles('Settings/venv_requirements.json') }}
+          key: aslm-chat-venv-mcp-browser-agent-${{ runner.os }}-${{ hashFiles('Settings/venv_requirements.json') }}
           restore-keys: |
-            aslm-chat-venv-mcp-browser-agent-
+            aslm-chat-venv-mcp-browser-agent-${{ runner.os }}-
 
       - name: Prepare tool venv
         run: |
           python -c "from Services import venv_manager; import sys; sys.exit(0 if venv_manager.ensure_venv('mcp-browser-agent', log=True) else 1)"
+          VENV_PYTHON=$(python -c "from Services import venv_manager; print(venv_manager.get_venv_python('mcp-browser-agent'))")
+          echo "VENV_PYTHON=${VENV_PYTHON}" >> "$GITHUB_ENV"
+          test -x "$VENV_PYTHON"
 
       - name: Install pytest
-        run: Data/venvs/tools/mcp-browser-agent/bin/python -m pip install pytest
+        run: |
+          "$VENV_PYTHON" -m pip install pytest
 
       - name: Run pytest
         working-directory: Tools/mcp-browser-agent
-        run: Data/venvs/tools/mcp-browser-agent/bin/python -m pytest -q
+        run: |
+          "$VENV_PYTHON" -m pytest -q

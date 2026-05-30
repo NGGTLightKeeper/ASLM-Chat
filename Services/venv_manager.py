@@ -269,9 +269,15 @@ def ensure_venv(venv_id: str, *, log: bool = True) -> bool:
 
     state = _read_state(venv_path)
     if state.get("packagesHash") == _packages_signature(packages, packages_no_deps):
-        if log:
-            print(f"[ASLM-Chat] Venv '{venv_id}' is up to date.")
-        return True
+        if not python_path.exists():
+            if log:
+                print(
+                    f"[ASLM-Chat] Venv '{venv_id}' state is current but Python is missing; reinstalling."
+                )
+        else:
+            if log:
+                print(f"[ASLM-Chat] Venv '{venv_id}' is up to date.")
+            return True
 
     if not _install_packages(venv_id, packages, packages_no_deps, log):
         return False
