@@ -119,8 +119,7 @@ PARAMETER_CONTAINER_KEYS = {
 }
 
 
-# Manage adapter runtime state.
-# Stop the active generation.
+# Stop the active OpenAI-compatible generation.
 def abort_generation() -> None:
     """Signal the active OpenAI-compatible generation to stop."""
 
@@ -265,7 +264,6 @@ def _to_plain_data(value: Any) -> Any:
             return serialized_dict
 
     return str(value)
-
 
 
 # Inspect model metadata.
@@ -427,7 +425,6 @@ def _extract_feature_flag(raw_model: dict[str, Any], feature_names: set[str]) ->
     if not matched_values:
         return None
     return any(matched_values)
-
 
 
 # Derive runtime defaults and supported parameters.
@@ -778,7 +775,6 @@ def _extract_context_length(raw_model: dict[str, Any]) -> int:
     return max(context_values) if context_values else 8192
 
 
-
 # Normalize provider-specific request controls.
 # Match one endpoint host.
 def _endpoint_host_matches(hostname: str, expected_host: str) -> bool:
@@ -1007,7 +1003,6 @@ def _get_model_payload(client: Any, model_name: str) -> dict[str, Any]:
     if not merged_payload:
         merged_payload = {"id": model_name, "model": model_name}
     return merged_payload
-
 
 
 # Build request and response payloads.
@@ -1328,7 +1323,6 @@ def _build_openai_request_options(
     return direct_options
 
 
-
 # Build tool feedback payloads.
 # Build one tool event.
 def _build_tool_event(tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]) -> dict[str, Any]:
@@ -1382,10 +1376,8 @@ def _build_tool_message(
     return payload
 
 
-
 # Parse streamed reasoning fragments.
 class _ReasoningTextParser:
-    """Split streamed reasoning text from visible content."""
 
     # Initialize parser state.
     def __init__(self, tag_pairs: tuple[tuple[str, str], ...] = REASONING_TAG_PAIRS) -> None:
@@ -1394,6 +1386,7 @@ class _ReasoningTextParser:
         self._in_reasoning = False
         self._pending = ""
 
+    # Find the next matching tag.
     @staticmethod
     def _find_next_tag(source: str, tags: list[str]) -> tuple[int, str] | None:
         next_match: tuple[int, str] | None = None
@@ -1405,6 +1398,7 @@ class _ReasoningTextParser:
                 next_match = (index, tag)
         return next_match
 
+    # Preserve a possible partial tag suffix.
     @staticmethod
     def _split_possible_tag_prefix(source: str, tags: list[str]) -> tuple[str, str]:
         reserve = 0
@@ -1473,7 +1467,6 @@ class _ReasoningTextParser:
         if self._in_reasoning:
             return pending, ""
         return "", pending
-
 
 
 # Stream tool-aware OpenAI conversations.
@@ -1821,7 +1814,6 @@ def _run_tool_loop(
             return
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
-
 
 
 # Expose the public adapter API.

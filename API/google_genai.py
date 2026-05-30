@@ -1350,12 +1350,14 @@ def _build_google_history_part(raw_part: Any, *, include_text: bool = True) -> d
     return history_part if history_part else None
 
 
+# Return whether preserved Gemini history already includes function calls.
 def _history_parts_have_function_call(parts: list[dict[str, Any]]) -> bool:
     """Return whether preserved Gemini history already includes function calls."""
 
     return any(isinstance(part, dict) and isinstance(part.get("function_call"), dict) for part in parts)
 
 
+# Return whether preserved Gemini parts contain a function call without its signature.
 def _google_parts_have_unsigned_function_call(raw_parts: Any) -> bool:
     """Return whether preserved Gemini parts contain a function call without its signature."""
 
@@ -1652,6 +1654,7 @@ def _apply_learned_request_preferences(model_name: str, config: dict[str, Any]) 
     return dict(config or {})
 
 
+# Return a request config clone with function tools disabled.
 def _strip_tools_from_config(config: dict[str, Any]) -> dict[str, Any]:
     """Return a request config clone with function tools disabled."""
 
@@ -1716,9 +1719,8 @@ def _build_tool_message(
 
 # Split streamed reasoning text from visible content.
 class _ReasoningTextParser:
-    """Split streamed reasoning text from visible content."""
 
-    # Initialize the instance.
+    # Initialize the parser state.
     def __init__(self, tag_pairs: tuple[tuple[str, str], ...] = REASONING_TAG_PAIRS) -> None:
         self._start_tags = [start for start, _end in tag_pairs]
         self._end_tags = [end for _start, end in tag_pairs]
@@ -2110,12 +2112,14 @@ def _run_tool_loop(
     )
     request_config = _apply_learned_request_preferences(model_name, request_config)
 
+    # Stream one direct round when no local tools are configured.
     if not tools:
         yield from _yield_stream_round(
             _stream_google_round(client, model_name, conversation, request_config, stream=stream)
         )
         return
 
+    # Track quotas, duplicate signatures, and repeated guardrail results.
     tool_quota_counters: dict[str, int] = {}
     seen_tool_signatures: set[str] = set()
     consecutive_blocked_tool_results = 0
@@ -2246,6 +2250,7 @@ def _run_tool_loop(
         if tool_response_parts:
             conversation.append({"role": "user", "parts": tool_response_parts})
 
+        # Force one final answer when repeated guardrail tool results stall progress.
         if consecutive_blocked_tool_results >= 2:
             conversation.append(
                 {
@@ -2468,9 +2473,6 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
         )
         request_config = _apply_learned_request_preferences(model_name, request_config)
 
-        # Tool transcripts already stored in the conversation must keep using
-        # the Gemini round helper so follow-up turns preserve provider-specific
-        # assistant parts and function calls.
         # Preserve existing tool transcripts when the conversation already contains them.
         if _conversation_uses_tools(messages):
             assistant_message = yield from _yield_stream_round(
