@@ -16,6 +16,7 @@ if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
 
+# Load the MCP server module from the sibling mcp-server.py file.
 def _load_mcp_server_module():
     spec = importlib.util.spec_from_file_location("browser_agent_worker_mcp_server", MCP_SERVER_PATH)
     if spec is None or spec.loader is None:
@@ -28,6 +29,7 @@ def _load_mcp_server_module():
 MCP_SERVER_MODULE = _load_mcp_server_module()
 
 
+# Build a normalized debug context dict from an incoming worker request.
 def _debug_context(request: dict[str, Any] | None = None) -> dict[str, Any]:
     context = request.get("context") if isinstance(request, dict) and isinstance(request.get("context"), dict) else {}
     return {
@@ -37,10 +39,12 @@ def _debug_context(request: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+# Emit a debug event (intentionally disabled; kept for call-site compatibility).
 def _debug_event(request: dict[str, Any] | None, event: str, **fields: Any) -> None:
     return None
 
 
+# Close the shared browser state and stop the dedicated browser event loop.
 async def _close_browser_state() -> None:
     try:
         from browser import close_browser_runtime, run_in_browser_loop, state
@@ -53,6 +57,7 @@ async def _close_browser_state() -> None:
         pass
 
 
+# Dispatch one JSON-line worker request to a browser tool or shutdown command.
 async def _handle_request(request: dict[str, Any]) -> dict[str, Any]:
     request_id = str(request.get("id") or "")
     _debug_event(
@@ -93,11 +98,13 @@ async def _handle_request(request: dict[str, Any]) -> dict[str, Any]:
         return {"id": request_id, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
+# Write one JSON response line to stdout for the parent process.
 def _write_response(response: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(response, ensure_ascii=False, default=str) + "\n")
     sys.stdout.flush()
 
 
+# Read JSON requests from stdin until a shutdown command ends the worker loop.
 def main() -> None:
     _debug_event(None, "browser_worker_main_started", argv=sys.argv)
     for line in sys.stdin:

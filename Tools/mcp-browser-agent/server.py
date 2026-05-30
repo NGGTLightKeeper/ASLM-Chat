@@ -11,9 +11,8 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 
+# Load register_tools from the root mcp-server.py file.
 def _load_register_tools():
-    """Load register_tools from the root mcp-server.py file."""
-
     module_path = Path(__file__).resolve().with_name("mcp-server.py")
     spec = spec_from_file_location("browser_agent_mcp_server", module_path)
     if spec is None or spec.loader is None:
@@ -43,10 +42,8 @@ register_tools(server)
 
 # Transport runners
 
-# Run MCP over stdio
+# Run MCP over stdio.
 async def _run_stdio() -> None:
-    """Start the MCP server with stdio transport."""
-
     log.info("Starting browser-agent MCP server (stdio)...")
 
     async with stdio_server() as (read_stream, write_stream):
@@ -57,10 +54,8 @@ async def _run_stdio() -> None:
         )
 
 
-# Run MCP over HTTP
+# Run MCP over streamable HTTP.
 async def _run_http(host: str, port: int) -> None:
-    """Start the MCP server with streamable HTTP transport."""
-
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
     from starlette.requests import Request
@@ -69,9 +64,8 @@ async def _run_http(host: str, port: int) -> None:
 
     session_manager = StreamableHTTPSessionManager(app=server, stateless=False)
 
+    # Proxy Starlette requests into the MCP session manager.
     async def handle_mcp(scope, receive, send) -> None:
-        """Proxy Starlette requests into the MCP session manager."""
-
         request = Request(scope, receive)
         await session_manager.handle_request(request, send)
 
@@ -88,10 +82,8 @@ async def _run_http(host: str, port: int) -> None:
 
 # CLI entry point
 
-# Parse arguments and launch the selected transport
+# Parse CLI arguments and launch the selected transport.
 def main() -> None:
-    """Parse CLI arguments and start the server."""
-
     parser = argparse.ArgumentParser(description="Browser Agent MCP Server")
     parser.add_argument("--http", action="store_true", help="Use HTTP transport instead of stdio")
     parser.add_argument("--host", default="127.0.0.1", help="HTTP host (default: 127.0.0.1)")

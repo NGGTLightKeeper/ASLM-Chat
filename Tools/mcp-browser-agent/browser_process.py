@@ -30,6 +30,7 @@ REF_DEPENDENT_TOOLS = {
 }
 
 
+# Strip non-serializable fields from the tool context before sending to the worker.
 def _json_safe_context(context: dict[str, Any] | None) -> dict[str, Any]:
     safe_context = {
         "module_dir": str(PROJECT_ROOT),
@@ -40,9 +41,10 @@ def _json_safe_context(context: dict[str, Any] | None) -> dict[str, Any]:
     return safe_context
 
 
+# Own the isolated browser worker process and its idle lifecycle.
 class BrowserProcessManager:
-    """Own the isolated browser worker process and its idle lifecycle."""
 
+    # Initialize empty worker process handles and idle-timer state.
     def __init__(self) -> None:
         self._process: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
@@ -50,11 +52,13 @@ class BrowserProcessManager:
         self._last_url: str = ""
         self._session_keepalive_failed = False
 
+    # Cancel the pending idle-shutdown timer if one is scheduled.
     def _cancel_idle_timer(self) -> None:
         if self._idle_handle is not None:
             self._idle_handle.cancel()
             self._idle_handle = None
 
+    # Schedule worker shutdown after the configured idle timeout.
     def _schedule_idle_timer(self) -> None:
         self._cancel_idle_timer()
         loop = asyncio.get_running_loop()
@@ -63,6 +67,7 @@ class BrowserProcessManager:
             lambda: asyncio.create_task(self.shutdown(reason="idle-timeout")),
         )
 
+    # Spawn the browser worker subprocess when it is not already running.
     async def _ensure_process(self) -> asyncio.subprocess.Process:
         if self._process is not None and self._process.returncode is None:
             return self._process
@@ -89,6 +94,7 @@ class BrowserProcessManager:
         )
         return self._process
 
+    # Read stdout lines until the response matching request_id arrives.
     async def _read_response(
         self,
         process: asyncio.subprocess.Process,
@@ -161,6 +167,7 @@ class BrowserProcessManager:
                 )
                 return payload
 
+    # Store the last non-blank URL from a tool result for idle restore.
     def _remember_result(self, result: Any) -> None:
         url = ""
         if isinstance(result, dict):
@@ -171,6 +178,7 @@ class BrowserProcessManager:
         if url and url not in {"about:blank", ""}:
             self._last_url = url
 
+    # Forget and stop a worker process whose pipes are no longer usable.
     async def _discard_process_locked(
         self,
         process: asyncio.subprocess.Process,
@@ -178,8 +186,6 @@ class BrowserProcessManager:
         context: dict[str, Any] | None,
         reason: str,
     ) -> None:
-        """Forget and stop a worker process whose pipes are no longer usable."""
-
         if self._process is process:
             self._process = None
         append_browser_portal_debug_event(
@@ -200,6 +206,7 @@ class BrowserProcessManager:
         except Exception:
             pass
 
+    # Return whether a worker error warrants spawning a fresh subprocess.
     def _worker_response_is_retryable(self, response: dict[str, Any]) -> bool:
         if response.get("ok"):
             return False
@@ -215,6 +222,7 @@ class BrowserProcessManager:
             )
         )
 
+    # Write one tool request JSON line to the worker stdin and await its response.
     async def _send_tool_request_locked(
         self,
         process: asyncio.subprocess.Process,
@@ -291,6 +299,7 @@ class BrowserProcessManager:
             message=message,
         )
 
+    # Prepend a note that element refs are stale after worker restart.
     def _restored_refs_message(self, result: Any) -> Any:
         note = (
             "Browser process was restored after idle timeout. The previous browser refs are no longer valid. "
@@ -307,6 +316,7 @@ class BrowserProcessManager:
             return f"{note}\n\n{result}"
         return result
 
+    # Re-navigate to the last URL after worker restart before retrying the tool.
     async def _restore_after_worker_restart_locked(
         self,
         process: asyncio.subprocess.Process,
@@ -342,6 +352,7 @@ class BrowserProcessManager:
             return self._restored_refs_message(restore_response.get("result"))
         return None
 
+    # Dispatch a browser tool call to the worker with idle timer and restore logic.
     async def call(
         self,
         tool_name: str,
@@ -457,6 +468,7 @@ class BrowserProcessManager:
             )
             return f"Error: browser worker failed: {response.get('error') or 'unknown error'}"
 
+    # Gracefully shut down the worker subprocess, killing it if needed.
     async def shutdown(self, *, reason: str = "shutdown") -> None:
         async with self._lock:
             self._cancel_idle_timer()

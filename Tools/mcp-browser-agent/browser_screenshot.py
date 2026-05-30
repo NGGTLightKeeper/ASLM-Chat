@@ -15,6 +15,7 @@ SANDBOX_SCREEN_TARGETS = {
 }
 
 
+# Load model runtime metadata from the module dir or the default tools path.
 def _load_model_runtime_metadata(module_dir: str | None = None) -> dict[str, Any]:
     candidates = []
     if module_dir:
@@ -31,6 +32,7 @@ def _load_model_runtime_metadata(module_dir: str | None = None) -> dict[str, Any
     return {}
 
 
+# Return whether the active model supports vision according to runtime metadata.
 def _model_supports_vision(context: dict[str, Any] | None) -> tuple[bool, dict[str, Any], str]:
     safe_context = context or {}
     payload = _load_model_runtime_metadata(str(safe_context.get("module_dir") or ""))
@@ -62,6 +64,7 @@ def _model_supports_vision(context: dict[str, Any] | None) -> tuple[bool, dict[s
     return bool(capabilities.get("vision", False)), record, "matched"
 
 
+# Parse width and height from a PNG file header.
 def _png_dimensions(data: bytes) -> dict[str, int] | None:
     if len(data) < 24 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
         return None
@@ -71,6 +74,7 @@ def _png_dimensions(data: bytes) -> dict[str, int] | None:
     }
 
 
+# Resolve the sandbox screenshots directory when sandbox mode is active.
 def _sandbox_screens_dir(context: dict[str, Any] | None) -> tuple[Path | None, str]:
     safe_context = context or {}
     sandbox_enabled = bool(safe_context.get("sandbox_enabled"))
@@ -90,6 +94,7 @@ def _sandbox_screens_dir(context: dict[str, Any] | None) -> tuple[Path | None, s
     return Path(module_dir).joinpath("Tools", *path_parts), model_prefix
 
 
+# Build the image payload dict with optional inline preview for vision models.
 def _image_result_from_png(
     *,
     data: bytes,
@@ -135,6 +140,7 @@ def _image_result_from_png(
     return image
 
 
+# Wrap a captured image into the tool result shape expected by MCP callers.
 def _structured_image_result(image: dict[str, Any], *, supports_vision: bool) -> dict[str, Any]:
     if supports_vision and image.get("preview", {}).get("type") == "inline_base64":
         return {
@@ -161,6 +167,7 @@ def _structured_image_result(image: dict[str, Any], *, supports_vision: bool) ->
     return result
 
 
+# Capture a PNG screenshot and return structured image metadata for the model.
 async def capture_browser_screenshot(full_page: bool, context: dict[str, Any] | None = None) -> dict[str, Any]:
     from browser import DOWNLOADS_DIR, log, state
 
