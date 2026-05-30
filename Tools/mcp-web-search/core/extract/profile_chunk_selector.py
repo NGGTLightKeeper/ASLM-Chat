@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Profile-aware chunk selection and SEO keyword-stuffing penalties for previews."""
-
 from __future__ import annotations
 
 import re
@@ -21,30 +19,22 @@ from core.extract.content_processor import (
     _truncate_at_sentence,
 )
 
-# Output-profile families (aligned with services.web_search._OUTPUT_PROFILES).
+# Output-profile families (aligned with services.web_search output profiles).
 _DEPTH_FIRST_TYPES = frozenset({"technical", "academic", "medical", "troubleshooting"})
 _BREADTH_FIRST_TYPES = frozenset({"journalistic", "forum", "shopping"})
 
 
 @dataclass(frozen=True)
 class ChunkCompressPolicy:
-    """How aggressively to keep scored paragraphs for a query class."""
-
     char_budget: int
-    # Minimum hybrid score (0..1) for a paragraph to be eligible.
     min_score: float
-    # Hard cap on paragraph count in the output.
     max_chunks: int
-    # When many paragraphs pass min_score, allow up to this many chunks.
     max_chunks_expanded: int
-    # Score needed to count toward "many good chunks" expansion.
     expand_score: float
-    # Weight of SEO stuffing penalty in the hybrid score.
     seo_weight: float = 0.45
 
 
 _POLICIES: dict[str, ChunkCompressPolicy] = {
-    # Few, high-precision fragments unless many strong chunks exist.
     "general": ChunkCompressPolicy(
         char_budget=1_400,
         min_score=0.40,
@@ -59,7 +49,6 @@ _POLICIES: dict[str, ChunkCompressPolicy] = {
         max_chunks_expanded=9,
         expand_score=0.50,
     ),
-    # Volume-first: tight cap on parsed depth per source.
     "journalistic": ChunkCompressPolicy(
         char_budget=1_000,
         min_score=0.44,
@@ -82,7 +71,6 @@ _POLICIES: dict[str, ChunkCompressPolicy] = {
         max_chunks_expanded=6,
         expand_score=0.52,
     ),
-    # Depth-first: more room, lower bar, more chunks when signal is strong.
     "technical": ChunkCompressPolicy(
         char_budget=2_400,
         min_score=0.30,
@@ -116,8 +104,9 @@ _POLICIES: dict[str, ChunkCompressPolicy] = {
 
 _DEFAULT_POLICY = _POLICIES["general"]
 
+
+# Map query class to breadth / general / depth chunk family.
 def policy_family(query_type: str | None) -> str:
-    """Map query class to breadth / general / depth chunk family."""
     key = (query_type or "general").strip().lower()
     if key in _DEPTH_FIRST_TYPES:
         return "depth"
@@ -132,8 +121,8 @@ def policy_family(query_type: str | None) -> str:
     return "general"
 
 
+# Map primary query class to chunk selection policy (optional char budget override).
 def resolve_chunk_policy(query_type: str | None, *, char_budget: int | None = None) -> ChunkCompressPolicy:
-    """Map primary query class to chunk selection policy."""
     key = (query_type or "general").strip().lower()
     if key not in _POLICIES:
         if key in _DEPTH_FIRST_TYPES:
@@ -156,21 +145,23 @@ def resolve_chunk_policy(query_type: str | None, *, char_budget: int | None = No
     )
 
 
+# Tokenize text via BM25 helper.
 def _tokenize(text: str) -> list[str]:
     return _bm25_tokenize(text)
 
 
+# Fraction of text that looks like complete sentences.
 def _sentence_like_ratio(text: str) -> float:
     compact = (text or "").strip()
     if len(compact) < 40:
         return 0.0
     endings = len(re.findall(r"[.!?…]", compact))
-  # Lists/tables may have few sentence ends — do not over-penalize.
+    # Lists/tables may have few sentence ends — do not over-penalize.
     return min(1.0, endings / max(1, len(compact) / 180))
 
 
+# Cheap factual-density proxy without GLiNER (0..1).
 def _entity_heuristic_score(text: str) -> float:
-    """Cheap factual-density proxy without GLiNER (0..1)."""
     tokens = _tokenize(text)
     if not tokens:
         return 0.0
@@ -187,6 +178,7 @@ def _entity_heuristic_score(text: str) -> float:
     return min(1.0, score)
 
 
+# Scale scores to [0, 1] by peak value.
 def _normalize_scores(values: list[float]) -> list[float]:
     if not values:
         return []
@@ -196,12 +188,12 @@ def _normalize_scores(values: list[float]) -> list[float]:
     return [min(1.0, max(0.0, v / peak)) for v in values]
 
 
+# Return (hybrid_score, seo_penalty) per paragraph.
 def _score_paragraphs(
     paragraphs: list[str],
     query_terms: list[str],
     policy: ChunkCompressPolicy,
 ) -> list[tuple[float, float]]:
-    """Return (hybrid_score, seo_penalty) per paragraph."""
     if not paragraphs:
         return []
 
@@ -227,12 +219,14 @@ def _score_paragraphs(
     return scored
 
 
+# Cap on paragraph count; expands when many strong chunks exist.
 def _chunk_limit(policy: ChunkCompressPolicy, strong_count: int) -> int:
     if strong_count >= policy.max_chunks and strong_count >= 3:
         return policy.max_chunks_expanded
     return policy.max_chunks
 
 
+# Select paragraphs by relevance + entity heuristics; penalize SEO stuffing.
 def compress_chunks_profiled(
     text: str,
     query: str,
@@ -240,10 +234,6 @@ def compress_chunks_profiled(
     query_type: str | None = None,
     char_budget: int | None = None,
 ) -> tuple[str, dict[str, object]]:
-    """Select paragraphs by relevance + entity heuristics; penalize SEO stuffing.
-
-    Returns (compressed_text, debug_info).
-    """
     policy = resolve_chunk_policy(query_type, char_budget=char_budget)
     fam = policy_family(query_type)
     debug: dict[str, object] = {

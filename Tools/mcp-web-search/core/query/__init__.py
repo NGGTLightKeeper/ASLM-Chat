@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from .class_profiles import (
     ClassProfile,
     ClassRuleScore,

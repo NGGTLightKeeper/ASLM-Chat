@@ -34,9 +34,8 @@ BLOCKED_EXTENSIONS: list[str] = [
 ]
 
 
+# Return the lowercase extension, including compound archive suffixes.
 def _extract_extension(filename: str) -> str:
-    """Return the lowercase extension, including compound archive suffixes."""
-
     name = filename.lower()
     for compound in (".tar.gz", ".tar.bz2", ".tar.xz"):
         if name.endswith(compound):
@@ -44,9 +43,8 @@ def _extract_extension(filename: str) -> str:
     return Path(name).suffix
 
 
+# Return (extension, category) if url points to a known downloadable file.
 def get_download_info(url: str) -> tuple[str, str] | None:
-    """Return (extension, category) if *url* points to a known downloadable file."""
-
     try:
         path = unquote(urlparse(url).path)
         filename = PurePosixPath(path).name or ""

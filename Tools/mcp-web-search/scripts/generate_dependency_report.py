@@ -1,17 +1,4 @@
-#!/usr/bin/env python3
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
-
-"""Generate a dependency report for Python files in the repository.
-
-The report is intended as a helper when preparing ``pyproject.toml``.
-It walks Python files, parses imports via AST, and writes a text log with
-per-file sections plus an aggregate list of third-party package roots.
-
-Example
--------
-python scripts/generate_dependency_report.py
-python scripts/generate_dependency_report.py --root . --out tmp/dependency_report.txt
-"""
 
 from __future__ import annotations
 
@@ -43,6 +30,7 @@ class ModuleImports:
     relative: tuple[str, ...]
 
 
+# Build the dependency-report CLI argument parser.
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="scripts/generate_dependency_report.py")
     parser.add_argument(
@@ -63,6 +51,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Walk the repo tree and collect .py files, honoring exclude dirs.
 def _iter_python_files(root: Path, *, include_tests: bool) -> list[Path]:
     files: list[Path] = []
     for path in root.rglob("*.py"):
@@ -75,6 +64,7 @@ def _iter_python_files(root: Path, *, include_tests: bool) -> list[Path]:
     return sorted(files)
 
 
+# Collect top-level package/module names for first-party import classification.
 def _top_level_roots(root: Path) -> set[str]:
     roots: set[str] = set()
     for child in root.iterdir():
@@ -87,6 +77,7 @@ def _top_level_roots(root: Path) -> set[str]:
     return roots
 
 
+# Parse a Python file; return None when syntax is invalid.
 def _safe_parse(path: Path) -> ast.AST | None:
     try:
         return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -96,6 +87,7 @@ def _safe_parse(path: Path) -> ast.AST | None:
         return None
 
 
+# Classify import nodes into stdlib, third-party, first-party, and relative.
 def _collect_imports(tree: ast.AST, *, first_party_roots: set[str]) -> tuple[set[str], set[str], set[str], set[str]]:
     stdlib: set[str] = set()
     third_party: set[str] = set()
@@ -138,6 +130,7 @@ def _collect_imports(tree: ast.AST, *, first_party_roots: set[str]) -> tuple[set
     return stdlib, third_party, first_party, relative
 
 
+# Parse one file and return categorized import lists.
 def _scan_file(path: Path, *, root: Path, first_party_roots: set[str]) -> ModuleImports:
     tree = _safe_parse(path)
     if tree is None:
@@ -158,11 +151,13 @@ def _scan_file(path: Path, *, root: Path, first_party_roots: set[str]) -> Module
     )
 
 
+# Derive an uppercase section title from a relative file path.
 def _header_label(path: Path) -> str:
     stem = path.stem.replace("-", "_").replace(".", "_")
     return stem.upper()
 
 
+# Render one import-category bullet list for the text report.
 def _render_section(title: str, values: tuple[str, ...]) -> list[str]:
     lines = [f"{title}:"]
     if not values:
@@ -173,6 +168,7 @@ def _render_section(title: str, values: tuple[str, ...]) -> list[str]:
     return lines
 
 
+# Assemble per-file sections plus aggregate third-party package roots.
 def _build_report(root: Path, modules: list[ModuleImports]) -> str:
     lines: list[str] = []
     external_roots: set[str] = set()
@@ -210,6 +206,7 @@ def _build_report(root: Path, modules: list[ModuleImports]) -> str:
     return "\n".join(lines)
 
 
+# CLI entry: scan Python files and write the dependency report.
 def main() -> int:
     args = _parse_args()
     root = Path(args.root).resolve()

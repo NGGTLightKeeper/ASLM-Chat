@@ -1,17 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Shared text-scoring utilities used by both the search pipeline and the site mapper.
-
-Extracted here so that core/mappers/ and services/ can import without
-creating a cross-layer dependency (services → core is fine; core → services is not).
-
-Public API
-----------
-query_terms(query)                         -- tokenise query into meaningful terms
-lexical_score(query, title, snippet, url)  -- BM25-lite relevance score [0, 1]
-densify_text_gliner(text, output_chars)    -- keep highest entity-density paragraphs
-"""
-
 from __future__ import annotations
 
 import re
@@ -22,6 +10,8 @@ from core.cache.query_normalizer import QUERY_STOPWORDS as _QUERY_STOPWORDS, COM
 
 _PUNCT_STRIP = "?!.,;:\"'()[]{}<>@#"
 
+
+# Tokenise query into meaningful terms (stopwords removed when possible).
 def query_terms(query: str) -> list[str]:
     raw = []
     for t in (query or "").split():
@@ -39,6 +29,7 @@ def query_terms(query: str) -> list[str]:
     return filtered or raw
 
 
+# BM25-lite relevance score in [0, 1] from title, snippet, and URL path.
 def lexical_score(query: str, title: str, snippet: str, url: str) -> float:
     terms = query_terms(query)
     if not terms:
@@ -55,8 +46,8 @@ def lexical_score(query: str, title: str, snippet: str, url: str) -> float:
     )
 
 
+# Keep highest entity-density paragraphs via GliNER; fall back to head-truncation.
 def densify_text_gliner(text: str, output_chars: int = 3_000) -> str:
-    """Keep highest entity-density paragraphs via GliNER; falls back to head-truncation."""
     paragraphs = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
     if not paragraphs:
         return text[:output_chars]

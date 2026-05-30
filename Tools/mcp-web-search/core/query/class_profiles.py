@@ -1,4 +1,4 @@
-"""File-based query class profiles: load, score, and hybrid routing with optional model_scores."""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ _PENALTY_NEGATIVE = 0.45
 _TRIGRAM_THRESHOLD = 0.55
 _FUZZY_TERM_MAX_LEN = 48
 
-# Hybrid routing
+# Hybrid routing blend weights.
 _MODEL_BLEND = 0.72
 _RULE_BLEND = 0.28
 _RULE_BOOST_CAP = 0.12
@@ -67,6 +67,7 @@ _MIN_FUZZY_TERM_LEN = 4
 _TOKEN_BOUNDARY = r"(?<![0-9A-Za-z]){}(?![0-9A-Za-z])"
 
 
+# Rule-based query class profile loaded from JSON.
 @dataclass(slots=True)
 class ClassProfile:
     class_name: str
@@ -85,6 +86,7 @@ class ClassProfile:
     notes: str = ""
 
 
+# Per-class rule match score with optional debug reasons.
 @dataclass(slots=True)
 class ClassRuleScore:
     class_name: str
@@ -92,6 +94,7 @@ class ClassRuleScore:
     reasons: list[str] = field(default_factory=list)
 
 
+# Build ClassProfile from one JSON profile object.
 def _profile_from_dict(data: dict[str, Any]) -> ClassProfile:
     missing = _REQUIRED_KEYS - data.keys()
     if missing:
@@ -117,12 +120,14 @@ def _profile_from_dict(data: dict[str, Any]) -> ClassProfile:
     )
 
 
+# Validate one profile JSON file before merge into cache.
 def _validate_profile_file(path: Path, data: dict[str, Any]) -> None:
     if not isinstance(data, dict):
         raise ValueError(f"{path.name}: root must be object")
     _profile_from_dict(data)
 
 
+# Load all class profile JSON files from class_profiles/ (cached).
 @lru_cache(maxsize=1)
 def load_class_profiles() -> dict[str, ClassProfile]:
     if not _PROFILES_DIR.is_dir():
@@ -141,14 +146,17 @@ def load_class_profiles() -> dict[str, ClassProfile]:
     return profiles
 
 
+# Clear cached class profiles for tests or hot reload.
 def clear_class_profiles_cache() -> None:
     load_class_profiles.cache_clear()
 
 
+# Lowercase and collapse non-alphanumeric runs to spaces.
 def _normalize_text(text: str) -> str:
     return _TEXT_SIG_RE.sub(" ", (text or "").lower()).strip()
 
 
+# Character trigram set for fuzzy term matching.
 def _char_trigrams(text: str) -> set[str]:
     normalized = _normalize_text(text)
     if len(normalized) < 2:
@@ -157,6 +165,7 @@ def _char_trigrams(text: str) -> set[str]:
     return {padded[i : i + 3] for i in range(len(padded) - 2)}
 
 
+# Jaccard similarity of character trigram sets.
 def _trigram_similarity(a: str, b: str) -> float:
     ta, tb = _char_trigrams(a), _char_trigrams(b)
     if not ta or not tb:
@@ -166,6 +175,7 @@ def _trigram_similarity(a: str, b: str) -> float:
     return inter / union if union else 0.0
 
 
+# True when term matches query via token, phrase, or boundary regex.
 def _term_in_query(
     term: str, query_norm: str, tokens: set[str], query_raw_lower: str = ""
 ) -> bool:
@@ -183,6 +193,7 @@ def _term_in_query(
     return False
 
 
+# Trigram fuzzy match for a single term against normalized query.
 def _fuzzy_term_match(term: str, query_norm: str) -> tuple[bool, float]:
     if _SPECIAL_TERM_RE.search(term or ""):
         return False, 0.0
@@ -197,7 +208,7 @@ def _fuzzy_term_match(term: str, query_norm: str) -> tuple[bool, float]:
             if whole >= _TRIGRAM_THRESHOLD:
                 return True, whole
         return False, 0.0
-    # Compare against each query word of similar length
+    # Per-word trigram similarity for single-token terms.
     words = query_norm.split()
     best = 0.0
     for word in words:
@@ -210,7 +221,7 @@ def _fuzzy_term_match(term: str, query_norm: str) -> tuple[bool, float]:
             best = sim
     if best >= _TRIGRAM_THRESHOLD:
         return True, best
-    # Whole-query fuzzy for aliases
+    # Whole-query fuzzy for short aliases.
     if abs(len(query_norm) - len(term_norm)) <= max(4, len(term_norm) // 3):
         whole = _trigram_similarity(term_norm, query_norm)
         if whole >= _TRIGRAM_THRESHOLD:
@@ -218,6 +229,7 @@ def _fuzzy_term_match(term: str, query_norm: str) -> tuple[bool, float]:
     return False, best
 
 
+# Flatten all language_hints term lists for one profile.
 def _collect_language_terms(profile: ClassProfile) -> list[str]:
     out: list[str] = []
     for terms in (profile.language_hints or {}).values():
@@ -225,8 +237,8 @@ def _collect_language_terms(profile: ClassProfile) -> list[str]:
     return out
 
 
+# Score query against all loaded profiles; scores normalized to 0..1.
 def score_query_against_profiles(query: str) -> list[ClassRuleScore]:
-    """Score query against all loaded profiles; scores normalized to 0..1."""
     profiles = load_class_profiles()
     query_raw_lower = (query or "").lower()
     query_norm = _normalize_text(query)
@@ -241,6 +253,7 @@ def score_query_against_profiles(query: str) -> list[ClassRuleScore]:
         reasons: list[str] = []
         hard_hits = 0
 
+        # Add exact or fuzzy term hits to raw score and reasons.
         def _apply_terms(terms: list[str], weight: float, label: str) -> None:
             nonlocal raw, hard_hits
             for term in terms:
@@ -255,6 +268,7 @@ def score_query_against_profiles(query: str) -> list[ClassRuleScore]:
                         raw += weight * sim
                         reasons.append(f"{label}:fuzzy:{term[:40]}:{sim:.2f}")
 
+        # Term buckets: strong, medium, weak, phrases, hard, intent, language, aliases.
         _apply_terms(profile.strong_terms, _WEIGHT_STRONG, "strong")
         _apply_terms(profile.medium_terms, _WEIGHT_MEDIUM, "medium")
         _apply_terms(profile.weak_terms, _WEIGHT_WEAK, "weak")
@@ -273,7 +287,7 @@ def score_query_against_profiles(query: str) -> list[ClassRuleScore]:
             if _term_in_query(hard, query_norm, tokens, query_raw_lower):
                 hard_hits += 1
 
-        # Cap denominator so large profiles still reach usable 0..1 scores.
+        # Normalize raw score to 0..1 using profile-specific denominator.
         profile_span = (
             len(profile.strong_terms) * _WEIGHT_STRONG
             + len(profile.medium_terms) * _WEIGHT_MEDIUM
@@ -293,10 +307,12 @@ def score_query_against_profiles(query: str) -> list[ClassRuleScore]:
     return results
 
 
+# Map class name to rule score for one query.
 def _rule_scores_map(query: str) -> dict[str, float]:
     return {r.class_name: r.score for r in score_query_against_profiles(query)}
 
 
+# Pick top non-general classes by score and CLASS_PRIORITY order.
 def _top_rule_classes(scores: list[ClassRuleScore], limit: int = 3, min_score: float = 0.12) -> list[str]:
     picked = [r for r in scores if r.score >= min_score and r.class_name != "general"]
     if not picked:
@@ -305,12 +321,13 @@ def _top_rule_classes(scores: list[ClassRuleScore], limit: int = 3, min_score: f
     return [r.class_name for r in ordered]
 
 
+# Rule-only classification compatible with legacy infer_query_types() ordering.
 def infer_query_types_from_rules(query: str, limit: int = 3) -> list[str]:
-    """Rule-only classification compatible with legacy infer_query_types() ordering."""
     scores = score_query_against_profiles(query)
     return _top_rule_classes(scores, limit=limit)
 
 
+# Normalize model label scores to a probability distribution.
 def _normalize_model_scores(model_scores: dict[str, float] | None) -> dict[str, float]:
     if not model_scores:
         return {}
@@ -325,11 +342,11 @@ def _normalize_model_scores(model_scores: dict[str, float] | None) -> dict[str, 
     return {k: max(0.0, v) / total for k, v in cleaned.items()}
 
 
+# Hybrid router: model_scores primary, rules adjust; returns (class, weight, reason).
 def infer_query_types_hybrid(
     query: str,
     model_scores: dict[str, float] | None = None,
 ) -> list[tuple[str, float, str]]:
-    """Hybrid router: model_scores primary, rules adjust; returns (class, weight, reason)."""
     rule_list = score_query_against_profiles(query)
     rule_map = {r.class_name: r.score for r in rule_list}
     rule_by_name = {r.class_name: r for r in rule_list}
@@ -346,13 +363,14 @@ def infer_query_types_hybrid(
     blended: dict[str, float] = {}
     reasons: dict[str, str] = {}
 
+    # Base blend: model weight plus capped rule delta.
     for class_name, model_w in model_norm.items():
         rule_w = rule_map.get(class_name, 0.0)
         delta = max(-_RULE_PENALTY_CAP, min(_RULE_BOOST_CAP, (rule_w - 0.25) * _RULE_BLEND))
         blended[class_name] = max(0.0, model_w * _MODEL_BLEND + rule_w * _RULE_BLEND + delta)
         reasons[class_name] = f"model={model_w:.2f},rule={rule_w:.2f},delta={delta:+.2f}"
 
-    # Soft split: keep secondary model classes above threshold
+    # Soft split: keep secondary model classes above threshold.
     model_sorted = sorted(model_norm.items(), key=lambda x: -x[1])
     if len(model_sorted) >= 2:
         primary, p_w = model_sorted[0]
@@ -361,7 +379,7 @@ def infer_query_types_hybrid(
             blended[secondary] = max(blended.get(secondary, 0.0), s_w * _MODEL_BLEND)
             reasons[secondary] = reasons.get(secondary, "") + f";soft-split={s_w:.2f}"
 
-    # Confident single-class model → add general secondary
+    # Confident single-class model → add general secondary.
     if model_sorted:
         top_class, top_w = model_sorted[0]
         second_w = model_sorted[1][1] if len(model_sorted) > 1 else 0.0
@@ -370,7 +388,7 @@ def infer_query_types_hybrid(
                 blended["general"] = _GENERAL_SECONDARY_FLOOR
                 reasons["general"] = f"secondary-fallback;primary={top_class}@{top_w:.2f}"
 
-    # High-confidence rule override (rare): hard indicators + strong rule, weak model
+    # High-confidence rule override when hard indicators fire and model is weak.
     if model_sorted:
         model_top = model_sorted[0][0]
         model_top_w = model_sorted[0][1]
@@ -410,8 +428,8 @@ def infer_query_types_hybrid(
     return out[:3]
 
 
+# Terms for freshness/intent detection (from journalistic profile).
 def journalistic_intent_terms() -> frozenset[str]:
-    """Terms for freshness/intent detection (from journalistic profile)."""
     prof = load_class_profiles().get("journalistic")
     if not prof:
         return frozenset()

@@ -1,16 +1,4 @@
-"""DOM-aware block extractor with language-agnostic structural scoring.
-
-Collects paragraph-level blocks after preclean and filters navigation/UI noise
-using link density, clickable density, fragmentation, sibling uniformity, and
-optional per-domain template frequency — not keyword dictionaries.
-
-Public API
-----------
-extract_dom_blocks(cleaned_html, *, domain, url, min_block_chars) -> (blocks, stats)
-structure_ui_score(tag) -> float
-template_frequency_score(domain, dom_path) -> float
-observe_domain_page(domain) -> None
-"""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -60,14 +48,15 @@ _NAV_WORDS_RE = re.compile(
 _domain_stats: dict[str, dict[str, Any]] = {}
 
 
+# Record one more sampled page for per-domain template frequency.
 def observe_domain_page(domain: str) -> None:
-    """Record that one more page was sampled for *domain* (for template frequency)."""
     if not domain:
         return
     bucket = _domain_stats.setdefault(domain, {})
     bucket["__pages__"] = int(bucket.get("__pages__", 0)) + 1
 
 
+# Update path-level length and link-density stats for a domain.
 def _record_path_observation(
     domain: str,
     dom_path: str,
@@ -83,8 +72,8 @@ def _record_path_observation(
     entry["total_link"] = float(entry.get("total_link", 0.0)) + link_density
 
 
+# Return [0, 1]: how often this DOM path appeared on sampled pages for the domain.
 def template_frequency_score(domain: str, dom_path: str) -> float:
-    """Return [0, 1]: how often this DOM path appeared on sampled pages for the domain."""
     bucket = _domain_stats.get(domain or "", {})
     entry = bucket.get(dom_path)
     if not entry or not isinstance(entry, dict):
@@ -93,6 +82,7 @@ def template_frequency_score(domain: str, dom_path: str) -> float:
     return min(int(entry.get("seen", 0)) / sampled, 1.0)
 
 
+# Hostname from URL (www. stripped).
 def _domain_from_url(url: str | None) -> str:
     if not url:
         return ""
@@ -103,6 +93,7 @@ def _domain_from_url(url: str | None) -> str:
         return ""
 
 
+# Slash-separated tag path from element up to html.
 def _dom_path(tag: "Tag") -> str:
     parts: list[str] = []
     node = tag
@@ -115,6 +106,7 @@ def _dom_path(tag: "Tag") -> str:
     return "/" + "/".join(reversed(parts))
 
 
+# Nav/UI score from id, class, role, and aria attributes.
 def _attr_nav_score(tag: "Tag") -> float:
     attrs = tag.attrs or {}
     combined = " ".join(
@@ -129,6 +121,7 @@ def _attr_nav_score(tag: "Tag") -> float:
     return min(hits * 0.20 + (0.25 if role_hit else 0.0), 1.0)
 
 
+# Fraction of block text inside anchor tags.
 def _anchor_density(tag: "Tag", text: str) -> float:
     if not text:
         return 0.0
@@ -136,6 +129,7 @@ def _anchor_density(tag: "Tag", text: str) -> float:
     return min(anchor_chars / max(len(text), 1), 1.0)
 
 
+# Fraction of descendants that are clickable elements.
 def _clickable_density(tag: "Tag") -> float:
     descendants = tag.find_all(True, recursive=True)
     if not descendants:
@@ -144,6 +138,7 @@ def _clickable_density(tag: "Tag") -> float:
     return min(len(clickable) / max(len(descendants), 1), 1.0)
 
 
+# Fraction of descendants that are form controls.
 def _control_density(tag: "Tag") -> float:
     descendants = tag.find_all(True, recursive=True)
     if not descendants:
@@ -152,6 +147,7 @@ def _control_density(tag: "Tag") -> float:
     return min(len(controls) / max(len(descendants), 1), 1.0)
 
 
+# Density of menu-style separator characters in text.
 def _separator_ratio(text: str) -> float:
     if not text:
         return 0.0
@@ -159,6 +155,7 @@ def _separator_ratio(text: str) -> float:
     return min(seps / max(len(text), 1) * 12, 1.0)
 
 
+# Fraction of text nodes that are very short (menu-label signal).
 def _short_text_node_ratio(tag: "Tag") -> float:
     nodes = [s.strip() for s in tag.find_all(string=True) if s and str(s).strip()]
     if not nodes:
@@ -167,13 +164,14 @@ def _short_text_node_ratio(tag: "Tag") -> float:
     return short / len(nodes)
 
 
+# Text length per descendant element (paragraph mass proxy).
 def _text_density(tag: "Tag", text: str) -> float:
     descendants = tag.find_all(True, recursive=True)
     return min(len(text) / max(len(descendants), 1) / 120.0, 1.0)
 
 
+# Fraction of clause splits that look like real sentences (not menu labels).
 def _sentence_like_ratio(text: str) -> float:
-    """Fraction of clause splits that look like real sentences (not menu labels)."""
     parts = re.split(r"[.!?;:。！？]+", text or "")
     parts = [p.strip() for p in parts if p.strip()]
     if not parts:
@@ -182,8 +180,8 @@ def _sentence_like_ratio(text: str) -> float:
     return good / len(parts)
 
 
+# Score for long unstructured word lists without facts (mega-menus).
 def _monolithic_list_score(text: str) -> float:
-    """Long unstructured word lists without facts (mega-menus, category dumps)."""
     if len(text) < 200:
         return 0.0
     words = text.split()
@@ -196,8 +194,8 @@ def _monolithic_list_score(text: str) -> float:
     return 0.0
 
 
+# Many same-tag siblings with similar lengths (menu cluster).
 def _menu_cluster_score(tag: "Tag") -> float:
-    """Detect menu/list clusters: many same-tag siblings with similar lengths."""
     parent = tag.parent
     if parent is None:
         return 0.0
@@ -217,6 +215,7 @@ def _menu_cluster_score(tag: "Tag") -> float:
     return min(1.0, similar / len(siblings))
 
 
+# Boost when ancestors have menu/nav-related attributes.
 def _ancestor_menu_hint(tag: "Tag") -> float:
     node = tag
     for _ in range(4):
@@ -233,6 +232,7 @@ def _ancestor_menu_hint(tag: "Tag") -> float:
     return 0.0
 
 
+# Similarity of tag, length, and link density among siblings.
 def _sibling_uniformity(tag: "Tag") -> float:
     parent = tag.parent
     if parent is None:
@@ -263,6 +263,7 @@ def _sibling_uniformity(tag: "Tag") -> float:
     return min(1.0, 0.40 * same_tag + 0.35 * similar_len + 0.25 * link_sim)
 
 
+# Debug-only nav-word density (optional lexicon weight).
 def _nav_word_density_debug(text: str) -> float:
     if not text:
         return 0.0
@@ -271,13 +272,13 @@ def _nav_word_density_debug(text: str) -> float:
     return min(len(matches) / max(len(tokens), 1), 1.0)
 
 
+# Language-agnostic UI/nav score in [0, 1]; higher = more likely boilerplate.
 def structure_ui_score(
     tag: "Tag",
     *,
     domain: str = "",
     debug_lexicon: bool = False,
 ) -> float:
-    """Language-agnostic UI/nav score in [0, 1]. Higher = more likely boilerplate."""
     text = tag.get_text(separator=" ", strip=True)
     link_s = _anchor_density(tag, text)
     click_s = _clickable_density(tag)
@@ -316,11 +317,12 @@ def structure_ui_score(
     return max(0.0, min(round(ui, 4), 1.0))
 
 
+# Backward-compatible alias for structure_ui_score.
 def nav_score(tag: "Tag", *, domain: str = "") -> float:
-    """Backward-compatible alias for structure_ui_score."""
     return structure_ui_score(tag, domain=domain)
 
 
+# Content signal from sentence shape, text mass, and low link density.
 def _content_score(tag: "Tag", text: str) -> float:
     sentence_s = _sentence_like_ratio(text)
     text_s = _text_density(tag, text)
@@ -337,6 +339,7 @@ def _content_score(tag: "Tag", text: str) -> float:
     )
 
 
+# Final keep score: content minus UI, with optional query relevance hook.
 def block_keep_score(
     tag: "Tag",
     text: str,
@@ -344,7 +347,6 @@ def block_keep_score(
     domain: str = "",
     query_relevance: float = 0.0,
 ) -> float:
-    """Final keep score: content minus UI, with optional query relevance hook."""
     ui = structure_ui_score(tag, domain=domain)
     content = _content_score(tag, text)
     fact_s = fact_signal_score(text)
@@ -356,6 +358,7 @@ def block_keep_score(
     )
 
 
+# True for table cells/rows and fact-like text blocks.
 def _is_protected(tag: "Tag", text: str) -> bool:
     if tag.name in {"td", "th", "tr", "table"}:
         return bool(text.strip())
@@ -369,6 +372,7 @@ _CANDIDATE_TAGS = frozenset({
 _CONTAINER_TAGS = frozenset({"article", "section", "main", "div"})
 
 
+# Collect leaf-level block tags with deduplicated text signatures.
 def _collect_leaf_blocks(soup) -> list[tuple["Tag", str]]:
     results: list[tuple["Tag", str]] = []
     seen_texts: set[str] = set()
@@ -387,6 +391,7 @@ def _collect_leaf_blocks(soup) -> list[tuple["Tag", str]]:
     return results
 
 
+# Extract content blocks, filtering structural UI/nav noise.
 def extract_dom_blocks(
     cleaned_html: str,
     *,
@@ -396,7 +401,6 @@ def extract_dom_blocks(
     nav_reject_threshold: float = NAV_HARD_REJECT,
     debug_lexicon: bool = False,
 ) -> tuple[list[str], dict[str, int | str]]:
-    """Extract content blocks, filtering structural UI/nav noise."""
     empty_stats: dict[str, int | str] = {
         "total_candidates": 0,
         "nav_rejected": 0,
@@ -420,7 +424,7 @@ def extract_dom_blocks(
     protected_kept = 0
     blocks: list[str] = []
 
-    # --- pass 1: score using the OLD (pre-page) template statistics ---
+    # Pass 1: score using pre-page template statistics.
     path_observations: list[tuple[str, int, float]] = []
     for tag, text in candidates:
         if len(text) < min_block_chars:
@@ -440,7 +444,7 @@ def extract_dom_blocks(
         else:
             blocks.append(text)
 
-    # --- pass 2: update statistics AFTER scoring (avoid self-poisoning) ---
+    # Pass 2: update domain stats after scoring (avoid self-poisoning).
     if resolved_domain:
         observe_domain_page(resolved_domain)
         seen_paths: set[str] = set()

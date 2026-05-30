@@ -1,5 +1,4 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
-"""Language-neutral factual signals (currency, units, decimals) for extraction heuristics."""
 
 from __future__ import annotations
 
@@ -43,6 +42,7 @@ _UNITS = rf"(?:{_UNITS_LATIN}|{_UNITS_CYR})"
 _NUM = r"\d+(?:[.,]\d+)?"
 
 
+# Compile currency, measurement, and decimal regexes once per process.
 @lru_cache(maxsize=1)
 def _compiled():
     flags = re.IGNORECASE
@@ -73,20 +73,23 @@ def _compiled():
     }
 
 
+# True when text contains a currency symbol, ISO code, or currency word.
 def has_currency(text: str) -> bool:
     return bool(_compiled()["currency"].search(text))
 
 
+# True when text contains a numeric value with a known unit or percent.
 def has_measurement(text: str) -> bool:
     return bool(_compiled()["measurement"].search(text))
 
 
+# True when text contains a decimal number (digit separator or fraction).
 def has_decimal_number(text: str) -> bool:
     return bool(_compiled()["decimal"].search(text))
 
 
+# Factual-density score: 0 none, 0.4 decimal only, 0.8 currency or unit.
 def fact_signal_score(text: str) -> float:
-    """0 = none, 0.4 = decimal only, 0.8 = currency or unit."""
     if has_currency(text) or has_measurement(text):
         return 0.8
     if has_decimal_number(text):
@@ -94,5 +97,6 @@ def fact_signal_score(text: str) -> float:
     return 0.0
 
 
+# True when any factual signal is present in the text.
 def is_fact_like_text(text: str) -> bool:
     return fact_signal_score(text) > 0.0

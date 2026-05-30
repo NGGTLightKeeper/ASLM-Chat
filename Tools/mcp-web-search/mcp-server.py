@@ -74,10 +74,12 @@ TOOLS = [
 ]
 
 
+# Report whether this bridge supports the given engine/model pair.
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
     return engine in ("ollama-service", "lms", "openai", "google-genai")
 
 
+# Parse JSON-encoded list strings passed as tool arguments.
 def _maybe_parse_list(val: Any) -> Any:
     if isinstance(val, str):
         stripped = val.strip()
@@ -92,6 +94,7 @@ def _maybe_parse_list(val: Any) -> Any:
     return val
 
 
+# Normalize a URL host into a bare registrable domain label.
 def _source_domain(url: str) -> str:
     host = urlparse(url or "").netloc.lower()
     if "@" in host:
@@ -101,6 +104,7 @@ def _source_domain(url: str) -> str:
     return host.removeprefix("www.")
 
 
+# Build a short human-readable label from a domain name.
 def _display_domain(domain: str) -> str:
     parts = [part for part in (domain or "").split(".") if part]
     if len(parts) >= 2:
@@ -112,10 +116,12 @@ def _display_domain(domain: str) -> str:
     return label.replace("-", " ").title()
 
 
+# DuckDuckGo favicon URL for a source domain chip.
 def _favicon_url(domain: str) -> str:
     return f"https://icons.duckduckgo.com/ip3/{domain}.ico" if domain else ""
 
 
+# Build one read_page source metadata record for UI chips.
 def _read_page_source(url: str, rank: int, result_text: str = "") -> dict[str, object]:
     domain = _source_domain(url)
     ok = not str(result_text or "").lstrip().lower().startswith("error:")
@@ -129,6 +135,7 @@ def _read_page_source(url: str, rank: int, result_text: str = "") -> dict[str, o
     }
 
 
+# Assemble the structured read_page payload for one or many URLs.
 def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, object]:
     sources = [
         _read_page_source(url, index, results[index - 1] if index - 1 < len(results) else "")
@@ -148,6 +155,7 @@ def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, object]
     }
 
 
+# Dispatch MCP tool calls to web_search or read_page services.
 async def call_tool(
     tool_id: str,
     arguments: dict[str, Any] | None,

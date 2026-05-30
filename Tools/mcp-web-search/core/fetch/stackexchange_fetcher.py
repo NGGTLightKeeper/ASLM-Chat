@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Public Stack Exchange question fetcher for read_page and preview paths."""
-
 from __future__ import annotations
 
 import asyncio
@@ -22,10 +20,12 @@ _HOST_TO_SITE = {
 }
 
 
+# Normalize host: lowercase, strip www.
 def _host(url: str) -> str:
     return urlparse(url).netloc.lower().removeprefix("www.")
 
 
+# Map Stack Exchange hostname to API site parameter.
 def _site_from_host(host: str) -> str | None:
     if host in _HOST_TO_SITE:
         return _HOST_TO_SITE[host]
@@ -34,15 +34,18 @@ def _site_from_host(host: str) -> str | None:
     return None
 
 
+# Extract numeric question id from a /questions/{id}/ URL path.
 def stackexchange_question_id(url: str) -> str | None:
     m = _QUESTION_RE.search(urlparse(url).path)
     return m.group(1) if m else None
 
 
+# True when url is a supported Stack Exchange question page.
 def is_stackexchange_question_url(url: str) -> bool:
     return _site_from_host(_host(url)) is not None and stackexchange_question_id(url) is not None
 
 
+# Convert API HTML fragment to plain text (code blocks preserved as fenced).
 def _strip_html_fragment(fragment: str) -> str:
     try:
         from bs4 import BeautifulSoup
@@ -62,6 +65,7 @@ def _strip_html_fragment(fragment: str) -> str:
         return html.unescape(text).strip()
 
 
+# Format Unix epoch as ISO-8601 UTC with Z suffix.
 def _format_timestamp(value: object) -> str:
     try:
         return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat().replace("+00:00", "Z")
@@ -69,6 +73,7 @@ def _format_timestamp(value: object) -> str:
         return ""
 
 
+# GET Stack Exchange API URL and return parsed JSON.
 def _stackexchange_api_get(url: str, timeout: int) -> dict[str, Any]:
     from curl_cffi import requests as _r
 
@@ -86,11 +91,13 @@ def _stackexchange_api_get(url: str, timeout: int) -> dict[str, Any]:
     return resp.json()
 
 
+# Display name from API owner object.
 def _owner_name(item: dict[str, Any]) -> str:
     owner = item.get("owner") if isinstance(item.get("owner"), dict) else {}
     return str(owner.get("display_name") or "").strip()
 
 
+# Normalize one comment item from API JSON.
 def _normalize_comment(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "comment_id": int(item.get("comment_id") or 0),
@@ -101,6 +108,7 @@ def _normalize_comment(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Normalize one answer item plus its comment list.
 def _normalize_answer(item: dict[str, Any], comments: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "answer_id": int(item.get("answer_id") or 0),
@@ -115,6 +123,7 @@ def _normalize_answer(item: dict[str, Any], comments: list[dict[str, Any]]) -> d
     }
 
 
+# Group comment items by post_id or parent id field.
 def _comments_by_post_id(items: list[dict[str, Any]], id_field: str) -> dict[int, list[dict[str, Any]]]:
     grouped: dict[int, list[dict[str, Any]]] = {}
     for item in items:
@@ -128,6 +137,7 @@ def _comments_by_post_id(items: list[dict[str, Any]], id_field: str) -> dict[int
     return grouped
 
 
+# Fetch question + top answers via Stack Exchange API (sync).
 def fetch_stackexchange_question_data_sync(
     url: str,
     timeout: float = 20.0,
@@ -239,6 +249,7 @@ def fetch_stackexchange_question_data_sync(
     }
 
 
+# Render API payload as markdown for read_page / preview.
 def render_stackexchange_question_markdown(data: dict[str, Any]) -> str:
     if not data.get("ok"):
         return f"Error: {data.get('error') or 'unknown Stack Exchange fetch failure'}"
@@ -321,11 +332,13 @@ def render_stackexchange_question_markdown(data: dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
+# Sync fetch: API payload rendered as markdown.
 def fetch_stackexchange_question_sync(url: str, timeout: float = 20.0, answer_limit: int = 3) -> str:
     data = fetch_stackexchange_question_data_sync(url, timeout=timeout, answer_limit=answer_limit)
     return render_stackexchange_question_markdown(data)
 
 
+# Async wrapper around fetch_stackexchange_question_data_sync.
 async def fetch_stackexchange_question_data(
     url: str,
     timeout: float = 20.0,
@@ -344,6 +357,7 @@ async def fetch_stackexchange_question_data(
     )
 
 
+# Async fetch: markdown for read_page / preview.
 async def fetch_stackexchange_question(url: str, timeout: float = 20.0, answer_limit: int = 3) -> str:
     data = await fetch_stackexchange_question_data(url, timeout=timeout, answer_limit=answer_limit)
     return render_stackexchange_question_markdown(data)

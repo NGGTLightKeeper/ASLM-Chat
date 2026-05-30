@@ -1,21 +1,4 @@
-#!/usr/bin/env python3
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
-
-"""Probe academic search via web_search, then fetch each result via read_page.
-
-Workflow
---------
-1. Run the current structured web search with an academic domain constraint
-2. Keep up to N results
-3. For each result:
-   - store the search-side url/title/preview
-   - keep ``pdf_url`` when web_search exposed one
-   - parse the preferred target with read_page
-4. Save a JSON report under ``tmp/``
-
-The preferred read target is:
-  pdf_url if present, otherwise result.url
-"""
 
 from __future__ import annotations
 
@@ -53,6 +36,7 @@ class SearchReadProbe:
     read_page: ReadPageProbe
 
 
+# Build the academic PDF probe CLI argument parser.
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="scripts/academic_pdf_probe.py")
     parser.add_argument("query", help="Academic search query.")
@@ -82,11 +66,13 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Collapse whitespace and trim text to a character limit.
 def _trim(text: str, limit: int) -> str:
     compact = " ".join(str(text or "").split()).strip()
     return compact[:limit].rstrip() if compact else ""
 
 
+# Wrap read_page output into a probe record with ok/error flags.
 def _read_probe_from_text(target_url: str, text: str) -> ReadPageProbe:
     stripped = str(text or "").strip()
     is_error = stripped.startswith("Error:")
@@ -99,6 +85,7 @@ def _read_probe_from_text(target_url: str, text: str) -> ReadPageProbe:
     )
 
 
+# Run site-constrained web_search, then read_page each result (pdf_url preferred).
 async def _main() -> int:
     args = _parse_args()
 
@@ -143,7 +130,7 @@ async def _main() -> int:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_domain = args.domain.replace("/", "_").replace("\\", "_").replace(":", "_")
     out_path = out_dir / f"academic_pdf_probe_{safe_domain}_{stamp}.json"
-    out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print(f"Saved: {out_path}")
     print(f"Results: {len(payload_results)}")

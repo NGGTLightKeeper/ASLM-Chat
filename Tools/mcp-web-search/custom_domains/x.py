@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import asyncio
@@ -13,10 +15,12 @@ from custom_domains.retail_common import strip_html_fragment
 _X_POST_PATTERN = re.compile(r"/(?:(?:i|[^/]+)/web/)?status/(\d+)|/[^/]+/status/(\d+)")
 
 
+# Normalize URL host (strip www./m. prefixes).
 def _host(url: str) -> str:
     return urlparse(url).netloc.lower().removeprefix("www.").removeprefix("m.")
 
 
+# Extract numeric status id from an X/Twitter post URL path.
 def x_status_id(url: str) -> str | None:
     match = _X_POST_PATTERN.search(urlparse(url).path)
     if not match:
@@ -24,10 +28,12 @@ def x_status_id(url: str) -> str | None:
     return match.group(1) or match.group(2)
 
 
+# True when URL is an x.com/twitter.com status permalink.
 def is_x_post(url: str) -> bool:
     return _host(url) in {"twitter.com", "x.com"} and x_status_id(url) is not None
 
 
+# Format syndication API JSON into readable markdown.
 def parse_x_syndication_payload(data: dict, url: str) -> str:
     text = str(data.get("text") or "").strip()
     user = data.get("user") if isinstance(data.get("user"), dict) else {}
@@ -78,6 +84,7 @@ def parse_x_syndication_payload(data: dict, url: str) -> str:
     return "\n".join(lines).strip()
 
 
+# Format oEmbed HTML payload into readable markdown.
 def parse_x_oembed_payload(data: dict, url: str) -> str:
     author_name = str(data.get("author_name") or "").strip()
     author_url = str(data.get("author_url") or "").strip()
@@ -96,6 +103,7 @@ def parse_x_oembed_payload(data: dict, url: str) -> str:
     return "\n".join(lines).strip()
 
 
+# GET JSON from syndication or oEmbed endpoint via curl_cffi.
 def _x_fetch_json(endpoint: str, timeout: int) -> dict | None:
     from curl_cffi import requests as _r
 
@@ -116,6 +124,7 @@ def _x_fetch_json(endpoint: str, timeout: int) -> dict | None:
         return _json.loads(resp.text)
 
 
+# Fetch post via syndication API, then oEmbed fallback; return markdown or error string.
 async def fetch_x_post(url: str, timeout: float) -> str:
     status_id = x_status_id(url)
     if not status_id:
@@ -123,6 +132,7 @@ async def fetch_x_post(url: str, timeout: float) -> str:
 
     loop = asyncio.get_running_loop()
 
+    # Try syndication JSON first, then publish.twitter.com oEmbed.
     def _sync() -> str | None:
         syndication_url = f"https://cdn.syndication.twimg.com/tweet-result?id={status_id}&token=x"
         try:

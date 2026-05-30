@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Generate or update mcp.json for this mcp-web-search server."""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -12,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
+# Resolve the project virtualenv Python, falling back to the current interpreter.
 def _detect_python() -> Path:
     if sys.platform.startswith("win"):
         candidates = [
@@ -29,6 +29,7 @@ def _detect_python() -> Path:
     return Path(sys.executable)
 
 
+# Map a setup target or explicit output path to the destination mcp.json file.
 def _target_path(target: str, output: str | None) -> Path:
     if output:
         return Path(output).expanduser().resolve()
@@ -39,6 +40,7 @@ def _target_path(target: str, output: str | None) -> Path:
     raise SystemExit("Unknown target. Use --target lmstudio|project or pass --output PATH.")
 
 
+# Load an existing mcp.json payload when present, otherwise return an empty dict.
 def _load_existing(path: Path) -> dict:
     if not path.exists():
         return {}
@@ -48,6 +50,7 @@ def _load_existing(path: Path) -> dict:
         return {}
 
 
+# Build one mcpServers entry for the FastMCP adapter module.
 def _server_entry(python_exe: Path, timeout_ms: int) -> dict:
     return {
         "command": str(python_exe),
@@ -61,6 +64,7 @@ def _server_entry(python_exe: Path, timeout_ms: int) -> dict:
     }
 
 
+# CLI entry: write or print mcp.json for lmstudio or the project root.
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate or update mcp.json for mcp-web-search."

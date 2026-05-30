@@ -1,11 +1,4 @@
-"""Micro-chunk worker: surgically prune SEO-like clauses without lexicons.
-
-Algorithm notes:
-- No keyword dictionaries or language-specific word lists.
-- Split text into sentence-level units, then into micro-clauses by punctuation.
-- Protect numeric punctuation variants so values like "2 . 5" remain intact.
-- Remove only anomalous clauses that are query-dense but fact-poor.
-"""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -25,17 +18,13 @@ _SPACE_RE = re.compile(r"\s+")
 _QUERY_CHARS_RE = re.compile(r"\w+", re.UNICODE)
 
 
+# Collapse runs of whitespace to a single space.
 def _normalize_spaces(text: str) -> str:
     return _SPACE_RE.sub(" ", text or "").strip()
 
 
+# Protect decimal/range/version punctuation between digits from clause splits.
 def _protect_numeric_punctuation(text: str) -> str:
-    """Protect decimal/range/version punctuation between digits.
-
-    Handles compact and spaced forms:
-    - 2.5 / 2,5 / 2/5 / 2:5
-    - 2 . 5 / 2 ,5 / 2, 5 / 2 / 5
-    """
     out: list[str] = []
     n = len(text)
     i = 0
@@ -57,6 +46,7 @@ def _protect_numeric_punctuation(text: str) -> str:
     return "".join(out)
 
 
+# Restore numeric punctuation sentinels after splitting.
 def _restore_numeric_punctuation(text: str) -> str:
     out = text
     for sep, sentinel in _NUM_SEP_SENTINELS.items():
@@ -64,26 +54,27 @@ def _restore_numeric_punctuation(text: str) -> str:
     return out
 
 
+# Sentence-like split while preserving punctuation in each sentence.
 def _split_sentences(text: str) -> list[str]:
-    """Sentence-like split while preserving punctuation in each sentence."""
     protected = _protect_numeric_punctuation(text)
     parts = re.split(r"(?<=[.!?…])\s+", protected)
     return [_restore_numeric_punctuation(p).strip() for p in parts if p.strip()]
 
 
+# Split sentence into clauses by punctuation excluding dash.
 def _split_micro_clauses(sentence: str) -> list[str]:
-    """Split sentence into clauses by punctuation excluding dash."""
     protected = _protect_numeric_punctuation(sentence)
     parts = re.split(r"\s*[,;:!?…]+\s*", protected)
     return [_restore_numeric_punctuation(p).strip() for p in parts if p.strip()]
 
 
+# Count tokens in clause that appear in the query/reference set.
 def _query_hits(tokens: list[str], query_set: set[str]) -> int:
     return sum(1 for t in tokens if t in query_set)
 
 
+# Language-agnostic fact signal from structure (digits, ids, versions).
 def _factual_signal(clause: str) -> float:
-    """Language-agnostic fact signal based on structure, not vocabulary."""
     text = clause or ""
     if not text:
         return 0.0
@@ -104,12 +95,14 @@ def _factual_signal(clause: str) -> float:
     return min(1.0, score)
 
 
+# Fraction of clause tokens that match query terms.
 def _query_density(clause_tokens: list[str], query_set: set[str]) -> float:
     if not clause_tokens:
         return 0.0
     return _query_hits(clause_tokens, query_set) / len(clause_tokens)
 
 
+# Fraction of clause tokens that match SERP/reference terms.
 def _reference_density(clause_tokens: list[str], reference_set: set[str]) -> float:
     if not clause_tokens or not reference_set:
         return 0.0
@@ -124,19 +117,13 @@ class MicroPruneDebug:
     clauses_dropped: int = 0
 
 
+# Remove SEO-like micro-clauses; preserve factual fragments.
 def prune_micro_chunks(
     text: str,
     query: str,
     *,
     reference_text: str = "",
 ) -> tuple[str, MicroPruneDebug]:
-    """Remove SEO-like micro-clauses and preserve factual fragments.
-
-    Rules:
-    - Clause can be dropped only when query-overlap is high and factual signal is low.
-    - If all high-overlap content in a sentence is dropped and remaining content is weak,
-      the full sentence is dropped.
-    """
     text = text or ""
     if not text.strip() or not query.strip():
         return text, MicroPruneDebug()
@@ -152,6 +139,7 @@ def prune_micro_chunks(
     total_clause = 0
     dropped_clause = 0
 
+    # True when a clause is query-dense but fact-poor (SEO tumor).
     def _clause_is_tumor(
         clause: str,
         *,
@@ -248,8 +236,7 @@ def prune_micro_chunks(
         rest_hits = _query_hits(rest_tokens, query_tokens)
         rest_fact = _factual_signal(rest_text)
 
-        # Whole-sentence drop if after surgery nothing informative remains.
-        # Also drop when all remaining query-bearing content is still low-factual.
+        # Drop whole sentence when remaining content is still uninformative.
         if (rest_hits == 0 and rest_fact < 0.35) or (rest_hits > 0 and rest_fact < 0.20):
             dropped_sent += 1
             continue

@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import argparse
@@ -16,6 +18,7 @@ from custom_domains.amazon import fetch_amazon_snapshot
 from custom_domains.ebay import fetch_ebay_snapshot
 
 
+# Load URL records from a JSON list file.
 def _read_test_records(path: str) -> list[dict[str, Any]]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(data, list):
@@ -23,6 +26,7 @@ def _read_test_records(path: str) -> list[dict[str, Any]]:
     return [item for item in data if isinstance(item, dict) and item.get("url")]
 
 
+# Keep the first record per retail source name.
 def _pick_one_per_source(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     chosen: dict[str, dict[str, Any]] = {}
     for item in records:
@@ -32,6 +36,7 @@ def _pick_one_per_source(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(chosen.values())
 
 
+# Parse one URL per source with the best-known retail fetch path.
 async def _run(input_path: str, output_path: str, timeout: float, wait: float) -> int:
     records = _pick_one_per_source(_read_test_records(input_path))
     rows: list[dict[str, Any]] = []
@@ -66,6 +71,7 @@ async def _run(input_path: str, output_path: str, timeout: float, wait: float) -
     return 0
 
 
+# Build the retail parse probe CLI argument parser.
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Parse one URL per retail source with the best currently known fetch path.",
@@ -77,6 +83,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# CLI entry: run retail parse probe and write JSON output.
 def main() -> None:
     args = _parse_args()
     raise SystemExit(asyncio.run(_run(args.input, args.out, args.timeout, args.wait)))

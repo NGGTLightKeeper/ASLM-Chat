@@ -1,51 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Dynamic domain reputation tracker.
-
-Persists per-domain rolling quality scores in SQLite and auto-derives
-blacklist and trust-promotion decisions when confidence is sufficient.
-
-Design
-------
-Two tables:
-  domain_reputation  — raw EWM stats per (domain, query_type)
-  domain_decisions   — derived decisions (blacklist / promote)
-
-Each scored result writes one observation to both:
-  (domain, query_type)   — query-type-specialised score
-  (domain, '__global__') — cross-type aggregate (used for blacklisting)
-
-Thresholds
-----------
-  AUTO_BLACKLIST : global EMA < 0.12  AND obs_count >= 10
-  AUTO_PROMOTE   : query_type EMA > 0.72 AND obs_count >= 15
-  EMA_ALPHA      : 0.20  (≈ 10-obs half-life, recency-weighted)
-
-Protection
-----------
-  Domains present in the static trust_registry with tier A or B are marked
-  protected and are immune to auto-blacklisting. They can still be promoted.
-
-Effect on scoring
------------------
-  - Auto-blacklisted domain → triage skips result entirely (hard gate).
-  - Otherwise the reputation score (0–1) is blended into the trust component
-    in _result_score: 70% static tier + 30% dynamic reputation (when static
-    tier exists), or 100% dynamic reputation for unknown domains.
-  - Reputation is only recorded when the result had actual fetched content
-    (payload.text non-empty), so fetch failures do not penalise a domain.
-  - Content signal (_content_quality_signal) blends quality, lexical overlap,
-    and parsed/snippet relevance so BM25-default previews can reach promote EMA.
-  - Auto-promoted tier (B/C) is applied to result.trust_tier when still unknown.
-
-Public API
-----------
-DomainReputationStore   — main class
-get_reputation_store()  — module-level singleton
-DomainReport            — typed summary dataclass
-"""
-
 from __future__ import annotations
 
 import json
@@ -62,10 +16,7 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger("core.registry.domain_reputation")
 
-# ---------------------------------------------------------------------------
-# Tuneable thresholds
-# ---------------------------------------------------------------------------
-
+# Tuneable EMA and auto-blacklist/promote thresholds.
 EMA_ALPHA: float = 0.20           # recency weight; ≈10 obs half-life
 BLACKLIST_THRESHOLD: float = 0.12  # global EMA below this → auto-blacklist
 BLACKLIST_MIN_OBS: int = 10        # need at least N obs before blacklisting
@@ -82,10 +33,7 @@ UNBLACKLIST_COOLDOWN_HOURS: int = 24
 _GLOBAL = "__global__"
 
 
-# ---------------------------------------------------------------------------
-# Schema
-# ---------------------------------------------------------------------------
-
+# SQLite schema for domain_reputation and domain_decisions tables.
 _SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
 
@@ -116,10 +64,7 @@ CREATE TABLE IF NOT EXISTS domain_decisions (
 """
 
 
-# ---------------------------------------------------------------------------
-# Dataclass for reporting
-# ---------------------------------------------------------------------------
-
+# Snapshot of one domain's reputation stats and decision flags.
 @dataclass
 class DomainReport:
     domain: str
@@ -134,17 +79,10 @@ class DomainReport:
     protected: bool
 
 
-# ---------------------------------------------------------------------------
-# DomainReputationStore
-# ---------------------------------------------------------------------------
-
+# SQLite-backed rolling domain reputation; writes locked, reads use WAL.
 class DomainReputationStore:
-    """SQLite-backed rolling domain reputation tracker.
 
-    Thread-safe: all writes use a dedicated lock; reads use separate
-    short-lived connections (WAL allows concurrent readers).
-    """
-
+    # Open or create reputation DB and mark static A/B domains protected.
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         self._lock = Lock()
@@ -152,14 +90,14 @@ class DomainReputationStore:
         self._init_db()
         self._protect_static_domains()
 
-    # -- Setup ---------------------------------------------------------------
-
+    # Open SQLite connection with row factory and busy timeout.
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path, timeout=10, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
+    # Create tables and indexes from _SCHEMA_SQL.
     def _init_db(self) -> None:
         conn = self._connect()
         try:
@@ -171,8 +109,8 @@ class DomainReputationStore:
         finally:
             conn.close()
 
+    # Mark trust registry A/B tier patterns as protected from auto-blacklist.
     def _protect_static_domains(self) -> None:
-        """Mark A/B domains from the trust registry as protected (blacklist-immune)."""
         try:
             from core.registry.trust_registry import load_trust_registry
 
@@ -203,18 +141,8 @@ class DomainReputationStore:
         finally:
             conn.close()
 
-    # -- Core write ----------------------------------------------------------
-
+    # Record one observation; updates per-type and global EMA, then re-evaluates decisions.
     def record(self, domain: str, query_type: str, score: float) -> None:
-        """Record one content-quality observation for a domain.
-
-        Writes to both (domain, query_type) and (domain, '__global__'), then
-        re-evaluates whether auto-blacklist or auto-promote decisions should
-        be updated.
-
-        This method is synchronous and should be called from a thread pool
-        executor in async contexts to avoid blocking the event loop.
-        """
         if not domain or not (0.0 <= score <= 1.0):
             return
 
@@ -232,6 +160,7 @@ class DomainReputationStore:
             finally:
                 conn.close()
 
+    # Insert or exponentially smooth-update one (domain, query_type) EMA row.
     def _upsert_ema(
         self,
         conn: sqlite3.Connection,
@@ -265,13 +194,13 @@ class DomainReputationStore:
                 (new_ema, now, domain, query_type),
             )
 
+    # Apply auto-blacklist, un-blacklist, promote, and demote rules for domain.
     def _evaluate_decisions(
         self,
         conn: sqlite3.Connection,
         domain: str,
         query_type: str,
     ) -> None:
-        """Re-check thresholds and update domain_decisions if needed."""
         now = time.time()
 
         # Read global stats
@@ -388,8 +317,8 @@ class DomainReputationStore:
                 "promoted_query_types": json.dumps(new_types),
             })
 
+    # Insert or patch domain_decisions row with given field updates.
     def _upsert_decision(self, conn: sqlite3.Connection, domain: str, fields: dict) -> None:
-        """Insert or patch a row in domain_decisions."""
         existing = conn.execute(
             "SELECT domain FROM domain_decisions WHERE domain=?", (domain,)
         ).fetchone()
@@ -409,10 +338,8 @@ class DomainReputationStore:
                 list(fields.values()) + [domain],
             )
 
-    # -- Read API ------------------------------------------------------------
-
+    # True when domain_decisions marks domain auto_blacklisted.
     def is_auto_blacklisted(self, domain: str) -> bool:
-        """Return True if domain has been auto-blacklisted."""
         conn = self._connect()
         try:
             row = conn.execute(
@@ -423,17 +350,8 @@ class DomainReputationStore:
         finally:
             conn.close()
 
+    # Best reputation in [0,1]: query-type EMA, else global EMA, else 0.50 neutral.
     def get_reputation_score(self, domain: str, query_type: str) -> float:
-        """Return the best available reputation score in [0, 1].
-
-        Priority:
-          1. Query-type-specific EMA if >= 5 observations
-          2. Global EMA if >= 5 observations
-          3. Neutral fallback (0.50)
-
-        Only returns if the domain has enough observations to be meaningful;
-        otherwise returns 0.50 so reputation is a no-op for new domains.
-        """
         conn = self._connect()
         try:
             qt_row = conn.execute(
@@ -456,8 +374,8 @@ class DomainReputationStore:
         finally:
             conn.close()
 
+    # Build DomainReport for domain or None if no reputation rows exist.
     def get_report(self, domain: str) -> Optional[DomainReport]:
-        """Return a structured report for one domain, or None if unseen."""
         conn = self._connect()
         try:
             per_type_rows = conn.execute(
@@ -518,13 +436,13 @@ class DomainReputationStore:
         finally:
             conn.close()
 
+    # Return promoted trust tier (B/C) for domain if any.
     def get_promoted_tier(self, domain: str) -> Optional[str]:
-        """Return the promoted tier for a domain, if any."""
         report = self.get_report(domain)
         return report.promoted_tier if report else None
 
+    # List recently auto-blacklisted domains up to limit.
     def top_blacklisted(self, limit: int = 20) -> list[dict]:
-        """Return recent auto-blacklisted domains ordered by blacklist time."""
         conn = self._connect()
         try:
             rows = conn.execute(
@@ -549,8 +467,8 @@ class DomainReputationStore:
         finally:
             conn.close()
 
+    # List auto-promoted domains ordered by tier and promoted_at.
     def top_promoted(self, limit: int = 20) -> list[dict]:
-        """Return promoted domains ordered by strongest tier then recency."""
         conn = self._connect()
         try:
             rows = conn.execute(
@@ -584,16 +502,12 @@ class DomainReputationStore:
             conn.close()
 
 
-# ---------------------------------------------------------------------------
-# Singleton
-# ---------------------------------------------------------------------------
-
 _store: Optional[DomainReputationStore] = None
 _store_lock = Lock()
 
 
+# Lazily initialised global DomainReputationStore.
 def get_reputation_store() -> DomainReputationStore:
-    """Return the lazily initialised global DomainReputationStore."""
     global _store
     if _store is None:
         with _store_lock:
@@ -606,12 +520,8 @@ def get_reputation_store() -> DomainReputationStore:
     return _store
 
 
-# ---------------------------------------------------------------------------
-# URL → domain helper (reused by callers)
-# ---------------------------------------------------------------------------
-
+# Extract bare hostname from URL, stripping www. prefix.
 def domain_from_url(url: str) -> str:
-    """Extract bare hostname, stripping www. prefix."""
     try:
         host = urlparse(url).netloc.lower()
         if host.startswith("www."):

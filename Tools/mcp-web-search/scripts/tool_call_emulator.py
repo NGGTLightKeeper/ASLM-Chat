@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+# Load mcp-server.py as a module for direct tool invocation.
 def _load_mcp_server_module():
     module_path = ROOT / "mcp-server.py"
     spec = importlib.util.spec_from_file_location("mcp_web_search_mcp_server", module_path)
@@ -36,6 +37,7 @@ class ToolCall:
     raw: str
 
 
+# Extract <tool_call> XML blocks from assistant transcript text.
 def _parse_xml_calls(text: str) -> list[ToolCall]:
     import re
 
@@ -60,6 +62,7 @@ def _parse_xml_calls(text: str) -> list[ToolCall]:
     return calls
 
 
+# Attempt JSON decode; return None on failure.
 def _try_json_decode(payload: str) -> Any | None:
     payload = payload.strip()
     if not payload:
@@ -70,6 +73,7 @@ def _try_json_decode(payload: str) -> Any | None:
         return None
 
 
+# Decode one JSON object starting at a substring offset.
 def _extract_json_block(text: str, start: int) -> tuple[Any | None, int]:
     decoder = json.JSONDecoder()
     snippet = text[start:].lstrip()
@@ -83,6 +87,7 @@ def _extract_json_block(text: str, start: int) -> tuple[Any | None, int]:
         return None, start
 
 
+# Parse LM Studio panel-style tool call blocks from transcript text.
 def _parse_panel_calls(text: str, known_tools: set[str]) -> list[ToolCall]:
     calls: list[ToolCall] = []
     lines = text.splitlines()
@@ -127,6 +132,7 @@ def _parse_panel_calls(text: str, known_tools: set[str]) -> list[ToolCall]:
     return calls
 
 
+# Merge XML and panel tool calls, deduplicating by tool/args/source.
 def extract_tool_calls(text: str, known_tools: set[str]) -> list[ToolCall]:
     calls: list[ToolCall] = []
     seen: set[tuple[str, str, str]] = set()
@@ -143,6 +149,7 @@ def extract_tool_calls(text: str, known_tools: set[str]) -> list[ToolCall]:
     return calls
 
 
+# Invoke one MCP tool via the loaded server module.
 async def _execute_call(module: Any, call: ToolCall, context: dict[str, Any] | None = None) -> dict[str, Any]:
     started = time.perf_counter()
     try:
@@ -166,6 +173,7 @@ async def _execute_call(module: Any, call: ToolCall, context: dict[str, Any] | N
         }
 
 
+# Print one tool execution result to stdout.
 def _print_execution(result: dict[str, Any]) -> None:
     print(f"Tool    : {result['tool']}")
     print(f"Status  : {result['status']}")
@@ -185,6 +193,7 @@ def _print_execution(result: dict[str, Any]) -> None:
     print()
 
 
+# Built-in web_search stress scenarios for soak testing.
 def _built_in_stress_scenarios() -> list[ToolCall]:
     return [
         ToolCall(
@@ -212,6 +221,7 @@ def _built_in_stress_scenarios() -> list[ToolCall]:
     ]
 
 
+# Replay tool calls from a transcript file or stdin against the MCP server.
 async def run_replay(path: Path | None, *, strict: bool = False) -> int:
     module = _load_mcp_server_module()
     known_tools = {tool["id"] for tool in module.TOOLS}
@@ -244,6 +254,7 @@ async def run_replay(path: Path | None, *, strict: bool = False) -> int:
     return exit_code
 
 
+# Run built-in stress web_search scenarios sequentially.
 async def run_stress() -> int:
     module = _load_mcp_server_module()
     exit_code = 0
@@ -255,6 +266,7 @@ async def run_stress() -> int:
     return exit_code
 
 
+# CLI entry: replay or stress-search subcommands.
 def main() -> int:
     parser = argparse.ArgumentParser(description="Replay and emulate MCP tool calls against mcp-web-search.")
     subparsers = parser.add_subparsers(dest="command", required=True)

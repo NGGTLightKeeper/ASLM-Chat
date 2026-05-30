@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import asyncio
@@ -10,10 +12,12 @@ from core.fetch.thread_pool import io_pool as _io_pool
 _REDDIT_PATTERN = re.compile(r"reddit\.com/r/[^/]+/comments/")
 
 
+# True when URL looks like a Reddit thread comments page.
 def is_reddit(url: str) -> bool:
     return bool(_REDDIT_PATTERN.search(url))
 
 
+# Fetch thread JSON API and format post title, body, and nested comments as markdown.
 async def fetch_reddit_json(url: str) -> str:
     loop = asyncio.get_running_loop()
     parsed = urlparse(url)
@@ -22,6 +26,7 @@ async def fetch_reddit_json(url: str) -> str:
         path += ".json"
     json_url = urlunparse((parsed.scheme, parsed.netloc, path, "", "limit=50&depth=3", ""))
 
+    # Blocking curl_cffi fetch executed on the shared I/O thread pool.
     def _do() -> dict:
         from curl_cffi import requests as _r
 
@@ -53,6 +58,7 @@ async def fetch_reddit_json(url: str) -> str:
         lines.append(post["selftext"])
     lines.append("")
 
+    # Walk comment tree recursively, indenting by depth.
     def _comments(children: list, depth: int = 0) -> None:
         for child in children:
             if child.get("kind") != "t1":

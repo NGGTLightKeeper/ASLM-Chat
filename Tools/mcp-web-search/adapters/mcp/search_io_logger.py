@@ -13,6 +13,7 @@ _LOG_LOCK = threading.Lock()
 _LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "model_search_io.json"
 
 
+# Coerce a value to something JSON-serializable for the IO log.
 def _jsonable(value: Any) -> Any:
     try:
         json.dumps(value, ensure_ascii=False, default=str)
@@ -21,6 +22,7 @@ def _jsonable(value: Any) -> Any:
         return repr(value)
 
 
+# Drop redundant preview fields when they duplicate the snippet text.
 def _without_duplicate_preview(value: Any) -> Any:
     if isinstance(value, list):
         return [_without_duplicate_preview(item) for item in value]
@@ -38,9 +40,8 @@ def _without_duplicate_preview(value: Any) -> Any:
     return cleaned
 
 
+# Append one full search/read-page IO event to a readable JSON array.
 def write_search_io_event(event: dict[str, Any]) -> None:
-    """Append one full search/read-page IO event to a readable JSON array."""
-
     record = {
         "ts": datetime.now(timezone.utc).isoformat(),
         **dict(event or {}),

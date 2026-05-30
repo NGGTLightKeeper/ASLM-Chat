@@ -14,6 +14,7 @@ if str(REPO_ROOT) not in sys.path:
 from core.fetch.camoufox_fetcher import fetch_with_camoufox, is_camoufox_available
 
 
+# Build the Camoufox single-URL probe CLI argument parser.
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="scripts/camoufox_probe.py",
@@ -26,6 +27,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Fetch one URL with Camoufox and print or save diagnostics.
 async def _main() -> int:
     args = _parse_args()
 

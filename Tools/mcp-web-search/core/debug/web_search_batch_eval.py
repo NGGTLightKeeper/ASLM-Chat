@@ -1,9 +1,4 @@
-"""Batch evaluator for neural/domain web_search routing.
-
-This is an operator tool, not a unit test. It runs live provider searches for a
-small taxonomy-covering query set, fetches previews, runs both local ASLM
-embedding exports, and writes a compact JSON + Markdown report.
-"""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -70,6 +65,7 @@ BASIC_CASES: list[dict[str, str]] = [
 ]
 
 
+# Return top label/score pairs from a score mapping.
 def _top_pairs(mapping: dict[str, float], limit: int = 5) -> list[list[Any]]:
     return [
         [name, round(score, 4)]
@@ -77,14 +73,17 @@ def _top_pairs(mapping: dict[str, float], limit: int = 5) -> list[list[Any]]:
     ]
 
 
+# Convert hybrid class mix tuples into a name→weight dict.
 def _class_mix(hybrid: list[tuple[str, float, str]]) -> dict[str, float]:
     return {name: float(weight) for name, weight, _reason in hybrid}
 
 
+# Weighted average of per-class values using the hybrid mix.
 def _weighted(values: dict[str, float], mix: dict[str, float], default: float = 1.0) -> float:
     return sum(weight * float(values.get(name, default)) for name, weight in mix.items()) or default
 
 
+# Look up trust registry entry by URL host pattern.
 def _trust_entry_for_url(trust_registry, url: str):
     host = urlparse(url or "").netloc.lower()
     for pattern, entry in getattr(trust_registry, "_lookup", {}).items():
@@ -93,6 +92,7 @@ def _trust_entry_for_url(trust_registry, url: str):
     return None
 
 
+# Trace domain-registry scoring multipliers for one result URL.
 def _domain_trace(url: str, mix: dict[str, float]) -> dict[str, Any]:
     registry = get_registry()
     info = registry.lookup(url)
@@ -124,6 +124,7 @@ def _domain_trace(url: str, mix: dict[str, float]) -> dict[str, Any]:
     }
 
 
+# Trace trust-registry affinity for one result URL.
 def _trust_trace(trust_registry, url: str, mix: dict[str, float]) -> dict[str, Any]:
     entry = _trust_entry_for_url(trust_registry, url)
     if entry is None:
@@ -138,6 +139,7 @@ def _trust_trace(trust_registry, url: str, mix: dict[str, float]) -> dict[str, A
     }
 
 
+# Collect diagnostic flags when routing or previews miss expectations.
 def _case_flags(expected: str, model_top: str, hybrid: list[tuple[str, float, str]], rows: list[dict[str, Any]]) -> list[str]:
     flags: list[str] = []
     hybrid_classes = [name for name, _weight, _reason in hybrid]
@@ -162,6 +164,7 @@ def _case_flags(expected: str, model_top: str, hybrid: list[tuple[str, float, st
     return flags
 
 
+# Run live search + preview + scoring trace for one taxonomy case.
 async def _evaluate_case(
     case: dict[str, str],
     *,
@@ -177,6 +180,7 @@ async def _evaluate_case(
     raw_query = case["query"]
     expected = case["class"]
 
+    # Query analysis: constraints, year hint, rules, and neural class mix.
     constraints = parse_domain_constraints(raw_query)
     analysis_query = constraints.clean_query or raw_query
     analysis_query, year_hint = _apply_year_hint_policy(analysis_query, cfg.query)
@@ -194,6 +198,7 @@ async def _evaluate_case(
     out_profile = _apply_effort_to_output_profile(_get_output_profile(query_types), opts)
     query_profile = _parse_query_profile(analysis_query)
 
+    # Provider search with zero-result fallback.
     deduped, triage, effective_query = await service._run_with_zero_result_fallback(
         provider_query=provider_query,
         analysis_query=analysis_query,
@@ -214,6 +219,7 @@ async def _evaluate_case(
 
         triage = _triage_results(deduped, analysis_query) if deduped else []
 
+    # Optional preview fetch for top triage-approved results.
     payloads = [PreviewPayload()] * len(deduped)
     to_fetch = []
     to_fetch_indexes = []
@@ -246,6 +252,7 @@ async def _evaluate_case(
         for index, payload in zip(to_fetch_indexes, fetched):
             payloads[index] = payload
 
+    # Per-result domain/trust/source-model scoring rows.
     trust_registry = get_trust_registry()
     source_inputs = [
         format_source_relevance_input(
@@ -338,6 +345,7 @@ async def _evaluate_case(
     }
 
 
+# Render batch-eval Markdown summary and per-case detail tables.
 def _render_markdown(cases: list[dict[str, Any]]) -> str:
     lines = [
         "# Web Search Neural/Domain Batch Eval",
@@ -385,6 +393,7 @@ def _render_markdown(cases: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# Run all selected taxonomy cases and write JSON/Markdown reports.
 async def _main_async(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -452,6 +461,7 @@ async def _main_async(args: argparse.Namespace) -> int:
     return 0
 
 
+# Build the batch-eval CLI argument parser.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run live batch eval for web_search neural/domain routing")
     parser.add_argument("--classes", nargs="*", help="Only run selected expected classes")
@@ -471,6 +481,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# CLI entry: asyncio driver for batch evaluation.
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     return asyncio.run(_main_async(args))

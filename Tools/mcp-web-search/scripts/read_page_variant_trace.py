@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import argparse
@@ -7,6 +9,7 @@ from dataclasses import asdict
 from services.read_page import ReadPageService, _dns_variant_urls, _host
 
 
+# Fetch one URL with read_page tracing and print variant attempt details.
 async def _run(url: str) -> None:
     service = ReadPageService()
     variants = _dns_variant_urls(url) if _host(url) == "dns-shop.ru" else [url]
@@ -32,6 +35,7 @@ async def _run(url: str) -> None:
     print(f"Preview: {preview[:300]}")
 
 
+# CLI entry: parse URL and run the variant trace.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Trace read_page variant behavior.")
     parser.add_argument("url", help="URL to read and trace")

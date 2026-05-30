@@ -1,9 +1,4 @@
-"""Custom domain-specific fetch/extract routes.
-
-These modules are intentionally kept outside the main `read_page` service so we
-can iterate on domain-specific strategies without coupling them to the generic
-pipeline too early.
-"""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from .amazon import fetch_amazon_snapshot
 from .dns_shop import dns_variant_urls, rewrite_read_page_url

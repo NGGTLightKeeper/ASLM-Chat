@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import argparse
@@ -53,10 +55,12 @@ class ProbeStats:
     markdown_removed_blocks: int = 0
 
 
+# Collapse runs of whitespace to a single space.
 def _normalize_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
+# Split normalized markdown into header (before ---) and body.
 def _split_markdown_document(markdown: str) -> tuple[str, str]:
     marker = "\n\n---\n\n"
     if marker not in markdown:
@@ -65,11 +69,13 @@ def _split_markdown_document(markdown: str) -> tuple[str, str]:
     return head + marker, body
 
 
+# Extract <title> text from raw HTML.
 def _extract_html_title(raw_html: str) -> str:
     match = _TITLE_RE.search(raw_html or "")
     return _normalize_ws(match.group(1)) if match else ""
 
 
+# Detect captcha or access-denied pages from title/body heuristics.
 def _detect_fetch_blocker(raw_html: str) -> str:
     compact = _normalize_ws(raw_html).lower()
     title = _extract_html_title(raw_html).lower()
@@ -80,6 +86,7 @@ def _detect_fetch_blocker(raw_html: str) -> str:
     return ""
 
 
+# Score how likely text is SPA/widget JSON machine noise.
 def _machine_noise_score(text: str) -> float:
     compact = _normalize_ws(text)
     if not compact:
@@ -120,6 +127,7 @@ def _machine_noise_score(text: str) -> float:
     return score
 
 
+# True when machine-noise score exceeds the removal threshold.
 def _looks_like_machine_noise(text: str) -> bool:
     compact = _normalize_ws(text)
     if len(compact) < 180:
@@ -127,6 +135,7 @@ def _looks_like_machine_noise(text: str) -> bool:
     return _machine_noise_score(compact) >= 2.0
 
 
+# Remove DOM subtrees that look like widget/ecommerce machine noise.
 def _prune_html_machine_nodes(raw_html: str) -> tuple[str, ProbeStats]:
     stats = ProbeStats()
     if not raw_html or BeautifulSoup is None:
@@ -159,6 +168,7 @@ def _prune_html_machine_nodes(raw_html: str) -> tuple[str, ProbeStats]:
     return str(soup), stats
 
 
+# Strip tracking query params from the **URL:** line in markdown headers.
 def _clean_tracking_in_header(header: str) -> str:
     if not header:
         return header
@@ -175,10 +185,12 @@ def _clean_tracking_in_header(header: str) -> str:
     return "\n".join(lines)
 
 
+# Yield paragraph blocks from markdown body text.
 def _iter_markdown_blocks(body: str) -> Iterable[str]:
     return (block.strip() for block in re.split(r"\n\s*\n", body or ""))
 
 
+# Drop noisy markdown blocks and redact long opaque tokens.
 def _clean_markdown_machine_blocks(markdown: str) -> tuple[str, ProbeStats]:
     header, body = _split_markdown_document(markdown)
     stats = ProbeStats()
@@ -198,6 +210,7 @@ def _clean_markdown_machine_blocks(markdown: str) -> tuple[str, ProbeStats]:
     return f"{cleaned_header}{cleaned_body}".strip(), stats
 
 
+# Full pipeline: prune HTML noise, normalize, then clean markdown blocks.
 def clean_spa_markdown(url: str, raw_html: str) -> tuple[str, dict[str, int]]:
     pruned_html, html_stats = _prune_html_machine_nodes(raw_html)
     markdown = normalize_page(url, pruned_html)
@@ -208,6 +221,7 @@ def clean_spa_markdown(url: str, raw_html: str) -> tuple[str, dict[str, int]]:
     }
 
 
+# Fetch raw HTML via Camoufox without normalization.
 async def _fetch_html(url: str, timeout: float, wait_sec: float) -> str:
     if not is_camoufox_available():
         raise RuntimeError("Camoufox is unavailable")
@@ -224,6 +238,7 @@ async def _fetch_html(url: str, timeout: float, wait_sec: float) -> str:
     return result.html
 
 
+# Probe each URL: fetch, baseline normalize, clean, and print previews.
 async def _run(urls: list[str], timeout: float, wait_sec: float, out_dir: str) -> int:
     out_path = Path(out_dir) if out_dir else None
     if out_path:
@@ -259,6 +274,7 @@ async def _run(urls: list[str], timeout: float, wait_sec: float, out_dir: str) -
     return 0
 
 
+# Build the SPA read/clean probe CLI argument parser.
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Temporary probe for generic anti-hydration cleaning on SPA-heavy product pages.",
@@ -270,6 +286,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# CLI entry: asyncio driver for SPA cleaning probe.
 def main() -> None:
     args = _parse_args()
     raise SystemExit(asyncio.run(_run(args.urls, timeout=args.timeout, wait_sec=args.wait, out_dir=args.out_dir)))

@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Trust registry: modular profile JSONs with optional legacy monolithic fallback."""
-
 from __future__ import annotations
 
 import json
@@ -35,6 +33,7 @@ _PROFILE_REQUIRED_KEYS = frozenset({"profile", "domains"})
 # - tiers and blacklist come from trust_registry_profiles/_global.json when present, else legacy monolith.
 
 
+# Trust tier and class affinity for one domain pattern.
 @dataclass
 class TrustDomainEntry:
     pattern: str
@@ -44,6 +43,7 @@ class TrustDomainEntry:
     class_affinity: Dict[str, float] = field(default_factory=dict)
     notes: str = ""
 
+    # Serialize entry for legacy-compatible domain list output.
     def as_dict(self) -> dict[str, Any]:
         return {
             "pattern": self.pattern,
@@ -55,12 +55,12 @@ class TrustDomainEntry:
         }
 
 
+# True when host equals domain or is a subdomain of it.
 def _is_host_match(host: str, domain: str) -> bool:
-    """Return whether a host equals the domain or one of its subdomains."""
-
     return host == domain or host.endswith("." + domain)
 
 
+# Merge class_affinity maps keeping per-class maximum.
 def _merge_float_maps(existing: Dict[str, float], incoming: Dict[str, float]) -> Dict[str, float]:
     merged = dict(existing)
     for key, value in incoming.items():
@@ -75,11 +75,13 @@ def _merge_float_maps(existing: Dict[str, float], incoming: Dict[str, float]) ->
     return merged
 
 
+# Build TrustDomainEntry from one profile or legacy JSON entry.
 def _entry_from_dict(entry: dict[str, Any], defaults: dict[str, Any]) -> Optional[TrustDomainEntry]:
     pattern = str(entry.get("pattern") or defaults.get("pattern") or "").strip().lower()
     if not pattern:
         return None
 
+    # Prefer entry value, else defaults, for one field key.
     def _pick(key: str, default: Any = "") -> Any:
         if key in entry and entry[key] is not None:
             return entry[key]
@@ -107,6 +109,7 @@ def _entry_from_dict(entry: dict[str, Any], defaults: dict[str, Any]) -> Optiona
     )
 
 
+# Overlay wins scalars; aliases unioned; class_affinity max-merged.
 def _merge_trust_entry(base: TrustDomainEntry, overlay: TrustDomainEntry) -> TrustDomainEntry:
     return TrustDomainEntry(
         pattern=base.pattern,
@@ -118,6 +121,7 @@ def _merge_trust_entry(base: TrustDomainEntry, overlay: TrustDomainEntry) -> Tru
     )
 
 
+# Validate one trust profile JSON file structure.
 def _validate_profile_file(path: Path, data: dict[str, Any]) -> None:
     if not isinstance(data, dict):
         raise ValueError(f"{path.name}: root must be object")
@@ -138,6 +142,7 @@ def _validate_profile_file(path: Path, data: dict[str, Any]) -> None:
             raise ValueError(f"{path.name}: domains[{i}] missing 'pattern'")
 
 
+# Profile JSON load order from manifest.json then remaining *.json files.
 def _profile_load_order(profiles_dir: Path) -> List[Path]:
     manifest_path = profiles_dir / _MANIFEST_NAME
     ordered: List[Path] = []
@@ -166,6 +171,7 @@ def _profile_load_order(profiles_dir: Path) -> List[Path]:
     return ordered
 
 
+# Load tiers and blacklist from trust_registry_profiles/_global.json.
 def _load_global_config(profiles_dir: Path) -> tuple[dict[str, dict], dict]:
     global_path = profiles_dir / _GLOBAL_NAME
     if global_path.is_file():
@@ -179,6 +185,7 @@ def _load_global_config(profiles_dir: Path) -> tuple[dict[str, dict], dict]:
     return {}, {}
 
 
+# Load domain patterns from legacy monolithic trust_registry.json.
 def _load_legacy_domains(path: Path) -> Dict[str, TrustDomainEntry]:
     by_pattern: Dict[str, TrustDomainEntry] = {}
     try:
@@ -197,6 +204,7 @@ def _load_legacy_domains(path: Path) -> Dict[str, TrustDomainEntry]:
     return by_pattern
 
 
+# Read tiers and blacklist from legacy monolith without loading domains.
 def _legacy_tiers_and_blacklist(path: Path) -> tuple[dict[str, dict], dict]:
     try:
         data = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -207,6 +215,7 @@ def _legacy_tiers_and_blacklist(path: Path) -> tuple[dict[str, dict], dict]:
     return tiers, blacklist
 
 
+# Load and merge domain patterns from trust_registry_profiles/ JSON files.
 def _load_profile_domains(profiles_dir: Path) -> Dict[str, TrustDomainEntry]:
     by_pattern: Dict[str, TrustDomainEntry] = {}
     if not profiles_dir.is_dir():
@@ -235,6 +244,7 @@ def _load_profile_domains(profiles_dir: Path) -> Dict[str, TrustDomainEntry]:
     return by_pattern
 
 
+# Resolve legacy monolith path from explicit arg or known candidates.
 def _resolve_legacy_path(explicit: Optional[str]) -> Optional[Path]:
     if explicit:
         p = Path(explicit)
@@ -245,6 +255,7 @@ def _resolve_legacy_path(explicit: Optional[str]) -> Optional[Path]:
     return None
 
 
+# Cached merge result: tiers, blacklist, domains, load metadata.
 @dataclass
 class _MergedTrustData:
     tiers: dict[str, dict]
@@ -254,6 +265,7 @@ class _MergedTrustData:
     source: str
 
 
+# Merge legacy monolith, _global.json, and profile domain entries (cached).
 @lru_cache(maxsize=8)
 def _load_merged_registry(
     profiles_dir_str: str,
@@ -301,20 +313,18 @@ def _load_merged_registry(
     )
 
 
+# Clear cached merged registry and singleton (for tests).
 def clear_trust_registry_cache() -> None:
-    """Clear cached merged registry and singleton instance (for tests)."""
-
     _load_merged_registry.cache_clear()
     global _instance
     _instance = None
 
 
+# Return (tiers, blacklist, domains_by_pattern) from merged sources.
 def load_trust_registry(
     profiles_dir: Optional[Path | str] = None,
     legacy_path: Optional[Path | str] = None,
 ) -> tuple[dict[str, dict], dict, Dict[str, TrustDomainEntry]]:
-    """Return (tiers, blacklist, domains_by_pattern) from merged sources (cached)."""
-
     pdir = Path(profiles_dir) if profiles_dir else _PROFILES_DIR
     legacy = Path(legacy_path) if legacy_path else _resolve_legacy_path(None)
     merged = _load_merged_registry(
@@ -324,9 +334,10 @@ def load_trust_registry(
     return merged.tiers, merged.blacklist, dict(merged.domains)
 
 
+# Load trust tiers and blacklist from modular profile JSONs or legacy monolith.
 class TrustRegistry:
-    """Load trust tiers and blacklist rules from modular or legacy JSON registry."""
 
+    # Load merged trust data from profiles, global config, and optional legacy file.
     def __init__(
         self,
         path: Optional[str] = None,
@@ -362,31 +373,29 @@ class TrustRegistry:
                 self._source,
             )
 
+    # Return trust entry for URL host if pattern matches.
     def get_entry(self, url: str) -> Optional[TrustDomainEntry]:
-        """Return the matching TrustDomainEntry for a URL, or None."""
         netloc = urlparse(url).netloc.lower()
         for pattern, entry in self._lookup.items():
             if netloc == pattern or netloc.endswith("." + pattern):
                 return entry
         return None
 
+    # Return trust tier letter (A/B/C) for URL or None.
     def get_tier(self, url: str) -> Optional[str]:
-        """Return the configured trust tier for a URL, if any."""
         entry = self.get_entry(url)
         return entry.tier if entry is not None else None
 
+    # Return numeric tier weight from tiers config for URL.
     def get_weight(self, url: str) -> float:
-        """Return the numeric trust weight for a URL."""
-
         tier = self.get_tier(url)
         if not tier:
             return 0.0
 
         return self.tiers.get(tier, {}).get("weight", 0.0)
 
+    # True when URL matches extension, domain, or pattern blacklist rules.
     def is_blacklisted(self, url: str) -> bool:
-        """Check URL rules, extensions, and blocked domains."""
-
         url_lower = url.lower()
         netloc = urlparse(url).netloc.lower()
 
@@ -412,9 +421,8 @@ class TrustRegistry:
 
         return False
 
+    # Keep search results whose URL tier is in allowed_tiers.
     def filter_results(self, results: list, allowed_tiers: set[str]) -> list:
-        """Keep only results whose trust tier is explicitly allowed."""
-
         filtered = []
         for result in results:
             url = result.url if hasattr(result, "url") else result.get("url", "")
@@ -428,9 +436,8 @@ class TrustRegistry:
 _instance: Optional[TrustRegistry] = None
 
 
+# Shared TrustRegistry singleton.
 def get_trust_registry() -> TrustRegistry:
-    """Return the shared TrustRegistry instance."""
-
     global _instance
 
     if _instance is None:

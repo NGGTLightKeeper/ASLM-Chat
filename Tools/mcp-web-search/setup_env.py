@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Bootstrap a local virtualenv and install dependencies from pyproject.toml."""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -14,22 +13,26 @@ ROOT = Path(__file__).resolve().parent
 PYPROJECT = ROOT / "pyproject.toml"
 
 
+# Read the project name from pyproject.toml for user-facing output.
 def _load_project_name() -> str:
     data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     return str(data.get("project", {}).get("name", ROOT.name))
 
 
+# Resolve the Python executable inside a virtualenv directory.
 def _venv_python(venv_dir: Path) -> Path:
     if sys.platform.startswith("win"):
         return venv_dir / "Scripts" / "python.exe"
     return venv_dir / "bin" / "python"
 
 
+# Run a subprocess command with cwd pinned to the project root.
 def _run(cmd: list[str], *, cwd: Path) -> None:
     print(">", " ".join(cmd))
     subprocess.run(cmd, cwd=str(cwd), check=True)
 
 
+# CLI entry: create a venv and install this package from pyproject.toml.
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Create a venv and install this project from pyproject.toml."

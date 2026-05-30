@@ -1,12 +1,4 @@
-#!/usr/bin/env python3
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
-
-"""Render a small HTML report showing search source icons.
-
-The report answers: which favicon URL did web_search return, what image did
-that URL actually serve, and would the ASLM UI use that favicon or its local
-fallback for the source chip.
-"""
 
 from __future__ import annotations
 
@@ -42,6 +34,7 @@ class IconFetch:
     error: str
 
 
+# Build the search icon probe CLI argument parser.
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="scripts/search_icon_probe.py")
     parser.add_argument("query", help="Search query to run through web_search_rich.")
@@ -56,9 +49,8 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Mirror Apps/UI sourceHasExtractedPreview: favicon vs fallback letter chip.
 def _source_uses_favicon(source: dict[str, Any]) -> bool:
-    """Mirror Apps/UI/static/js/ui/messages-ui.js sourceHasExtractedPreview."""
-
     has_preview = "preview" in source
     has_snippet = "snippet" in source
     if not has_preview and not has_snippet:
@@ -68,15 +60,18 @@ def _source_uses_favicon(source: dict[str, Any]) -> bool:
     return bool(preview) and preview != snippet
 
 
+# Prefer display_domain, then domain, for chip labels.
 def _display_domain(source: dict[str, Any]) -> str:
     return str(source.get("display_domain") or source.get("domain") or "").strip()
 
 
+# First letter of display domain for fallback chip rendering.
 def _fallback_letter(source: dict[str, Any]) -> str:
     domain = _display_domain(source)
     return (domain[:1] or "?").upper()
 
 
+# Fetch one favicon URL and return status plus optional data URL.
 def _fetch_icon(url: str, timeout: float) -> IconFetch:
     if not url:
         return IconFetch(False, 0, "", 0, "", "empty icon url")
@@ -97,6 +92,7 @@ def _fetch_icon(url: str, timeout: float) -> IconFetch:
         return IconFetch(False, 0, "", 0, "", str(exc))
 
 
+# Fetch all source favicons concurrently via asyncio.to_thread.
 async def _fetch_icons(sources: list[dict[str, Any]], timeout: float) -> dict[str, IconFetch]:
     async def one(source: dict[str, Any]) -> tuple[str, IconFetch]:
         url = str(source.get("favicon_url") or "").strip()
@@ -106,6 +102,7 @@ async def _fetch_icons(sources: list[dict[str, Any]], timeout: float) -> dict[st
     return {url: fetch for url, fetch in pairs}
 
 
+# Render one ASLM-style source chip (favicon image or letter fallback).
 def _chip_html(source: dict[str, Any], icon: IconFetch, *, force_fallback: bool = False) -> str:
     domain = html.escape(_display_domain(source))
     letter = html.escape(_fallback_letter(source))
@@ -116,6 +113,7 @@ def _chip_html(source: dict[str, Any], icon: IconFetch, *, force_fallback: bool 
     return f'<span class="chip">{icon_html}<span>{domain}</span></span>'
 
 
+# Build the HTML report comparing raw favicon vs UI chip behavior.
 def _render_html(query: str, payload: dict[str, Any], icon_fetches: dict[str, IconFetch]) -> str:
     sources = payload.get("sources") if isinstance(payload.get("sources"), list) else []
     rows: list[str] = []
@@ -217,6 +215,7 @@ def _render_html(query: str, payload: dict[str, Any], icon_fetches: dict[str, Ic
 """
 
 
+# Run web_search_rich, fetch favicons, and write the HTML report.
 async def main() -> int:
     args = _parse_args()
     payload = await run_web_search_rich(args.query, max_results=max(1, args.limit))

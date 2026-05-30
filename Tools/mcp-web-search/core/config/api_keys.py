@@ -1,17 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Search provider credentials loader.
-
-Keeps hosted provider credentials in a dedicated config file so operational
-secrets do not mix with behavioral search settings.
-
-Public API
-----------
-ApiKeysConfig   -- typed API key configuration dataclass
-load_api_keys() -- load and cache api_keys.json
-"""
-
 from __future__ import annotations
 
 import json
@@ -93,6 +81,7 @@ class ApiKeysConfig:
 _cached_api_keys: ApiKeysConfig | None = None
 
 
+# Read a nullable string from a JSON dict (blank → None).
 def _read_nullable_str(raw: dict, key: str) -> str | None:
     value = raw.get(key)
     if value is None:
@@ -101,9 +90,8 @@ def _read_nullable_str(raw: dict, key: str) -> str | None:
     return text or None
 
 
+# Create api_keys.json from the example template when missing.
 def _bootstrap_api_keys_file(target: Path) -> None:
-    """Create api_keys.json from the example template when missing."""
-
     if target.exists():
         return
     if not _API_KEYS_EXAMPLE_PATH.is_file():
@@ -117,12 +105,8 @@ def _bootstrap_api_keys_file(target: Path) -> None:
         logger.warning("Failed to create api_keys.json from template at %s: %s", target, exc)
 
 
+# Load api_keys.json and cache an ApiKeysConfig singleton (custom path for tests only).
 def load_api_keys(path: Path | None = None) -> ApiKeysConfig:
-    """Load and return the ApiKeysConfig singleton.
-
-    Subsequent calls return the cached instance.
-    Pass a custom *path* only in tests.
-    """
     global _cached_api_keys
     if _cached_api_keys is not None and path is None:
         return _cached_api_keys

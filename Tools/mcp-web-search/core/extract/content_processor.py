@@ -1,23 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Content processor: extract and score text from raw HTML.
-
-Refactored from legacy src/content_processor.py:
-  - Removed all sys.path.insert hacks and importlib.util config loading
-  - Profile/settings system replaced by typed core.config.SearchConfig
-  - Internal imports (semantic, gliner) use absolute package paths
-  - PreviewPayload and build_preview_payload preserved for compatibility
-
-Public API
-----------
-PreviewPayload    -- dataclass: text + quality/semantic scores
-build_preview_payload(url, raw_html, query, settings) -> PreviewPayload
-Helper functions (used by page_normalizer and services):
-  _preclean_html, _extract_text_with_bs4, _regex_html_to_text,
-  _normalize_text, _dedupe_blocks, _get_boilerplate_filter
-"""
-
 from __future__ import annotations
 
 import html as html_lib
@@ -29,9 +11,7 @@ from typing import Any, Iterable, Optional
 
 logger = logging.getLogger("core.extract.content_processor")
 
-# ---------------------------------------------------------------------------
-# LaTeX processing: index_text (BM25) and llm_text (model)
-# ---------------------------------------------------------------------------
+# LaTeX processing: index_text (BM25) and llm_text (model).
 
 _LATEX_CMD_RE = re.compile(r"\\[a-zA-Z]+")
 _LATEX_SPAN_RE = re.compile(
@@ -99,20 +79,14 @@ _KNOWN_MACROS: frozenset[str] = (
 )
 
 
+# Return sorted list of \cmd names in text not in _KNOWN_MACROS.
 def _unknown_macros(text: str) -> list[str]:
-    """Return sorted list of \\cmd names in *text* not in _KNOWN_MACROS."""
     found = {m[1:] for m in _LATEX_CMD_RE.findall(text)}
     return sorted(found - _KNOWN_MACROS)
 
 
+# Build pylatexenc LatexWalker context with unknown macros as 1-arg pass-through.
 def _make_walker_context(unknown: list[str]):
-    """Build a pylatexenc LatexWalker context with unknown macros as 1-arg pass-through.
-
-    Built-in pylatexenc definitions take precedence (prepend=False); our specs
-    only apply for macros that pylatexenc genuinely does not know.
-    Returns None if pylatexenc API is unavailable or *unknown* is empty.
-    The caller should fall back to a plain LatexWalker() when None is returned.
-    """
     if not unknown:
         return None
     try:
@@ -129,14 +103,8 @@ def _make_walker_context(unknown: list[str]):
         return None
 
 
+# Build pylatexenc latex2text context with unknown macros as 1-arg pass-through.
 def _make_l2t_context(unknown: list[str]):
-    """Build a pylatexenc latex2text context with unknown macros as 1-arg pass-through.
-
-    Built-in pylatexenc definitions take precedence (prepend=False); our specs
-    only apply for macros that pylatexenc genuinely does not know.
-    Returns None if pylatexenc API is unavailable or *unknown* is empty.
-    The caller should fall back to plain LatexNodes2Text() when None is returned.
-    """
     if not unknown:
         return None
     try:
@@ -152,8 +120,8 @@ def _make_l2t_context(unknown: list[str]):
         return None
 
 
+# True when text likely contains LaTeX markup.
 def _has_latex(text: str) -> bool:
-    """Quick heuristic: True when text likely contains LaTeX markup."""
     if not text:
         return False
     if "$$" in text or "\\[" in text or "\\(" in text:
@@ -165,14 +133,8 @@ def _has_latex(text: str) -> bool:
     return len(_LATEX_CMD_RE.findall(text)) >= 3
 
 
+# Convert LaTeX markup to plain text suitable for BM25 tokenisation.
 def _clean_latex_for_index(text: str) -> str:
-    """Convert LaTeX markup to plain text suitable for BM25 tokenisation.
-
-    Uses pylatexenc.LatexNodes2Text when available; falls back to a simple
-    regex stripper so BM25 is never blocked by a missing optional dep.
-    Unknown macros are registered as 1-arg pass-through so their content
-    is preserved rather than silently dropped.
-    """
     if not _has_latex(text):
         return text
     try:
@@ -189,8 +151,8 @@ def _clean_latex_for_index(text: str) -> str:
     return re.sub(r"[\$\{\}]", " ", cleaned)
 
 
+# Recursively transpile a pylatexenc node to readable text for the LLM.
 def _node_to_text(node) -> str:  # noqa: ANN001
-    """Recursively transpile a pylatexenc node to readable text for the LLM."""
     from pylatexenc.latexwalker import (
         LatexCharsNode, LatexMacroNode, LatexGroupNode,
         LatexMathNode, LatexEnvironmentNode, LatexCommentNode,
@@ -261,16 +223,8 @@ def _node_to_text(node) -> str:  # noqa: ANN001
     return str(getattr(node, "chars", "") or "")
 
 
+# Transpile LaTeX markup to human-readable notation for the LLM.
 def _render_latex_for_llm(text: str) -> str:
-    """Transpile LaTeX markup to human-readable notation for the LLM.
-
-    Walks the entire text through LatexWalker. Plain-text regions become
-    LatexCharsNode and pass through unchanged, so non-LaTeX content is safe.
-    Only activated when _has_latex() is True (cheap heuristic).
-    Unknown macros are registered as 1-arg pass-through so their content
-    is preserved rather than silently dropped.
-    Falls back gracefully to _clean_latex_for_index when pylatexenc is absent.
-    """
     if not _has_latex(text):
         return text
 
@@ -285,9 +239,7 @@ def _render_latex_for_llm(text: str) -> str:
         return _clean_latex_for_index(text)
 
 
-# ---------------------------------------------------------------------------
-# BM25 helpers (no external deps; used for paragraph compression)
-# ---------------------------------------------------------------------------
+# BM25 helpers (no external deps; used for paragraph compression).
 
 _TOKEN_RE = re.compile(r"\b\w+\b")
 _BM25_K1 = 1.5
@@ -295,12 +247,13 @@ _BM25_B = 0.75
 _BM25_MIN_TOKEN_LEN = 2
 
 
+# Tokenize text for BM25 (words longer than _BM25_MIN_TOKEN_LEN).
 def _bm25_tokenize(text: str) -> list[str]:
     return [t.lower() for t in _TOKEN_RE.findall(text or "") if len(t) > _BM25_MIN_TOKEN_LEN]
 
 
+# Return BM25 score of each paragraph against query_terms.
 def _bm25_score_paragraphs(paragraphs: list[str], query_terms: list[str]) -> list[float]:
-    """Return BM25 score of each paragraph against query_terms."""
     if not paragraphs or not query_terms:
         return [0.0] * len(paragraphs)
 
@@ -330,8 +283,8 @@ def _bm25_score_paragraphs(paragraphs: list[str], query_terms: list[str]) -> lis
     return scores
 
 
+# Return (should_run, device) based on hardware profile and page quality.
 def _should_run_gliner(quality_score: float, hw_profile: str) -> tuple[bool, str]:
-    """Return (should_run, device) based on hardware profile and page quality."""
     if hw_profile == "full_gpu":
         # GPU available: densify any page that passed basic quality bar
         return quality_score >= 0.20, "cuda"
@@ -339,6 +292,7 @@ def _should_run_gliner(quality_score: float, hw_profile: str) -> tuple[bool, str
     return False, ""
 
 
+# Re-rank paragraphs by BM25 + GLiNER hybrid; fit to max_chars.
 def _gliner_compress(
     paragraphs: list[str],
     query_terms: list[str],
@@ -346,12 +300,6 @@ def _gliner_compress(
     device: str = "cpu",
     query_type: str | None = None,
 ) -> tuple[str, bool]:
-    """Re-rank paragraphs by BM25 + GLiNER entity-density hybrid, fit to max_chars.
-
-    Returns (compressed_text, used_gliner).
-    used_gliner=False means GLiNER was unavailable; caller should fall back.
-    Hybrid score: 55 % BM25 relevance + 45 % entity density.
-    """
     if not paragraphs:
         return "", False
 
@@ -387,13 +335,8 @@ def _gliner_compress(
     return ("\n\n".join(result) if result else ""), True
 
 
+# Select top paragraphs by BM25 relevance that fit within max_chars.
 def compress_to_budget(text: str, query: str, max_chars: int) -> str:
-    """Select top paragraphs by BM25 relevance that fit within max_chars.
-
-    Runs in O(n*m) time (n paragraphs, m query terms). No GPU required.
-    Preserves original paragraph order in the output for readability.
-    Falls back to simple truncation when query is empty or text is short.
-    """
     if not text or len(text) <= max_chars:
         return text
 
@@ -437,8 +380,8 @@ def compress_to_budget(text: str, query: str, max_chars: int) -> str:
     return "\n\n".join(result) if result else text[:max_chars]
 
 
+# Fallback BM25 query from URL path segments and page title.
 def derive_read_page_focus(url: str, markdown: str) -> str:
-    """Fallback BM25 query from URL path segments and page title (not for direct use as primary focus)."""
     from urllib.parse import unquote, urlparse
 
     parts: list[str] = []
@@ -468,8 +411,8 @@ def derive_read_page_focus(url: str, markdown: str) -> str:
     return " ".join(parts).strip()
 
 
+# Prefer explicit focus; else derive from URL/title; else empty.
 def _resolve_read_page_compress_query(focus: str, url: str, markdown: str) -> str:
-    """Prefer explicit focus; otherwise derive from URL/title; else empty (head-truncate in compress_to_budget)."""
     explicit = (focus or "").strip()
     if explicit:
         return explicit
@@ -480,6 +423,7 @@ def _resolve_read_page_compress_query(focus: str, url: str, markdown: str) -> st
         return ""
 
 
+# Shrink long read_page output with BM25 or GLiNER before the hard max_chars cap.
 def compress_read_page_markdown(
     markdown: str,
     *,
@@ -491,7 +435,6 @@ def compress_read_page_markdown(
     enable_compress: bool = True,
     enable_gliner: bool = False,
 ) -> str:
-    """Shrink long read_page output with BM25 or GLiNER before the hard max_chars cap."""
     text = markdown or ""
     if not text:
         return text
@@ -526,9 +469,7 @@ def compress_read_page_markdown(
     return text
 
 
-# ---------------------------------------------------------------------------
-# Tag / noise constants
-# ---------------------------------------------------------------------------
+# Tag / noise constants.
 
 _NOISE_TAGS = {
     "script", "style", "nav", "header", "footer", "aside", "form",
@@ -554,9 +495,7 @@ _WHITESPACE_RE = re.compile(r"[ \t\r\f\v]+")
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
-# ---------------------------------------------------------------------------
-# Preview settings (simple defaults; extended profile support via config)
-# ---------------------------------------------------------------------------
+# Preview settings (defaults merged with SearchConfig and hardware profile).
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
     "output_chars": 1_400,
@@ -581,8 +520,8 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
 }
 
 
+# Return current preview settings merged with hardware profile defaults.
 def get_preview_settings(*, apply_hardware_profile: bool = True) -> dict[str, Any]:
-    """Return current preview settings merged with hardware profile defaults."""
     settings = dict(_DEFAULT_SETTINGS)
     try:
         from core.config import load_search_config
@@ -623,10 +562,6 @@ def get_preview_settings(*, apply_hardware_profile: bool = True) -> dict[str, An
     return settings
 
 
-# ---------------------------------------------------------------------------
-# PreviewPayload
-# ---------------------------------------------------------------------------
-
 @dataclass
 class PreviewPayload:
     text: str = ""
@@ -642,16 +577,17 @@ class PreviewPayload:
     nav_rejected: int = 0
 
 
-# ---------------------------------------------------------------------------
-# HTML cleaning helpers (used by page_normalizer)
-# ---------------------------------------------------------------------------
+# HTML cleaning helpers (used by page_normalizer).
 
+
+# Collapse whitespace and unescape HTML entities in text.
 def _normalize_text(text: str) -> str:
     return _WHITESPACE_RE.sub(
         " ", html_lib.unescape(text or "").replace("\u00a0", " ")
     ).strip(" -|\t\r\n")
 
 
+# Join paragraph blocks into a single pipe-separated line.
 def _single_line(text: str) -> str:
     blocks = [_normalize_text(piece) for piece in re.split(r"\n\s*\n", text or "")]
     return " | ".join(block for block in blocks if block)
@@ -660,18 +596,8 @@ def _single_line(text: str) -> str:
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
 
 
+# Truncate text to max_chars, preferring a sentence boundary when possible.
 def _truncate_at_sentence(text: str, max_chars: int) -> str:
-    """Truncate *text* to *max_chars*, trying to end on a sentence boundary.
-
-    Strategy:
-      1. If text fits — return as-is.
-      2. Look for the last sentence-ending punctuation (. ! ?) within the
-         budget.  Accept it only when at least 60 % of the budget is used,
-         so we don't return a tiny fragment for a page that starts with a
-         short sentence.
-      3. Fall back to the hard character limit stripped of trailing
-         punctuation if no good boundary is found.
-    """
     if len(text) <= max_chars:
         return text
 
@@ -688,6 +614,7 @@ def _truncate_at_sentence(text: str, max_chars: int) -> str:
     return window.rstrip(" ,;:|-")
 
 
+# Strip scripts/styles and tags; return normalized plain text.
 def _regex_html_to_text(raw_html: str) -> str:
     no_js = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", raw_html or "",
                    flags=re.IGNORECASE | re.DOTALL)
@@ -702,8 +629,8 @@ _MIN_PAGE_TITLE_CHARS = 8
 _MIN_META_DESC_CHARS = 24
 
 
+# Best-effort page title / description when SERP snippet is absent.
 def _extract_page_title_reference(raw_html: str) -> str:
-    """Best-effort page title / description for SEO reference when SERP snippet is absent."""
     if not raw_html:
         return ""
     try:
@@ -736,11 +663,11 @@ def _extract_page_title_reference(raw_html: str) -> str:
     return ""
 
 
+# Resolve SEO/SERP reference text and its source label.
 def _resolve_serp_reference(
     settings: dict[str, Any],
     raw_html: str,
 ) -> tuple[str, str]:
-    """Resolve SEO/SERP reference text and its source label."""
     snippet = _normalize_text(str(settings.get("serp_snippet") or ""))
     if len(snippet) >= _MIN_SERP_SNIPPET_CHARS:
         return snippet, "serp_snippet"
@@ -755,8 +682,8 @@ def _resolve_serp_reference(
     return "", ""
 
 
+# Prepend SERP snippet into HTML so extractors can align against it.
 def _inject_serp_reference_into_html(raw_html: str, reference: str) -> str:
-    """Prepend SERP snippet into HTML so extractors can align against it."""
     reference = _normalize_text(reference)
     if not raw_html or not reference:
         return raw_html
@@ -782,8 +709,8 @@ def _inject_serp_reference_into_html(raw_html: str, reference: str) -> str:
         return f'<p {_SERP_REF_ATTR}="1">{escaped}</p>{raw_html}'
 
 
+# Remove injected or duplicated SERP reference blocks from extracted text.
 def _strip_serp_reference_blocks(text: str, reference: str) -> str:
-    """Remove injected or duplicated SERP reference blocks from extracted text."""
     ref_norm = _normalize_text(reference)
     if not text or not ref_norm:
         return text
@@ -800,8 +727,8 @@ def _strip_serp_reference_blocks(text: str, reference: str) -> str:
     return "\n\n".join(kept).strip() if kept else text.strip()
 
 
+# Remove noise tags and noise-marker nodes from HTML.
 def _preclean_html(raw_html: str) -> str:
-    """Remove noise tags and noise-marker nodes from HTML."""
     if not raw_html:
         return ""
     try:
@@ -835,8 +762,8 @@ def _preclean_html(raw_html: str) -> str:
     return str(soup)
 
 
+# Re-split over-merged trafilatura output when possible.
 def _split_trafilatura_sections(text: str) -> str:
-    """Re-split over-merged trafilatura output when possible."""
     if not text or "\n\n" in text:
         return text
     parts = re.split(r"\n(?=\d+\.\s)", text)
@@ -845,13 +772,8 @@ def _split_trafilatura_sections(text: str) -> str:
     return text
 
 
+# Structural flat-text nav heuristic (short lines, separators, low sentence density).
 def _flat_nav_structural_ratio(text: str) -> float:
-    """Structural flat-text nav heuristic (no keyword dictionary).
-
-    Signals: high short-line ratio, high pipe/separator density, low sentence
-    density.  These are language-independent and reasonably accurate for
-    detecting flattened menu dumps in trafilatura output.
-    """
     if not text or len(text) < 40:
         return 0.0
     lines = [l.strip() for l in text.splitlines() if l.strip()]
@@ -877,13 +799,13 @@ def _flat_nav_structural_ratio(text: str) -> float:
     return max(0.0, min(score, 1.0))
 
 
+# Pick trafilatura or DOM blocks, whichever yields cleaner structure.
 def _choose_extraction(
     cleaned_html: str,
     *,
     url: str = "",
     min_clean_chars: int = 220,
 ) -> tuple[str, str, dict[str, int | str]]:
-    """Pick trafilatura or DOM blocks, whichever yields cleaner structure."""
     dom_stats: dict[str, int | str] = {}
     traf = _extract_text_with_trafilatura(cleaned_html)
     traf = _split_trafilatura_sections(traf)
@@ -936,12 +858,12 @@ def _choose_extraction(
     return dom_text or traf, "dom_blocks" if dom_text else "trafilatura", dom_stats
 
 
+# DOM-aware block extraction (replaces naïve bs4 fallback).
 def _extract_text_with_dom_blocks(
     cleaned_html: str,
     *,
     url: str = "",
 ) -> tuple[str, dict[str, int | str]]:
-    """DOM-aware block extraction (replaces naïve bs4 fallback)."""
     from core.extract.dom_block_extractor import extract_dom_blocks
 
     blocks, stats = extract_dom_blocks(cleaned_html, url=url)
@@ -952,6 +874,7 @@ def _extract_text_with_dom_blocks(
     return "\n\n".join(blocks), stats
 
 
+# Extract leaf block tags via BeautifulSoup.
 def _extract_text_with_bs4(cleaned_html: str) -> str:
     if not cleaned_html:
         return ""
@@ -974,8 +897,9 @@ def _extract_text_with_bs4(cleaned_html: str) -> str:
     return "\n\n".join(blocks)
 
 
+# Return a callable that returns True for boilerplate text blocks.
 def _get_boilerplate_filter():
-    """Return a callable that returns True for boilerplate text blocks."""
+    # Fallback boilerplate check using noise markers and minimum length.
     def _fallback(text: str) -> bool:
         compact = _normalize_text(text).lower()
         if len(compact) < 40:
@@ -984,6 +908,7 @@ def _get_boilerplate_filter():
     return _fallback
 
 
+# Deduplicate blocks by exact text and token signature.
 def _dedupe_blocks(blocks: Iterable[str]) -> list[str]:
     deduped: list[str] = []
     seen_exact: set[str] = set()
@@ -1006,15 +931,16 @@ def _dedupe_blocks(blocks: Iterable[str]) -> list[str]:
     return deduped
 
 
+# Split text into normalized paragraph blocks.
 def _split_blocks(text: str) -> list[str]:
     pieces = re.split(r"\n\s*\n|(?<=\.)\s{2,}", text or "")
     return [n for p in pieces if (n := _normalize_text(p))]
 
 
-# ---------------------------------------------------------------------------
-# Quality scoring
-# ---------------------------------------------------------------------------
+# Quality scoring and trafilatura extraction.
 
+
+# Extract main text via trafilatura (tables on, comments off).
 def _extract_text_with_trafilatura(cleaned_html: str) -> str:
     if not cleaned_html:
         return ""
@@ -1040,6 +966,7 @@ def _extract_text_with_trafilatura(cleaned_html: str) -> str:
     return text or ""
 
 
+# Filter boilerplate blocks and dedupe; return joined text and block count.
 def _clean_extracted_text(text: str) -> tuple[str, int]:
     is_boilerplate = _get_boilerplate_filter()
     blocks = _split_blocks(text)
@@ -1048,6 +975,7 @@ def _clean_extracted_text(text: str) -> tuple[str, int]:
     return "\n\n".join(deduped), len(deduped)
 
 
+# Heuristic quality score in [0, 1] from length, blocks, and noise markers.
 def _estimate_quality(text: str, block_count: int) -> float:
     compact = _normalize_text(text)
     if not compact:
@@ -1065,10 +993,10 @@ def _estimate_quality(text: str, block_count: int) -> float:
     return max(0.0, min(round(score, 4), 1.0))
 
 
-# ---------------------------------------------------------------------------
-# Semantic extraction (optional)
-# ---------------------------------------------------------------------------
+# Semantic extraction (optional).
 
+
+# Optional embedding-based chunk selection when mode is semantic.
 def _semantic_extract(text: str, query: str, settings: dict[str, Any]) -> tuple[str, float]:
     if settings.get("mode") != "semantic" or not query.strip():
         return text, 0.0
@@ -1098,12 +1026,8 @@ def _semantic_extract(text: str, query: str, settings: dict[str, Any]) -> tuple[
     return preview_text or text, max(0.0, min(round(semantic_score, 4), 1.0))
 
 
-# ---------------------------------------------------------------------------
-# build_preview_payload (main entry point for content_processor)
-# ---------------------------------------------------------------------------
-
+# Pre-warm embedding models if semantic mode is active.
 def warm_preview_models(settings: Optional[dict[str, Any]] = None) -> None:
-    """Pre-warm embedding models if semantic mode is active."""
     active = dict(settings or get_preview_settings())
     if active.get("mode") == "semantic":
         try:
@@ -1114,6 +1038,7 @@ def warm_preview_models(settings: Optional[dict[str, Any]] = None) -> None:
             pass
 
 
+# Extract a relevance-scored, query-focused preview from raw HTML.
 def build_preview_payload(
     url: str,
     raw_html: str,
@@ -1121,7 +1046,6 @@ def build_preview_payload(
     domain_info: Optional[Any] = None,
     settings: Optional[dict[str, Any]] = None,
 ) -> PreviewPayload:
-    """Extract a relevance-scored, query-focused preview from raw HTML."""
     from core.extract.profile_chunk_selector import (
         compress_chunks_profiled,
         policy_family,

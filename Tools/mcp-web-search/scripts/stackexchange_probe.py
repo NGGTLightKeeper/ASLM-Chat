@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import argparse
@@ -17,6 +19,7 @@ from core.fetch.stackexchange_fetcher import (
 )
 
 
+# Build the Stack Exchange probe CLI argument parser.
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="scripts/stackexchange_probe.py",
@@ -30,6 +33,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Fetch structured + markdown Stack Exchange output and optionally save artifacts.
 async def _main() -> int:
     args = _parse_args()
 

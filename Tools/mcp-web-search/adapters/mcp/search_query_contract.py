@@ -46,8 +46,8 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
 }
 
 
+# Normalize the public search effort argument.
 def coerce_search_effort(value: Any = None) -> str:
-    """Normalize the public search effort argument."""
     if isinstance(value, dict):
         value = value.get("effort")
     elif isinstance(value, str):
@@ -60,8 +60,8 @@ def coerce_search_effort(value: Any = None) -> str:
     return effort if effort in _EFFORT_VALUES else "medium"
 
 
+# Convert the public query argument into one provider-ready search string.
 def coerce_search_query(value: Any) -> str:
-    """Convert the public string query into one provider query."""
     if isinstance(value, dict):
         plan = value.get("query", value)
         if isinstance(plan, str):
@@ -83,12 +83,14 @@ def coerce_search_query(value: Any) -> str:
     return sanitize_legacy_query(str(value or ""))
 
 
+# Collapse whitespace and cap legacy free-text queries at 220 characters.
 def sanitize_legacy_query(query: str) -> str:
     text = str(query or "").strip()
     text = text.replace("\r", " ").replace("\n", " ")
     return _SPACE_RE.sub(" ", text).strip()[:220].strip()
 
 
+# Best-effort JSON parse for string tool arguments that look like objects.
 def _try_parse_json(value: str) -> Any:
     stripped = value.strip()
     if not stripped or stripped[0] not in "[{":

@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import argparse
@@ -16,6 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 from core.fetch.camoufox_fetcher import fetch_with_camoufox, is_camoufox_available
 
 
+# Build the retail read probe CLI argument parser.
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="scripts/retail_read_probe.py",
@@ -28,11 +31,13 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Collapse whitespace and trim text to a display limit.
 def _trim_text(text: str, limit: int = 240) -> str:
     compact = re.sub(r"\s+", " ", text or "").strip()
     return compact[:limit]
 
 
+# Extract title and meta description preview from HTML.
 def _extract_title_and_preview(html: str) -> tuple[str, str]:
     title_match = re.search(r"<title[^>]*>(.*?)</title>", html or "", re.IGNORECASE | re.DOTALL)
     og_desc_match = re.search(
@@ -54,6 +59,7 @@ def _extract_title_and_preview(html: str) -> tuple[str, str]:
     return title, preview
 
 
+# Insert a dns-shop product path segment after /product/.
 def _swap_product_segment(url: str, segment: str) -> str:
     parts = urlsplit(url)
     path = parts.path
@@ -62,6 +68,7 @@ def _swap_product_segment(url: str, segment: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
 
 
+# Build URL variants (suffixes, query params, host tricks) for one product URL.
 def build_variants(url: str) -> list[dict[str, str]]:
     parts = urlsplit(url)
     host = parts.netloc
@@ -107,6 +114,7 @@ def build_variants(url: str) -> list[dict[str, str]]:
     return deduped
 
 
+# Fetch one variant with curl_cffi chrome impersonation.
 def probe_curl_cffi(url: str, timeout: float) -> dict[str, object]:
     started = time.perf_counter()
     try:
@@ -151,6 +159,7 @@ def probe_curl_cffi(url: str, timeout: float) -> dict[str, object]:
         }
 
 
+# Fetch one variant with Camoufox browser automation.
 async def probe_camoufox(url: str, timeout: float, wait: float) -> dict[str, object]:
     started = time.perf_counter()
     if not is_camoufox_available():
@@ -191,6 +200,7 @@ async def probe_camoufox(url: str, timeout: float, wait: float) -> dict[str, obj
     }
 
 
+# Fetch one variant with Patchright headless Chromium.
 async def probe_patchright(url: str, timeout: float, wait: float) -> dict[str, object]:
     started = time.perf_counter()
     try:
@@ -240,6 +250,7 @@ async def probe_patchright(url: str, timeout: float, wait: float) -> dict[str, o
         }
 
 
+# Run curl_cffi, camoufox, and patchright probes for one URL variant.
 async def probe_variant(variant: dict[str, str], timeout: float, wait: float) -> dict[str, object]:
     url = variant["url"]
     curl_result = await asyncio.to_thread(probe_curl_cffi, url, timeout)
@@ -252,6 +263,7 @@ async def probe_variant(variant: dict[str, str], timeout: float, wait: float) ->
     }
 
 
+# CLI entry: probe all variants for each base URL and emit JSON summary.
 async def main() -> int:
     args = _parse_args()
     all_rows: list[dict[str, object]] = []

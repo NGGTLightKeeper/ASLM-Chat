@@ -1,21 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-DDGS (DuckDuckGo Search) provider.
-
-Refactored from legacy deep-research/src/ddgs_client.py:
-  - Removed all sys.path.insert hacks
-  - Config values loaded from core.config, not from a loose config.py
-  - Import of SearchResult uses core.models (no inline fallback dataclass)
-  - Subprocess worker path resolved relative to this file's package
-  - Snippet normalization regex moved here from engine.py
-
-Public API
-----------
-DDGSClient             -- synchronous search client with retry + cache
-async_ddgs_search(...) -- asyncio-friendly wrapper
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -50,6 +34,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 _shared_pool: Optional[ThreadPoolExecutor] = None
 _shared_pool_lock = Lock()
 
+# Dedicated thread pool for DDGS sync search (rate-limited sleeps).
 def _get_pool() -> ThreadPoolExecutor:
     global _shared_pool
     if _shared_pool is None:
@@ -64,10 +49,6 @@ def _get_pool() -> ThreadPoolExecutor:
 
 logger = logging.getLogger("core.fetch.ddgs_client")
 
-
-# ---------------------------------------------------------------------------
-# Config defaults (overridden at runtime if core.config is available)
-# ---------------------------------------------------------------------------
 
 try:
     from core.config import load_search_config as _load_cfg
@@ -85,10 +66,6 @@ except Exception:
     DDGS_WORKER_TIMEOUT = 25.0
 
 
-# ---------------------------------------------------------------------------
-# DDGS import
-# ---------------------------------------------------------------------------
-
 try:
     from ddgs import DDGS
     from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
@@ -103,23 +80,11 @@ _HARD_FAILURE_ERRORS = ("403", "forbidden")
 _OPERATOR_TOKEN_RE = re.compile(r"(?<!\S)(?:-?site:[^\s]+|inurl:[^\s]+|intitle:[^\s]+|filetype:[^\s]+|(?:OR|\|))(?=\s|$)", re.IGNORECASE)
 _LEXICAL_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-]{2,}|[А-Яа-яЁё0-9_\-]{2,}")
 
-# ---------------------------------------------------------------------------
-# Hedged-request constants
-# ---------------------------------------------------------------------------
-# Backup engine fires after this many seconds if the primary hasn't responded.
-# hedge_delay = clamp(primary.p95_lat * 0.8, MIN, MAX)
+# Backup engine fires after hedge_delay if primary hasn't responded (see search_with_fallback).
 _HEDGE_MIN_DELAY: float = 0.5   # never hedge faster than 0.5s (avoid DDGS burst)
 _HEDGE_MAX_DELAY: float = 4.0   # never wait longer than 4s before hedging
 _HEDGE_DEFAULT_DELAY: float = 1.5  # used when no telemetry is available yet
 
-
-# ---------------------------------------------------------------------------
-# Backend presets
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Cache TTL by query type
-# ---------------------------------------------------------------------------
 
 # News/journalistic queries go stale fast; technical content stays valid longer.
 _QUERY_TTL: dict[str, int] = {
@@ -136,22 +101,14 @@ _QUERY_TTL: dict[str, int] = {
 _NEGATIVE_CACHE_TTL = 300     # 5 min — cache empty results to avoid hammering
 
 
+# Shortest TTL across matched query types (e.g. finance + journalistic → 300s).
 def _effective_ttl(query_types: list[str], timelimit: str | None = None) -> int:
-    """Return the most restrictive TTL across all matched query types.
-
-    When a query matches both 'finance' (600s) and 'journalistic' (300s),
-    the shortest TTL wins — we want the freshest possible cache.
-    """
     base = min((_QUERY_TTL.get(qt, 1_800) for qt in query_types), default=1_800)
     return _timelimit_cache_ttl(timelimit, base)
 
 
+# Union of BACKEND_PRESETS engines for all matched types (skips "auto").
 def _union_preset_engines(query_types: list[str]) -> list[str]:
-    """Return deduplicated union of preferred DDGS backends for all matched types.
-
-    Preserves order: engines from the highest-priority type come first.
-    Skips 'auto' entries — those mean 'no preference' and fall back to router.
-    """
     seen: set[str] = set()
     engines: list[str] = []
     for qt in query_types:
@@ -177,6 +134,7 @@ _TIMELIMIT_TTL: dict[str, int] = {
 _PARTIAL_BUFFER_LOCK = Lock()
 
 
+# Serialize SearchResult list for partial-timeout buffer file.
 def _serialise_results(results: list[SearchResult]) -> list[dict]:
     return [
         {
@@ -194,6 +152,7 @@ def _serialise_results(results: list[SearchResult]) -> list[dict]:
     ]
 
 
+# Merge and persist partial hedged-search results for worker timeout recovery.
 def _write_partial_results(path: str | None, results: list[SearchResult]) -> None:
     if not path or not results:
         return
@@ -229,6 +188,7 @@ def _write_partial_results(path: str | None, results: list[SearchResult]) -> Non
         logger.debug("ddgs partial buffer write failed path=%r err=%s", path, exc)
 
 
+# Load partial results written before a subprocess worker timed out.
 def _read_partial_results(path: str | None) -> list[SearchResult]:
     if not path:
         return []
@@ -248,12 +208,8 @@ def _read_partial_results(path: str | None) -> list[SearchResult]:
         return []
 
 
+# Cap cache TTL when a timelimit filter is active (fresher results expected).
 def _timelimit_cache_ttl(timelimit: Optional[str], base_ttl: int) -> int:
-    """Return a TTL that respects the time filter's freshness requirement.
-
-    When a time filter is active, results are expected to be more volatile,
-    so the effective TTL is the minimum of the base TTL and the filter cap.
-    """
     if not timelimit:
         return base_ttl
     cap = _TIMELIMIT_TTL.get(timelimit, base_ttl)
@@ -279,9 +235,6 @@ BACKEND_PRESETS: dict[str, str] = {
 BACKEND_FALLBACK = ["google,brave", "mojeek", "auto"]
 BACKEND_SITE_QUERY = ["yandex,yahoo", "auto"]
 
-# ---------------------------------------------------------------------------
-# Multilingual parallel-backend mapping
-# ---------------------------------------------------------------------------
 # Each entry: list of (ddgs_backend, ddgs_region) pairs fired in parallel.
 # First non-empty result wins (same logic as the existing non-English path).
 #
@@ -309,18 +262,14 @@ _LANG_BACKENDS: dict[str, list[tuple[str, str]]] = {
 _LANG_BACKENDS_DEFAULT_BACKENDS = ("duckduckgo", "google")
 
 
-# ---------------------------------------------------------------------------
-# Snippet normalization (inlined from legacy engine.py)
-# ---------------------------------------------------------------------------
-
 _MULTI_SPACE_RE = re.compile(r"\s{2,}")
 _SEPARATOR_RE = re.compile(r"\s*([|/•·])\s*")
 _DASH_RE = re.compile(r"\s*([—–])\s*")
 _CAMEL_BOUNDARY_RE = re.compile(r"([а-яёa-z\u00e0-\u024f])([А-ЯЁA-Z\u00c0-\u024e])")
 
 
+# Universal snippet cleanup (no language-specific tokenization).
 def normalize_snippet(text: str) -> str:
-    """Apply only universal cleanup without language-specific word splitting."""
     if not text:
         return text
     text = html_lib.unescape(text).replace("\u00a0", " ").strip()
@@ -337,18 +286,16 @@ _SNIPPET_DATE_RE = re.compile(
 )
 
 
+# Parse leading date prefix from a DDGS snippet string.
 def _extract_snippet_date(snippet: str) -> str:
     m = _SNIPPET_DATE_RE.match(snippet or "")
     return m.group(1).rstrip(",").strip() if m else ""
 
 
-# ---------------------------------------------------------------------------
-# DDGSClient
-# ---------------------------------------------------------------------------
-
+# DDGS wrapper with retry, SQLite cache, and proxy rotation.
 class DDGSClient:
-    """Wrap DDGS with retry, optional SQLite cache, and proxy handling."""
 
+    # Configure proxies, cache, delays, and retry policy.
     def __init__(
         self,
         proxies: Optional[list[str]] = None,
@@ -371,8 +318,7 @@ class DDGSClient:
         if cache_db:
             self._init_cache()
 
-    # -- Proxy helpers -------------------------------------------------------
-
+    # Pick a random proxy not in cooldown.
     def _get_proxy(self) -> Optional[str]:
         if not self.proxies:
             return None
@@ -385,13 +331,13 @@ class DDGSClient:
             ]
             return random.choice(available) if available else None
 
+    # Mark proxy as rate-limited until cooldown expires.
     def _block_proxy(self, proxy: str) -> None:
         with self._proxy_lock:
             self._blocked_proxies[proxy] = time.time()
             logger.warning("Proxy blocked: %s...", proxy[:30])
 
-    # -- Cache helpers -------------------------------------------------------
-
+    # Create SQLite cache table if missing.
     def _init_cache(self) -> None:
         with sqlite3.connect(self._cache_db) as conn:
             conn.execute(
@@ -405,6 +351,7 @@ class DDGSClient:
                 """
             )
 
+    # SHA-256 key from normalized query plus search parameters.
     def _cache_key(self, query: str, **kwargs: object) -> str:
         from core.cache.query_normalizer import normalize_exact_query_key, normalize_query_key
         normalized = normalize_query_key(query)
@@ -413,6 +360,7 @@ class DDGSClient:
         raw = f"{exact}|{raw}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
+    # Return cached raw DDGS rows if still within TTL.
     def _cache_get(self, key: str) -> Optional[list]:
         if not self._cache_db:
             return None
@@ -427,6 +375,7 @@ class DDGSClient:
             logger.debug("ddgs cache_get failed: %s", _e)
         return None
 
+    # Store raw DDGS rows with optional per-entry TTL.
     def _cache_set(self, key: str, data: list, ttl: Optional[int] = None) -> None:
         if not self._cache_db:
             return
@@ -439,8 +388,7 @@ class DDGSClient:
         except Exception as _e:
             logger.debug("ddgs cache_set failed: %s", _e)
 
-    # -- Search helpers ------------------------------------------------------
-
+    # Truncate and collapse whitespace on user query.
     @staticmethod
     def _sanitize_query(query: str) -> str:
         query = " ".join(query.strip().split())
@@ -448,14 +396,15 @@ class DDGSClient:
             query = " ".join(query.split()[:10])
         return query[:120]
 
+    # Progressively simpler query variants for zero-result fallback.
     @staticmethod
     def _degraded_query_variants(query: str) -> list[str]:
-        """Return progressively simpler query variants for zero-result fallback."""
         base = " ".join(str(query or "").split()).strip()
         if not base:
             return []
         variants: list[str] = []
 
+        # Append unique simplified variant strings.
         def add_variant(value: str) -> None:
             candidate = " ".join(str(value or "").split()).strip()
             if candidate and candidate != base and candidate not in variants:
@@ -473,6 +422,7 @@ class DDGSClient:
             add_variant(" ".join(lexical[:2]))
         return variants
 
+    # One synchronous DDGS search with retries, cache, and negative cache on empty.
     def search_sync(
         self,
         query: str,
@@ -482,12 +432,6 @@ class DDGSClient:
         timelimit: Optional[str] = None,
         cache_ttl: Optional[int] = None,
     ) -> list[dict]:
-        """Run one synchronous DDGS search with retries and caching.
-
-        cache_ttl — override per-call TTL (seconds). Uses self.cache_ttl if None.
-        Empty results are stored in a negative cache for _NEGATIVE_CACHE_TTL seconds
-        to avoid hammering an engine that just returned nothing.
-        """
         if not _DDGS_AVAILABLE:
             logger.error("ddgs is not installed: pip install ddgs")
             return []
@@ -561,6 +505,7 @@ class DDGSClient:
 
         return []
 
+    # search_sync mapped to SearchResult models with normalized snippets.
     def search_to_results(
         self,
         query: str,
@@ -570,7 +515,6 @@ class DDGSClient:
         timelimit: Optional[str] = None,
         cache_ttl: Optional[int] = None,
     ) -> list[SearchResult]:
-        """Convert raw DDGS rows into SearchResult objects."""
         raw = self.search_sync(
             query=query,
             max_results=max_results,
@@ -596,6 +540,7 @@ class DDGSClient:
             )
         return results
 
+    # Router-driven hedged search; site: and non-en lang use static backend lists.
     def search_with_fallback(
         self,
         query: str,
@@ -607,16 +552,6 @@ class DDGSClient:
         hedge_count: int = 2,
         partial_buffer_path: str | None = None,
     ) -> list[SearchResult]:
-        """Try engines via router until one returns results.
-
-        query_types — when provided (multi-type classification), backend
-        presets and TTL are derived as the union / minimum across all types.
-        query_type (single) is used as the primary label for logging only.
-
-        Special cases (site: queries, non-en lang) bypass the router and use
-        static backend lists, since the router only tracks single-engine
-        performance and these queries have different engine preferences.
-        """
         # Normalise: use query_types when available, fall back to single type
         _qtypes: list[str] = query_types if query_types else [query_type]
         # site: queries — static list, bypass router
@@ -764,8 +699,8 @@ class DDGSClient:
 
         stop = threading.Event()
 
+        # Run one hedged engine after optional stagger delay.
         def _hedged_search(engine: str, start_delay: float) -> list:
-            """Run one search attempt after an optional stagger delay."""
             if start_delay > 0 and stop.wait(timeout=start_delay):
                 # stop was signalled before our delay expired → another engine won
                 return []
@@ -850,18 +785,14 @@ class DDGSClient:
         return []
 
 
-# ---------------------------------------------------------------------------
-# Singleton accessor
-# ---------------------------------------------------------------------------
-
 _client: Optional[DDGSClient] = None
 _client_lock = Lock()
 
+# Lazily initialized global DDGS client singleton.
 def get_ddgs_client(
     proxies: Optional[list[str]] = None,
     cache_db: Optional[str] = None,
 ) -> DDGSClient:
-    """Return the lazily initialized global DDGS client."""
     global _client
     if _client is None:
         with _client_lock:
@@ -877,13 +808,10 @@ def get_ddgs_client(
     return _client
 
 
-# ---------------------------------------------------------------------------
-# Subprocess worker helpers (for hard-kill on timeout)
-# ---------------------------------------------------------------------------
-
 _WORKER_SCRIPT = Path(__file__).parent / "_ddgs_worker.py"
 
 
+# Truncate query for log messages.
 def _query_preview(query: str, limit: int = 96) -> str:
     compact = " ".join((query or "").split())
     return compact if len(compact) <= limit else compact[: max(0, limit - 3)].rstrip() + "..."
@@ -891,6 +819,7 @@ def _query_preview(query: str, limit: int = 96) -> str:
 
 
 
+# Rebuild SearchResult list from worker subprocess JSON payload.
 def _deserialize_results(payload: list[dict]) -> list[SearchResult]:
     results: list[SearchResult] = []
     for item in payload or []:
@@ -914,10 +843,7 @@ def _deserialize_results(payload: list[dict]) -> list[SearchResult]:
     return results
 
 
-# ---------------------------------------------------------------------------
-# Async interface
-# ---------------------------------------------------------------------------
-
+# Async DDGS search; optional isolated subprocess for hard-kill on timeout.
 async def async_ddgs_search(
     query: str,
     max_results: int = 10,
@@ -931,14 +857,6 @@ async def async_ddgs_search(
     engine_timeout: Optional[int] = None,
     max_retries: Optional[int] = None,
 ) -> list[SearchResult]:
-    """Run DDGS search for asyncio callers with optional hard-kill subprocess.
-
-    query_types — when provided (multi-type classification), backend presets
-    and TTL are derived as the union / minimum across all types.
-    hedge_count — number of DDGS backends to fire in parallel (hedging).
-    Pass 1 when hosted API engines are already covering the query so DDGS
-    doesn't fire redundant parallel backends.
-    """
     client = get_ddgs_client()
     use_subprocess = DDGS_USE_SUBPROCESS if use_subprocess is None else use_subprocess
     worker_timeout = DDGS_WORKER_TIMEOUT if worker_timeout is None else worker_timeout
@@ -1053,7 +971,7 @@ async def async_ddgs_search(
             return []
         return _deserialize_results(payload.get("results") or [])
 
-    # Executor fallback (when subprocess is disabled or worker script missing)
+    # In-process fallback when subprocess worker is disabled or missing.
     def _sync() -> list[SearchResult]:
         return client.search_with_fallback(
             query=query,

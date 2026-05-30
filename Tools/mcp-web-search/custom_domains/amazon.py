@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import argparse
@@ -15,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
 from custom_domains.common import CHROME_BASIC_HEADERS, extract_title, extract_with_preferred_pipeline, looks_blocked
 
 
+# Fetch Amazon product page via httpx and return extraction snapshot dict.
 async def fetch_amazon_snapshot(url: str, timeout: float = 20.0) -> dict[str, Any]:
     started = time.perf_counter()
     import httpx
@@ -46,6 +49,7 @@ async def fetch_amazon_snapshot(url: str, timeout: float = 20.0) -> dict[str, An
     }
 
 
+# CLI argument parser for standalone amazon.py runs.
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the custom Amazon snapshot fetcher.")
     parser.add_argument("url")
@@ -53,6 +57,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# CLI entry: fetch snapshot and print JSON to stdout.
 def main() -> None:
     args = _parse_args()
     result = asyncio.run(fetch_amazon_snapshot(args.url, timeout=args.timeout))

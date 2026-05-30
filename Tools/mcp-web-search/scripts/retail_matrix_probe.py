@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import argparse
@@ -85,11 +87,13 @@ _DEFAULT_ENGINES: tuple[str, ...] = (
 )
 
 
+# Collapse whitespace and trim text to a display limit.
 def _trim_text(text: str, limit: int = 240) -> str:
     compact = re.sub(r"\s+", " ", text or "").strip()
     return compact[:limit]
 
 
+# Extract title and meta description preview from HTML.
 def _extract_title_and_preview(html: str) -> tuple[str, str]:
     title_match = _TITLE_RE.search(html or "")
     og_desc_match = _OG_DESC_RE.search(html or "")
@@ -103,6 +107,7 @@ def _extract_title_and_preview(html: str) -> tuple[str, str]:
     return title, preview
 
 
+# Classify fetch outcome: html, json, xml, redirect, blocked, etc.
 def _detect_response_class(final_url: str, content_type: str, title: str, body: str, status: int) -> str:
     lower_url = (final_url or "").lower()
     lower_title = (title or "").lower()
@@ -128,6 +133,7 @@ def _detect_response_class(final_url: str, content_type: str, title: str, body: 
     return "unknown"
 
 
+# Detect price/rating/spec signals in page title and body.
 def _signal_summary(title: str, body: str) -> dict[str, bool]:
     hay = f"{title}\n{body}"
     return {
@@ -137,6 +143,7 @@ def _signal_summary(title: str, body: str) -> dict[str, bool]:
     }
 
 
+# Rank probe rows by ok status, signals, and content length.
 def _score_result(result: dict[str, Any]) -> int:
     cls = result.get("response_class", "unknown")
     score = {
@@ -155,6 +162,7 @@ def _score_result(result: dict[str, Any]) -> int:
     return score
 
 
+# Load URL records from a JSON list file.
 def _read_test_urls(path: str) -> list[dict[str, Any]]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(data, list):
@@ -162,6 +170,7 @@ def _read_test_urls(path: str) -> list[dict[str, Any]]:
     return [item for item in data if isinstance(item, dict) and item.get("url")]
 
 
+# Build retail URL variants, extending the base retail_read_probe set.
 def _extend_variants(url: str) -> list[dict[str, str]]:
     variants = _base_build_variants(url)
     base = url.split("?", 1)[0]
@@ -181,6 +190,7 @@ def _extend_variants(url: str) -> list[dict[str, str]]:
     return variants
 
 
+# Fetch one URL with httpx and capture diagnostics.
 def _probe_httpx(url: str, timeout: float, headers: dict[str, str]) -> dict[str, Any]:
     started = time.perf_counter()
     try:
@@ -222,6 +232,7 @@ def _probe_httpx(url: str, timeout: float, headers: dict[str, str]) -> dict[str,
         }
 
 
+# Fetch one URL with requests and capture diagnostics.
 def _probe_requests(url: str, timeout: float, headers: dict[str, str]) -> dict[str, Any]:
     started = time.perf_counter()
     try:
@@ -262,6 +273,7 @@ def _probe_requests(url: str, timeout: float, headers: dict[str, str]) -> dict[s
         }
 
 
+# Fetch one URL with curl_cffi chrome impersonation.
 def _probe_curl_cffi(url: str, timeout: float, headers: dict[str, str]) -> dict[str, Any]:
     started = time.perf_counter()
     try:
@@ -308,6 +320,7 @@ def _probe_curl_cffi(url: str, timeout: float, headers: dict[str, str]) -> dict[
         }
 
 
+# Fetch one URL with Camoufox browser automation.
 async def _probe_camoufox(url: str, timeout: float, wait: float) -> dict[str, Any]:
     started = time.perf_counter()
     if not is_camoufox_available():
@@ -370,6 +383,7 @@ async def _probe_camoufox(url: str, timeout: float, wait: float) -> dict[str, An
         }
 
 
+# Fetch one URL with Patchright headless Chromium.
 async def _probe_patchright(url: str, timeout: float, wait: float, headers: dict[str, str]) -> dict[str, Any]:
     started = time.perf_counter()
     try:
@@ -429,6 +443,7 @@ async def _probe_patchright(url: str, timeout: float, wait: float, headers: dict
         }
 
 
+# Fetch one URL with SeleniumBase UC mode.
 def _probe_seleniumbase(url: str, timeout: float, wait: float, headers: dict[str, str]) -> dict[str, Any]:
     started = time.perf_counter()
     driver = None
@@ -490,6 +505,7 @@ def _probe_seleniumbase(url: str, timeout: float, wait: float, headers: dict[str
                 pass
 
 
+# Dispatch one fetch engine probe by name.
 async def _run_engine(engine: str, url: str, timeout: float, wait: float, headers: dict[str, str]) -> dict[str, Any]:
     if engine == "httpx":
         return await asyncio.to_thread(_probe_httpx, url, timeout, headers)
@@ -506,6 +522,7 @@ async def _run_engine(engine: str, url: str, timeout: float, wait: float, header
     raise ValueError(f"Unknown engine: {engine}")
 
 
+# Stage 1: httpx-only sweep across URL suffix variants.
 async def _stage1_suffix_probe(url: str, timeout: float, headers: dict[str, str], max_variants: int) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for variant in _extend_variants(url)[:max_variants]:
@@ -518,6 +535,7 @@ async def _stage1_suffix_probe(url: str, timeout: float, headers: dict[str, str]
     return rows
 
 
+# Select top-scoring variants from stage 1 for deeper probing.
 def _pick_promising_variants(stage1_rows: list[dict[str, Any]], keep: int) -> list[dict[str, str]]:
     scored: list[tuple[int, dict[str, str]]] = []
     for row in stage1_rows:
@@ -541,6 +559,7 @@ def _pick_promising_variants(stage1_rows: list[dict[str, Any]], keep: int) -> li
     return kept
 
 
+# Stage 2: httpx sweep across UA profiles for promising variants.
 async def _stage2_ua_probe(
     variants: list[dict[str, str]],
     timeout: float,
@@ -560,6 +579,7 @@ async def _stage2_ua_probe(
     return rows
 
 
+# Select top URL+UA pairs from stage 2 for full engine matrix.
 def _pick_best_candidates(stage2_rows: list[dict[str, Any]], keep: int) -> list[dict[str, str]]:
     scored: list[tuple[int, dict[str, str]]] = []
     for row in stage2_rows:
@@ -585,6 +605,7 @@ def _pick_best_candidates(stage2_rows: list[dict[str, Any]], keep: int) -> list[
     return kept
 
 
+# Stage 3: run all fetch engines on best URL+UA candidates.
 async def _stage3_engine_probe(
     candidates: list[dict[str, str]],
     timeout: float,
@@ -606,6 +627,7 @@ async def _stage3_engine_probe(
     return rows
 
 
+# Summarize stage-3 engine results per base URL.
 def _build_summary(stage3_rows: list[dict[str, Any]]) -> dict[str, Any]:
     best_row: dict[str, Any] | None = None
     best_score = -10**9
@@ -620,6 +642,7 @@ def _build_summary(stage3_rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+# Build the retail matrix probe CLI argument parser.
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="scripts/retail_matrix_probe.py",
@@ -650,6 +673,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# CLI entry: three-stage retail fetch matrix and JSON report.
 async def main() -> int:
     args = _parse_args()
     records = _read_test_urls(args.input)

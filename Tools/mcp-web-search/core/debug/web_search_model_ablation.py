@@ -1,4 +1,4 @@
-"""Live ablation: rules-only vs neural encoder/decoder/full on high effort."""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -48,6 +48,7 @@ MODES: dict[str, dict[str, str]] = {
 }
 
 
+# Aggregate timing stats grouped by ablation mode name.
 def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     by_mode: dict[str, list[float]] = {}
     for row in rows:
@@ -66,6 +67,7 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+# Render ablation-specific Markdown (mode column instead of pipeline).
 def _render_ablation_markdown(rows: list[dict[str, Any]], modes: dict[str, dict[str, str]]) -> str:
     summary = _summary(rows)
     lines = [
@@ -100,6 +102,7 @@ def _render_ablation_markdown(rows: list[dict[str, Any]], modes: dict[str, dict[
     return "\n".join(lines)
 
 
+# Run one ablation mode across queries with encoder/decoder env toggles.
 async def _run_mode(mode: str, meta: dict[str, str], queries: list[str], args: argparse.Namespace) -> list[dict[str, Any]]:
     clear_shared_search_model_session()
     os.environ["ASLM_WEB_SEARCH_PIPELINE"] = meta["pipeline"]
@@ -117,6 +120,7 @@ async def _run_mode(mode: str, meta: dict[str, str], queries: list[str], args: a
     return rows
 
 
+# Execute selected ablation modes and write JSON/Markdown reports.
 async def _main_async(args: argparse.Namespace) -> int:
     queries = args.queries or DEFAULT_QUERIES
     selected = {name: MODES[name] for name in (args.modes or list(MODES)) if name in MODES}
@@ -141,6 +145,7 @@ async def _main_async(args: argparse.Namespace) -> int:
     return 0
 
 
+# Build the model-ablation CLI argument parser.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Ablation: rules vs encoder vs decoder vs full (high effort)")
     parser.add_argument("queries", nargs="*", help="Queries; defaults to latency_compare set")
@@ -162,6 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# CLI entry: asyncio driver for model ablation benchmarks.
 def main() -> int:
     return asyncio.run(_main_async(build_parser().parse_args()))
 
