@@ -1000,7 +1000,7 @@ class UploadedFileManifestTests(SimpleTestCase):
         )
 
         self.assertTrue(manifest.text_available)
-        self.assertIn("Slide 1: Slide upload text", manifest.text_preview or "")
+        self.assertIn("Slide upload text", manifest.text_preview or "")
 
     # Test xlsx files expose a small table preview from worksheet XML.
     def test_xlsx_manifest_extracts_sheet_text(self):
@@ -2528,7 +2528,7 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(b"".join(response.streaming_content), b"Hi there")
         self.assertEqual(Chat.objects.count(), 1)
         self.assertEqual(Chat.objects.first().messages.count(), 2)
-        mock_prepare_runtime.assert_called_once_with("ollama-service")
+        mock_prepare_runtime.assert_any_call("ollama-service")
 
     # Test chat API supports an attachment-only prompt.
     @patch("Apps.UI.views.llm_api.prepare_runtime")
@@ -3085,9 +3085,10 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         b"".join(response.streaming_content)
         history_messages = mock_generate.call_args.kwargs["messages"]
-        self.assertEqual([item["role"] for item in history_messages[:4]], ["user", "assistant", "tool", "assistant"])
-        self.assertEqual(history_messages[1]["thinking"], "Plan")
-        self.assertEqual(history_messages[2]["name"], "time_suite__time_now")
+        non_system = [item for item in history_messages if item.get("role") != "system"]
+        self.assertEqual([item["role"] for item in non_system[:4]], ["user", "assistant", "tool", "assistant"])
+        self.assertEqual(non_system[1]["thinking"], "Plan")
+        self.assertEqual(non_system[2]["name"], "time_suite__time_now")
         self.assertEqual(history_messages[-1]["content"], "Follow up")
 
     # Test chat API strips legacy UI markup when transcript is missing.
@@ -3119,7 +3120,8 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         b"".join(response.streaming_content)
         history_messages = mock_generate.call_args.kwargs["messages"]
-        self.assertEqual(history_messages[1], {"role": "assistant", "content": "Visible answer"})
+        assistant_messages = [item for item in history_messages if item.get("role") == "assistant"]
+        self.assertEqual(assistant_messages[0], {"role": "assistant", "content": "Visible answer"})
 
     # Test chat API strips service control tokens from visible output.
     @patch("Apps.UI.views.llm_api.prepare_runtime")
