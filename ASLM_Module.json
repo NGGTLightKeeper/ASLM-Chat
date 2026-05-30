@@ -26,6 +26,7 @@
             "Settings/settings.json",
             "Skills",
             "MCP/mcp.json",
+            "Tools/mcp-web-search/models",
             "db.sqlite3"
         ],
         "runFirstRunAfterUpdate": true
