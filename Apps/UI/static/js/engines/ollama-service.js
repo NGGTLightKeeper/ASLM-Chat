@@ -1,6 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { OLLAMA_UNSUPPORTED_RUNTIME_PARAMS } from '/static/js/main/constants.js';
+import { OLLAMA_UNSUPPORTED_RUNTIME_PARAMS } from '../main/constants.js';
 
 // Option helpers.
 // Remove runtime keys unsupported by the managed Ollama service.

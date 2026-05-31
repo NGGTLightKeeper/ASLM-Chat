@@ -1,7 +1,7 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { getCsrfToken } from '/static/js/main/api.js';
-import { escHtml } from '/static/js/main/utils.js';
+import { getCsrfToken } from '../main/api.js';
+import { escHtml } from '../main/utils.js';
 
 // Attachment UI.
 // Create helpers for file picking, previews, and attachment state.

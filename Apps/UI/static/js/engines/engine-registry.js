@@ -1,9 +1,9 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { googleGenAiAdapter } from '/static/js/engines/google-genai.js';
-import { lmsAdapter } from '/static/js/engines/lms.js';
-import { ollamaServiceAdapter } from '/static/js/engines/ollama-service.js';
-import { openAiAdapter } from '/static/js/engines/openai.js';
+import { googleGenAiAdapter } from './google-genai.js';
+import { lmsAdapter } from './lms.js';
+import { ollamaServiceAdapter } from './ollama-service.js';
+import { openAiAdapter } from './openai.js';
 
 const ENGINE_ADAPTERS = [
   ollamaServiceAdapter,

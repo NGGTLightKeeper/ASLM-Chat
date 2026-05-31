@@ -1,6 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { escHtml, escapeAttributeValue, timeNow } from '/static/js/main/utils.js';
+import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
 import {
   addSegmentCitationSources,
   addSegmentsCitationSources,
@@ -8,9 +8,9 @@ import {
   decorateCitationsInHtml as decorateCitationHandlesInHtml,
   normalizeCitationBrackets as normalizeCitationHandleBrackets,
   normalizeCitationSpacing as normalizeCitationHandleSpacing
-} from '/static/js/ui/citations-ui.js';
-import { bindCitationPreviewCards } from '/static/js/ui/citation-preview-ui.js';
-import { t } from '/static/js/main/i18n.js';
+} from './citations-ui.js';
+import { bindCitationPreviewCards } from './citation-preview-ui.js';
+import { t } from '../main/i18n.js';
 
 // marked's default GFM `del` allows single-tilde pairs (~x~), which breaks ~ for "approximately".
 // GitHub-style strikethrough is ~~ only; install tokenizer override once.

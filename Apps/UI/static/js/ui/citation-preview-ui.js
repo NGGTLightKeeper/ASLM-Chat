@@ -1,6 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { escHtml, escapeAttributeValue } from '/static/js/main/utils.js';
+import { escHtml, escapeAttributeValue } from '../main/utils.js';
 
 
 // Preview data helpers.

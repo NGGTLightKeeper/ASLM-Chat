@@ -4,17 +4,17 @@ import {
   LLM_PARAMETER_OPTION_SETS,
   OLLAMA_UNSUPPORTED_RUNTIME_PARAMS,
   PARAMETER_DEFINITIONS
-} from '/static/js/main/constants.js';
-import { getEngineAdapter, normalizeEngineValue } from '/static/js/engines/engine-registry.js';
+} from '../main/constants.js';
+import { getEngineAdapter, normalizeEngineValue } from '../engines/engine-registry.js';
 import {
   deleteNestedValue,
   escapeAttributeValue,
   escapeTextareaValue,
   isThinkingParameterKey,
   setNestedValue
-} from '/static/js/main/utils.js';
-import { getJson, patchJson } from '/static/js/main/api.js';
-import { t } from '/static/js/main/i18n.js';
+} from '../main/utils.js';
+import { getJson, patchJson } from '../main/api.js';
+import { t } from '../main/i18n.js';
 
 // Parameters UI.
 // Create helpers for model controls, tool selection, and option payloads.

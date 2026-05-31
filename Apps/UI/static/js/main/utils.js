@@ -1,7 +1,7 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { THINK_PARAMETER_KEYS } from '/static/js/main/constants.js';
-import { intlLocaleTag } from '/static/js/main/i18n.js';
+import { THINK_PARAMETER_KEYS } from './constants.js';
+import { intlLocaleTag } from './i18n.js';
 
 // JSON helpers.
 // Parse one JSON payload embedded in a script tag.

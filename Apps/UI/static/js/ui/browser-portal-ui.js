@@ -1,7 +1,7 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { escHtml, escapeAttributeValue } from '/static/js/main/utils.js';
-import { getJson, postJson } from '/static/js/main/api.js';
+import { escHtml, escapeAttributeValue } from '../main/utils.js';
+import { getJson, postJson } from '../main/api.js';
 
 // Portal poll cache.
 // If hydrate runs twice on the same portal node, clear any prior poll interval.

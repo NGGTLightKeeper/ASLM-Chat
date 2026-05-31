@@ -1,6 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { escHtml, parseJsonScript } from '/static/js/main/utils.js';
+import { escHtml, parseJsonScript } from '../main/utils.js';
 
 // Custom model selector.
 // Mirrors the native select so existing model-loading code keeps working.

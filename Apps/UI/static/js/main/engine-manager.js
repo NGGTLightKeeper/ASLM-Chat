@@ -1,10 +1,10 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { getJson, postJson } from '/static/js/main/api.js';
-import { t } from '/static/js/main/i18n.js';
-import { LLM_PARAMETER_OPTION_SETS } from '/static/js/main/constants.js';
-import { getEngineAdapter, normalizeEngineValue } from '/static/js/engines/engine-registry.js';
-import { isLocalHostname, normalizeAddressForParsing } from '/static/js/main/utils.js';
+import { getJson, postJson } from './api.js';
+import { t } from './i18n.js';
+import { LLM_PARAMETER_OPTION_SETS } from './constants.js';
+import { getEngineAdapter, normalizeEngineValue } from '../engines/engine-registry.js';
+import { isLocalHostname, normalizeAddressForParsing } from './utils.js';
 
 // Engine manager.
 // Create the runtime controller for engine selection, model loading, and presets.
