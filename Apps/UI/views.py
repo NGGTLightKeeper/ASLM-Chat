@@ -89,7 +89,7 @@ from context_compression.history_compressor import (  # noqa: E402
     resolve_context_window_tokens,
 )
 
-DEFAULT_SYSTEM_PROMPT_PATH = settings.BASE_DIR / "SYSTEM_PROMPT.md"
+DEFAULT_SYSTEM_PROMPT_PATH = settings.BASE_DIR / "Tools" / "SYSTEM_PROMPT.md"
 _default_system_prompt_lock = threading.RLock()
 _default_system_prompt_mtime_ns: int | None = None
 _default_system_prompt_cache = ""

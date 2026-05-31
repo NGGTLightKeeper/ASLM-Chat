@@ -40,7 +40,7 @@ except Exception:  # pragma: no cover - optional during non-MCP imports
 def _find_aslm_root() -> Path:
     current = Path(__file__).resolve().parent
     for p in [current, *current.parents]:
-        if (p / "SYSTEM_PROMPT.md").exists() or (p / ".git").exists():
+        if (p / "Tools" / "SYSTEM_PROMPT.md").exists() or (p / ".git").exists():
             return p
     return current.parents[3] if len(current.parents) > 3 else current
 
