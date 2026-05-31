@@ -64,6 +64,7 @@ from Apps.Data.models import (
     MessageImage,
     OllamaPreset,
 )
+from Apps.UI import STATIC_CACHE_VERSION
 from Apps.UI.host_theme_bridge import build_host_theme_template_context
 from Apps.UI.host_locale_bridge import build_host_locale_template_context
 from Apps.UI.upload_storage import (
@@ -1532,6 +1533,19 @@ def _load_models_for_engine(engine: str) -> list[str]:
     return _set_cached_model_list(engine, sorted_model_names)
 
 
+# Build import map JSON for versioned ES module URLs.
+def _build_js_import_map() -> str:
+    from django.templatetags.static import static as static_url
+
+    js_root = Path(__file__).resolve().parent / "static" / "js"
+    imports: dict[str, str] = {}
+    for path in sorted(js_root.rglob("*.js")):
+        rel = path.relative_to(js_root).as_posix()
+        logical = static_url(f"js/{rel}")
+        imports[logical] = f"{logical}?v={STATIC_CACHE_VERSION}"
+    return json.dumps({"imports": imports}, separators=(",", ":"))
+
+
 # Build shared template context
 def _build_base_context() -> dict[str, Any]:
     runtime_settings = settings.get_runtime_engine_settings()
@@ -1543,6 +1557,8 @@ def _build_base_context() -> dict[str, Any]:
         "runtime_settings": runtime_settings,
         "available_tool_servers": _list_tool_servers_cached(engine=engine),
         "chats": Chat.objects.all(),
+        "static_cache_version": STATIC_CACHE_VERSION,
+        "js_import_map": _build_js_import_map(),
     }
     base.update(build_host_theme_template_context())
     base.update(build_host_locale_template_context())

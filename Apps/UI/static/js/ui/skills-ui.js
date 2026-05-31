@@ -1,7 +1,7 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { getJson, patchJson, postJson, requestJson } from '../main/api.js';
-import { intlLocaleTag, t } from '../main/i18n.js';
+import { getJson, patchJson, postJson, requestJson } from '/static/js/main/api.js';
+import { intlLocaleTag, t } from '/static/js/main/i18n.js';
 
 // Skills manager UI.
 // Create the settings-sidebar entry and the modal customize surface.

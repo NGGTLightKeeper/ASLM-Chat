@@ -1,6 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { escHtml, escapeAttributeValue } from '../main/utils.js';
+import { escHtml, escapeAttributeValue } from '/static/js/main/utils.js';
 
 const CITATION_ID_PATTERN = /^(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,16}-\d+)$/;
 const CITATION_SCAN_PATTERN = /\b(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,16}-\d+)\b/gi;

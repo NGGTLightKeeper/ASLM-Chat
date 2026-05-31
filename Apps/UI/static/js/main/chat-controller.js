@@ -1,7 +1,7 @@
 ﻿// Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { deleteJson, getCsrfToken, getJson, patchJson, postJson } from './api.js';
-import { intlLocaleTag, t } from './i18n.js';
+import { deleteJson, getCsrfToken, getJson, patchJson, postJson } from '/static/js/main/api.js';
+import { intlLocaleTag, t } from '/static/js/main/i18n.js';
 
 // Chat controller.
 // Create the chat workflow controller for sending, loading, and mutating chats.

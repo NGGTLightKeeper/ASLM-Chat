@@ -1,17 +1,17 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { createAttachmentsUi } from '../ui/attachments-ui.js';
-import { createBrowserPortalUi } from '../ui/browser-portal-ui.js';
-import { createChatHistoryUi } from '../ui/chat-history-ui.js';
-import { createMessagesUi } from '../ui/messages-ui.js';
-import { createModelSelectorUi } from '../ui/model-selector-ui.js?v=custom-model-selector-7';
-import { createParametersUi } from '../ui/parameters-ui.js?v=sandbox-default-3';
-import { createSkillsUi } from '../ui/skills-ui.js?v=skills-manager-27';
-import { createToolInspector } from '../ui/tool-inspector.js';
-import { createAppContext } from './app-context.js';
-import { createChatController } from './chat-controller.js';
-import { createEngineManager } from './engine-manager.js';
-import { bindEventHandlers } from './event-bindings.js';
+import { createAttachmentsUi } from '/static/js/ui/attachments-ui.js';
+import { createBrowserPortalUi } from '/static/js/ui/browser-portal-ui.js';
+import { createChatHistoryUi } from '/static/js/ui/chat-history-ui.js';
+import { createMessagesUi } from '/static/js/ui/messages-ui.js';
+import { createModelSelectorUi } from '/static/js/ui/model-selector-ui.js';
+import { createParametersUi } from '/static/js/ui/parameters-ui.js';
+import { createSkillsUi } from '/static/js/ui/skills-ui.js';
+import { createToolInspector } from '/static/js/ui/tool-inspector.js';
+import { createAppContext } from '/static/js/main/app-context.js';
+import { createChatController } from '/static/js/main/chat-controller.js';
+import { createEngineManager } from '/static/js/main/engine-manager.js';
+import { bindEventHandlers } from '/static/js/main/event-bindings.js';
 
 // Application bootstrap.
 // Initialize the chat page after the DOM is ready.

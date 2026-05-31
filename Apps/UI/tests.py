@@ -1378,6 +1378,34 @@ class UploadRoutingTests(SimpleTestCase):
 
 # View and runtime mapping tests.
 
+# Verify per-process static cache busting for templates and ES modules.
+class StaticCacheVersionTests(SimpleTestCase):
+    # Verify static cache version format.
+    def test_static_cache_version_format(self):
+        from Apps.UI import STATIC_CACHE_VERSION
+
+        self.assertRegex(STATIC_CACHE_VERSION, r"^\d{14}$")
+
+    # Verify static template tag appends the cache-bust query.
+    def test_static_template_tag_appends_cache_bust_query(self):
+        from Apps.UI import STATIC_CACHE_VERSION
+        from django.template import Context, Template
+
+        rendered = Template(
+            "{% load i18n_tags %}{% static 'css/main/main.css' %}"
+        ).render(Context({}))
+        self.assertEqual(rendered, f"/static/css/main/main.css?v={STATIC_CACHE_VERSION}")
+
+    # Verify JS import map rewrites module URLs with the same version.
+    def test_build_js_import_map_versions_modules(self):
+        from Apps.UI import STATIC_CACHE_VERSION
+        from Apps.UI.views import _build_js_import_map
+
+        payload = json.loads(_build_js_import_map())
+        versioned = payload["imports"]["/static/js/main/main.js"]
+        self.assertEqual(versioned, f"/static/js/main/main.js?v={STATIC_CACHE_VERSION}")
+
+
 # Verify that the main page uses the configured engine and local server helpers.
 class MainViewTests(ToolRegistryTestMixin, TestCase):
     # Test main view includes runtime settings and local servers.
@@ -1411,6 +1439,11 @@ class MainViewTests(ToolRegistryTestMixin, TestCase):
             }],
         )
         self.assertContains(response, 'id="group-load"')
+        self.assertContains(response, 'type="importmap"')
+        self.assertRegex(
+            response.content.decode("utf-8"),
+            r"/static/js/main/main\.js\?v=\d{14}",
+        )
 
 
 # Ensure Ollama-only thinking parameters are normalized before request dispatch.

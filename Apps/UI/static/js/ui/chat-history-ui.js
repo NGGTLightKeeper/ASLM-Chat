@@ -1,6 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { escHtml, escapeAttributeValue } from '../main/utils.js';
+import { escHtml, escapeAttributeValue } from '/static/js/main/utils.js';
 
 // Chat history UI.
 // Create helpers for the sidebar chat list and menu.

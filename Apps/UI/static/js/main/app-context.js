@@ -1,8 +1,8 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { normalizeEngineValue } from '../engines/engine-registry.js';
-import { initI18n } from './i18n.js';
-import { parseJsonScript } from './utils.js';
+import { normalizeEngineValue } from '/static/js/engines/engine-registry.js';
+import { initI18n } from '/static/js/main/i18n.js';
+import { parseJsonScript } from '/static/js/main/utils.js';
 
 initI18n();
 
