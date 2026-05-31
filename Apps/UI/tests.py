@@ -1444,6 +1444,10 @@ class MainViewTests(ToolRegistryTestMixin, TestCase):
             response.content.decode("utf-8"),
             r"/static/js/main/main\.js\?v=\d{14}",
         )
+        self.assertNotContains(response, "cdn.jsdelivr.net")
+        self.assertContains(response, "/static/css/vendor/katex.min.css?v=")
+        self.assertContains(response, "/static/js/vendor/katex.min.js?v=")
+        self.assertContains(response, "/static/js/vendor/mermaid.min.js?v=")
 
 
 # Ensure Ollama-only thinking parameters are normalized before request dispatch.

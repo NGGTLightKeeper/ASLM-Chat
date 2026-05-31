@@ -24,7 +24,7 @@
     {% endif %}
     <script type="application/json" id="aslmHostThemeData">{{ host_theme_json|safe }}</script>
     <script type="application/json" id="aslmHostLocaleData">{{ host_locale_json|safe }}</script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+    <link rel="stylesheet" href="{% static 'css/vendor/katex.min.css' %}" />
     {% block extra_css %}{% endblock %}
 </head>
 
@@ -143,7 +143,7 @@
 <!-- Markdown parsing and sanitization -->
 <script src="{% static 'js/vendor/marked.min.js' %}"></script>
 <script src="{% static 'js/vendor/purify.min.js' %}"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="{% static 'js/vendor/katex.min.js' %}"></script>
 <script src="{% static 'js/vendor/mermaid.min.js' %}"></script>
 <!-- Syntax highlighting -->
 <!-- Syntax highlighting: vendor theme is fixed (dark); swapping for host light/dark is deferred. -->
