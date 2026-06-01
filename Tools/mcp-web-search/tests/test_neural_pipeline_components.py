@@ -30,8 +30,8 @@ import services.web_search as web_search_module
 
 @pytest.mark.unit
 def test_model_paths_resolve_under_models_dir() -> None:
-    assert default_query_classifier_path().name == "aslm_embedding_encoder"
-    assert default_source_relevance_path().name == "aslm_embedding_decoder"
+    assert default_query_classifier_path().name == "ASLM-Chat-WS-Embedding-1-97m-encoder"
+    assert default_source_relevance_path().name == "ASLM-Chat-WS-Embedding-1-97m-decoder"
     assert default_query_classifier_path().parent == default_source_relevance_path().parent
 
 
@@ -180,10 +180,15 @@ def test_pipeline_rules_disables_neural_stack(monkeypatch) -> None:
     assert not web_search_module._use_neural_pipeline("high")
 
     monkeypatch.setenv("ASLM_WEB_SEARCH_PIPELINE", "aslm_embedding")
-    assert not web_search_module._use_neural_pipeline("high")
+    assert web_search_module._use_neural_pipeline("high")
     assert not web_search_module._use_neural_pipeline("medium")
 
+    monkeypatch.setenv("ASLM_WEB_SEARCH_NEURAL_ENCODER", "0")
+    monkeypatch.setenv("ASLM_WEB_SEARCH_NEURAL_DECODER", "0")
+    assert not web_search_module._use_neural_pipeline("high")
+
     monkeypatch.setenv("ASLM_WEB_SEARCH_NEURAL_ENCODER", "1")
+    monkeypatch.setenv("ASLM_WEB_SEARCH_NEURAL_DECODER", "0")
     assert web_search_module._neural_encoder_enabled("high")
     assert not web_search_module._neural_decoder_enabled("high")
     assert web_search_module._use_neural_pipeline("high")

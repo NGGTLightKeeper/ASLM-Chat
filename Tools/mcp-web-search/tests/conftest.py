@@ -7,20 +7,24 @@ from pathlib import Path
 import pytest
 
 
-# True when both on-disk ASLM export dirs contain labels.json.
+# True when both on-disk ASLM export dirs are complete.
 
 def aslm_embedding_exports_available() -> bool:
-    from core.query.aslm_embedding_runtime import (
-        default_query_classifier_path,
-        default_source_relevance_path,
+    from core.query.aslm_embedding_models import (
+        export_is_complete,
+        encoder_export_path,
+        decoder_export_path,
     )
 
-    enc = default_query_classifier_path()
-    dec = default_source_relevance_path()
-    return (enc / "labels.json").is_file() and (dec / "labels.json").is_file()
+    return export_is_complete(encoder_export_path()) and export_is_complete(
+        decoder_export_path()
+    )
 
 
 requires_aslm_models = pytest.mark.skipif(
     not aslm_embedding_exports_available(),
-    reason="ASLM embedding exports missing under Tools/mcp-web-search/models/",
+    reason=(
+        "ASLM embedding exports missing under Tools/mcp-web-search/models/"
+        " (ASLM-Chat-WS-Embedding-1-97m-encoder / -decoder)"
+    ),
 )

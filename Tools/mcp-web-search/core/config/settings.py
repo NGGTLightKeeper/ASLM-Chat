@@ -101,9 +101,9 @@ class EffortSection:
 
 @dataclass
 class ModelsSection:
-    pipeline: str = "rules"
-    enable_encoder: bool = False
-    enable_decoder: bool = False
+    pipeline: str = "aslm_embedding"
+    enable_encoder: bool = True
+    enable_decoder: bool = True
     search_device: str = "cpu"
     keep_loaded: bool = False
 

@@ -10,10 +10,16 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
+from core.query.aslm_embedding_models import (
+    MODELS_DIR,
+    decoder_export_path,
+    encoder_export_path,
+)
+
 logger = logging.getLogger("core.query.aslm_embedding_runtime")
 
 
-DEFAULT_MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
+DEFAULT_MODELS_DIR = MODELS_DIR
 
 
 # Read boolean env flag (0/false/no/off/disabled → False).
@@ -319,14 +325,12 @@ def _resolve_device(device: str) -> str:
 
 # Default on-disk path for query classifier (encoder) export.
 def default_query_classifier_path(root: str | Path | None = None) -> Path:
-    base = Path(root) if root is not None else DEFAULT_MODELS_DIR
-    return base / "aslm_embedding_encoder"
+    return encoder_export_path(root)
 
 
 # Default on-disk path for source relevance (decoder) export.
 def default_source_relevance_path(root: str | Path | None = None) -> Path:
-    base = Path(root) if root is not None else DEFAULT_MODELS_DIR
-    return base / "aslm_embedding_decoder"
+    return decoder_export_path(root)
 
 
 # Fixed template for decoder relevance scoring input.
