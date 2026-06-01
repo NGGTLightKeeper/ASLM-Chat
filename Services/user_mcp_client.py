@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper. All Rights Reserved.
 
-"""MCP client for user-defined servers from ``MCP/mcp.json`` (stdio + streamable HTTP)."""
-
 from __future__ import annotations
 
 import asyncio
@@ -27,12 +25,12 @@ CALL_TOOL_TIMEOUT = 120.0
 _locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)
 
 
+# Release per-server locks (reserved for future persistent sessions).
 def shutdown_all() -> None:
-    """Release per-server locks (reserved for future persistent sessions)."""
-
     _locks.clear()
 
 
+# Normalize MCP tool input schemas into JSON Schema objects.
 def _normalize_parameters_schema(schema: Any) -> dict[str, Any]:
     if schema is None:
         return {"type": "object", "properties": {}}
@@ -54,6 +52,7 @@ def _normalize_parameters_schema(schema: Any) -> dict[str, Any]:
     return normalized
 
 
+# Convert MCP list_tools results into ASLM tool definition payloads.
 def _tool_definitions_from_mcp_tools(
     server_id: str,
     mcp_tools: list[Any],
@@ -67,6 +66,7 @@ def _tool_definitions_from_mcp_tools(
         if not raw_name:
             raw_name = f"tool_{index}"
 
+        # Assign a stable slug and avoid collisions within one server.
         base_slug = _slugify(raw_name)
         slug = base_slug
         suffix = 2
@@ -94,6 +94,7 @@ def _tool_definitions_from_mcp_tools(
     return definitions, error
 
 
+# Format one MCP call_tool result as plain text for the chat layer.
 def _format_call_tool_result(result: Any) -> str:
     if getattr(result, "isError", False):
         parts: list[str] = []
@@ -119,6 +120,7 @@ def _format_call_tool_result(result: Any) -> str:
     return "\n\n".join(chunks).strip()
 
 
+# Open one short-lived MCP session for stdio or streamable HTTP transport.
 @asynccontextmanager
 async def _connect_session(entry: UserMcpServerEntry):
     if entry.transport == "http":
@@ -154,6 +156,7 @@ async def _connect_session(entry: UserMcpServerEntry):
         devnull.close()
 
 
+# List tools from one user MCP server over a fresh connection.
 async def _list_tools_async(entry: UserMcpServerEntry) -> tuple[list[dict[str, Any]], str | None]:
     try:
         async with _connect_session(entry) as session:
@@ -165,6 +168,7 @@ async def _list_tools_async(entry: UserMcpServerEntry) -> tuple[list[dict[str, A
         return [], f"{type(exc).__name__}: {exc}"
 
 
+# Invoke one MCP tool over a fresh connection.
 async def _call_tool_async(entry: UserMcpServerEntry, mcp_tool_name: str, arguments: dict[str, Any]) -> str:
     try:
         async with _connect_session(entry) as session:
@@ -178,17 +182,15 @@ async def _call_tool_async(entry: UserMcpServerEntry, mcp_tool_name: str, argume
         return f"User MCP tool execution failed: {exc}"
 
 
+# Connect once, list tools, and disconnect (serialized per server id).
 def fetch_tool_definitions(entry: UserMcpServerEntry) -> tuple[list[dict[str, Any]], str | None]:
-    """Connect once, list tools, disconnect."""
-
     lock = _locks[entry.server_id]
     with lock:
         return asyncio.run(_list_tools_async(entry))
 
 
+# Run one MCP tool call with a new connection per invocation.
 def call_user_mcp_tool(entry: UserMcpServerEntry, mcp_tool_name: str, arguments: dict[str, Any]) -> str:
-    """Run one MCP tool call (new connection per invocation)."""
-
     lock = _locks[entry.server_id]
     with lock:
         return asyncio.run(_call_tool_async(entry, mcp_tool_name, arguments))

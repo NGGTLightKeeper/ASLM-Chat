@@ -1,15 +1,10 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 import json
 import os
-import sys
-from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
-
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from core.extract.content_processor import PreviewPayload
 from core.models.search import SearchResult
@@ -30,7 +25,6 @@ from services.web_search import (
 
 
 pytestmark = pytest.mark.integration
-
 
 EVAL_CASES = [
     {
@@ -128,9 +122,13 @@ EVAL_CASES = [
 ]
 
 
+# _class_mix — flatten hybrid query-type tuples to name→weight map.
+
 def _class_mix(hybrid: list[tuple[str, float, str]]) -> dict[str, float]:
     return {name: float(weight) for name, weight, _reason in hybrid}
 
+
+# _trust_entry_for_url — resolve trust registry entry by host pattern match.
 
 def _trust_entry_for_url(trust_registry, url: str):
     host = urlparse(url).netloc.lower()
@@ -139,6 +137,8 @@ def _trust_entry_for_url(trust_registry, url: str):
             return entry
     return None
 
+
+# _domain_multiplier — compute domain weight breakdown for eval trace output.
 
 def _domain_multiplier(url: str, class_mix: dict[str, float]) -> dict[str, float | str]:
     info = get_registry().lookup(url)
@@ -182,6 +182,8 @@ def _domain_multiplier(url: str, class_mix: dict[str, float]) -> dict[str, float
     }
 
 
+# _trust_multiplier — compute trust tier affinity for eval trace output.
+
 def _trust_multiplier(trust_registry, url: str, class_mix: dict[str, float]) -> dict[str, float | str]:
     entry = _trust_entry_for_url(trust_registry, url)
     if entry is None:
@@ -199,6 +201,10 @@ def _trust_multiplier(trust_registry, url: str, class_mix: dict[str, float]) -> 
         "pattern": entry.pattern,
     }
 
+
+# Neural web-search domain eval — local ASLM embedding trace (RUN_NEURAL_WEB_SEARCH_EVAL=1).
+
+# test_neural_web_search_domain_eval_trace — print JSON trace of domain/trust multipliers per fixture case.
 
 def test_neural_web_search_domain_eval_trace() -> None:
     if os.environ.get("RUN_NEURAL_WEB_SEARCH_EVAL") != "1":

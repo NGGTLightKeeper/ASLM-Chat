@@ -1,7 +1,11 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 from core.extract.nextjs_rsc import extract_nextjs_rsc_text
 
+
+# extract_nextjs_rsc_text — merge split __next_f scripts into structured markdown.
 
 def test_extract_nextjs_rsc_text_handles_split_scripts_and_structure() -> None:
     html = """

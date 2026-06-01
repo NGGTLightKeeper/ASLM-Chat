@@ -1,20 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Source cache: SQLite + FTS5 local page cache for cache-first retrieval.
-
-Refactored from legacy src/source_cache.py:
-  - Removed all sys.path hacks and try/except import fallbacks
-  - URL helpers (canonicalize_url, url_hash, content_hash) are now
-    inlined directly — no cross-module path dependency
-  - Public API is unchanged
-
-Public API
-----------
-SourceCache    -- main class, owns the SQLite DB
-CachedPage     -- dataclass for a cached page record
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -37,6 +22,7 @@ _SQLITE_CORRUPTION_MARKERS = (
 )
 
 
+# True when a sqlite3 error indicates a corrupt on-disk database.
 def _is_sqlite_corruption(exc: BaseException) -> bool:
     if not isinstance(exc, sqlite3.DatabaseError):
         return False
@@ -44,15 +30,11 @@ def _is_sqlite_corruption(exc: BaseException) -> bool:
     return any(marker in message for marker in _SQLITE_CORRUPTION_MARKERS)
 
 
-# ---------------------------------------------------------------------------
-# URL helpers (inlined from legacy crawl_frontier to remove cross-deps)
-# ---------------------------------------------------------------------------
-
 from core.fetch.url_utils import _TRACKING_PARAMS, UnsafeFetchUrl, validate_public_fetch_url
 
 
+# Normalize URL for dedup: https, strip www, sort/filter query params.
 def canonicalize_url(url: str) -> str:
-    """Normalize a URL: https, strip www., sort/filter query params."""
     try:
         p = urlparse(url.strip())
         scheme = (p.scheme or "https").lower()
@@ -72,22 +54,18 @@ def canonicalize_url(url: str) -> str:
         return url.strip()
 
 
+# SHA-256 of canonical URL.
 def url_hash(url: str) -> str:
     return hashlib.sha256(canonicalize_url(url).encode()).hexdigest()
 
 
+# SHA-256 of page text content.
 def content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
 
 
-# ---------------------------------------------------------------------------
-# Data model
-# ---------------------------------------------------------------------------
-
 @dataclass
 class CachedPage:
-    """A cached page record."""
-
     url: str
     domain: str
     title: str
@@ -99,10 +77,6 @@ class CachedPage:
     char_count: int
     score: float = 0.0   # FTS5 BM25 score (only set by search_local)
 
-
-# ---------------------------------------------------------------------------
-# Schema DDL
-# ---------------------------------------------------------------------------
 
 _SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
@@ -158,13 +132,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
 """
 
 
-# ---------------------------------------------------------------------------
-# SourceCache
-# ---------------------------------------------------------------------------
-
+# SQLite + FTS5 local page cache for cache-first retrieval.
 class SourceCache:
-    """SQLite + FTS5 source page cache."""
-
     def __init__(self, db_path: str, default_ttl: int = 86_400) -> None:
         self._db_path = db_path
         self._default_ttl = default_ttl
@@ -174,10 +143,8 @@ class SourceCache:
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._init_db()
 
-    # -- Connection helpers --------------------------------------------------
-
+    # Return a per-thread persistent SQLite connection.
     def _get_conn(self) -> sqlite3.Connection:
-        """Return a per-thread persistent SQLite connection."""
         conn = getattr(self._local, "conn", None)
         if conn is None:
             conn = None
@@ -197,6 +164,7 @@ class SourceCache:
                 raise
         return conn
 
+    # Close the current thread's SQLite connection.
     def _close_thread_conn(self) -> None:
         conn = getattr(self._local, "conn", None)
         if conn is not None:
@@ -206,8 +174,8 @@ class SourceCache:
                 pass
             self._local.conn = None
 
+    # Quarantine corrupt DB files and recreate an empty cache.
     def _recover_corrupt_db(self, exc: BaseException) -> bool:
-        """Quarantine a corrupt SQLite cache and recreate an empty one."""
         if self._recovering_corrupt_db or not _is_sqlite_corruption(exc):
             return False
 
@@ -239,6 +207,7 @@ class SourceCache:
             self._recovering_corrupt_db = False
         return True
 
+    # Apply schema DDL on first open (or after corruption recovery).
     def _init_db(self) -> None:
         try:
             conn = self._get_conn()
@@ -252,19 +221,13 @@ class SourceCache:
                 return
             raise
 
-    # -- Public API ----------------------------------------------------------
-
+    # FTS5 + BM25 search over cached pages (status=ok, within freshness window).
     def search_local(
         self,
         query: str,
         limit: int = 10,
         min_freshness_sec: int | None = None,
     ) -> list[CachedPage]:
-        """Full-text search over cached pages using FTS5 + BM25.
-
-        Returns pages ordered by relevance (title weighted 5x over body).
-        Only returns pages with status='ok'.
-        """
         if not query or not query.strip():
             return []
 
@@ -309,6 +272,7 @@ class SourceCache:
             for r in rows
         ]
 
+    # Insert or update a page (pages + FTS5 in one transaction).
     def cache_page(
         self,
         url: str,
@@ -318,7 +282,6 @@ class SourceCache:
         domain: str = "",
         status: str = "ok",
     ) -> None:
-        """Insert or update a page in the cache."""
         try:
             validate_public_fetch_url(url)
         except UnsafeFetchUrl as exc:
@@ -338,8 +301,6 @@ class SourceCache:
         try:
             with self._write_lock:
                 conn = self._get_conn()
-                # Wrap pages + FTS5 update in a single transaction so they
-                # can never desync if the process crashes mid-write.
                 with conn:
                     conn.execute(
                         """
@@ -358,7 +319,6 @@ class SourceCache:
                         (uhash, canonicalize_url(url), domain, title, clean_text, raw_html,
                          now, chash, status, len(clean_text)),
                     )
-                    # Explicitly maintain FTS5 index (UPSERT does not fire triggers).
                     conn.execute("DELETE FROM pages_fts WHERE url_hash = ?", (uhash,))
                     conn.execute(
                         "INSERT INTO pages_fts (url_hash, title, clean_text) VALUES (?, ?, ?)",
@@ -369,8 +329,8 @@ class SourceCache:
                 return
             logger.warning("source_cache: write failed url=%r: %s", url, exc)
 
+    # Return a cached page by URL, or None.
     def get_cached(self, url: str) -> Optional[CachedPage]:
-        """Return a cached page by URL, or None."""
         try:
             validate_public_fetch_url(url)
         except UnsafeFetchUrl as exc:
@@ -402,8 +362,8 @@ class SourceCache:
             char_count=r["char_count"],
         )
 
+    # True when a cached ok page exists and is younger than max_age_sec.
     def is_fresh(self, url: str, max_age_sec: int | None = None) -> bool:
-        """Check whether a cached page exists and is still fresh."""
         try:
             validate_public_fetch_url(url)
         except UnsafeFetchUrl:
@@ -425,8 +385,8 @@ class SourceCache:
             return False
         return r is not None and r["fetched_at"] > cutoff
 
+    # Associate a query with a source URL for stats and future ranking.
     def record_query_source(self, query: str, url: str, rank: int = 0) -> None:
-        """Associate a query with a source URL (for stats and future ranking)."""
         uhash = url_hash(url)
         try:
             with self._write_lock:
@@ -441,6 +401,7 @@ class SourceCache:
                 return
             logger.warning("source_cache: query source write failed query=%r url=%r: %s", query, url, exc)
 
+    # Attach class/relevance metadata to a query-source observation.
     def record_query_source_classes(
         self,
         query: str,
@@ -451,7 +412,6 @@ class SourceCache:
         snippet_score: float = 0.0,
         parsed_score: float = 0.0,
     ) -> None:
-        """Attach class/relevance metadata to a query-source observation."""
         uhash = url_hash(url)
         try:
             with self._write_lock:
@@ -480,23 +440,21 @@ class SourceCache:
                 return
             logger.warning("source_cache: query source class write failed query=%r url=%r: %s", query, url, exc)
 
+    # Total number of cached pages.
     def page_count(self) -> int:
-        """Return total number of cached pages."""
         r = self._get_conn().execute("SELECT COUNT(*) FROM pages").fetchone()
         return int(r[0]) if r else 0
 
+    # Basic cache statistics (totals and distinct queries).
     def cache_stats(self) -> dict:
-        """Return basic cache statistics."""
         conn = self._get_conn()
         total = conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0] or 0
         ok = conn.execute("SELECT COUNT(*) FROM pages WHERE status = 'ok'").fetchone()[0] or 0
         queries = conn.execute("SELECT COUNT(DISTINCT query) FROM query_sources").fetchone()[0] or 0
         return {"total_pages": total, "ok_pages": ok, "unique_queries": queries}
 
-    # -- Eviction ------------------------------------------------------------
-
+    # Delete stale pages and related query_sources; returns deleted count.
     def evict_stale(self, max_age_sec: int | None = None) -> int:
-        """Delete pages older than max_age_sec (and their query_sources). Returns deleted count."""
         ttl = max_age_sec or self._default_ttl
         cutoff = time.time() - ttl
         with self._write_lock:

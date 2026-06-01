@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Domain registry: modular profile JSONs with optional legacy monolithic fallback."""
-
 from __future__ import annotations
 
 import json
@@ -37,12 +35,14 @@ _PROFILE_REQUIRED_KEYS = frozenset({"profile", "domains"})
 # - Legacy monolithic domain_registry.json is loaded first as a base; profile entries override per pattern.
 
 
+# Path-prefix class weight overrides for a domain pattern.
 @dataclass
 class PathWeight:
     path_prefix: str
     class_weights: Dict[str, float] = field(default_factory=dict)
 
 
+# Static domain metadata: tier, fetch method, weights, and aliases.
 @dataclass
 class DomainInfo:
     pattern: str
@@ -68,6 +68,7 @@ class DomainInfo:
     parsing_mode: str = ""
 
 
+# Resolved fetch strategy combining static registry and endpoint overlay.
 @dataclass
 class AccessStrategy:
     source: str = "default"
@@ -95,6 +96,7 @@ _DEFAULT_INFO = DomainInfo(
 )
 
 
+# Merge float maps with max or min per key.
 def _merge_float_maps(existing: Dict[str, float], incoming: Dict[str, float], *, op: str) -> Dict[str, float]:
     merged = dict(existing)
     for key, value in incoming.items():
@@ -114,6 +116,7 @@ def _merge_float_maps(existing: Dict[str, float], incoming: Dict[str, float], *,
     return merged
 
 
+# Merge path_weights lists; same prefix merges class_weights with max.
 def _merge_path_weights(existing: List[PathWeight], incoming: List[PathWeight]) -> List[PathWeight]:
     by_prefix: Dict[str, PathWeight] = {pw.path_prefix: pw for pw in existing}
     for pw in incoming:
@@ -127,6 +130,7 @@ def _merge_path_weights(existing: List[PathWeight], incoming: List[PathWeight]) 
     return sorted(by_prefix.values(), key=lambda x: x.path_prefix)
 
 
+# Parse path_weights array from JSON into PathWeight objects.
 def _parse_path_weights(raw: Any) -> List[PathWeight]:
     if not isinstance(raw, list):
         return []
@@ -149,11 +153,13 @@ def _parse_path_weights(raw: Any) -> List[PathWeight]:
     return result
 
 
+# Build DomainInfo from one profile or legacy JSON entry.
 def _domain_from_dict(entry: dict[str, Any], defaults: dict[str, Any]) -> Optional[DomainInfo]:
     pattern = str(entry.get("pattern") or defaults.get("pattern") or "").strip().lower()
     if not pattern:
         return None
 
+    # Prefer entry value, else defaults, for one field key.
     def _pick(key: str, default: Any = None) -> Any:
         if key in entry and entry[key] is not None:
             return entry[key]
@@ -209,9 +215,8 @@ def _domain_from_dict(entry: dict[str, Any], defaults: dict[str, Any]) -> Option
     )
 
 
+# Merge two entries for the same pattern; overlay wins scalars, maps merge per policy.
 def _merge_domain_info(base: DomainInfo, overlay: DomainInfo) -> DomainInfo:
-    """Merge two entries for the same pattern; overlay wins scalars, maps merge per policy."""
-
     topics = overlay.topics or base.topics
     merged = DomainInfo(
         pattern=base.pattern,
@@ -239,6 +244,7 @@ def _merge_domain_info(base: DomainInfo, overlay: DomainInfo) -> DomainInfo:
     return merged
 
 
+# Validate one domain profile JSON file structure.
 def _validate_profile_file(path: Path, data: dict[str, Any]) -> None:
     if not isinstance(data, dict):
         raise ValueError(f"{path.name}: root must be object")
@@ -259,6 +265,7 @@ def _validate_profile_file(path: Path, data: dict[str, Any]) -> None:
             raise ValueError(f"{path.name}: domains[{i}] missing 'pattern'")
 
 
+# Profile JSON load order from manifest.json then remaining *.json files.
 def _profile_load_order(profiles_dir: Path) -> List[Path]:
     manifest_path = profiles_dir / _MANIFEST_NAME
     ordered: List[Path] = []
@@ -287,6 +294,7 @@ def _profile_load_order(profiles_dir: Path) -> List[Path]:
     return ordered
 
 
+# Load domain patterns from legacy monolithic domain_registry.json.
 def _load_legacy_domains(path: Path) -> Dict[str, DomainInfo]:
     by_pattern: Dict[str, DomainInfo] = {}
     try:
@@ -305,6 +313,7 @@ def _load_legacy_domains(path: Path) -> Dict[str, DomainInfo]:
     return by_pattern
 
 
+# Load and merge domain patterns from domain_profiles/ JSON files.
 def _load_profile_domains(profiles_dir: Path) -> Dict[str, DomainInfo]:
     by_pattern: Dict[str, DomainInfo] = {}
     if not profiles_dir.is_dir():
@@ -333,6 +342,7 @@ def _load_profile_domains(profiles_dir: Path) -> Dict[str, DomainInfo]:
     return by_pattern
 
 
+# Resolve legacy monolith path from explicit arg or known candidates.
 def _resolve_legacy_path(explicit: Optional[str]) -> Optional[Path]:
     if explicit:
         p = Path(explicit)
@@ -343,13 +353,12 @@ def _resolve_legacy_path(explicit: Optional[str]) -> Optional[Path]:
     return None
 
 
+# Merge legacy monolith with profile domain entries (cached).
 @lru_cache(maxsize=8)
 def _load_merged_registry(
     profiles_dir_str: str,
     legacy_path_str: Optional[str],
 ) -> tuple[Dict[str, DomainInfo], bool, str]:
-    """Load and merge registry data. Cached by (profiles_dir, legacy_path)."""
-
     profiles_dir = Path(profiles_dir_str)
     legacy_path = Path(legacy_path_str) if legacy_path_str else _resolve_legacy_path(None)
 
@@ -377,20 +386,18 @@ def _load_merged_registry(
     return by_pattern, loaded, source
 
 
+# Clear cached merged registry and singleton (for tests).
 def clear_domain_registry_cache() -> None:
-    """Clear cached merged registry and singleton instance (for tests)."""
-
     _load_merged_registry.cache_clear()
     global _registry
     _registry = None
 
 
+# Return merged domain entries keyed by pattern.
 def load_domain_registry(
     profiles_dir: Optional[Path | str] = None,
     legacy_path: Optional[Path | str] = None,
 ) -> Dict[str, DomainInfo]:
-    """Return merged domain entries keyed by pattern (cached)."""
-
     pdir = Path(profiles_dir) if profiles_dir else _PROFILES_DIR
     legacy = Path(legacy_path) if legacy_path else _resolve_legacy_path(None)
     by_pattern, _, _ = _load_merged_registry(
@@ -400,9 +407,10 @@ def load_domain_registry(
     return dict(by_pattern)
 
 
+# Resolve domain metadata from static registry and dynamic endpoint overlay.
 class DomainRegistry:
-    """Resolve domain metadata from the static registry and dynamic overlay."""
 
+    # Load merged registry from profiles dir and optional legacy monolith.
     def __init__(
         self,
         config_path: Optional[str] = None,
@@ -426,6 +434,7 @@ class DomainRegistry:
         if not self._loaded:
             logger.warning("Domain registry empty - no profiles or legacy file found")
 
+    # Register patterns and aliases into lookup map.
     def _register_patterns(self, by_pattern: Dict[str, DomainInfo]) -> None:
         self._domains.clear()
         for info in by_pattern.values():
@@ -440,9 +449,11 @@ class DomainRegistry:
                 self._source,
             )
 
+    # Normalize URL or host string to bare domain.
     def _extract_domain(self, url_or_domain: str) -> str:
         return normalize_domain(url_or_domain)
 
+    # Lookup static DomainInfo without endpoint overlay.
     def _lookup_static(self, url_or_domain: str) -> DomainInfo:
         domain = self._extract_domain(url_or_domain)
         if not domain:
@@ -459,6 +470,7 @@ class DomainRegistry:
 
         return _DEFAULT_INFO
 
+    # Build DomainInfo from static entry plus validated overlay strategy.
     def _overlay_to_info(self, url_or_domain: str, overlay: EndpointStrategy) -> DomainInfo:
         static_info = self._lookup_static(url_or_domain)
         return DomainInfo(
@@ -485,12 +497,14 @@ class DomainRegistry:
             parsing_mode=static_info.parsing_mode,
         )
 
+    # Return DomainInfo preferring endpoint overlay when validated.
     def lookup(self, url_or_domain: str) -> DomainInfo:
         overlay = get_endpoint_overlay().lookup_validated(self._extract_domain(url_or_domain), url_or_domain)
         if overlay is not None:
             return self._overlay_to_info(url_or_domain, overlay)
         return self._lookup_static(url_or_domain)
 
+    # Resolve fetch strategy from overlay or static registry entry.
     def resolve_access_strategy(self, url_or_domain: str) -> AccessStrategy:
         domain = self._extract_domain(url_or_domain)
         overlay = get_endpoint_overlay().lookup_validated(domain, url_or_domain)
@@ -531,12 +545,15 @@ class DomainRegistry:
             response_time_ms=info.response_time_ms,
         )
 
+    # True when resolved method is camoufox browser fetch.
     def needs_camoufox(self, url_or_domain: str) -> bool:
         return self.lookup(url_or_domain).method == "camoufox"
 
+    # True when parsing_mode is nextjs_rsc for this domain.
     def prefers_nextjs_rsc(self, url_or_domain: str) -> bool:
         return self.lookup(url_or_domain).parsing_mode == "nextjs_rsc"
 
+    # Group unique patterns by tier for operator reporting.
     def summary(self) -> Dict[str, List[str]]:
         result: Dict[str, List[str]] = {
             "friendly": [],
@@ -555,6 +572,7 @@ class DomainRegistry:
             result[tier].append(f"{info.pattern} [{info.method}] ({','.join(info.topics)})")
         return result
 
+    # True when at least one domain pattern was loaded.
     @property
     def loaded(self) -> bool:
         return self._loaded
@@ -563,6 +581,7 @@ class DomainRegistry:
 _registry: Optional[DomainRegistry] = None
 
 
+# Shared DomainRegistry singleton.
 def get_registry(config_path: Optional[str] = None) -> DomainRegistry:
     global _registry
     if _registry is None:
@@ -570,7 +589,10 @@ def get_registry(config_path: Optional[str] = None) -> DomainRegistry:
     return _registry
 
 
+# Lazy proxy delegating attribute access to shared DomainRegistry singleton.
 class _RegistryProxy:
+
+    # Forward attribute lookup to get_registry() instance.
     def __getattr__(self, item):
         return getattr(get_registry(), item)
 

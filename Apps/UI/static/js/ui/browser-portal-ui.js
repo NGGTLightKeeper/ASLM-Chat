@@ -3,7 +3,8 @@
 import { escHtml, escapeAttributeValue } from '../main/utils.js';
 import { getJson, postJson } from '../main/api.js';
 
-/** If hydrate runs twice on the same portal node, clear any prior poll interval (orphaned closure). */
+// Portal poll cache.
+// If hydrate runs twice on the same portal node, clear any prior poll interval.
 const portalFramePollIntervalByEl = typeof WeakMap === 'undefined' ? null : new WeakMap();
 const portalWaitTimerByEl = typeof WeakMap === 'undefined' ? null : new WeakMap();
 
@@ -12,6 +13,8 @@ const portalWaitTimerByEl = typeof WeakMap === 'undefined' ? null : new WeakMap(
 export function createBrowserPortalUi(context) {
   const { icons, state } = context;
 
+  // Segment classification helpers.
+  // Normalize one tool segment into a canonical tool id suffix.
   function normalizeToolId(segment) {
     const rawToolId = String(segment && (segment.toolId || segment.alias || segment.toolName) || '').trim();
     if (!rawToolId) {
@@ -21,6 +24,7 @@ export function createBrowserPortalUi(context) {
     return aliasParts[aliasParts.length - 1].toLowerCase();
   }
 
+  // Report whether one activity segment belongs to the browser agent.
   function isBrowserToolSegment(segment) {
     if (!segment || segment.type !== 'tool') {
       return false;
@@ -34,6 +38,7 @@ export function createBrowserPortalUi(context) {
       || toolId.startsWith('browser_');
   }
 
+  // Report whether raw browser tool rows should be shown for debugging.
   function browserDebugEnabled(options) {
     const renderOptions = options || {};
     if (renderOptions.browserDebug === true || renderOptions.showRawBrowserTools === true) {
@@ -45,6 +50,7 @@ export function createBrowserPortalUi(context) {
     return settings.browser_portal_debug === true || settings.browserPortalDebug === true;
   }
 
+  // Derive the portal status badge from the latest browser segment.
   function statusForSegments(segments, options) {
     const renderOptions = options || {};
     const latest = segments[segments.length - 1] || {};
@@ -68,6 +74,7 @@ export function createBrowserPortalUi(context) {
     return 'done';
   }
 
+  // Map one portal status code to a short human label.
   function statusLabel(status) {
     if (status === 'failed') {
       return 'Failed';
@@ -81,6 +88,9 @@ export function createBrowserPortalUi(context) {
     return 'Live';
   }
 
+
+  // Portal rendering helpers.
+  // Build icon, title, and detail text for one browser tool segment.
   function actionForSegment(segment) {
     const toolId = normalizeToolId(segment);
     const args = segment && segment.arguments && typeof segment.arguments === 'object'
@@ -151,6 +161,7 @@ export function createBrowserPortalUi(context) {
     };
   }
 
+  // Build a data URL from one browser screenshot payload.
   function dataUrlFromImage(image) {
     if (!image || typeof image !== 'object') {
       return '';
@@ -167,6 +178,7 @@ export function createBrowserPortalUi(context) {
     return `data:${mime};base64,${dataBase64}`;
   }
 
+  // Pick the latest screenshot frame from a browser segment list.
   function extractFrame(segments) {
     for (let index = segments.length - 1; index >= 0; index -= 1) {
       const segment = segments[index];
@@ -198,6 +210,7 @@ export function createBrowserPortalUi(context) {
     return null;
   }
 
+  // Resolve the active page URL from frame metadata or navigate args.
   function extractUrl(segments, frame) {
     if (frame && frame.url) {
       return String(frame.url);
@@ -214,6 +227,7 @@ export function createBrowserPortalUi(context) {
     return '';
   }
 
+  // Render the live viewport image or an empty-state placeholder.
   function renderFrame(frame, status) {
     const keyCapture = status === 'waiting'
       ? '<textarea class="browser-portal-key-capture" aria-hidden="true" tabindex="-1" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>'
@@ -244,6 +258,7 @@ export function createBrowserPortalUi(context) {
     `;
   }
 
+  // Render one consolidated browser portal block for related tool segments.
   function renderPortalSegment(browserSegments, options) {
     const status = statusForSegments(browserSegments, options);
     const latest = browserSegments[browserSegments.length - 1] || {};
@@ -256,7 +271,7 @@ export function createBrowserPortalUi(context) {
     const timeoutSeconds = Math.max(1, parseInt(latestArgs.timeout_seconds || 45, 10) || 45);
 
     if (isWaitUser) {
-      // Wait state: replace the live preview with a plain card — no browser frame, no DOM controls.
+      // Wait state: show a plain card without a live frame or interactive DOM controls.
       const waitMessage = String(latestArgs.message || 'Complete the step in the browser window, then the model will continue.').trim();
       return `
         <div class="browser-portal browser-portal--wait-user" data-browser-status="waiting" data-browser-wait-timeout="${escapeAttributeValue(timeoutSeconds)}">
@@ -304,12 +319,16 @@ export function createBrowserPortalUi(context) {
     `;
   }
 
+
+  // Portal lifecycle.
+  // Attach interactive handlers to browser portal nodes under one root.
   function hydrate(root) {
     const rootEl = root && root.jquery ? root[0] : root;
     if (!rootEl) {
       return;
     }
 
+    // Wire manual control, polling, and timers for each wait-user portal node.
     rootEl.querySelectorAll('.browser-portal').forEach(function hydratePortal(portal) {
       if (!portal.classList.contains('browser-portal--wait-user')) {
         return;
@@ -340,16 +359,20 @@ export function createBrowserPortalUi(context) {
       const FRAME_POLL_MS_FOREGROUND = 100;
       const FRAME_POLL_MS_BACKGROUND = 1000;
 
+      // Wait-session timing helpers.
+      // Coerce one payload field into a positive finite number.
       function numericPayloadValue(value) {
         const number = Number(value);
         return Number.isFinite(number) && number > 0 ? number : 0;
       }
 
+      // Convert one epoch-seconds value from the server into milliseconds.
       function epochSecondsToMs(value) {
         const number = numericPayloadValue(value);
         return number > 0 ? number * 1000 : 0;
       }
 
+      // Resolve the wait-session deadline timestamp in milliseconds.
       function waitDeadlineAtMs() {
         const deadline = Number(portal.dataset.browserWaitDeadlineAt || 0) || 0;
         if (deadline > 0) {
@@ -360,6 +383,9 @@ export function createBrowserPortalUi(context) {
         return (startedAt || Date.now()) + (timeoutSeconds * 1000);
       }
 
+
+      // Frame polling.
+      // Start or restart the frame poll interval for the active tab visibility.
       function armFramePollInterval() {
         if (framePollTimer) {
           window.clearInterval(framePollTimer);
@@ -374,6 +400,7 @@ export function createBrowserPortalUi(context) {
         }
       }
 
+      // Re-arm polling when the document visibility state changes.
       function onFramePollVisibility() {
         if (!portal.isConnected || !portal.classList.contains('browser-portal--wait-user')) {
           document.removeEventListener('visibilitychange', onFramePollVisibility);
@@ -382,10 +409,12 @@ export function createBrowserPortalUi(context) {
         armFramePollInterval();
       }
 
+      // Stop listening for visibility changes on this portal node.
       function detachFramePollVisibility() {
         document.removeEventListener('visibilitychange', onFramePollVisibility);
       }
 
+      // Report whether the portal chip already shows a terminal session state.
       function portalLiveUiShowsSessionEnded() {
         const chip = portal.querySelector('.browser-portal-status');
         if (chip) {
@@ -398,6 +427,7 @@ export function createBrowserPortalUi(context) {
         return attr === 'done' || attr === 'failed';
       }
 
+      // Read the frame object from one browser portal API payload.
       function frameFromPayload(payload) {
         if (!payload || typeof payload !== 'object') {
           return null;
@@ -405,6 +435,9 @@ export function createBrowserPortalUi(context) {
         return payload.frame && typeof payload.frame === 'object' ? payload.frame : null;
       }
 
+
+      // Manual control input.
+      // Ensure the hidden textarea used for keyboard capture exists.
       function ensureKeyCapture() {
         if (!frame) {
           return null;
@@ -424,6 +457,7 @@ export function createBrowserPortalUi(context) {
         return keyCapture;
       }
 
+      // Move focus into the keyboard capture surface for remote typing.
       function focusKeyCapture() {
         const capture = ensureKeyCapture();
         if (capture) {
@@ -439,6 +473,9 @@ export function createBrowserPortalUi(context) {
         }
       }
 
+
+      // Portal status helpers.
+      // Merge one server payload into local portal session state.
       function applyFramePayload(payload) {
         if (payload && Number.isFinite(Number(payload.version))) {
           latestVersion = Math.max(latestVersion, Number(payload.version));
@@ -467,12 +504,14 @@ export function createBrowserPortalUi(context) {
         }
       }
 
+      // Update the manual status label text in the portal strip.
       function setManualStatus(text) {
         if (statusText) {
           statusText.textContent = text;
         }
       }
 
+      // Apply one portal status class and label to the strip chip.
       function setPortalStatus(statusName, text) {
         const normalized = String(statusName || '').trim().toLowerCase() || 'waiting';
         portal.dataset.browserStatus = normalized;
@@ -486,6 +525,7 @@ export function createBrowserPortalUi(context) {
         setManualStatus(text || statusLabel(normalized));
       }
 
+      // Cancel the countdown animation frame for this portal node.
       function cancelWaitTimer() {
         if (!portalWaitTimerByEl) {
           return;
@@ -497,6 +537,7 @@ export function createBrowserPortalUi(context) {
         }
       }
 
+      // Tear down polling, timers, and manual control for one portal node.
       function stopBrowserPortalManualLoop(reason) {
         detachFramePollVisibility();
         if (framePollTimer) {
@@ -513,6 +554,7 @@ export function createBrowserPortalUi(context) {
         setPortalStatus(reason === 'Broadcast failed' ? 'failed' : 'done', reason || 'Session ended');
       }
 
+      // Draw a short-lived click ring at the pointer position in the frame.
       function addClickRing(event) {
         if (!frame) {
           return;
@@ -528,6 +570,7 @@ export function createBrowserPortalUi(context) {
         }, { once: true });
       }
 
+      // Map pointer coordinates into the visible browser image viewport.
       function browserImageGeometry() {
         if (!frame) {
           return null;
@@ -560,6 +603,7 @@ export function createBrowserPortalUi(context) {
         };
       }
 
+      // Poll the backend once for the latest browser portal frame state.
       async function pollFrameOnce() {
         if (!portal.isConnected || !portal.classList.contains('browser-portal--wait-user')) {
           return;
@@ -604,6 +648,9 @@ export function createBrowserPortalUi(context) {
         }
       }
 
+
+      // Portal event transport.
+      // Send one manual browser portal event to the backend.
       async function sendPortalEvent(type, payload) {
         if (!portal.isConnected || !portal.classList.contains('browser-portal--wait-user')) {
           return false;
@@ -665,6 +712,7 @@ export function createBrowserPortalUi(context) {
         }
       }
 
+      // Send one typed text chunk as a portal type event.
       function sendTypedText(text) {
         const value = String(text || '');
         if (value) {
@@ -672,6 +720,7 @@ export function createBrowserPortalUi(context) {
         }
       }
 
+      // Route keyboard input from the portal frame to backend events.
       function handlePortalKeyDown(event) {
         if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing) {
           return;
@@ -700,6 +749,7 @@ export function createBrowserPortalUi(context) {
         }
       }
 
+      // Forward pasted plain text into the remote browser session.
       function handlePortalPaste(event) {
         event.preventDefault();
         const text = event.clipboardData ? event.clipboardData.getData('text/plain') : '';
@@ -709,6 +759,7 @@ export function createBrowserPortalUi(context) {
         }
       }
 
+      // Forward buffered characters from the hidden capture textarea.
       function handleCaptureInput(event) {
         const capture = event.target && event.target.classList && event.target.classList.contains('browser-portal-key-capture')
           ? event.target
@@ -721,6 +772,8 @@ export function createBrowserPortalUi(context) {
         sendTypedText(text);
       }
 
+
+      // One-time portal event wiring.
       if (portal.dataset.browserPortalHydrated !== '1') {
         portal.dataset.browserPortalHydrated = '1';
         if (frame) {
@@ -787,6 +840,7 @@ export function createBrowserPortalUi(context) {
         portal.dataset.browserWaitDeadlineAt = String(Date.now() + (fallbackTimeoutSeconds * 1000));
       }
 
+      // Update the wait countdown label on each animation frame.
       function tick() {
         if (!portal.isConnected || !portal.classList.contains('browser-portal--wait-user')) {
           if (portalWaitTimerByEl) {
@@ -840,6 +894,7 @@ export function createBrowserPortalUi(context) {
     });
   }
 
+  // Replace browser tool rows with one portal segment when debug mode is off.
   function enhanceSegments(segments, options) {
     const sourceSegments = Array.isArray(segments) ? segments : [];
     if (browserDebugEnabled(options)) {

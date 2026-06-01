@@ -29,8 +29,8 @@ CONFIG_FILE_PATH = os.getenv(
 )
 
 
+# Load sandbox.env into os.environ (does not overwrite vars already set).
 def _load_sandbox_env(path: str) -> None:
-    """Load sandbox.env into os.environ (does not overwrite vars already set)."""
     try:
         with open(path, encoding="utf-8") as fh:
             for raw_line in fh:
@@ -193,9 +193,8 @@ _RG_TYPE_FALLBACK = {
 }
 
 
+# Return ripgrep type aliases mapped to representative glob patterns.
 def _load_rg_type_map() -> dict[str, str]:
-    """Return ripgrep type aliases mapped to representative glob patterns."""
-
     try:
         result = subprocess.run(
             ["rg", "--type-list"],
@@ -235,11 +234,8 @@ def _load_rg_type_map() -> dict[str, str]:
 RG_TYPE_TO_GLOB = _load_rg_type_map()
 
 
-# Workspace validation.
-
+# Return True when the host workspace path looks safe.
 def _validate_workspace_path(path: str) -> bool:
-    """Return True when the host workspace path looks safe."""
-
     normalized = os.path.normpath(os.path.abspath(path)).lower()
     path_name = os.path.basename(normalized.rstrip("\\/"))
     dangerous_patterns = [
@@ -284,11 +280,8 @@ if not IN_CONTAINER and not _validate_workspace_path(HOST_WORKSPACE):
 HOST_WORKSPACE = os.path.abspath(HOST_WORKSPACE)
 
 
-# Import root normalization.
-
+# Return normalized host roots allowed for imports.
 def get_allowed_import_roots() -> list[str]:
-    """Return normalized host roots allowed for imports."""
-
     raw_roots: list[str] = []
 
     if IMPORT_ROOTS_ENV.strip():

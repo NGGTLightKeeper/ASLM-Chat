@@ -1,27 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Web Search service.
-
-This module is the single orchestration point for fast web search.
-It replaces the scattered search logic from legacy src/engine.py.
-
-Architecture
-------------
-  1. Run DDGS search (optionally supplemented by hosted API engines)
-  2. Deduplicate results by normalized URL, domain+title, snippet similarity
-  3. Fetch previews for top candidates (httpx → curl_cffi, cache-first)
-  4. Soft-rerank by semantic + lexical + trust signal
-  5. Format and return a clean text response
-
-All parameters default to values from core.config.SearchConfig.
-
-Public API
-----------
-WebSearchService            -- async service class
-run_web_search(query, ...)  -- top-level convenience coroutine
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -97,6 +75,7 @@ _CACHE_PATH = Path(__file__).resolve().parent.parent / "_cache" / "source_cache.
 _cache = SourceCache(str(_CACHE_PATH))
 
 
+# True for HTTP redirect status codes.
 def _is_redirect_status(status_code: int) -> bool:
     return status_code in {301, 302, 303, 307, 308}
 
@@ -105,8 +84,8 @@ def _is_redirect_status(status_code: int) -> bool:
 _http_connector: Optional["aiohttp.TCPConnector"] = None  # type: ignore[name-defined]
 
 
+# Return (or lazily create) the shared TCPConnector for preview fetches.
 async def _get_http_connector(concurrency: int) -> "aiohttp.TCPConnector":  # type: ignore[name-defined]
-    """Return (or lazily create) the shared TCPConnector for preview fetches."""
     global _http_connector
     import aiohttp as _aiohttp
     if _http_connector is None or _http_connector.closed:
@@ -116,18 +95,15 @@ async def _get_http_connector(concurrency: int) -> "aiohttp.TCPConnector":  # ty
     return _http_connector
 
 
+# Close shared HTTP connector on MCP server shutdown.
 async def shutdown_web_search() -> None:
-    """Close shared HTTP connector on MCP server shutdown.
-
-    Call this from the server lifespan handler to ensure open sockets are
-    released cleanly instead of leaking on process exit.
-    """
     global _http_connector
     if _http_connector is not None and not _http_connector.closed:
         await _http_connector.close()
         _http_connector = None
 
 
+# aiohttp text fetch with per-redirect SSRF checks.
 async def _aiohttp_get_text_checked(
     session,
     url: str,
@@ -135,7 +111,6 @@ async def _aiohttp_get_text_checked(
     headers: dict[str, str] | None = None,
     content_tokens: tuple[str, ...] = ("html", "xml", "text"),
 ) -> str | None:
-    """Fetch text with SSRF checks before the request and after each redirect."""
     current_url = validate_public_fetch_url(url)
     for _ in range(max_safe_redirects() + 1):
         async with session.get(current_url, allow_redirects=False, headers=headers) as resp:
@@ -151,6 +126,7 @@ async def _aiohttp_get_text_checked(
     return None
 
 
+# curl_cffi text fetch with per-redirect SSRF checks.
 def _curl_get_text_checked(
     url: str,
     *,
@@ -158,7 +134,6 @@ def _curl_get_text_checked(
     headers: dict[str, str],
     content_tokens: tuple[str, ...] = ("html", "xml", "text"),
 ) -> str | None:
-    """curl_cffi text fetch with the same redirect-by-redirect SSRF checks."""
     from curl_cffi import requests as cffi_req
 
     current_url = validate_public_fetch_url(url)
@@ -191,13 +166,13 @@ _SEARCH_EFFORT_ALIASES = {
     "standard": "medium",
 }
 
-# ---------------------------------------------------------------------------
-# URL utilities (inlined from legacy engine.py, no external deps)
-# ---------------------------------------------------------------------------
 
+# Generate a short hex request id for trace logs.
 def _make_request_id() -> str:
     return secrets.token_hex(4)
 
+
+# Emit a structured trace line for web_search stages.
 def _trace(req_id: str, stage: str, **fields: object) -> None:
     extras = " ".join(f"{key}={value!r}" for key, value in fields.items())
     message = f"req={req_id} stage={stage}"
@@ -205,16 +180,6 @@ def _trace(req_id: str, stage: str, **fields: object) -> None:
         message = f"{message} {extras}"
     trace_logger.info(message)
 
-
-# ---------------------------------------------------------------------------
-# Query classification helpers
-# ---------------------------------------------------------------------------
-
-# _QUERY_STOPWORDS imported from core.cache.query_normalizer above
-
-# ---------------------------------------------------------------------------
-# Time range helpers
-# ---------------------------------------------------------------------------
 
 # Maps human-readable aliases to DDGS timelimit values (d/w/m/y).
 _TIME_RANGE_MAP: dict[str, str] = {
@@ -230,25 +195,12 @@ _TIME_RANGE_MAP: dict[str, str] = {
 }
 
 
+# Map a human-readable time range alias to a DDGS timelimit (d/w/m/y).
 def _normalize_time_range(time_range: Optional[str]) -> Optional[str]:
-    """Map a human-readable time range alias to a DDGS timelimit value.
-
-    Returns None for unrecognised/empty input so the caller can decide
-    whether to fall back to no filter or raise.
-
-    >>> _normalize_time_range("today")  # "d"
-    >>> _normalize_time_range("week")   # "w"
-    >>> _normalize_time_range("y")      # "y"
-    >>> _normalize_time_range(None)     # None
-    """
     if not time_range:
         return None
     return _TIME_RANGE_MAP.get(time_range.strip().lower().replace("-", "_"))
 
-
-# ---------------------------------------------------------------------------
-# Smart timelimit inference
-# ---------------------------------------------------------------------------
 
 # Maps primary query type → DDGS timelimit.
 # Rationale:
@@ -268,11 +220,8 @@ _AUTO_TIMELIMIT: dict[str, Optional[str]] = {
 }
 
 
+# Infer DDGS timelimit from primary classified query type.
 def _auto_timelimit(query_types: list[str]) -> Optional[str]:
-    """Infer the appropriate DDGS timelimit from the classified query types.
-
-    Uses the primary type.  Falls back to None (no restriction) for unknown types.
-    """
     primary = query_types[0] if query_types else "general"
     return _AUTO_TIMELIMIT.get(primary, None)
 
@@ -281,11 +230,8 @@ def _auto_timelimit(query_types: list[str]) -> Optional[str]:
 _TIMELIMIT_ORDER: dict[str, int] = {"d": 0, "w": 1, "m": 2, "y": 3}
 
 
+# Return the more restrictive of two timelimits (None = no restriction).
 def _stricter_timelimit(a: Optional[str], b: Optional[str]) -> Optional[str]:
-    """Return the more restrictive (shorter window) of two timelimits.
-
-    None means "no restriction" — the least restrictive option.
-    """
     if a is None:
         return b
     if b is None:
@@ -293,8 +239,8 @@ def _stricter_timelimit(a: Optional[str], b: Optional[str]) -> Optional[str]:
     return a if _TIMELIMIT_ORDER.get(a, 99) <= _TIMELIMIT_ORDER.get(b, 99) else b
 
 
+# True when the query anchors to a year before last calendar year.
 def _has_historical_year_anchor(query: str) -> bool:
-    """Return True when a query explicitly anchors itself to an older year."""
     raw_years = re.findall(r'\b((?:19|20)\d{2})\b', query or "")
     if not raw_years:
         return False
@@ -304,13 +250,14 @@ def _has_historical_year_anchor(query: str) -> bool:
     return min(int(year) for year in raw_years) < this_year - 1
 
 
+# Combine query-type auto timelimit with historical-year override.
 def _resolve_auto_timelimit(query: str) -> Optional[str]:
-    """Combine query-type freshness with explicit historical-year intent."""
     if _has_historical_year_anchor(query):
         return None
     return _auto_timelimit(infer_query_types(query))
 
 
+# Map trailing year tokens in the query to a DDGS timelimit when mode is timelimit.
 def _year_hint_timelimit(
     query: str,
     mode: str,
@@ -318,17 +265,6 @@ def _year_hint_timelimit(
     prev: Optional[str],
     older: Optional[str],
 ) -> Optional[str]:
-    """Extract a year from the query and return a corresponding timelimit.
-
-    Only fires when:
-      - mode is "timelimit"
-      - the query contains freshness hints OR a comma-preceded trailing year
-
-    The most recent year found is used.  Maps:
-      year >= this year  → *current*  (default "m")
-      year == last year  → *prev*     (default "y")
-      year <  last year  → *older*    (default None)
-    """
     if (mode or "").strip().lower() != "timelimit":
         return None
 
@@ -354,6 +290,7 @@ def _year_hint_timelimit(
         return older
 
 
+# Apply year_hint_mode: strip years and/or derive timelimit from config.
 def _apply_year_hint_policy(query: str, qcfg: object) -> tuple[str, Optional[str]]:
     mode = str(getattr(qcfg, "year_hint_mode", "timelimit") or "timelimit").strip().lower()
     if mode not in {"timelimit", "strip", "none"}:
@@ -395,22 +332,8 @@ _TRAILING_YEAR_FRESHNESS_HINTS: frozenset[str] = frozenset({
 })
 
 
+# Strip year tokens used as freshness hints (comma-trailing or with freshness words).
 def _strip_trailing_year(query: str) -> str:
-    """Remove year/year-range tokens that a model appended as time hints.
-
-    Three cases, in priority order:
-
-    1. Comma-preceded trailing year ("AI developments, 2023-2024")
-       → always stripped; comma signals it is a metadata tag.
-
-    2. Freshness hint present ("latest AI news 2026", "GPT-5.4 2026 benchmarks latest")
-       → ALL standalone year tokens stripped, anywhere in the query.
-       Rationale: timelimit is already set automatically from the query type, so the
-       year is redundant noise that can confuse the search engine.
-
-    3. No freshness hint ("SOTA LLM benchmarks 2024")
-       → left intact; the year is a genuine temporal anchor.
-    """
     # Case 1: comma-separated trailing year → unconditional strip
     if _TRAILING_YEAR_COMMA_RE.search(query):
         cleaned = _TRAILING_YEAR_COMMA_RE.sub("", query).strip()
@@ -427,15 +350,7 @@ def _strip_trailing_year(query: str) -> str:
 
 
 
-
-
-
-
-
-
-# ---------------------------------------------------------------------------
 # Query quality gate — SEO spam words & word-count ceiling
-# ---------------------------------------------------------------------------
 
 #: Words that signal an SEO/clickbait-style query rather than a focused search
 #: expression.  This list intentionally stays narrow: ordinary research intents
@@ -591,22 +506,8 @@ _OPERATOR_TOKEN_RE = re.compile(
 )
 
 
+# Count content words in a query (operators and quoted phrases excluded).
 def _count_content_tokens(query: str) -> int:
-    """Count only the *content* words in a query, ignoring search operators.
-
-    Operators stripped before counting:
-      ``site:`` / ``-site:`` / ``-domain.tld`` / ``+word`` / ``OR`` / ``AND`` / ``NOT``
-
-    Quoted phrases (``"foo bar"``) count as **one** content token, because they
-    represent a single search signal despite containing multiple words.
-
-    Examples::
-
-        "asyncio TaskGroup site:github.com"          → 2  (asyncio, taskgroup)
-        '"torch.compile" issues Python 3.12'         → 4  ("torch.compile", issues, python, 3.12)
-        'H3N2 treatment site:who.int OR site:pubmed' → 2  (h3n2, treatment)
-        'QUIC bypass -site:wikipedia.org'            → 2  (quic, bypass)
-    """
     q = query.strip().lower()
 
     # Phase 1 — consume and count quoted phrases as single tokens, then remove them.
@@ -635,9 +536,8 @@ _QUERY_REJECTION_TOO_LONG: str = (
 )
 
 
+# True when a banned SEO keyword appears as a whole word or phrase.
 def _contains_spam_keyword(query: str, keyword: str) -> bool:
-    """Return whether a banned keyword appears as a real word or phrase."""
-
     keyword = str(keyword or "").strip().lower()
     if not keyword:
         return False
@@ -652,26 +552,13 @@ def _contains_spam_keyword(query: str, keyword: str) -> bool:
     return keyword in query
 
 
+# Query text with operators removed, for SEO spam scanning.
 def _spam_scan_text(query: str) -> str:
-    """Return the part of a query that should be checked for SEO markers."""
-
     return _OPERATOR_TOKEN_RE.sub(" ", query.strip().lower()).strip()
 
 
+# Validate query quality; return None or a BAD_QUERY rejection message.
 def validate_search_query(query: str) -> str | None:
-    """Validate a search query for quality before sending it to the engine.
-
-    Returns ``None`` when the query passes all checks, or a plain-English
-    rejection message (starting with ``BAD_QUERY:``) that the caller should
-    return directly to the model so it can reformulate.
-
-    Checks (in order):
-      1. SEO spam words — multilingual blocklist applied after search operators
-         and quoted exact phrases are removed.
-      2. Content-word ceiling — more than ``_QUERY_MAX_TOKENS`` non-operator
-         words is treated as a keyword-pile / sentence query.
-         Operators (site:, -site:, OR, quoted phrases) are excluded from count.
-    """
     if not query or not query.strip():
         return None  # empty queries are handled elsewhere
 
@@ -708,19 +595,8 @@ _DATE_SIGNAL_RE = re.compile(
 _query_terms = _query_terms_from_scoring
 
 
+# Detect dominant script → 2-letter language code for DDGS region routing.
 def infer_query_language(query: str) -> str:
-    """Detect the dominant script of a query using Unicode block counts.
-
-    Returns a 2-letter language code understood by DDGS region mapping,
-    or "en" as the default fallback for Latin/undetected scripts.
-
-    Detection is purely character-based (no external deps):
-      - Script-specific Unicode blocks give unambiguous signals for
-        Cyrillic, Arabic, Hebrew, CJK, Kana, Hangul, Thai, Devanagari, Greek.
-      - Latin-based languages (de, fr, es, …) are NOT distinguished here;
-        they route through the English engine-router path, which handles
-        them fine via the wt-wt region.
-    """
     text = str(query or "")
     if not text:
         return "en"
@@ -773,17 +649,12 @@ def infer_query_language(query: str) -> str:
     return "en"
 
 
-
-
+# Classify query into up to 3 routing types (rules-based profiles).
 def infer_query_types(query: str) -> list[str]:
-    """Classify query into routing-aware types (up to 3), priority-ordered.
-
-    Rule profiles live in ``core/query/class_profiles/``. For ASLM embedding classifier
-    output, use ``infer_query_types_hybrid(query, model_scores=...)`` from ``core.query``.
-    """
     return infer_query_types_from_rules(query, limit=3)
 
 
+# Extract years, journalistic intent, and query terms for scoring helpers.
 def _parse_query_profile(query: str) -> dict:
     q = (query or "").lower()
     years = _YEAR_RE.findall(query)
@@ -791,10 +662,6 @@ def _parse_query_profile(query: str) -> dict:
     has_intent = bool(tokens & journalistic_intent_terms())
     return {"years": years, "has_intent": has_intent, "terms": _query_terms(query)}
 
-
-# ---------------------------------------------------------------------------
-# Deduplication
-# ---------------------------------------------------------------------------
 
 _HUB_URL_SEGMENTS = frozenset({
     "category", "categories", "tag", "tags", "topic", "topics",
@@ -809,6 +676,7 @@ _HUB_TITLE_PHRASES = (
 )
 
 
+# Penalize hub/listing URLs and generic index pages in triage scoring.
 def _hub_penalty(url: str, title: str, snippet: str) -> float:
     penalty = 0.0
     path_parts = set((urlparse(url).path or "").lower().strip("/").split("/"))
@@ -827,7 +695,6 @@ def _hub_penalty(url: str, title: str, snippet: str) -> float:
 
 @dataclass
 class TriageResult:
-    """Decision produced by _triage_results for one search result."""
     skip: bool          # True → don't fetch, use snippet only
     fetch_policy: str   # "cheap" (httpx only) | "race" (httpx + curl_cffi parallel)
     score: float        # triage relevance score [0, 1]
@@ -846,6 +713,7 @@ class SearchCycleContext:
     debug_trace: dict = field(default_factory=dict)
 
 
+# Resolve pipeline mode from env or search_config (rules vs aslm_embedding).
 def _pipeline_mode() -> str:
     from core.config.pipeline_modes import normalize_pipeline_mode
 
@@ -855,17 +723,19 @@ def _pipeline_mode() -> str:
     return normalize_pipeline_mode(load_search_config().models.pipeline)
 
 
+# Cached models section from search_config.
 def _models_config():
     return load_search_config().models
 
 
+# Neural stack runs only on high effort when pipeline is aslm_embedding.
 def _neural_stack_enabled(effort: str | None = None) -> bool:
-    """Neural stack may run only on high effort when pipeline is ``aslm_embedding``."""
     if _pipeline_mode() == "rules":
         return False
     return _normalize_search_effort(effort) == "high"
 
 
+# True when ASLM encoder should load for this effort.
 def _neural_encoder_enabled(effort: str | None = None) -> bool:
     if not _neural_stack_enabled(effort):
         return False
@@ -875,6 +745,7 @@ def _neural_encoder_enabled(effort: str | None = None) -> bool:
     )
 
 
+# True when ASLM decoder should load for this effort.
 def _neural_decoder_enabled(effort: str | None = None) -> bool:
     if not _neural_stack_enabled(effort):
         return False
@@ -884,19 +755,22 @@ def _neural_decoder_enabled(effort: str | None = None) -> bool:
     )
 
 
+# True when encoder or decoder is active for this effort.
 def _use_neural_pipeline(effort: str | None = None) -> bool:
-    """True when at least one neural component is active for this effort."""
     return _neural_encoder_enabled(effort) or _neural_decoder_enabled(effort)
 
 
+# Which neural components (encoder, decoder) are enabled for this effort.
 def _model_session_components(effort: str | None = None) -> tuple[bool, bool]:
     return _neural_encoder_enabled(effort), _neural_decoder_enabled(effort)
 
 
+# Format top class scores for trace/debug output.
 def _format_model_label_top(top: list[tuple[str, float]], limit: int = 5) -> list[list[Any]]:
     return [[name, round(float(score), 4)] for name, score in top[:limit]]
 
 
+# Build encoder/decoder load status dict for neural session snapshots.
 def _component_load_status(
     *,
     enabled: bool,
@@ -925,6 +799,7 @@ def _component_load_status(
     }
 
 
+# Snapshot neural model session load state for tracing.
 def _model_session_snapshot(
     model_session: SearchModelSession | None,
     effort: str | None,
@@ -978,6 +853,7 @@ def _model_session_snapshot(
     }
 
 
+# Log neural encoder/decoder usage and classification debug to trace.
 def _log_neural_usage(
     req_id: str,
     *,
@@ -1038,6 +914,7 @@ def _log_neural_usage(
             )
 
 
+# Parse ASLM_WEB_SEARCH_* env flag (0/false/no/off → disabled).
 def _env_enabled(name: str, *, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -1045,6 +922,7 @@ def _env_enabled(name: str, *, default: bool) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
 
 
+# True when neural models should stay loaded between searches.
 def _keep_search_models_loaded() -> bool:
     return _env_enabled(
         "ASLM_WEB_SEARCH_KEEP_MODELS",
@@ -1052,6 +930,7 @@ def _keep_search_models_loaded() -> bool:
     )
 
 
+# Device string for ASLM models (env or config, default cpu).
 def _search_model_device() -> str:
     return (os.environ.get("ASLM_WEB_SEARCH_MODEL_DEVICE") or load_search_config().models.search_device or "cpu").strip().lower()
 
@@ -1060,8 +939,8 @@ _MODEL_SESSION_LOCK = threading.RLock()
 _SHARED_MODEL_SESSION: SearchModelSession | None = None
 
 
+# Release the optional process-wide neural model session.
 def clear_shared_search_model_session() -> None:
-    """Release the optional process-wide neural model session."""
     global _SHARED_MODEL_SESSION
     with _MODEL_SESSION_LOCK:
         if _SHARED_MODEL_SESSION is not None:
@@ -1069,6 +948,7 @@ def clear_shared_search_model_session() -> None:
         _SHARED_MODEL_SESSION = None
 
 
+# True when a cached session matches requested encoder/decoder/device.
 def _session_matches_components(
     session: SearchModelSession,
     *,
@@ -1084,6 +964,7 @@ def _session_matches_components(
     )
 
 
+# Get or create the process-wide SearchModelSession (when keep_loaded).
 def _get_shared_search_model_session(
     effort: str | None = None,
     *,
@@ -1116,6 +997,7 @@ def _get_shared_search_model_session(
         return _SHARED_MODEL_SESSION
 
 
+# Context manager for per-search or shared neural model session.
 @contextmanager
 def _search_model_session_scope(effort: str | None = None):
     load_encoder, load_decoder = _model_session_components(effort)
@@ -1141,10 +1023,12 @@ def _search_model_session_scope(effort: str | None = None):
         yield model_session
 
 
+# Convert class mix weights to legacy query type name list.
 def _class_mix_to_legacy_types(class_mix: list[QueryClassWeight]) -> list[str]:
     return [item.name for item in class_mix] or ["general"]
 
 
+# Build class mix from rules-only profile scoring.
 def _build_legacy_class_mix(query: str) -> list[QueryClassWeight]:
     types = infer_query_types_from_rules(query, limit=3)
     if not types:
@@ -1155,6 +1039,7 @@ def _build_legacy_class_mix(query: str) -> list[QueryClassWeight]:
     ])
 
 
+# Build class mix via ASLM encoder with rules fallback and debug metadata.
 def _build_neural_class_mix(query: str, model_session: SearchModelSession | None, effort: str | None = None) -> tuple[list[QueryClassWeight], dict]:
     if not _neural_encoder_enabled(effort):
         mix = _build_legacy_class_mix(query)
@@ -1212,6 +1097,7 @@ def _build_neural_class_mix(query: str, model_session: SearchModelSession | None
     }
 
 
+# Cheap lexical/trust score used before preview fetching.
 def _triage_soft_score(
     result: SearchResult,
     query: str,
@@ -1219,7 +1105,6 @@ def _triage_soft_score(
     index: int,
     total: int,
 ) -> float:
-    """Cheap lexical/trust score used before preview fetching."""
     title = (result.title or "").strip()
     snippet = (result.snippet or "").strip()
     pos_score = 1.0 - (index / max(total - 1, 1))
@@ -1244,6 +1129,7 @@ def _triage_soft_score(
     return max(0.0, min(1.0, score))
 
 
+# Run cheap triage for one SERP result (skip/fetch_policy/score).
 def _triage_one_result(
     result: SearchResult,
     query: str,
@@ -1253,7 +1139,6 @@ def _triage_one_result(
     trust_reg=None,
     rep_store=None,
 ) -> TriageResult:
-    """Run the cheap triage logic for a single result."""
     url = result.url
     title = (result.title or "").strip()
     snippet = (result.snippet or "").strip()
@@ -1289,16 +1174,8 @@ def _triage_one_result(
     return TriageResult(skip=False, fetch_policy="cheap", score=score)
 
 
+# Cheap per-result triage; populates result.trust_tier when missing.
 def _triage_results(results: list[SearchResult], query: str) -> list[TriageResult]:
-    """Cheap per-result triage (< 1ms each, no network).
-
-    Returns a TriageResult per result:
-      - skip: whether to skip preview fetch entirely
-      - fetch_policy: "cheap" or "race" (determines parallelism in fetch)
-      - score: relevance signal
-
-    Side effect: populates result.trust_tier when it's still "?".
-    """
     try:
         trust_reg = get_trust_registry()
     except Exception as _e:
@@ -1339,8 +1216,8 @@ _DOMAIN_CAP_OVERRIDES: dict[str, int] = {
 }
 
 
+# Enforce per-domain cap so one host cannot dominate the candidate pool.
 def _apply_domain_cap(results: list[SearchResult]) -> list[SearchResult]:
-    """Enforce per-domain result cap to prevent any single source monopolising the pool."""
     from urllib.parse import urlparse as _up
     counts: dict[str, int] = {}
     out: list[SearchResult] = []
@@ -1354,6 +1231,7 @@ def _apply_domain_cap(results: list[SearchResult]) -> list[SearchResult]:
     return out
 
 
+# Attach domain-registry routing_score and debug to each result.
 def _apply_registry_routing(results: list[SearchResult], class_mix: list[QueryClassWeight]) -> None:
     for result in results:
         try:
@@ -1366,6 +1244,7 @@ def _apply_registry_routing(results: list[SearchResult], class_mix: list[QueryCl
             result.routing_debug = {}
 
 
+# Score SERP snippets with ASLM decoder when enabled.
 def _apply_snippet_decoder(
     results: list[SearchResult],
     query: str,
@@ -1432,6 +1311,7 @@ def _apply_snippet_decoder(
     )
 
 
+# Score fetched preview bodies with ASLM decoder when enabled.
 def _apply_parsed_decoder(
     results: list[SearchResult],
     payloads: list[PreviewPayload],
@@ -1510,8 +1390,8 @@ def _apply_parsed_decoder(
     )
 
 
+# Dedup by normalized URL, domain+title, and snippet signature.
 def _dedup_results(results: list[SearchResult]) -> list[SearchResult]:
-    """Dedup by normalized URL, domain+title, and snippet signature."""
     seen_urls: set[str] = set()
     seen_keys: set[str] = set()
     out: list[SearchResult] = []
@@ -1531,10 +1411,6 @@ def _dedup_results(results: list[SearchResult]) -> list[SearchResult]:
         out.append(r)
     return out
 
-
-# ---------------------------------------------------------------------------
-# Scoring
-# ---------------------------------------------------------------------------
 
 _TIER_TRUST_SCORES = {
     "A": 1.0,
@@ -1560,10 +1436,12 @@ _TRUST_BLEND_WEIGHTS: dict[str, tuple[float, float]] = {
 }
 
 
+# Static/dynamic trust blend weights for lexical scoring by query type.
 def _trust_blend_weights(query_type: str) -> tuple[float, float]:
     return _TRUST_BLEND_WEIGHTS.get(query_type, _TRUST_BLEND_WEIGHTS["general"])
 
 
+# Small score boost for academic: engine results on academic/medical queries.
 def _academic_engine_bonus(result: SearchResult, query_type: str) -> float:
     if query_type not in {"academic", "medical"}:
         return 0.0
@@ -1581,8 +1459,7 @@ def _academic_engine_bonus(result: SearchResult, query_type: str) -> float:
     return min(bonus, 0.14)
 
 
-
-
+# Boost when preview/body years match query year anchors; penalize mismatch.
 def _year_match_score(text: str, years: list[str]) -> float:
     if not years or not text:
         return 0.0
@@ -1599,12 +1476,12 @@ _PARSED_LEX_BODY_CHARS = 4_000
 _PARSED_LEX_MARGIN = 0.04
 
 
+# Lexical overlap using SERP fields plus fetched preview body text.
 def _parsed_lexical_score(
     query: str,
     result: SearchResult,
     payload: PreviewPayload,
 ) -> float:
-    """Lexical overlap using SERP fields plus fetched preview text (not SERP-only)."""
     body = (payload.text or "").strip()
     if not body:
         return 0.0
@@ -1619,6 +1496,7 @@ def _parsed_lexical_score(
     )
 
 
+# Combined rerank score: lexical, neural, trust, routing, and hub penalty.
 def _result_score(
     result: SearchResult,
     payload: PreviewPayload,
@@ -1694,16 +1572,8 @@ def _result_score(
     return max(0.0, score)
 
 
+# Content quality signal for reputation recording (no rank/trust position).
 def _content_quality_signal(payload: PreviewPayload, result: SearchResult, query: str) -> float:
-    """Raw content quality signal for reputation recording.
-
-    Deliberately excludes position/trust/rank so that the reputation system
-    tracks actual content quality, not search-engine ranking or existing tier.
-    Only called when payload.text is non-empty (fetch succeeded).
-
-    BM25-default path must be able to reach PROMOTE_THRESHOLD (0.72) on strong
-    previews, so parsed/snippet relevance is included (aligned with _result_score).
-    """
     lex = _lexical_score(query, result.title or "", result.snippet or "", result.url)
     parsed_lex = _parsed_lexical_score(query, result, payload)
     lex_component = (
@@ -1725,6 +1595,7 @@ def _content_quality_signal(payload: PreviewPayload, result: SearchResult, query
     return min(1.0, 0.30 * quality + 0.40 * relevance + 0.30 * lex_component)
 
 
+# Fill trust_tier from static registry, then dynamic auto-promote.
 def _resolve_result_trust_tier(
     result: SearchResult,
     url: str,
@@ -1732,7 +1603,6 @@ def _resolve_result_trust_tier(
     trust_reg,
     rep_store,
 ) -> None:
-    """Fill trust_tier from static registry, then dynamic auto-promote."""
     if (result.trust_tier or "?") != "?":
         return
     if trust_reg is not None:
@@ -1749,16 +1619,13 @@ def _resolve_result_trust_tier(
             logger.debug("rep_store.get_promoted_tier failed for %s: %s", url, _e)
 
 
-# ---------------------------------------------------------------------------
-# Preview fetching
-# ---------------------------------------------------------------------------
-
 from core.fetch.constants import DEFAULT_UA as _UA
 _PREFETCH_MAX_URLS: int = 5   # cap on background prefetch targets per search
 # Limit concurrent background prefetch tasks to avoid socket exhaustion under burst load.
 _PREFETCH_SEMAPHORE: Optional[asyncio.Semaphore] = None
 
 
+# Semaphore limiting concurrent background prefetch tasks.
 def _get_prefetch_semaphore() -> asyncio.Semaphore:
     global _PREFETCH_SEMAPHORE
     if _PREFETCH_SEMAPHORE is None:
@@ -1766,16 +1633,8 @@ def _get_prefetch_semaphore() -> asyncio.Semaphore:
     return _PREFETCH_SEMAPHORE
 
 
+# Fire-and-forget: prefetch uncached URLs into SourceCache (HTML only, no antibot).
 async def _prefetch_urls_background(urls: list[str], req_id: str = "-") -> None:
-    """Background task: fetch uncached URLs into SourceCache.
-
-    Fire-and-forget — called via ``asyncio.create_task()``.  Any exception is
-    silently swallowed so it never surfaces in the main search response.
-
-    Reuses the shared TCPConnector, so no new connection pools are created.
-    Only HTML/text content-types are stored; antibot pages are skipped.
-    URLs already fresh in cache are skipped immediately.
-    """
     import aiohttp as _aiohttp
 
     to_fetch: list[str] = []
@@ -1827,17 +1686,13 @@ async def _prefetch_urls_background(urls: list[str], req_id: str = "-") -> None:
 
 
 
+# Download PDF, extract text, densify with GliNER (tight preview caps).
 async def _fetch_pdf_preview(
     url: str,
     query: str,
     loop,
     req_id: str = "-",
 ) -> PreviewPayload:
-    """Download a PDF URL, extract text, densify with GliNER, return PreviewPayload.
-
-    Uses a strict 5 MB download cap and a 3 K char output target —
-    much tighter than read_page's full-extraction path.
-    """
     _UA_PDF = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -1939,6 +1794,7 @@ async def _fetch_pdf_preview(
     return PreviewPayload(text=text, quality_score=0.75, strategy_used="pdf_gliner")
 
 
+# Fetch one page preview (policy cheap = aiohttp only, race = aiohttp + curl_cffi).
 async def _fetch_preview_one(
     session,
     result: SearchResult,
@@ -1950,12 +1806,6 @@ async def _fetch_preview_one(
     fetch_timeout: float | None = None,
     req_id: str = "-",
 ) -> PreviewPayload:
-    """Fetch one page preview.
-
-    policy="cheap"  — aiohttp only (saves connections for lower-relevance results)
-    policy="race"   — aiohttp + curl_cffi launched simultaneously; first
-                      non-antibot response wins, loser is cancelled.
-    """
     async with sem:
         if fetch_timeout is None:
             fetch_timeout = float(load_search_config().search.preview_fetch_timeout)
@@ -2146,6 +1996,7 @@ async def _fetch_preview_one(
         return payload
 
 
+# Fetch previews concurrently; optional early_return_threshold cancels stragglers.
 async def _fetch_previews(
     results: list[SearchResult],
     query: str,
@@ -2159,13 +2010,6 @@ async def _fetch_previews(
     req_id: str = "-",
     deadline: float | None = None,
 ) -> list[PreviewPayload]:
-    """Fetch previews for a list of results concurrently.
-
-    policies — parallel list of fetch policies per result ("cheap" | "race").
-               If None, defaults to "cheap" for all.
-    early_return_threshold — cancel remaining fetches after this many non-empty
-                             payloads are collected (0 = wait for all).
-    """
     import aiohttp
     import math as _math
 
@@ -2290,21 +2134,9 @@ async def _fetch_previews(
     return payloads
 
 # ---------------------------------------------------------------------------
-# Result formatting
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Per-query-type output profiles
-# ---------------------------------------------------------------------------
-
+# Per-query-type caps: result count, preview depth, unparsed bonus thresholds.
 @dataclass
 class _OutputProfile:
-    """Controls how many results are shown and how deeply they are parsed.
-
-    Two strategies:
-      depth-first  — fewer results, richer parsed content, optional bonus snippets
-      breadth-first — more results, shallow parsing, speed over depth
-    """
     max_results: int           # final result count shown to the model
     preview_fetch_limit: int   # max pages to actually scrape
     unparsed_bonus: int        # unparsed results appended if score ≥ threshold
@@ -2316,6 +2148,7 @@ _DEPTH_PREVIEW_TYPES: frozenset[str] = frozenset({
 })
 
 
+# Max preview chars shown in formatted output by query type and effort.
 def _preview_display_limit(query_type: str | None, *, low_effort: bool) -> int:
     if low_effort:
         return 320
@@ -2324,6 +2157,7 @@ def _preview_display_limit(query_type: str | None, *, low_effort: bool) -> int:
     return 1600
 
 
+# Merge query-type chunk policy into preview extraction settings.
 def _configure_preview_settings(
     preview_settings: dict,
     *,
@@ -2356,22 +2190,25 @@ _DEFAULT_OUTPUT_PROFILE = _OUTPUT_PROFILES["general"]
 _ADAPTIVE_BREADTH_QUERY_TYPES: frozenset[str] = frozenset({"technical", "troubleshooting"})
 
 
+# Return depth-first or breadth-first output profile for the primary query type.
 def _get_output_profile(query_types: list[str]) -> _OutputProfile:
-    """Return the output profile for the primary query type."""
     return _OUTPUT_PROFILES.get(query_types[0] if query_types else "general",
                                 _DEFAULT_OUTPUT_PROFILE)
 
 
+# Normalize effort aliases (normal/default → medium).
 def _normalize_search_effort(effort: str | None) -> str:
     value = str(effort or "").strip().lower()
     value = _SEARCH_EFFORT_ALIASES.get(value, value)
     return value if value in _SEARCH_EFFORT_VALUES else "medium"
 
 
+# True when search effort is low (snippet-only, no previews).
 def _is_low_effort(opts: WebSearchOptions) -> bool:
     return _normalize_search_effort(opts.effort) == "low"
 
 
+# Scale max_results and preview limits for high effort.
 def _scale_output_profile(profile: _OutputProfile, multiplier: int) -> _OutputProfile:
     scaled = replace(profile)
     scaled.max_results = max(1, int(profile.max_results) * multiplier)
@@ -2380,6 +2217,7 @@ def _scale_output_profile(profile: _OutputProfile, multiplier: int) -> _OutputPr
     return scaled
 
 
+# Apply low/high effort overrides to an output profile.
 def _apply_effort_to_output_profile(profile: _OutputProfile, opts: WebSearchOptions) -> _OutputProfile:
     effort = _normalize_search_effort(opts.effort)
     if effort == "low":
@@ -2393,17 +2231,19 @@ def _apply_effort_to_output_profile(profile: _OutputProfile, opts: WebSearchOpti
     return profile
 
 
+# Re-apply low-effort caps after adaptive profile widening.
 def _enforce_effort_after_adaptation(profile: _OutputProfile, opts: WebSearchOptions) -> _OutputProfile:
     if _normalize_search_effort(opts.effort) == "low":
         return _apply_effort_to_output_profile(profile, opts)
     return profile
 
 
+# Final model-visible result cap (profile vs opts.max_results).
 def _effective_output_limit(profile: _OutputProfile, opts: WebSearchOptions) -> int:
-    """Return the final model-visible result cap for this query."""
     return max(1, min(int(profile.max_results), int(opts.max_results)))
 
 
+# Widen technical/troubleshooting output when preview evidence is thin.
 def _adapt_output_profile(
     results: list[SearchResult],
     triage: list[TriageResult],
@@ -2412,13 +2252,6 @@ def _adapt_output_profile(
     query_types: list[str],
     payloads: list[PreviewPayload] | None = None,
 ) -> tuple[_OutputProfile, dict[str, object]]:
-    """Expand technical/troubleshooting output breadth when evidence is thin.
-
-    This controller is intentionally conservative:
-      - only widens output for technical-style queries
-      - only expands, never shrinks, the baseline profile
-      - post-fetch adaptation can widen the displayed set, but does not refetch
-    """
     primary = query_types[0] if query_types else "general"
     meta: dict[str, object] = {
         "applied": False,
@@ -2529,6 +2362,7 @@ def _adapt_output_profile(
 _DOWNLOADABLE_EXTS = (".pdf", ".mp4", ".mp3", ".docx", ".xlsx", ".csv")
 
 
+# Short badge label for result URL type (VIDEO, PDF, WIKI, etc.).
 def _badge_type(url: str) -> str:
     u = url.lower()
     if "youtube.com" in u or "youtu.be" in u:
@@ -2546,6 +2380,7 @@ def _badge_type(url: str) -> str:
     return "WEB"
 
 
+# Resolve direct PDF URL from result metadata or arxiv abs link.
 def _infer_pdf_url(result: SearchResult) -> str:
     current = str(result.pdf_url or "").strip()
     if current:
@@ -2561,12 +2396,14 @@ def _infer_pdf_url(result: SearchResult) -> str:
     return ""
 
 
+# Populate pdf_url on each SearchResult when inferable.
 def _enrich_pdf_urls(results: list[SearchResult]) -> list[SearchResult]:
     for result in results:
         result.pdf_url = _infer_pdf_url(result)
     return results
 
 
+# Human-readable search engine / provider label for output.
 def _badge_engine(engine: str) -> str:
     e = engine.lower()
     if e.startswith("academic:"):
@@ -2585,6 +2422,7 @@ def _badge_engine(engine: str) -> str:
     return "DDGS"
 
 
+# Collapse whitespace and truncate text for snippet/preview display.
 def _display_text(text: str, limit: int) -> str:
     compact = " ".join((text or "").split()).strip(" ,;:|-")
     if not compact:
@@ -2592,13 +2430,8 @@ def _display_text(text: str, limit: int) -> str:
     return compact[:limit].rstrip(" ,;:|-")
 
 
+# Token Jaccard + char similarity for snippet/preview de-duplication.
 def _semantic_duplicate_ratio(a: str, b: str) -> float:
-    """Cheap semantic-ish duplicate score for snippet/preview de-duping.
-
-    Uses normalized token overlap plus character similarity. This catches exact
-    copies and near-copies without pulling embedding models into the response
-    formatting path.
-    """
     left = " ".join((a or "").lower().split())
     right = " ".join((b or "").lower().split())
     if not left or not right:
@@ -2617,6 +2450,7 @@ def _semantic_duplicate_ratio(a: str, b: str) -> float:
     return max(token_jaccard, char_ratio)
 
 
+# Drop preview text that largely duplicates the SERP snippet.
 def _dedupe_preview_against_snippet(snippet: str, preview: str, threshold: float = 0.92) -> str:
     if not preview:
         return ""
@@ -2625,6 +2459,7 @@ def _dedupe_preview_against_snippet(snippet: str, preview: str, threshold: float
     return "" if _semantic_duplicate_ratio(snippet, preview) >= threshold else preview
 
 
+# Normalized host from URL for display and favicons.
 def _source_domain(url: str) -> str:
     host = urlparse(url or "").netloc.lower()
     if "@" in host:
@@ -2634,6 +2469,7 @@ def _source_domain(url: str) -> str:
     return host.removeprefix("www.")
 
 
+# Short display label from domain (e.g. github.com → Github).
 def _display_domain(domain: str) -> str:
     parts = [p for p in (domain or "").split(".") if p]
     if len(parts) >= 2:
@@ -2645,10 +2481,12 @@ def _display_domain(domain: str) -> str:
     return label.replace("-", " ").title()
 
 
+# DuckDuckGo favicon URL for a domain.
 def _favicon_url(domain: str) -> str:
     return f"https://icons.duckduckgo.com/ip3/{domain}.ico" if domain else ""
 
 
+# Build SearchSource struct from a ranked result and optional preview.
 def _source_from_result(
     result: SearchResult,
     rank: int,
@@ -2681,6 +2519,7 @@ def _source_from_result(
     )
 
 
+# Citation-oriented context block for the model from SearchSource list.
 def _build_model_context(
     query: str,
     sources: list[SearchSource],
@@ -2728,6 +2567,7 @@ def _build_model_context(
     return "\n".join(lines).strip()
 
 
+# Stable citation handle id for a source rank within a search_id.
 def _citation_source_id(search_id: str, rank: int) -> str:
     compact = re.sub(r"[^a-z0-9]+", "", (search_id or "").lower())
     compact = compact.removeprefix("srch")
@@ -2735,6 +2575,7 @@ def _citation_source_id(search_id: str, rank: int) -> str:
     return f"c{namespace}-{rank}"
 
 
+# Compact UI chip payload for rich search responses.
 def _build_compact_ui(query: str, sources: list[SearchSource], limit: int = 3) -> dict[str, object]:
     visible = sources[: max(0, limit)]
     return {
@@ -2752,6 +2593,7 @@ def _build_compact_ui(query: str, sources: list[SearchSource], limit: int = 3) -
     }
 
 
+# Serialize SearchRichResult for MCP structuredContent.
 def _rich_result_to_dict(result: SearchRichResult) -> dict[str, object]:
     return {
         "query": result.query,
@@ -2771,8 +2613,8 @@ _HUMAN_DATE_RE = re.compile(
 )
 
 
+# Normalize engine date strings to 'Mon DD, YYYY' (empty if unparseable).
 def _normalize_date(raw: str) -> str:
-    """Normalize any engine date string to 'Mon DD, YYYY'. Returns '' if unparseable."""
     raw = (raw or "").strip()
     if not raw:
         return ""
@@ -2796,6 +2638,7 @@ def _normalize_date(raw: str) -> str:
     return ""
 
 
+# Build final MCP text output with depth-first vs breadth-first selection.
 def _format_results(
     results: list[SearchResult],
     payloads: list[PreviewPayload],
@@ -2810,16 +2653,6 @@ def _format_results(
     rep_store=None,
     max_results_override: int | None = None,
 ) -> str:
-    """Build the final text output for the MCP tool.
-
-    output_profile — controls result count and depth-first vs breadth-first
-    selection. Depth-first types (technical, academic, …) prefer parsed
-    results and add unparsed bonus only if score meets the threshold.
-    Breadth-first types (journalistic, forum, …) just take top N by score.
-
-    total_char_budget — if > 0, stop adding result blocks once the cumulative
-    character count would exceed it (prevents flooding the model context).
-    """
     max_results = max_results_override if max_results_override is not None else output_profile.max_results
     _qtypes = query_types if query_types else [query_type]
     scored: list[tuple[float, int, SearchResult, PreviewPayload]] = []
@@ -2940,6 +2773,7 @@ def _format_results(
     return "\n".join(lines).strip()
 
 
+# Select rich sources parsed-first while preserving requested volume.
 def _select_output_sources(
     results: list[SearchResult],
     payloads: list[PreviewPayload],
@@ -2952,8 +2786,6 @@ def _select_output_sources(
     rep_store=None,
     max_results_override: int | None = None,
 ) -> list[tuple[SearchResult, PreviewPayload]]:
-    """Select rich sources parsed-first while preserving the requested volume."""
-
     max_results = max_results_override if max_results_override is not None else output_profile.max_results
     _qtypes = query_types if query_types else [query_type]
     scored: list[tuple[float, int, SearchResult, PreviewPayload]] = []
@@ -3016,10 +2848,6 @@ def _select_output_sources(
     return [(result, payload) for _, _, result, payload in final]
 
 
-# ---------------------------------------------------------------------------
-# WebSearchService
-# ---------------------------------------------------------------------------
-
 @dataclass
 class WebSearchOptions:
     max_results: int = 10
@@ -3040,9 +2868,8 @@ class WebSearchOptions:
     effort_multiplier: int = 1
 
 
+# Orchestrate fast web search across DDGS and hosted search APIs.
 class WebSearchService:
-    """Orchestrate fast web search across DDGS and hosted search APIs."""
-
     def __init__(self, options: Optional[WebSearchOptions] = None) -> None:
         cfg = load_search_config()
         self._cfg = cfg
@@ -3052,6 +2879,7 @@ class WebSearchService:
             total_timeout=cfg.search.preview_total_timeout,
         )
 
+    # DDGS + hosted + academic fetch, merge, dedup, triage.
     async def _run_search_pipeline(
         self,
         query: str,
@@ -3065,7 +2893,6 @@ class WebSearchService:
         source_budget: dict[str, int] | None = None,
         model_session: SearchModelSession | None = None,
     ) -> tuple[list[SearchResult], list]:
-        """Shared provider fetch → merge → dedup → triage. Returns (deduped, triage)."""
         pool_multiplier = max(
             1,
             int(
@@ -3174,9 +3001,9 @@ class WebSearchService:
         triage = _triage_results(deduped, query) if deduped else []
         return deduped, triage
 
+    # Build progressively simpler query variants for zero-result fallback.
     @staticmethod
     def _fallback_query_variants(query: str) -> list[str]:
-        """Build progressively simpler query variants for zero-result fallback."""
         base = " ".join(str(query or "").split()).strip()
         if not base:
             return []
@@ -3206,6 +3033,7 @@ class WebSearchService:
 
         return variants
 
+    # Run search pipeline; retry with simpler query variants if empty.
     async def _run_with_zero_result_fallback(
         self,
         *,
@@ -3219,7 +3047,6 @@ class WebSearchService:
         source_budget: dict[str, int] | None = None,
         model_session: SearchModelSession | None = None,
     ) -> tuple[list[SearchResult], list[_TriageResult], str]:
-        """Run search pipeline and retry with degraded query variants if empty."""
         lang = infer_query_language(analysis_query)
         query_type = query_types[0] if query_types else "general"
         deduped, triage = await self._run_search_pipeline(
@@ -3291,13 +3118,13 @@ class WebSearchService:
 
         return [], [], analysis_query
 
+    # Run web search and return formatted text for the MCP tool.
     async def search(
         self,
         query: str,
         deadline: float | None = None,
         model_session: SearchModelSession | None = None,
     ) -> str:
-        """Run web search and return formatted text result."""
         opts = self._opts
         req_id = _make_request_id()
         overall_t0 = time.perf_counter()
@@ -3547,17 +3374,13 @@ class WebSearchService:
         _trace(req_id, "search.done", elapsed=round(time.perf_counter() - overall_t0, 3))
         return result_text
 
+    # Deep-research entry: ranked SearchResult list without preview formatting.
     async def search_structured(
         self,
         query: str,
         deadline: float | None = None,
         model_session: SearchModelSession | None = None,
     ) -> list[SearchResult]:
-        """Run the safe search pipeline and return ranked SearchResult items.
-
-        This is the deep-research entry point. It preserves the current isolated
-        provider lifecycle and cheap triage scoring, but skips preview formatting.
-        """
         opts = self._opts
         constraints = parse_domain_constraints(query)
         analysis_query = constraints.clean_query or query
@@ -3622,20 +3445,13 @@ class WebSearchService:
         _trace(req_id, "structured.done", chosen_top_k=top_k, skipped=len(skipped), ranked=len(ranked))
         return combined[:top_k]
 
+    # Structured payload for MCP structuredContent / UI clients.
     async def search_rich(
         self,
         query: str,
         deadline: float | None = None,
         model_session: SearchModelSession | None = None,
     ) -> SearchRichResult:
-        """Run web search and return a UI/model friendly structured payload.
-
-        Mirrors search() pipeline step-for-step:
-          _run_search_pipeline → pre-fetch _adapt_output_profile (updates preview_fetch_limit)
-          → triage-aware to_fetch list → _fetch_previews → post-fetch _adapt_output_profile
-          → background prefetch
-        Skip/fetch_policy decisions from the triage system are fully honoured.
-        """
         opts = self._opts
         search_id = f"srch_{_make_request_id()}"
         req_id = search_id
@@ -3831,17 +3647,13 @@ class WebSearchService:
         )
 
 
-# ---------------------------------------------------------------------------
-# Top-level convenience coroutine
-# ---------------------------------------------------------------------------
-
 # Hard wall-clock limit for the entire search lifecycle.
 # When exceeded, the coroutine is cancelled → subprocesses are killed via
 # their finally blocks in async_ddgs_search(), aiohttp sessions are closed
 # by their async context managers, and executor threads run to natural
 # completion (they have internal timeouts so they won't hang indefinitely).
+# Short timeout budget for degraded fallback attempts after hard timeout.
 def _fallback_timeout_window(hard_timeout: float) -> float:
-    """Return a short timeout budget for degraded fallback attempts."""
     effort_cfg = load_search_config().effort
     try:
         base = float(hard_timeout)
@@ -3856,8 +3668,8 @@ def _fallback_timeout_window(hard_timeout: float) -> float:
     )
 
 
+# Compact snippet-only fallback text after search timeout.
 def _format_timeout_fallback_text(query: str, results: list[SearchResult], limit: int = 5) -> str:
-    """Build a compact fallback response from snippet-only structured results."""
     if not results:
         return f"Search timed out with no fallback results for: {query}"
     lines: list[str] = [
@@ -3879,6 +3691,7 @@ def _format_timeout_fallback_text(query: str, results: list[SearchResult], limit
     return "\n".join(lines).strip()
 
 
+# Rich JSON payload when search times out but snippet fallback succeeded.
 def _timeout_fallback_rich_payload(query: str, results: list[SearchResult]) -> dict[str, object]:
     search_id = f"srch_{_make_request_id()}"
     fallback_sources = [
@@ -3906,6 +3719,7 @@ def _timeout_fallback_rich_payload(query: str, results: list[SearchResult]) -> d
     }
 
 
+# Rich JSON payload for BAD_QUERY validation rejections.
 def _rejected_search_payload(query: str, rejection: str) -> dict[str, object]:
     return {
         "query": query,
@@ -3924,6 +3738,7 @@ def _rejected_search_payload(query: str, rejection: str) -> dict[str, object]:
     }
 
 
+# Wall-clock limit for a search from effort tier or explicit override.
 def _effort_hard_timeout(effort: str, hard_timeout: float | None) -> float:
     if hard_timeout is not None:
         return float(hard_timeout)
@@ -3935,6 +3750,7 @@ def _effort_hard_timeout(effort: str, hard_timeout: float | None) -> float:
     return float(effort_cfg.medium_hard_timeout)
 
 
+# WebSearchOptions tuned for low/medium/high effort from config.
 def _build_effort_options(
     cfg: object,
     *,
@@ -3992,6 +3808,7 @@ def _build_effort_options(
     )
 
 
+# MCP/CLI entry: formatted text search with hard timeout and timelimit inference.
 async def run_web_search(
     query: str,
     max_results: int = 10,
@@ -4001,17 +3818,6 @@ async def run_web_search(
     hard_timeout: float | None = None,
     effort: str = "medium",
 ) -> str:
-    """Convenience entry point for MCP adapter and CLI.
-
-    Enforces the configured hard timeout over the entire search lifecycle.
-    If exceeded, kills spawned subprocesses and returns a clean timeout message
-    instead of raising — callers never see a hanging coroutine.
-
-    The time window is inferred automatically from the query type:
-      journalistic / finance  → last month
-      shopping / troubleshoot / forum / technical → last year
-      academic / medical / general → no restriction
-    """
     init_t0 = time.perf_counter()
     cfg = load_search_config()
     constraints = parse_domain_constraints(query)
@@ -4085,6 +3891,7 @@ async def run_web_search(
         )
 
 
+# Structured search returning ranked SearchResult items (no preview formatting).
 async def run_web_search_structured(
     query: str,
     max_results: int = 10,
@@ -4093,7 +3900,6 @@ async def run_web_search_structured(
     time_range: Optional[str] = None,
     effort: str = "medium",
 ) -> list[SearchResult]:
-    """Structured counterpart to run_web_search for structured callers."""
     cfg = load_search_config()
     constraints = parse_domain_constraints(query)
     query_for_search = constraints.clean_query or query
@@ -4135,6 +3941,7 @@ async def run_web_search_structured(
         return []
 
 
+# Rich search payload for MCP structuredContent / UI.
 async def run_web_search_rich(
     query: str,
     max_results: int = 10,
@@ -4143,7 +3950,6 @@ async def run_web_search_rich(
     time_range: Optional[str] = None,
     effort: str = "medium",
 ) -> dict[str, object]:
-    """Structured web-search payload for MCP structuredContent/UI clients."""
     cfg = load_search_config()
     constraints = parse_domain_constraints(query)
     query_for_search = constraints.clean_query or query

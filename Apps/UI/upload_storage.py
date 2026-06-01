@@ -25,18 +25,16 @@ MAX_UPLOAD_BYTES = 16 * 1024 * 1024 * 1024
 INLINE_MANIFEST_MAX_BYTES = 64 * 1024 * 1024
 
 
+# Host and model paths for one upload destination.
 @dataclass(frozen=True)
 class UploadStorageTarget:
-    """Host and model paths for one upload destination."""
-
     server_id: str
     upload_root: Path
     model_prefix: str
 
 
+# Return a stable list of tool server ids from request payloads.
 def normalize_tool_server_ids(tool_server_ids: list[str] | None) -> list[str]:
-    """Return a stable list of tool server ids from request payloads."""
-
     if not tool_server_ids:
         return []
     normalized: list[str] = []
@@ -50,13 +48,13 @@ def normalize_tool_server_ids(tool_server_ids: list[str] | None) -> list[str]:
     return normalized
 
 
+# Route UI uploads to the mcp-sandbox tree.
 def resolve_upload_storage_target(tool_server_ids: list[str] | None = None) -> UploadStorageTarget:
-    """Route UI uploads to the mcp-sandbox tree."""
-
     _ = tool_server_ids
     return UploadStorageTarget("sandbox", USER_UPLOAD_ROOT, SANDBOX_MODEL_PREFIX)
 
 
+# Safe scope.
 def _safe_scope(value: str | None) -> str:
     raw_value = str(value or "").strip()
     if not raw_value:
@@ -64,6 +62,7 @@ def _safe_scope(value: str | None) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]+", "_", raw_value)[:96] or "pending"
 
 
+# Stored file name.
 def _stored_file_name(file_id: str, original_name: str) -> str:
     safe_name = normalize_upload_name(original_name)
     safe_name = re.sub(r"[\x00-\x1f<>:\"|?*]+", "_", safe_name).strip(" .") or "uploaded-file"
@@ -71,9 +70,8 @@ def _stored_file_name(file_id: str, original_name: str) -> str:
     return f"{normalized_id}__{safe_name}"
 
 
+# Return UI-facing kind and label for one upload.
 def display_kind_for_upload(name: str, mime: str) -> tuple[str, str]:
-    """Return UI-facing kind and label for one upload."""
-
     suffix = Path(normalize_upload_name(name)).suffix.lower()
     normalized_mime = str(mime or "").lower()
     if normalized_mime.startswith("image/"):
@@ -103,9 +101,8 @@ def display_kind_for_upload(name: str, mime: str) -> tuple[str, str]:
     return "file", "File"
 
 
+# Return the small user-facing upload payload.
 def public_upload_payload(manifest: UploadedFileManifest | dict[str, Any], *, status: str = "ready") -> dict[str, Any]:
-    """Return the small user-facing upload payload."""
-
     if isinstance(manifest, UploadedFileManifest):
         file_id = manifest.file_id
         name = manifest.name
@@ -130,9 +127,8 @@ def public_upload_payload(manifest: UploadedFileManifest | dict[str, Any], *, st
     }
 
 
+# Return a model-facing manifest that respects the selected sandbox state.
 def model_upload_payload(manifest: dict[str, Any], *, sandbox_enabled: bool = False) -> dict[str, Any]:
-    """Return a model-facing manifest that respects the selected sandbox state."""
-
     payload = dict(manifest or {})
     if not sandbox_enabled:
         payload["sandbox_path"] = None
@@ -144,15 +140,18 @@ def model_upload_payload(manifest: dict[str, Any], *, sandbox_enabled: bool = Fa
     return payload
 
 
+# Manifest sidecar path.
 def _manifest_sidecar_path(file_path: Path) -> Path:
     return file_path.with_name(f"{file_path.name}{UPLOAD_MANIFEST_SUFFIX}")
 
 
+# Manifest storage dir.
 def _manifest_storage_dir(sha256: str) -> Path:
     safe_sha = re.sub(r"[^a-fA-F0-9]+", "", str(sha256 or "").lower())
     return USER_FILE_MANIFEST_ROOT / (safe_sha or "unknown")
 
 
+# Manifest storage path.
 def _manifest_storage_path(manifest: UploadedFileManifest | dict[str, Any]) -> Path:
     if isinstance(manifest, UploadedFileManifest):
         sha256 = manifest.sha256
@@ -164,6 +163,7 @@ def _manifest_storage_path(manifest: UploadedFileManifest | dict[str, Any]) -> P
     return _manifest_storage_dir(sha256) / f"{safe_id}{UPLOAD_MANIFEST_SUFFIX}"
 
 
+# Write manifest.
 def _write_manifest(manifest: UploadedFileManifest) -> None:
     manifest_path = _manifest_storage_path(manifest)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,13 +173,13 @@ def _write_manifest(manifest: UploadedFileManifest) -> None:
     )
 
 
+# Model sandbox path.
 def _model_sandbox_path(model_prefix: str, scope: str, stored_name: str) -> str:
     return f"{model_prefix}/{scope}/{stored_name}".replace("\\", "/")
 
 
+# Map a stored manifest sandbox_path back to a host file path.
 def resolve_uploaded_file_host_path(manifest: dict[str, Any]) -> Path:
-    """Map a stored manifest sandbox_path back to a host file path."""
-
     sandbox_path = str((manifest or {}).get("sandbox_path") or "").strip().replace("\\", "/")
     if not sandbox_path:
         raise FileNotFoundError("Uploaded file content is not available")
@@ -198,10 +198,12 @@ def resolve_uploaded_file_host_path(manifest: dict[str, Any]) -> Path:
     return target
 
 
+# File sha256.
 def _file_sha256(file_bytes: bytes) -> str:
     return hashlib.sha256(file_bytes or b"").hexdigest()
 
 
+# Format upload size.
 def _format_upload_size(size_bytes: int) -> str:
     if size_bytes >= 1024 * 1024 * 1024:
         return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
@@ -210,6 +212,7 @@ def _format_upload_size(size_bytes: int) -> str:
     return f"{size_bytes} bytes"
 
 
+# Stream upload to temp.
 def _stream_upload_to_temp(
     uploaded_file: Any,
     *,
@@ -252,6 +255,7 @@ def _stream_upload_to_temp(
     return temp_path, size_bytes, sha256.hexdigest(), inline_bytes
 
 
+# Load manifest from sidecar.
 def _load_manifest_from_sidecar(sidecar_path: Path) -> dict[str, Any] | None:
     try:
         manifest = json.loads(sidecar_path.read_text(encoding="utf-8"))
@@ -260,6 +264,7 @@ def _load_manifest_from_sidecar(sidecar_path: Path) -> dict[str, Any] | None:
     return manifest if isinstance(manifest, dict) else None
 
 
+# Iterate manifest paths for sha.
 def _iter_manifest_paths_for_sha(sha256: str):
     manifest_dir = _manifest_storage_dir(sha256)
     if not manifest_dir.exists():
@@ -267,6 +272,7 @@ def _iter_manifest_paths_for_sha(sha256: str):
     yield from manifest_dir.glob(f"*{UPLOAD_MANIFEST_SUFFIX}")
 
 
+# Find stored manifest.
 def _find_stored_manifest(
     *,
     sha256: str,
@@ -290,6 +296,7 @@ def _find_stored_manifest(
     return None
 
 
+# Find existing upload.
 def _find_existing_upload(
     target_dir: Path,
     *,
@@ -337,6 +344,7 @@ def _find_existing_upload(
     return None
 
 
+# Find existing upload by hash.
 def _find_existing_upload_by_hash(
     target_dir: Path,
     *,
@@ -363,6 +371,7 @@ def _find_existing_upload_by_hash(
     return None
 
 
+# Manifest from dict.
 def _manifest_from_dict(manifest: dict[str, Any]) -> UploadedFileManifest | None:
     try:
         return UploadedFileManifest(**manifest)
@@ -370,6 +379,7 @@ def _manifest_from_dict(manifest: dict[str, Any]) -> UploadedFileManifest | None
         return None
 
 
+# Normalize existing manifest for path.
 def _normalize_existing_manifest_for_path(
     manifest: dict[str, Any],
     *,
@@ -390,6 +400,7 @@ def _normalize_existing_manifest_for_path(
     return _manifest_from_dict(patched)
 
 
+# Build lightweight upload manifest.
 def _build_lightweight_upload_manifest(
     *,
     file_id: str,
@@ -421,6 +432,7 @@ def _build_lightweight_upload_manifest(
     )
 
 
+# Persist one Django uploaded file and return its private manifest plus public payload.
 def save_upload_to_sandbox(
     uploaded_file: Any,
     *,
@@ -428,8 +440,6 @@ def save_upload_to_sandbox(
     model_supports_vision: bool = False,
     tool_server_ids: list[str] | None = None,
 ) -> tuple[UploadedFileManifest, dict[str, Any]]:
-    """Persist one Django uploaded file and return its private manifest plus public payload."""
-
     clean_name = normalize_upload_name(getattr(uploaded_file, "name", "") or "uploaded-file")
     declared_size_bytes = int(getattr(uploaded_file, "size", 0) or 0)
     if declared_size_bytes > MAX_UPLOAD_BYTES:
@@ -543,9 +553,8 @@ def save_upload_to_sandbox(
         raise
 
 
+# Load a private manifest by file id from external storage or legacy sidecars.
 def load_upload_manifest(file_id: str) -> dict[str, Any] | None:
-    """Load a private manifest by file id from external storage or legacy sidecars."""
-
     normalized_id = re.sub(r"[^a-fA-F0-9-]+", "", str(file_id or ""))
     if not normalized_id:
         return None

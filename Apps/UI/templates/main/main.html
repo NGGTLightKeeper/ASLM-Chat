@@ -1,5 +1,4 @@
 {% extends "main/base.html" %}
-{% load static %}
 {% load i18n_tags %}
 
 {% block title %}{% t "meta.appTitle" %}{% endblock %}
@@ -366,5 +365,5 @@
 {{ runtime_settings|json_script:"runtimeSettingsData" }}
 {{ engine_options|json_script:"engineOptionsData" }}
 {{ available_tool_servers|json_script:"availableToolServersData" }}
-<script type="module" src="{% static 'js/main/main.js' %}?v=sandbox-default-3"></script>
+<script type="module" src="{% static 'js/main/main.js' %}"></script>
 {% endblock %}

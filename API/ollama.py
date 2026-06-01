@@ -63,8 +63,7 @@ _unsupported_options_lock = threading.Lock()
 _reported_unsupported_option_sets: set[tuple[str, ...]] = set()
 
 
-# Manage the bundled Ollama runtime.
-# Import the Ollama service module.
+# Import the managed Ollama service module lazily.
 def _get_ollama_service_module():
     """Import the managed Ollama service module lazily."""
 
@@ -149,7 +148,6 @@ def _summarize_tool_names(tool_calls: list[dict[str, Any]]) -> str:
     return ", ".join(names) if names else "none"
 
 
-# Work with local Ollama models.
 # Create the Ollama client.
 def get_client() -> ollama.Client:
     """Create an Ollama client using the configured local service port."""
@@ -223,7 +221,6 @@ def get_model_settings(model_name: str) -> Any:
     except Exception as exc:
         logger.error("[Ollama API] Error fetching settings for %s: %s", model_name, exc)
         raise
-
 
 
 # Normalize Ollama payloads.
@@ -385,7 +382,6 @@ def _prepare_chat_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
 
     call_kwargs, _ = _prepare_chat_kwargs_with_metadata(kwargs)
     return call_kwargs
-
 
 
 # Stream tool-aware conversations.

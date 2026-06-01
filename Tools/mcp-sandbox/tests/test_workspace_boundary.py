@@ -1,11 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Workspace boundary enforcement tests.
-
-Verifies that read/write/edit/describe block path traversal and symlink
-escapes at the API level, without requiring a running Docker container.
-"""
-
 from __future__ import annotations
 
 import os
@@ -50,7 +44,7 @@ class WorkspaceBoundaryTests(unittest.TestCase):
             except PermissionError:
                 pass
 
-    # ── Path traversal ────────────────────────────────────────────────
+    # Path traversal.
 
     def test_read_traversal_blocked(self) -> None:
         with self.assertRaises((ValueError, FileNotFoundError)):
@@ -93,7 +87,7 @@ class WorkspaceBoundaryTests(unittest.TestCase):
         with self.assertRaises((ValueError, OSError)):
             get_secure_task_path("file\x00../etc/passwd")
 
-    # ── Absolute path rejection ───────────────────────────────────────
+    # Absolute path rejection.
 
     def test_validate_rejects_unix_absolute(self) -> None:
         with patch.object(workspace_mod, "IN_CONTAINER", False):
@@ -109,14 +103,14 @@ class WorkspaceBoundaryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_model_path("/workspace")
 
-    # ── Symlink escape ────────────────────────────────────────────────
+    # Symlink escape.
 
     @unittest.skipIf(
         sys.platform == "win32",
         "Symlink creation requires elevated privileges on Windows",
     )
+    # read() must reject a symlink inside workspace pointing outside.
     def test_read_symlink_escape_blocked(self) -> None:
-        """read() must reject a symlink inside workspace pointing outside."""
         sym = self.task_root / "__sym_escape"
         target = Path("/etc/passwd")
         if not target.exists():
@@ -132,8 +126,8 @@ class WorkspaceBoundaryTests(unittest.TestCase):
         sys.platform == "win32",
         "Symlink creation requires elevated privileges on Windows",
     )
+    # write() must reject writing through a symlink pointing outside.
     def test_write_symlink_escape_blocked(self) -> None:
-        """write() must reject writing through a symlink pointing outside."""
         sym = self.task_root / "__sym_write"
         target = Path("/tmp/sym_write_test")
         sym.symlink_to(target)
@@ -148,8 +142,8 @@ class WorkspaceBoundaryTests(unittest.TestCase):
         sys.platform == "win32",
         "Symlink creation requires elevated privileges on Windows",
     )
+    # describe() must reject a symlink pointing outside.
     def test_describe_symlink_escape_blocked(self) -> None:
-        """describe() must reject a symlink pointing outside."""
         sym = self.task_root / "__sym_describe"
         target = Path("/etc/passwd")
         if not target.exists():
@@ -165,8 +159,8 @@ class WorkspaceBoundaryTests(unittest.TestCase):
         sys.platform == "win32",
         "Symlink creation requires elevated privileges on Windows",
     )
+    # Symlinks pointing inside task_root should be allowed.
     def test_symlink_within_workspace_is_allowed(self) -> None:
-        """Symlinks pointing inside task_root should be allowed."""
         real = self.task_root / "real.txt"
         real.write_text("content", encoding="utf-8")
         sym = self.task_root / "__sym_internal"
@@ -182,8 +176,8 @@ class WorkspaceBoundaryTests(unittest.TestCase):
         sys.platform == "win32",
         "Symlink creation requires elevated privileges on Windows",
     )
+    # ls() may report a symlink but must not walk through it.
     def test_ls_does_not_recurse_into_symlink_directory(self) -> None:
-        """ls() may report a symlink but must not walk through it."""
         outside = self.task_root.parent / "__outside_ls_target"
         outside.mkdir(exist_ok=True)
         (outside / "secret.txt").write_text("SECRET", encoding="utf-8")
@@ -202,8 +196,8 @@ class WorkspaceBoundaryTests(unittest.TestCase):
         sys.platform == "win32",
         "Symlink creation requires elevated privileges on Windows",
     )
+    # grep() must not read through symlink files that escape task_root.
     def test_grep_symlink_file_escape_blocked(self) -> None:
-        """grep() must not read through symlink files that escape task_root."""
         outside = self.task_root.parent / "__outside_grep_secret.txt"
         outside.write_text("SECRET", encoding="utf-8")
         link = self.task_root / "__grep_link.txt"
@@ -215,7 +209,7 @@ class WorkspaceBoundaryTests(unittest.TestCase):
             link.unlink(missing_ok=True)
             outside.unlink(missing_ok=True)
 
-    # ── In-container absolute path access ────────────────────────────
+    # In-container absolute path access.
 
     def test_read_rejects_oversized_file_before_loading(self) -> None:
         big = self.task_root / "big.txt"
@@ -266,8 +260,8 @@ class WorkspaceBoundaryTests(unittest.TestCase):
             p = get_secure_task_path("/opt/../opt/app/config.py")
         self.assertEqual(p, Path("/opt/app/config.py"))
 
+    # Relative paths still resolve under task_root even in-container.
     def test_get_secure_task_path_relative_unchanged_in_container(self) -> None:
-        """Relative paths still resolve under task_root even in-container."""
         with patch.object(workspace_mod, "IN_CONTAINER", True):
             p = get_secure_task_path("script.py")
         self.assertEqual(p, workspace.task_root() / "script.py")
@@ -282,10 +276,10 @@ class WorkspaceBoundaryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_model_path("/opt/app/config.py")
 
-    # ── clear_workspace targets task_root ─────────────────────────────
+    # clear_workspace targets task_root.
 
+    # clear_workspace() must only clear task_root(), not workspace_root().
     def test_clear_workspace_does_not_touch_project_root(self) -> None:
-        """clear_workspace() must only clear task_root(), not workspace_root()."""
         from sandbox.workspace import clear_workspace, workspace_root, task_root
 
         # Write a sentinel into project root (workspace_root parent level)
@@ -307,7 +301,7 @@ class WorkspaceBoundaryTests(unittest.TestCase):
         finally:
             sentinel.unlink(missing_ok=True)
 
-    # ── Legitimate paths still work ───────────────────────────────────
+    # Legitimate paths still work.
 
     def test_write_and_read_normal_path(self) -> None:
         write("hello.txt", "world")
@@ -319,8 +313,8 @@ class WorkspaceBoundaryTests(unittest.TestCase):
         result = read("sub/dir/file.txt")
         self.assertEqual(result["result"]["content"], "nested")
 
+    # workspace read() with traversal path raises before reaching FS.
     def test_handle_tool_read_traversal_via_workspace_api_blocked(self) -> None:
-        """workspace read() with traversal path raises before reaching FS."""
         from sandbox.workspace import read as ws_read
         with self.assertRaises((ValueError, FileNotFoundError)):
             ws_read("../../etc/passwd")

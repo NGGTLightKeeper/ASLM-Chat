@@ -1,19 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Camoufox fetcher — async interface to the isolated Camoufox subprocess worker.
-
-Unlike PageFetcher (httpx → curl_cffi), this fetcher routes every request
-through an isolated child process so the Playwright/asyncio internals of
-Camoufox never interfere with the MCP server's event loop.
-
-Public API
-----------
-is_camoufox_available() -> bool
-fetch_with_camoufox(url, *, ...) -> FetchResult
-fetch_batch_with_camoufox(urls, *, ...) -> list[FetchResult]
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -31,13 +17,11 @@ from core.fetch.thread_pool import io_pool as _io_pool
 
 logger = logging.getLogger("core.fetch.camoufox_fetcher")
 
+_WORKER_SCRIPT = Path(__file__).parent / "_camoufox_worker.py"
 
+
+# Kill a process and its children (Firefox spawned by Camoufox).
 def _kill_process_tree(pid: int) -> None:
-    """Kill a process and all its children (including Firefox spawned by Camoufox).
-
-    On Windows uses taskkill /F /T which walks the whole process tree.
-    On Unix sends SIGKILL to the process group.
-    """
     try:
         if sys.platform == "win32":
             subprocess.run(
@@ -55,18 +39,9 @@ def _kill_process_tree(pid: int) -> None:
         logger.debug("_kill_process_tree(%d) failed: %s", pid, exc)
 
 
-# Path to the worker script (same package directory).
-_WORKER_SCRIPT = Path(__file__).parent / "_camoufox_worker.py"
-
-
-# ---------------------------------------------------------------------------
-# Result type
-# ---------------------------------------------------------------------------
-
+# Outcome of a single Camoufox subprocess fetch.
 @dataclass
 class FetchResult:
-    """Result from a Camoufox fetch attempt."""
-
     url: str
     success: bool = False
     html: str = ""
@@ -78,15 +53,11 @@ class FetchResult:
     duration_sec: float = 0.0
 
 
-# ---------------------------------------------------------------------------
-# Availability check (cached)
-# ---------------------------------------------------------------------------
-
 _available_cache: Optional[bool] = None
 
 
+# Return True if the camoufox package and its browser binary exist.
 def is_camoufox_available() -> bool:
-    """Return True if the camoufox package and its browser binary exist."""
     global _available_cache
     if _available_cache is not None:
         return _available_cache
@@ -118,10 +89,7 @@ def is_camoufox_available() -> bool:
     return bool(_available_cache)
 
 
-# ---------------------------------------------------------------------------
-# Single URL fetch via subprocess
-# ---------------------------------------------------------------------------
-
+# Fetch url in an isolated Camoufox subprocess; returns FetchResult.
 async def fetch_with_camoufox(
     url: str,
     *,
@@ -137,11 +105,6 @@ async def fetch_with_camoufox(
     process_timeout: float = 0.0,   # wall-clock timeout for the child process; 0 = timeout_sec + 15
     normalize: bool = True,          # run page_normalizer on raw HTML
 ) -> FetchResult:
-    """Fetch *url* in an isolated Camoufox subprocess.
-
-    Returns a FetchResult. On failure, FetchResult.success is False and
-    FetchResult.error contains the reason.
-    """
     t0 = time.perf_counter()
 
     if not process_timeout:
@@ -214,7 +177,7 @@ async def fetch_with_camoufox(
     if not raw_html or len(raw_html) < 200:
         return FetchResult(url=url, error="insufficient HTML content", duration_sec=duration)
 
-    # Check for anti-bot wall.
+    # Anti-bot wall check.
     try:
         from core.fetch.antibot import is_antibot
         if is_antibot(raw_html):
@@ -222,7 +185,7 @@ async def fetch_with_camoufox(
     except Exception:
         pass
 
-    # Optionally normalise HTML → clean text.
+    # Optional HTML → clean text via page_normalizer.
     clean_text = ""
     if normalize:
         try:
@@ -251,10 +214,7 @@ async def fetch_with_camoufox(
     )
 
 
-# ---------------------------------------------------------------------------
-# Batch fetch
-# ---------------------------------------------------------------------------
-
+# Fetch multiple URLs with limited concurrency (keep max_concurrency at 1–2).
 async def fetch_batch_with_camoufox(
     urls: list[str],
     *,
@@ -271,16 +231,12 @@ async def fetch_batch_with_camoufox(
     warmup_count: int = 1,
     normalize: bool = True,
 ) -> list[FetchResult]:
-    """Fetch multiple URLs via Camoufox with limited concurrency.
-
-    Camoufox is heavy (full browser per request), so keep max_concurrency
-    at 1-2 for stable operation.
-    """
     if not urls:
         return []
 
     sem = asyncio.Semaphore(max_concurrency)
 
+    # Fetch one URL under the batch semaphore.
     async def _one(url: str) -> FetchResult:
         async with sem:
             return await fetch_with_camoufox(

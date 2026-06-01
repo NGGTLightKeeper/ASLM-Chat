@@ -1,10 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Docker lifecycle, supervisor pipe, and docker-exec backend — host-side only.
-
-This module must only be imported on the host. Inside the container use exec.py.
-"""
-
 from __future__ import annotations
 
 import json
@@ -85,14 +80,13 @@ UPLOAD_MODEL_ROOT = f"{MODEL_WORKSPACE_CONTAINER.rstrip('/')}/User"
 DEFAULT_DOCKER_JOB_ROOT = "/workspace/.sandbox_jobs"
 
 
+# Keep old model-facing upload paths usable in plain bash commands.
 def _rewrite_legacy_upload_paths(command: str) -> str:
-    """Keep old model-facing upload paths usable in plain bash commands."""
-
     return str(command or "").replace(LEGACY_UPLOAD_MODEL_ROOT, UPLOAD_MODEL_ROOT)
 
 
+# Pick a container-writable root for background spool files.
 def _resolve_docker_job_root() -> str:
-    """Pick a container-writable root for background spool files."""
     configured = (
         os.getenv("SANDBOX_CONTAINER_JOB_ROOT", "").strip()
         or os.getenv("SANDBOX_JOB_ROOT", "").strip()
@@ -102,8 +96,8 @@ def _resolve_docker_job_root() -> str:
     return DEFAULT_DOCKER_JOB_ROOT
 
 
+# Return ordered job-root candidates for docker background jobs.
 def _docker_job_root_candidates() -> list[str]:
-    """Return ordered job-root candidates for docker background jobs."""
     configured = _resolve_docker_job_root()
     candidates = [
         configured,
@@ -119,15 +113,15 @@ def _docker_job_root_candidates() -> list[str]:
     return unique
 
 
-# ── Subprocess helpers ───────────────────────────────────────────────
+# Subprocess helpers
 
+# Run a subprocess command with UTF-8 text handling.
 def _run_command(
     args: list[str],
     timeout: int = 30,
     check: bool = False,
     input_text: str | None = None,
 ):
-    """Run a subprocess command with UTF-8 text handling."""
     return subprocess.run(
         args,
         input=input_text,
@@ -140,10 +134,10 @@ def _run_command(
     )
 
 
-# ── Docker availability ──────────────────────────────────────────────
+# Docker availability
 
+# Return True when the docker CLI is installed.
 def _docker_cli_available() -> bool:
-    """Return True when the docker CLI is installed."""
     try:
         result = _run_command(["docker", "--version"], timeout=5)
         return result.returncode == 0
@@ -151,20 +145,19 @@ def _docker_cli_available() -> bool:
         return False
 
 
+# Query docker daemon info.
 def _docker_info(timeout: int = 5):
-    """Query docker daemon info."""
     return _run_command(["docker", "info", "--format", "{{json .}}"], timeout=timeout)
 
 
+# Return whether host tools may launch Docker Desktop automatically.
 def _auto_start_docker_enabled() -> bool:
-    """Return whether host tools may launch Docker Desktop automatically."""
-
     value = os.environ.get("SANDBOX_AUTO_START_DOCKER", "")
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Ensure the Docker daemon is available.
 def _ensure_docker_running() -> tuple[bool, str]:
-    """Ensure the Docker daemon is available."""
     if not _docker_cli_available():
         return False, "Docker CLI not found. Install Docker Desktop first."
 
@@ -218,7 +211,7 @@ def _ensure_docker_running() -> tuple[bool, str]:
     )
 
 
-# ── Container existence checks ───────────────────────────────────────
+# Container existence checks
 
 def _container_exists() -> bool:
     result = _run_command(
@@ -234,7 +227,7 @@ def _container_is_running() -> bool:
     return bool(result.stdout.strip())
 
 
-# ── Image preparation ────────────────────────────────────────────────
+# Image preparation
 
 def _image_has_required_runtime(inspect_stdout: str) -> bool:
     try:
@@ -247,8 +240,8 @@ def _image_has_required_runtime(inspect_stdout: str) -> bool:
     return labels.get(REQUIRED_IMAGE_LABEL) == REQUIRED_IMAGE_LABEL_VALUE
 
 
+# Ensure the sandbox image exists locally by delegating to setup-sandbox.py.
 def _ensure_image(force_rebuild: bool = False) -> tuple[bool, str]:
-    """Ensure the sandbox image exists locally by delegating to setup-sandbox.py."""
     inspect_result = _run_command(
         ["docker", "image", "inspect", SANDBOX_IMAGE], timeout=20
     )
@@ -269,7 +262,7 @@ def _ensure_image(force_rebuild: bool = False) -> tuple[bool, str]:
     )
 
 
-# ── Container run command ────────────────────────────────────────────
+# Container run command
 
 def _linux_venv_bind_source() -> str | None:
     if not SUPERVISOR_VENV_HOST:
@@ -334,8 +327,8 @@ _CONFIG_TEMPLATE = """\
 """
 
 
+# Create sandbox.env with commented-out defaults if it does not exist yet.
 def _ensure_sandbox_config(config_path: str = CONFIG_FILE_PATH) -> None:
-    """Create sandbox.env with commented-out defaults if it does not exist yet."""
     path = Path(config_path)
     if path.exists():
         return
@@ -347,11 +340,11 @@ def _ensure_sandbox_config(config_path: str = CONFIG_FILE_PATH) -> None:
         logger.warning("Could not create sandbox config %s: %s", config_path, exc)
 
 
+# Build the docker run command for the sandbox container.
 def _build_run_command(
     image_name: str,
     include_storage_limit: bool = True,
 ) -> list[str]:
-    """Build the docker run command for the sandbox container."""
     command = [
         "docker", "run", "-d",
         "--name", CONTAINER_NAME,
@@ -427,17 +420,17 @@ def _build_run_command(
     return command
 
 
-# ── Container lifecycle ──────────────────────────────────────────────
+# Container lifecycle
 
 _container_lock = threading.Lock()
 
 
+# Ensure the sandbox container is running (idempotent with retry).
 def _ensure_container_running(
     image_name: str = SANDBOX_IMAGE,
     max_retries: int = 3,
     retry_delay: float = 2.0,
 ) -> tuple[bool, str]:
-    """Ensure the sandbox container is running — idempotent with retry."""
     _ensure_sandbox_config()
     docker_ok, msg = _ensure_docker_running()
     if not docker_ok:
@@ -601,13 +594,12 @@ def _create_container(image_name: str) -> tuple[bool, str]:
     return False, result.stderr.strip()
 
 
+# Poll until the container reaches 'running' state or the timeout expires.
+#
+# Returns False if the container enters a restart loop (crashes immediately)
+# so the caller can report a meaningful error rather than getting a confusing
+# 'Container is restarting' error from docker exec.
 def _wait_for_container_running(timeout_s: float = 10.0) -> tuple[bool, str]:
-    """Poll until the container reaches 'running' state or the timeout expires.
-
-    Returns False if the container enters a restart loop (crashes immediately)
-    so the caller can report a meaningful error rather than getting a confusing
-    'Container is restarting' error from docker exec.
-    """
     deadline = time.time() + timeout_s
     consecutive_restarting = 0
     while time.time() < deadline:
@@ -680,8 +672,8 @@ def _snapshot_check_result(
     }
 
 
+# Run safety/stability checks before mutating Docker snapshot state.
 def _run_snapshot_preflight() -> dict:
-    """Run safety/stability checks before mutating Docker snapshot state."""
     checks: list[dict] = []
 
     def add(name: str, ok: bool, message: str = "", details: dict | None = None) -> None:
@@ -887,7 +879,7 @@ def restore_container(name: str = "stable", preserve_workspace: bool = True) -> 
     }
 
 
-# ── Supervisor stdio proxy ───────────────────────────────────────────
+# Supervisor stdio proxy
 
 def _supervisor_exec_command(
     *,
@@ -1102,6 +1094,7 @@ def _write_queue_to_process(
                 pass
 
 
+# Pipe host stdio to the in-container MCP supervisor with reconnect.
 def pipe_to_container_supervisor(
     *,
     max_restarts: int | None = None,
@@ -1109,7 +1102,6 @@ def pipe_to_container_supervisor(
     output_stream=None,
     error_stream=None,
 ) -> int:
-    """Pipe host stdio to the in-container MCP supervisor with reconnect."""
     input_stream = input_stream or sys.stdin.buffer
     output_stream = output_stream or sys.stdout.buffer
     error_stream = error_stream or sys.stderr.buffer
@@ -1517,6 +1509,7 @@ def _exec_bash_docker_background(
         time.sleep(0.2)
 
 
+# Execute a bash command inside the sandbox container via docker exec.
 def _exec_bash_docker(
     command: str,
     cwd: str = ".",
@@ -1527,7 +1520,6 @@ def _exec_bash_docker(
     on_progress: Callable[[float, str], None] | None = None,
     background: str | bool | None = "never",
 ) -> dict:
-    """Execute a bash command inside the sandbox container via docker exec."""
     from sandbox.exec import should_use_background
 
     command = _rewrite_legacy_upload_paths(command)
@@ -1683,8 +1675,8 @@ def _exec_bash_docker(
 
 # ── Status reporting ─────────────────────────────────────────────────
 
+# Return Docker and container status without forcing startup.
 def get_status() -> dict:
-    """Return Docker and container status without forcing startup."""
     docker_cli = _docker_cli_available()
     docker_daemon_running = False
     docker_info_message = "Docker CLI not found."

@@ -247,15 +247,13 @@ TOOLS = [
 ]
 
 
+# Expose this tool server for engines that support tool-calling.
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
-    """Expose this tool server for engines that support tool-calling."""
-
     return engine in ("ollama-service", "lms", "openai", "google-genai")
 
 
+# Convert MCP-style content payloads into plain text for local tool execution.
 def _flatten_content(content: Any) -> str:
-    """Convert MCP-style content payloads into plain text for local tool execution."""
-
     if isinstance(content, str):
         return content
 
@@ -278,15 +276,15 @@ def _flatten_content(content: Any) -> str:
     return str(content)
 
 
+# Run a coroutine while optionally sending keepalive logs to an MCP session.
 async def _run_with_keepalive(coro, session=None, interval: float = 3.0, message: str = "working..."):
-    """Run a coroutine while optionally sending keepalive logs to an MCP session."""
-
     if session is None:
         return await coro
 
     result = None
     done = asyncio.Event()
 
+    # Periodically send debug log messages until the main coroutine finishes.
     async def _keepalive_loop() -> None:
         while not done.is_set():
             try:
@@ -304,6 +302,7 @@ async def _run_with_keepalive(coro, session=None, interval: float = 3.0, message
             except BaseException:
                 break
 
+    # Run the tool coroutine and signal completion to the keepalive loop.
     async def _run() -> None:
         nonlocal result
         result = await coro
@@ -313,6 +312,7 @@ async def _run_with_keepalive(coro, session=None, interval: float = 3.0, message
     return result
 
 
+# Pick keepalive interval and status message for a given browser tool name.
 def _browser_keepalive_settings(name: str, arguments: dict[str, Any] | None) -> tuple[float, str]:
     args = arguments or {}
     if name == "browser_navigate":
@@ -325,13 +325,12 @@ def _browser_keepalive_settings(name: str, arguments: dict[str, Any] | None) -> 
     return 3.0, "working..."
 
 
+# Execute one browser action in-process and return plain text or structured output.
 async def _execute_browser_tool_local(
     name: str,
     arguments: dict[str, Any] | None,
     context: dict[str, Any] | None = None,
 ) -> Any:
-    """Execute one browser action and return plain text output."""
-
     from browser import (
         _click_by_role_and_name,
         run_in_browser_loop,
@@ -354,6 +353,7 @@ async def _execute_browser_tool_local(
     session = safe_context.get("mcp_session")
     keepalive_interval, keepalive_message = _browser_keepalive_settings(name, args)
 
+    # Run the requested browser tool against the shared Playwright page.
     async def _run_action() -> Any:
         state.tool_context = safe_context
         if browser_module._waiting_for_user and name != "browser_wait_for_user":
@@ -555,6 +555,7 @@ async def _execute_browser_tool_local(
                 raise
             return f"Error: {type(exc).__name__}: {exc}"
 
+    # Execute once and attach portal UI metadata when the result is plain text.
     async def _perform_once() -> Any:
         result = await _run_action()
         return await with_browser_portal_ui(
@@ -564,6 +565,7 @@ async def _execute_browser_tool_local(
             page=state.page,
         )
 
+    # Retry once after browser death by closing state and relaunching.
     async def _perform() -> Any:
         for attempt in range(2):
             try:
@@ -583,9 +585,8 @@ async def _execute_browser_tool_local(
     )
 
 
+# Execute one browser action through the worker subprocess or inline when configured.
 async def _execute_browser_tool(name: str, arguments: dict[str, Any] | None, context: dict[str, Any] | None = None) -> Any:
-    """Execute one browser action through an isolated browser worker process."""
-
     if os.getenv("ASLM_BROWSER_AGENT_WORKER") == "1" or os.getenv("ASLM_BROWSER_AGENT_INLINE") == "1":
         return await _execute_browser_tool_local(name, arguments or {}, context or {})
 
@@ -608,9 +609,10 @@ async def _execute_browser_tool(name: str, arguments: dict[str, Any] | None, con
     )
 
 
+# Build an ASLM-compatible per-tool wrapper that delegates to _execute_browser_tool.
 def _make_tool_handler(tool_id: str):
-    """Build an ASLM-compatible per-tool wrapper."""
 
+    # Delegate one ASLM tool id to the shared browser execution pipeline.
     async def _handler(arguments: dict[str, Any] | None, context: dict[str, Any] | None = None) -> Any:
         return await _execute_browser_tool(tool_id, arguments or {}, context or {})
 
@@ -623,19 +625,17 @@ TOOL_HANDLERS = {
 }
 
 
+# Generic ASLM-compatible dispatcher for Browser Agent tools.
 async def call_tool(tool_id: str, arguments: dict[str, Any] | None, context: dict[str, Any] | None = None) -> Any:
-    """Generic ASLM-compatible dispatcher for Browser Agent tools."""
-
     return await _execute_browser_tool(tool_id, arguments or {}, context or {})
 
 
+# Attach Browser Agent tools to the provided MCP server instance.
 def register_tools(server) -> None:
-    """Attach Browser Agent tools to the provided MCP server."""
 
     @server.list_tools()
+    # Describe the Browser Agent tool surface for MCP list_tools.
     async def list_tools() -> list[Tool]:
-        """Describe the Browser Agent tool surface."""
-
         return [
             Tool(
                 name=tool["id"],
@@ -646,9 +646,8 @@ def register_tools(server) -> None:
         ]
 
     @server.call_tool()
+    # Execute the requested Browser Agent tool and return MCP CallToolResult.
     async def server_call_tool(name: str, arguments: dict[str, Any] | None) -> CallToolResult:
-        """Execute the requested Browser Agent tool."""
-
         log.info("server_call_tool: %s", name)
         session = None
         try:

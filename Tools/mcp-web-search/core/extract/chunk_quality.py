@@ -1,4 +1,4 @@
-"""Chunk quality signals: SEO keyword-stuffing penalty (language-agnostic)."""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -13,10 +13,12 @@ _TOKEN_RE = re.compile(r"\b\w+\b", re.UNICODE)
 _BIGRAM_WORD_RE = _TOKEN_RE
 
 
+# Lowercase word tokens with length > 1.
 def _tokenize(text: str) -> list[str]:
     return [t.lower() for t in _TOKEN_RE.findall(text or "") if len(t) > 1]
 
 
+# Fraction of text that looks like complete sentences (by ending punctuation).
 def _sentence_like_ratio(text: str) -> float:
     compact = (text or "").strip()
     if len(compact) < 40:
@@ -25,6 +27,7 @@ def _sentence_like_ratio(text: str) -> float:
     return min(1.0, endings / max(1, len(compact) / 180))
 
 
+# Penalty for repeated trigrams (keyword-stuffing signal).
 def _repeated_trigram_penalty(tokens: list[str]) -> float:
     if len(tokens) < 12:
         return 0.0
@@ -35,11 +38,11 @@ def _repeated_trigram_penalty(tokens: list[str]) -> float:
     return min(1.0, max(0.0, (top - 2) / max(4, len(tokens) / 20)))
 
 
+# Return 0..1 penalty for SEO keyword piles (1 = reject-worthy spam).
 def seo_keyword_stuffing_penalty(
     text: str,
     query_terms: Iterable[str] | None = None,
 ) -> float:
-    """Return 0..1 penalty for SEO keyword piles (1 = reject-worthy spam)."""
     tokens = _tokenize(text)
     if len(tokens) < 12:
         return 0.0
@@ -77,10 +80,11 @@ def seo_keyword_stuffing_penalty(
     return min(1.0, round(penalty, 4))
 
 
-# Alias used in tests and profile_chunk_selector.
+# Alias used in profile_chunk_selector.
 seo_penalty = seo_keyword_stuffing_penalty
 
 
+# True when SEO stuffing penalty meets or exceeds the hard-reject threshold.
 def is_seo_hard_reject(
     chunk_text: str,
     query_tokens: Iterable[str] | None = None,

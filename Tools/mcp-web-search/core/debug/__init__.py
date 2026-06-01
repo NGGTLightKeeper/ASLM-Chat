@@ -1,1 +1,1 @@
-"""Debug and operator consoles for mcp-web-search."""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.

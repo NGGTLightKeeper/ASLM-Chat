@@ -81,7 +81,6 @@ OPENAI_DIRECT_OPTION_KEYS = {
 }
 
 
-
 # Build LM Studio SDK clients.
 # Normalize the configured API host.
 def _extract_api_host(raw_address: str) -> str:
@@ -196,7 +195,6 @@ def _list_models_with_client(method_name: str) -> list[Any]:
         return list(getattr(client, method_name)())
     finally:
         _close_client(client)
-
 
 
 # Normalize LM Studio metadata.
@@ -419,7 +417,6 @@ def _read_json_file(path: str) -> Any:
         return None
 
 
-
 # Normalize LM Studio KV config fields.
 # Unwrap one KV field value.
 def _unwrap_kv_field_value(value: Any) -> Any:
@@ -557,7 +554,6 @@ def _kv_fields_to_client_config(section_key: str, fields: list[dict[str, Any]]) 
     return _normalize_model_config(normalized)
 
 
-
 # Read and sync persisted LM Studio defaults.
 # Read one model index record.
 def _get_model_index_record(model_name: str) -> dict[str, Any]:
@@ -685,7 +681,6 @@ def _sync_operation_defaults_to_disk(model_name: str, operation_config: dict[str
 
     with _model_state_lock:
         _synced_operation_defaults_signatures[model_name] = signature
-
 
 
 # Derive runtime capabilities and request options.
@@ -1086,10 +1081,8 @@ def _build_tool_message(
     return payload
 
 
-
 # Parse streamed reasoning fragments.
 class _ReasoningTextParser:
-    """Split streamed reasoning text from visible content."""
 
     # Initialize parser state.
     def __init__(self, tag_pairs: tuple[tuple[str, str], ...] = REASONING_TAG_PAIRS) -> None:
@@ -1179,7 +1172,6 @@ class _ReasoningTextParser:
         if self._in_reasoning:
             return pending, ""
         return "", pending
-
 
 
 # Stream native and OpenAI-compatible LM Studio conversations.
@@ -1574,7 +1566,6 @@ def _run_tool_loop(
             return
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
-
 
 
 # Expose the public adapter API.

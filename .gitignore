@@ -200,3 +200,45 @@ Settings/host_locale.json
 MCP/mcp.json
 Data/
 !Apps/Data/
+
+# Tools (shared)
+pytest-cache-files-*/
+
+# Archives (local download artifacts)
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.gz
+*.bz2
+*.xz
+
+Tools/zip/
+Tools/user_files/
+Tools/model_runtime_metadata.json
+
+# Tools/mcp-sandbox
+Tools/mcp-sandbox/tests/.test_workspace/
+Tools/mcp-sandbox/tests/.test_workspace_jobs/
+Tools/mcp-sandbox/tests/_sandbox/
+Tools/mcp-sandbox/_sandbox/
+Tools/mcp-sandbox/todo.md
+Tools/mcp-sandbox/.env.local
+Tools/mcp-sandbox/docker.dev.env
+Tools/mcp-sandbox/sandbox.env
+
+# Tools/mcp-web-search
+Tools/mcp-web-search/core/config/api_keys.json
+Tools/mcp-web-search/majestic_million.csv
+Tools/mcp-web-search/core/registry/majestic_million.csv
+Tools/mcp-web-search/_cache/
+Tools/mcp-web-search/tmp/
+Tools/mcp-web-search/todo.md
+Tools/mcp-web-search/logs/
+Tools/mcp-web-search/archive/
+Tools/mcp-web-search/scripts/
+Tools/mcp-web-search/models/
+Tools/mcp-web-search/ASLM-Embending/
+Tools/mcp-web-search/**/*.bat

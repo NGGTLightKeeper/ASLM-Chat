@@ -1,18 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Search configuration loader.
-
-Reads search_config.json from this directory and exposes a typed
-SearchConfig dataclass. All service-layer modules import from here;
-no module should read JSON directly.
-
-Public API
-----------
-SearchConfig      -- typed configuration dataclass
-load_search_config() -> SearchConfig
-"""
-
 from __future__ import annotations
 
 import json
@@ -28,10 +15,7 @@ logger = logging.getLogger("config.search")
 _CONFIG_PATH = Path(__file__).parent / "search_config.json"
 
 
-# ---------------------------------------------------------------------------
-# Typed config dataclasses
-# ---------------------------------------------------------------------------
-
+# Typed config dataclasses (loaded from search_config.json).
 @dataclass
 class SearchSection:
     timeout_seconds: float = 40.0
@@ -75,23 +59,9 @@ class CacheSection:
     page_ttl_seconds: int = 86_400
 
 
+# Year tokens in queries: timelimit (default), strip, or none — see year_hint_* fields.
 @dataclass
 class QuerySection:
-    """Controls how year tokens in search queries are interpreted.
-
-    year_hint_mode:
-        "timelimit" — extract the year, derive a timelimit from it, then
-                      strip it from the query so the search engine doesn't
-                      treat it as a keyword.  Most useful behavior.
-        "strip"     — strip years when freshness hints are present, but do
-                      not use them to set a timelimit (legacy behavior).
-        "none"      — leave years in the query untouched.
-
-    year_hint_current / year_hint_prev / year_hint_older:
-        DDGS timelimit ("d"/"w"/"m"/"y") or null (no restriction) applied
-        when the extracted year equals the current year, the previous year,
-        or anything older.  Null means "no additional restriction".
-    """
     year_hint_mode: str = "timelimit"
     year_hint_current: Optional[str] = "m"  # year == this year  → last month
     year_hint_prev: Optional[str] = "y"     # year == last year  → last year
@@ -148,15 +118,12 @@ class SearchConfig:
     effort: "EffortSection" = field(default_factory=lambda: EffortSection())
 
 
-# ---------------------------------------------------------------------------
-# Loader (singleton pattern)
-# ---------------------------------------------------------------------------
-
 _cached_config: SearchConfig | None = None
 
 _MISSING = object()
 
 
+# Coerce JSON values to optional strings (empty string → None).
 def _optional_string(value: object, default: Optional[str]) -> Optional[str]:
     if value is None:
         return None
@@ -167,12 +134,8 @@ def _optional_string(value: object, default: Optional[str]) -> Optional[str]:
     return str(value)
 
 
+# Load search_config.json and cache a SearchConfig singleton (custom path for tests only).
 def load_search_config(path: Path | None = None) -> SearchConfig:
-    """Load and return the SearchConfig singleton.
-
-    Subsequent calls return the cached instance.
-    Pass a custom *path* only in tests.
-    """
     global _cached_config
     if _cached_config is not None and path is None:
         return _cached_config

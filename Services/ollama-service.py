@@ -40,21 +40,21 @@ SERVER_CONFIG_ENV_KEYS = (
 )
 
 
-# Describe desired Ollama runtime state
+# Runtime state model
+
+# Flags derived from settings that describe whether Ollama should run.
 @dataclass(frozen=True)
 class OllamaDesiredState:
-    """Describe whether the managed Ollama runtime should currently be active."""
-
     requested_engine: str
     active_engine: str
     is_enabled: bool
     should_run: bool
 
 
-# Read tracked Ollama PID
-def _read_pid() -> int | None:
-    """Return the saved Ollama PID when it exists."""
+# Process tracking
 
+# Read the managed Ollama PID from disk.
+def _read_pid() -> int | None:
     try:
         raw_value = PID_FILE.read_text(encoding="utf-8").strip()
     except OSError:
@@ -69,28 +69,22 @@ def _read_pid() -> int | None:
         return None
 
 
-# Write tracked Ollama PID
+# Persist the managed Ollama PID on disk.
 def _write_pid(pid: int) -> None:
-    """Persist the managed Ollama PID on disk."""
-
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text(str(pid), encoding="utf-8")
 
 
-# Clear tracked Ollama PID
+# Remove the saved Ollama PID file.
 def _clear_pid() -> None:
-    """Remove the saved Ollama PID file."""
-
     try:
         PID_FILE.unlink()
     except OSError:
         pass
 
 
-# Check tracked process state
+# Return whether the given PID still points to a live process.
 def _is_pid_running(pid: int | None) -> bool:
-    """Return whether the given PID still points to a live process."""
-
     if not pid:
         return False
 
@@ -102,10 +96,10 @@ def _is_pid_running(pid: int | None) -> bool:
     return True
 
 
-# Resolve desired runtime state
-def _get_desired_state(requested_engine: str | None = None) -> OllamaDesiredState:
-    """Return whether the managed Ollama runtime should currently be running."""
+# Runtime policy
 
+# Resolve whether the managed Ollama runtime should currently be running.
+def _get_desired_state(requested_engine: str | None = None) -> OllamaDesiredState:
     active_engine = settings.get_llm_engine()
     resolved_engine = settings.normalize_engine_name(requested_engine or active_engine)
     is_enabled = bool(settings.get("ollama-service", False))
@@ -118,10 +112,8 @@ def _get_desired_state(requested_engine: str | None = None) -> OllamaDesiredStat
     )
 
 
-# Build managed runtime environment
+# Build environment variables used to launch the managed Ollama service.
 def _build_service_environment() -> tuple[dict[str, str], int]:
-    """Return the environment variables used to launch the managed Ollama service."""
-
     ollama_models = settings.get("ollama-service_models")
     ollama_port = int(settings.get("ollama-service_port", 30002))
 
@@ -137,21 +129,19 @@ def _build_service_environment() -> tuple[dict[str, str], int]:
     return env, ollama_port
 
 
-# Sanitize one console line
-def _sanitize_console_line(message: str) -> str:
-    """Strip ANSI escapes and trailing line breaks for ASLM console rendering."""
+# Log formatting
 
+# Strip ANSI escapes and trailing line breaks for ASLM console rendering.
+def _sanitize_console_line(message: str) -> str:
     cleaned = ANSI_ESCAPE_RE.sub("", message)
     return cleaned.rstrip("\r\n")
 
 
-# Truncate one console line
+# Trim long console lines so ASLM stays readable.
 def _truncate_console_line(
     message: str,
     limit: int = MAX_CONSOLE_LINE_LENGTH,
 ) -> str:
-    """Trim long console lines so ASLM stays readable."""
-
     if settings.is_console_trace_enabled():
         limit = max(limit, 900)
     elif settings.is_console_debug_enabled():
@@ -163,10 +153,8 @@ def _truncate_console_line(
     return f"{message[:max(0, limit - 3)].rstrip()}..."
 
 
-# Parse structured Ollama log fields
+# Parse Ollama key=value log lines into a dictionary.
 def _parse_structured_log_fields(message: str) -> dict[str, str]:
-    """Parse Ollama's key=value log format into a dictionary."""
-
     try:
         tokens = shlex.split(message, posix=True)
     except ValueError:
@@ -187,10 +175,8 @@ def _parse_structured_log_fields(message: str) -> dict[str, str]:
     return fields
 
 
-# Extract one environment value from a log blob
+# Extract one environment variable from Ollama's server-config log dump.
 def _extract_env_value(env_blob: str, env_key: str) -> str:
-    """Extract one environment variable value from Ollama's server-config dump."""
-
     match = re.search(rf"{re.escape(env_key)}:([^ ]+)", env_blob)
     if not match:
         return ""
@@ -198,15 +184,13 @@ def _extract_env_value(env_blob: str, env_key: str) -> str:
     return match.group(1).strip()
 
 
-# Collect leftover structured log details
+# Format extra structured-log fields as key=value details.
 def _collect_remaining_field_details(
     fields: dict[str, str],
     *,
     excluded_keys: set[str] | None = None,
     max_items: int | None = None,
 ) -> list[str]:
-    """Return extra structured-log fields formatted as key=value details."""
-
     excluded = {"time", "level", "source", "msg"}
     if excluded_keys:
         excluded |= set(excluded_keys)
@@ -227,10 +211,8 @@ def _collect_remaining_field_details(
     return details
 
 
-# Summarize model load request details
+# Extract useful runner load-request fields from Ollama trace lines.
 def _summarize_load_request(request_blob: str) -> list[str]:
-    """Extract useful runner load-request fields from Ollama trace lines."""
-
     details: list[str] = []
     patterns = {
         "operation": r"Operation:([A-Za-z0-9_]+)",
@@ -250,10 +232,8 @@ def _summarize_load_request(request_blob: str) -> list[str]:
     return details
 
 
-# Format one GIN access log line
+# Convert GIN access logs into a compact summary.
 def _format_gin_line(message: str) -> str | None:
-    """Convert GIN access logs into a compact summary."""
-
     match = re.search(
         r'\[GIN\]\s+\S+\s+-\s+\S+\s+\|\s+(\d+)\s+\|\s+([^|]+?)\s+\|\s+([^|]+?)\s+\|\s+([A-Z]+)\s+"([^"]+)"',
         message,
@@ -273,10 +253,8 @@ def _format_gin_line(message: str) -> str | None:
     )
 
 
-# Format one backend loader log line
+# Convert backend loader logs into a shorter summary.
 def _format_backend_line(message: str) -> str:
-    """Convert backend loader logs into a shorter, more useful summary."""
-
     backend_path = message.partition(" from ")[2].strip()
     if backend_path:
         backend_name = Path(backend_path).name
@@ -288,10 +266,8 @@ def _format_backend_line(message: str) -> str:
     return _truncate_console_line(f"[Ollama][Backend] {message}")
 
 
-# Format one structured Ollama log line
+# Convert Ollama structured logs into concise console lines.
 def _format_structured_ollama_line(message: str) -> str | None:
-    """Convert Ollama structured logs into concise console lines."""
-
     # Parse key=value pairs from Ollama's structured logger output.
     fields = _parse_structured_log_fields(message)
     if not fields:
@@ -466,10 +442,8 @@ def _format_structured_ollama_line(message: str) -> str | None:
     return _truncate_console_line(rendered)
 
 
-# Format one raw console log line
+# Convert raw Ollama output into a readable console line.
 def _format_console_log_line(message: str) -> str | None:
-    """Convert raw Ollama output into a readable console line."""
-
     if not message:
         return None
 
@@ -489,17 +463,15 @@ def _format_console_log_line(message: str) -> str | None:
     return _truncate_console_line(f"[Ollama] {message}")
 
 
-# Print watcher status
-def _print_status(message: str) -> None:
-    """Emit one watcher status line."""
+# Log streaming
 
+# Emit one watcher status line to stdout.
+def _print_status(message: str) -> None:
     print(f"[ASLM-Chat] {message}", flush=True)
 
 
-# Read recent managed log lines
+# Return the latest non-empty lines from the managed Ollama log file.
 def _read_recent_log_lines(limit: int = RECENT_LOG_LINE_COUNT) -> list[str]:
-    """Return the latest non-empty log lines from the managed Ollama log file."""
-
     if not LOG_FILE.exists():
         return []
 
@@ -517,10 +489,8 @@ def _read_recent_log_lines(limit: int = RECENT_LOG_LINE_COUNT) -> list[str]:
     return list(recent_lines)
 
 
-# Stream new managed log lines
+# Print managed Ollama log lines written after the given file offset.
 def _stream_new_log_lines(position: int) -> int:
-    """Print all new managed Ollama log lines since the given file offset."""
-
     if not LOG_FILE.exists():
         return 0
 
@@ -550,10 +520,8 @@ def _stream_new_log_lines(position: int) -> int:
         return position
 
 
-# Stream the managed log file forever
+# Mirror managed Ollama log lines into the current process stdout.
 def _stream_log_file_forever() -> None:
-    """Mirror managed Ollama log lines into the current process stdout."""
-
     last_pid: int | None = None
     log_position = 0
 
@@ -591,10 +559,8 @@ def _stream_log_file_forever() -> None:
         time.sleep(LOG_POLL_INTERVAL)
 
 
-# Ensure background log streaming
+# Start a single background thread that forwards Ollama logs to stdout.
 def _ensure_log_streaming() -> None:
-    """Start a single background thread that forwards Ollama logs to stdout."""
-
     global _log_stream_thread
 
     with _log_stream_lock:
@@ -609,10 +575,10 @@ def _ensure_log_streaming() -> None:
         _log_stream_thread.start()
 
 
-# Wait for Ollama HTTP readiness
-def _wait_until_ready(timeout_seconds: float = 15.0) -> bool:
-    """Wait until the local Ollama HTTP endpoint starts responding."""
+# Readiness checks
 
+# Wait until the local Ollama HTTP endpoint starts responding.
+def _wait_until_ready(timeout_seconds: float = 15.0) -> bool:
     deadline = time.time() + timeout_seconds
     host = settings.get_engine_url("ollama-service")
     version_url = f"{host.rstrip('/')}/api/version"
@@ -629,10 +595,8 @@ def _wait_until_ready(timeout_seconds: float = 15.0) -> bool:
     return False
 
 
-# Wait for an existing Ollama runtime
+# Give a separately launched Ollama runtime a short chance to appear.
 def _wait_for_existing_runtime(timeout_seconds: float = 2.0) -> bool:
-    """Give a separately launched Ollama runtime a short chance to appear."""
-
     deadline = time.time() + max(0.0, timeout_seconds)
     while time.time() < deadline:
         if _wait_until_ready(timeout_seconds=0.25):
@@ -648,17 +612,15 @@ def _wait_for_existing_runtime(timeout_seconds: float = 2.0) -> bool:
     return False
 
 
-# Detect ASLM-managed execution context
+# Return whether ASLM module infrastructure launched the current process.
 def _is_running_inside_aslm() -> bool:
-    """Return whether the current process is launched by ASLM module infrastructure."""
-
     return bool(os.environ.get("ASLM_MODULE_ID") or os.environ.get("ASLM_MODULE_DIR"))
 
 
-# Start managed Ollama service
-def start_ollama(engine: str | None = None) -> bool:
-    """Start the local Ollama service when the active engine requires it."""
+# Public lifecycle
 
+# Start the local Ollama service when the active engine requires it.
+def start_ollama(engine: str | None = None) -> bool:
     global _ollama_process
 
     # Check whether the current engine selection should manage Ollama at all.
@@ -754,10 +716,8 @@ def start_ollama(engine: str | None = None) -> bool:
         return False
 
 
-# Run dedicated Ollama runtime process
+# Replace the current process with ollama serve for the dedicated runtime command.
 def run_ollama_runtime(log: bool = False) -> int:
-    """Replace the current process with ``ollama serve``."""
-
     # Skip the command when the managed runtime is disabled.
     desired_state = _get_desired_state("ollama-service")
     if not desired_state.is_enabled:
@@ -790,10 +750,8 @@ def run_ollama_runtime(log: bool = False) -> int:
         return 1
 
 
-# Stop managed Ollama service
+# Stop the managed Ollama service when a tracked PID exists.
 def stop_ollama() -> None:
-    """Stop the managed Ollama service when a tracked PID exists."""
-
     global _ollama_process
 
     # Exit quietly when there is no tracked runtime.
@@ -820,10 +778,8 @@ def stop_ollama() -> None:
         _clear_pid()
 
 
-# Run managed Ollama log console
+# Stream the managed Ollama log file into stdout for the console command.
 def run_ollama_console(log: bool = False) -> None:
-    """Stream the managed Ollama log file into stdout."""
-
     del log  # Reserved for future verbosity controls.
     _print_status("Ollama log streaming is active.")
     _stream_log_file_forever()

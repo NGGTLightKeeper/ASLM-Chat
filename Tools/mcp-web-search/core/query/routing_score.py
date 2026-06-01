@@ -1,4 +1,4 @@
-"""Class-aware registry scoring for web-search routing and ranking."""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from core.registry.trust_registry import get_trust_registry
 NEUTRAL_CLASS = "general"
 
 
+# One query class with normalized weight and optional reason string.
 @dataclass(frozen=True)
 class QueryClassWeight:
     name: str
@@ -19,6 +20,7 @@ class QueryClassWeight:
     reason: str = ""
 
 
+# Combined domain and trust routing multiplier with debug metadata.
 @dataclass(frozen=True)
 class RoutingScore:
     multiplier: float
@@ -28,6 +30,7 @@ class RoutingScore:
     debug: dict = field(default_factory=dict)
 
 
+# Normalize class weights to sum to 1; fallback to general on empty input.
 def normalize_class_mix(classes: list[tuple[str, float, str]] | list[QueryClassWeight]) -> list[QueryClassWeight]:
     cleaned: list[QueryClassWeight] = []
     for item in classes:
@@ -49,6 +52,7 @@ def normalize_class_mix(classes: list[tuple[str, float, str]] | list[QueryClassW
     ]
 
 
+# Ensure a general-class floor when a single non-general class dominates.
 def ensure_general_fallback(classes: list[QueryClassWeight], *, floor: float = 0.18) -> list[QueryClassWeight]:
     if not classes:
         return [QueryClassWeight(NEUTRAL_CLASS, 1.0, "empty-fallback")]
@@ -63,10 +67,12 @@ def ensure_general_fallback(classes: list[QueryClassWeight], *, floor: float = 0
     return normalize_class_mix(classes)
 
 
+# Convert class weight list to name → weight map.
 def class_mix_map(classes: list[QueryClassWeight]) -> dict[str, float]:
     return {item.name: item.weight for item in classes}
 
 
+# Distribute integer source budget across classes by normalized weights.
 def allocate_source_budget(classes: list[QueryClassWeight], total: int) -> dict[str, int]:
     total = max(1, int(total))
     mix = ensure_general_fallback(normalize_class_mix(classes))
@@ -93,6 +99,7 @@ def allocate_source_budget(classes: list[QueryClassWeight], total: int) -> dict[
     return allocation
 
 
+# Weighted average over class mix; general uses default when absent from values.
 def _weighted(values: dict[str, float], mix: dict[str, float], default: float = 1.0) -> float:
     if not mix:
         return default
@@ -105,6 +112,7 @@ def _weighted(values: dict[str, float], mix: dict[str, float], default: float = 
     return total or default
 
 
+# Lookup trust registry entry by URL host pattern.
 def _trust_entry_for_url(trust_registry, url: str):
     host = urlparse(url or "").netloc.lower()
     for pattern, entry in getattr(trust_registry, "_lookup", {}).items():
@@ -113,6 +121,7 @@ def _trust_entry_for_url(trust_registry, url: str):
     return None
 
 
+# Compute combined domain and trust routing multiplier for one URL.
 def compute_routing_score(url: str, classes: list[QueryClassWeight]) -> RoutingScore:
     mix = class_mix_map(ensure_general_fallback(normalize_class_mix(classes)))
     domain_registry = get_registry()
@@ -120,6 +129,7 @@ def compute_routing_score(url: str, classes: list[QueryClassWeight]) -> RoutingS
     info = domain_registry.lookup(url)
     strategy = domain_registry.resolve_access_strategy(url)
 
+    # Path-prefix class weights (longest matching prefix wins).
     path = urlparse(url or "").path or "/"
     matched_path = ""
     path_weight = 1.0
@@ -135,6 +145,7 @@ def compute_routing_score(url: str, classes: list[QueryClassWeight]) -> RoutingS
     raw_domain = base * class_weight * demotion * path_weight
     domain_multiplier = max(0.55, min(1.45, raw_domain))
 
+    # Trust tier affinity blended into final multiplier.
     entry = _trust_entry_for_url(trust_registry, url)
     if entry is not None:
         trust_affinity = max(0.55, min(1.25, _weighted(entry.class_affinity, mix)))

@@ -1,4 +1,4 @@
-"""Tests for reputation content-quality signal, auto-promote, and trust wiring."""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -22,6 +22,8 @@ from services.web_search import (
 )
 
 
+# Build a default SearchResult for content-quality tests.
+
 def _result(**kwargs) -> SearchResult:
     base = dict(
         url="https://security-notes.example/cve",
@@ -32,6 +34,8 @@ def _result(**kwargs) -> SearchResult:
     base.update(kwargs)
     return SearchResult(**base)
 
+
+# _content_quality_signal — strong BM25 preview can exceed promote threshold.
 
 def test_bm25_signal_can_exceed_promote_threshold() -> None:
     payload = PreviewPayload(
@@ -44,12 +48,16 @@ def test_bm25_signal_can_exceed_promote_threshold() -> None:
     assert signal >= PROMOTE_THRESHOLD, f"signal={signal:.3f} below promote threshold"
 
 
+# _content_quality_signal — weak preview stays below promote threshold.
+
 def test_bm25_signal_stays_below_promote_for_weak_preview() -> None:
     payload = PreviewPayload(text="Short.", quality_score=0.35, semantic_score=0.0)
     result = _result(parsed_relevance_score=0.25, snippet_relevance_score=0.30)
     signal = _content_quality_signal(payload, result, "CVE-2024 OpenSSL critical patch RCE")
     assert signal < PROMOTE_THRESHOLD
 
+
+# _content_quality_signal — semantic_score component affects the blended signal.
 
 def test_semantic_path_uses_semantic_component() -> None:
     payload = PreviewPayload(text="Body", quality_score=0.7, semantic_score=0.85)
@@ -60,8 +68,9 @@ def test_semantic_path_uses_semantic_component() -> None:
     assert with_sem != without_sem
 
 
+# EMA convergence — repeated strong signals reach PROMOTE_THRESHOLD.
+
 def test_ema_reaches_promote_after_repeated_strong_signals() -> None:
-    """Simulate EMA updates — strong BM25-era signals must converge above 0.72."""
     signal = 0.80
     ema = 0.5
     for _ in range(20):
@@ -69,8 +78,9 @@ def test_ema_reaches_promote_after_repeated_strong_signals() -> None:
     assert ema >= PROMOTE_THRESHOLD
 
 
+# Fixture helper: realistic BM25 observation for reputation store tests.
+
 def _strong_bm25_observation() -> tuple[PreviewPayload, SearchResult, str, float]:
-    """Realistic BM25-default observation that should eventually auto-promote."""
     query = "CVE-2024 OpenSSL critical patch RCE"
     payload = PreviewPayload(
         text="CVE-2024-5535 CVSS 9.8. Upgrade OpenSSL 3.0.14 and 3.1.6.",
@@ -82,13 +92,16 @@ def _strong_bm25_observation() -> tuple[PreviewPayload, SearchResult, str, float
     return payload, result, query, signal
 
 
+# Per-test DomainReputationStore backed by tmp_path.
+
 @pytest.fixture
 def rep_store(tmp_path) -> DomainReputationStore:
     return DomainReputationStore(str(tmp_path / "domain_reputation.db"))
 
 
+# DomainReputationStore — repeated strong BM25 observations auto-promote tier C.
+
 def test_auto_promote_after_repeated_bm25_quality_observations(rep_store: DomainReputationStore) -> None:
-    """BM25-era signals must drive per-query-type EMA over PROMOTE_THRESHOLD and set tier C."""
     domain = "security-notes.example"
     query_type = "technical"
     _, _, _, signal = _strong_bm25_observation()
@@ -106,6 +119,8 @@ def test_auto_promote_after_repeated_bm25_quality_observations(rep_store: Domain
     assert rep_store.get_promoted_tier(domain) == "C"
     assert query_type in report.promoted_query_types
 
+
+# _parsed_lexical_score — body match beats SERP-only when preview aligns with query.
 
 def test_parsed_lexical_beats_serp_only_when_body_matches_query() -> None:
     query = "CVE-2024 OpenSSL critical patch RCE"
@@ -145,8 +160,9 @@ def test_parsed_lexical_beats_serp_only_when_body_matches_query() -> None:
     assert score_with_body > score_no_body
 
 
+# _result_score — parsed_lex boost requires margin over SERP lexical score.
+
 def test_parsed_lex_boost_requires_margin_over_serp_lex() -> None:
-    """No extra parsed_lex path when body does not beat SERP lexical by margin."""
     query = "CVE-2024 OpenSSL critical patch RCE"
     result = _result(
         title="CVE-2024 OpenSSL critical patch RCE advisory",
@@ -169,8 +185,9 @@ def test_parsed_lex_boost_requires_margin_over_serp_lex() -> None:
     assert abs(score_with_body - score_serp_only) < 1e-6
 
 
+# _resolve_result_trust_tier — auto-promoted domain surfaces as trust_tier C.
+
 def test_resolve_trust_tier_applies_auto_promoted_tier(rep_store: DomainReputationStore) -> None:
-    """Promoted domain must surface as trust_tier B/C in triage/scoring paths."""
     domain = "openssl-notes.example"
     query_type = "technical"
     _, _, _, signal = _strong_bm25_observation()

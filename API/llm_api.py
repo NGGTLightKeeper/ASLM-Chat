@@ -54,6 +54,7 @@ def get_models(engine: str | None) -> Any:
 
     raise NotImplementedError(f"Engine {engine} does not implement get_models")
 
+
 # Download a model through one engine.
 def download_model(engine: str | None, model_name: str, **kwargs: Any) -> Any:
     """Download or pull a model through the selected engine adapter."""
@@ -64,6 +65,7 @@ def download_model(engine: str | None, model_name: str, **kwargs: Any) -> Any:
         return module.download_model(model_name, **kwargs)
 
     raise NotImplementedError(f"Engine {engine} does not implement download_model")
+
 
 # Generate a response through one engine.
 def generate(engine: str | None, model_name: str, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
@@ -98,6 +100,7 @@ def abort_generation(engine: str | None = None) -> None:
     if callable(abort):
         abort()
 
+
 # Read model metadata from one engine.
 def get_model_settings(engine: str | None, model_name: str) -> Any:
     """Return model metadata exposed by the selected engine."""
@@ -108,6 +111,7 @@ def get_model_settings(engine: str | None, model_name: str) -> Any:
         return module.get_model_settings(model_name)
 
     raise NotImplementedError(f"Engine {engine} does not implement get_model_settings")
+
 
 # Reload one model when the adapter supports it.
 def reload_model(engine: str | None, model_name: str) -> None:
@@ -142,6 +146,7 @@ def prepare_runtime(engine: str | None) -> None:
 
     prepare()
 
+
 # Clean up one engine runtime.
 def cleanup_runtime(engine: str | None) -> None:
     """Release runtime resources for the selected engine."""
@@ -150,6 +155,7 @@ def cleanup_runtime(engine: str | None) -> None:
     cleanup = getattr(module, "cleanup_runtime", None)
     if callable(cleanup):
         cleanup()
+
 
 # Switch runtime ownership between engines.
 def handle_engine_transition(previous_engine: str | None, next_engine: str | None) -> None:

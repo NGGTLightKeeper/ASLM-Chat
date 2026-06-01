@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import re
@@ -14,6 +16,7 @@ from core.extract.page_normalizer import (
 )
 
 
+# Chrome-like User-Agent for lightweight httpx fetches.
 CHROME_BASIC_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -23,15 +26,18 @@ CHROME_BASIC_HEADERS = {
 }
 
 
+# Collapse whitespace and cap string length.
 def trim(text: str, limit: int = 240) -> str:
     return re.sub(r"\s+", " ", text or "").strip()[:limit]
 
 
+# Parse document title from raw HTML.
 def extract_title(html: str) -> str:
     match = re.search(r"<title[^>]*>(.*?)</title>", html or "", re.IGNORECASE | re.DOTALL)
     return trim(match.group(1) if match else "", 180)
 
 
+# Heuristic: page looks like a bot/captcha block rather than real content.
 def looks_blocked(title: str, html: str) -> bool:
     lower_title = (title or "").lower()
     lower_html = (html or "").lower()
@@ -41,6 +47,7 @@ def looks_blocked(title: str, html: str) -> bool:
     )
 
 
+# Drop known Trafilatura noise lines from extracted markdown.
 def clean_trafilatura_snapshot(text: str) -> str:
     lines = [line.rstrip() for line in (text or "").splitlines()]
     cleaned: list[str] = []
@@ -60,6 +67,7 @@ def clean_trafilatura_snapshot(text: str) -> str:
     return "\n".join(cleaned).strip()
 
 
+# Run normalize_page or trafilatura extraction and build markdown snapshot fields.
 def extract_with_preferred_pipeline(url: str, raw_html: str, *, prefer_trafilatura: bool) -> dict[str, Any]:
     meta = _extract_meta(raw_html, None, url)
     cleaned_html = _preclean_html(raw_html)

@@ -1,11 +1,6 @@
-import sys
-from pathlib import Path
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from core.query.class_profiles import (
     CLASS_PRIORITY,
@@ -19,12 +14,16 @@ from core.query.class_profiles import (
 from services.web_search import infer_query_types
 
 
+# Autouse fixture: clear class profile cache between tests.
+
 @pytest.fixture(autouse=True)
 def _fresh_profiles() -> None:
     clear_class_profiles_cache()
     yield
     clear_class_profiles_cache()
 
+
+# load_class_profiles — all 21 priority classes load with descriptions.
 
 def test_load_all_class_profiles() -> None:
     profiles = load_class_profiles()
@@ -35,12 +34,16 @@ def test_load_all_class_profiles() -> None:
         assert profiles[name].description
 
 
+# _trigram_similarity — fuzzy match close spellings.
+
 def test_trigram_catches_close_variants() -> None:
     assert _trigram_similarity("kubernetes", "kuberntes") >= 0.55
     scores = score_query_against_profiles("kuberntes cluster deployment yaml")
     tech = next(r for r in scores if r.class_name == "technical")
     assert any("fuzzy" in reason for reason in tech.reasons)
 
+
+# score_query_against_profiles — obvious technical queries score high.
 
 def test_obvious_technical_scores_high() -> None:
     scores = {r.class_name: r.score for r in score_query_against_profiles(
@@ -52,6 +55,8 @@ def test_obvious_technical_scores_high() -> None:
         "asyncio TaskGroup cancellation semantics Python 3.12"
     )
 
+
+# score_query_against_profiles — technical special terms must not false-positive.
 
 @pytest.mark.parametrize(
     "query",
@@ -73,6 +78,8 @@ def test_technical_special_terms_do_not_match_unrelated_substrings(query: str) -
     assert not any("c++" in reason or "rust" in reason or "react" in reason for reason in technical.reasons)
 
 
+# score_query_against_profiles — explicit C++/dotnet-style tokens match technical.
+
 @pytest.mark.parametrize(
     "query",
     [
@@ -92,6 +99,8 @@ def test_technical_symbol_terms_match_explicit_forms(query: str) -> None:
     assert technical.score >= 0.12
 
 
+# score_query_against_profiles — weather queries dominate technical.
+
 def test_obvious_weather_scores_high() -> None:
     scores = {r.class_name: r.score for r in score_query_against_profiles(
         "weather forecast temperature humidity погода на завтра прогноз"
@@ -100,6 +109,8 @@ def test_obvious_weather_scores_high() -> None:
     assert scores["weather"] >= 0.08
     assert infer_query_types_from_rules("погода на завтра прогноз осадки")[0] == "weather"
 
+
+# infer_query_types_hybrid — model split keeps both technical and academic.
 
 def test_model_split_technical_academic_keeps_both() -> None:
     hybrid = infer_query_types_hybrid(
@@ -111,11 +122,15 @@ def test_model_split_technical_academic_keeps_both() -> None:
     assert "academic" in classes
 
 
+# infer_query_types_from_rules — score order before CLASS_PRIORITY tie-break.
+
 def test_rule_only_order_prefers_score_before_class_priority() -> None:
     classes = infer_query_types_from_rules("Tesla Model 3 price")
 
     assert classes[:2] == ["shopping", "automotive"]
 
+
+# infer_query_types_hybrid — model-only technical adds general secondary.
 
 def test_model_only_technical_adds_general_secondary() -> None:
     hybrid = infer_query_types_hybrid(
@@ -127,15 +142,15 @@ def test_model_only_technical_adds_general_secondary() -> None:
     assert "general" in classes
 
 
+# infer_query_types_hybrid — hard rule override only at high model confidence.
+
 def test_hard_rule_override_only_at_high_confidence() -> None:
-    # Model confident weather; rules should not flip to technical on weak overlap.
     hybrid_weak = infer_query_types_hybrid(
         "sunny afternoon walk",
         model_scores={"weather": 0.88},
     )
     assert hybrid_weak[0][0] == "weather"
 
-    # Model weak weather; strong technical hard indicators in query.
     hybrid_override = infer_query_types_hybrid(
         "python kubernetes docker github api sdk readthedocs",
         model_scores={"weather": 0.42},
@@ -145,6 +160,8 @@ def test_hard_rule_override_only_at_high_confidence() -> None:
     if top == "technical":
         assert "override" in hybrid_override[0][2] or "model=" in hybrid_override[0][2]
 
+
+# infer_query_types — public wrapper returns capped finance-first list.
 
 def test_infer_query_types_wrapper_compatible() -> None:
     types = infer_query_types("bitcoin price nasdaq trading")

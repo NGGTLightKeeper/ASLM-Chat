@@ -63,21 +63,17 @@ TOOL_BLOCK_FINAL_PROMPT = (
 )
 
 
+# Run async tool handlers on one persistent event loop.
 class AsyncCallableRunner:
-    """Run async tool handlers on one persistent event loop.
 
-    Some tool handlers keep asyncio subprocess transports between calls. On
-    Windows those transports are tied to the event loop that created them, so
-    using a fresh asyncio.run() per tool call can leave a live process with a
-    closed Proactor pipe.
-    """
-
+    # Initialize the shared runner state.
     def __init__(self) -> None:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
         self._lock = threading.Lock()
 
+    # Host the dedicated asyncio loop on a background thread.
     def _thread_main(self) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -88,6 +84,7 @@ class AsyncCallableRunner:
         finally:
             loop.close()
 
+    # Start the background loop thread when it is not already running.
     def ensure_started(self) -> None:
         if self._thread is not None and self._thread.is_alive() and self._loop is not None:
             return
@@ -105,12 +102,14 @@ class AsyncCallableRunner:
             self._thread.start()
             self._ready.wait()
 
+    # Run one coroutine on the shared loop and wait for its result.
     def run(self, coro: Any, *, timeout: float | None = None) -> Any:
         self.ensure_started()
         assert self._loop is not None
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result(timeout=timeout)
 
+    # Stop the background loop and join its thread.
     def close(self) -> None:
         loop = self._loop
         thread = self._thread
@@ -122,6 +121,7 @@ class AsyncCallableRunner:
             thread.join(timeout=3)
 
 
+# Return the process-wide async callable runner singleton.
 def _get_async_callable_runner() -> AsyncCallableRunner:
     global _ASYNC_CALLABLE_RUNNER
     with _ASYNC_CALLABLE_RUNNER_LOCK:
@@ -144,16 +144,17 @@ def _venv_subprocess_env(python_path: Path) -> dict[str, str]:
     return env
 
 
-# Persistent external tool worker.
+# Keep one isolated tool worker process alive for stateful servers.
 class ExternalWorkerSession:
-    """Keep one isolated tool worker process alive for stateful servers."""
 
+    # Bind one worker process to a server entrypoint and venv Python.
     def __init__(self, server_file: Path, python_path: Path) -> None:
         self.server_file = server_file
         self.python_path = python_path
         self.process: subprocess.Popen[str] | None = None
         self.lock = threading.Lock()
 
+    # Spawn the worker process when it is missing or has exited.
     def _start(self) -> None:
         if self.process is not None and self.process.poll() is None:
             return
@@ -172,6 +173,7 @@ class ExternalWorkerSession:
             bufsize=1,
         )
 
+    # Send one JSON request to the worker and return its result envelope.
     def request(
         self,
         operation: str,
@@ -235,6 +237,7 @@ class ExternalWorkerSession:
 
             return envelope.get("result")
 
+    # Read worker protocol lines until a final JSON envelope arrives.
     def _read_response_line(self, timeout_s: float) -> str:
         """Read worker protocol lines until a final envelope arrives."""
 
@@ -246,6 +249,7 @@ class ExternalWorkerSession:
         while True:
             lines: Queue[str] = Queue()
 
+            # Read one stdout line in a background thread.
             def reader() -> None:
                 try:
                     lines.put(process.stdout.readline())
@@ -277,8 +281,8 @@ class ExternalWorkerSession:
                 continue
             return raw_line
 
+    # Stop the worker process if it is running.
     def close(self) -> None:
-        """Stop the worker process if it is running."""
 
         process = self.process
         self.process = None
@@ -308,6 +312,7 @@ def _print_runtime_event(message: str) -> None:
     print(f"[ASLM-Chat] {message}", flush=True)
 
 
+# Return a wall-clock timeout for one worker request.
 def _worker_timeout_seconds(operation: str, payload: dict[str, Any] | None = None) -> float:
     """Return a wall-clock timeout for one worker request."""
 
@@ -393,6 +398,8 @@ def _summarize_tool_context(context: dict[str, Any]) -> str:
     return ", ".join(parts) if parts else "none"
 
 
+# Enforce per-response tool quotas and cooldowns.
+# Return the canonical tool id used for per-response quotas.
 def _quota_tool_id(tool_event: dict[str, Any] | None) -> str:
     """Return the canonical tool id used for per-response quotas."""
 
@@ -406,6 +413,7 @@ def _quota_tool_id(tool_event: dict[str, Any] | None) -> str:
     return ""
 
 
+# Return the normalized web-search effort value from tool arguments.
 def _search_effort(arguments: dict[str, Any] | None) -> str:
     """Return the normalized web-search effort value from tool arguments."""
 
@@ -418,6 +426,7 @@ def _search_effort(arguments: dict[str, Any] | None) -> str:
     return str(value or "").strip().lower()
 
 
+# Return the per-response quota for one tool call.
 def _tool_quota_limit(quota_tool_id: str, arguments: dict[str, Any] | None = None) -> int:
     """Return the per-response quota for one tool call."""
 
@@ -426,6 +435,7 @@ def _tool_quota_limit(quota_tool_id: str, arguments: dict[str, Any] | None = Non
     return TOOL_CALL_QUOTAS[quota_tool_id]
 
 
+# Append complete model/search tool IO as a readable JSON array.
 def _write_search_io_event(event: dict[str, Any]) -> None:
     """Append complete model/search tool IO as a readable JSON array."""
 
@@ -454,6 +464,7 @@ def _write_search_io_event(event: dict[str, Any]) -> None:
         logger.debug("Failed to write search IO JSON event.", exc_info=True)
 
 
+# Remove preview fields from diagnostics when they duplicate snippet text.
 def _without_duplicate_preview(value: Any) -> Any:
     """Remove preview fields from diagnostics when they exactly duplicate snippet."""
 
@@ -473,6 +484,7 @@ def _without_duplicate_preview(value: Any) -> Any:
     return cleaned
 
 
+# Log exactly what search/read-page tools receive from and return to the model.
 def log_search_tool_io(
     phase: str,
     tool_event: dict[str, Any] | None,
@@ -502,6 +514,7 @@ def log_search_tool_io(
     )
 
 
+# Increment one quota counter and return an error when the call is over limit.
 def consume_tool_quota(
     tool_event: dict[str, Any] | None,
     counters: dict[str, int],
@@ -531,6 +544,7 @@ def consume_tool_quota(
     return None
 
 
+# Return whether a tool result is a guardrail message, not fresh evidence.
 def is_blocking_tool_result(result: Any) -> bool:
     """Return whether a tool result is a guardrail/block message, not fresh evidence."""
 
@@ -545,12 +559,14 @@ def is_blocking_tool_result(result: Any) -> bool:
     )
 
 
+# Return the instruction used when the tool loop must stop retrying tools.
 def forced_final_prompt_after_tool_blocks() -> str:
     """Return the instruction used when the tool loop must stop retrying tools."""
 
     return TOOL_BLOCK_FINAL_PROMPT
 
 
+# Return a stable representation for duplicate tool-call detection.
 def _canonical_tool_arguments(value: Any) -> Any:
     """Return a stable representation for duplicate tool-call detection."""
 
@@ -572,6 +588,7 @@ def _canonical_tool_arguments(value: Any) -> Any:
     return value
 
 
+# Return an error message when the same quota-controlled tool call repeats.
 def consume_duplicate_tool_call(
     tool_event: dict[str, Any] | None,
     arguments: dict[str, Any] | None,
@@ -601,6 +618,7 @@ def consume_duplicate_tool_call(
     return None
 
 
+# Extract normalized read_page URL arguments from one tool payload.
 def _read_page_urls(arguments: dict[str, Any] | None) -> list[str]:
     if not isinstance(arguments, dict):
         return []
@@ -623,6 +641,7 @@ def _read_page_urls(arguments: dict[str, Any] | None) -> list[str]:
     return [str(raw_url).strip()] if str(raw_url or "").strip() else []
 
 
+# Normalize one read_page URL for cooldown comparison.
 def _normalize_read_page_url(url: str) -> str:
     text = re.sub(r"\s+", " ", str(url or "").strip())
     if not text:
@@ -641,6 +660,7 @@ def _normalize_read_page_url(url: str) -> str:
     return urlunsplit((scheme, netloc, path, parsed.query, ""))
 
 
+# Normalize one cooldown key payload for stable comparison.
 def _normalize_cooldown_value(value: Any) -> Any:
     canonical = _canonical_tool_arguments(value)
     if isinstance(canonical, str):
@@ -655,6 +675,7 @@ def _normalize_cooldown_value(value: Any) -> Any:
     return canonical
 
 
+# Build cooldown keys for one search or read_page tool invocation.
 def _tool_cooldown_keys(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> list[tuple[str, str]]:
     tool_id = _quota_tool_id(tool_event)
     if tool_id == "read_page":
@@ -674,6 +695,7 @@ def _tool_cooldown_keys(tool_event: dict[str, Any] | None, arguments: dict[str, 
     return []
 
 
+# Format the duplicate-tool cooldown message shown to the model.
 def _tool_cooldown_message(tool_id: str, entries: list[tuple[str, int]]) -> str:
     display = "web_search" if tool_id == "web_search" else "read_page"
     thing = "query" if tool_id == "web_search" else "URL"
@@ -689,6 +711,7 @@ def _tool_cooldown_message(tool_id: str, entries: list[tuple[str, int]]) -> str:
     return "\n".join(lines)
 
 
+# Block repeated search/read-page calls within a short cooldown window.
 def consume_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> str | None:
     """Block repeated search/read-page calls within a short cooldown window."""
 
@@ -714,6 +737,7 @@ def consume_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str
     return None
 
 
+# Mark search/read-page calls as recently used.
 def remember_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> None:
     """Mark search/read-page calls as recently used."""
 
@@ -726,13 +750,14 @@ def remember_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[st
             _TOOL_COOLDOWNS[key] = expires_at
 
 
+# Delegate read_page cooldown checks to the shared tool cooldown helper.
 def consume_read_page_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> str | None:
     return consume_tool_cooldown(tool_event, arguments)
 
 
+# Delegate read_page cooldown bookkeeping to the shared tool cooldown helper.
 def remember_read_page_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> None:
     remember_tool_cooldown(tool_event, arguments)
-
 
 
 # Manage the server discovery cache.
@@ -1071,6 +1096,7 @@ def _normalize_server_tools(raw_tools: Any, server_id: str) -> list[dict[str, An
     return normalized_tools
 
 
+# Append servers from MCP/mcp.json to the registry payload.
 def _merge_user_mcp_servers(discovered: dict[str, dict[str, Any]]) -> None:
     """Append servers from ``MCP/mcp.json`` to the registry payload."""
 
@@ -1151,8 +1177,6 @@ def _extract_server_definition(module: ModuleType, folder_name: str, server_file
     }
 
 
-
-# Expose the server registry.
 # Refresh the server registry.
 def _ensure_registry_loaded() -> dict[str, dict[str, Any]]:
     """Discover and cache valid local MCP-style server modules."""
@@ -1259,7 +1283,6 @@ def get_server(
     return server_definition
 
 
-
 # Serialize registry data.
 # Serialize one tool.
 def _serialize_tool(tool_definition: dict[str, Any]) -> dict[str, Any]:
@@ -1347,7 +1370,6 @@ def build_ollama_tools(
     return tools, tool_lookup
 
 
-
 # Execute tool callables.
 # Run one async callable.
 async def _run_async_callable(callable_fn, *args: Any) -> Any:
@@ -1396,7 +1418,6 @@ def _dispatch_server_callable(
     return _execute_callable(callable_fn, tool_id, arguments, context)
 
 
-
 # Serialize tool results.
 # Serialize one tool result.
 def _serialize_tool_result(result: Any) -> str:
@@ -1422,6 +1443,8 @@ def _serialize_tool_result(result: Any) -> str:
     return str(result)
 
 
+# Normalize tool result payloads.
+# Parse JSON tool payloads returned as plain strings.
 def _coerce_tool_result_object(result: Any) -> Any:
     """Parse JSON tool payloads returned as plain strings."""
 
@@ -1437,6 +1460,7 @@ def _coerce_tool_result_object(result: Any) -> Any:
     return parsed if isinstance(parsed, dict) else result
 
 
+# Return a normalized shared-file payload from direct or sandbox-wrapped results.
 def _extract_shared_file_payload(result: Any) -> dict[str, Any] | None:
     """Return a normalized shared-file payload from direct or sandbox-wrapped results."""
 
@@ -1476,6 +1500,7 @@ def _extract_shared_file_payload(result: Any) -> dict[str, Any] | None:
     return payload
 
 
+# Return frontend metadata for rich structured tool results.
 def _extract_structured_tool_result(result: Any) -> dict[str, Any] | None:
     """Return frontend metadata for rich structured tool results."""
 
@@ -1500,6 +1525,7 @@ def _extract_structured_tool_result(result: Any) -> dict[str, Any] | None:
     return result
 
 
+# Split one tool result into model-visible text and UI-only metadata.
 def split_tool_result_payload(content: Any) -> tuple[str, dict[str, Any]]:
     """Split one tool result into model-visible text and UI-only metadata."""
 
@@ -1527,6 +1553,7 @@ def split_tool_result_payload(content: Any) -> tuple[str, dict[str, Any]]:
     return _serialize_tool_result(content), {}
 
 
+# Build UI-only metadata for an inline image tool result.
 def _image_tool_result_extras(content: dict[str, Any]) -> dict[str, Any]:
     """Build UI-only metadata for an inline image tool result."""
 

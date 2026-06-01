@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Tests for intent classification and compound pipeline normalization."""
-
 import os
 import sys
 from pathlib import Path
@@ -13,8 +11,8 @@ os.environ["SANDBOX_HOST_WORKSPACE"] = str(ROOT)
 from sandbox.intent import Intent, classify, NormalizedCommand
 
 
+# All read-like commands classify as OPEN.
 def test_open_variants():
-    """All read-like commands classify as OPEN."""
     cases = [
         "cat file.py",
         "head -n 30 file.py",
@@ -30,8 +28,8 @@ def test_open_variants():
     print(f"PASS: {len(cases)} OPEN variants all classified correctly")
 
 
+# head/tail/sed extract line ranges.
 def test_open_line_ranges():
-    """head/tail/sed extract line ranges."""
     nc = classify("head -n 30 file.py")
     assert nc.start_line == 1
     assert nc.end_line == 30, f"end_line={nc.end_line}"
@@ -43,8 +41,8 @@ def test_open_line_ranges():
     print("PASS: line ranges from head/sed extracted correctly")
 
 
+# All search commands classify as LOCATE.
 def test_locate_variants():
-    """All search commands classify as LOCATE."""
     cases = [
         ("grep -r pattern .", "pattern"),
         ("grep -ri Pattern src/", "Pattern"),
@@ -59,8 +57,8 @@ def test_locate_variants():
     print(f"PASS: {len(cases)} LOCATE variants all classified correctly")
 
 
+# ls/tree/find classify as SURVEY.
 def test_survey_variants():
-    """ls/tree/find classify as SURVEY."""
     cases = ["ls .", "ls -la src/", "tree -L 2", "find . -name '*.py'"]
     for cmd in cases:
         nc = classify(cmd)
@@ -69,8 +67,8 @@ def test_survey_variants():
     print(f"PASS: {len(cases)} SURVEY variants classified correctly")
 
 
+# cat file | head -n 20 → OPEN with line range.
 def test_compound_cat_head():
-    """cat file | head -n 20 → OPEN with line range."""
     nc = classify("cat file.py | head -n 20")
     assert nc is not None, "Got None for compound cat|head"
     assert nc.intent == Intent.OPEN, f"Expected OPEN, got {nc.intent}"
@@ -80,8 +78,8 @@ def test_compound_cat_head():
     print(f"PASS: cat file | head -n 20 → OPEN [1:20] (was_compound={nc.was_compound})")
 
 
+# cat file | grep pattern → LOCATE.
 def test_compound_cat_grep():
-    """cat file | grep pattern → LOCATE."""
     nc = classify("cat file.py | grep pattern")
     assert nc is not None, "Got None for compound cat|grep"
     assert nc.intent == Intent.LOCATE, f"Expected LOCATE, got {nc.intent}"
@@ -91,8 +89,8 @@ def test_compound_cat_grep():
     print(f"PASS: cat file | grep pattern → LOCATE (was_compound={nc.was_compound})")
 
 
+# head -n 50 file | grep pattern → LOCATE.
 def test_compound_head_grep():
-    """head -n 50 file | grep pattern → LOCATE."""
     nc = classify("head -n 50 file.py | grep pattern")
     assert nc is not None
     assert nc.intent == Intent.LOCATE, f"Expected LOCATE, got {nc.intent}"
@@ -100,8 +98,8 @@ def test_compound_head_grep():
     print(f"PASS: head -n 50 file | grep pattern → LOCATE")
 
 
+# Execution commands return None (→ real bash).
 def test_run_commands_return_none():
-    """Execution commands return None (→ real bash)."""
     run_cases = [
         "python script.py",
         "pytest tests/",
@@ -119,8 +117,8 @@ def test_run_commands_return_none():
     print(f"PASS: {len(run_cases)} RUN commands handled correctly")
 
 
+# &&, ||, ;, subshells, redirections → None (real bash).
 def test_chains_return_none():
-    """&&, ||, ;, subshells, redirections → None (real bash)."""
     chain_cases = [
         "echo hello && cat file.py",
         "cat file.py || echo failed",
@@ -139,8 +137,8 @@ def test_chains_return_none():
     print(f"PASS: {len(chain_cases)} compound chains correctly passed to real bash")
 
 
+# grep -i → case_sensitive=False.
 def test_locate_case_sensitivity():
-    """grep -i → case_sensitive=False."""
     nc = classify("grep -ri pattern src/")
     assert nc is not None
     assert nc.intent == Intent.LOCATE
@@ -148,8 +146,8 @@ def test_locate_case_sensitivity():
     print(f"PASS: grep -ri → case_sensitive=False")
 
 
+# rg --type py → glob_pattern=*.py.
 def test_locate_rg_type_flag():
-    """rg --type py → glob_pattern=*.py."""
     nc = classify("rg pattern --type py src/")
     assert nc is not None
     assert nc.intent == Intent.LOCATE
@@ -157,8 +155,8 @@ def test_locate_rg_type_flag():
     print(f"PASS: rg --type py → glob_pattern=*.py")
 
 
+# find -name '*.py' -type f → NormalizedCommand with name_pattern/find_type.
 def test_find_carries_name_and_type():
-    """find -name '*.py' -type f → NormalizedCommand with name_pattern/find_type."""
     nc = classify('find . -name "*.py" -type f -maxdepth 2')
     assert nc is not None, "find with supported flags should classify"
     assert nc.intent == Intent.SURVEY
@@ -167,8 +165,8 @@ def test_find_carries_name_and_type():
     assert nc.depth == 2, f"depth={nc.depth!r}"
 
 
+# grep -C 2 pattern file → context_before/after = 2.
 def test_grep_context_carried():
-    """grep -C 2 pattern file → context_before/after = 2."""
     nc = classify("grep -C 2 pattern file.py")
     assert nc is not None
     assert nc.intent == Intent.LOCATE
@@ -181,8 +179,8 @@ def test_grep_context_carried():
     assert nc.context_before == 1 and nc.context_after == 3
 
 
+# ls -la and combined short flags must enable include_hidden.
 def test_ls_la_includes_hidden():
-    """ls -la and combined short flags must enable include_hidden."""
     for cmd in ("ls -la", "ls -al", "ls -lah .", "ls -A"):
         nc = classify(cmd)
         assert nc is not None, cmd
@@ -190,16 +188,16 @@ def test_ls_la_includes_hidden():
         assert nc.include_hidden is True, f"include_hidden False for: {cmd}"
 
 
+# du is NOT routed as a directory listing — must reach real bash.
 def test_du_falls_through_to_bash():
-    """du is NOT routed as a directory listing — must reach real bash."""
     nc = classify("du -sh .")
     # Either None (no routing) or RUN intent — must not be SURVEY.
     if nc is not None:
         assert nc.intent == Intent.RUN, f"du routed as {nc.intent}"
 
 
+# find with -exec / -mtime / etc. must fall back to real bash.
 def test_find_unsupported_flags_fall_back():
-    """find with -exec / -mtime / etc. must fall back to real bash."""
     for cmd in (
         "find . -name '*.log' -exec rm {} ;",
         "find . -mtime -7",
@@ -211,16 +209,16 @@ def test_find_unsupported_flags_fall_back():
             assert nc.intent == Intent.RUN, f"{cmd!r} routed as {nc.intent}"
 
 
+# grep -l changes output format to filenames — not implemented, fall back to bash.
 def test_grep_files_with_matches():
-    """grep -l changes output format to filenames — not implemented, fall back to bash."""
     nc = classify("grep -l pattern src/")
     # -l/-L are not handled by the router, so classifier returns None → real bash
     if nc is not None:
         assert nc.intent == Intent.RUN
 
 
+# grep -v changes semantics — fall back to real bash.
 def test_grep_inverted_falls_back():
-    """grep -v changes semantics — fall back to real bash."""
     nc = classify("grep -v pattern file.py")
     if nc is not None:
         assert nc.intent == Intent.RUN

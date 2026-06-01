@@ -47,6 +47,7 @@ _notify_lock = threading.RLock()
 logger = logging.getLogger(__name__)
 
 
+# Metadata for one file node in a skill folder tree.
 @dataclass(frozen=True)
 class SkillFile:
     path: str
@@ -56,17 +57,18 @@ class SkillFile:
     updated_at: float
 
 
+# Ensure the project-level Skills root directory exists.
 def ensure_skills_dir() -> Path:
-    """Ensure the project-level skills root exists."""
-
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     return SKILLS_DIR
 
 
+# Return True when a path segment is hidden or reserved.
 def _is_hidden_part(part: str) -> bool:
     return part in {"", ".", ".."} or part.startswith(".")
 
 
+# Validate and return a safe skill folder name.
 def _validate_skill_name(name: str) -> str:
     cleaned = str(name or "").strip()
     if not cleaned:
@@ -78,6 +80,7 @@ def _validate_skill_name(name: str) -> str:
     return cleaned
 
 
+# Normalize and validate a relative file path inside a skill folder.
 def _normalize_relative_file_path(path: str) -> str:
     raw = str(path or "").replace("\\", "/").strip().strip("/")
     if not raw:
@@ -93,6 +96,7 @@ def _normalize_relative_file_path(path: str) -> str:
     return "/".join(parts)
 
 
+# Normalize and validate a relative directory path inside a skill folder.
 def _normalize_relative_dir_path(path: str) -> str:
     raw = str(path or "").replace("\\", "/").strip().strip("/")
     if not raw:
@@ -108,6 +112,7 @@ def _normalize_relative_dir_path(path: str) -> str:
     return "/".join(parts)
 
 
+# Resolve the on-disk directory for one skill name.
 def _skill_dir(name: str) -> Path:
     ensure_skills_dir()
     skill_name = _validate_skill_name(name)
@@ -117,6 +122,7 @@ def _skill_dir(name: str) -> Path:
     return target
 
 
+# Resolve an absolute path for one file inside a skill folder.
 def _skill_file_path(folder: str, file_path: str) -> Path:
     skill_root = _skill_dir(folder)
     rel_path = _normalize_relative_file_path(file_path)
@@ -126,6 +132,7 @@ def _skill_file_path(folder: str, file_path: str) -> Path:
     return target
 
 
+# Resolve an absolute path for one subdirectory inside a skill folder.
 def _skill_subdir_path(folder: str, dir_path: str) -> Path:
     skill_root = _skill_dir(folder)
     rel_path = _normalize_relative_dir_path(dir_path)
@@ -135,6 +142,8 @@ def _skill_subdir_path(folder: str, dir_path: str) -> Path:
     return target
 
 
+
+# Read a text file with size and binary guards for the skills manager.
 def _safe_read_text(path: Path) -> str:
     size_bytes = path.stat().st_size
     if size_bytes > MAX_TEXT_FILE_BYTES:
@@ -145,6 +154,7 @@ def _safe_read_text(path: Path) -> str:
     return data.decode("utf-8")
 
 
+# Write text atomically via a temporary file in the target directory.
 def _atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
@@ -156,6 +166,8 @@ def _atomic_write_text(path: Path, content: str) -> None:
         Path(tmp_path).unlink(missing_ok=True)
 
 
+
+# Parse one YAML-like front matter scalar value.
 def _parse_scalar(value: str) -> Any:
     cleaned = str(value or "").strip().strip('"').strip("'")
     lowered = cleaned.lower()
@@ -166,9 +178,8 @@ def _parse_scalar(value: str) -> Any:
     return cleaned
 
 
+# Parse a small YAML-like front matter block from skill markdown.
 def parse_front_matter(content: str) -> tuple[dict[str, Any], str]:
-    """Parse a small YAML-like front matter block."""
-
     text = str(content or "")
     match = _FRONT_MATTER_RE.match(text)
     if match is None:
@@ -187,6 +198,7 @@ def parse_front_matter(content: str) -> tuple[dict[str, Any], str]:
     return meta, text[match.end() :]
 
 
+# Normalize the skill source field from front matter metadata.
 def _normalize_skill_source(meta: dict[str, Any]) -> str:
     raw = str(meta.get("source") or meta.get("added_by") or "").strip().lower()
     if raw in {"download", "downloaded", "remote", "import", "imported"}:
@@ -198,6 +210,7 @@ def _normalize_skill_source(meta: dict[str, Any]) -> str:
     return "local"
 
 
+# Strip legacy front matter keys before persisting metadata.
 def _normalize_meta_for_storage(meta: dict[str, Any]) -> dict[str, Any]:
     cleaned = dict(meta)
     cleaned["source"] = _normalize_skill_source(cleaned)
@@ -206,6 +219,7 @@ def _normalize_meta_for_storage(meta: dict[str, Any]) -> dict[str, Any]:
     return cleaned
 
 
+# Return the best available creation timestamp for a skill folder.
 def _skill_created_at(stat: os.stat_result) -> float:
     birthtime = getattr(stat, "st_birthtime", None)
     if birthtime is not None:
@@ -213,6 +227,7 @@ def _skill_created_at(stat: os.stat_result) -> float:
     return float(stat.st_ctime)
 
 
+# Render front matter metadata as a markdown header block.
 def _format_front_matter(meta: dict[str, Any]) -> str:
     lines = ["---"]
     for key in ("name", "description", "source", "enabled"):
@@ -228,6 +243,7 @@ def _format_front_matter(meta: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+# Locate the primary markdown file for one skill folder.
 def _primary_file_for_skill(skill_root: Path) -> Path:
     for filename in PRIMARY_SKILL_FILENAMES:
         candidate = skill_root / filename
@@ -239,6 +255,7 @@ def _primary_file_for_skill(skill_root: Path) -> Path:
     return skill_root / "SKILL.md"
 
 
+# Read normalized metadata and the primary file path for one skill.
 def _read_skill_meta(skill_root: Path) -> tuple[dict[str, Any], str]:
     primary = _primary_file_for_skill(skill_root)
     meta: dict[str, Any] = {}
@@ -262,6 +279,7 @@ def _read_skill_meta(skill_root: Path) -> tuple[dict[str, Any], str]:
     return normalized, primary_rel
 
 
+# Build one SkillFile node for the skills tree API.
 def _file_node(path: Path, root: Path) -> SkillFile:
     stat = path.stat()
     return SkillFile(
@@ -273,6 +291,7 @@ def _file_node(path: Path, root: Path) -> SkillFile:
     )
 
 
+# Build the nested file tree for one skill folder.
 def _build_tree(path: Path, root: Path) -> list[dict[str, Any]]:
     nodes: list[dict[str, Any]] = []
     try:
@@ -297,6 +316,8 @@ def _build_tree(path: Path, root: Path) -> list[dict[str, Any]]:
     return nodes
 
 
+
+# List all skill folders with metadata and file trees.
 def list_skills() -> dict[str, Any]:
     root = ensure_skills_dir()
     folders: list[dict[str, Any]] = []
@@ -325,6 +346,7 @@ def list_skills() -> dict[str, Any]:
     }
 
 
+# Create a new skill folder with a default SKILL.md template.
 def create_skill_folder(name: str) -> dict[str, Any]:
     skill_name = _validate_skill_name(name)
     target = _skill_dir(skill_name)
@@ -345,6 +367,7 @@ def create_skill_folder(name: str) -> dict[str, Any]:
     return list_skills()
 
 
+# Rename a skill folder and update its primary front matter name.
 def rename_skill_folder(old_name: str, new_name: str) -> dict[str, Any]:
     source = _skill_dir(old_name)
     destination = _skill_dir(new_name)
@@ -362,6 +385,7 @@ def rename_skill_folder(old_name: str, new_name: str) -> dict[str, Any]:
     return list_skills()
 
 
+# Delete one skill folder and its contents.
 def delete_skill_folder(name: str) -> dict[str, Any]:
     target = _skill_dir(name)
     if not target.is_dir():
@@ -370,6 +394,7 @@ def delete_skill_folder(name: str) -> dict[str, Any]:
     return list_skills()
 
 
+# Create a subdirectory inside one skill folder.
 def create_skill_subdirectory(folder: str, dir_path: str) -> dict[str, Any]:
     skill_root = _skill_dir(folder)
     if not skill_root.is_dir():
@@ -381,6 +406,7 @@ def create_skill_subdirectory(folder: str, dir_path: str) -> dict[str, Any]:
     return list_skills()
 
 
+# Delete a subdirectory inside one skill folder.
 def delete_skill_subdirectory(folder: str, dir_path: str) -> dict[str, Any]:
     target = _skill_subdir_path(folder, dir_path)
     if not target.is_dir():
@@ -389,6 +415,7 @@ def delete_skill_subdirectory(folder: str, dir_path: str) -> dict[str, Any]:
     return list_skills()
 
 
+# Rename a file or directory inside one skill folder.
 def rename_skill_item(folder: str, old_path: str, new_path: str, kind: str) -> dict[str, Any]:
     skill_root = _skill_dir(folder)
     if not skill_root.is_dir():
@@ -411,6 +438,7 @@ def rename_skill_item(folder: str, old_path: str, new_path: str, kind: str) -> d
     return list_skills()
 
 
+# Read one skill file with parsed front matter metadata.
 def read_skill_file(folder: str, file_path: str) -> dict[str, Any]:
     target = _skill_file_path(folder, file_path)
     if not target.is_file():
@@ -427,6 +455,7 @@ def read_skill_file(folder: str, file_path: str) -> dict[str, Any]:
     }
 
 
+# Write one skill file and return the updated skills listing.
 def write_skill_file(folder: str, file_path: str, content: str) -> dict[str, Any]:
     target = _skill_file_path(folder, file_path)
     skill_root = _skill_dir(folder)
@@ -439,6 +468,7 @@ def write_skill_file(folder: str, file_path: str, content: str) -> dict[str, Any
     return list_skills()
 
 
+# Delete one skill file and prune empty parent directories.
 def delete_skill_file(folder: str, file_path: str) -> dict[str, Any]:
     target = _skill_file_path(folder, file_path)
     if not target.is_file():
@@ -455,6 +485,7 @@ def delete_skill_file(folder: str, file_path: str) -> dict[str, Any]:
     return list_skills()
 
 
+# Parse a loose enabled flag from API or front matter input.
 def parse_enabled_flag(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -468,6 +499,7 @@ def parse_enabled_flag(value: Any) -> bool:
     return bool(cleaned)
 
 
+# Toggle whether one skill is enabled and refresh sandbox sync when needed.
 def set_skill_enabled(folder: str, enabled: bool) -> dict[str, Any]:
     skill_root = _skill_dir(folder)
     if not skill_root.is_dir():
@@ -495,13 +527,8 @@ def set_skill_enabled(folder: str, enabled: bool) -> dict[str, Any]:
     return list_skills()
 
 
+# Create a skill folder from browser-imported path/content pairs.
 def import_skill_files(skill_name: str, files: list[dict[str, Any]]) -> dict[str, Any]:
-    """Create a skill folder from a list of ``{path, content}`` dicts (browser import).
-
-    Raises ``ValueError`` if the skill already exists.
-    Each file path is validated: only relative paths with allowed extensions are written.
-    """
-
     validated_name = _validate_skill_name(skill_name)
     target_root = _skill_dir(validated_name)
     target_resolved = target_root.resolve()
@@ -569,9 +596,9 @@ def import_skill_files(skill_name: str, files: list[dict[str, Any]]) -> dict[str
     return list_skills()
 
 
-def _format_skill_tree_lines(nodes: list[dict[str, Any]], *, indent: int = 2) -> list[str]:
-    """Render enabled skill tree nodes as indented lines (folders and .md files)."""
 
+# Render enabled skill tree nodes as indented lines for the system prompt.
+def _format_skill_tree_lines(nodes: list[dict[str, Any]], *, indent: int = 2) -> list[str]:
     lines: list[str] = []
     pad = " " * indent
     for node in nodes:
@@ -595,12 +622,15 @@ def _format_skill_tree_lines(nodes: list[dict[str, Any]], *, indent: int = 2) ->
     return lines
 
 
+
+# Return the path used to queue a one-shot skills config refresh.
 def _pending_notify_path() -> Path:
     path = _PENDING_NOTIFY_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
+# Load the pending skills notification state from disk.
 def _load_notify_state() -> dict[str, Any]:
     path = _pending_notify_path()
     if not path.is_file():
@@ -613,6 +643,7 @@ def _load_notify_state() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+# Persist or clear the pending skills notification state.
 def _save_notify_state(state: dict[str, Any]) -> None:
     path = _pending_notify_path()
     if not state.get("config_refresh_pending"):
@@ -625,13 +656,13 @@ def _save_notify_state(state: dict[str, Any]) -> None:
     )
 
 
+# Clear any queued one-shot skills summary refresh (tests and tooling).
 def clear_skill_config_refresh_pending() -> None:
-    """Clear any queued one-shot skills summary refresh (tests and tooling)."""
-
     with _notify_lock:
         _save_notify_state({})
 
 
+# Migrate legacy notification files and re-queue refresh when needed.
 def _migrate_legacy_notify_state() -> None:
     legacy_path = ensure_skills_dir() / _LEGACY_PENDING_NOTIFY_FILE
     if legacy_path.is_file():
@@ -644,11 +675,13 @@ def _migrate_legacy_notify_state() -> None:
         _queue_skill_config_refresh()
 
 
+# Return whether a skills config refresh is pending without consuming it.
 def _peek_config_refresh_pending() -> bool:
     _migrate_legacy_notify_state()
     return bool(_load_notify_state().get("config_refresh_pending"))
 
 
+# Return and clear the pending skills config refresh flag.
 def _consume_config_refresh_pending() -> bool:
     with _notify_lock:
         _migrate_legacy_notify_state()
@@ -658,14 +691,15 @@ def _consume_config_refresh_pending() -> bool:
         return pending
 
 
+# Queue a one-shot skills summary refresh for the next chat turn.
 def _queue_skill_config_refresh() -> None:
     with _notify_lock:
         _save_notify_state({"config_refresh_pending": True})
 
 
-def build_system_prompt_inventory() -> str:
-    """Build a system-prompt block listing enabled skills and their on-disk layout."""
 
+# Build a system-prompt block listing enabled skills and their on-disk layout.
+def build_system_prompt_inventory() -> str:
     payload = list_skills()
     folders = [folder for folder in payload["folders"] if folder.get("enabled", True)]
     if not folders:
@@ -711,13 +745,12 @@ def build_system_prompt_inventory() -> str:
     return "\n".join(lines)
 
 
+# Inject skills into the system prompt on the first turn or after enable toggles.
 def build_system_prompt_skills_section(
     *,
     consume: bool = True,
     include_baseline: bool = False,
 ) -> str:
-    """Inject skills into the system prompt only for the first chat turn or after toggles."""
-
     pending = _consume_config_refresh_pending() if consume else _peek_config_refresh_pending()
     inventory = build_system_prompt_inventory()
     if pending:
@@ -738,12 +771,13 @@ def build_system_prompt_skills_section(
     return ""
 
 
+# Backward-compatible alias for build_system_prompt_skills_section.
 def build_system_prompt_skill_delta(*, consume: bool = True, include_baseline: bool = False) -> str:
-    """Backward-compatible alias for the skills system-prompt section."""
-
     return build_system_prompt_skills_section(consume=consume, include_baseline=include_baseline)
 
 
+
+# Compute the SHA-256 digest of one file.
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -752,6 +786,7 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+# List skill folder names that are currently enabled.
 def _enabled_skill_names(root: Path) -> set[str]:
     names: set[str] = set()
     if not root.is_dir():
@@ -765,6 +800,7 @@ def _enabled_skill_names(root: Path) -> set[str]:
     return names
 
 
+# Enumerate files under a skills root with size and hash metadata for sync.
 def _iter_sync_files(root: Path, skill_names: set[str] | None = None) -> dict[str, dict[str, Any]]:
     files: dict[str, dict[str, Any]] = {}
     if not root.exists():
@@ -792,6 +828,7 @@ def _iter_sync_files(root: Path, skill_names: set[str] | None = None) -> dict[st
     return files
 
 
+# Remove one file or directory during sandbox sync cleanup.
 def _remove_tree_entry(path: Path) -> None:
     if path.is_symlink() or path.is_file():
         path.unlink(missing_ok=True)
@@ -799,9 +836,9 @@ def _remove_tree_entry(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def sync_skills_to_sandbox() -> dict[str, Any]:
-    """Mirror project Skills into the sandbox Skills directory."""
 
+# Mirror project Skills into the sandbox Skills directory.
+def sync_skills_to_sandbox() -> dict[str, Any]:
     with _sync_lock:
         source_root = ensure_skills_dir().resolve()
         target_root = SANDBOX_SKILLS_DIR.resolve()
@@ -817,6 +854,8 @@ def sync_skills_to_sandbox() -> dict[str, Any]:
 
         removed = 0
         copied = 0
+
+        # Drop target files that are no longer present in the enabled source set.
         for rel_path, target_info in target_files.items():
             if rel_path in source_files:
                 continue
@@ -824,6 +863,7 @@ def sync_skills_to_sandbox() -> dict[str, Any]:
             target_path.unlink(missing_ok=True)
             removed += 1
 
+        # Remove stale directories, manifests, and paths outside the source tree.
         source_prefixes = set()
         for rel_path in source_files:
             parts = Path(rel_path).parts
@@ -846,6 +886,7 @@ def sync_skills_to_sandbox() -> dict[str, Any]:
             _remove_tree_entry(target_entry)
             removed += 1
 
+        # Copy or update files that changed size or content hash.
         for rel_path, source_info in source_files.items():
             source_path = Path(source_info["path"])
             target_path = (target_root / rel_path).resolve()
@@ -858,6 +899,7 @@ def sync_skills_to_sandbox() -> dict[str, Any]:
             shutil.copy2(source_path, target_path)
             copied += 1
 
+        # Prune empty directories left after removals.
         for directory in sorted(
             [path for path in target_root.rglob("*") if path.is_dir()],
             key=lambda item: len(item.parts),

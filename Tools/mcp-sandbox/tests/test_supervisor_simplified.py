@@ -24,6 +24,7 @@ from sandbox.exec import _truncate  # noqa: E402
 from sandbox.workspace import find, resolve_model_path, task_root  # noqa: E402
 
 
+# Recreate a clean task_root for each test class.
 def _setup_task_root() -> None:
     tr = task_root()
     if tr.exists():

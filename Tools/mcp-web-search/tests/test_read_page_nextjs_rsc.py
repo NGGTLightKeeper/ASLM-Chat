@@ -1,9 +1,13 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import asyncio
 
 from services.read_page import ReadPageService
 
+
+# ReadPageService — registry-driven nextjs_rsc fast path without normalize_page.
 
 def test_read_page_uses_registry_driven_nextjs_rsc_fast_path(monkeypatch) -> None:
     monkeypatch.setattr("services.read_page._cache.get_cached", lambda url: None)

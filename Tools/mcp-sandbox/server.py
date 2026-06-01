@@ -14,9 +14,8 @@ for _p in (_ROOT / "supervisor", _ROOT / "src"):
 from sandbox.docker_host import pipe_to_container_supervisor
 
 
+# Run the host-side stdio proxy for the in-container MCP supervisor.
 def main() -> None:
-    """Run the host-side stdio proxy for the in-container MCP supervisor."""
-
     raise SystemExit(pipe_to_container_supervisor())
 
 

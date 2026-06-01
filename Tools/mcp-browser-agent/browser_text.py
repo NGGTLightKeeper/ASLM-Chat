@@ -133,6 +133,7 @@ TEXT_EDITOR_SCRIPT = r"""(payload) => {
 }"""
 
 
+# Parse a 1-based line range string into start, end, and insert-mode flag.
 def _parse_line_range(raw_range: Any, total_lines: int) -> tuple[int, int, bool]:
     raw = str(raw_range or "").strip()
     if not raw:
@@ -151,6 +152,7 @@ def _parse_line_range(raw_range: Any, total_lines: int) -> tuple[int, int, bool]
     return start, end, False
 
 
+# Replace or insert lines in editor text using a 1-based line range.
 def replace_line_range(current: str, raw_range: Any, replacement: str) -> str:
     normalized = current.replace("\r\n", "\n").replace("\r", "\n")
     had_trailing_newline = normalized.endswith("\n")
@@ -175,6 +177,7 @@ def replace_line_range(current: str, raw_range: Any, replacement: str) -> str:
     return result
 
 
+# Read or set text in the focused editor or in the element identified by ref.
 async def _read_or_set_text_state(page: Any, ref: str, mode: str, text: str) -> dict[str, Any]:
     payload = {"mode": mode, "text": text}
     if not ref:
@@ -193,6 +196,7 @@ async def _read_or_set_text_state(page: Any, ref: str, mode: str, text: str) -> 
     return await locator.evaluate(wrapper, payload)
 
 
+# Return the first visible locator match from a multi-match locator.
 async def _first_visible(locator: Any) -> Any | None:
     try:
         count = await locator.count()
@@ -208,9 +212,8 @@ async def _first_visible(locator: Any) -> Any | None:
     return None
 
 
+# Resolve text refs using exact DOM attributes before broad role fallback.
 async def _resolve_text_locator(page: Any, elem: dict[str, Any]) -> Any | None:
-    """Resolve text refs using exact DOM attributes before broad role fallback."""
-
     role = str(elem.get("role") or "")
     name = str(elem.get("name") or "")
 
@@ -230,10 +233,12 @@ async def _resolve_text_locator(page: Any, elem: dict[str, Any]) -> Any | None:
     return await _resolve_locator(role, name)
 
 
+# Escape a string for use inside a CSS attribute selector.
 def _css_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+# Infer read/set/replace/delete from explicit action or argument shape.
 def _infer_action(args: dict[str, Any]) -> str:
     raw_action = str(args.get("action", "") or "").strip().lower()
     if raw_action:
@@ -247,6 +252,7 @@ def _infer_action(args: dict[str, Any]) -> str:
     return "read"
 
 
+# Build a user-facing error when the text target is not editable.
 def _non_editable_error(ref: str, target: dict[str, Any], action: str) -> str:
     kind = str(target.get("kind") or "unknown")
     label = str(target.get("label") or "").strip()
@@ -259,6 +265,7 @@ def _non_editable_error(ref: str, target: dict[str, Any], action: str) -> str:
     )
 
 
+# Compute the next editor value for set, replace, or delete actions.
 def _next_text(action: str, args: dict[str, Any], current: str) -> str:
     if action == "set":
         return str(args.get("text", ""))
@@ -285,6 +292,7 @@ def _next_text(action: str, args: dict[str, Any], current: str) -> str:
     raise ValueError("action must be one of read, set, replace, delete.")
 
 
+# Replace one or all occurrences of old_text, with ambiguity checks.
 def _replace_match(current: str, old_text: str, replacement: str, replace_all: bool) -> str:
     match_count = current.count(old_text)
     if match_count == 0:
@@ -295,6 +303,7 @@ def _replace_match(current: str, old_text: str, replacement: str, replace_all: b
     return current.replace(old_text, replacement, limit)
 
 
+# Execute browser_text: read, set, replace, or delete editor content and return a snapshot.
 async def handle_browser_text(
     args: dict[str, Any],
     *,

@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import re
@@ -6,11 +8,13 @@ from urllib.parse import urlparse, urlunparse
 from custom_domains.retail_common import format_price_value, normalize_availability, strip_html_fragment
 
 
+# Trim and cap a single DNS-shop spec line extracted from HTML.
 def _clean_dns_spec_text(text: str) -> str:
     cleaned = re.sub(r"\s+", " ", text or "").strip(" \t\r\n,;|")
     return cleaned[:120]
 
 
+# Point product URLs at the characteristics subpage for richer read_page content.
 def rewrite_read_page_url(url: str) -> str:
     parsed = urlparse(url)
     host = parsed.netloc.lower().removeprefix("www.").removeprefix("m.")
@@ -32,6 +36,7 @@ def rewrite_read_page_url(url: str) -> str:
     return url
 
 
+# Build alternate fetch URLs (.xaml, characteristics) for a DNS-shop product page.
 def dns_variant_urls(url: str) -> list[str]:
     parsed = urlparse(url)
     host = parsed.netloc.lower().removeprefix("www.").removeprefix("m.")
@@ -55,6 +60,7 @@ def dns_variant_urls(url: str) -> list[str]:
     return variants
 
 
+# Extract product metadata from DNS-shop product HTML.
 def extract_dns_metadata(raw_html: str) -> dict[str, str]:
     meta: dict[str, str] = {}
 

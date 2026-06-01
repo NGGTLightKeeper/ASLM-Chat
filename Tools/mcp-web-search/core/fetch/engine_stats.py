@@ -1,23 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-engine_stats.py — Rolling reputation tracker for DDGS backends.
-
-Each EngineStats instance stores the last N observations for one backend.
-Scoring formula:
-    score = 0.35 * (1 - norm_latency)
-          + 0.25 * success_rate
-          + 0.20 * quality_pass_rate
-          + 0.10 * freshness_score
-          + 0.10 * result_stability
-
-Tiers:
-    hot      — score >= 0.65 and not tripped
-    warm     — 0.35 <= score < 0.65 and not tripped
-    cold     — score < 0.35 and not tripped
-    tripped  — circuit breaker active (cooldown_until > now)
-"""
-
 from __future__ import annotations
 
 import math
@@ -27,22 +9,17 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Deque
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-WINDOW = 30             # rolling observations per engine
-COOLDOWN_SECONDS = 600  # 10 min circuit-breaker cooldown
-TRIP_THRESHOLD = 0.6    # error_rate above this triggers the breaker
-
-# Latency reference point for normalization: 99th-percentile expected worst case
-LATENCY_CEIL = 8.0      # seconds — anything above this scores 0 on latency
+# Rolling window size per engine.
+WINDOW = 30
+# Circuit-breaker cooldown after repeated failures (seconds).
+COOLDOWN_SECONDS = 600
+# Error rate above this trips the breaker.
+TRIP_THRESHOLD = 0.6
+# Latency normalization ceiling: above this scores zero on latency.
+LATENCY_CEIL = 8.0
 
 
-# ---------------------------------------------------------------------------
-# One observation
-# ---------------------------------------------------------------------------
-
+# One completed search call sample for reputation scoring.
 @dataclass
 class Observation:
     ts: float           # unix timestamp of the call
@@ -53,10 +30,7 @@ class Observation:
     result_hash: int    # hash of top-5 URLs for stability check
 
 
-# ---------------------------------------------------------------------------
-# Per-engine rolling stats
-# ---------------------------------------------------------------------------
-
+# Rolling reputation tracker for one DDGS or hosted backend.
 @dataclass
 class EngineStats:
     name: str
@@ -64,25 +38,28 @@ class EngineStats:
     cooldown_until: float = 0.0
     consecutive_errors: int = 0
 
-    # --- Derived metrics ---------------------------------------------------
-
+    # True while circuit-breaker cooldown is active.
     @property
     def is_tripped(self) -> bool:
         return time.time() < self.cooldown_until
 
+    # Number of observations in the rolling window.
     @property
     def observation_count(self) -> int:
         return len(self.window)
 
+    # Latencies from successful observations only.
     @property
     def latencies(self) -> list[float]:
         return [o.latency for o in self.window if o.success]
 
+    # Median latency of successful calls.
     @property
     def p50_latency(self) -> float:
         lats = self.latencies
         return statistics.median(lats) if lats else float("inf")
 
+    # 95th-percentile latency of successful calls.
     @property
     def p95_latency(self) -> float:
         lats = sorted(self.latencies)
@@ -91,16 +68,19 @@ class EngineStats:
         idx = max(0, math.ceil(0.95 * len(lats)) - 1)
         return lats[idx]
 
+    # Fraction of window observations that returned results.
     @property
     def success_rate(self) -> float:
         if not self.window:
             return 0.5  # unknown → neutral prior
         return sum(1 for o in self.window if o.success) / len(self.window)
 
+    # Complement of success_rate.
     @property
     def error_rate(self) -> float:
         return 1.0 - self.success_rate
 
+    # Fraction of successful calls that passed the quality check.
     @property
     def quality_pass_rate(self) -> float:
         passed = [o for o in self.window if o.success]
@@ -108,9 +88,9 @@ class EngineStats:
             return 0.5
         return sum(1 for o in passed if o.quality_pass) / len(passed)
 
+    # Decay from 1.0 (recent success) to 0.0 over 30 minutes since last success.
     @property
     def freshness_score(self) -> float:
-        """How recently did we see a success? 1.0 = <1 min ago, 0.0 = >30 min ago."""
         successes = [o for o in self.window if o.success]
         if not successes:
             return 0.0
@@ -118,20 +98,21 @@ class EngineStats:
         age = time.time() - last
         return max(0.0, 1.0 - age / 1800.0)
 
+    # Fraction of consecutive successful pairs sharing the same result hash.
     @property
     def result_stability(self) -> float:
-        """Fraction of consecutive result pairs that share the same hash."""
         hashes = [o.result_hash for o in self.window if o.success]
         if len(hashes) < 2:
             return 1.0
         matches = sum(1 for a, b in zip(hashes, hashes[1:]) if a == b)
         return matches / (len(hashes) - 1)
 
+    # Normalized latency: 0 = instant, 1 = LATENCY_CEIL or worse.
     @property
     def normalized_latency(self) -> float:
-        """0 = instant, 1 = LATENCY_CEIL or worse."""
         return min(1.0, self.p50_latency / LATENCY_CEIL)
 
+    # Weighted composite reputation score (0 when tripped).
     @property
     def score(self) -> float:
         if self.is_tripped:
@@ -144,6 +125,7 @@ class EngineStats:
             + 0.10 * self.result_stability
         )
 
+    # hot / warm / cold / tripped label from score and breaker state.
     @property
     def tier(self) -> str:
         if self.is_tripped:
@@ -155,23 +137,21 @@ class EngineStats:
             return "warm"
         return "cold"
 
-    # --- Mutation ----------------------------------------------------------
-
+    # Append observation and trip breaker on sustained failures.
     def record(self, obs: Observation) -> None:
         self.window.append(obs)
         if obs.success:
             self.consecutive_errors = 0
         else:
             self.consecutive_errors += 1
-            # trip circuit breaker on 3 consecutive errors or high error_rate in window
+            # Trip circuit breaker on 3 consecutive errors or high error_rate in window.
             if self.consecutive_errors >= 3 or (
                 len(self.window) >= 5 and self.error_rate > TRIP_THRESHOLD
             ):
                 self.cooldown_until = time.time() + COOLDOWN_SECONDS
                 self.consecutive_errors = 0
 
-    # --- Display -----------------------------------------------------------
-
+    # JSON-serializable status dict for debugging and dashboards.
     def summary(self) -> dict:
         return {
             "engine": self.name,
@@ -191,15 +171,7 @@ class EngineStats:
         }
 
 
-# ---------------------------------------------------------------------------
-# Registry of all active engines
-# ---------------------------------------------------------------------------
-
-# Engines confirmed working via stress-bench (2026-04-06, region=wt-wt).
-# DDGS v9 available backends: brave, duckduckgo, google, grokipedia, mojeek,
-#                             wikipedia, yahoo, yandex  (bing dropped in v9)
-# Excluded: yandex (endpoint issues), brave/mojeek (frequent 4xx blocks),
-#           grokipedia (experimental, low coverage).
+# DDGS backends confirmed working via stress-bench (region=wt-wt).
 ALL_ENGINES = [
     "duckduckgo",
     "google",
@@ -207,8 +179,7 @@ ALL_ENGINES = [
     "wikipedia",
 ]
 
-# API-key-based hosted search providers.
-# Only engines whose key is present in api_keys.json are registered in the router.
+# API-key hosted providers; only engines with keys in api_keys.json are registered.
 HOSTED_ENGINES = [
     "tavily",
     "brave",
@@ -217,12 +188,8 @@ HOSTED_ENGINES = [
 ]
 
 
+# Build engine stats registry; optional extra_engines adds hosted providers.
 def make_registry(extra_engines: list[str] | None = None) -> dict[str, EngineStats]:
-    """Build the engine stats registry.
-
-    Always includes ALL_ENGINES (DDGS backends).
-    Pass *extra_engines* (e.g. available hosted providers) to add them too.
-    """
     names = list(ALL_ENGINES)
     for name in (extra_engines or []):
         if name not in names:

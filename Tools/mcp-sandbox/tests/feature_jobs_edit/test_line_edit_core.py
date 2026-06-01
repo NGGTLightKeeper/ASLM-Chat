@@ -56,13 +56,13 @@ class LineEditCoreTests(unittest.TestCase):
         self.assertEqual((self.task_root / "notes.txt").read_text(encoding="utf-8"), "one\nthree\n")
 
     def test_preserves_crlf_newlines(self) -> None:
-        (self.task_root / "win.txt").write_text("one\r\ntwo\r\nthree\r\n", encoding="utf-8", newline="")
+        (self.task_root / "win.txt").write_bytes(b"one\r\ntwo\r\nthree\r\n")
 
         workspace.edit_lines("win.txt", "2", "TWO")
 
         self.assertEqual(
-            (self.task_root / "win.txt").read_text(encoding="utf-8", newline=""),
-            "one\r\nTWO\r\nthree\r\n",
+            (self.task_root / "win.txt").read_bytes(),
+            b"one\r\nTWO\r\nthree\r\n",
         )
 
 

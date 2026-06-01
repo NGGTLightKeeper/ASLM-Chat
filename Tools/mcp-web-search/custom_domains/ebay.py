@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import argparse
@@ -17,6 +19,7 @@ from core.fetch.camoufox_fetcher import fetch_with_camoufox, is_camoufox_availab
 from custom_domains.common import CHROME_BASIC_HEADERS, extract_with_preferred_pipeline, looks_blocked, trim
 
 
+# Fetch eBay listing via Camoufox, then Patchright fallback; return extraction snapshot dict.
 async def fetch_ebay_snapshot(url: str, timeout: float = 20.0, wait: float = 4.0) -> dict[str, Any]:
     started = time.perf_counter()
     candidates: list[dict[str, Any]] = []
@@ -119,6 +122,7 @@ async def fetch_ebay_snapshot(url: str, timeout: float = 20.0, wait: float = 4.0
     }
 
 
+# CLI argument parser for standalone ebay.py runs.
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the custom eBay snapshot fetcher.")
     parser.add_argument("url")
@@ -127,6 +131,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# CLI entry: fetch snapshot and print JSON to stdout.
 def main() -> None:
     args = _parse_args()
     result = asyncio.run(fetch_ebay_snapshot(args.url, timeout=args.timeout, wait=args.wait))

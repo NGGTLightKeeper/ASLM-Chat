@@ -1,25 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-_ddgs_worker.py — Isolated subprocess worker for async_ddgs_search().
-
-Protocol
---------
-stdin  : one JSON line — the request payload (see async_ddgs_search for schema)
-stdout : one JSON line — {"ok": true, "results": [...]} | {"ok": false, "error": "..."}
-stderr : ignored by caller
-
-Running in a separate process means:
-  - DDGS HTTP calls can be hard-killed via proc.kill() with no thread-safety concerns
-  - A hung DDGS request doesn't block the main asyncio event loop
-  - Router telemetry accumulates inside _ddgs_worker.py's own process; the parent
-    updates its own router after deserialising results (via engine field on SearchResult)
-
-Exit codes
-----------
-  0  normal (ok=true or ok=false with error message)
-  1  startup failure (import error, bad JSON, etc.)
-"""
 from __future__ import annotations
 
 import io
@@ -27,27 +7,24 @@ import json
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Force UTF-8 stdout so JSON with non-ASCII is transmitted cleanly
-# ---------------------------------------------------------------------------
+# Force UTF-8 stdout so JSON with non-ASCII is transmitted cleanly.
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-# ---------------------------------------------------------------------------
-# Path: make core/ importable when run as a script from any working directory
-# ---------------------------------------------------------------------------
+# Make core/ importable when run as a script from any working directory.
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 
+# Write one JSON error line to stdout.
 def _fail(msg: str) -> None:
     sys.stdout.write(json.dumps({"ok": False, "error": msg}, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
 
+# stdin: JSON request; stdout: one JSON line with results or error.
 def main() -> None:
-    # --- Read request payload ------------------------------------------------
     try:
         raw = sys.stdin.buffer.read()
         payload = json.loads(raw.decode("utf-8", errors="replace"))
@@ -67,7 +44,7 @@ def main() -> None:
     timelimit               = payload.get("timelimit")    # str | None
     hedge_count: int        = int(payload.get("hedge_count", 2))
 
-    # DDGSClient construction params
+    # DDGSClient construction params.
     proxies: list[str]        = list(payload.get("proxies") or [])
     cache_db                  = payload.get("cache_db")  # str | None
     cache_ttl: int            = int(payload.get("cache_ttl", 3600))
@@ -77,7 +54,6 @@ def main() -> None:
     max_retries: int          = int(payload.get("max_retries", 2))
     partial_buffer_path       = payload.get("partial_buffer_path")
 
-    # --- Import and run ------------------------------------------------------
     try:
         from core.fetch.ddgs_client import DDGSClient
         from core.fetch.engine_stats import Observation
@@ -126,10 +102,7 @@ def main() -> None:
     out = json.dumps({"ok": True, "results": serialised}, ensure_ascii=False)
     sys.stdout.write(out + "\n")
     sys.stdout.flush()
-    # Hard-exit: bypass Python's thread-join on process shutdown.
-    # ThreadPoolExecutor threads from search_with_fallback (hedged search) are
-    # non-daemon and keep running until their HTTP timeout fires.  We already
-    # wrote the result, so there's no reason to wait for them.
+    # Hard-exit: bypass thread join on shutdown (hedged search may still be running).
     import os as _os
     _os._exit(0)
 

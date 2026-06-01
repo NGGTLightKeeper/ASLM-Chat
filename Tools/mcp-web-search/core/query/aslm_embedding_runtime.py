@@ -1,14 +1,4 @@
-"""Optional runtime loader for local ASLM embedding search model exports.
-
-The exports in ``models/`` contain a ModernBERT encoder plus two small heads:
-
-* ``label_head`` for taxonomy label probabilities.
-* ``score_head`` for a scalar confidence/relevance score.
-
-This module is intentionally dependency-light at import time. Torch and
-Transformers are imported only when a model is loaded so normal search tests do
-not need the neural stack.
-"""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -26,6 +16,7 @@ logger = logging.getLogger("core.query.aslm_embedding_runtime")
 DEFAULT_MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 
 
+# Read boolean env flag (0/false/no/off/disabled → False).
 def _env_component_enabled(name: str, *, default: bool = True) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -33,18 +24,21 @@ def _env_component_enabled(name: str, *, default: bool = True) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off", "disabled"}
 
 
+# ASLM head output: per-label probabilities and scalar relevance score.
 @dataclass(frozen=True)
 class AslmEmbeddingPrediction:
     labels: dict[str, float]
     score: float
 
+    # Top label probabilities sorted descending.
     def top(self, limit: int = 5) -> list[tuple[str, float]]:
         return sorted(self.labels.items(), key=lambda item: item[1], reverse=True)[:limit]
 
 
+# Local ASLM export: ModernBERT encoder plus label_head and score_head.
 class AslmEmbeddingRuntime:
-    """Run one local ASLM embedding export on CPU/GPU through Transformers."""
 
+    # Load tokenizer, encoder, and heads from an on-disk export directory.
     def __init__(self, export_dir: str | Path, *, device: str = "cpu", max_length: int = 512) -> None:
         self.export_dir = Path(export_dir)
         self.device = device
@@ -71,6 +65,7 @@ class AslmEmbeddingRuntime:
             trust_remote_code=True,
         )
 
+        # Load heads and restore weights from model.pt checkpoint.
         hidden = int(self.encoder.config.hidden_size)
         self.label_head = nn.Linear(hidden, len(self.labels))
         self.score_head = nn.Sequential(
@@ -104,6 +99,7 @@ class AslmEmbeddingRuntime:
         self.label_head.eval()
         self.score_head.eval()
 
+    # Batch inference: sigmoid label probs and scalar relevance per text.
     def predict(self, texts: Iterable[str]) -> list[AslmEmbeddingPrediction]:
         torch = self._torch
         items = list(texts)
@@ -135,8 +131,8 @@ class AslmEmbeddingRuntime:
             for row, score in zip(label_probs, scalar_scores.tolist(), strict=True)
         ]
 
+    # Drop model refs and clear CPU/CUDA caches.
     def close(self) -> None:
-        """Release heavyweight model references and clear CPU/CUDA caches."""
         torch = self._torch
         self.encoder = None
         self.label_head = None
@@ -155,14 +151,16 @@ class AslmEmbeddingRuntime:
             pass
 
 
+# Cached loader for one export directory and device.
 @lru_cache(maxsize=4)
 def load_aslm_embedding_export(export_dir: str, *, device: str = "cpu") -> AslmEmbeddingRuntime:
     return AslmEmbeddingRuntime(export_dir, device=device)
 
 
+# Encoder/decoder lifecycle for one search cycle (bypasses lru_cache for unload).
 class SearchModelSession:
-    """Model lifecycle for one search cycle or one batch."""
 
+    # Configure which models to load and resolve device from env flags.
     def __init__(
         self,
         *,
@@ -190,10 +188,10 @@ class SearchModelSession:
         self.encoder_path: Path | None = None
         self.decoder_path: Path | None = None
 
+    # Load encoder and/or decoder when session enters context.
     def __enter__(self) -> "SearchModelSession":
         if self.load:
-            # Deliberately bypass the lru-cached helper so production search
-            # cycles can unload models at cycle end.
+            # Load encoder and decoder without lru_cache so close() can free memory.
             if self.load_encoder:
                 self.encoder_path = default_query_classifier_path()
                 try:
@@ -234,13 +232,16 @@ class SearchModelSession:
                     )
         return self
 
+    # Release models when session exits context.
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
+    # True when at least one model loaded successfully.
     @property
     def ready(self) -> bool:
         return self.encoder is not None or self.decoder is not None
 
+    # Close loaded encoder and decoder runtimes.
     def close(self) -> None:
         if self.encoder is not None:
             self.encoder.close()
@@ -249,11 +250,13 @@ class SearchModelSession:
         self.encoder = None
         self.decoder = None
 
+    # Run encoder query classifier; None if encoder not loaded.
     def classify_query(self, query: str) -> AslmEmbeddingPrediction | None:
         if self.encoder is None:
             return None
         return self.encoder.predict([query])[0]
 
+    # Score SERP snippet candidates with decoder (no page preview).
     def score_snippet_candidates(
         self, query: str, candidates: Iterable[dict[str, str]]
     ) -> list[AslmEmbeddingPrediction]:
@@ -271,6 +274,7 @@ class SearchModelSession:
         ]
         return self.decoder.predict(texts)
 
+    # Score fetched page candidates with decoder including preview text.
     def score_parsed_candidates(
         self, query: str, candidates: Iterable[dict[str, str]]
     ) -> list[AslmEmbeddingPrediction]:
@@ -289,6 +293,7 @@ class SearchModelSession:
         return self.decoder.predict(texts)
 
 
+# Map device string (auto, cuda, gpu) to torch device name.
 def _resolve_device(device: str) -> str:
     requested = (device or "cpu").strip().lower()
     if requested in {"gpu", "cuda:0"}:
@@ -312,16 +317,19 @@ def _resolve_device(device: str) -> str:
     return "cpu"
 
 
+# Default on-disk path for query classifier (encoder) export.
 def default_query_classifier_path(root: str | Path | None = None) -> Path:
     base = Path(root) if root is not None else DEFAULT_MODELS_DIR
     return base / "aslm_embedding_encoder"
 
 
+# Default on-disk path for source relevance (decoder) export.
 def default_source_relevance_path(root: str | Path | None = None) -> Path:
     base = Path(root) if root is not None else DEFAULT_MODELS_DIR
     return base / "aslm_embedding_decoder"
 
 
+# Fixed template for decoder relevance scoring input.
 def format_source_relevance_input(
     *,
     query: str,

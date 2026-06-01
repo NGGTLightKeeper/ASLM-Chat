@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import asyncio
@@ -10,14 +12,17 @@ from core.fetch.constants import DEFAULT_UA as _UA
 from core.fetch.thread_pool import io_pool as _io_pool
 
 
+# Normalize URL host (strip www./m. prefixes).
 def _host(url: str) -> str:
     return urlparse(url).netloc.lower().removeprefix("www.").removeprefix("m.")
 
 
+# True when URL targets github.com.
 def is_github_url(url: str) -> bool:
     return _host(url) == "github.com"
 
 
+# Parse owner, repo, and remaining path segments from a GitHub URL.
 def _repo_parts(url: str) -> tuple[str, str, list[str]] | None:
     parsed = urlparse(url)
     if _host(url) != "github.com":
@@ -31,6 +36,7 @@ def _repo_parts(url: str) -> tuple[str, str, list[str]] | None:
     return owner, repo.removesuffix(".git"), parts[2:]
 
 
+# Build GitHub REST API headers, optionally with GITHUB_TOKEN / GH_TOKEN.
 def _github_headers() -> dict[str, str]:
     headers = {
         "Accept": "application/vnd.github+json",
@@ -43,6 +49,7 @@ def _github_headers() -> dict[str, str]:
     return headers
 
 
+# Synchronous GET returning parsed JSON from the GitHub API.
 def _api_get_json(url: str, timeout: int) -> Any:
     import httpx
 
@@ -51,6 +58,7 @@ def _api_get_json(url: str, timeout: int) -> Any:
     return resp.json()
 
 
+# Decode base64 contents field from a GitHub contents API response.
 def _decode_content_payload(data: Any) -> str:
     if not isinstance(data, dict):
         return ""
@@ -62,6 +70,7 @@ def _decode_content_payload(data: Any) -> str:
     return base64.b64decode(raw).decode("utf-8", errors="replace")
 
 
+# Format repository metadata and README as markdown.
 def _format_repo(repo: dict[str, Any], readme: str, url: str) -> str:
     full_name = str(repo.get("full_name") or "").strip()
     description = str(repo.get("description") or "").strip()
@@ -98,6 +107,7 @@ def _format_repo(repo: dict[str, Any], readme: str, url: str) -> str:
     return "\n".join(lines).strip()
 
 
+# Format issue metadata, body, and comments as markdown.
 def _format_issue(issue: dict[str, Any], comments: list[Any], url: str) -> str:
     title = str(issue.get("title") or url).strip()
     user = issue.get("user") if isinstance(issue.get("user"), dict) else {}
@@ -131,6 +141,7 @@ def _format_issue(issue: dict[str, Any], comments: list[Any], url: str) -> str:
     return "\n".join(lines).strip()
 
 
+# Format directory listing from GitHub contents/tree API as markdown.
 def _format_tree(items: list[Any], owner: str, repo: str, ref: str, path: str, url: str) -> str:
     title_path = path or "."
     lines = [f"# {owner}/{repo}: {title_path}", f"URL: {url}", f"Ref: {ref}", ""]
@@ -145,6 +156,7 @@ def _format_tree(items: list[Any], owner: str, repo: str, ref: str, path: str, u
     return "\n".join(lines).strip()
 
 
+# Fetch repo, issue, blob, or tree via GitHub API and return formatted markdown.
 async def fetch_github_page(url: str, timeout: float = 20.0) -> str:
     parsed = _repo_parts(url)
     if not parsed:
@@ -154,6 +166,7 @@ async def fetch_github_page(url: str, timeout: float = 20.0) -> str:
     owner_q = quote(owner, safe="")
     repo_q = quote(repo, safe="")
 
+    # Blocking API work run on the shared I/O thread pool.
     def _sync() -> str:
         api_root = f"https://api.github.com/repos/{owner_q}/{repo_q}"
         try:

@@ -1,13 +1,4 @@
-"""Interactive debug console for the real web_search pipeline.
-
-Run from ``Tools/mcp-web-search``:
-
-    python -m core.debug.web_search_console
-
-Useful one-shot form:
-
-    python -m core.debug.web_search_console --once "reactive oxygen species pubmed" --fetch-previews
-"""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -63,11 +54,13 @@ from services.web_search import (
 )
 
 
+# Forward trace.web_search log records to stdout for the console.
 class _ConsoleTraceHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         print(f"[trace] {record.getMessage()}")
 
 
+# Attach a stdout handler to trace.web_search when --trace is set.
 def _install_trace_logging() -> None:
     logger = logging.getLogger("trace.web_search")
     logger.setLevel(logging.INFO)
@@ -76,11 +69,13 @@ def _install_trace_logging() -> None:
     logger.propagate = False
 
 
+# Strip www. prefix from URL host for display.
 def _domain_from_url(url: str) -> str:
     host = urlparse(url or "").netloc.lower()
     return host[4:] if host.startswith("www.") else host
 
 
+# Look up trust registry entry by URL host pattern.
 def _trust_entry_for_url(trust_registry, url: str):
     host = urlparse(url or "").netloc.lower()
     for pattern, entry in getattr(trust_registry, "_lookup", {}).items():
@@ -89,16 +84,19 @@ def _trust_entry_for_url(trust_registry, url: str):
     return None
 
 
+# Convert hybrid class mix tuples into a name→weight dict.
 def _class_mix(hybrid: list[tuple[str, float, str]]) -> dict[str, float]:
     return {name: float(weight) for name, weight, _reason in hybrid}
 
 
+# Weighted average of per-class values using the hybrid mix.
 def _weighted_map_value(values: dict[str, float], class_mix: dict[str, float], default: float = 1.0) -> float:
     if not class_mix:
         return default
     return sum(weight * float(values.get(name, default)) for name, weight in class_mix.items()) or default
 
 
+# Build domain-registry debug payload for one result URL.
 def _domain_debug(url: str, class_mix: dict[str, float]) -> dict[str, Any]:
     registry = get_registry()
     info = registry.lookup(url)
@@ -139,6 +137,7 @@ def _domain_debug(url: str, class_mix: dict[str, float]) -> dict[str, Any]:
     }
 
 
+# Build trust-registry debug payload for one result URL.
 def _trust_debug(trust_registry, url: str, class_mix: dict[str, float]) -> dict[str, Any]:
     entry = _trust_entry_for_url(trust_registry, url)
     if entry is None:
@@ -153,11 +152,13 @@ def _trust_debug(trust_registry, url: str, class_mix: dict[str, float]) -> dict[
     }
 
 
+# Pretty-print a titled JSON block to stdout.
 def _print_json(title: str, value: Any) -> None:
     print(f"\n== {title} ==")
     print(json.dumps(value, indent=2, ensure_ascii=False, default=str))
 
 
+# Return top label/score pairs from a score mapping.
 def _top_pairs(mapping: dict[str, float], limit: int = 8) -> list[list[Any]]:
     return [
         [name, round(score, 4)]
@@ -165,7 +166,9 @@ def _top_pairs(mapping: dict[str, float], limit: int = 8) -> list[list[Any]]:
     ]
 
 
+# Interactive REPL that traces the live web_search pipeline end-to-end.
 class WebSearchDebugConsole:
+    # Wire service options and optionally load ASLM embedding models.
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.cfg = load_search_config()
@@ -191,6 +194,7 @@ class WebSearchDebugConsole:
         if args.neural:
             self._load_models()
 
+    # Open a SearchModelSession and bind encoder/decoder handles.
     def _load_models(self) -> None:
         print("[models] loading ASLM embedding encoder/decoder...")
         t0 = time.perf_counter()
@@ -200,6 +204,7 @@ class WebSearchDebugConsole:
         self.source_model = self.model_session.decoder
         print(f"[models] session ready in {time.perf_counter() - t0:.2f}s")
 
+    # Release the model session and clear model handles.
     def close(self) -> None:
         if self.model_session is not None:
             self.model_session.close()
@@ -207,6 +212,7 @@ class WebSearchDebugConsole:
         self.query_model = None
         self.source_model = None
 
+    # Run one query: classify, search, fetch previews, and print trace JSON.
     async def run_query(self, raw_query: str) -> None:
         raw_query = (raw_query or "").strip()
         if not raw_query:
@@ -289,6 +295,7 @@ class WebSearchDebugConsole:
             print("\n[done] analysis-only mode")
             return
 
+        # Provider search with zero-result fallback.
         deduped, triage, effective_query = await self.service._run_with_zero_result_fallback(
             provider_query=provider_query,
             analysis_query=analysis_query,
@@ -340,6 +347,7 @@ class WebSearchDebugConsole:
                 to_fetch_indices.append(index)
                 to_fetch_policies.append(decision.fetch_policy)
 
+        # Optional preview fetch for top triage-approved results.
         payloads = [PreviewPayload()] * len(deduped)
         if self.options.fetch_previews and to_fetch:
             loop = asyncio.get_running_loop()
@@ -370,6 +378,7 @@ class WebSearchDebugConsole:
         except Exception:
             trust_registry = None
 
+        # Source-model relevance scores for inspected rows.
         source_predictions = {}
         if self.source_model is not None:
             source_inputs = []
@@ -476,6 +485,7 @@ class WebSearchDebugConsole:
 
         print(f"\n[done] elapsed={time.perf_counter() - started:.2f}s results={len(deduped)} inspected={len(rows)}")
 
+    # Update a runtime console flag from a :set command.
     def set_option(self, key: str, value: str) -> None:
         if key in {"fetch_previews", "neural", "show_formatted", "analysis_only"}:
             parsed = value.lower() in {"1", "true", "yes", "on"}
@@ -515,6 +525,7 @@ HELP = """Commands:
 """
 
 
+# REPL loop or single --once query, then tear down the console.
 async def _main_async(args: argparse.Namespace) -> int:
     if args.trace:
         _install_trace_logging()
@@ -554,6 +565,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         console.close()
 
 
+# Build the web_search debug console CLI argument parser.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Interactive web_search debug console")
     parser.add_argument("--once", help="Run one query and exit")
@@ -580,6 +592,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# CLI entry: asyncio driver for the debug console.
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)

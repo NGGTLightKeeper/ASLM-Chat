@@ -26,15 +26,15 @@ TOOL_HANDLER_NAMES = ("TOOL_HANDLERS", "TOOL_EXECUTORS")
 WORKER_HEARTBEAT_SECONDS = 5.0
 
 
+# Run async tool handlers on one persistent background event loop.
 class AsyncCallableRunner:
-    """Run async tool handlers on one persistent event loop."""
-
     def __init__(self) -> None:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
         self._lock = threading.Lock()
 
+    # Own the asyncio loop inside a dedicated daemon thread.
     def _thread_main(self) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -45,6 +45,7 @@ class AsyncCallableRunner:
         finally:
             loop.close()
 
+    # Start the background loop thread when it is not already running.
     def ensure_started(self) -> None:
         if self._thread is not None and self._thread.is_alive() and self._loop is not None:
             return
@@ -62,12 +63,14 @@ class AsyncCallableRunner:
             self._thread.start()
             self._ready.wait()
 
+    # Execute one coroutine on the background loop and block for the result.
     def run(self, coro: Any) -> Any:
         self.ensure_started()
         assert self._loop is not None
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result()
 
+    # Stop the background loop and join its thread.
     def close(self) -> None:
         loop = self._loop
         thread = self._thread
@@ -82,18 +85,16 @@ class AsyncCallableRunner:
 _ASYNC_CALLABLE_RUNNER = AsyncCallableRunner()
 
 
-# Normalize public identifiers.
-def _slugify(value: str) -> str:
-    """Return a stable lower-case identifier."""
+# Module loading and metadata
 
+# Normalize public identifiers into stable lower-case slugs.
+def _slugify(value: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
     return normalized or "tool"
 
 
-# Load one server module from disk.
+# Load one tool server module from disk and register its folder on sys.path.
 def _load_module(server_file: Path) -> ModuleType:
-    """Load one tool server module."""
-
     server_root = server_file.parent
     if str(server_root) not in sys.path:
         sys.path.insert(0, str(server_root))
@@ -108,10 +109,8 @@ def _load_module(server_file: Path) -> ModuleType:
     return module
 
 
-# Return one exported metadata dictionary.
+# Read MCP_SERVER (or SERVER) metadata from a loaded module.
 def _server_metadata(module: ModuleType, folder_name: str) -> dict[str, Any]:
-    """Return normalized server metadata."""
-
     raw_server: Any = {}
     for attr_name in SERVER_METADATA_NAMES:
         raw_server = getattr(module, attr_name, None)
@@ -130,10 +129,8 @@ def _server_metadata(module: ModuleType, folder_name: str) -> dict[str, Any]:
     }
 
 
-# Normalize one tool schema.
+# Normalize one JSON-schema-like tool parameters object.
 def _normalize_schema(schema: Any) -> dict[str, Any]:
-    """Return a JSON-schema-like mapping."""
-
     if not isinstance(schema, dict):
         return {"type": "object", "properties": {}}
 
@@ -145,10 +142,8 @@ def _normalize_schema(schema: Any) -> dict[str, Any]:
     return normalized
 
 
-# Return normalized tool definitions.
+# Build normalized tool definitions from a module TOOLS export.
 def _server_tools(module: ModuleType, server_id: str) -> list[dict[str, Any]]:
-    """Return normalized tools exported by one server module."""
-
     raw_tools = getattr(module, "TOOLS", None)
     if raw_tools is None:
         legacy_tool = getattr(module, "TOOL", None)
@@ -181,10 +176,8 @@ def _server_tools(module: ModuleType, server_id: str) -> list[dict[str, Any]]:
     return tools
 
 
-# Return per-tool handlers.
+# Collect explicit per-tool handler callables from the module.
 def _tool_handlers(module: ModuleType) -> dict[str, Any]:
-    """Return explicit tool handlers exported by one module."""
-
     raw_handlers: Any = None
     for attr_name in TOOL_HANDLER_NAMES:
         raw_handlers = getattr(module, attr_name, None)
@@ -201,10 +194,8 @@ def _tool_handlers(module: ModuleType) -> dict[str, Any]:
     }
 
 
-# Return a generic dispatcher when available.
+# Return the generic tool dispatcher callable when the module exports one.
 def _server_callable(module: ModuleType):
-    """Return the generic tool dispatcher exported by one module."""
-
     for attr_name in SERVER_DISPATCHER_NAMES:
         candidate = getattr(module, attr_name, None)
         if callable(candidate):
@@ -212,19 +203,17 @@ def _server_callable(module: ModuleType):
     return None
 
 
-# Run one callable.
-def _execute_callable(callable_fn, *args: Any) -> Any:
-    """Execute sync and async callables."""
+# Tool execution
 
+# Invoke sync or async callables, routing coroutines through the shared loop.
+def _execute_callable(callable_fn, *args: Any) -> Any:
     if inspect.iscoroutinefunction(callable_fn):
         return _ASYNC_CALLABLE_RUNNER.run(callable_fn(*args))
     return callable_fn(*args)
 
 
-# Dispatch a generic server callable.
+# Call a generic dispatcher using a tolerant signature-matching strategy.
 def _dispatch_server_callable(callable_fn, tool_id: str, arguments: dict[str, Any], context: dict[str, Any]) -> Any:
-    """Call a generic dispatcher with a tolerant signature strategy."""
-
     parameter_names = list(inspect.signature(callable_fn).parameters)
     if len(parameter_names) <= 1:
         return _execute_callable(callable_fn, arguments)
@@ -236,10 +225,8 @@ def _dispatch_server_callable(callable_fn, tool_id: str, arguments: dict[str, An
     return _execute_callable(callable_fn, tool_id, arguments, context)
 
 
-# Convert arbitrary values to JSON-compatible data.
+# Convert arbitrary return values into JSON-serializable data.
 def _to_jsonable(value: Any) -> Any:
-    """Return a JSON-compatible representation."""
-
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, dict):
@@ -254,20 +241,18 @@ def _to_jsonable(value: Any) -> Any:
     return str(value)
 
 
-# Describe one tool server.
-def describe(server_file: Path) -> dict[str, Any]:
-    """Return public metadata for one tool server."""
+# Public worker operations
 
+# Return public metadata and tool list for one tool server file.
+def describe(server_file: Path) -> dict[str, Any]:
     module = _load_module(server_file)
     metadata = _server_metadata(module, server_file.parent.name)
     metadata["tools"] = _server_tools(module, metadata["id"])
     return metadata
 
 
-# Check whether one tool server supports the current runtime.
+# Return whether the server supports the requested engine and model pair.
 def supports(server_file: Path, payload: dict[str, Any]) -> bool:
-    """Return whether the server supports one engine/model pair."""
-
     module = _load_module(server_file)
     supports_fn = getattr(module, "supports", None)
     if not callable(supports_fn):
@@ -281,10 +266,8 @@ def supports(server_file: Path, payload: dict[str, Any]) -> bool:
         return bool(supports_fn(engine, model_name))
 
 
-# Call one tool.
+# Execute one tool call against a server module.
 def call(server_file: Path, payload: dict[str, Any]) -> Any:
-    """Execute one tool call."""
-
     module = _load_module(server_file)
     tool_id = _slugify(str(payload.get("tool_id") or ""))
     arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
@@ -305,26 +288,23 @@ def call(server_file: Path, payload: dict[str, Any]) -> Any:
     return _dispatch_server_callable(dispatcher, tool_id, arguments, context)
 
 
-# Print one JSON response.
-def _print_response(ok: bool, payload: Any, *, output=sys.stdout) -> int:
-    """Print a JSON worker envelope."""
+# Worker protocol helpers
 
+# Print one JSON worker envelope to stdout.
+def _print_response(ok: bool, payload: Any, *, output=sys.stdout) -> int:
     key = "result" if ok else "error"
     print(json.dumps({"ok": ok, key: _to_jsonable(payload)}, ensure_ascii=False), file=output)
     output.flush()
     return 0 if ok else 1
 
 
+# Emit one protocol-safe heartbeat line for the parent process.
 def _worker_heartbeat(output=sys.stdout) -> None:
-    """Emit one protocol-safe liveness line for the parent process."""
-
     print(json.dumps({"event": "heartbeat"}, ensure_ascii=False), file=output, flush=True)
 
 
-# Execute one request for persistent worker mode.
+# Execute one worker request without printing the envelope.
 def _execute_request(operation: str, server_file: Path, payload: dict[str, Any]) -> tuple[bool, Any]:
-    """Return one worker envelope payload without printing it."""
-
     try:
         if operation == "describe":
             return True, describe(server_file)
@@ -337,10 +317,8 @@ def _execute_request(operation: str, server_file: Path, payload: dict[str, Any])
         return False, f"{type(exc).__name__}: {exc}"
 
 
-# Serve newline-delimited worker requests until stdin closes.
+# Run a persistent newline-delimited JSON worker on stdin until EOF.
 def serve(server_file: Path) -> int:
-    """Run a persistent worker process for stateful tool servers."""
-
     output = sys.stdout
     try:
         for raw_line in sys.stdin:
@@ -363,6 +341,7 @@ def serve(server_file: Path) -> int:
                     done = threading.Event()
                     outcome: dict[str, Any] = {}
 
+                    # Run tool work on a side thread so heartbeats can continue on the main thread.
                     def run_request() -> None:
                         with contextlib.redirect_stdout(sys.stderr):
                             ok, payload = _execute_request(operation, server_file, request_payload)
@@ -389,10 +368,8 @@ def serve(server_file: Path) -> int:
     return 0
 
 
-# CLI entry point.
+# CLI entry point for one-shot and persistent worker modes.
 def main() -> int:
-    """Run the tool worker command."""
-
     if len(sys.argv) < 3:
         return _print_response(False, "Usage: tool_worker.py <describe|supports|call> <server_file>")
 

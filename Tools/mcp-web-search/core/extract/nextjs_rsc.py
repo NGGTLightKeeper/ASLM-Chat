@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import json
@@ -15,9 +17,8 @@ _INLINE_TAGS = {"a", "b", "code", "em", "i", "small", "span", "strong", "sub", "
 _SKIP_TAGS = {"body", "head", "html", "link", "meta", "script", "style", "template", "title"}
 
 
+# Extract structured text from Next.js RSC flight payloads embedded in HTML.
 def extract_nextjs_rsc_text(raw_html: str) -> str:
-    """Extract structured text from Next.js RSC flight payloads embedded in HTML."""
-
     records = _parse_rsc_records(raw_html)
     if not records:
         return ""
@@ -42,6 +43,7 @@ def extract_nextjs_rsc_text(raw_html: str) -> str:
     return "\n\n".join(deduped)
 
 
+# Parse self.__next_f.push script chunks into record id → JSON node map.
 def _parse_rsc_records(raw_html: str) -> dict[str, object]:
     chunks: list[str] = []
     for match in _PAYLOAD_RE.finditer(raw_html or ""):
@@ -69,6 +71,7 @@ def _parse_rsc_records(raw_html: str) -> dict[str, object]:
     return records
 
 
+# True when an RSC node is a content root (heading, paragraph, list, table, etc.).
 def _is_content_root(node: object) -> bool:
     if not _is_element(node):
         return False
@@ -88,6 +91,7 @@ def _is_content_root(node: object) -> bool:
     return False
 
 
+# Render an RSC subtree into markdown-like text blocks.
 def _render_node(node: object, records: dict[str, object], seen: set[str]) -> list[str]:
     if isinstance(node, str):
         resolved = _resolve_ref(node, records, seen)
@@ -133,11 +137,13 @@ def _render_node(node: object, records: dict[str, object], seen: set[str]) -> li
     return []
 
 
+# Render ul/ol children as markdown list items.
 def _render_list(node: object, records: dict[str, object], seen: set[str]) -> list[str]:
     items = _find_list_items(node, records, seen)
     return [f"- {item}" for item in items if item]
 
 
+# Recursively collect li text from a list subtree.
 def _find_list_items(node: object, records: dict[str, object], seen: set[str]) -> list[str]:
     resolved = _resolve_if_ref(node, records, seen)
     if resolved is not None:
@@ -163,11 +169,13 @@ def _find_list_items(node: object, records: dict[str, object], seen: set[str]) -
     return items
 
 
+# Render table rows as pipe-separated cell lines.
 def _render_table_like(node: object, records: dict[str, object], seen: set[str]) -> list[str]:
     rows = _find_table_rows(node, records, seen)
     return [" | ".join(row) for row in rows if row]
 
 
+# Recursively collect tr → cell text rows from a table subtree.
 def _find_table_rows(node: object, records: dict[str, object], seen: set[str]) -> list[list[str]]:
     resolved = _resolve_if_ref(node, records, seen)
     if resolved is not None:
@@ -193,6 +201,7 @@ def _find_table_rows(node: object, records: dict[str, object], seen: set[str]) -
     return rows
 
 
+# Collect td/th inline text for one table row.
 def _find_row_cells(node: object, records: dict[str, object], seen: set[str]) -> list[str]:
     resolved = _resolve_if_ref(node, records, seen)
     if resolved is not None:
@@ -218,6 +227,7 @@ def _find_row_cells(node: object, records: dict[str, object], seen: set[str]) ->
     return cells
 
 
+# Flatten inline markup into a single line of text.
 def _inline_text(node: object, records: dict[str, object], seen: set[str]) -> str:
     resolved = _resolve_if_ref(node, records, seen)
     if resolved is not None:
@@ -249,6 +259,7 @@ def _inline_text(node: object, records: dict[str, object], seen: set[str]) -> st
     return _join_inline(parts)
 
 
+# Strip RSC sentinel strings and collapse whitespace in inline text.
 def _clean_inline_text(text: str) -> str:
     if not text:
         return ""
@@ -257,6 +268,7 @@ def _clean_inline_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.replace("\u00a0", " ")).strip()
 
 
+# Normalize whitespace in a rendered block.
 def _clean_block(text: str) -> str:
     text = text.replace("\u00a0", " ")
     text = re.sub(r"[ \t]+", " ", text)
@@ -265,18 +277,21 @@ def _clean_block(text: str) -> str:
     return text.strip()
 
 
+# Join inline text parts with spaces, preserving explicit line breaks.
 def _join_inline(parts: list[str]) -> str:
     merged = " ".join(part for part in parts if part and part != "\n")
     merged = re.sub(r"\s+", " ", merged)
     return merged.strip()
 
 
+# Resolve a string node when it is an RSC $L reference.
 def _resolve_if_ref(node: object, records: dict[str, object], seen: set[str]) -> object | None:
     if isinstance(node, str):
         return _resolve_ref(node, records, seen)
     return None
 
 
+# Follow $L<id> reference into the records map (cycle-safe).
 def _resolve_ref(value: str, records: dict[str, object], seen: set[str]) -> object | None:
     match = _REF_RE.match(value)
     if not match:
@@ -291,15 +306,18 @@ def _resolve_ref(value: str, records: dict[str, object], seen: set[str]) -> obje
     return target
 
 
+# True when node is an RSC React element tuple ($, tag, …).
 def _is_element(node: object) -> bool:
     return isinstance(node, list) and len(node) >= 4 and node[0] == "$"
 
 
+# Tag name from an RSC element tuple.
 def _tag_name(node: list[object]) -> str:
     tag = node[1]
     return tag if isinstance(tag, str) else ""
 
 
+# Props dict from an RSC element tuple.
 def _props(node: list[object]) -> dict[str, object]:
     props = node[3]
     return props if isinstance(props, dict) else {}

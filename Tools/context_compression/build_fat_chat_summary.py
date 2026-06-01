@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import json
@@ -13,6 +15,7 @@ DB_PATH = TOOL_DB_PATH if TOOL_DB_PATH.exists() else PROJECT_DB_PATH
 OUT_PATH = Path(__file__).with_name("test") / "fat_chat_summary.json"
 
 
+# Build a raw-only structured summary for the largest cached chat and write JSON output.
 def main() -> None:
     if not DB_PATH.exists():
         raise RuntimeError(f"Database not found: {DB_PATH}")

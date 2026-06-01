@@ -1,4 +1,4 @@
-﻿# Copyright NGGT.LightKeeper. All Rights Reserved.
+# Copyright NGGT.LightKeeper. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -64,6 +64,7 @@ from Apps.Data.models import (
     MessageImage,
     OllamaPreset,
 )
+from Apps.UI import STATIC_CACHE_VERSION
 from Apps.UI.host_theme_bridge import build_host_theme_template_context
 from Apps.UI.host_locale_bridge import build_host_locale_template_context
 from Apps.UI.upload_storage import (
@@ -89,7 +90,7 @@ from context_compression.history_compressor import (  # noqa: E402
     resolve_context_window_tokens,
 )
 
-DEFAULT_SYSTEM_PROMPT_PATH = settings.BASE_DIR / "SYSTEM_PROMPT.md"
+DEFAULT_SYSTEM_PROMPT_PATH = settings.BASE_DIR / "Tools" / "SYSTEM_PROMPT.md"
 _default_system_prompt_lock = threading.RLock()
 _default_system_prompt_mtime_ns: int | None = None
 _default_system_prompt_cache = ""
@@ -129,8 +130,6 @@ TEXT_ATTACHMENT_EXTENSIONS = {
 
 # Read the project-level system prompt file.
 def _read_default_system_prompt() -> str:
-    """Return the root SYSTEM_PROMPT.md content, reloading it when changed."""
-
     global _default_system_prompt_cache, _default_system_prompt_mtime_ns
 
     try:
@@ -162,6 +161,9 @@ def _build_runtime_context() -> str:
     return f"Today is {now.strftime('%A, %Y-%m-%d')}."
 
 
+# Favicon resolution helpers.
+
+# Normalize one domain string for favicon lookup.
 def _normalize_favicon_domain(value: str) -> str:
     raw_value = str(value or "").strip()
     if not raw_value:
@@ -189,6 +191,7 @@ def _normalize_favicon_domain(value: str) -> str:
     return host
 
 
+# Return whether the host resolves to a public address.
 def _is_public_favicon_host(host: str) -> bool:
     try:
         addresses = socket.getaddrinfo(host, None)
@@ -213,6 +216,7 @@ def _is_public_favicon_host(host: str) -> bool:
     return bool(addresses)
 
 
+# Return whether one favicon URL is safe to fetch.
 def _favicon_url_is_safe(url: str) -> bool:
     try:
         parsed = urlparse(url)
@@ -223,6 +227,7 @@ def _favicon_url_is_safe(url: str) -> bool:
     return _is_public_favicon_host(parsed.hostname)
 
 
+# Infer the favicon MIME type from headers and bytes.
 def _favicon_content_type(response: Any, content: bytes) -> str:
     content_type = str(response.headers.get("content-type", "") or "").split(";")[0].strip().lower()
     if content_type in FAVICON_IMAGE_TYPES:
@@ -245,6 +250,7 @@ def _favicon_content_type(response: Any, content: bytes) -> str:
     return ""
 
 
+# Perform one bounded HTTP GET with redirect validation.
 def _favicon_safe_get(session: Any, url: str, *, stream: bool = False) -> Any | None:
     current_url = url
     for _redirect_index in range(5):
@@ -268,6 +274,7 @@ def _favicon_safe_get(session: Any, url: str, *, stream: bool = False) -> Any | 
     return None
 
 
+# Download one favicon candidate when it is within size limits.
 def _fetch_favicon_candidate(session: Any, url: str) -> tuple[str, bytes] | None:
     response = _favicon_safe_get(session, url, stream=True)
     if response is None:
@@ -297,6 +304,7 @@ def _fetch_favicon_candidate(session: Any, url: str) -> tuple[str, bytes] | None
         response.close()
 
 
+# Rank one favicon candidate by rel, size, and format.
 def _score_favicon_candidate(candidate: dict[str, str]) -> int:
     rel = candidate.get("rel", "")
     sizes = candidate.get("sizes", "")
@@ -321,6 +329,7 @@ def _score_favicon_candidate(candidate: dict[str, str]) -> int:
     return score
 
 
+# Collect favicon candidates from HTML, manifests, and fallbacks.
 def _collect_favicon_candidates(session: Any, base_url: str) -> list[dict[str, str]]:
     candidates: list[dict[str, str]] = []
     final_url = base_url
@@ -389,6 +398,7 @@ def _collect_favicon_candidates(session: Any, base_url: str) -> list[dict[str, s
     return sorted(candidates, key=_score_favicon_candidate, reverse=True)
 
 
+# Resolve the best favicon bytes for one domain.
 def _resolve_favicon_content(domain: str) -> tuple[str, bytes] | None:
     if requests is None:
         return None
@@ -425,11 +435,13 @@ def _resolve_favicon_content(domain: str) -> tuple[str, bytes] | None:
     return None
 
 
+# Return on-disk cache paths for one favicon domain.
 def _favicon_cache_paths(domain: str) -> tuple[Path, Path]:
     key = hashlib.sha256(domain.encode("utf-8")).hexdigest()
     return FAVICON_CACHE_DIR / f"{key}.bin", FAVICON_CACHE_DIR / f"{key}.json"
 
 
+# Read a cached favicon when the entry is still valid.
 def _read_favicon_disk_cache(domain: str, now: float) -> tuple[str, bytes] | None:
     content_path, meta_path = _favicon_cache_paths(domain)
     try:
@@ -448,6 +460,7 @@ def _read_favicon_disk_cache(domain: str, now: float) -> tuple[str, bytes] | Non
     return content_type, content
 
 
+# Persist one favicon payload to the disk cache.
 def _write_favicon_disk_cache(domain: str, content_type: str, content: bytes, expires_at: float) -> None:
     if not content or len(content) > FAVICON_MAX_BYTES:
         return
@@ -472,9 +485,8 @@ def _write_favicon_disk_cache(domain: str, content_type: str, content: bytes, ex
         logger.debug("Failed to write favicon disk cache for %s", domain, exc_info=True)
 
 
+# Return whether the chat has not yet persisted a user message.
 def _chat_is_first_user_turn(chat: Chat | None) -> bool:
-    """Return whether the chat has not yet persisted a user message."""
-
     if chat is None:
         return True
     return not chat.messages.filter(role="user").exists()
@@ -487,8 +499,6 @@ def _compose_system_prompt(
     consume_skill_notifications: bool = True,
     include_skills_baseline: bool = False,
 ) -> str:
-    """Build the system prompt sent to the model for one request."""
-
     parts: list[str] = []
 
     default_prompt = _read_default_system_prompt()
@@ -650,8 +660,6 @@ OUTPUT_TOKEN_KEYS = (
 
 # Return a stable runtime scope for model metadata caches.
 def _engine_metadata_scope(engine: str) -> tuple[str, str]:
-    """Return endpoint and API-key scope for runtime metadata caches."""
-
     try:
         endpoint = settings.get_engine_url(engine)
     except Exception:
@@ -668,32 +676,25 @@ def _engine_metadata_scope(engine: str) -> tuple[str, str]:
 
 # Return a defensive deep copy of a cacheable payload.
 def _clone_metadata_payload(payload: Any) -> Any:
-    """Return a detached copy so callers cannot mutate cached metadata."""
-
     return copy.deepcopy(payload)
 
 
 # Clear cached model metadata.
 def _clear_model_metadata_caches() -> None:
-    """Invalidate runtime metadata caches after settings or presets change."""
-
     with _metadata_cache_lock:
         _model_info_cache.clear()
         _model_list_cache.clear()
         _tool_server_cache.clear()
 
 
+# Drop cached tool server lists only (e.g. after ``mcp.json`` changes).
 def _clear_tool_server_cache() -> None:
-    """Drop cached tool server lists only (e.g. after ``mcp.json`` changes)."""
-
     with _metadata_cache_lock:
         _tool_server_cache.clear()
 
 
 # Remember the latest selected model for one engine.
 def _remember_active_model(engine: str, model_name: str) -> None:
-    """Store the latest selected model for this server process."""
-
     normalized_engine = settings.normalize_engine_name(engine)
     normalized_model = str(model_name or "").strip()
     if not normalized_model:
@@ -705,8 +706,6 @@ def _remember_active_model(engine: str, model_name: str) -> None:
 
 # Read the latest selected model for one engine.
 def _get_remembered_active_model(engine: str) -> str:
-    """Return the latest selected model for this server process."""
-
     normalized_engine = settings.normalize_engine_name(engine)
     with _active_model_lock:
         return _active_model_by_engine.get(normalized_engine, "")
@@ -714,8 +713,6 @@ def _get_remembered_active_model(engine: str) -> str:
 
 # Convert one value into a positive integer when possible.
 def _coerce_positive_int(value: Any) -> int | None:
-    """Return a positive integer or ``None`` when the value is not numeric."""
-
     if isinstance(value, bool) or value is None:
         return None
 
@@ -729,8 +726,6 @@ def _coerce_positive_int(value: Any) -> int | None:
 
 # Read the first positive integer from a mapping.
 def _first_positive_int(mapping: dict[str, Any], keys: tuple[str, ...]) -> int | None:
-    """Return the first positive integer found under one of the given keys."""
-
     if not isinstance(mapping, dict):
         return None
 
@@ -744,8 +739,6 @@ def _first_positive_int(mapping: dict[str, Any], keys: tuple[str, ...]) -> int |
 
 # Resolve the model name represented by an inference-info request.
 def _resolve_inference_model(engine: str, requested_model: str | None = None) -> tuple[str, str]:
-    """Return the model name and where that selection came from."""
-
     model_name = str(requested_model or "").strip()
     if model_name:
         return model_name, "request"
@@ -763,8 +756,6 @@ def _resolve_inference_model(engine: str, requested_model: str | None = None) ->
 
 # Return cached model info when it is still fresh.
 def _get_cached_model_info(engine: str, model_name: str) -> dict[str, Any] | None:
-    """Return a cached model-info payload if available."""
-
     endpoint, api_key_hash = _engine_metadata_scope(engine)
     cache_key = (engine, model_name, endpoint, f"{api_key_hash}:{MODEL_INFO_CACHE_SCHEMA_VERSION}")
     now = time.monotonic()
@@ -782,8 +773,6 @@ def _get_cached_model_info(engine: str, model_name: str) -> dict[str, Any] | Non
 
 # Store model info in the runtime cache.
 def _set_cached_model_info(engine: str, model_name: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Cache and return a detached model-info payload."""
-
     endpoint, api_key_hash = _engine_metadata_scope(engine)
     cache_key = (engine, model_name, endpoint, f"{api_key_hash}:{MODEL_INFO_CACHE_SCHEMA_VERSION}")
     cached_payload = _clone_metadata_payload(payload)
@@ -796,8 +785,6 @@ def _set_cached_model_info(engine: str, model_name: str, payload: dict[str, Any]
 
 # Return cached model names when still fresh.
 def _get_cached_model_list(engine: str) -> list[str] | None:
-    """Return a cached model list for one engine if available."""
-
     endpoint, api_key_hash = _engine_metadata_scope(engine)
     cache_key = (engine, endpoint, api_key_hash)
     now = time.monotonic()
@@ -815,8 +802,6 @@ def _get_cached_model_list(engine: str) -> list[str] | None:
 
 # Store model names in the runtime cache.
 def _set_cached_model_list(engine: str, models: list[str]) -> list[str]:
-    """Cache and return a detached model list."""
-
     endpoint, api_key_hash = _engine_metadata_scope(engine)
     cache_key = (engine, endpoint, api_key_hash)
     cached_models = list(models)
@@ -829,8 +814,6 @@ def _set_cached_model_list(engine: str, models: list[str]) -> list[str]:
 
 # Return cached tool servers when still fresh.
 def _list_tool_servers_cached(engine: str, model_name: str | None = None) -> list[dict[str, Any]]:
-    """Return supported tool servers with a short runtime cache."""
-
     endpoint, api_key_hash = _engine_metadata_scope(engine)
     normalized_model = str(model_name or "")
     cache_key = (engine, normalized_model, endpoint, api_key_hash)
@@ -852,15 +835,11 @@ def _list_tool_servers_cached(engine: str, model_name: str | None = None) -> lis
 
 # Emit one concise runtime event for the ASLM console.
 def _print_runtime_event(message: str) -> None:
-    """Emit one concise runtime event for the ASLM console."""
-
     print(f"[ASLM-Chat] {message}", flush=True)
 
 
 # Return whether the exception is an expected runtime/connectivity failure.
 def _is_expected_runtime_error(exc: Exception) -> bool:
-    """Return whether the exception is an expected runtime/connectivity failure."""
-
     exc_name = type(exc).__name__
     if exc_name in {"ConnectError", "ConnectionError", "ReadTimeout", "TimeoutException"}:
         return True
@@ -880,8 +859,6 @@ def _is_expected_runtime_error(exc: Exception) -> bool:
 
 # Return a user-facing runtime error string without noisy transport details.
 def _format_runtime_error(engine: str, exc: Exception) -> str:
-    """Return a user-facing runtime error string without noisy transport details."""
-
     message = str(exc).strip()
     normalized_message = message.lower()
 
@@ -918,8 +895,6 @@ def _format_runtime_error(engine: str, exc: Exception) -> str:
 
 # Remove assistant-control tokens that should never be shown to the user.
 def _strip_llm_control_tokens(content: str) -> str:
-    """Remove assistant-control tokens that should never be shown to the user."""
-
     cleaned = str(content or "")
     for pattern in LLM_CONTROL_TOKEN_PATTERNS:
         cleaned = pattern.sub("", cleaned)
@@ -928,8 +903,6 @@ def _strip_llm_control_tokens(content: str) -> str:
 
 # Return a short, readable summary of option keys.
 def _summarize_option_keys(options: dict[str, Any] | None, max_keys: int = 6) -> str:
-    """Return a short, readable summary of option keys."""
-
     if not isinstance(options, dict) or not options:
         return "none"
 
@@ -941,8 +914,6 @@ def _summarize_option_keys(options: dict[str, Any] | None, max_keys: int = 6) ->
 
 # Count image attachments present in the current outbound request.
 def _count_request_images(messages: list[dict[str, Any]]) -> int:
-    """Count image attachments present in the current outbound request."""
-
     image_count = 0
     for message in messages:
         if not isinstance(message, dict):
@@ -955,8 +926,6 @@ def _count_request_images(messages: list[dict[str, Any]]) -> int:
 
 # Return decoded bytes for one base64 payload or data URL.
 def _decode_base64_payload(raw_value: Any) -> bytes:
-    """Return decoded bytes for one base64 payload or data URL."""
-
     if raw_value is None:
         return b""
 
@@ -975,8 +944,6 @@ def _decode_base64_payload(raw_value: Any) -> bytes:
 
 # Estimate decoded byte size without materializing the full payload.
 def _estimate_base64_payload_size(raw_value: Any) -> int:
-    """Return the decoded byte size for one base64 payload or data URL."""
-
     payload = str(raw_value or "").strip()
     if not payload:
         return 0
@@ -994,8 +961,6 @@ def _estimate_base64_payload_size(raw_value: Any) -> int:
 
 # Return whether one payload is structurally valid base64.
 def _is_valid_base64_payload(raw_value: Any) -> bool:
-    """Return whether one base64 payload has a valid lightweight shape."""
-
     payload = str(raw_value or "").strip()
     if not payload:
         return False
@@ -1012,8 +977,6 @@ def _is_valid_base64_payload(raw_value: Any) -> bool:
 
 # Split a data URL into MIME type and base64 payload.
 def _parse_data_url(raw_value: Any) -> tuple[str, str]:
-    """Split a data URL into MIME type and base64 payload."""
-
     payload = str(raw_value or "").strip()
     if not payload.startswith("data:") or "," not in payload:
         return "", payload
@@ -1027,8 +990,6 @@ def _parse_data_url(raw_value: Any) -> tuple[str, str]:
 
 # Return the normalized attachment kind for the payload.
 def _guess_attachment_kind(mime_type: str, name: str = "") -> str:
-    """Return the normalized attachment kind for the payload."""
-
     normalized_mime = str(mime_type or "").strip().lower()
     if normalized_mime.startswith("image/"):
         return MessageAttachmentKind.IMAGE
@@ -1042,8 +1003,6 @@ def _guess_attachment_kind(mime_type: str, name: str = "") -> str:
 
 # Normalize one incoming attachment payload into the storage shape.
 def _normalize_attachment_payload(raw_attachment: Any, order: int) -> dict[str, Any] | None:
-    """Normalize one incoming attachment payload into the storage shape."""
-
     if isinstance(raw_attachment, str):
         mime_type = _detect_image_mime(raw_attachment)
         raw_data = raw_attachment
@@ -1104,8 +1063,6 @@ def _normalize_attachment_payload(raw_attachment: Any, order: int) -> dict[str, 
 
 # Return a normalized list of request attachments.
 def _normalize_request_attachments(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return a normalized list of request attachments."""
-
     normalized: list[dict[str, Any]] = []
     raw_attachments = data.get("attachments", []) or []
     raw_images = data.get("images", []) or []
@@ -1118,15 +1075,11 @@ def _normalize_request_attachments(data: dict[str, Any]) -> list[dict[str, Any]]
 
 # Build an attachment content endpoint path.
 def _attachment_content_url(record_type: str, record_id: int) -> str:
-    """Return the lazy content endpoint for one stored attachment."""
-
     return f"/api/attachment/{record_type}/{record_id}/content/"
 
 
 # Convert a persisted attachment-like object into the frontend payload.
 def _serialize_attachment_record(attachment: Any, *, include_data: bool = True) -> dict[str, Any]:
-    """Convert a persisted attachment-like object into the frontend payload."""
-
     if isinstance(attachment, MessageAttachment):
         payload = {
             "id": attachment.id,
@@ -1164,8 +1117,6 @@ def _serialize_attachment_record(attachment: Any, *, include_data: bool = True) 
 
 # Return all persisted attachments for a message in a shared shape.
 def _get_message_attachments(message: Message, *, include_data: bool = True) -> list[dict[str, Any]]:
-    """Return all persisted attachments for a message in a shared shape."""
-
     attachments = [_serialize_attachment_record(item, include_data=include_data) for item in message.attachments.all()]
     legacy_images = [_serialize_attachment_record(item, include_data=include_data) for item in message.images.all()]
     combined = [item for item in attachments + legacy_images if item]
@@ -1175,8 +1126,6 @@ def _get_message_attachments(message: Message, *, include_data: bool = True) -> 
 
 # Decode one serialized attachment payload into bytes.
 def _attachment_data_to_bytes(attachment: dict[str, Any]) -> bytes:
-    """Decode one serialized attachment payload into bytes."""
-
     try:
         return _decode_base64_payload(attachment.get("data_url") or attachment.get("data"))
     except (ValueError, binascii.Error):
@@ -1185,8 +1134,6 @@ def _attachment_data_to_bytes(attachment: dict[str, Any]) -> bytes:
 
 # Return whether the attachment should be decoded as text.
 def _is_text_attachment(mime_type: str, name: str) -> bool:
-    """Return whether the attachment should be decoded as text."""
-
     normalized_mime = str(mime_type or "").strip().lower()
     normalized_name = Path(name or "").name.lower()
     attachment_path = Path(name or "")
@@ -1221,8 +1168,6 @@ def _is_text_attachment(mime_type: str, name: str) -> bool:
 
 # Trim attachment text so prompts stay bounded.
 def _truncate_attachment_text(text: str, limit: int = ATTACHMENT_TEXT_CHAR_LIMIT) -> str:
-    """Trim attachment text so prompts stay bounded."""
-
     normalized = str(text or "").strip()
     if len(normalized) <= limit:
         return normalized
@@ -1231,8 +1176,6 @@ def _truncate_attachment_text(text: str, limit: int = ATTACHMENT_TEXT_CHAR_LIMIT
 
 # Persist extracted text for one stored file attachment.
 def _cache_attachment_text(attachment: dict[str, Any], extracted_text: str) -> str:
-    """Store extracted attachment text so future requests do not decode it again."""
-
     attachment["extracted_text"] = extracted_text
     attachment["extracted_text_ready"] = True
 
@@ -1256,8 +1199,6 @@ def _cache_attachment_text(attachment: dict[str, Any], extracted_text: str) -> s
 
 # Extract prompt-friendly text from a file attachment when possible.
 def _extract_attachment_text(attachment: dict[str, Any]) -> str:
-    """Extract prompt-friendly text from a file attachment when possible."""
-
     if attachment.get("extracted_text_ready"):
         return _truncate_attachment_text(str(attachment.get("extracted_text") or ""))
 
@@ -1290,8 +1231,6 @@ def _extract_attachment_text(attachment: dict[str, Any]) -> str:
 
 # Serialize one non-image attachment into universal text context.
 def _build_file_attachment_prompt_block(attachment: dict[str, Any]) -> str:
-    """Serialize one non-image attachment into universal text context."""
-
     attachment_name = str(attachment.get("name") or "file").strip() or "file"
     mime_type = str(attachment.get("mime_type") or "application/octet-stream").strip()
     size_bytes = int(attachment.get("size_bytes") or 0)
@@ -1315,9 +1254,8 @@ def _build_file_attachment_prompt_block(attachment: dict[str, Any]) -> str:
     )
 
 
+# Return whether the resolved tool selection includes sandbox file access.
 def _selected_tools_include_sandbox(selected_tool_servers: list[dict[str, Any]]) -> bool:
-    """Return whether the resolved tool selection includes sandbox file access."""
-
     selected_ids = {
         str(server.get("id") or "").strip()
         for server in selected_tool_servers
@@ -1325,9 +1263,8 @@ def _selected_tools_include_sandbox(selected_tool_servers: list[dict[str, Any]])
     return "sandbox" in selected_ids
 
 
+# Return uploaded file ids referenced by a chat request.
 def _normalize_uploaded_file_ids(data: dict[str, Any]) -> list[str]:
-    """Return uploaded file ids referenced by a chat request."""
-
     raw_values: list[Any] = []
     for key in ("uploaded_file_ids", "uploaded_files", "file_ids"):
         value = data.get(key)
@@ -1354,9 +1291,8 @@ def _normalize_uploaded_file_ids(data: dict[str, Any]) -> list[str]:
     return normalized
 
 
+# Load model-facing upload manifests for the selected tool state.
 def _load_model_upload_manifests(file_ids: list[str], *, sandbox_enabled: bool) -> list[dict[str, Any]]:
-    """Load model-facing upload manifests for the selected tool state."""
-
     manifests: list[dict[str, Any]] = []
     for file_id in file_ids:
         manifest = load_upload_manifest(file_id)
@@ -1365,9 +1301,8 @@ def _load_model_upload_manifests(file_ids: list[str], *, sandbox_enabled: bool) 
     return manifests
 
 
+# Return stable file ids from loaded upload manifests.
 def _upload_manifest_file_ids(manifests: list[dict[str, Any]]) -> list[str]:
-    """Return stable file ids from loaded upload manifests."""
-
     seen: set[str] = set()
     file_ids: list[str] = []
     for manifest in manifests or []:
@@ -1378,9 +1313,8 @@ def _upload_manifest_file_ids(manifests: list[dict[str, Any]]) -> list[str]:
     return file_ids
 
 
+# Build a stored user-message entry that keeps upload context replayable.
 def _build_uploaded_file_context_entry(file_ids: list[str]) -> dict[str, Any] | None:
-    """Build a stored user-message entry that keeps upload context replayable."""
-
     normalized_ids = []
     seen: set[str] = set()
     for file_id in file_ids or []:
@@ -1396,9 +1330,8 @@ def _build_uploaded_file_context_entry(file_ids: list[str]) -> dict[str, Any] | 
     }
 
 
+# Return upload ids persisted on a user message.
 def _extract_uploaded_file_ids_from_message(message: Message) -> list[str]:
-    """Return upload ids persisted on a user message."""
-
     raw_entries = getattr(message, "llm_transcript", None)
     if not isinstance(raw_entries, list):
         return []
@@ -1430,18 +1363,16 @@ def _extract_uploaded_file_ids_from_message(message: Message) -> list[str]:
     return file_ids
 
 
+# Load persisted upload manifests for one stored user message.
 def _load_message_upload_manifests(message: Message, *, sandbox_enabled: bool) -> list[dict[str, Any]]:
-    """Load persisted upload manifests for one stored user message."""
-
     return _load_model_upload_manifests(
         _extract_uploaded_file_ids_from_message(message),
         sandbox_enabled=sandbox_enabled,
     )
 
 
+# Serialize one uploaded file manifest into private model context.
 def _build_uploaded_file_prompt_block(manifest: dict[str, Any]) -> str:
-    """Serialize one uploaded file manifest into private model context."""
-
     name = str(manifest.get("name") or "file").strip() or "file"
     mime = str(manifest.get("mime") or "application/octet-stream").strip()
     size_bytes = int(manifest.get("size_bytes") or 0)
@@ -1478,12 +1409,11 @@ def _build_uploaded_file_prompt_block(manifest: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# Attach uploaded file manifests to the current user entry.
 def _apply_uploaded_file_manifests_to_llm_entry(
     entry: dict[str, Any],
     manifests: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Attach uploaded file manifests to the current user entry."""
-
     blocks = [_build_uploaded_file_prompt_block(manifest) for manifest in manifests if manifest]
     if not blocks:
         return entry
@@ -1496,8 +1426,6 @@ def _apply_uploaded_file_manifests_to_llm_entry(
 
 # Attach images and file context to one outbound LLM message.
 def _apply_attachments_to_llm_entry(entry: dict[str, Any], attachments: list[dict[str, Any]]) -> dict[str, Any]:
-    """Attach images and file context to one outbound LLM message."""
-
     image_payloads = []
     image_mime_types = []
     file_blocks = []
@@ -1525,8 +1453,6 @@ def _apply_attachments_to_llm_entry(entry: dict[str, Any], attachments: list[dic
 
 # Read local GPU devices
 def _get_local_gpu_devices() -> list[dict[str, Any]]:
-    """Return local NVIDIA GPU devices with both numeric ids and labels."""
-
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=index,name", "--format=csv,noheader"],
@@ -1557,15 +1483,11 @@ def _get_local_gpu_devices() -> list[dict[str, Any]]:
 
 # Resolve active engine
 def _get_active_engine(requested_engine: str | None = None) -> str:
-    """Return the canonical engine identifier used for the current request."""
-
     return settings.normalize_engine_name(requested_engine or settings.get_llm_engine())
 
 
 # Extract model name
 def _extract_model_name(model_entry: Any) -> str:
-    """Extract a model name from adapter-specific list responses."""
-
     if isinstance(model_entry, str):
         return model_entry
     if isinstance(model_entry, dict):
@@ -1583,8 +1505,6 @@ def _extract_model_name(model_entry: Any) -> str:
 
 # Load engine models
 def _load_models_for_engine(engine: str) -> list[str]:
-    """Return sorted model names for the selected engine."""
-
     cached_models = _get_cached_model_list(engine)
     if cached_models is not None:
         return cached_models
@@ -1615,8 +1535,6 @@ def _load_models_for_engine(engine: str) -> list[str]:
 
 # Build shared template context
 def _build_base_context() -> dict[str, Any]:
-    """Build shared template context used by chat pages."""
-
     runtime_settings = settings.get_runtime_engine_settings()
     engine = _get_active_engine(runtime_settings.get("llm-engine"))
     base = {
@@ -1626,6 +1544,7 @@ def _build_base_context() -> dict[str, Any]:
         "runtime_settings": runtime_settings,
         "available_tool_servers": _list_tool_servers_cached(engine=engine),
         "chats": Chat.objects.all(),
+        "static_cache_version": STATIC_CACHE_VERSION,
     }
     base.update(build_host_theme_template_context())
     base.update(build_host_locale_template_context())
@@ -1634,8 +1553,6 @@ def _build_base_context() -> dict[str, Any]:
 
 # Build runtime settings payload
 def _build_runtime_settings_payload() -> dict[str, Any]:
-    """Return the settings payload used by the UI settings API."""
-
     runtime_settings = settings.get_runtime_engine_settings()
     active_engine = _get_active_engine(runtime_settings.get("llm-engine"))
     runtime_settings["llm-engine"] = active_engine
@@ -1650,8 +1567,6 @@ def _build_runtime_settings_payload() -> dict[str, Any]:
 
 # Build chat title
 def _build_chat_title(message: str, has_attachments: bool) -> str:
-    """Generate a stable title for a new chat thread."""
-
     from Apps.UI.locale_catalog import translate
 
     if message:
@@ -1663,8 +1578,6 @@ def _build_chat_title(message: str, has_attachments: bool) -> str:
 
 # Detect image MIME type
 def _detect_image_mime(base64_data: str) -> str:
-    """Guess the MIME type from the leading bytes of a base64 payload."""
-
     if base64_data.startswith("/9j/"):
         return "image/jpeg"
     if base64_data.startswith("iVBOR"):
@@ -1678,8 +1591,6 @@ def _detect_image_mime(base64_data: str) -> str:
 
 # Strip legacy markup
 def _strip_llm_markup(content: str) -> str:
-    """Remove stored think/tool markers from legacy assistant content."""
-
     source = _strip_llm_control_tokens(str(content or ""))
     source = re.sub(r"<think>.*?</think>", "", source, flags=re.DOTALL)
     source = re.sub(r"<tool_call>.*?</tool_call>", "", source, flags=re.DOTALL)
@@ -1688,8 +1599,6 @@ def _strip_llm_markup(content: str) -> str:
 
 # Normalize transcript entries
 def _normalize_transcript_entries(raw_entries: Any) -> list[dict[str, Any]]:
-    """Return a safe list of transcript entries stored on assistant messages."""
-
     if not isinstance(raw_entries, list):
         return []
 
@@ -1743,8 +1652,6 @@ def _normalize_transcript_entries(raw_entries: Any) -> list[dict[str, Any]]:
 
 # Build LLM history entries
 def _build_llm_history_entries(message: Message, *, sandbox_enabled: bool = False) -> list[dict[str, Any]]:
-    """Convert one stored message into the message list expected by the LLM backend."""
-
     if message.role != "assistant":
         payload = {"role": message.role, "content": message.content}
         payload = _apply_attachments_to_llm_entry(payload, _get_message_attachments(message))
@@ -1790,9 +1697,8 @@ def _build_llm_history_entries(message: Message, *, sandbox_enabled: bool = Fals
     return [{"role": "assistant", "content": stripped_content}]
 
 
+# Return whether one stored assistant message represents a compression marker.
 def _message_has_context_compression_summary(message: Message) -> bool:
-    """Return whether one stored assistant message represents a compression marker."""
-
     if getattr(message, "role", "") != "assistant":
         return False
     for entry in _normalize_transcript_entries(getattr(message, "llm_transcript", None)):
@@ -1801,13 +1707,12 @@ def _message_has_context_compression_summary(message: Message) -> bool:
     return False
 
 
+# Build chronological non-compression entries represented by a new boundary.
 def _build_context_compression_source_entries(
     history_records: list[Message],
     *,
     sandbox_enabled: bool = False,
 ) -> list[dict[str, Any]]:
-    """Build chronological non-compression entries represented by a new boundary."""
-
     boundary_records: list[Message] = []
     for historical_message in history_records:
         if _message_has_context_compression_summary(historical_message):
@@ -1822,8 +1727,6 @@ def _build_context_compression_source_entries(
 
 # Build activity segments
 def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
-    """Build frontend activity segments from the stored machine transcript."""
-
     transcript_entries = _normalize_transcript_entries(message.llm_transcript)
     if not transcript_entries:
         return []
@@ -1885,9 +1788,8 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
     return segments
 
 
+# Return whether the stored transcript contains model reasoning.
 def _message_has_reasoning_segments(message: Message) -> bool:
-    """Return whether the stored transcript contains model reasoning."""
-
     return any(
         entry.get("role") == "assistant" and str(entry.get("thinking", "") or "").strip()
         for entry in _normalize_transcript_entries(message.llm_transcript)
@@ -1896,8 +1798,6 @@ def _message_has_reasoning_segments(message: Message) -> bool:
 
 # Serialize message
 def _serialize_message(message: Message, *, include_attachment_data: bool = True) -> dict[str, Any]:
-    """Convert a database message to the JSON shape expected by the frontend."""
-
     payload = {
         "id": message.id,
         "role": message.role,
@@ -1930,8 +1830,6 @@ def _serialize_message(message: Message, *, include_attachment_data: bool = True
 
 # Extract streamed message parts
 def _extract_stream_message_parts(chunk: Any) -> tuple[str, str]:
-    """Return streamed thinking and content text from a backend chunk."""
-
     raw_message = chunk.get("message", {}) if isinstance(chunk, dict) else getattr(chunk, "message", {})
     if isinstance(raw_message, dict):
         thinking_part = raw_message.get("thinking", "") or ""
@@ -1942,9 +1840,8 @@ def _extract_stream_message_parts(chunk: Any) -> tuple[str, str]:
     return _strip_llm_control_tokens(str(thinking_part)), _strip_llm_control_tokens(str(text_part))
 
 
+# Return transcript entries safe to persist while a response is streaming.
 def _copy_transcript_entries_for_storage(transcript_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return transcript entries safe to persist while a response is streaming."""
-
     entries: list[dict[str, Any]] = []
     for entry in transcript_entries:
         if isinstance(entry, dict):
@@ -1952,14 +1849,13 @@ def _copy_transcript_entries_for_storage(transcript_entries: list[dict[str, Any]
     return entries
 
 
+# Overlay streamed assistant text onto machine transcript entries.
 def _build_streaming_assistant_transcript(
     transcript_entries: list[dict[str, Any]],
     *,
     visible_content: str,
     thinking_content: str,
 ) -> list[dict[str, Any]]:
-    """Overlay streamed assistant text onto machine transcript entries."""
-
     entries = _copy_transcript_entries_for_storage(transcript_entries)
     has_assistant_content = False
     has_assistant_thinking = False
@@ -1983,8 +1879,6 @@ def _build_streaming_assistant_transcript(
 
 # Serialize tool marker
 def _serialize_tool_call_marker(tool_event: dict[str, Any]) -> str:
-    """Encode a tool invocation into an inline marker understood by the frontend."""
-
     payload = {
         "alias": str(tool_event.get("alias", "") or "").strip(),
         "server_id": str(tool_event.get("server_id", "") or "").strip(),
@@ -2004,8 +1898,6 @@ def _serialize_tool_result_marker(
     tool_ui: dict[str, Any] | None = None,
     structured_content: dict[str, Any] | None = None,
 ) -> str:
-    """Encode a tool result into an inline marker so the frontend can show _out_."""
-
     payload = {"alias": alias, "content": content}
     if isinstance(tool_ui, dict):
         payload["tool_ui"] = tool_ui
@@ -2014,9 +1906,8 @@ def _serialize_tool_result_marker(
     return f'<tool_result>{json.dumps(payload, ensure_ascii=False)}</tool_result>'
 
 
+# Encode a context-compression boundary without pretending it is a model tool.
 def _serialize_context_compression_marker(compression_event: dict[str, Any]) -> str:
-    """Encode a context-compression boundary without pretending it is a model tool."""
-
     payload = {
         "alias": str(compression_event.get("alias") or "context_compression_summary").strip(),
         "server_id": str(compression_event.get("server_id") or "system").strip(),
@@ -2037,8 +1928,6 @@ def _serialize_context_compression_marker(compression_event: dict[str, Any]) -> 
 
 # Extract Ollama model info
 def _normalize_capability_tokens(capabilities: Any) -> set[str]:
-    """Return normalized capability names from loosely shaped runtime metadata."""
-
     if capabilities is None:
         return set()
 
@@ -2065,8 +1954,6 @@ def _normalize_capability_tokens(capabilities: Any) -> set[str]:
 
 # Return whether one Ollama chat template can serialize tools.
 def _ollama_template_supports_tool_calling(template: str) -> bool:
-    """Return whether an Ollama template contains tool-call placeholders."""
-
     normalized_template = str(template or "")
     if not normalized_template:
         return False
@@ -2080,8 +1967,6 @@ def _ollama_metadata_supports_tool_calling(
     capabilities: Any,
     template: str,
 ) -> bool:
-    """Return whether Ollama model metadata indicates real tool-call support."""
-
     if capabilities is not None:
         return bool(_normalize_capability_tokens(capabilities) & TOOL_CAPABILITY_NAMES)
 
@@ -2090,9 +1975,8 @@ def _ollama_metadata_supports_tool_calling(
     return _ollama_template_supports_tool_calling(template)
 
 
+# Parse Ollama-specific model metadata into a frontend-friendly payload.
 def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
-    """Parse Ollama-specific model metadata into a frontend-friendly payload."""
-
     context_length = 8192
     model_layers = 0
     defaults: dict[str, Any] = {}
@@ -2216,8 +2100,6 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
 
 # Extract generic model info
 def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
-    """Build a best-effort model metadata payload for non-Ollama engines."""
-
     if not isinstance(settings_data, dict):
         return {
             "context_length": 8192,
@@ -2283,8 +2165,6 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
 
 # Build model info payload
 def _build_fallback_model_info_payload(engine: str, model_name: str) -> dict[str, Any]:
-    """Return a safe payload when runtime metadata cannot be loaded."""
-
     payload = _extract_generic_model_info({})
     payload["available_tool_servers"] = []
     payload["model"] = model_name
@@ -2300,8 +2180,6 @@ def _build_model_info_payload(
     *,
     allow_fallback: bool = False,
 ) -> dict[str, Any]:
-    """Load adapter metadata and normalize it for the frontend."""
-
     cached_payload = _get_cached_model_info(engine, model_name)
     if cached_payload is not None:
         _sync_runtime_model_metadata(
@@ -2355,8 +2233,6 @@ def _build_model_info_payload(
 
 # Build a stable engine label for API payloads.
 def _get_engine_label(engine: str) -> str:
-    """Return a human-readable engine label."""
-
     return getattr(settings, "ENGINE_LABELS", {}).get(engine, engine)
 
 
@@ -2367,8 +2243,6 @@ def _build_inference_info_payload(
     model_info_payload: dict[str, Any],
     model_source: str,
 ) -> dict[str, Any]:
-    """Return unified runtime inference metadata independent of engine."""
-
     defaults = model_info_payload.get("defaults", {})
     if not isinstance(defaults, dict):
         defaults = {}
@@ -2434,9 +2308,8 @@ def _build_inference_info_payload(
     }
 
 
+# Describe one local metadata source without freezing dynamic ports.
 def _runtime_metadata_source(name: str, route: str, port_setting: str) -> dict[str, Any]:
-    """Describe one local metadata source without freezing dynamic ports."""
-
     return {
         "name": name,
         "type": "local_http_route",
@@ -2451,6 +2324,7 @@ def _runtime_metadata_source(name: str, route: str, port_setting: str) -> dict[s
     }
 
 
+# Return runtime metadata file.
 def _read_runtime_metadata_file() -> dict[str, Any]:
     try:
         with MODEL_RUNTIME_METADATA_PATH.open("r", encoding="utf-8") as handle:
@@ -2460,6 +2334,7 @@ def _read_runtime_metadata_file() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+# Write runtime metadata file.
 def _write_runtime_metadata_file(payload: dict[str, Any]) -> None:
     MODEL_RUNTIME_METADATA_PATH.parent.mkdir(parents=True, exist_ok=True)
     temp_path = MODEL_RUNTIME_METADATA_PATH.with_suffix(".json.tmp")
@@ -2469,6 +2344,7 @@ def _write_runtime_metadata_file(payload: dict[str, Any]) -> None:
     os.replace(temp_path, MODEL_RUNTIME_METADATA_PATH)
 
 
+# Persist active model metadata for local tools in real time.
 def _sync_runtime_model_metadata(
     engine: str,
     model_name: str,
@@ -2477,8 +2353,6 @@ def _sync_runtime_model_metadata(
     source: str,
     route: str,
 ) -> None:
-    """Persist active model metadata for local tools in real time."""
-
     if not engine or not model_name or not isinstance(model_info_payload, dict):
         return
     if model_info_payload.get("metadata_fallback"):
@@ -2585,8 +2459,6 @@ def _sync_runtime_model_metadata(
 
 # Read JSON body
 def _read_json_request_body(request) -> dict[str, Any]:
-    """Parse a JSON request body and return a dictionary."""
-
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError as exc:
@@ -2599,8 +2471,6 @@ def _read_json_request_body(request) -> dict[str, Any]:
 
 # Resolve selected tool servers
 def _resolve_tool_servers(engine: str, model_name: str, tool_server_ids: list[str]) -> list[dict[str, Any]]:
-    """Return the selected tool servers when they are supported by the backend."""
-
     resolved = []
     for raw_id in tool_server_ids:
         normalized = str(raw_id or "").strip()
@@ -2620,8 +2490,6 @@ def _validate_tool_server_support(
     tool_server_ids: list[str],
     payload: dict[str, Any] | None = None,
 ) -> None:
-    """Raise when tools are requested for a model that should not call tools."""
-
     if not tool_server_ids:
         return
 
@@ -2633,8 +2501,6 @@ def _validate_tool_server_support(
 
 # Parse stored tool slugs
 def _parse_active_tool_slugs(slug: str) -> list[str]:
-    """Return a list of active tool server ids from the stored slug field."""
-
     import json as _json
     if not slug:
         return []
@@ -2649,8 +2515,6 @@ def _parse_active_tool_slugs(slug: str) -> list[str]:
 
 # Resolve chat instance
 def _resolve_chat(chat_id: str, user_message: str, attachments: list[dict[str, Any]]) -> Chat:
-    """Return an existing chat or create a new one for the request."""
-
     if not chat_id:
         return Chat.objects.create(title=_build_chat_title(user_message, bool(attachments)))
 
@@ -2661,8 +2525,6 @@ def _resolve_chat(chat_id: str, user_message: str, attachments: list[dict[str, A
 
 # Save message images
 def _store_message_attachments(message_record: Message, attachments: list[dict[str, Any]]) -> None:
-    """Persist uploaded message attachments for the current user message."""
-
     for attachment in attachments:
         MessageAttachment.objects.create(
             message=message_record,
@@ -2683,8 +2545,6 @@ def _resolve_history_char_budget(
     active_model: str = "",
     observed_chars_per_token: float | None = None,
 ) -> int:
-    """Return an approximate character budget for replayed chat history."""
-
     context_length = _context_window_tokens_from_model_info(model_info_payload)
     return _history_char_budget_from_context_window(
         context_length,
@@ -2699,8 +2559,6 @@ def _resolve_history_char_budget(
 
 # Estimate the prompt cost of one normalized LLM entry.
 def _estimate_llm_entry_chars(entry: dict[str, Any]) -> int:
-    """Return a lightweight size estimate for one outbound LLM entry."""
-
     if not isinstance(entry, dict):
         return 0
 
@@ -2716,9 +2574,8 @@ def _estimate_llm_entry_chars(entry: dict[str, Any]) -> int:
     return cost
 
 
+# Approximate token count from UTF-8 character count.
 def _estimate_tokens_from_chars(char_count: int) -> int:
-    """Approximate token count from UTF-8 character count."""
-
     try:
         chars = max(0, int(char_count))
     except (TypeError, ValueError):
@@ -2729,14 +2586,13 @@ def _estimate_tokens_from_chars(char_count: int) -> int:
     return max(1, int(round(chars / 2.4)))
 
 
+# Return one base chars/token hint from model family and engine metadata.
 def _model_chars_per_token_hint(
     *,
     model_info_payload: dict[str, Any] | None,
     active_engine: str,
     active_model: str,
 ) -> float:
-    """Return one base chars/token hint from model family and engine metadata."""
-
     model_name = str(active_model or (model_info_payload or {}).get("model") or "").strip().lower()
     engine_name = str(active_engine or "").strip().lower()
 
@@ -2759,6 +2615,7 @@ def _model_chars_per_token_hint(
     return base_ratio
 
 
+# Return the chars/token ratio shared by usage telemetry and compression.
 def _effective_chars_per_token_hint(
     *,
     model_info_payload: dict[str, Any] | None,
@@ -2766,8 +2623,6 @@ def _effective_chars_per_token_hint(
     active_model: str,
     observed_chars_per_token: float | None = None,
 ) -> float:
-    """Return the chars/token ratio shared by usage telemetry and compression."""
-
     base_ratio = _model_chars_per_token_hint(
         model_info_payload=model_info_payload,
         active_engine=active_engine,
@@ -2778,6 +2633,7 @@ def _effective_chars_per_token_hint(
     return float(max(1.4, min(4.0, base_ratio)))
 
 
+# Convert a token context window into the same char budget the UI estimates.
 def _history_char_budget_from_context_window(
     context_window_tokens: int,
     *,
@@ -2788,8 +2644,6 @@ def _history_char_budget_from_context_window(
     minimum_chars: int = 16000,
     fallback_chars: int = LLM_HISTORY_DEFAULT_CHAR_BUDGET,
 ) -> int:
-    """Convert a token context window into the same char budget the UI estimates."""
-
     try:
         tokens = max(0, int(context_window_tokens))
     except (TypeError, ValueError):
@@ -2806,6 +2660,7 @@ def _history_char_budget_from_context_window(
     return max(int(minimum_chars), int(tokens * chars_per_token))
 
 
+# Estimate tokens using model hints + optional observed prompt telemetry.
 def _estimate_tokens_adaptive(
     *,
     char_count: int,
@@ -2814,8 +2669,6 @@ def _estimate_tokens_adaptive(
     active_model: str,
     observed_chars_per_token: float | None = None,
 ) -> int:
-    """Estimate tokens using model hints + optional observed prompt telemetry."""
-
     try:
         chars = max(0, int(char_count))
     except (TypeError, ValueError):
@@ -2834,6 +2687,7 @@ def _estimate_tokens_adaptive(
     return max(1, int(round(chars / base_ratio)))
 
 
+# Context window tokens from model info.
 def _context_window_tokens_from_model_info(model_info_payload: dict[str, Any] | None) -> int:
     if not isinstance(model_info_payload, dict):
         return 0
@@ -2863,6 +2717,7 @@ def _context_window_tokens_from_model_info(model_info_payload: dict[str, Any] | 
     return 0
 
 
+# Estimate current context usage for UI telemetry.
 def _estimate_context_usage(
     *,
     chat: Chat | None,
@@ -2872,8 +2727,6 @@ def _estimate_context_usage(
     active_engine: str = "",
     active_model: str = "",
 ) -> dict[str, Any]:
-    """Estimate current context usage for UI telemetry."""
-
     context_window_tokens = resolve_context_window_tokens(
         model_info_payload,
         runtime_metadata_path=MODEL_RUNTIME_METADATA_PATH,
@@ -2941,6 +2794,7 @@ def _estimate_context_usage(
     }
 
 
+# Build one compression event payload for manual/auto UI-triggered compression.
 def _build_manual_compression_event(
     *,
     chat: Chat,
@@ -2953,8 +2807,6 @@ def _build_manual_compression_event(
     exclude_message_ids: set[int | str] | None = None,
     summarize_with_model_enabled: bool = True,
 ) -> dict[str, Any] | None:
-    """Build one compression event payload for manual/auto UI-triggered compression."""
-
     observed_chars_per_token: float | None = None
     with _chat_usage_lock:
         observed = dict(_chat_usage_by_chat_id.get(str(chat.id), {}))
@@ -3122,6 +2974,7 @@ def _build_manual_compression_event(
     }
 
 
+# Collect recent user messages.
 def _collect_recent_user_messages(chat: Chat, exclude_message_id: int) -> list[str]:
     messages = (
         chat.messages
@@ -3137,10 +2990,12 @@ def _collect_recent_user_messages(chat: Chat, exclude_message_id: int) -> list[s
     return result
 
 
+# Collect direct user directives.
 def _collect_direct_user_directives(chat: Chat, exclude_message_id: int) -> list[str]:
     return []
 
 
+# Generate one non-streamed summary payload with the active model.
 def _generate_history_summary_with_model(
     *,
     engine: str,
@@ -3148,8 +3003,6 @@ def _generate_history_summary_with_model(
     prompt_messages: list[dict[str, str]],
     model_info_payload: dict[str, Any] | None = None,
 ) -> str:
-    """Generate one non-streamed summary payload with the active model."""
-
     options = {
         "temperature": 0.0,
         "max_tokens": 8192,
@@ -3186,8 +3039,6 @@ def _build_chat_history(
     upload_manifests: list[dict[str, Any]] | None = None,
     sandbox_enabled: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    """Build the message history sent to the selected backend."""
-
     llm_messages: list[dict[str, Any]] = []
     if system_prompt:
         llm_messages.append({"role": "system", "content": system_prompt})
@@ -3368,8 +3219,6 @@ def _split_generation_options(
     think_param_name: str = "think",
     think_level_param_name: str = "think_level",
 ) -> tuple[Any, Any, dict[str, Any]]:
-    """Split thinking controls from generic model options."""
-
     think_value = None
     think_level_value = None
     clean_options: dict[str, Any] = {}
@@ -3391,9 +3240,8 @@ def _split_generation_options(
     return think_value, think_level_value, clean_options
 
 
+# Insert a one-off system notice after the main system prompt, without persisting a message.
 def _inject_ephemeral_system_notice(llm_messages: list[dict[str, Any]], notice: str) -> None:
-    """Insert a one-off system notice after the main system prompt, without persisting a message."""
-
     cleaned = str(notice or "").strip()
     if not cleaned:
         return
@@ -3418,8 +3266,6 @@ def _build_generate_kwargs(
     think_level_param_name: str = "think_level",
     sync_operation_defaults: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build keyword arguments for ``llm_api.generate``."""
-
     generate_kwargs: dict[str, Any] = {
         "engine": engine,
         "model_name": model_name,
@@ -3466,8 +3312,6 @@ def _stream_chat_response(
     system_prompt: str = "",
     current_user_message_id: int | str | None = None,
 ):
-    """Stream visible content and persist the machine transcript."""
-
     visible_parts: list[str] = []
     thinking_parts: list[str] = []
     transcript_entries: list[dict[str, Any]] = []
@@ -3492,9 +3336,8 @@ def _stream_chat_response(
     last_snapshot_chars = 0
     stream_compression_applied = isinstance(compression_event, dict)
 
+    # Return current in-flight assistant text for compression estimates.
     def current_stream_context_text() -> str:
-        """Return current in-flight assistant text for compression estimates."""
-
         parts = [
             _strip_llm_control_tokens("".join(thinking_parts)).strip(),
             _strip_llm_control_tokens("".join(visible_parts)).strip(),
@@ -3510,9 +3353,8 @@ def _stream_chat_response(
                 parts.append(_strip_llm_control_tokens(str(entry.get("content") or "")).strip())
         return "\n".join(part for part in parts if part)
 
+    # Persist the in-flight assistant buffer so reloads/compression see it.
     def persist_stream_snapshot(*, force: bool = False) -> None:
-        """Persist the in-flight assistant buffer so reloads/compression see it."""
-
         nonlocal last_snapshot_at, last_snapshot_chars
 
         visible_content = _strip_llm_control_tokens("".join(visible_parts)).strip()
@@ -3549,9 +3391,8 @@ def _stream_chat_response(
         except Exception:
             logger.exception("Failed to persist streaming assistant snapshot")
 
+    # Build and persist one automatic compression marker at safe stream points.
     def maybe_apply_stream_context_compression(trigger: str, extra_context_text: str = "") -> str:
-        """Build and persist one automatic compression marker at safe stream points."""
-
         nonlocal restart_after_stream_compression, stream_compression_applied
 
         if stream_compression_applied:
@@ -3878,8 +3719,6 @@ class MainView(TemplateView):
 
     # Build the main page context.
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
-        """Return template context for the main chat page."""
-
         context = super().get_context_data(**kwargs)
         context.update(_build_base_context())
         return context
@@ -3889,8 +3728,6 @@ class MainView(TemplateView):
 
 # Store uploaded files and return UI-facing file cards.
 def upload_files_api(request):
-    """Accept arbitrary user files and store private manifests for model use."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -3937,8 +3774,6 @@ def upload_files_api(request):
 
 # Handle a chat generation request.
 def chat_api(request):
-    """Handle chat generation requests and stream assistant output."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4131,6 +3966,7 @@ def _path_is_within(path: Path, root: Path) -> bool:
         return False
 
 
+# Shared file allowed roots.
 def _shared_file_allowed_roots() -> list[Path]:
     roots = [
         settings.BASE_DIR / "Tools" / "mcp-sandbox" / "_sandbox",
@@ -4155,6 +3991,7 @@ def _shared_file_allowed_roots() -> list[Path]:
     return normalized
 
 
+# Resolve shared file path.
 def _resolve_shared_file_path(raw_path: str) -> Path:
     cleaned = str(raw_path or "").strip().strip('"')
     if not cleaned or "\x00" in cleaned:
@@ -4184,6 +4021,7 @@ def _resolve_shared_file_path(raw_path: str) -> Path:
     candidate_set: list[Path] = []
     seen: set[str] = set()
 
+    # Track one shared-file path candidate without duplicates.
     def push_candidate(path: Path) -> None:
         key = str(path).lower()
         if key not in seen:
@@ -4213,9 +4051,8 @@ def _resolve_shared_file_path(raw_path: str) -> Path:
     raise FileNotFoundError("Shared file not found or not allowed.")
 
 
+# Return the local path for one uploaded file manifest.
 def _resolve_uploaded_file_content_path(manifest: dict[str, Any]) -> Path:
-    """Return the local path for one uploaded file manifest."""
-
     return resolve_uploaded_file_host_path(manifest)
 
 
@@ -4223,6 +4060,7 @@ MEDIA_RANGE_CHUNK_BYTES = 64 * 1024 * 1024
 MEDIA_STREAM_READ_BYTES = 1024 * 1024
 
 
+# Range not satisfiable response.
 def _range_not_satisfiable_response(file_size: int) -> HttpResponse:
     resp = HttpResponse(status=416)
     resp["Content-Range"] = "bytes */" + str(max(0, int(file_size or 0)))
@@ -4230,9 +4068,8 @@ def _range_not_satisfiable_response(file_size: int) -> HttpResponse:
     return resp
 
 
+# Return one satisfiable byte range, including suffix ranges.
 def _parse_single_byte_range(range_header: str, file_size: int) -> tuple[int, int] | None:
-    """Return one satisfiable byte range, including suffix ranges."""
-
     if file_size <= 0:
         return None
     range_match = re.fullmatch(r"bytes=(\d*)-(\d*)", str(range_header or "").strip())
@@ -4264,6 +4101,7 @@ def _parse_single_byte_range(range_header: str, file_size: int) -> tuple[int, in
     return start, end
 
 
+# Stream a local file with HTTP Range support for media playback.
 def _stream_local_file_response(
     request,
     target: Path,
@@ -4272,8 +4110,6 @@ def _stream_local_file_response(
     safe_name: str,
     disposition: str = "inline",
 ):
-    """Stream a local file with HTTP Range support for media playback."""
-
     file_size = target.stat().st_size
     range_header = request.META.get("HTTP_RANGE", "").strip()
     is_head = request.method == "HEAD"
@@ -4290,6 +4126,7 @@ def _stream_local_file_response(
             fh = target.open("rb")
             fh.seek(start)
 
+            # Yield file bytes for one HTTP Range response chunk.
             def _range_iter(fh, remaining):
                 try:
                     while remaining > 0:
@@ -4319,8 +4156,6 @@ def _stream_local_file_response(
 
 # Return uploaded file bytes on demand.
 def uploaded_file_content_api(request, file_id: str):
-    """Stream one uploaded file by id with HTTP Range support for media playback."""
-
     if request.method not in {"GET", "HEAD"}:
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4341,9 +4176,8 @@ def uploaded_file_content_api(request, file_id: str):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Download a model-shared local file after validating its workspace path.
 def shared_file_download_api(request):
-    """Download a model-shared local file after validating its workspace path."""
-
     if request.method not in {"GET", "HEAD"}:
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4370,8 +4204,6 @@ def shared_file_download_api(request):
 
 # Abort active generation.
 def abort_generation_api(request):
-    """Immediately signal the active LLM generation to stop."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4393,8 +4225,6 @@ def abort_generation_api(request):
 
 # Return stored attachment bytes on demand.
 def attachment_content_api(request, record_type: str, attachment_id: int):
-    """Stream one persisted attachment without embedding it into chat JSON."""
-
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4427,8 +4257,6 @@ def attachment_content_api(request, record_type: str, attachment_id: int):
 
 # Delete a specific message by ID.
 def delete_message_api(request, message_id):
-    """Delete a single message by its primary key."""
-
     if request.method != "DELETE":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4445,8 +4273,6 @@ def delete_message_api(request, message_id):
 
 # Delete the last assistant reply for regeneration.
 def delete_last_assistant_api(request, chat_id):
-    """Delete the last assistant message and return the preceding user message for regeneration."""
-
     if request.method != "DELETE":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4485,8 +4311,6 @@ def delete_last_assistant_api(request, chat_id):
 
 # Regenerate the assistant reply for an existing user message without duplicating it.
 def regenerate_chat_api(request, chat_id):
-    """Re-run generation against an existing user message in the chat."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4650,8 +4474,6 @@ def regenerate_chat_api(request, chat_id):
 
 # Rename a chat thread.
 def rename_chat_api(request, chat_id):
-    """Rename a chat thread."""
-
     if request.method != "PATCH":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4674,8 +4496,6 @@ def rename_chat_api(request, chat_id):
 
 # Delete a chat thread and all its messages.
 def delete_chat_api(request, chat_id):
-    """Delete a chat thread and all its messages."""
-
     if request.method != "DELETE":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4692,8 +4512,6 @@ def delete_chat_api(request, chat_id):
 
 # Load persisted messages for a chat thread.
 def load_chat_api(request, chat_id):
-    """Load persisted messages for a chat thread."""
-
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4720,8 +4538,6 @@ def load_chat_api(request, chat_id):
 
 # Return model metadata for the selected engine.
 def get_model_info_api(request):
-    """Return model capabilities and default parameters for the selected engine."""
-
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4760,8 +4576,6 @@ def get_model_info_api(request):
 
 # Return unified runtime inference metadata for the active engine/model.
 def get_inference_info_api(request):
-    """Return active inference engine, model, context and output limits."""
-
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4843,8 +4657,6 @@ def get_inference_info_api(request):
 
 # Return the model list for the selected engine.
 def get_models_api(request):
-    """Return model names for the requested engine."""
-
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4859,8 +4671,6 @@ def get_models_api(request):
 
 # Return discovered tool servers.
 def mcp_config_api(request):
-    """Read or replace ``MCP/mcp.json`` (LM Studio / Cursor style user MCP servers)."""
-
     mcp_json.ensure_default_mcp_json()
 
     if request.method == "GET":
@@ -4889,9 +4699,8 @@ def mcp_config_api(request):
     return JsonResponse({"ok": True, "content": mcp_json.load_raw_text()})
 
 
+# Return a normalized JSON error for skills APIs.
 def _skills_error_response(exc: Exception) -> JsonResponse:
-    """Return a normalized JSON error for skills APIs."""
-
     if isinstance(exc, FileNotFoundError):
         return JsonResponse({"error": str(exc)}, status=404)
     if isinstance(exc, ValueError):
@@ -4900,9 +4709,8 @@ def _skills_error_response(exc: Exception) -> JsonResponse:
     return JsonResponse({"error": str(exc)}, status=500)
 
 
+# List skills or create a new skill folder.
 def skills_api(request):
-    """List skills or create a new skill folder."""
-
     if request.method == "GET":
         try:
             return JsonResponse(skills_config.list_skills())
@@ -4919,9 +4727,8 @@ def skills_api(request):
         return _skills_error_response(exc)
 
 
+# Rename or delete one skill folder.
 def skills_folder_api(request):
-    """Rename or delete one skill folder."""
-
     if request.method not in {"PATCH", "DELETE"}:
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4939,9 +4746,8 @@ def skills_folder_api(request):
         return _skills_error_response(exc)
 
 
+# Read, write, or delete one skill file.
 def skills_file_api(request):
-    """Read, write, or delete one skill file."""
-
     if request.method == "GET":
         try:
             return JsonResponse(
@@ -4967,9 +4773,8 @@ def skills_file_api(request):
         return _skills_error_response(exc)
 
 
+# Enable or disable one skill.
 def skills_enabled_api(request):
-    """Enable or disable one skill."""
-
     if request.method not in {"PATCH", "POST"}:
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -4985,9 +4790,8 @@ def skills_enabled_api(request):
         return _skills_error_response(exc)
 
 
+# Create or delete a subdirectory inside a skill folder.
 def skills_directory_api(request):
-    """Create or delete a subdirectory inside a skill folder."""
-
     if request.method not in {"POST", "DELETE"}:
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5002,9 +4806,8 @@ def skills_directory_api(request):
         return _skills_error_response(exc)
 
 
+# Import a skill folder from a list of {path, content} file entries.
 def skills_import_api(request):
-    """Import a skill folder from a list of {path, content} file entries."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5022,9 +4825,8 @@ def skills_import_api(request):
         return _skills_error_response(exc)
 
 
+# Rename a file or directory inside a skill folder.
 def skills_path_api(request):
-    """Rename a file or directory inside a skill folder."""
-
     if request.method != "PATCH":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5042,9 +4844,8 @@ def skills_path_api(request):
         return _skills_error_response(exc)
 
 
+# Return locally discovered MCP-style tool servers for the requested engine/model.
 def get_tools_api(request):
-    """Return locally discovered MCP-style tool servers for the requested engine/model."""
-
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5054,9 +4855,9 @@ def get_tools_api(request):
     return JsonResponse({"tool_servers": servers, "servers": servers, "tools": servers})
 
 
+# Resolve and proxy a stable favicon for a search result domain.
 def favicon_api(request):
-    """Resolve and proxy a stable favicon for a search result domain."""
-
+    # Build one inline image HTTP response for a byte range.
     def image_response(content_type: str, content: bytes) -> HttpResponse:
         response = HttpResponse(content, content_type=content_type)
         response["Cache-Control"] = "public, max-age=604800"
@@ -5103,8 +4904,6 @@ def favicon_api(request):
 
 # Return Ollama preset metadata.
 def get_ollama_presets_api(request):
-    """Return preset metadata for the selected Ollama model."""
-
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5119,9 +4918,8 @@ def get_ollama_presets_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Return estimated/observed context usage for the current chat and model.
 def get_context_usage_api(request):
-    """Return estimated/observed context usage for the current chat and model."""
-
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5182,9 +4980,8 @@ def get_context_usage_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Force or opportunistically run context compression and persist a timeline marker.
 def context_compress_api(request):
-    """Force or opportunistically run context compression and persist a timeline marker."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5250,8 +5047,6 @@ def context_compress_api(request):
 
 # Return preset metadata for the selected LM Studio model.
 def get_lms_presets_api(request):
-    """Return preset metadata for the selected LM Studio model."""
-
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5268,16 +5063,12 @@ def get_lms_presets_api(request):
 
 # Return a JSON response after invalidating model metadata.
 def _preset_mutation_response(payload: dict[str, Any]) -> JsonResponse:
-    """Invalidate model-info caches after a preset mutation."""
-
     _clear_model_metadata_caches()
     return JsonResponse(payload)
 
 
 # Sync the active Ollama preset.
 def sync_ollama_preset_api(request):
-    """Persist UI changes to the active Ollama preset."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5297,8 +5088,6 @@ def sync_ollama_preset_api(request):
 
 # Persist UI changes to the active LM Studio preset.
 def sync_lms_preset_api(request):
-    """Persist UI changes to the active LM Studio preset."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5318,8 +5107,6 @@ def sync_lms_preset_api(request):
 
 # Activate an Ollama preset.
 def select_ollama_preset_api(request):
-    """Set the active preset for an Ollama model."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5341,8 +5128,6 @@ def select_ollama_preset_api(request):
 
 # Set the active preset for an LM Studio model.
 def select_lms_preset_api(request):
-    """Set the active preset for an LM Studio model."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5364,8 +5149,6 @@ def select_lms_preset_api(request):
 
 # Create an Ollama preset.
 def create_ollama_preset_api(request):
-    """Create a new Ollama preset for the selected model."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5393,8 +5176,6 @@ def create_ollama_preset_api(request):
 
 # Create a new LM Studio preset for the selected model.
 def create_lms_preset_api(request):
-    """Create a new LM Studio preset for the selected model."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5422,8 +5203,6 @@ def create_lms_preset_api(request):
 
 # Rename an Ollama preset.
 def rename_ollama_preset_api(request):
-    """Rename an existing custom Ollama preset."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5446,8 +5225,6 @@ def rename_ollama_preset_api(request):
 
 # Rename an existing custom LM Studio preset.
 def rename_lms_preset_api(request):
-    """Rename an existing custom LM Studio preset."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5470,8 +5247,6 @@ def rename_lms_preset_api(request):
 
 # Delete an Ollama preset.
 def delete_ollama_preset_api(request):
-    """Delete an existing custom preset and fall back to the default one."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5493,8 +5268,6 @@ def delete_ollama_preset_api(request):
 
 # Delete an existing custom preset and fall back to the default one.
 def delete_lms_preset_api(request):
-    """Delete an existing custom preset and fall back to the default one."""
-
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
@@ -5518,8 +5291,6 @@ def delete_lms_preset_api(request):
 
 # Read or update runtime settings.
 def runtime_settings_api(request):
-    """Read or update runtime engine settings used by the chat UI."""
-
     if request.method == "GET":
         return JsonResponse(_build_runtime_settings_payload())
 
@@ -5543,9 +5314,8 @@ def runtime_settings_api(request):
     previous_engine = settings.get_llm_engine()
     next_engine = previous_engine
 
+    # Return whether the payload looks like a masked placeholder, not a real key.
     def _is_masked_api_key(value: str) -> bool:
-        """Return whether the payload looks like a masked placeholder, not a real key."""
-
         raw = str(value or "")
         stripped = raw.strip()
         if not stripped:
@@ -5595,16 +5365,19 @@ _frame404_burst_log_count = 0
 _frame404_burst_log_last_ts = 0.0
 
 
+# Browser portal roots.
 def _browser_portal_roots() -> list[Path]:
     return [
         settings.BASE_DIR / "Data" / "runtime" / "browser_portal",
     ]
 
 
+# Browser portal debug log path.
 def _browser_portal_debug_log_path(root: Path | None = None) -> Path:
     return (root or _browser_portal_roots()[0]) / "debug.jsonl"
 
 
+# Browser portal debug safe.
 def _browser_portal_debug_safe(value: Any, *, depth: int = 0) -> Any:
     if depth > 4:
         return repr(value)[:4000]
@@ -5623,9 +5396,8 @@ def _browser_portal_debug_safe(value: Any, *, depth: int = 0) -> Any:
     return repr(value)[:4000]
 
 
+# Compact portal POST body for debug.jsonl (typing floods the log otherwise).
 def _browser_portal_http_event_body_for_log(data: dict[str, Any] | None) -> dict[str, Any]:
-    """Compact portal POST body for debug.jsonl (typing floods the log otherwise)."""
-
     if not isinstance(data, dict):
         return {}
     event_type = str(data.get("type") or "").strip().lower()
@@ -5648,12 +5420,12 @@ def _browser_portal_http_event_body_for_log(data: dict[str, Any] | None) -> dict
     return slim
 
 
+# Browser portal debug logging is intentionally disabled.
 def _write_browser_portal_debug_event(root: Path | None, event: str, **fields: Any) -> None:
-    """Browser portal debug logging is intentionally disabled."""
-
     return None
 
 
+# Return browser portal state from.
 def _read_browser_portal_state_from(root: Path) -> dict[str, Any] | None:
     try:
         payload = json.loads((root / "state.json").read_text(encoding="utf-8"))
@@ -5662,6 +5434,7 @@ def _read_browser_portal_state_from(root: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+# Is active browser portal state.
 def _is_active_browser_portal_state(payload: dict[str, Any]) -> bool:
     if str(payload.get("status") or "").lower() != "waiting":
         return False
@@ -5676,6 +5449,7 @@ def _is_active_browser_portal_state(payload: dict[str, Any]) -> bool:
     return updated_at > 0 and time.time() <= updated_at + timeout_seconds + 10
 
 
+# Active browser portal root.
 def _active_browser_portal_root() -> Path | None:
     candidates: list[tuple[float, Path]] = []
     for root in _browser_portal_roots():
@@ -5691,6 +5465,7 @@ def _active_browser_portal_root() -> Path | None:
     return candidates[0][1]
 
 
+# Browser portal state path.
 def _browser_portal_state_path() -> Path:
     root = _active_browser_portal_root()
     if root is None:
@@ -5698,6 +5473,7 @@ def _browser_portal_state_path() -> Path:
     return root / "state.json"
 
 
+# Browser portal events dir.
 def _browser_portal_events_dir() -> Path:
     root = _active_browser_portal_root()
     if root is None:
@@ -5705,6 +5481,7 @@ def _browser_portal_events_dir() -> Path:
     return root / "events"
 
 
+# Return browser portal state.
 def _read_browser_portal_state() -> dict[str, Any]:
     root = _active_browser_portal_root()
     if root is None:
@@ -5713,9 +5490,8 @@ def _read_browser_portal_state() -> dict[str, Any]:
     return payload if payload else {"ok": False, "error": "Invalid browser portal state."}
 
 
+# Return the latest frame published by browser_wait_for_user.
 def browser_portal_frame_api(request):
-    """Return the latest frame published by browser_wait_for_user."""
-
     global _frame404_burst_log_count, _frame404_burst_log_last_ts
 
     if request.method != "GET":
@@ -5752,9 +5528,8 @@ def browser_portal_frame_api(request):
     return JsonResponse(payload, status=status)
 
 
+# Queue one human portal event for the active browser_wait_for_user loop.
 def browser_portal_event_api(request):
-    """Queue one human portal event for the active browser_wait_for_user loop."""
-
     if request.method != "POST":
         _write_browser_portal_debug_event(None, "event_rejected_method", method=request.method)
         return JsonResponse({"error": "Invalid request method"}, status=405)
@@ -5854,8 +5629,6 @@ class ProfileView(TemplateView):
 
     # Build the profile page context.
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
-        """Return template context for the profile page."""
-
         context = super().get_context_data(**kwargs)
         context.update(_build_base_context())
         return context
@@ -5867,8 +5640,6 @@ class ChatView(TemplateView):
 
     # Build the preloaded chat page context.
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
-        """Return template context for a preloaded chat page."""
-
         context = super().get_context_data(**kwargs)
         context.update(_build_base_context())
         context["preload_chat_id"] = str(kwargs.get("chat_id", ""))

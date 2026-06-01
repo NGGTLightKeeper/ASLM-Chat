@@ -42,14 +42,18 @@ export function createModelSelectorUi(context) {
   const $search = $popover.find('.custom-model-search');
   const $list = $popover.find('.custom-model-list');
 
+  // Model list helpers.
+  // Read the currently selected model from the hidden native select.
   function selectedModel() {
     return String(dom.$modelSelector.val() || '').trim();
   }
 
+  // Build one cache key for capability lookups.
   function cacheKey(modelName) {
     return `${String(state.activeEngine || '').trim()}::${String(modelName || '').trim()}`;
   }
 
+  // Mirror option rows from the native model select element.
   function modelsFromNativeSelect() {
     return dom.$modelSelector.find('option').map(function readOption() {
       const value = String($(this).val() || '').trim();
@@ -58,10 +62,12 @@ export function createModelSelectorUi(context) {
     }).get().filter(Boolean);
   }
 
+  // Report whether one row is a non-selectable placeholder option.
   function isPlaceholderModel(model) {
     return !model || !model.value || model.value === 'No models available' || model.value === 'Models load on demand';
   }
 
+  // Read cached vision and tool capability flags for one model.
   function currentCapabilities(modelName) {
     const key = cacheKey(modelName);
     const cached = capabilityCache.get(key);
@@ -77,6 +83,7 @@ export function createModelSelectorUi(context) {
     return null;
   }
 
+  // Store capability flags with a bounded LRU-style eviction policy.
   function cacheCapabilities(key, value) {
     if (capabilityCache.has(key)) {
       capabilityCache.delete(key);
@@ -91,6 +98,7 @@ export function createModelSelectorUi(context) {
     }
   }
 
+  // Cache capabilities for the model currently loaded in app state.
   function rememberCurrentModelCapabilities() {
     const modelName = selectedModel();
     if (!modelName || !state.currentModelInfo) {
@@ -102,6 +110,7 @@ export function createModelSelectorUi(context) {
     });
   }
 
+  // Sync the custom selector button label with the active model.
   function updateButtonLabel() {
     const selected = selectedModel();
     const match = allModels.find(function findModel(model) {
@@ -110,6 +119,7 @@ export function createModelSelectorUi(context) {
     $value.text((match && match.label) || selected || 'Models load on demand');
   }
 
+  // Filter the virtual list from the search box and reset highlight.
   function applyFilter() {
     const query = String($search.val() || '').trim().toLowerCase();
     filteredModels = !query
@@ -124,6 +134,9 @@ export function createModelSelectorUi(context) {
     }), 0);
   }
 
+
+  // Capability prefetch.
+  // Queue capability lookups for rows visible in the virtual list.
   function requestVisibleCapabilities() {
     window.clearTimeout(requestTimer);
     requestTimer = window.setTimeout(function requestLater() {
@@ -153,6 +166,7 @@ export function createModelSelectorUi(context) {
     }, 80);
   }
 
+  // Drain the queued model_info requests with a concurrency limit.
   function processCapabilityQueue() {
     if (activeCapabilityRequests >= maxConcurrentCapabilityRequests || queuedCapabilityRequests.size === 0) {
       return;
@@ -199,6 +213,9 @@ export function createModelSelectorUi(context) {
     processCapabilityQueue();
   }
 
+
+  // Popover rendering.
+  // Build one virtualized model row HTML fragment.
   function optionHtml(model, index) {
     const selected = model.value === selectedModel();
     const highlighted = index === highlightedIndex;
@@ -220,6 +237,7 @@ export function createModelSelectorUi(context) {
     `;
   }
 
+  // Render the visible slice of the virtualized model list.
   function renderList() {
     if (!isOpen) {
       return;
@@ -248,6 +266,7 @@ export function createModelSelectorUi(context) {
     requestVisibleCapabilities();
   }
 
+  // Refresh list data from the hidden native select options.
   function syncFromNative() {
     rememberCurrentModelCapabilities();
     allModels = modelsFromNativeSelect();
@@ -256,6 +275,7 @@ export function createModelSelectorUi(context) {
     renderList();
   }
 
+  // Select one model by its index in the filtered list.
   function chooseModelByIndex(index) {
     const model = filteredModels[index];
     if (!model || isPlaceholderModel(model)) {
@@ -266,6 +286,7 @@ export function createModelSelectorUi(context) {
     close();
   }
 
+  // Keep the keyboard-highlighted row inside the scroll viewport.
   function scrollHighlightedIntoView() {
     if (highlightedIndex < 0) {
       return;
@@ -281,6 +302,7 @@ export function createModelSelectorUi(context) {
     }
   }
 
+  // Position the popover below or above the trigger based on viewport space.
   function positionPopover() {
     if (!isOpen) {
       return;
@@ -302,6 +324,7 @@ export function createModelSelectorUi(context) {
     $list.css('max-height', `${Math.max(112, maxHeight - 52)}px`);
   }
 
+  // Open the custom model selector popover.
   function open() {
     if (isOpen) {
       return;
@@ -322,6 +345,7 @@ export function createModelSelectorUi(context) {
     });
   }
 
+  // Close the custom model selector popover.
   function close() {
     if (!isOpen) {
       return;
@@ -331,6 +355,7 @@ export function createModelSelectorUi(context) {
     $popover.hide();
   }
 
+  // Toggle the custom model selector open state.
   function toggle() {
     if (isOpen) {
       close();
@@ -339,6 +364,9 @@ export function createModelSelectorUi(context) {
     }
   }
 
+
+  // Event wiring.
+  // Bind popover, keyboard, and native select synchronization events.
   function bindEvents() {
     $button.on('click', function onButtonClick(event) {
       event.preventDefault();
@@ -422,6 +450,7 @@ export function createModelSelectorUi(context) {
     }
   }
 
+  // Mount the custom selector UI once per page load.
   function init() {
     if (!$wrap.length || $wrap.data('customModelSelectorReady')) {
       return;

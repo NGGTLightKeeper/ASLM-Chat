@@ -19,9 +19,8 @@ SERVER_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = SERVER_ROOT / "config.py"
 
 
+# Load the sibling config module without relying on global sys.path order.
 def _load_local_config():
-    """Load the sibling config module without relying on global sys.path order."""
-
     spec = importlib.util.spec_from_file_location("mcp_browser_agent_config", CONFIG_PATH)
     if spec is None or spec.loader is None:
         raise ImportError(f"Unable to load browser-agent config from {CONFIG_PATH}")
@@ -43,15 +42,17 @@ MAX_ELEMENTS = _config.MAX_ELEMENTS
 MAX_MAIN_INTERACTIVE = _config.MAX_MAIN_INTERACTIVE
 
 
+# Keep one dedicated event loop alive for all browser operations.
 class BrowserRuntime:
-    """Keep one dedicated event loop alive for all browser operations."""
 
+    # Initialize empty loop/thread handles for the dedicated browser event loop.
     def __init__(self) -> None:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
         self._lock = threading.Lock()
 
+    # Run the dedicated asyncio event loop on a background thread.
     def _thread_main(self) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -62,6 +63,7 @@ class BrowserRuntime:
         finally:
             loop.close()
 
+    # Start the background loop thread when it is not already running.
     def ensure_started(self) -> None:
         if self._thread is not None and self._thread.is_alive() and self._loop is not None:
             return
@@ -79,14 +81,14 @@ class BrowserRuntime:
             self._thread.start()
             self._ready.wait()
 
+    # Schedule a coroutine on the dedicated browser loop from any thread.
     def submit(self, coro) -> concurrent.futures.Future:
         self.ensure_started()
         assert self._loop is not None
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
+    # Stop the dedicated browser loop after browser resources are closed.
     def close(self) -> None:
-        """Stop the dedicated browser loop after browser resources are closed."""
-
         with self._lock:
             loop = self._loop
             thread = self._thread
@@ -104,20 +106,18 @@ class BrowserRuntime:
 _browser_runtime = BrowserRuntime()
 
 
+# Stop the shared browser runtime loop during worker shutdown.
 def close_browser_runtime() -> None:
-    """Stop the shared browser runtime loop during worker shutdown."""
-
     _browser_runtime.close()
 
 
+# Run a browser coroutine on the dedicated browser loop with optional keepalive logs.
 async def run_in_browser_loop(
     coro,
     session=None,
     interval: float = 3.0,
     message: str = "working...",
 ):
-    """Run a browser coroutine on the dedicated browser loop."""
-
     future = _browser_runtime.submit(coro)
     wrapped = asyncio.wrap_future(future)
 
@@ -139,6 +139,7 @@ async def run_in_browser_loop(
         future.cancel()
         raise
 
+
 if sys.platform.startswith("win"):
     # Playwright/Camoufox may leave subprocess transports pending on shutdown.
     # Guard their destructors so tool calls do not emit false crash traces.
@@ -149,12 +150,14 @@ if sys.platform.startswith("win"):
         _orig_pipe_del = _proactor_events._ProactorBasePipeTransport.__del__
         _orig_subproc_del = _base_subprocess.BaseSubprocessTransport.__del__
 
+        # Swallow destructor errors from orphaned Playwright pipe transports on Windows.
         def _safe_pipe_del(self):
             try:
                 _orig_pipe_del(self)
             except Exception:
                 pass
 
+        # Swallow destructor errors from orphaned subprocess transports on Windows.
         def _safe_subproc_del(self):
             try:
                 _orig_subproc_del(self)
@@ -290,10 +293,8 @@ _ATTR_RE = re.compile(r'\[(?P<key>\w+)(?:=(?P<val>[^\]]+))?\]')
 
 # Accessibility tree extraction
 
-# Build a compact accessibility tree with stable element refs
+# Extract the current accessibility tree and assign stable element refs.
 async def get_accessibility_tree(page: Page, full: bool = False) -> tuple[list[dict], str]:
-    """Extract the current accessibility tree and assign stable refs."""
-
     try:
         yaml_text = await page.locator("body").aria_snapshot(timeout=10000)
     except Exception as exc:
@@ -416,10 +417,8 @@ async def get_accessibility_tree(page: Page, full: bool = False) -> tuple[list[d
 
 # Accessibility tree filtering
 
-# Hide low-value elements from model-facing output
+# Return whether an element should be hidden from model-facing snapshot output.
 def _is_noise_element(elem: dict) -> bool:
-    """Return whether an element should be hidden from tool output."""
-
     name = elem.get("name", "")
     role = elem.get("role", "")
     landmark = elem.get("landmark", "")
@@ -443,9 +442,8 @@ def _is_noise_element(elem: dict) -> bool:
     return False
 
 
+# Return the stable, model-facing subset of one accessibility element.
 def _snapshot_element_payload(el: dict) -> dict[str, Any]:
-    """Return the stable, model-facing subset of one accessibility element."""
-
     payload: dict[str, Any] = {
         "ref": el.get("ref"),
         "role": el.get("role"),
@@ -469,9 +467,8 @@ def _snapshot_element_payload(el: dict) -> dict[str, Any]:
     return payload
 
 
+# Format one element as a compact markdown action line.
 def _format_control_line(el: dict) -> str:
-    """Format one element as a compact action line."""
-
     payload = _snapshot_element_payload(el)
     parts = [f'[{payload["ref"]}]', str(payload["role"])]
     if payload.get("name"):
@@ -491,13 +488,12 @@ def _format_control_line(el: dict) -> str:
     return "- " + " ".join(parts)
 
 
+# Pick interactive controls that belong in the default snapshot.
 def _filter_snapshot_controls(
     elements: list[dict],
     *,
     full: bool,
 ) -> list[dict]:
-    """Pick the controls that belong in the default snapshot."""
-
     controls = [e for e in elements if e.get("interactive")]
     if not full:
         controls = [e for e in controls if not _is_noise_element(e)]
@@ -505,9 +501,8 @@ def _filter_snapshot_controls(
     return controls
 
 
+# Group interactive elements by the operation a model can perform.
 def _group_controls(elements: list[dict]) -> dict[str, list[dict]]:
-    """Group interactive elements by the operation a model can perform."""
-
     groups: dict[str, list[dict]] = {
         "text_inputs": [],
         "buttons": [],
@@ -529,14 +524,13 @@ def _group_controls(elements: list[dict]) -> dict[str, list[dict]]:
     return groups
 
 
+# Format controls in a predictable grouped order for snapshot markdown.
 def _format_parsed_controls(
     elements: list[dict],
     *,
     full: bool,
     max_items: int,
 ) -> list[str]:
-    """Format controls in a predictable grouped order."""
-
     selected = _filter_snapshot_controls(elements, full=full)
     groups = _group_controls(selected)
     lines: list[str] = []
@@ -576,9 +570,8 @@ def _format_parsed_controls(
     return lines
 
 
+# Build a compact structured state block for models that prefer JSON.
 def _build_parsed_state(elements: list[dict], *, full: bool, max_items: int) -> dict[str, Any]:
-    """Build a compact structured state for models that prefer JSON."""
-
     selected = _filter_snapshot_controls(elements, full=full)
     groups = _group_controls(selected)
 
@@ -598,10 +591,8 @@ def _build_parsed_state(elements: list[dict], *, full: bool, max_items: int) -> 
 
 # Snapshot text extraction
 
-# Pull a short text preview from the current page
+# Extract a short text preview from the main content area for full snapshots.
 async def _extract_brief_text(page: Page, max_chars: int = AUTO_TEXT_PREVIEW_LEN) -> str:
-    """Extract a short text preview for snapshot output."""
-
     try:
         text = await page.evaluate("""(maxChars) => {
             // Try main landmark first
@@ -643,10 +634,8 @@ async def _extract_brief_text(page: Page, max_chars: int = AUTO_TEXT_PREVIEW_LEN
 
 # Rendering wait helpers
 
-# Wait until SPA content becomes readable
+# Wait until SPA main content becomes readable without fixed sleeps.
 async def _wait_for_spa_content(page: Page, timeout_ms: int = 5000):
-    """Wait for SPA content to settle without relying on fixed sleeps."""
-
     # Poll the main landmark until meaningful text appears.
     for _ in range(6):
         try:
@@ -717,10 +706,8 @@ _KNOWN_ACCEPT_SELECTORS = [
 ]
 
 
-# Dismiss common cookie banners and blocking popups
+# Try to dismiss common cookie banners and blocking popups before snapshotting.
 async def _auto_dismiss_overlays(page: Page) -> list[str]:
-    """Try to dismiss common overlays before snapshotting."""
-
     dismissed = []
 
     # Make a few passes because some banners re-render after the first click.
@@ -876,10 +863,8 @@ async def _auto_dismiss_overlays(page: Page) -> list[str]:
     return dismissed
 
 
-# Detect situations that may require user guidance
+# Detect CAPTCHA, login, cookie banner, and error-page situations for warnings.
 async def _detect_page_situation(page: Page) -> list[str]:
-    """Detect page states that should be surfaced in the snapshot."""
-
     warnings: list[str] = []
     try:
         situation = await page.evaluate("""() => {
@@ -976,10 +961,8 @@ async def _detect_page_situation(page: Page) -> list[str]:
     return warnings
 
 
-# Describe a blocking overlay that is still visible
+# Describe a blocking overlay that remains visible after auto-dismiss attempts.
 async def _detect_undismissable_overlay(page: Page) -> str | None:
-    """Detect a remaining blocking overlay after auto-dismiss attempts."""
-
     try:
         result = await page.evaluate("""() => {
             const vw = window.innerWidth;
@@ -1054,38 +1037,34 @@ _BROWSER_CLOSED_MARKERS = (
 )
 
 
+# Return whether an exception indicates the browser process or session died.
 def is_browser_closed_error(exc: BaseException) -> bool:
-    """Return whether an exception means the browser process/session died."""
-
     text = f"{type(exc).__name__}: {exc}".lower()
     return any(marker in text for marker in _BROWSER_CLOSED_MARKERS)
 
 
+# Return the most recent non-blank URL from the navigation history buffer.
 def last_known_url() -> str:
-    """Return the most recent non-blank browser URL remembered by snapshots."""
-
     for url in reversed(_nav_history):
         value = str(url or "").strip()
         if value and value not in {"about:blank", ""}:
             return value
     return ""
 
-# Hold the shared browser context and page
+
+# Store the shared Camoufox/Playwright session used by MCP browser tools.
 class BrowserState:
-    """Store the shared browser session used by MCP tools."""
 
+    # Initialize empty browser, context, page, and tool context handles.
     def __init__(self):
-        """Initialize empty browser state."""
-
         self._camoufox_cm: AsyncCamoufox | None = None
         self.browser: Browser | None = None
         self.context: BrowserContext | None = None
         self.page: Page | None = None
         self.tool_context: dict[str, Any] = {}
 
+    # Return the active downloads directory for the current tool context.
     def downloads_dir(self) -> Path:
-        """Return the active downloads directory for the current tool context."""
-
         safe_context = self.tool_context or {}
         module_dir = str(safe_context.get("module_dir") or safe_context.get("project_dir") or "").strip()
         selected = safe_context.get("selected_tool_server_ids")
@@ -1096,10 +1075,8 @@ class BrowserState:
             return Path(module_dir) / "Tools" / "mcp-sandbox" / "_sandbox" / "downloads"
         return DOWNLOADS_DIR
 
-
+    # Return whether the stored Playwright page can still receive commands.
     async def _has_live_page(self) -> bool:
-        """Return whether the stored Playwright page can still receive commands."""
-
         if self.page is None:
             return False
 
@@ -1121,13 +1098,8 @@ class BrowserState:
             log.debug("Browser page health check failed but did not look fatal: %s", exc)
             return True
 
-    # Open the browser lazily on first use
+    # Launch the browser lazily on first use; return True when a new session started.
     async def ensure_open(self) -> bool:
-        """Launch the browser and register page handlers when needed.
-
-        Returns True when a new browser session was launched.
-        """
-
         if await self._has_live_page():
             return False
 
@@ -1170,10 +1142,8 @@ class BrowserState:
                 f"and that the current runtime is allowed to spawn browser subprocesses. Original error: {exc}"
             ) from exc
 
-        # Persist downloads into the active shared workspace.
+        # Save downloaded files into the active workspace directory.
         async def handle_download(download):
-            """Save downloaded files into the active workspace directory."""
-
             log.info(f"Download started: {download.suggested_filename}")
             try:
                 downloads_dir = self.downloads_dir()
@@ -1186,10 +1156,8 @@ class BrowserState:
 
         self.page.on("download", handle_download)
 
-        # Auto-accept dialogs so automation does not hang on alerts or prompts.
+        # Accept browser dialogs with a deterministic response so automation does not hang.
         async def handle_dialog(dialog):
-            """Accept browser dialogs with a deterministic response."""
-
             log.info(f"Dialog: {dialog.type} - {dialog.message}")
             try:
                 if dialog.type == "prompt":
@@ -1203,11 +1171,8 @@ class BrowserState:
         log.info("Camoufox browser ready.")
         return True
 
-
-    # Close all shared browser resources
+    # Close all shared browser resources and clear stored references.
     async def close(self):
-        """Close the browser context and reset stored references."""
-
         page = self.page
         context = self.context
         browser = self.browser
@@ -1257,13 +1222,8 @@ _portal_a11y_bundle: dict | None = None
 _portal_a11y_capture_counter: int = 0
 
 
+# Build a compact a11y bundle for the live portal panel (throttled Playwright calls).
 async def capture_portal_a11y_bundle(page: Any, *, max_controls: int = 60) -> dict | None:
-    """Build a compact a11y bundle for the live portal panel.
-
-    Updates the shared _last_elements cache so that click_ref events fired by
-    the UI panel map to the most recently published element tree.  Returns a
-    dict ready to embed under the ``a11y`` key in state.json, or None on error.
-    """
     global _last_elements, _portal_a11y_bundle, _portal_a11y_capture_counter
 
     _portal_a11y_capture_counter += 1
@@ -1304,8 +1264,8 @@ async def capture_portal_a11y_bundle(page: Any, *, max_controls: int = 60) -> di
     return bundle
 
 
+# Reset portal a11y counters and bundle when a new portal session starts.
 def reset_portal_a11y_state() -> None:
-    """Reset portal a11y counters and bundle; call when a new portal session starts."""
     global _portal_a11y_bundle, _portal_a11y_capture_counter
     _portal_a11y_bundle = None
     _portal_a11y_capture_counter = 0
@@ -1313,15 +1273,13 @@ def reset_portal_a11y_state() -> None:
 
 # Snapshot builders
 
-# Build the detailed page snapshot returned after navigation
+# Build the detailed page snapshot returned after navigation or major page changes.
 async def _take_snapshot(
     action_context: str | None = None,
     run_dismiss: bool = False,
     include_text: bool = True,
     full: bool = False,
 ) -> list[TextContent]:
-    """Build the full page snapshot used after major page changes."""
-
     global _last_elements, _nav_history
 
     # Clear low-value overlays before collecting snapshot data.
@@ -1411,10 +1369,8 @@ async def _take_snapshot(
     return [TextContent(type="text", text="\n".join(parts))]
 
 
-# Build the smaller snapshot used after in-page actions
+# Build the smaller controls-only snapshot used after in-page actions.
 async def _take_compact_snapshot(action_context: str | None = None) -> list[TextContent]:
-    """Build a compact snapshot for in-page actions."""
-
     global _last_elements, _nav_history
 
     elements, _ = await get_accessibility_tree(state.page)
@@ -1453,20 +1409,16 @@ async def _take_compact_snapshot(action_context: str | None = None) -> list[Text
 
 # Element lookup and locator resolution
 
-# Find an element by the ref stored in the last snapshot
+# Return the cached accessibility element matching the given ref.
 def _find_element(ref: str) -> dict | None:
-    """Return the cached element matching the given ref."""
-
     for el in _last_elements:
         if el["ref"] == ref:
             return el
     return None
 
 
-# Resolve the best Playwright locator for a role and name pair
+# Resolve the best Playwright locator for a role and accessible name pair.
 async def _resolve_locator(role: str, name: str):
-    """Resolve the best locator for a role and accessible name."""
-
     # Prefer semantic role lookups because they match the accessibility tree.
     for exact in (True, False):
         try:
@@ -1518,10 +1470,8 @@ async def _resolve_locator(role: str, name: str):
 
 # Click actions
 
-# Click a cached accessibility element using safe fallbacks
+# Click a cached accessibility element using role/name resolution and fallbacks.
 async def _click_by_role_and_name(ref: str):
-    """Click an element referenced by the last accessibility snapshot."""
-
     elem = _find_element(ref)
     if not elem:
         raise ValueError(

@@ -1,11 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Native subprocess execution — runs inside the container.
-
-This module has no docker dependencies and can be imported on any platform.
-Everything here runs as direct subprocesses inside the already-running sandbox.
-"""
-
 from __future__ import annotations
 
 import os
@@ -36,14 +30,14 @@ from sandbox.workspace import (
 logger = __import__("logging").getLogger(__name__)
 
 
-# ── Shared output helpers ────────────────────────────────────────────
+# Shared output helpers
 
 def _slice_utf8(data: bytes, start: int | None = None, end: int | None = None) -> str:
     return data[start:end].decode("utf-8", errors="ignore")
 
 
+# Trim output to a configurable head/tail window with an inline marker.
 def _truncate(value: str | None) -> tuple[str, bool]:
-    """Trim output to a configurable head/tail window with an inline marker."""
     if value is None:
         return "", False
     encoded = value.encode("utf-8", errors="replace")
@@ -66,9 +60,8 @@ def _truncate(value: str | None) -> tuple[str, bool]:
     )
 
 
+# Collect process output with a fixed head/tail memory budget.
 class BoundedOutputCollector:
-    """Collect process output with a fixed head/tail memory budget."""
-
     def __init__(self) -> None:
         self._buffer = bytearray()
         self._head = bytearray()
@@ -115,12 +108,12 @@ class BoundedOutputCollector:
         )
 
 
+# Read process output in chunks and forward each chunk to an optional callback.
 def _read_stream_chunks(
     stream,
     sink: BoundedOutputCollector,
     callback: Callable[[str], None] | None = None,
 ) -> None:
-    """Read process output in chunks and forward it to an optional callback."""
     while True:
         chunk = stream.read(1024)
         if not chunk:
@@ -130,7 +123,7 @@ def _read_stream_chunks(
             callback(chunk)
 
 
-# ── Background job helpers ───────────────────────────────────────────
+# Background job helpers
 
 _LONG_RUNNING_PATTERNS = re.compile(
     r"\b("
@@ -141,6 +134,7 @@ _LONG_RUNNING_PATTERNS = re.compile(
 )
 
 
+# Map bool/None background flag to auto | always | never.
 def _normalize_background_mode(background: str | bool | None) -> str:
     if background is True:
         return "always"
@@ -152,6 +146,7 @@ def _normalize_background_mode(background: str | bool | None) -> str:
     return normalized
 
 
+# Decide whether a command should run as a tracked background job.
 def should_use_background(
     command: str, timeout_s: int, background: str | bool | None = "auto"
 ) -> bool:
@@ -169,12 +164,14 @@ def _new_background_job_id() -> str:
     return f"bg_{uuid.uuid4().hex[:8]}"
 
 
+# Ensure JOB_ROOT exists and return its Path.
 def job_root() -> Path:
     root = Path(JOB_ROOT)
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
+# Bash-shaped dict when foreground wait hits timeout but the job keeps running.
 def _background_error_result(
     *,
     job: BackgroundJob,
@@ -198,6 +195,7 @@ def _background_error_result(
     }
 
 
+# Read and truncate background job spool files (stdout/stderr).
 def _job_files_result(
     job: BackgroundJob, *, incremental: bool = True
 ) -> tuple[str, str, bool]:
@@ -208,10 +206,10 @@ def _job_files_result(
     return stdout, stderr, trunc_out or trunc_err
 
 
-# ── User / process helpers ───────────────────────────────────────────
+# User / process helpers
 
+# POSIX-only Popen user-switching options when supervisor runs as root.
 def _popen_user_kwargs() -> dict:
-    """Return POSIX-only Popen user-switching options for model commands."""
     if os.name != "posix" or not COMMAND_USER or COMMAND_USER == "root":
         return {}
     geteuid = getattr(os, "geteuid", None)
@@ -220,8 +218,8 @@ def _popen_user_kwargs() -> dict:
     return {"user": COMMAND_USER}
 
 
+# Environment overrides (HOME, USER, SHELL) for the model command user.
 def _command_user_env() -> dict[str, str]:
-    """Return environment overrides for the model command user."""
     if os.name != "posix" or not COMMAND_USER or COMMAND_USER == "root":
         return {}
     try:
@@ -237,8 +235,8 @@ def _command_user_env() -> dict[str, str]:
     }
 
 
+# Best-effort SIGTERM then SIGKILL for the command's process group.
 def _kill_process_group(process: subprocess.Popen) -> None:
-    """Best-effort kill for the command's process group."""
     if os.name == "posix":
         try:
             pgid = os.getpgid(process.pid)
@@ -262,6 +260,7 @@ def _kill_process_group(process: subprocess.Popen) -> None:
     process.kill()
 
 
+# Block until the process exits after a kill (best-effort).
 def _wait_after_kill(process: subprocess.Popen, timeout: float = 2.0) -> None:
     try:
         process.wait(timeout=timeout)
@@ -269,8 +268,9 @@ def _wait_after_kill(process: subprocess.Popen, timeout: float = 2.0) -> None:
         pass
 
 
-# ── Native execution ─────────────────────────────────────────────────
+# Native execution
 
+# Run bash with output spooled to disk; may return early as a background job.
 def _exec_bash_native_background(
     command: str,
     cwd: str = ".",
@@ -278,7 +278,6 @@ def _exec_bash_native_background(
     stdin: str | None = None,
     on_progress: Callable[[float, str], None] | None = None,
 ) -> dict:
-    """Run a native command as a tracked background-capable job."""
     target_dir = get_secure_task_path(cwd, kind="cwd")
     if not target_dir.exists():
         raise FileNotFoundError(f"cwd not found: {normalize_model_relative_path(cwd)}")
@@ -352,6 +351,7 @@ def _exec_bash_native_background(
         job_id=job_id,
     )
 
+    # Poll until exit or foreground timeout → backgrounded error result.
     while process.poll() is None:
         elapsed_s = time.time() - start_time
         if elapsed_s >= timeout_s:
@@ -391,6 +391,7 @@ def _exec_bash_native_background(
     }
 
 
+# Execute bash in-process with piped stdout/stderr and optional background routing.
 def _exec_bash_native(
     command: str,
     cwd: str = ".",
@@ -401,7 +402,6 @@ def _exec_bash_native(
     on_progress: Callable[[float, str], None] | None = None,
     background: str | bool | None = "never",
 ) -> dict:
-    """Execute a bash command natively inside the already-running container."""
     if timeout_s <= 0:
         raise ValueError("timeout_s must be greater than 0.")
 
@@ -468,6 +468,7 @@ def _exec_bash_native(
     stdout_thread.start()
     stderr_thread.start()
 
+    # Wait for process exit, progress callbacks, or timeout → kill group.
     if stdin is not None and process.stdin is not None:
         try:
             process.stdin.write(stdin)
