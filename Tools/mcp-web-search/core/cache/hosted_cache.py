@@ -40,10 +40,13 @@ def query_ttl(query_type: str) -> int:
 # Serialize a SearchResult for SQLite JSON storage.
 def _result_to_dict(r: SearchResult) -> dict:
     return {
-        "url":     r.url,
-        "title":   r.title,
-        "snippet": r.snippet,
-        "engine":  r.engine,
+        "url":              r.url,
+        "title":            r.title,
+        "snippet":          r.snippet,
+        "engine":           r.engine,
+        "published_date":   r.published_date,
+        "pdf_url":          r.pdf_url,
+        "provider_content": r.provider_content,
     }
 
 
@@ -54,6 +57,9 @@ def _dict_to_result(d: dict) -> SearchResult:
         title=d.get("title", ""),
         snippet=d.get("snippet", ""),
         engine=d.get("engine", ""),
+        published_date=d.get("published_date", ""),
+        pdf_url=d.get("pdf_url", ""),
+        provider_content=d.get("provider_content", ""),
     )
 
 

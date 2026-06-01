@@ -33,6 +33,8 @@ class SearchResult:
     published_date: str = ""
     # Direct PDF URL when the source page or engine exposes one.
     pdf_url: str = ""
+    # Full text payload exposed by hosted providers; used internally for preview extraction.
+    provider_content: str = ""
     # Debugging fields (filled by service layer, stripped in MCP adapter)
     extract_debug_stage: str = ""
     extract_debug_timeout_sec: float = 0.0

@@ -1920,11 +1920,16 @@ async def _fetch_preview_one(
             return await loop.run_in_executor(_io_pool,_sync)
 
         # Fast path: if clean_text is already cached, skip fetch + parse entirely.
+        # If hosted providers pre-populated raw_html (for example Tavily raw_content),
+        # reuse it as the extraction input instead of doing a second network fetch.
         cached_page = _cache.get_cached(url)
-        if cached_page and _cache.is_fresh(url) and cached_page.clean_text:
-            return PreviewPayload(text=cached_page.clean_text)
+        cached_raw_html = ""
+        if cached_page and _cache.is_fresh(url):
+            if cached_page.clean_text:
+                return PreviewPayload(text=cached_page.clean_text)
+            cached_raw_html = cached_page.raw_html or ""
 
-        raw_html: str | None = None
+        raw_html: str | None = cached_raw_html or None
         if not raw_html:
             if policy == "cheap":
                 raw_html = await _aiohttp()
@@ -1971,7 +1976,12 @@ async def _fetch_preview_one(
 
         # Cache the processed text so future hits skip fetch + parse.
         if payload.text:
-            _cache.cache_page(url, result.title or "", clean_text=payload.text)
+            _cache.cache_page(
+                url,
+                result.title or "",
+                clean_text=payload.text,
+                raw_html=raw_html or cached_raw_html,
+            )
         _trace(
             req_id,
             "preview_fetch.done",
