@@ -1,0 +1,10 @@
+{{- /*
+  Returns one token (no whitespace): root-weight | title
+  Patch Notes sorting is handled separately via is-patchnotes-branch.html
+*/ -}}
+{{- $node := .node -}}
+{{- if not $node -}}title{{- else -}}
+{{- $dir := $node.File.Dir | default "" | replace "\\" "/" | strings.TrimSuffix "/" -}}
+{{- $rel := $node.RelPermalink | default "" | replace "\\" "/" | strings.TrimSuffix "/" -}}
+{{- if or (eq $dir "docs") (eq $rel "/docs") -}}root-weight{{- else -}}title{{- end -}}
+{{- end -}}

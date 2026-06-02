@@ -1,0 +1,69 @@
+// ASLM documentation typography — calmer hierarchy inside .main-content
+.docs-content {
+    .content-title {
+        font-size: 1.65rem !important;
+        line-height: 1.25;
+        margin-bottom: 0.75rem;
+    }
+
+    .main-content {
+        font-size: 0.9375rem;
+        line-height: 1.55;
+
+        h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-top: 1.75rem;
+            margin-bottom: 0.65rem;
+            padding-bottom: 0.25rem;
+            border-bottom: 1px solid var(--gray-300);
+        }
+
+        h3 {
+            font-size: 1.05rem;
+            font-weight: 600;
+            margin-top: 1.35rem;
+            margin-bottom: 0.5rem;
+        }
+
+        h4 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-top: 1rem;
+            margin-bottom: 0.35rem;
+            color: var(--text-default);
+        }
+
+        h5,
+        h6 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-top: 0.75rem;
+            margin-bottom: 0.25rem;
+        }
+
+        // Method signatures in backticks read as code, not giant headings
+        h4 code,
+        h5 code {
+            font-size: 0.82rem;
+            font-weight: 500;
+            background: var(--inline-code-bg);
+            border: var(--inline-code-border);
+            padding: 0.1rem 0.35rem;
+        }
+
+        table {
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+        }
+
+        hr {
+            margin: 1.5rem 0;
+            opacity: 0.25;
+        }
+    }
+}
+
+[data-dark-mode] .docs-content .main-content h2 {
+    border-bottom-color: var(--gray-700);
+}

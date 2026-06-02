@@ -1,0 +1,109 @@
+{{- /*
+  Recursive sidebar node. Expects dict:
+    node, current, depth, maxDepth, sidebarIcons
+*/ -}}
+{{- $node := .node -}}
+{{- $current := .current -}}
+{{- $depth := .depth -}}
+{{- $maxDepth := .maxDepth -}}
+{{- $sidebarIcons := .sidebarIcons -}}
+{{- $patchNotesBranch := eq (partial "docs/is-patchnotes-branch.html" (dict "node" $node) | strings.TrimSpace) "true" -}}
+{{- $sortMode := partial "docs/sidebar-sort-mode.html" (dict "node" $node) | strings.TrimSpace -}}
+{{- $hasChildren := or $node.Sections $node.Pages -}}
+{{- $active := in $current.RelPermalink $node.RelPermalink -}}
+{{- $canNest := lt $depth $maxDepth -}}
+{{- $noIconClass := "" -}}
+{{- if not $sidebarIcons }}{{ $noIconClass = "no-icon" }}{{ end -}}
+{{- $childDict := dict "node" $node "current" $current "depth" (add $depth 1) "maxDepth" $maxDepth "sidebarIcons" $sidebarIcons -}}
+
+{{- if and $hasChildren $canNest -}}
+<li class="sidebar-dropdown{{ if gt $depth 0 }} nested{{ end }}{{ if $noIconClass }} {{ $noIconClass }}{{ end }}{{ if $active }} current active{{ end }}">
+    <button class="btn" type="button">
+        {{- if and $sidebarIcons (eq $depth 0) -}}
+        <i class="material-icons me-2">{{ $node.Params.icon | default "notes" }}</i>
+        {{- end -}}
+        {{- $node.Title -}}
+    </button>
+    <div class="sidebar-submenu{{ if $active }} d-block{{ end }}">
+        <ul>
+            {{- partial "docs/sidebar-tree-children.html" $childDict -}}
+        </ul>
+    </div>
+</li>
+{{- else if $hasChildren -}}
+<li class="sidebar-dropdown{{ if gt $depth 0 }} nested{{ end }}{{ if $noIconClass }} {{ $noIconClass }}{{ end }}{{ if $active }} current active{{ end }}">
+    <button class="btn" type="button">
+        {{- if and $sidebarIcons (eq $depth 0) -}}
+        <i class="material-icons me-2">{{ $node.Params.icon | default "notes" }}</i>
+        {{- end -}}
+        {{- $node.Title -}}
+    </button>
+    <div class="sidebar-submenu{{ if $active }} d-block{{ end }}">
+        <ul>
+            {{- $seen := dict -}}
+            {{- if $patchNotesBranch -}}
+                {{- $sortedPages := partial "docs/sort-patchnotes-pages.html" $node.Pages -}}
+                {{- range $sortedPages -}}
+                    {{- $key := .RelPermalink -}}
+                    {{- if not (index $seen $key) -}}
+                        {{- $seen = merge $seen (dict $key true) -}}
+                        {{- $childActive := in $current.RelPermalink .RelPermalink -}}
+                        <li class="{{ if $childActive }}current {{ end }}{{ if $noIconClass }} {{ $noIconClass }}{{ end }}">
+                            <a class="sidebar-nested-link" href="{{ .Permalink }}">{{ .Title }}</a>
+                        </li>
+                    {{- end -}}
+                {{- end -}}
+            {{- else if eq $sortMode "root-weight" -}}
+                {{- range $node.Sections.ByWeight -}}
+                    {{- $key := .RelPermalink -}}
+                    {{- if not (index $seen $key) -}}
+                        {{- $seen = merge $seen (dict $key true) -}}
+                        {{- partial "docs/sidebar-tree.html" (dict "node" . "current" $current "depth" (add $depth 1) "maxDepth" $maxDepth "sidebarIcons" $sidebarIcons) -}}
+                    {{- end -}}
+                {{- end -}}
+                {{- range $node.Pages.ByWeight -}}
+                    {{- $key := .RelPermalink -}}
+                    {{- if not (index $seen $key) -}}
+                        {{- $seen = merge $seen (dict $key true) -}}
+                        {{- $childActive := in $current.RelPermalink .RelPermalink -}}
+                        <li class="{{ if $childActive }}current {{ end }}{{ if $noIconClass }} {{ $noIconClass }}{{ end }}">
+                            <a class="sidebar-nested-link" href="{{ .Permalink }}">{{ .Title }}</a>
+                        </li>
+                    {{- end -}}
+                {{- end -}}
+            {{- else -}}
+                {{- range $node.Sections.ByTitle -}}
+                    {{- $key := .RelPermalink -}}
+                    {{- if not (index $seen $key) -}}
+                        {{- $seen = merge $seen (dict $key true) -}}
+                        {{- partial "docs/sidebar-tree.html" (dict "node" . "current" $current "depth" (add $depth 1) "maxDepth" $maxDepth "sidebarIcons" $sidebarIcons) -}}
+                    {{- end -}}
+                {{- end -}}
+                {{- range $node.Pages.ByTitle -}}
+                    {{- $key := .RelPermalink -}}
+                    {{- if not (index $seen $key) -}}
+                        {{- $seen = merge $seen (dict $key true) -}}
+                        {{- $childActive := in $current.RelPermalink .RelPermalink -}}
+                        <li class="{{ if $childActive }}current {{ end }}{{ if $noIconClass }} {{ $noIconClass }}{{ end }}">
+                            <a class="sidebar-nested-link" href="{{ .Permalink }}">{{ .Title }}</a>
+                        </li>
+                    {{- end -}}
+                {{- end -}}
+            {{- end -}}
+        </ul>
+    </div>
+</li>
+{{- else -}}
+<li class="{{ if $active }}current {{ end }}{{ if and (gt $depth 0) $noIconClass }}{{ $noIconClass }}{{ end }}">
+    {{- if eq $depth 0 -}}
+    <a class="sidebar-root-link" href="{{ $node.Permalink }}">
+        {{- if $sidebarIcons -}}
+        <i class="material-icons me-2">{{ $node.Params.icon }}</i>
+        {{- end -}}
+        {{ $node.Title }}
+    </a>
+    {{- else -}}
+    <a class="sidebar-nested-link" href="{{ $node.Permalink }}">{{ $node.Title }}</a>
+    {{- end -}}
+</li>
+{{- end -}}
