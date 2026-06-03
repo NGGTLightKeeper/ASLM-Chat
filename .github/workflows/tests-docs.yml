@@ -1,0 +1,58 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+name: Tests - Docs
+
+on:
+  push:
+  pull_request:
+  issues:
+    types:
+      - opened
+      - edited
+      - reopened
+
+concurrency:
+  group: tests-docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hugo-build:
+    name: Hugo build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    defaults:
+      run:
+        working-directory: Docs/ASLM
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: Docs/ASLM/go.sum
+
+      - name: Cache Hugo modules
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/go/pkg/mod
+            Docs/ASLM/resources
+          key: aslm-chat-hugo-${{ runner.os }}-${{ hashFiles('Docs/ASLM/go.sum', 'Docs/ASLM/go.mod') }}
+          restore-keys: |
+            aslm-chat-hugo-${{ runner.os }}-
+
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v3
+        with:
+          hugo-version: "0.156.0"
+          extended: true
+
+      - name: Hugo mod get
+        run: hugo mod get
+
+      - name: Hugo build
+        run: hugo --minify --gc --printPathWarnings --logLevel warn
