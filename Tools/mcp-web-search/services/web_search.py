@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from contextlib import contextmanager
 import html as html_lib
 import json
@@ -20,6 +21,7 @@ from urllib.parse import urlparse
 from core.models.search import SearchResult, SearchRichResult, SearchSource
 from core.config import load_search_config
 from core.fetch.ddgs_client import async_ddgs_search
+from core.fetch.shopping.worker import async_shopping_search_worker
 from core.fetch.academic_fetcher import AcademicFetcher
 from core.fetch.hosted_clients import async_hosted_search, available_hosted_engines
 from core.query import (
@@ -2593,6 +2595,168 @@ def _build_compact_ui(query: str, sources: list[SearchSource], limit: int = 3) -
     }
 
 
+_SHOPPING_SCHEMA_VERSION = "shopping_search.v1"
+_SHOPPING_PARSER_VERSION = "strict_price.v1"
+_SHOPPING_EFFORT_LIMITS = {
+    "low": 4,
+    "medium": 7,
+    "high": 12,
+}
+_SHOPPING_WORKER_TIMEOUTS = {
+    "low": 3.5,
+    "medium": 6.5,
+    "high": 10.5,
+}
+
+
+def _shopping_intent_weight(class_mix: list[QueryClassWeight], query_types: list[str]) -> float:
+    weights = {item.name: float(item.weight or 0.0) for item in class_mix}
+    if query_types and query_types[0] == "shopping":
+        return max(1.0, weights.get("shopping", 0.0))
+    return weights.get("shopping", 0.0)
+
+
+def _should_run_shopping_core(class_mix: list[QueryClassWeight], query_types: list[str]) -> bool:
+    return _shopping_intent_weight(class_mix, query_types) >= 0.28
+
+
+def _shopping_limit_for_effort(effort: str, max_results: int) -> int:
+    normalized = _normalize_search_effort(effort)
+    base = _SHOPPING_EFFORT_LIMITS.get(normalized, _SHOPPING_EFFORT_LIMITS["medium"])
+    return max(1, min(base, max(1, int(max_results))))
+
+
+def _shopping_worker_timeout_for_effort(effort: str) -> float:
+    normalized = _normalize_search_effort(effort)
+    return _SHOPPING_WORKER_TIMEOUTS.get(normalized, _SHOPPING_WORKER_TIMEOUTS["medium"])
+
+
+def _shopping_price_line(product: dict[str, Any]) -> str:
+    price_text = str(product.get("price_text") or "").strip()
+    currency = str(product.get("currency") or "").strip()
+    price_value = product.get("price_value")
+    if price_text:
+        return price_text
+    if price_value is not None and currency:
+        return f"{currency} {price_value}"
+    return ""
+
+
+def _shopping_source_from_product(product: dict[str, Any], rank: int, source_id: str) -> SearchSource | None:
+    url = str(product.get("url") or "").strip()
+    title = str(product.get("title") or "").strip()
+    if not url or not title:
+        return None
+    domain = str(product.get("source_domain") or "").strip().lower() or _source_domain(url)
+    source = str(product.get("source") or "shopping").strip()
+    seller = str(product.get("seller") or "").strip()
+    availability = str(product.get("availability") or "").strip()
+    lane = str(product.get("lane") or "").strip()
+    price = _shopping_price_line(product)
+    snippet_parts = [
+        f"Price: {price}" if price else "",
+        f"Seller: {seller}" if seller else "",
+        f"Availability: {availability}" if availability else "",
+        f"Source: {source}" if source else "",
+    ]
+    snippet = ". ".join(part for part in snippet_parts if part)
+    preview_parts = [
+        f"Parsed shopping product with strict price: {price}" if price else "",
+        f"Seller: {seller}" if seller else "",
+        f"Availability: {availability}" if availability else "",
+        f"Lane: {lane}" if lane else "",
+        str(product.get("snippet") or "").strip(),
+    ]
+    preview = ". ".join(part for part in preview_parts if part)
+    return SearchSource(
+        id=source_id,
+        rank=rank,
+        title=title,
+        url=url,
+        domain=domain,
+        display_domain=_display_domain(domain) or domain,
+        favicon_url=str(product.get("favicon_url") or ""),
+        snippet=_display_text(snippet, 360),
+        preview=_display_text(preview, 900),
+        published_date="",
+        engine=f"shopping:{source}",
+        trust_tier="shopping",
+        score=round(float(product.get("confidence") or 0.0), 4),
+        pdf_url="",
+    )
+
+
+def _shopping_product_json(product: dict[str, Any], citation_id: str, effort: str) -> dict[str, Any]:
+    normalized = _normalize_search_effort(effort)
+    item = {
+        "citation_id": citation_id,
+        "parse_status": "price_parsed",
+        "title": str(product.get("title") or ""),
+        "url": str(product.get("url") or ""),
+        "source": str(product.get("source") or ""),
+        "source_domain": str(product.get("source_domain") or ""),
+        "lane": str(product.get("lane") or ""),
+        "price_text": str(product.get("price_text") or ""),
+        "price_value": product.get("price_value"),
+        "currency": str(product.get("currency") or ""),
+        "seller": str(product.get("seller") or ""),
+        "availability": str(product.get("availability") or ""),
+        "favicon_url": str(product.get("favicon_url") or ""),
+        "confidence": float(product.get("confidence") or 0.0),
+    }
+    if normalized != "low":
+        item["rating"] = str(product.get("rating") or "")
+        item["review_count"] = product.get("review_count")
+        item["snippet"] = _display_text(str(product.get("snippet") or ""), 420 if normalized == "medium" else 900)
+    if normalized == "high":
+        item["meta"] = product.get("meta") or {}
+    return item
+
+
+def _build_shopping_payload(
+    query: str,
+    effort: str,
+    raw_result: dict[str, Any],
+    product_citation_ids: list[str],
+) -> dict[str, Any]:
+    normalized = _normalize_search_effort(effort)
+    products = list(raw_result.get("products") or [])
+    product_items = [
+        _shopping_product_json(product, citation_id, normalized)
+        for product, citation_id in zip(products, product_citation_ids)
+        if isinstance(product, dict)
+    ]
+    payload: dict[str, Any] = {
+        "schema_version": _SHOPPING_SCHEMA_VERSION,
+        "parser_version": _SHOPPING_PARSER_VERSION,
+        "query": query,
+        "effort": normalized,
+        "partial": bool(raw_result.get("partial", False)),
+        "partial_reason": str(raw_result.get("partial_reason") or ""),
+        "source_count": len(product_items),
+        "products": product_items,
+        "mix": raw_result.get("mix") or {},
+        "timings": raw_result.get("timings") or {},
+    }
+    if normalized == "high":
+        payload["attempts"] = raw_result.get("attempts") or []
+        payload["provider_state"] = raw_result.get("provider_state") or {}
+    return payload
+
+
+def _append_shopping_context(model_context: str, shopping_payload: dict[str, Any]) -> str:
+    if not shopping_payload.get("products"):
+        return model_context
+    shopping_json = json.dumps(shopping_payload, ensure_ascii=False, separators=(",", ":"))
+    block = (
+        "\n\nShopping structured data (strict JSON; cite prices only with citation_id handles):\n"
+        "```json\n"
+        f"{shopping_json}\n"
+        "```"
+    )
+    return (model_context + block).strip()
+
+
 # Serialize SearchRichResult for MCP structuredContent.
 def _rich_result_to_dict(result: SearchRichResult) -> dict[str, object]:
     return {
@@ -3470,12 +3634,25 @@ class WebSearchService:
         query_profile = _parse_query_profile(query)
         out_profile = _apply_effort_to_output_profile(_get_output_profile(query_types), opts)
         preview_fetch_limit = out_profile.preview_fetch_limit
+        effort = _normalize_search_effort(opts.effort)
+        shopping_task: asyncio.Task[dict[str, Any]] | None = None
         _log_neural_usage(
             req_id,
             effort=opts.effort,
             model_session=model_session,
             class_debug=class_debug,
         )
+        if _should_run_shopping_core(class_mix, query_types):
+            shopping_limit = _shopping_limit_for_effort(effort, opts.max_results)
+            shopping_task = asyncio.create_task(
+                async_shopping_search_worker(
+                    provider_query,
+                    effort=effort,
+                    limit=shopping_limit,
+                    worker_timeout=_shopping_worker_timeout_for_effort(effort),
+                )
+            )
+            _trace(req_id, "shopping.worker.started", limit=shopping_limit, effort=effort)
 
         # --- 2. Provider fetch → merge → dedup → triage ---
         deduped, triage, effective_query = await self._run_with_zero_result_fallback(
@@ -3495,6 +3672,43 @@ class WebSearchService:
             triage = _triage_results(deduped, query) if deduped else []
 
         if not deduped:
+            shopping_raw: dict[str, Any] = {}
+            if shopping_task is not None:
+                with contextlib.suppress(Exception):
+                    shopping_raw = await shopping_task
+            shopping_sources: list[SearchSource] = []
+            product_citation_ids: list[str] = []
+            shopping_products = [
+                product for product in list(shopping_raw.get("products") or [])
+                if isinstance(product, dict)
+            ]
+            for product in shopping_products:
+                rank = len(shopping_sources) + 1
+                source_id = _citation_source_id(search_id, rank)
+                source = _shopping_source_from_product(product, rank, source_id)
+                if source is None:
+                    continue
+                product_citation_ids.append(source_id)
+                shopping_sources.append(source)
+            if shopping_sources:
+                shopping_payload = _build_shopping_payload(query, effort, shopping_raw, product_citation_ids)
+                model_context = _append_shopping_context(
+                    _build_model_context(query, shopping_sources, total_char_budget=opts.total_context_budget or 0),
+                    shopping_payload,
+                )
+                _trace(req_id, "rich.done", sources=len(shopping_sources), shopping_sources=len(shopping_sources))
+                return SearchRichResult(
+                    query=query,
+                    search_id=search_id,
+                    sources=shopping_sources,
+                    model_context=model_context,
+                    ui={
+                        "status": "done",
+                        "result_count": len(shopping_sources),
+                        "compact": _build_compact_ui(query, shopping_sources),
+                        "shopping": shopping_payload,
+                    },
+                )
             return SearchRichResult(
                 query=query,
                 search_id=search_id,
@@ -3628,12 +3842,41 @@ class WebSearchService:
             )
             for rank, (result, payload) in enumerate(selected_sources, 1)
         ]
+        shopping_raw: dict[str, Any] = {}
+        shopping_payload: dict[str, Any] = {}
+        if shopping_task is not None:
+            with contextlib.suppress(Exception):
+                shopping_raw = await shopping_task
+            shopping_products = [
+                product for product in list(shopping_raw.get("products") or [])
+                if isinstance(product, dict)
+            ]
+            shopping_product_citation_ids: list[str] = []
+            shopping_sources: list[SearchSource] = []
+            for product in shopping_products:
+                rank = len(sources) + len(shopping_sources) + 1
+                source_id = _citation_source_id(search_id, rank)
+                source = _shopping_source_from_product(product, rank, source_id)
+                if source is None:
+                    continue
+                shopping_product_citation_ids.append(source_id)
+                shopping_sources.append(source)
+            if shopping_sources:
+                sources.extend(shopping_sources)
+                shopping_payload = _build_shopping_payload(
+                    query,
+                    effort,
+                    shopping_raw,
+                    shopping_product_citation_ids,
+                )
+                _trace(req_id, "shopping.worker.done", products=len(shopping_sources))
         model_context = _build_model_context(
             query,
             sources,
             total_char_budget=opts.total_context_budget or 0,
         )
-        _trace(req_id, "rich.done", sources=len(sources))
+        model_context = _append_shopping_context(model_context, shopping_payload)
+        _trace(req_id, "rich.done", sources=len(sources), shopping_sources=shopping_payload.get("source_count", 0))
         return SearchRichResult(
             query=query,
             search_id=search_id,
@@ -3643,6 +3886,7 @@ class WebSearchService:
                 "status": "done",
                 "result_count": len(sources),
                 "compact": _build_compact_ui(query, sources),
+                "shopping": shopping_payload,
             },
         )
 
