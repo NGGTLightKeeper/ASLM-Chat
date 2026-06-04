@@ -147,6 +147,81 @@ End-to-end `web_search` MCP tool: validate query → classify → parallel retri
 
 ## Private functions
 
+#### `def _shopping_intent_weight(class_mix, query_types) -> float`
+
+**Purpose:** Calculate combined confidence for the "shopping" intent from class weights.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
+#### `def _should_run_shopping_core(class_mix, query_types) -> bool`
+
+**Purpose:** Determine if shopping intent strength exceeds routing threshold.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
+#### `def _shopping_limit_for_effort(effort, max_results) -> int`
+
+**Purpose:** Select result count limit for the shopping worker based on normalized effort.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
+#### `def _shopping_worker_timeout_for_effort(effort) -> float`
+
+**Purpose:** Provide the hard-kill subprocess timeout for the shopping search per effort tier.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
+#### `def _shopping_price_line(product) -> str`
+
+**Purpose:** Condense strict monetary structures into simple price text for snippets.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
+#### `def _shopping_source_from_product(product, rank, source_id) -> SearchSource | None`
+
+**Purpose:** Hydrates standard `SearchSource` metadata citations directly from JSON shopping products.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
+#### `def _shopping_product_json(product, citation_id, effort) -> dict[str, Any]`
+
+**Purpose:** Serializes a single shopping result item, adjusting fidelity by effort limits.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
+#### `def _build_shopping_payload(query, effort, raw_result, product_citation_ids) -> dict[str, Any]`
+
+**Purpose:** Constructs the structured UI component JSON output for shopping items.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
+#### `def _append_shopping_context(model_context, shopping_payload) -> str`
+
+**Purpose:** Injects strict JSON-structured shopping arrays directly into the primary neural model context.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Parse or serialize JSON payloads.
+
 #### `def _is_redirect_status(status_code) -> bool`
 
 **Purpose:** True for HTTP redirect status codes.
