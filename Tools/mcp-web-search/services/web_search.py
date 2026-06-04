@@ -2664,8 +2664,7 @@ def _shopping_source_from_product(product: dict[str, Any], rank: int, source_id:
         f"Parsed shopping product with strict price: {price}" if price else "",
         f"Seller: {seller}" if seller else "",
         f"Availability: {availability}" if availability else "",
-        f"Lane: {lane}" if lane else "",
-        str(product.get("snippet") or "").strip(),
+        f"Source lane: {lane}" if lane else "",
     ]
     preview = ". ".join(part for part in preview_parts if part)
     return SearchSource(

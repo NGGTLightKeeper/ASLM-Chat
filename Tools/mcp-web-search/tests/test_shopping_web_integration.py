@@ -59,6 +59,8 @@ def test_shopping_effort_limits_are_smaller_on_low_effort() -> None:
 
 @pytest.mark.unit
 def test_shopping_product_becomes_citable_search_source(product: dict) -> None:
+    product["snippet"] = "raw neighbouring card text that should not leak"
+
     source = _shopping_source_from_product(product, 3, "cabc-3")
 
     assert source is not None
@@ -68,6 +70,8 @@ def test_shopping_product_becomes_citable_search_source(product: dict) -> None:
     assert source.engine == "shopping:pricerunner"
     assert "$599.99" in source.snippet
     assert source.favicon_url == "/api/favicon/?domain=pricerunner.com"
+    assert "raw neighbouring card text" not in source.preview
+    assert "Parsed shopping product with strict price" in source.preview
 
 
 @pytest.mark.unit
