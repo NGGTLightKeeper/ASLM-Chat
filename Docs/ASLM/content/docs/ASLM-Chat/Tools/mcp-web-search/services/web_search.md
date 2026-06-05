@@ -810,6 +810,14 @@ End-to-end `web_search` MCP tool: validate query → classify → parallel retri
 
 1. Return the computed result to the caller.
 
+#### `def _shopping_source_from_product(product: dict[str, Any], rank: int, source_id: str) -> SearchSource | None`
+
+**Purpose:** Build SearchSource struct from a shopping product.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
 #### `def _build_model_context(query, sources, total_char_budget) -> str`
 
 **Purpose:** Citation-oriented context block for the model from SearchSource list.

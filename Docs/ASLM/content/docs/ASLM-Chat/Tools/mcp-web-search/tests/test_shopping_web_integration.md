@@ -11,28 +11,34 @@ draft: false
 
 ## Overview
 
-Part of `Tools/mcp-web-search/tests`. Contains test cases verifying the successful interaction and data parsing between the core shopping service and the broader web integration endpoints.
+Integration tests for the shopping web search functionality, focusing on effort limits and the generation of citable search sources from shopping products.
 
 ---
 
-## Tests
+## Classes
 
-#### `def test_shopping_intent_uses_primary_class_as_strong_signal() -> None`
+*None*
 
-#### `def test_shopping_intent_ignores_weak_secondary_signal() -> None`
+---
+
+## Public functions
 
 #### `def test_shopping_effort_limits_are_smaller_on_low_effort() -> None`
 
+**Purpose:** Implements `test_shopping_effort_limits_are_smaller_on_low_effort` in `test_shopping_web_integration.py`.
+
 #### `def test_shopping_product_becomes_citable_search_source(product: dict) -> None`
 
-#### `def test_shopping_json_schema_keeps_price_and_citation_strict(product: dict) -> None`
+**Purpose:** Implements `test_shopping_product_becomes_citable_search_source` in `test_shopping_web_integration.py`.
 
-#### `def test_low_effort_shopping_json_omits_auxiliary_metadata(product: dict) -> None`
+---
 
-#### `def test_shopping_context_appends_json_block(product: dict) -> None`
+## Private functions
+
+*None*
 
 ---
 
 ## Related
 
-- [tests/_index](../../_index/)
+- [tests](../_index/)
