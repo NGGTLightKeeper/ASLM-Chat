@@ -1,0 +1,314 @@
+# Copyright NGGT.LightKeeper. All Rights Reserved.
+
+name: PR - Sync Docs
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, closed]
+
+concurrency:
+  group: pr-sync-docs-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  # Scan: squash-merge Jules branches into PR head
+  scan:
+    if: |
+      github.actor != 'github-actions[bot]' &&
+      github.event.action != 'closed' &&
+      !startsWith(github.event.pull_request.head.ref, 'jules-docs-dev-') &&
+      !startsWith(github.event.pull_request.head.ref, 'jules-patchnotes-dev-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Find new Jules branches to merge
+        id: find-branches
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const pr    = context.payload.pull_request;
+
+            // ── 1. Collect already-tracked branches from bot comments ──────
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number: pr.number }
+            );
+            const alreadyTracked = new Set();
+            const MARKER_RE = /<!--\s*pr-sync-docs:tracked\s*-->([\s\S]*?)<!--\s*\/pr-sync-docs:tracked\s*-->/g;
+            for (const c of comments) {
+              if (c.user.login !== 'github-actions[bot]') continue;
+              let m;
+              while ((m = MARKER_RE.exec(c.body)) !== null) {
+                m[1].trim().split('\n').forEach(l => { const b = l.trim(); if (b) alreadyTracked.add(b); });
+              }
+            }
+            core.info(`Already tracked: ${[...alreadyTracked].join(', ') || '(none)'}`);
+
+            // ── 2. List all jules-docs-dev-* branches ──────────────────────
+            const allBranches = await github.paginate(
+              github.rest.repos.listBranches,
+              { owner, repo, per_page: 100 }
+            );
+            const docsBranches = allBranches
+              .map(b => b.name)
+              .filter(n => n.startsWith('jules-docs-dev-'));
+
+            // ── 3. List all jules-patchnotes-dev-* branches ────────────────
+            const pnBranches = allBranches
+              .map(b => b.name)
+              .filter(n => n.startsWith('jules-patchnotes-dev-'));
+
+            const toMerge = [];
+
+            for (const docsBranch of docsBranches) {
+              if (alreadyTracked.has(docsBranch)) {
+                core.info(`Skip (already tracked): ${docsBranch}`);
+                continue;
+              }
+
+              // Get commit list for docs branch
+              const docsCommits = await github.rest.repos.listCommits({
+                owner, repo, sha: docsBranch, per_page: 100
+              });
+              if (docsCommits.data.length < 2) {
+                core.info(`Skip (< 2 commits): ${docsBranch}`);
+                continue;
+              }
+
+              const secondToLastSHA = docsCommits.data[1].sha;
+              const lastDocsSHA     = docsCommits.data[0].sha;
+
+              // Check if secondToLastSHA is an ancestor of PR head
+              let cmp;
+              try {
+                cmp = await github.rest.repos.compareCommitsWithBasehead({
+                  owner, repo,
+                  basehead: `${secondToLastSHA}...${pr.head.sha}`
+                });
+              } catch (e) {
+                core.info(`Skip (compare error for ${docsBranch}): ${e.message}`);
+                continue;
+              }
+              // 'behind' / 'diverged' means PR head does NOT contain secondToLastSHA
+              if (cmp.data.status === 'behind' || cmp.data.status === 'diverged') {
+                core.info(`Skip (unrelated to this PR): ${docsBranch}`);
+                continue;
+              }
+
+              // ── Look for matching patchnotes branch ──────────────────────
+              let matchedPN = null;
+              for (const pnBranch of pnBranches) {
+                if (alreadyTracked.has(pnBranch)) continue;
+                const pnCommits = await github.rest.repos.listCommits({
+                  owner, repo, sha: pnBranch, per_page: 100
+                });
+                if (pnCommits.data.length < 2) continue;
+                if (pnCommits.data[1].sha === lastDocsSHA) {
+                  matchedPN = pnBranch;
+                  break;
+                }
+              }
+
+              if (matchedPN) {
+                // Delete docs branch — it's already embedded in the patchnotes branch
+                try {
+                  await github.rest.git.deleteRef({ owner, repo, ref: `heads/${docsBranch}` });
+                  core.info(`Deleted docs branch (patchnotes found): ${docsBranch}`);
+                } catch (e) { core.warning(`Could not delete ${docsBranch}: ${e.message}`); }
+
+                // Count files changed in patchnotes branch relative to its parent
+                const pnCmp = await github.rest.repos.compareCommitsWithBasehead({
+                  owner, repo,
+                  basehead: `${lastDocsSHA}...${matchedPN}`
+                });
+                if ((pnCmp.data.files || []).length === 0) {
+                  try {
+                    await github.rest.git.deleteRef({ owner, repo, ref: `heads/${matchedPN}` });
+                    core.info(`Deleted empty patchnotes branch: ${matchedPN}`);
+                  } catch (e) { core.warning(`Could not delete ${matchedPN}: ${e.message}`); }
+                } else {
+                  core.info(`Queue patchnotes branch for merge: ${matchedPN}`);
+                  toMerge.push(matchedPN);
+                }
+              } else {
+                // No patchnotes branch — work with docs branch directly
+                const docsCmp = await github.rest.repos.compareCommitsWithBasehead({
+                  owner, repo,
+                  basehead: `${secondToLastSHA}...${docsBranch}`
+                });
+                if ((docsCmp.data.files || []).length === 0) {
+                  try {
+                    await github.rest.git.deleteRef({ owner, repo, ref: `heads/${docsBranch}` });
+                    core.info(`Deleted empty docs branch: ${docsBranch}`);
+                  } catch (e) { core.warning(`Could not delete ${docsBranch}: ${e.message}`); }
+                } else {
+                  core.info(`Queue docs branch for merge: ${docsBranch}`);
+                  toMerge.push(docsBranch);
+                }
+              }
+            }
+
+            core.info(`Branches to merge: ${toMerge.join(', ') || '(none)'}`);
+            core.setOutput('new_branches', JSON.stringify(toMerge));
+
+      - name: Checkout PR head branch
+        if: steps.find-branches.outputs.new_branches != '[]'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Squash-merge Jules branches into PR head
+        if: steps.find-branches.outputs.new_branches != '[]'
+        env:
+          BRANCHES_JSON: ${{ steps.find-branches.outputs.new_branches }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          for branch in $(echo "$BRANCHES_JSON" | jq -r '.[]'); do
+            git fetch origin "$branch"
+            git merge --squash "origin/$branch" --no-commit || true
+            if ! git diff --cached --quiet; then
+              git commit -m "chore: integrate Jules docs from ${branch} [skip ci]"
+              echo "Committed squash of ${branch}"
+            else
+              echo "Nothing to commit from ${branch} (already up-to-date)"
+            fi
+          done
+
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+
+      - name: Post tracking comment
+        if: steps.find-branches.outputs.new_branches != '[]'
+        uses: actions/github-script@v7
+        env:
+          BRANCHES_JSON: ${{ steps.find-branches.outputs.new_branches }}
+        with:
+          script: |
+            const branches = JSON.parse(process.env.BRANCHES_JSON);
+            const body = [
+              '<!-- pr-sync-docs:tracked -->',
+              ...branches,
+              '<!-- /pr-sync-docs:tracked -->'
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body
+            });
+
+  # Integrate: cleanup + reverse PR on merge
+  integrate:
+    if: |
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      !startsWith(github.event.pull_request.head.ref, 'jules-docs-dev-') &&
+      !startsWith(github.event.pull_request.head.ref, 'jules-patchnotes-dev-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Delete Jules branches tracked in this PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const pr    = context.payload.pull_request;
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number: pr.number }
+            );
+
+            const toDelete = new Set();
+            const MARKER_RE = /<!--\s*pr-sync-docs:tracked\s*-->([\s\S]*?)<!--\s*\/pr-sync-docs:tracked\s*-->/g;
+            for (const c of comments) {
+              if (c.user.login !== 'github-actions[bot]') continue;
+              let m;
+              while ((m = MARKER_RE.exec(c.body)) !== null) {
+                m[1].trim().split('\n').forEach(l => { const b = l.trim(); if (b) toDelete.add(b); });
+              }
+            }
+
+            if (toDelete.size === 0) {
+              core.info('No Jules branches to delete.');
+              return;
+            }
+
+            for (const branch of toDelete) {
+              try {
+                await github.rest.git.deleteRef({ owner, repo, ref: `heads/${branch}` });
+                core.info(`Deleted branch: ${branch}`);
+              } catch (e) {
+                if (e.status === 404 || e.status === 422) {
+                  core.info(`Branch already gone: ${branch}`);
+                } else {
+                  core.warning(`Could not delete ${branch}: ${e.message}`);
+                }
+              }
+            }
+
+      - name: Create and auto-merge reverse PR (dev -> main sync)
+        if: |
+          github.event.pull_request.base.ref == 'main' &&
+          github.event.pull_request.head.ref == 'dev'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+
+            // Check for existing open PR main→dev
+            const existing = await github.rest.pulls.list({
+              owner, repo,
+              base: 'dev',
+              head: `${owner}:main`,
+              state: 'open'
+            });
+            if (existing.data.length > 0) {
+              core.info(`Reverse PR already exists: #${existing.data[0].number}`);
+              return;
+            }
+
+            // Create reverse PR
+            const newPR = await github.rest.pulls.create({
+              owner, repo,
+              base: 'dev',
+              head: 'main',
+              title: 'chore: sync docs from main to dev [skip ci]',
+              body: [
+                'Automatically created after merging `dev` → `main`.',
+                'Syncs documentation updates back to `dev`.',
+                '',
+                '<!-- pr-sync-docs:reverse -->'
+              ].join('\n')
+            });
+            core.info(`Created reverse PR: #${newPR.data.number}`);
+
+            // Merge immediately
+            try {
+              await github.rest.pulls.merge({
+                owner, repo,
+                pull_number: newPR.data.number,
+                merge_method: 'merge',
+                commit_title: 'chore: sync docs from main to dev [skip ci]',
+                commit_message: 'Automated sync of documentation from main to dev.'
+              });
+              core.info(`Merged reverse PR #${newPR.data.number}`);
+            } catch (e) {
+              core.warning(`Could not auto-merge reverse PR #${newPR.data.number}: ${e.message}`);
+              core.warning('Merge may require manual action if branch protection rules are active.');
+            }
