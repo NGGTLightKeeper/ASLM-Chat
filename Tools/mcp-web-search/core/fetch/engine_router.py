@@ -1,25 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-engine_router.py — Telemetry-driven dispatcher replacing backend="auto".
-
-This module owns only routing logic and statistics tracking.
-Actual HTTP calls are handled by DDGSClient in ddgs_client.py,
-which calls record() here after each search attempt.
-
-Usage (from DDGSClient):
-    router = get_router()
-    engine = router.pick()
-    # ... run search with that engine ...
-    router.record(engine, Observation(...))
-
-    # Or use pick_pool for parallel probing:
-    engines = router.pick_pool(n=2)
-
-    # Status display:
-    router.status()  -> list[dict] sorted by score desc
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -32,26 +12,15 @@ from core.fetch.engine_stats import EngineStats, Observation, make_registry
 
 logger = logging.getLogger("core.fetch.engine_router")
 
-
-# ---------------------------------------------------------------------------
-# Per-engine parameter overrides
-# ---------------------------------------------------------------------------
-
-# Some DDGS backends need non-default params to work correctly.
-# Keys map engine name → kwargs passed to ddgs.text() / DDGSClient.search_to_results().
+# Some DDGS backends need non-default params (e.g. wikipedia region).
 ENGINE_REGION_OVERRIDE: dict[str, str] = {
     # region=wt-wt causes DDGS to build "wt.wikipedia.org" (non-existent).
-    # Force English region so the URL resolves correctly.
     "wikipedia": "en-us",
 }
 
 
-# ---------------------------------------------------------------------------
-# Cheap quality helpers (used by DDGSClient when recording observations)
-# ---------------------------------------------------------------------------
-
+# True if >= 50% of results have a non-trivial snippet (>= 30 chars).
 def _quality_pass(results: list[dict]) -> bool:
-    """True if >= 50% of results have a non-trivial snippet (>= 30 chars)."""
     if not results:
         return False
     good = sum(
@@ -61,27 +30,18 @@ def _quality_pass(results: list[dict]) -> bool:
     return good / len(results) >= 0.5
 
 
+# Stable hash of the top-5 URLs for stability tracking.
 def _result_hash(results: list[dict]) -> int:
-    """Stable hash of the top-5 URLs for stability tracking."""
     urls = "||".join(
         (r.get("href") or r.get("url") or "") for r in results[:5]
     )
     return int(hashlib.md5(urls.encode()).hexdigest()[:8], 16)
 
 
-# ---------------------------------------------------------------------------
-# Router
-# ---------------------------------------------------------------------------
-
+# Telemetry-driven dispatcher; thread-safe via RLock.
 class EngineRouter:
-    """
-    Telemetry-driven dispatcher.  Thread-safe (uses a single Lock).
 
-    All state lives in self.registry — a dict[engine_name, EngineStats].
-    Tiers are recomputed from stats on every pick(); no caching needed
-    since each EngineStats.score is a pure property over its window.
-    """
-
+    # Wire registry and reentrant lock for nested pick_pool calls.
     def __init__(
         self,
         registry: Optional[dict[str, EngineStats]] = None,
@@ -89,28 +49,24 @@ class EngineRouter:
         self.registry: dict[str, EngineStats] = registry or make_registry()
         self._lock = threading.RLock()  # RLock: pick_pool() calls pick() while holding the lock
 
-    # --- Tier views ---------------------------------------------------------
-
+    # Engines currently in the hot tier.
     def hot(self) -> list[EngineStats]:
         return [e for e in self.registry.values() if e.tier == "hot"]
 
+    # Engines currently in the warm tier.
     def warm(self) -> list[EngineStats]:
         return [e for e in self.registry.values() if e.tier == "warm"]
 
+    # Engines currently in the cold tier.
     def cold(self) -> list[EngineStats]:
         return [e for e in self.registry.values() if e.tier == "cold"]
 
+    # Engines with an active circuit-breaker trip.
     def tripped(self) -> list[EngineStats]:
         return [e for e in self.registry.values() if e.tier == "tripped"]
 
-    # --- Pick logic ---------------------------------------------------------
-
+    # Return the single best backend name (hot → warm → cold; 10% exploration).
     def pick(self) -> str:
-        """
-        Return the single best backend name.
-        Prefers hot tier, falls back to warm, then cold.
-        Within each tier: 90% highest-score, 10% random exploration.
-        """
         with self._lock:
             candidates = self.hot() or self.warm() or self.cold()
             if not candidates:
@@ -119,16 +75,8 @@ class EngineRouter:
                 return random.choice(candidates).name
             return max(candidates, key=lambda e: e.score).name
 
+    # Return up to n backend names for parallel probing (hot, then warm, then cold).
     def pick_pool(self, n: int = 2) -> list[str]:
-        """
-        Return up to n backend names for parallel probing.
-        Prefer hot engines, then warm, then cold to fill the pool.
-
-        Cold-start matters because some callers run every query in a fresh
-        subprocess, so the router has no telemetry yet. In that situation all
-        engines start as "cold"; returning only one backend makes the search
-        path unnecessarily fragile.
-        """
         with self._lock:
             pool: list[str] = []
             hot = sorted(self.hot(), key=lambda e: e.score, reverse=True)
@@ -142,8 +90,8 @@ class EngineRouter:
                 pool = [self.pick()]
             return pool
 
+    # Return non-tripped engines not in exclude, sorted by score.
     def available(self, exclude: set[str]) -> list[str]:
-        """Return non-tripped engines not in the exclude set, sorted by score."""
         with self._lock:
             return [
                 e.name
@@ -151,10 +99,8 @@ class EngineRouter:
                 if not e.is_tripped and e.name not in exclude
             ]
 
-    # --- Telemetry recording ------------------------------------------------
-
+    # Record one observation and update engine reputation.
     def record(self, engine: str, obs: Observation) -> None:
-        """Record one observation for an engine. Thread-safe."""
         with self._lock:
             stats = self.registry.get(engine)
             if stats is not None:
@@ -165,10 +111,8 @@ class EngineRouter:
                     obs.quality_pass, stats.tier, stats.score,
                 )
 
-    # --- Status report ------------------------------------------------------
-
+    # Per-engine summary rows sorted by score (for status endpoints).
     def status(self) -> list[dict]:
-        """Sorted summary of all engines by score descending."""
         with self._lock:
             return sorted(
                 [e.summary() for e in self.registry.values()],
@@ -177,18 +121,12 @@ class EngineRouter:
             )
 
 
-# ---------------------------------------------------------------------------
-# Module-level singleton
-# ---------------------------------------------------------------------------
-
 _router: Optional[EngineRouter] = None
 _router_lock = threading.Lock()
 
-def get_router() -> EngineRouter:
-    """Return the lazily initialized global EngineRouter singleton.
 
-    On first call, also registers hosted engines that have an API key configured.
-    """
+# Lazily initialized global EngineRouter; registers hosted engines on first call.
+def get_router() -> EngineRouter:
     global _router
     if _router is None:
         with _router_lock:

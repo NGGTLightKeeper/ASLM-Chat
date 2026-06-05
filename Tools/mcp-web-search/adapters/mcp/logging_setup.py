@@ -1,22 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Centralized logging setup for mcp-web-search.
-
-Call setup_logging() once at MCP server startup.
-Each service emits to its own dedicated log file in logs/.
-
-Log files
----------
-logs/web_search.log
-logs/read_page.log
-logs/web_search_trace.log
-logs/read_page_trace.log
-logs/mcp_trace.log
-logs/core.log
-logs/gte.log
-"""
-
 from __future__ import annotations
 
 import logging
@@ -34,21 +17,19 @@ _SERVICE_LOGS: dict[str, str] = {
     "adapters.mcp.server": "mcp_trace.log",
     "mcp_server_bridge": "mcp_trace.log",
     "core": "core.log",
-    "core.query.gte_evidence_reranker": "gte.log",
 }
 
 _FORMAT = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
 _DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
 
+# Configure rotating file handlers for every service logger.
 def setup_logging(
     log_dir: Path | None = None,
     level: int = logging.INFO,
     max_bytes: int = 5 * 1024 * 1024,
     backup_count: int = 3,
 ) -> None:
-    """Configure rotating file handlers for every service logger."""
-
     target_dir = log_dir or _LOG_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
 

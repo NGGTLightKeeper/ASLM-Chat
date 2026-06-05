@@ -1,16 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""External exploration state for the sandbox session.
-
-Tracks what the model has already looked at, detects loops, and
-provides compact context summaries that help the controller decide
-which representation to serve next.
-
-This state lives outside the model — the model cannot see or modify it
-directly.  The controller reads it before choosing a response and
-updates it after every tool call.
-"""
-
 from __future__ import annotations
 
 import time
@@ -27,9 +16,8 @@ MAX_LOOP_COUNTERS = 1000
 MAX_REPRESENTATIONS_PER_PATH = 20
 
 
+# Keep singleton state bounded during long-lived supervisor sessions.
 def _trim_dict_oldest(mapping: dict[Any, Any], max_items: int) -> None:
-    """Keep singleton state bounded during long-lived supervisor sessions."""
-
     overflow = len(mapping) - max_items
     if overflow <= 0:
         return
@@ -37,10 +25,9 @@ def _trim_dict_oldest(mapping: dict[Any, Any], max_items: int) -> None:
         mapping.pop(key, None)
 
 
+# Per-session exploration memory.
 @dataclass
 class ExplorationState:
-    """Per-session exploration memory."""
-
     # path → number of times touched by any read-like intent
     touched_paths: dict[str, int] = field(default_factory=dict)
 
@@ -63,8 +50,9 @@ class ExplorationState:
     # Persisted task working directory (relative to task_root, always inside it)
     task_cwd: str = "."
 
-    # ── Recording ────────────────────────────────────────────────
+    # Recording
 
+    # Record that a path was accessed with a given intent.
     def record_touch(
         self,
         path: str | None,
@@ -72,8 +60,6 @@ class ExplorationState:
         window: tuple[int, int] | None = None,
         representation: str | None = None,
     ) -> None:
-        """Record that a path was accessed with a given intent."""
-
         if path is None:
             return
 
@@ -98,9 +84,8 @@ class ExplorationState:
                 del served[: len(served) - MAX_REPRESENTATIONS_PER_PATH]
             _trim_dict_oldest(self.representations_served, MAX_TRACKED_PATHS)
 
+    # Record a search query.
     def record_search(self, pattern: str, path: str, hit_count: int) -> None:
-        """Record a search query."""
-
         self.last_searches.append({
             "pattern": pattern,
             "path": path,
@@ -111,40 +96,37 @@ class ExplorationState:
         if len(self.last_searches) > 10:
             self.last_searches = self.last_searches[-10:]
 
+    # Cache a repo survey result.
     def record_survey(self, data: dict[str, Any]) -> None:
-        """Cache a repo survey result."""
-
         self.repo_survey_cache = data
         self.repo_survey_ts = time.time()
 
+    # Invalidate the survey cache after a filesystem mutation.
     def invalidate_survey_cache(self) -> None:
-        """Invalidate the survey cache after a filesystem mutation."""
-
         self.repo_survey_cache = None
         self.repo_survey_ts = 0.0
-    # ── Loop detection ───────────────────────────────────────────
 
+    # Loop detection
+
+    # Return True when the same intent+path has been hit too many times.
     def should_break_loop(
         self,
         path: str | None,
         intent: str,
         threshold: int = LOOP_BREAK_THRESHOLD,
     ) -> bool:
-        """Return True when the same intent+path has been hit too many times."""
-
         if path is None:
             return False
         key = f"{intent}:{path}"
         return self.loop_counters.get(key, 0) >= threshold
 
+    # Return fraction of [start, end] already covered by prior reads.
     def get_read_overlap(
         self,
         path: str,
         start_line: int,
         end_line: int,
     ) -> float:
-        """Return fraction of [start, end] already covered by prior reads."""
-
         windows = self.read_windows.get(path, [])
         if not windows:
             return 0.0
@@ -160,15 +142,12 @@ class ExplorationState:
         overlap = requested & covered
         return len(overlap) / len(requested)
 
-    # ── Representation selection ─────────────────────────────────
+    # Representation selection
 
+    # Suggest the next representation to serve for this path.
+    # If the model has already seen "raw" multiple times, switch to "map".
+    # If it has seen "map", switch to "outline" or "search_hits".
     def get_best_representation(self, path: str, intent: str) -> str:
-        """Suggest the next representation to serve for this path.
-
-        If the model has already seen "raw" multiple times, switch to "map".
-        If it has seen "map", switch to "outline" or "search_hits".
-        """
-
         served = self.representations_served.get(path, [])
         raw_count = served.count("raw")
         map_count = served.count("map")
@@ -179,23 +158,21 @@ class ExplorationState:
             return "outline"
         return "raw"
 
+    # Return True if a recent survey is cached.
     def has_survey_cache(self, max_age_s: float = 300.0) -> bool:
-        """Return True if a recent survey is cached."""
-
         if self.repo_survey_cache is None:
             return False
         return (time.time() - self.repo_survey_ts) < max_age_s
 
-    # ── Unread regions ───────────────────────────────────────────
+    # Unread regions
 
+    # Return contiguous unread line ranges for a file.
     def get_unread_windows(
         self,
         path: str,
         total_lines: int,
         min_gap: int = 20,
     ) -> list[tuple[int, int]]:
-        """Return contiguous unread line ranges for a file."""
-
         windows = self.read_windows.get(path, [])
         if not windows:
             return [(1, total_lines)]
@@ -227,14 +204,11 @@ class ExplorationState:
 
         return ranges
 
-    # ── Compact context for injection ────────────────────────────
+    # Compact context for injection
 
+    # Build a compact exploration summary for injection into responses.
+    # Returns None if the state is too sparse to be useful.
     def compact_context(self, max_items: int = 5) -> str | None:
-        """Build a compact exploration summary for injection into responses.
-
-        Returns None if the state is too sparse to be useful.
-        """
-
         if not self.touched_paths:
             return None
 
@@ -265,19 +239,13 @@ class ExplorationState:
 
         return "\n".join(parts) if len(parts) > 1 else None
 
-    # ── Task CWD management ──────────────────────────────────────
+    # Task CWD management
 
+    # Update task_cwd if final_cwd is inside task_root.
+    # final_cwd_container: absolute container path from bash wrapper
+    # (e.g. '/workspace/_sandbox/src'). Returns True if task_cwd was updated,
+    # False if it stayed the same.
     def update_task_cwd(self, final_cwd_container: str) -> bool:
-        """Update task_cwd if final_cwd is inside task_root.
-
-        Args:
-            final_cwd_container: absolute container path from bash wrapper
-                                 (e.g. '/workspace/_sandbox/src')
-
-        Returns:
-            True if task_cwd was updated, False if it stayed the same.
-        """
-
         if not final_cwd_container:
             return False
 
@@ -294,30 +262,22 @@ class ExplorationState:
         # Outside task root — don't update task_cwd
         return False
 
+    # Resolve the effective cwd for a bash command.
+    # Contract: cwd absent or None → use persisted task_cwd; cwd == "." → use
+    # persisted task_cwd; cwd == explicit → one-shot override (does not mutate state).
     def get_effective_cwd(self, explicit_cwd: str | None) -> str:
-        """Resolve the effective cwd for a bash command.
-
-        Contract:
-          - cwd absent or None  → use persisted task_cwd
-          - cwd == "."          → use persisted task_cwd
-          - cwd == explicit     → one-shot override (does not mutate state)
-        """
-
         if explicit_cwd is None or explicit_cwd == "." or explicit_cwd == "":
             return self.task_cwd
         return explicit_cwd
 
+    # Format execution_ended_in for display.
+    # Returns None if the command stayed in task_cwd (no need to show).
+    # Returns relative path if inside task-space.
+    # Returns 'container:/path' if outside task-space.
     def format_execution_ended_in(
         self,
         final_cwd_container: str,
     ) -> str | None:
-        """Format execution_ended_in for display.
-
-        Returns None if the command stayed in task_cwd (no need to show).
-        Returns relative path if inside task-space.
-        Returns 'container:/path' if outside task-space.
-        """
-
         if not final_cwd_container:
             return None
 
@@ -337,22 +297,20 @@ class ExplorationState:
         return rel
 
 
-# ── Singleton per server process ─────────────────────────────────────
+# Singleton per server process
 
 _session_state: ExplorationState | None = None
 
 
+# Return the current session state, creating it if needed.
 def get_session_state() -> ExplorationState:
-    """Return the current session state, creating it if needed."""
-
     global _session_state
     if _session_state is None:
         _session_state = ExplorationState()
     return _session_state
 
 
+# Reset the session state (for testing).
 def reset_session_state() -> None:
-    """Reset the session state (for testing)."""
-
     global _session_state
     _session_state = None

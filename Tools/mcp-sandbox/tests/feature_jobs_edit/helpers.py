@@ -16,6 +16,7 @@ if str(SRC) not in sys.path:
 os.environ.setdefault("SANDBOX_HOST_WORKSPACE", str(ROOT / ".test_workspace"))
 
 
+# Clear task_root children and return the task_root path.
 def reset_task_root():
     from sandbox import workspace
 

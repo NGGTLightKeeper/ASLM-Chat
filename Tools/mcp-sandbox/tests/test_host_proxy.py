@@ -24,6 +24,7 @@ import sandbox.docker_host as docker_host_mod  # noqa: E402
 container_mod = docker_host_mod
 
 
+# Fake subprocess with configurable stdout/stderr and wait hook.
 class FakeProcess:
     def __init__(
         self,
@@ -49,6 +50,7 @@ class FakeProcess:
         return self.returncode
 
 
+# stdin reader that blocks until closed.
 class BlockingInput:
     def __init__(self) -> None:
         self.closed = threading.Event()
@@ -63,6 +65,7 @@ class BlockingInput:
         self.closed.set()
 
 
+# Stream that only allows read1 (not blocking read).
 class Read1Stream:
     def __init__(self, chunks: list[bytes]) -> None:
         self.chunks = list(chunks)

@@ -1,9 +1,12 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import html
 import re
 
 
+# Strip tags from a small HTML fragment and unescape entities.
 def strip_html_fragment(text: str) -> str:
     clean = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     clean = re.sub(r"</p\s*>", "\n\n", clean, flags=re.IGNORECASE)
@@ -11,6 +14,7 @@ def strip_html_fragment(text: str) -> str:
     return html.unescape(clean).strip()
 
 
+# Format a price string as grouped integer digits (space thousands separator).
 def format_price_value(value: str) -> str:
     digits = re.sub(r"[^\d]", "", value or "")
     if not digits:
@@ -18,6 +22,7 @@ def format_price_value(value: str) -> str:
     return f"{int(digits):,}".replace(",", " ")
 
 
+# Normalize schema.org or free-text availability labels for display.
 def normalize_availability(value: str) -> str:
     text = strip_html_fragment(value or "")
     text = re.sub(r"\s+", " ", text).strip(" \t\r\n:;,.-")
@@ -58,6 +63,7 @@ def normalize_availability(value: str) -> str:
     return text
 
 
+# Prepend structured retail fields (price, availability, specs) above markdown body.
 def prepend_retail_metadata(markdown: str, meta: dict[str, str]) -> str:
     if not markdown or not meta:
         return markdown

@@ -1,4 +1,4 @@
-﻿# Copyright NGGT.LightKeeper. All Rights Reserved.
+﻿# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+# Character and window limits for compression prompts and stored summaries.
 COMPRESSION_ENTRY_MAX_CHARS = 2400
 ANALYTIC_ENTRY_MAX_CHARS = 360
 MEMORY_ENTRY_MAX_CHARS = 1200
@@ -15,6 +16,7 @@ COMPRESSION_FIRST_CONTEXT_ENTRIES = 3
 COMPRESSION_LAST_CONTEXT_ENTRIES = 5
 TOOL_OBSERVATION_MAX_CHARS = 700
 
+# Hosts and markers stripped or down-ranked during memory sanitization.
 NOISY_URL_HOSTS = {
     "127.0.0.1",
     "localhost",
@@ -29,6 +31,9 @@ RAW_TOOL_NOISE_MARKERS = (
     "put the citation handle",
     "search results for:",
 )
+
+
+# Snapshot returned when evaluating whether history compression should run.
 @dataclass
 class CompressionDecision:
     enabled: bool
@@ -37,6 +42,7 @@ class CompressionDecision:
     reason: str
 
 
+# Resolve context window size from model info, then from runtime metadata when available.
 def resolve_context_window_tokens(
     model_info_payload: dict[str, Any] | None,
     *,
@@ -44,8 +50,6 @@ def resolve_context_window_tokens(
     active_engine: str = "",
     active_model: str = "",
 ) -> int:
-    """Resolve context window from model payload first, then runtime metadata file."""
-
     def _positive_int(value: Any) -> int:
         if isinstance(value, bool) or value is None:
             return 0
@@ -55,6 +59,7 @@ def resolve_context_window_tokens(
             return 0
         return number if number > 0 else 0
 
+    # Prefer explicit limits from the active model payload.
     payload_model_limit = 0
     if isinstance(model_info_payload, dict):
         defaults = model_info_payload.get("defaults", {})
@@ -81,6 +86,7 @@ def resolve_context_window_tokens(
     if runtime_metadata_path is None:
         return payload_model_limit
 
+    # Fall back to the on-disk runtime metadata registry.
     try:
         payload = json.loads(runtime_metadata_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -95,6 +101,7 @@ def resolve_context_window_tokens(
 
     model_key = f"{active_engine}:{active_model}" if active_engine and active_model else ""
     targets: list[dict[str, Any]] = []
+    # Search active model first, then the engine default, then any registered model.
     if model_key and isinstance(models.get(model_key), dict):
         targets.append(models[model_key])
     active = payload.get("active", {})
@@ -126,6 +133,7 @@ def resolve_context_window_tokens(
     return payload_model_limit
 
 
+# Decide whether history compression should run for the current character budget.
 def decide_compression(
     *,
     used_history_chars: int,
@@ -157,6 +165,7 @@ def decide_compression(
     )
 
 
+# Remove model control tokens and thinking wrappers from transcript text.
 def _strip_control_tokens(text: str) -> str:
     cleaned = str(text or "")
     cleaned = re.sub(r"<\|start\|>.*?<\|message\|>", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
@@ -164,6 +173,7 @@ def _strip_control_tokens(text: str) -> str:
     return cleaned.strip()
 
 
+# Format one history entry as role-prefixed text for generic compression prompts.
 def _entry_text(entry: dict[str, Any], max_chars: int = COMPRESSION_ENTRY_MAX_CHARS) -> str:
     role = str(entry.get("role") or "unknown")
     content = _strip_control_tokens(str(entry.get("content") or ""))
@@ -175,6 +185,7 @@ def _entry_text(entry: dict[str, Any], max_chars: int = COMPRESSION_ENTRY_MAX_CH
     return f"{role}: {raw}" if raw else f"{role}:"
 
 
+# Return True when a URL points at localhost, Bing, or other low-value hosts.
 def _is_noisy_url(url: str) -> bool:
     raw = str(url or "").strip().strip("\"'`<>").rstrip(".,;:)]}")
     if not raw:
@@ -189,6 +200,7 @@ def _is_noisy_url(url: str) -> bool:
     return False
 
 
+# Normalize a URL string and drop noisy or empty values.
 def _clean_url(url: str) -> str:
     raw = str(url or "").strip().strip("\"'`<>").rstrip(".,;:)]}")
     if not raw or _is_noisy_url(raw):
@@ -196,6 +208,7 @@ def _clean_url(url: str) -> str:
     return raw
 
 
+# Detect host/path strings that should be treated as URLs rather than file paths.
 def _looks_like_web_host_path(value: str) -> bool:
     text = str(value or "").strip().lower()
     if not text:
@@ -205,9 +218,137 @@ def _looks_like_web_host_path(value: str) -> bool:
     return bool(re.match(r"^(?:www\.)?[^/\\]+\.(?:com|org|net|ru|io|ai|dev|gov|edu|co|tv)(?:[/\\].*)?$", text))
 
 
-def _clean_memory_text(text: str) -> str:
-    """Remove repeated tool boilerplate while preserving useful facts."""
+# Method/attribute tails from source code that must not be treated as file extensions.
+_CODE_TOKEN_EXTENSIONS = frozenset(
+    {
+        "strip",
+        "match",
+        "split",
+        "join",
+        "find",
+        "read",
+        "write",
+        "append",
+        "extend",
+        "lower",
+        "upper",
+        "format",
+        "draw",
+        "add",
+        "get",
+        "set",
+        "empty",
+        "multiline",
+        "findall",
+        "startswith",
+        "endswith",
+        "enqueue",
+        "isenabled",
+        "visible",
+        "width",
+        "opacity",
+        "count",
+        "take",
+        "text",
+    }
+)
 
+
+# Return the final path segment from a Windows or POSIX path string.
+def _file_basename(value: str) -> str:
+    return str(value or "").rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+
+
+# Return the extension after the last dot, matching Path.suffix semantics.
+def _file_extension(value: str) -> str:
+    return Path(_file_basename(value)).suffix
+
+
+# Return the extension body without the leading dot.
+def _extension_body(value: str) -> str:
+    return _file_extension(value).lstrip(".")
+
+
+# Reject identifier.token shapes produced by the file regex over source code.
+def _looks_like_code_fragment(value: str) -> bool:
+    name = _file_basename(value)
+    if "/" in value or "\\" in value:
+        return False
+    if "." not in name:
+        return True
+
+    stem, _, ext = name.rpartition(".")
+    if not stem or not ext:
+        return True
+    if ext.isupper() and len(ext) > 4:
+        return True
+    if len(stem) <= 2 and stem.isascii() and stem.islower():
+        return True
+    if len(ext) == 1:
+        return True
+    if ext != ext.lower() and ext != ext.upper():
+        return True
+    return ext.lower() in _CODE_TOKEN_EXTENSIONS
+
+
+# Validate a candidate file path extracted from chat text.
+def _looks_like_valid_path(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if re.search(r"\\[nr]\s", text):
+        return False
+    if "=" in text or "(" in text or ")" in text:
+        return False
+    if re.fullmatch(r"\d+(\.\d+)?", text):
+        return False
+    if re.search(r"\s{2,}", text):
+        return False
+    if len(text.split()) > 4:
+        return False
+    if "/" not in text and "\\" not in text:
+        extension = _file_extension(text)
+        if not re.fullmatch(r"\.[A-Za-z0-9]{1,12}", extension):
+            return False
+        if _looks_like_code_fragment(text):
+            return False
+    return True
+
+
+# Lowercased assistant phrases that indicate navigation filler, not durable facts.
+_ASSISTANT_NAV_PREFIXES = (
+    "assistant: now let me",
+    "assistant: let me",
+    "assistant: let me now",
+    "assistant: let me check",
+    "assistant: let me look",
+    "assistant: let me read",
+    "assistant: let me verify",
+    "assistant: let me do",
+    "assistant: let me continue",
+    "assistant: let me get",
+    "assistant: now i",
+)
+
+
+# Return True when text matches known assistant navigation openers.
+def _is_assistant_navigation(text: str) -> bool:
+    lowered = str(text or "").lower().strip()
+    return any(lowered.startswith(prefix) for prefix in _ASSISTANT_NAV_PREFIXES)
+
+
+# Require minimum length and reject title-case-only heading fragments.
+def _passes_semantic_threshold(text: str) -> bool:
+    if len(text) < 15:
+        return False
+    bare = text.rstrip(":").strip()
+    if bare and bare == bare.title():
+        return False
+    return True
+
+
+# Remove repeated tool boilerplate while preserving useful facts.
+def _clean_memory_text(text: str) -> str:
     lines: list[str] = []
     skip_citation_block = False
     for raw_line in _strip_control_tokens(text).splitlines():
@@ -228,6 +369,7 @@ def _clean_memory_text(text: str) -> str:
     return "\n".join(lines).strip()
 
 
+# Build a sanitized role-prefixed memory line for one transcript entry.
 def _entry_memory_text(entry: dict[str, Any], max_chars: int = MEMORY_ENTRY_MAX_CHARS) -> str:
     role = str(entry.get("role") or "unknown").lower()
     content = _clean_memory_text(str(entry.get("content") or ""))
@@ -236,6 +378,7 @@ def _entry_memory_text(entry: dict[str, Any], max_chars: int = MEMORY_ENTRY_MAX_
     if not raw:
         return f"{role}:"
 
+    # Collapse web-search tool dumps into a short structured observation.
     if role == "tool":
         site_match = re.search(r"\*\*Site:\*\*\s*([^\n]+)", raw)
         url_match = re.search(r"\*\*URL:\*\*\s*([^\n]+)", raw)
@@ -270,9 +413,8 @@ def _entry_memory_text(entry: dict[str, Any], max_chars: int = MEMORY_ENTRY_MAX_
     return f"{role}: {raw}" if raw else f"{role}:"
 
 
+# Return a compact observation from a tool result without raw tool-call logs.
 def _tool_observation_text(entry: dict[str, Any], max_chars: int = TOOL_OBSERVATION_MAX_CHARS) -> str:
-    """Return a compact observation from a tool result without raw tool-call logs."""
-
     text = _clean_memory_text(str(entry.get("content") or ""))
     if not text:
         return ""
@@ -317,6 +459,7 @@ def _tool_observation_text(entry: dict[str, Any], max_chars: int = TOOL_OBSERVAT
     return observation
 
 
+# Choose the best compact text representation for one compression-prompt entry.
 def _compression_prompt_entry_text(entry: dict[str, Any]) -> str:
     role = str(entry.get("role") or "").lower()
     if role == "tool":
@@ -325,9 +468,8 @@ def _compression_prompt_entry_text(entry: dict[str, Any]) -> str:
     return _entry_memory_text(entry, max_chars=1000)
 
 
+# Keep the first and last entries around the compressed span for model context.
 def _scoped_context_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep a small stable raw-context window around the compressed span."""
-
     if len(entries) <= COMPRESSION_FIRST_CONTEXT_ENTRIES + COMPRESSION_LAST_CONTEXT_ENTRIES:
         return list(entries)
     first = entries[:COMPRESSION_FIRST_CONTEXT_ENTRIES]
@@ -335,6 +477,7 @@ def _scoped_context_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any
     return [*first, *last]
 
 
+# Detect text that still looks like an unprocessed tool or search dump.
 def _looks_like_raw_tool_dump(text: str) -> bool:
     lowered = str(text or "").lower()
     if any(marker in lowered for marker in RAW_TOOL_NOISE_MARKERS):
@@ -350,12 +493,14 @@ def _looks_like_raw_tool_dump(text: str) -> bool:
     return False
 
 
+# Normalize, filter, and dedupe semantic list fields on a summary payload.
 def _sanitize_semantic_items(
     values: list[Any],
     *,
     limit: int,
     max_chars: int,
     allow_tool_memory: bool = False,
+    apply_semantic_threshold: bool = False,
 ) -> list[str]:
     cleaned: list[str] = []
     for value in values:
@@ -366,17 +511,24 @@ def _sanitize_semantic_items(
             continue
         if not allow_tool_memory and _looks_like_raw_tool_dump(text):
             continue
+        if _is_assistant_navigation(text):
+            continue
+        if apply_semantic_threshold and not _passes_semantic_threshold(text):
+            continue
         if len(text) > max_chars:
             text = text[:max_chars].rstrip() + "..."
         cleaned.append(text)
     return _dedupe_strings(cleaned, limit=limit)
 
 
+# Sanitize open_tasks with stricter semantic thresholds than generic lists.
 def _sanitize_open_tasks(values: list[Any], *, limit: int = 12) -> list[str]:
     tasks: list[str] = []
     for value in values:
         text = _clean_memory_text(str(value or ""))
         if not text:
+            continue
+        if not _passes_semantic_threshold(text):
             continue
         if len(text) > ANALYTIC_ENTRY_MAX_CHARS:
             text = text[:ANALYTIC_ENTRY_MAX_CHARS].rstrip() + "..."
@@ -384,6 +536,7 @@ def _sanitize_open_tasks(values: list[Any], *, limit: int = 12) -> list[str]:
     return _dedupe_strings(tasks, limit=limit)
 
 
+# Deduplicate strings case-insensitively while preserving first-seen order.
 def _dedupe_strings(values: list[str], *, limit: int = 64) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
@@ -401,6 +554,7 @@ def _dedupe_strings(values: list[str], *, limit: int = 64) -> list[str]:
     return result
 
 
+# Extract non-trivial lines suitable for fact or observation harvesting.
 def _line_candidates(text: str) -> list[str]:
     raw = _strip_control_tokens(text)
     candidates: list[str] = []
@@ -414,6 +568,7 @@ def _line_candidates(text: str) -> list[str]:
     return candidates
 
 
+# Return the canonical empty structured summary object.
 def _empty_summary_payload() -> dict[str, Any]:
     return {
         "summary_version": 1,
@@ -430,6 +585,7 @@ def _empty_summary_payload() -> dict[str, Any]:
     }
 
 
+# Build a fallback summary payload by scanning overflow entries without a model.
 def _raw_context_payload(
     overflow_entries: list[dict[str, Any]],
     recent_user_messages: list[str],
@@ -445,6 +601,7 @@ def _raw_context_payload(
     url_pattern = re.compile(r"https?://[^\s)>\]\"']+", flags=re.IGNORECASE)
     file_pattern = re.compile(r"(?:[A-Za-z]:\\[^\n\r\t*?\"<>|]+|[\w./\\-]+\.[A-Za-z0-9]{1,12})")
 
+    # Harvest URLs, paths, tool names, and memory lines from each overflow turn.
     for entry in overflow_entries:
         role = str(entry.get("role") or "").strip().lower()
         content = _strip_control_tokens(str(entry.get("content") or ""))
@@ -457,7 +614,9 @@ def _raw_context_payload(
         files.extend(
             file_name
             for file_name in (match.group(0).strip(".,;:`'\"") for match in file_pattern.finditer(text))
-            if file_name and not _looks_like_web_host_path(file_name)
+            if file_name
+            and not _looks_like_web_host_path(file_name)
+            and _looks_like_valid_path(file_name)
         )
 
         if role == "tool":
@@ -495,11 +654,13 @@ def _raw_context_payload(
     }
 
 
+# Clamp and sanitize every field on a model-produced summary payload.
 def _sanitize_summary_payload(model_payload: dict[str, Any]) -> dict[str, Any]:
     merged = dict(model_payload) if isinstance(model_payload, dict) else {}
     merged["summary_version"] = 1
     merged.pop("history_highlights", None)
 
+    # Normalize long narrative fields first.
     work_summary = _clean_memory_text(str(merged.get("work_summary") or ""))
     if len(work_summary) > 6000:
         work_summary = work_summary[:6000].rstrip() + "..."
@@ -516,6 +677,7 @@ def _sanitize_summary_payload(model_payload: dict[str, Any]) -> dict[str, Any]:
             text = text[:max_chars].rstrip() + "..."
         merged[key] = text
 
+    # Sanitize list-shaped semantic fields with per-field limits.
     semantic_limits = {
         "recent_user_messages": (12, 900, False),
         "key_facts": (48, 420, False),
@@ -533,17 +695,26 @@ def _sanitize_summary_payload(model_payload: dict[str, Any]) -> dict[str, Any]:
             limit=limit,
             max_chars=max_chars,
             allow_tool_memory=allow_tool_memory,
+            apply_semantic_threshold=(key == "key_facts"),
         )
 
     artifacts = merged.get("artifacts") if isinstance(merged.get("artifacts"), dict) else {}
     merged["artifacts"] = {
-        "files": _dedupe_strings([str(file_name) for file_name in (artifacts.get("files") if isinstance(artifacts.get("files"), list) else []) if not _looks_like_web_host_path(str(file_name))], limit=32),
+        "files": _dedupe_strings(
+            [
+                str(file_name)
+                for file_name in (artifacts.get("files") if isinstance(artifacts.get("files"), list) else [])
+                if not _looks_like_web_host_path(str(file_name)) and _looks_like_valid_path(str(file_name))
+            ],
+            limit=32,
+        ),
         "urls": _dedupe_strings([url for url in (_clean_url(str(url)) for url in (artifacts.get("urls") if isinstance(artifacts.get("urls"), list) else [])) if url], limit=24),
         "tools_used": _dedupe_strings(artifacts.get("tools_used") if isinstance(artifacts.get("tools_used"), list) else [], limit=32),
     }
     return merged
 
 
+# Merge model summary fields with deterministic raw-context harvest results.
 def _merge_model_summary_with_raw_context(model_payload: dict[str, Any], raw_payload: dict[str, Any]) -> dict[str, Any]:
     merged = _sanitize_summary_payload(model_payload)
 
@@ -562,20 +733,30 @@ def _merge_model_summary_with_raw_context(model_payload: dict[str, Any], raw_pay
     artifacts = merged.get("artifacts") if isinstance(merged.get("artifacts"), dict) else {}
     raw_artifacts = raw_payload.get("artifacts") if isinstance(raw_payload.get("artifacts"), dict) else {}
     merged["artifacts"] = {
-        "files": _dedupe_strings([str(file_name) for file_name in [*(artifacts.get("files") if isinstance(artifacts.get("files"), list) else []), *(raw_artifacts.get("files") or [])] if not _looks_like_web_host_path(str(file_name))], limit=32),
+        "files": _dedupe_strings(
+            [
+                str(file_name)
+                for file_name in [
+                    *(artifacts.get("files") if isinstance(artifacts.get("files"), list) else []),
+                    *(raw_artifacts.get("files") or []),
+                ]
+                if not _looks_like_web_host_path(str(file_name)) and _looks_like_valid_path(str(file_name))
+            ],
+            limit=32,
+        ),
         "urls": _dedupe_strings([url for url in (_clean_url(str(url)) for url in [*(artifacts.get("urls") if isinstance(artifacts.get("urls"), list) else []), *(raw_artifacts.get("urls") or [])]) if url], limit=24),
         "tools_used": _dedupe_strings([*(artifacts.get("tools_used") if isinstance(artifacts.get("tools_used"), list) else []), *(raw_artifacts.get("tools_used") or [])], limit=32),
     }
     return merged
 
 
+# Serialize a summary payload into the stored compression marker text.
 def _summary_text_from_payload(payload: dict[str, Any]) -> str:
     return "[Conversation History Summary Base]\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
+# Fit a summary into a character budget while preserving valid JSON.
 def fit_summary_text(summary_payload: dict[str, Any], max_chars: int) -> tuple[str, dict[str, Any]]:
-    """Fit a summary into a character budget while preserving valid JSON."""
-
     try:
         budget = int(max_chars)
     except (TypeError, ValueError):
@@ -594,6 +775,7 @@ def fit_summary_text(summary_payload: dict[str, Any], max_chars: int) -> tuple[s
     risk_flags.append("Compression summary was size-fitted; low-priority excerpts may be omitted.")
     fitted["risk_flags"] = risk_flags
 
+    # Drop or truncate lower-priority fields until the serialized summary fits.
     shrink_order = [
         "reflection_summary",
         "work_summary",
@@ -648,6 +830,7 @@ def fit_summary_text(summary_payload: dict[str, Any], max_chars: int) -> tuple[s
     return _summary_text_from_payload(fitted), fitted
 
 
+# Parse a JSON object from raw model text, including fenced or prose-wrapped payloads.
 def _extract_json_object(text: str) -> dict[str, Any] | None:
     raw = str(text or "").strip()
     if not raw:
@@ -671,11 +854,13 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
+# Return True when a Markdown field value is effectively empty.
 def _empty_markdown_value(text: str) -> bool:
     normalized = re.sub(r"\s+", " ", str(text or "").strip().lower())
     return normalized in {"", "none", "n/a", "na", "-", "(none)", "empty"}
 
 
+# Parse bullet list lines from a Markdown section body.
 def _markdown_list_items(lines: list[str]) -> list[str]:
     items: list[str] = []
     for line in lines:
@@ -686,12 +871,14 @@ def _markdown_list_items(lines: list[str]) -> list[str]:
     return items
 
 
+# Join non-empty Markdown section lines into a single block string.
 def _markdown_block(lines: list[str]) -> str:
     cleaned = [str(line or "").strip() for line in lines]
     text = "\n".join(line for line in cleaned if not _empty_markdown_value(line)).strip()
     return text
 
 
+# Normalize a Markdown heading or label for canonical section lookup.
 def _normalize_markdown_heading(heading: str) -> str:
     text = str(heading or "").strip().lower().strip("*_`:")
     text = re.sub(r"[_-]+", " ", text)
@@ -699,6 +886,7 @@ def _normalize_markdown_heading(heading: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+# Canonical Markdown section titles for model compression output.
 MARKDOWN_SECTION_HEADINGS = {
     "session_goal": "Session Goal",
     "current_focus": "Current Focus",
@@ -715,16 +903,19 @@ MARKDOWN_SECTION_HEADINGS = {
 }
 
 
+# Map normalized headings and aliases back to internal summary field names.
 NORMALIZED_MARKDOWN_SECTIONS = {}
 for field_name, heading in MARKDOWN_SECTION_HEADINGS.items():
     NORMALIZED_MARKDOWN_SECTIONS[_normalize_markdown_heading(field_name)] = field_name
     NORMALIZED_MARKDOWN_SECTIONS[_normalize_markdown_heading(heading)] = field_name
 
 
+# Resolve a heading string to an internal summary field name, if recognized.
 def _canonical_markdown_section(heading: str) -> str:
     return NORMALIZED_MARKDOWN_SECTIONS.get(_normalize_markdown_heading(heading), "")
 
 
+# Parse fixed-section Markdown model output into a summary payload dict.
 def _extract_markdown_summary(text: str) -> dict[str, Any] | None:
     sections: dict[str, list[str]] = {}
     current = ""
@@ -779,10 +970,12 @@ def _extract_markdown_summary(text: str) -> dict[str, Any] | None:
     return payload if has_semantic_content or has_artifacts else None
 
 
+# Parse model output as JSON first, then as contract Markdown sections.
 def _extract_summary_payload(text: str) -> dict[str, Any] | None:
     return _extract_json_object(text) or _extract_markdown_summary(text)
 
 
+# Build the structured history compression block and parsed payload metadata.
 def build_structured_history_summary(
     *,
     overflow_entries: list[dict[str, Any]],
@@ -791,8 +984,6 @@ def build_structured_history_summary(
     summarize_with_model: Callable[[list[dict[str, str]]], str] | None,
     max_overflow_entries: int = 40,
 ) -> tuple[str, dict[str, Any]]:
-    """Return a structured compression block and parsed payload metadata."""
-
     scoped_full = overflow_entries[-max(1, max_overflow_entries):]
     scoped = _scoped_context_entries(scoped_full)
     transcript_lines = []
@@ -805,6 +996,8 @@ def build_structured_history_summary(
     summary_payload: dict[str, Any] | None = None
     raw_payload = _raw_context_payload(scoped_full, recent_user_messages)
     model_text = ""
+
+    # Ask the model for contract Markdown when a callback is available.
     if summarize_with_model is not None and transcript.strip():
         prompt_messages = [
             {
@@ -865,6 +1058,7 @@ def build_structured_history_summary(
         model_text = summarize_with_model(prompt_messages)
         summary_payload = _extract_summary_payload(model_text)
 
+    # Fall back to raw harvest when the model output cannot be parsed.
     if not isinstance(summary_payload, dict):
         warning = ""
         if summarize_with_model is not None and transcript.strip():

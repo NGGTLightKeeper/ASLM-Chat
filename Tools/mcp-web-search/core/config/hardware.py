@@ -1,23 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-hardware.py — One-time hardware capability probe.
-
-Detects available GPU/VRAM at startup and returns a profile string
-used by ContentProcessor and WebSearchService to decide which optional
-inference layers (semantic embeddings, GLiNER) to enable.
-
-Profiles
---------
-full_gpu     — CUDA available, >= 4 GB free VRAM
-partial_gpu  — CUDA available, 1–4 GB free VRAM (embeddings yes, GLiNER no)
-cpu_safe     — No CUDA or < 1 GB free VRAM (BM25 only, no heavy models)
-
-Public API
-----------
-get_hardware_profile() -> str   (cached; call freely)
-"""
-
 from __future__ import annotations
 
 import logging
@@ -30,8 +12,8 @@ _VRAM_PARTIAL_GB = 1.0  # GB free → partial_gpu
 _profile_cache: str | None = None
 
 
+# Probe GPU VRAM once and return full_gpu, partial_gpu, or cpu_safe.
 def detect_hardware_profile() -> str:
-    """Probe hardware and return a profile string. Not cached; use get_hardware_profile()."""
     try:
         import torch  # type: ignore
         if not torch.cuda.is_available():
@@ -56,8 +38,8 @@ def detect_hardware_profile() -> str:
         return "cpu_safe"
 
 
+# Return cached hardware profile (probed once per process).
 def get_hardware_profile() -> str:
-    """Return cached hardware profile (probed once per process lifetime)."""
     global _profile_cache
     if _profile_cache is None:
         _profile_cache = detect_hardware_profile()

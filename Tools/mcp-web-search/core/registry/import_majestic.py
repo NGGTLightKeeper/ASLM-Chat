@@ -1,36 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Import Majestic Million domains into trust_registry_profiles/majestic_web.json.
-
-Usage
------
-    python core/registry/import_majestic.py            # dry-run (no writes)
-    python core/registry/import_majestic.py --write    # write to profiles
-    python core/registry/import_majestic.py --stats    # alias for dry-run
-
-What it does
-------------
-1. Extracts majestic_million.csv from majestic_million.zip (same directory)
-2. Maps domains to tiers by RefSubNets:
-     A  — RefSubNets > 50 000  (global giants, major publishers)
-     B  — RefSubNets >  5 000
-     C  — RefSubNets >    500
-   Below 500 → skipped (too low authority)
-3. Deduplicates against the already-merged registry (profiles + monolith)
-   so running twice is safe — existing entries always win
-4. Writes new entries to trust_registry_profiles/majestic_web.json
-   (NOT to trust_registry.json — monolith is frozen)
-5. Never writes tiers or blacklist — those belong in _global.json only
-
-Notes
------
-- Manual entries in any profile file always win over Majestic data
-  (dedup is against the merged view, not just the output file)
-- Blacklisted domains (blocked_domain_contains) are never promoted
-- The output file has profile/defaults/domains structure matching other profiles
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -53,6 +22,7 @@ TIER_THRESHOLDS: list[tuple[int, str]] = [
 ]
 
 
+# Map RefSubNets count to trust tier A/B/C or None if below minimum.
 def _tier_for(ref_subnets: int) -> str | None:
     for threshold, tier in TIER_THRESHOLDS:
         if ref_subnets >= threshold:
@@ -60,6 +30,7 @@ def _tier_for(ref_subnets: int) -> str | None:
     return None
 
 
+# Open CSV text stream from majestic_million.zip.
 def _extract_csv(zip_path: Path) -> io.TextIOWrapper:
     zf = zipfile.ZipFile(zip_path)
     names = zf.namelist()
@@ -69,8 +40,8 @@ def _extract_csv(zip_path: Path) -> io.TextIOWrapper:
     return io.TextIOWrapper(zf.open(csv_name), encoding="utf-8")
 
 
+# Patterns already present in merged trust registry (profiles + monolith).
 def _existing_patterns() -> set[str]:
-    """Return all patterns already in the merged registry (profiles + monolith)."""
     try:
         from core.registry.trust_registry import load_trust_registry
 
@@ -78,7 +49,6 @@ def _existing_patterns() -> set[str]:
         return set(domains.keys())
     except Exception:
         pass
-    # Fallback: read monolith only
     if TRUST_REGISTRY_PATH.is_file():
         try:
             data = json.loads(TRUST_REGISTRY_PATH.read_text(encoding="utf-8"))
@@ -88,6 +58,7 @@ def _existing_patterns() -> set[str]:
     return set()
 
 
+# blocked_domain_contains fragments from merged trust blacklist.
 def _blocked_fragments() -> list[str]:
     try:
         from core.registry.trust_registry import load_trust_registry
@@ -98,8 +69,8 @@ def _blocked_fragments() -> list[str]:
         return []
 
 
+# Domain entries already written to majestic_web.json profile.
 def _load_existing_output() -> list[dict]:
-    """Return already-written Majestic profile entries if the output file exists."""
     if OUTPUT_PROFILE.is_file():
         try:
             data = json.loads(OUTPUT_PROFILE.read_text(encoding="utf-8"))
@@ -109,6 +80,7 @@ def _load_existing_output() -> list[dict]:
     return []
 
 
+# Import Majestic Million CSV into trust_registry_profiles/majestic_web.json.
 def run(write: bool = False, stats: bool = False) -> None:
     if not ZIP_PATH.is_file():
         print(f"[skip] Majestic zip not found: {ZIP_PATH}")
@@ -194,6 +166,7 @@ def run(write: bool = False, stats: bool = False) -> None:
     print(f"\nWritten {len(truly_new):,} new entries ({len(all_entries):,} total) to {OUTPUT_PROFILE}")
 
 
+# CLI entry for Majestic Million import dry-run or --write.
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Import Majestic Million into trust_registry_profiles/majestic_web.json"

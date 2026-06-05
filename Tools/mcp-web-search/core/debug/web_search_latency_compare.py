@@ -1,4 +1,4 @@
-"""Compare live web_search latency between rules and aslm_embedding pipelines."""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ DEFAULT_QUERIES = [
 ]
 
 
+# Compute a percentile from sorted elapsed-time samples.
 def _percentile(values: list[float], pct: float) -> float:
     if not values:
         return 0.0
@@ -34,6 +35,7 @@ def _percentile(values: list[float], pct: float) -> float:
     return ordered[index]
 
 
+# Run one live web_search_rich call under a temporary pipeline env override.
 async def _run_one(query: str, *, pipeline: str, args: argparse.Namespace) -> dict[str, Any]:
     from core.config.pipeline_modes import normalize_pipeline_mode
 
@@ -41,6 +43,8 @@ async def _run_one(query: str, *, pipeline: str, args: argparse.Namespace) -> di
     old_pipeline = os.environ.get("ASLM_WEB_SEARCH_PIPELINE")
     old_keep = os.environ.get("ASLM_WEB_SEARCH_KEEP_MODELS")
     old_device = os.environ.get("ASLM_WEB_SEARCH_MODEL_DEVICE")
+
+    # Apply benchmark overrides for this single query.
     os.environ["ASLM_WEB_SEARCH_PIPELINE"] = pipeline
     os.environ["ASLM_WEB_SEARCH_KEEP_MODELS"] = "1" if args.keep_models else "0"
     if args.device:
@@ -79,6 +83,7 @@ async def _run_one(query: str, *, pipeline: str, args: argparse.Namespace) -> di
             "error": f"{type(exc).__name__}: {exc}",
         }
     finally:
+        # Restore prior environment values.
         if old_pipeline is None:
             os.environ.pop("ASLM_WEB_SEARCH_PIPELINE", None)
         else:
@@ -93,6 +98,7 @@ async def _run_one(query: str, *, pipeline: str, args: argparse.Namespace) -> di
             os.environ["ASLM_WEB_SEARCH_MODEL_DEVICE"] = old_device
 
 
+# Benchmark every query for one pipeline across repeated runs.
 async def _run_pipeline(pipeline: str, queries: list[str], args: argparse.Namespace) -> list[dict[str, Any]]:
     clear_shared_search_model_session()
     rows: list[dict[str, Any]] = []
@@ -104,6 +110,7 @@ async def _run_pipeline(pipeline: str, queries: list[str], args: argparse.Namesp
     return rows
 
 
+# Aggregate mean/median/p90 timing stats per pipeline.
 def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     by_pipeline: dict[str, list[float]] = {}
     for row in rows:
@@ -123,6 +130,7 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+# Render a Markdown table report from benchmark rows.
 def _render_markdown(rows: list[dict[str, Any]]) -> str:
     summary = _summary(rows)
     lines = [
@@ -155,6 +163,7 @@ def _render_markdown(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# Run all pipelines, then write JSON and Markdown reports under output_dir.
 async def _main_async(args: argparse.Namespace) -> int:
     queries = args.queries or DEFAULT_QUERIES
     rows: list[dict[str, Any]] = []
@@ -175,6 +184,7 @@ async def _main_async(args: argparse.Namespace) -> int:
     return 0
 
 
+# Build the latency-compare CLI argument parser.
 def build_parser() -> argparse.ArgumentParser:
     from core.config.pipeline_modes import PIPELINE_MODE_CHOICES
 
@@ -200,6 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# CLI entry: asyncio driver for latency comparison.
 def main() -> int:
     return asyncio.run(_main_async(build_parser().parse_args()))
 

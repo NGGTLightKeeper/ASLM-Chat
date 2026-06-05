@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import asyncio
@@ -22,6 +24,7 @@ _EBAY_HOSTS = frozenset({
 })
 
 
+# Normalize URL host (strip www./m. prefixes).
 def _host(url: str) -> str:
     return urlparse(url).netloc.lower().removeprefix("www.").removeprefix("m.")
 
@@ -32,9 +35,9 @@ class CustomRoute:
     is_heavy: bool
     quality_score: float
     matches: Callable[[str], bool]
-    # async (url, timeout) → markdown text | None
     _fetch: Callable[[str, float], Awaitable[str | None]]
 
+    # Run route fetch with asyncio timeout; return None on failure or timeout.
     async def fetch_preview(self, url: str, timeout: float) -> str | None:
         try:
             return await asyncio.wait_for(self._fetch(url, timeout), timeout=timeout)
@@ -46,10 +49,7 @@ class CustomRoute:
             return None
 
 
-# ---------------------------------------------------------------------------
-# Fetch wrappers — normalise all returns to str | None
-# ---------------------------------------------------------------------------
-
+# Amazon snapshot → markdown; drop blocked or empty pages.
 async def _amazon_fetch(url: str, timeout: float) -> str | None:
     snapshot = await fetch_amazon_snapshot(url, timeout=timeout)
     markdown = str(snapshot.get("markdown") or "").strip()
@@ -62,6 +62,7 @@ async def _amazon_fetch(url: str, timeout: float) -> str | None:
     return markdown
 
 
+# Reddit JSON thread → markdown; drop error strings.
 async def _reddit_fetch(url: str, timeout: float) -> str | None:
     text = await fetch_reddit_json(url)
     if text and not text.startswith("Error:"):
@@ -69,6 +70,7 @@ async def _reddit_fetch(url: str, timeout: float) -> str | None:
     return None
 
 
+# X/Twitter post → markdown; drop error strings.
 async def _x_fetch(url: str, timeout: float) -> str | None:
     text = await fetch_x_post(url, timeout)
     if text and not text.startswith("Error:"):
@@ -76,6 +78,7 @@ async def _x_fetch(url: str, timeout: float) -> str | None:
     return None
 
 
+# GitHub API page → markdown; drop error-prefixed responses.
 async def _github_fetch(url: str, timeout: float) -> str | None:
     text = await fetch_github_page(url, timeout)
     if text and not text.lstrip().lower().startswith("error:"):
@@ -83,13 +86,10 @@ async def _github_fetch(url: str, timeout: float) -> str | None:
     return None
 
 
+# Placeholder for heavy routes handled outside the router preview path.
 async def _heavy_noop(url: str, timeout: float) -> str | None:
     return None
 
-
-# ---------------------------------------------------------------------------
-# Route registry
-# ---------------------------------------------------------------------------
 
 _ROUTES: list[CustomRoute] = [
     CustomRoute(
@@ -144,6 +144,7 @@ _ROUTES: list[CustomRoute] = [
 ]
 
 
+# Return the first custom route that matches the URL, or None.
 def get_custom_route(url: str) -> CustomRoute | None:
     for route in _ROUTES:
         if route.matches(url):

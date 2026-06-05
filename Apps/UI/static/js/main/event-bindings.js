@@ -15,6 +15,8 @@ export function bindEventHandlers(context, dependencies) {
   const rightSidebarStorageKey = 'aslm.settingsSidebarCollapsed';
   const $activityRoots = dom.$messagesInner.add($('#reasoningDrawerBody'));
 
+  // Layout helpers.
+  // Collapse or expand the right settings sidebar and optionally persist state.
   function setRightSidebarCollapsed(collapsed, persist) {
     dom.$chatShell.toggleClass('settings-collapsed', !!collapsed);
     dom.$sidebarRightToggle
@@ -84,6 +86,9 @@ export function bindEventHandlers(context, dependencies) {
     });
   });
 
+
+  // Composer menu helpers.
+  // Hide both welcome and conversation composer popovers.
   function closeComposerMenus() {
     dom.$composerMenuPopover.add(dom.$composerMenuPopoverConv).hide();
     dom.$composerMenuBtn.add(dom.$composerMenuBtnConv)
@@ -91,6 +96,7 @@ export function bindEventHandlers(context, dependencies) {
       .attr('aria-expanded', 'false');
   }
 
+  // Hide both thinking-level dropdown menus.
   function closeThinkLevelMenus() {
     dom.$thinkLevelSelector.add(dom.$thinkLevelSelectorConv)
       .removeClass('is-open')
@@ -101,6 +107,7 @@ export function bindEventHandlers(context, dependencies) {
       .attr('aria-expanded', 'false');
   }
 
+  // Open one composer menu popover and close competing menus.
   function toggleComposerMenu($button, $popover) {
     const willOpen = !$popover.is(':visible');
     closeComposerMenus();
@@ -231,11 +238,13 @@ export function bindEventHandlers(context, dependencies) {
   const $dropOverlay = $('<div class="file-drop-overlay" aria-hidden="true"><div class="file-drop-overlay-inner">Drop files to attach</div></div>');
   $('body').append($dropOverlay);
 
+  // Show the full-page file drop highlight overlay.
   function showDropOverlay() {
     $dropOverlay.addClass('is-visible');
     dom.$chatShell.addClass('is-file-dragging');
   }
 
+  // Hide the full-page file drop highlight overlay.
   function hideDropOverlay() {
     $dropOverlay.removeClass('is-visible');
     dom.$chatShell.removeClass('is-file-dragging');
@@ -261,10 +270,14 @@ export function bindEventHandlers(context, dependencies) {
     attachmentsUi.removePendingAttachment(index);
   });
 
+
+  // File drag-and-drop helpers.
+  // Read the DataTransfer object from a native or jQuery event.
   function getDragDataTransfer(event) {
     return event && (event.dataTransfer || (event.originalEvent && event.originalEvent.dataTransfer));
   }
 
+  // Report whether a drag event carries at least one file item.
   function eventHasDraggedFiles(event) {
     const dataTransfer = getDragDataTransfer(event);
     if (!dataTransfer) {
@@ -284,10 +297,12 @@ export function bindEventHandlers(context, dependencies) {
     });
   }
 
+  // Report whether the skills manager modal is currently open.
   function isSkillsManagerOpen() {
     return document.body.classList.contains('skills-manager-open');
   }
 
+  // Report whether a drag event is over the skills import dropzone.
   function isOverSkillsImportSurface(event) {
     const el = event && (event.target || (event.nativeEvent && event.nativeEvent.target));
     return !!(el && el.closest && (
@@ -296,6 +311,7 @@ export function bindEventHandlers(context, dependencies) {
     ));
   }
 
+  // Highlight the chat drop overlay while files are dragged over the shell.
   function handleFileDrag(event) {
     const dataTransfer = getDragDataTransfer(event);
     if (!dataTransfer) {
@@ -318,6 +334,7 @@ export function bindEventHandlers(context, dependencies) {
     showDropOverlay();
   }
 
+  // Clear drag highlights when the file drag leaves the window.
   function handleFileDragEnd(event) {
     if (!event) {
       return;
@@ -337,6 +354,7 @@ export function bindEventHandlers(context, dependencies) {
     }
   }
 
+  // Accept dropped files into the pending attachment queue.
   function handleFileDrop(event) {
     const dataTransfer = getDragDataTransfer(event);
     if (!dataTransfer) {

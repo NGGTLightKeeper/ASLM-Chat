@@ -1,30 +1,13 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Search domain models.
-
-Defines the canonical data contracts for web search results
-and query routing hints. All services must produce/consume these types.
-
-Public API
-----------
-SearchResult   -- one result from any search provider
-QueryPlan      -- a search query with routing hints
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 
-# ---------------------------------------------------------------------------
-# Query planning
-# ---------------------------------------------------------------------------
-
+# Store a search query together with routing hints.
 @dataclass
 class QueryPlan:
-    """Store a search query together with routing hints."""
-
     query: str
     target_domains: list[str] = field(default_factory=list)
     excluded_domains: list[str] = field(default_factory=list)
@@ -32,14 +15,9 @@ class QueryPlan:
     method_hint: str = "auto"
 
 
-# ---------------------------------------------------------------------------
-# Search result
-# ---------------------------------------------------------------------------
-
+# Represent one search result returned by any backend.
 @dataclass
 class SearchResult:
-    """Represent one search result returned by any backend."""
-
     url: str
     title: str
     snippet: str
@@ -55,6 +33,8 @@ class SearchResult:
     published_date: str = ""
     # Direct PDF URL when the source page or engine exposes one.
     pdf_url: str = ""
+    # Full text payload exposed by hosted providers; used internally for preview extraction.
+    provider_content: str = ""
     # Debugging fields (filled by service layer, stripped in MCP adapter)
     extract_debug_stage: str = ""
     extract_debug_timeout_sec: float = 0.0
@@ -65,10 +45,9 @@ class SearchResult:
     routing_debug: dict = field(default_factory=dict)
 
 
+# UI/model-facing representation of one ranked search source.
 @dataclass
 class SearchSource:
-    """UI/model-facing representation of one ranked search source."""
-
     id: str
     rank: int
     title: str
@@ -85,10 +64,9 @@ class SearchSource:
     pdf_url: str = ""
 
 
+# Structured web-search payload shared by model context and UI.
 @dataclass
 class SearchRichResult:
-    """Structured web-search payload shared by model context and UI."""
-
     query: str
     search_id: str
     sources: list[SearchSource]

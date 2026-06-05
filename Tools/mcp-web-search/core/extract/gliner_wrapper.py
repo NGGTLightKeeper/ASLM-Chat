@@ -1,18 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-GLiNER entity-density scorer for content densification.
-
-Lazy-loads urchade/gliner_medium-v2.1 on first call. Model instance is
-cached per (model_id, device) pair for the process lifetime. Falls back to
-zero-score lists when GLiNER is not installed or the model fails to load.
-
-Public API
-----------
-is_gliner_available() -> bool
-score_entity_density(paragraphs, device, threshold) -> list[float]
-"""
-
 from __future__ import annotations
 
 import logging
@@ -28,8 +15,6 @@ _FORCED_MODEL_ID = os.getenv("ASLM_GLINER_MODEL", "").strip()
 _MEDIUM_MIN_VRAM_GB = float(os.getenv("ASLM_GLINER_MEDIUM_MIN_VRAM_GB", "1.5"))
 _SMALL_MIN_VRAM_GB = float(os.getenv("ASLM_GLINER_SMALL_MIN_VRAM_GB", "1.0"))
 
-# Entity label vocabulary for factual density scoring.
-# Tuned for news/science/tech content typical in web-search results.
 _ENTITY_LABELS = [
     "person", "organization", "location", "date", "event",
     "technology", "product", "concept", "metric", "scientific term",
@@ -39,6 +24,7 @@ _model_cache: dict[str, Any] = {}
 _skip_logged: set[str] = set()
 
 
+# Log a GLiNER skip reason at most once per key.
 def _log_skip_once(key: str, message: str) -> None:
     if key in _skip_logged:
         return
@@ -46,6 +32,7 @@ def _log_skip_once(key: str, message: str) -> None:
     logger.warning(message)
 
 
+# Restore environment variables after a temporary HF offline override.
 def _restore_env(previous: dict[str, str | None]) -> None:
     for key, value in previous.items():
         if value is None:
@@ -54,6 +41,7 @@ def _restore_env(previous: dict[str, str | None]) -> None:
             os.environ[key] = value
 
 
+# Read free CUDA VRAM in GB via nvidia-smi or torch.
 def _cuda_free_gb() -> float | None:
     try:
         output = subprocess.check_output(
@@ -84,8 +72,8 @@ def _cuda_free_gb() -> float | None:
         return None
 
 
+# Return (model_id, device) for a safe CUDA GLiNER runtime, or None.
 def get_gliner_runtime(device: str = "cuda") -> tuple[str, str] | None:
-    """Return (model_id, device) for a safe CUDA GLiNER runtime."""
     requested = (device or "cuda").lower().strip()
     if requested != "cuda":
         _log_skip_once(
@@ -131,12 +119,8 @@ def get_gliner_runtime(device: str = "cuda") -> tuple[str, str] | None:
     return None
 
 
+# True when a safe CUDA GLiNER runtime is available; log_fn receives diagnostics.
 def gliner_cuda_enabled(log_fn: Callable[[str], None]) -> bool:
-    """Return True when a safe CUDA GLiNER runtime is available.
-
-    Calls log_fn with diagnostic messages for skip/ready events.
-    The caller controls deduplication (pass a filtered wrapper if needed).
-    """
     try:
         runtime = get_gliner_runtime("cuda")
     except Exception as exc:
@@ -150,8 +134,8 @@ def gliner_cuda_enabled(log_fn: Callable[[str], None]) -> bool:
     return True
 
 
+# True when the gliner package is importable.
 def is_gliner_available() -> bool:
-    """Return True when the gliner package is importable."""
     try:
         import gliner  # noqa: F401
         return True
@@ -159,8 +143,8 @@ def is_gliner_available() -> bool:
         return False
 
 
+# Load (or return cached) GLiNER model on the requested device.
 def _load_model(device: str = "cuda") -> Optional[Any]:
-    """Load (or return cached) GLiNER model on the requested device."""
     runtime = get_gliner_runtime(device)
     if runtime is None:
         return None
@@ -206,20 +190,13 @@ def _load_model(device: str = "cuda") -> Optional[Any]:
         return None
 
 
+# Return entity-density score [0.0, 1.0] for each paragraph.
 def score_entity_density(
     paragraphs: list[str],
     device: str = "cuda",
     threshold: float = 0.35,
     cpu_para_limit: int = 6,
 ) -> list[float]:
-    """Return entity-density score [0.0, 1.0] for each paragraph.
-
-    Density = (unique entity surface forms) / max(50, len(para)) * 100,
-    clamped to 1.0. Paragraphs beyond *cpu_para_limit* on CPU receive 0.0
-    to cap latency.
-
-    Returns all-zero list when GLiNER is unavailable or loading fails.
-    """
     scored = score_entity_density_with_entities(
         paragraphs,
         device=device,
@@ -229,6 +206,7 @@ def score_entity_density(
     return [score for score, _ in scored]
 
 
+# Normalize raw GLiNER entity dicts to a consistent shape.
 def _normalize_entities(raw_entities: list[dict]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for e in raw_entities:
@@ -247,6 +225,7 @@ def _normalize_entities(raw_entities: list[dict]) -> list[dict[str, Any]]:
     return normalized
 
 
+# Return entity-density score and normalized entities for each paragraph.
 def score_entity_density_with_entities(
     paragraphs: list[str],
     labels: list[str] | None = None,
@@ -254,7 +233,6 @@ def score_entity_density_with_entities(
     threshold: float = 0.35,
     cpu_para_limit: int = 6,
 ) -> list[tuple[float, list[dict[str, Any]]]]:
-    """Return entity-density score and normalized entities for each paragraph."""
     if not paragraphs:
         return []
 
@@ -283,10 +261,6 @@ def score_entity_density_with_entities(
     return scored
 
 
-# ---------------------------------------------------------------------------
-# Deep-research extensions (ported from legacy deep-research/src/gliner_wrapper.py)
-# ---------------------------------------------------------------------------
-
 # Per-domain label presets for focused NER extraction.
 LABELS_BY_DOMAIN: dict[str, list[str]] = {
     "general": ["person", "organization", "location", "date", "money", "product"],
@@ -300,16 +274,15 @@ LABELS_BY_DOMAIN: dict[str, list[str]] = {
     "journalistic": ["person", "organization", "location", "date", "event", "money"],
 }
 
-# Thresholds used by the deep-research triage path.
 _DR_THRESHOLD: float = float(os.getenv("ASLM_GLINER_THRESHOLD", "0.35"))
 _DR_THRESHOLD_RU: float = float(os.getenv("ASLM_GLINER_THRESHOLD_RU", "0.28"))
 
 
+# Choose GLiNER label set from explicit or inferred query type.
 def get_labels_for_query(
     query: str,
     query_type: str | None = None,
 ) -> list[str]:
-    """Choose GLiNER label set from explicit or inferred query type."""
     if query_type and query_type in LABELS_BY_DOMAIN:
         return LABELS_BY_DOMAIN[query_type]
     q = query.lower()
@@ -324,6 +297,7 @@ def get_labels_for_query(
     return LABELS_BY_DOMAIN["general"]
 
 
+# Return (passes_threshold, entities); used to drop low-information pages.
 def check_information_density(
     text: str,
     labels: list[str],
@@ -332,14 +306,9 @@ def check_information_density(
     max_length: int = 3000,
     device: str = "cuda",
 ) -> tuple[bool, list[dict]]:
-    """Return (passes_threshold, entities) for the text.
-
-    Passes when the number of extracted entities >= min_entities.
-    Used in dedup_filter to drop low-information pages before synthesis.
-    """
     model = _load_model(device)
     if model is None:
-        return True, []   # GLiNER unavailable → don't filter
+        return True, []
 
     chunk = text[:max_length]
     try:
@@ -352,12 +321,8 @@ def check_information_density(
     return len(normalized) >= min_entities, normalized
 
 
+# Lower GLiNER threshold for Cyrillic-heavy text.
 def detect_language_and_adjust_threshold(text: str) -> float:
-    """Lower the GLiNER threshold for texts that appear to contain Cyrillic.
-
-    Cyrillic-heavy text tends to yield lower NER confidence scores,
-    so a reduced threshold prevents valid entities from being filtered out.
-    """
     cyrillic_count = sum(1 for char in text[:500] if "\u0400" <= char <= "\u04ff")
     if cyrillic_count > 50:
         return _DR_THRESHOLD_RU

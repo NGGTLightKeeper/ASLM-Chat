@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import secrets
 import sys
 from pathlib import Path
@@ -33,7 +32,6 @@ from adapters.mcp.search_query_contract import (
 from adapters.mcp.logging_setup import setup_logging
 from core.config import load_search_config as _load_cfg
 from core.fetch.thread_pool import io_pool as _io_pool  # noqa: F401 — initialise shared pool
-from core.query.gte_evidence_reranker import warm_up as _gte_warm_up
 
 setup_logging()
 
@@ -41,16 +39,6 @@ _CFG = _load_cfg()
 _MAX_RESULTS = max(1, int(_CFG.search.max_results))
 _BATCH_LIMIT = max(1, int(_CFG.search.batch_query_limit))
 logger = logging.getLogger("mcp_server_bridge")
-
-# Pre-load GTE reranker in background only for real tool calls.  When
-# tool_worker runs a short-lived describe/supports probe, the worker process
-# exits immediately and kills the daemon warm-up thread — so skip it there.
-_MCP_OPERATION = os.getenv("ASLM_MCP_OPERATION", "call").strip().lower()
-if _MCP_OPERATION == "call":
-    try:
-        _gte_warm_up(ttl_seconds=300.0)
-    except Exception:
-        pass
 
 MCP_SERVER = {
     "id": "web_search",
@@ -86,10 +74,12 @@ TOOLS = [
 ]
 
 
+# Report whether this bridge supports the given engine/model pair.
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
     return engine in ("ollama-service", "lms", "openai", "google-genai")
 
 
+# Parse JSON-encoded list strings passed as tool arguments.
 def _maybe_parse_list(val: Any) -> Any:
     if isinstance(val, str):
         stripped = val.strip()
@@ -104,6 +94,7 @@ def _maybe_parse_list(val: Any) -> Any:
     return val
 
 
+# Normalize a URL host into a bare registrable domain label.
 def _source_domain(url: str) -> str:
     host = urlparse(url or "").netloc.lower()
     if "@" in host:
@@ -113,6 +104,7 @@ def _source_domain(url: str) -> str:
     return host.removeprefix("www.")
 
 
+# Build a short human-readable label from a domain name.
 def _display_domain(domain: str) -> str:
     parts = [part for part in (domain or "").split(".") if part]
     if len(parts) >= 2:
@@ -124,10 +116,12 @@ def _display_domain(domain: str) -> str:
     return label.replace("-", " ").title()
 
 
+# DuckDuckGo favicon URL for a source domain chip.
 def _favicon_url(domain: str) -> str:
     return f"https://icons.duckduckgo.com/ip3/{domain}.ico" if domain else ""
 
 
+# Build one read_page source metadata record for UI chips.
 def _read_page_source(url: str, rank: int, result_text: str = "") -> dict[str, object]:
     domain = _source_domain(url)
     ok = not str(result_text or "").lstrip().lower().startswith("error:")
@@ -141,6 +135,7 @@ def _read_page_source(url: str, rank: int, result_text: str = "") -> dict[str, o
     }
 
 
+# Assemble the structured read_page payload for one or many URLs.
 def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, object]:
     sources = [
         _read_page_source(url, index, results[index - 1] if index - 1 < len(results) else "")
@@ -160,6 +155,7 @@ def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, object]
     }
 
 
+# Dispatch MCP tool calls to web_search or read_page services.
 async def call_tool(
     tool_id: str,
     arguments: dict[str, Any] | None,
@@ -223,8 +219,6 @@ async def call_tool(
         # ─────────────────────────────────────────────────────────────────────
 
         logger.info("bridge.web_search.start query_preview=%r", query_text[:160])
-        # Refresh GTE TTL so the model stays hot during active search sessions.
-        _gte_warm_up(ttl_seconds=300.0)
         result = await run_web_search_rich(
             query_text,
             max_results=_MAX_RESULTS,
@@ -265,8 +259,6 @@ async def call_tool(
         if isinstance(url, list):
             urls = [u.strip() for u in url if isinstance(u, str) and u.strip()]
             logger.info("bridge.read_page.start batch=True urls=%d", len(urls[:_BATCH_LIMIT]))
-            # Refresh GTE TTL — read_page results are commonly cited.
-            _gte_warm_up(ttl_seconds=300.0)
             results = await asyncio.gather(
                 *[run_read_page(u) for u in urls[:_BATCH_LIMIT]],
                 return_exceptions=True,
@@ -292,7 +284,6 @@ async def call_tool(
             return payload
         url_text = url.strip()
         logger.info("bridge.read_page.start batch=False url=%r", url_text[:220])
-        _gte_warm_up(ttl_seconds=300.0)
         result = await run_read_page(url_text)
         payload = _read_page_payload([url_text], [result])
         write_search_io_event(

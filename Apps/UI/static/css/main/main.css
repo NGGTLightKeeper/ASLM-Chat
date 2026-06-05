@@ -3614,7 +3614,6 @@
 
 .msg-citation-chip,
 .msg-stream-text .markdown-body .msg-citation-chip {
-  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -3631,8 +3630,6 @@
   text-decoration: none;
   vertical-align: baseline;
   white-space: nowrap;
-  isolation: isolate;
-  overflow: hidden;
 }
 
 .msg-citation-chip:hover,
@@ -3642,54 +3639,8 @@
   text-decoration: none;
 }
 
-.msg-citation-chip.is-citation-annotating {
-  /* No outline around the chip, loading animation runs inside instead */
-}
-
-.msg-citation-chip.is-citation-annotating::after {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(in srgb, var(--c-primary) 28%, transparent) 45%,
-    transparent 80%
-  );
-  content: "";
-  opacity: 0.85;
-  pointer-events: none;
-  transform: translateX(-120%);
-  animation: msg-citation-loading-wave 1.15s ease-in-out infinite;
-}
-
-.msg-citation-chip.is-citation-annotated {
-  /* Clean borderless design */
-}
-
-.msg-citation-highlight {
-  border-radius: 4px;
-  background:
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--c-primary) 20%, transparent) 0%,
-      color-mix(in srgb, var(--c-primary) 20%, transparent) 100%
-    )
-    0 100% / 0 100% no-repeat;
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
-  color: color-mix(in srgb, var(--c-text) 94%, var(--c-primary));
-  transition: background-size 180ms ease-out;
-}
-
-.msg-citation-highlight.is-active {
-  animation: msg-citation-highlight-sweep 220ms ease-out forwards;
-}
-
 .msg-citation-favicon,
 .msg-citation-fallback {
-  position: relative;
-  z-index: 1;
   flex: 0 0 auto;
   width: 14px;
   height: 14px;
@@ -3715,8 +3666,6 @@
 }
 
 .msg-citation-domain {
-  position: relative;
-  z-index: 1;
   min-width: 0;
   overflow: hidden;
   color: var(--c-text-muted);
@@ -3803,109 +3752,6 @@
   color: var(--c-text-muted);
   font-size: 13px;
   line-height: 1.5;
-}
-
-/* Skeleton loader for loading citation previews */
-.skeleton-wave {
-  position: relative;
-  overflow: hidden;
-  background-color: color-mix(in srgb, var(--c-text) 8%, transparent);
-  border-radius: 4px;
-}
-
-.skeleton-wave::after {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  transform: translateX(-100%);
-  background-image: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--c-bg) 0%, transparent) 0%,
-    color-mix(in srgb, var(--c-text) 6%, transparent) 30%,
-    color-mix(in srgb, var(--c-text) 12%, transparent) 50%,
-    color-mix(in srgb, var(--c-text) 6%, transparent) 70%,
-    color-mix(in srgb, var(--c-bg) 0%, transparent) 100%
-  );
-  animation: skeleton-shimmer 1.6s infinite;
-  content: '';
-}
-
-@keyframes skeleton-shimmer {
-  100% {
-    transform: translateX(100%);
-  }
-}
-
-.msg-citation-preview-skeleton-favicon {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.msg-citation-preview-skeleton-title {
-  height: 14px;
-  width: 100%;
-  border-radius: 4px;
-}
-
-.msg-citation-preview-skeleton-domain {
-  height: 10px;
-  width: 40%;
-  border-radius: 3px;
-}
-
-.msg-citation-preview-skeleton-line {
-  height: 12px;
-  margin-bottom: 8px;
-  border-radius: 3px;
-}
-.msg-citation-preview-skeleton-line:last-child {
-  margin-bottom: 0;
-}
-
-.msg-citation-preview-skeleton-body {
-  margin-top: 12px;
-}
-
-.msg-citation-preview-skeleton-footer-left {
-  width: 60px;
-  height: 24px;
-  border-radius: 4px;
-}
-
-.msg-citation-preview-skeleton-footer-right {
-  width: 45px;
-  height: 14px;
-  border-radius: 3px;
-}
-
-.msg-citation-preview-text .msg-citation-highlight {
-  padding: 0 2px;
-}
-
-@keyframes msg-citation-loading-wave {
-
-  0% {
-    transform: translateX(-120%);
-  }
-
-  100% {
-    transform: translateX(120%);
-  }
-}
-
-@keyframes msg-citation-highlight-sweep {
-
-  from {
-    background-size: 0 100%;
-  }
-
-  to {
-    background-size: 100% 100%;
-  }
 }
 
 .msg-citation-preview-date {

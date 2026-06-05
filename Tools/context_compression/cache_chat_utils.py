@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import json
@@ -6,17 +8,15 @@ from pathlib import Path
 from typing import Any
 
 
+# Open the chat cache SQLite database with row dict access.
 def connect_cache_db(db_path: Path) -> sqlite3.Connection:
-    """Open chat cache database with Row access."""
-
     connection = sqlite3.connect(str(db_path))
     connection.row_factory = sqlite3.Row
     return connection
 
 
+# Return the chat row with the largest combined message content footprint.
 def load_fattest_chat(conn: sqlite3.Connection) -> sqlite3.Row:
-    """Return the chat with the largest stored content/transcript footprint."""
-
     row = conn.execute(
         """
         select c.id, c.title, count(m.id) as messages,
@@ -33,9 +33,8 @@ def load_fattest_chat(conn: sqlite3.Connection) -> sqlite3.Row:
     return row
 
 
+# Load transcript entries and the latest user messages for compression input.
 def collect_chat_entries(conn: sqlite3.Connection, chat_id: str) -> tuple[list[dict[str, Any]], list[str]]:
-    """Collect normalized transcript entries and latest user messages for compression."""
-
     rows = conn.execute(
         """
         select id, role, content, llm_transcript, created_at
@@ -54,6 +53,7 @@ def collect_chat_entries(conn: sqlite3.Connection, chat_id: str) -> tuple[list[d
         except Exception:
             transcript = []
 
+        # Prefer per-turn LLM transcript items when present.
         if isinstance(transcript, list) and transcript:
             for item in transcript:
                 if not isinstance(item, dict):

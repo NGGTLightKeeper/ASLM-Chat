@@ -11,11 +11,11 @@ from typing import Any
 
 from config import DOWNLOADS_DIR
 
-# Lazy import guard for browser module — imported only inside functions to avoid
-# circular imports at module load time.
+# Lazy-import browser module inside functions to avoid circular imports at load time.
 _browser_mod = None
 
 
+# Lazy-import browser module to avoid circular imports at module load time.
 def _get_browser_mod():
     global _browser_mod
     if _browser_mod is None:
@@ -26,16 +26,16 @@ def _get_browser_mod():
 _PORTAL_FRAME_PUBLISH_LOG_COUNTER = 0
 
 
+# Browser portal debug logging is intentionally disabled.
 def append_browser_portal_debug_event(
     context: dict[str, Any] | None,
     event: str,
     **fields: Any,
 ) -> None:
-    """Browser portal debug logging is intentionally disabled."""
-
     return None
 
 
+# Map a tool result string to a portal UI status (done, failed, waiting).
 def _status_from_result(result: Any) -> str:
     text = str(result or "").strip().lower()
     if text.startswith("error:") or text.startswith("tool execution failed:"):
@@ -45,9 +45,8 @@ def _status_from_result(result: Any) -> str:
     return "done"
 
 
+# Capture a small JPEG viewport frame for the chat browser portal.
 async def capture_browser_portal_frame(page: Any) -> dict[str, Any] | None:
-    """Capture a small UI-only viewport frame for the chat browser portal."""
-
     if page is None:
         return None
 
@@ -76,6 +75,7 @@ async def capture_browser_portal_frame(page: Any) -> dict[str, Any] | None:
     return frame
 
 
+# Resolve the on-disk root directory for portal state and events.
 def browser_portal_root(context: dict[str, Any] | None = None) -> Path:
     safe_context = context or {}
     module_dir = str(safe_context.get("module_dir") or safe_context.get("project_dir") or "").strip()
@@ -88,14 +88,17 @@ def browser_portal_root(context: dict[str, Any] | None = None) -> Path:
     return DOWNLOADS_DIR / "browser_portal"
 
 
+# Return the directory where portal UI events are queued.
 def browser_portal_events_dir(context: dict[str, Any] | None = None) -> Path:
     return browser_portal_root(context) / "events"
 
 
+# Return the path to the portal state.json file.
 def browser_portal_state_path(context: dict[str, Any] | None = None) -> Path:
     return browser_portal_root(context) / "state.json"
 
 
+# Reset portal session files and write initial waiting state; return new session_id.
 def reset_browser_portal_state(context: dict[str, Any] | None, *, message: str, timeout_seconds: int) -> str:
     global _PORTAL_FRAME_PUBLISH_LOG_COUNTER
     _PORTAL_FRAME_PUBLISH_LOG_COUNTER = 0
@@ -133,6 +136,7 @@ def reset_browser_portal_state(context: dict[str, Any] | None, *, message: str, 
     return session_id
 
 
+# Atomically write portal state.json with optional session_id guard.
 def _write_portal_state(
     context: dict[str, Any] | None,
     payload: dict[str, Any],
@@ -201,6 +205,7 @@ def _write_portal_state(
         raise
 
 
+# Read and parse the current portal state.json payload.
 def read_browser_portal_state(context: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
         payload = json.loads(browser_portal_state_path(context).read_text(encoding="utf-8"))
@@ -209,6 +214,7 @@ def read_browser_portal_state(context: dict[str, Any] | None = None) -> dict[str
     return payload if isinstance(payload, dict) else {"ok": False, "error": "Invalid browser portal state."}
 
 
+# Write one UI event JSON file into the portal events directory.
 def enqueue_browser_portal_event(payload: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
     events_dir = browser_portal_events_dir(context)
     events_dir.mkdir(parents=True, exist_ok=True)
@@ -230,6 +236,7 @@ def enqueue_browser_portal_event(payload: dict[str, Any], context: dict[str, Any
     return {"ok": True, "event_id": event_id}
 
 
+# Read and remove queued portal events, optionally filtered by session_id.
 def _pop_browser_portal_events(
     context: dict[str, Any] | None = None,
     *,
@@ -275,6 +282,7 @@ def _pop_browser_portal_events(
     return events
 
 
+# Capture frame and a11y bundle and merge them into portal state.json.
 async def publish_browser_portal_frame(
     page: Any,
     context: dict[str, Any] | None = None,
@@ -327,6 +335,7 @@ async def publish_browser_portal_frame(
     return payload
 
 
+# Apply queued portal UI events (click, scroll, key, type, click_ref) to the page.
 async def apply_browser_portal_events(
     page: Any,
     context: dict[str, Any] | None = None,
@@ -456,6 +465,7 @@ async def apply_browser_portal_events(
     return should_finish
 
 
+# Wrap a text tool result with UI metadata without changing model-facing text.
 async def with_browser_portal_ui(
     result: Any,
     *,
@@ -463,8 +473,6 @@ async def with_browser_portal_ui(
     arguments: dict[str, Any],
     page: Any,
 ) -> Any:
-    """Wrap a text tool result with UI metadata without changing model text."""
-
     if not isinstance(result, str):
         return result
 

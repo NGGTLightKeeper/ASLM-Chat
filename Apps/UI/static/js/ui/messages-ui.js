@@ -4,11 +4,10 @@ import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
 import {
   addSegmentCitationSources,
   addSegmentsCitationSources,
-  bindCitationAnnotationHighlights,
   createCitationRegistry,
   decorateCitationsInHtml as decorateCitationHandlesInHtml,
-  normalizeAssistantMarkdown as normalizeCitationHandleMarkdown,
-  scheduleCitationAnnotations
+  normalizeCitationBrackets as normalizeCitationHandleBrackets,
+  normalizeCitationSpacing as normalizeCitationHandleSpacing
 } from './citations-ui.js';
 import { bindCitationPreviewCards } from './citation-preview-ui.js';
 import { t } from '../main/i18n.js';
@@ -133,6 +132,7 @@ export function createMessagesUi(context, dependencies) {
 
 
   // Markdown rendering.
+  // Report whether the character at index is escaped by a backslash run.
   function isEscapedAt(text, index) {
     let backslashCount = 0;
     for (let cursor = index - 1; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) {
@@ -141,6 +141,7 @@ export function createMessagesUi(context, dependencies) {
     return backslashCount % 2 === 1;
   }
 
+  // Find the next unescaped occurrence of one substring.
   function findUnescaped(text, needle, fromIndex) {
     let cursor = Math.max(0, Number(fromIndex) || 0);
     while (cursor < text.length) {
@@ -156,6 +157,7 @@ export function createMessagesUi(context, dependencies) {
     return -1;
   }
 
+  // Find the earliest LaTeX delimiter starting at one cursor position.
   function nextLatexDelimiter(text, fromIndex) {
     const candidates = [
       { open: '$$', close: '$$', displayMode: true },
@@ -172,12 +174,7 @@ export function createMessagesUi(context, dependencies) {
       if (delimiter.open === '$') {
         const before = index > 0 ? text[index - 1] : '';
         const after = index + 1 < text.length ? text[index + 1] : '';
-        // Currency ($0.14, $0.028 / M) — not inline math.
-        if (/\d/.test(after) || /\d/.test(before)) {
-          return;
-        }
-        // "$ foo" is almost never intentional TeX; real inline math is $\alpha$ or $\frac12$.
-        if (/\s/.test(after || '')) {
+        if (/\d/.test(before) || /\s/.test(after || '')) {
           return;
         }
       }
@@ -188,6 +185,7 @@ export function createMessagesUi(context, dependencies) {
     return best;
   }
 
+  // Render one LaTeX fragment with KaTeX when available.
   function renderLatexSourceToHtml(latexSource, displayMode) {
     if (typeof katex === 'undefined' || !katex.renderToString) {
       return escHtml(latexSource);
@@ -201,6 +199,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Append rendered LaTeX nodes into one document fragment.
   function appendLatexHtml(fragment, latexSource, displayMode) {
     if (typeof katex === 'undefined' || !katex.renderToString) {
       fragment.appendChild(document.createTextNode(latexSource));
@@ -211,6 +210,7 @@ export function createMessagesUi(context, dependencies) {
     fragment.appendChild(template.content);
   }
 
+  // Replace LaTeX delimiters inside one text node with KaTeX output.
   function replaceLatexInTextNode(textNode) {
     const source = textNode.nodeValue || '';
     const fragment = document.createDocumentFragment();
@@ -232,14 +232,6 @@ export function createMessagesUi(context, dependencies) {
         cursor = closeIndex + delimiter.close.length;
         continue;
       }
-      if (
-        delimiter.open === '$'
-        && !delimiter.displayMode
-        && !looksLikeLatexSource(latexSource)
-      ) {
-        cursor = delimiter.index + 1;
-        continue;
-      }
       if (delimiter.index > cursor) {
         fragment.appendChild(document.createTextNode(source.slice(cursor, delimiter.index)));
       }
@@ -257,6 +249,7 @@ export function createMessagesUi(context, dependencies) {
     textNode.parentNode.replaceChild(fragment, textNode);
   }
 
+  // Render LaTeX delimiters across one HTML string.
   function renderLatexInHtml(html) {
     if (typeof document === 'undefined' || typeof katex === 'undefined') {
       return html;
@@ -286,6 +279,7 @@ export function createMessagesUi(context, dependencies) {
     return template.innerHTML;
   }
 
+  // Heuristically detect whether plain text looks like LaTeX math.
   function looksLikeLatexSource(source) {
     const text = String(source || '').trim();
     if (!text) {
@@ -295,6 +289,7 @@ export function createMessagesUi(context, dependencies) {
       || (/\\/.test(text) && /[_^]\{?[\w()+\-]+/.test(text));
   }
 
+  // Convert bracket-style display math into $$ blocks before markdown parse.
   function normalizeLooseDisplayLatex(source) {
     return String(source || '')
       .replace(/(^|\n)[ \t]*\\\[\s*\n?([\s\S]*?)\n?[ \t]*\\\](?=\n|$)/g, function normalizeEscapedLatexBlock(match, prefix, body) {
@@ -313,6 +308,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Replace display and inline math with placeholders before markdown parse.
   function extractLatexBlocks(source) {
     const blocks = [];
     const text = String(source || '')
@@ -337,6 +333,7 @@ export function createMessagesUi(context, dependencies) {
     return { text, blocks };
   }
 
+  // Swap LaTeX placeholder tokens back to rendered KaTeX HTML.
   function restoreLatexPlaceholders(html, blocks) {
     let result = String(html || '');
     (blocks || []).forEach(function restoreLatexBlock(block) {
@@ -354,6 +351,9 @@ export function createMessagesUi(context, dependencies) {
     return result;
   }
 
+
+  // Markdown code-block helpers.
+  // Read the raw language class from one fenced code element.
   function markdownRawCodeLanguage(codeEl) {
     const classNames = String((codeEl && codeEl.className) || '');
     const match = classNames.match(/(?:^|\s)language-([a-z0-9_+#.-]+)/i)
@@ -361,19 +361,23 @@ export function createMessagesUi(context, dependencies) {
     return String(match ? match[1] : '').trim().toLowerCase();
   }
 
+  // Syntax highlighting helpers.
   function markdownCodeLanguage(codeEl) {
     const normalized = normalizeHighlightLanguage(markdownRawCodeLanguage(codeEl));
     return normalized === 'plaintext' ? 'Code' : normalized.toUpperCase();
   }
 
+  // Resolve the highlight.js language id for one code element.
   function markdownCodeHighlightLanguage(codeEl) {
     return normalizeHighlightLanguage(markdownRawCodeLanguage(codeEl));
   }
 
+  // Report whether one code block should render as Mermaid.
   function isMermaidCodeLanguage(codeEl) {
     return markdownRawCodeLanguage(codeEl) === 'mermaid';
   }
 
+  // Keep only http and https URLs safe for markdown links.
   function safeMarkdownUrl(value) {
     try {
       const parsed = new URL(String(value || '').trim());
@@ -383,6 +387,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Turn bare URLs inside inline code spans into links.
   function linkifyInlineCodeUrls(template) {
     template.content.querySelectorAll('code').forEach(function linkifyInlineCodeUrl(codeEl) {
       if (codeEl.closest('pre, a')) {
@@ -409,6 +414,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Wrap fenced code blocks with copy UI and highlighting.
   function enhanceMarkdownCodeBlocks(html) {
     if (typeof document === 'undefined' || !html) {
       return html;
@@ -486,7 +492,7 @@ export function createMessagesUi(context, dependencies) {
   // Render one visible text segment as sanitized HTML.
   function renderMarkdownSegment(content, citationSources) {
     const normalizedContent = normalizeLooseDisplayLatex(
-      normalizeCitationHandleMarkdown(content)
+      normalizeCitationHandleSpacing(normalizeCitationHandleBrackets(content))
     );
     const visibleContent = normalizedContent;
     const latexBlocks = extractLatexBlocks(visibleContent);
@@ -510,6 +516,7 @@ export function createMessagesUi(context, dependencies) {
     return escHtml(content);
   }
 
+  // Normalize a language id to a supported highlight.js id.
   function normalizeHighlightLanguage(language) {
     const raw = String(language || '').trim().toLowerCase();
     const aliases = {
@@ -545,6 +552,7 @@ export function createMessagesUi(context, dependencies) {
     return 'plaintext';
   }
 
+  // Infer a highlight language from a file path extension.
   function languageFromPath(path, fallback) {
     const cleanPath = String(path || '').split(/[?#]/)[0];
     const baseName = cleanPath.split(/[\\/]/).pop().toLowerCase();
@@ -566,6 +574,7 @@ export function createMessagesUi(context, dependencies) {
     return normalizeHighlightLanguage(extension);
   }
 
+  // Highlight source text with highlight.js when available.
   function highlightCode(code, language) {
     const text = String(code || '');
     const safeLanguage = normalizeHighlightLanguage(language);
@@ -586,6 +595,7 @@ export function createMessagesUi(context, dependencies) {
 
 
 
+  // Search source chip helpers.
   function safeExternalUrl(value) {
     const rawValue = String(value || '').trim();
     if (!rawValue) {
@@ -600,6 +610,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Read the display domain from one search source record.
   function faviconDomain(source) {
     const safeSource = source && typeof source === 'object' ? source : {};
     const directDomain = String(safeSource.domain || '').trim();
@@ -614,6 +625,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Build the favicon proxy URL for one domain.
   function localFaviconUrlForDomain(domain) {
     const cleanDomain = String(domain || '').trim().replace(/^www\./i, '');
     if (!cleanDomain || /[^a-z0-9.-]/i.test(cleanDomain)) {
@@ -622,6 +634,7 @@ export function createMessagesUi(context, dependencies) {
     return `/api/favicon/?domain=${encodeURIComponent(cleanDomain)}`;
   }
 
+  // Report whether a source record includes extracted preview text.
   function sourceHasExtractedPreview(source) {
     const safeSource = source && typeof source === 'object' ? source : {};
     const hasPreviewField = Object.prototype.hasOwnProperty.call(safeSource, 'preview');
@@ -635,6 +648,7 @@ export function createMessagesUi(context, dependencies) {
     return !!preview && preview !== snippet;
   }
 
+  // Resolve the favicon URL shown on one source chip.
   function sourceFaviconUrl(source) {
     const safeSource = source && typeof source === 'object' ? source : {};
     const localFaviconUrl = localFaviconUrlForDomain(faviconDomain(safeSource));
@@ -648,6 +662,7 @@ export function createMessagesUi(context, dependencies) {
     return safeExternalUrl(source.favicon_url);
   }
 
+  // Build CSS variables for a domain-colored chip accent.
   function domainAccentStyle(value, extraStyle) {
     const text = String(value || '').trim().toLowerCase();
     let hash = 0;
@@ -700,6 +715,7 @@ export function createMessagesUi(context, dependencies) {
     return best;
   }
 
+  // Streaming activity tag helpers.
   function openToolPayloadInfo(rawText) {
     return findOpenActivityMarker(rawText, [
       { open: '<tool_call>', close: '</tool_call>' },
@@ -708,16 +724,19 @@ export function createMessagesUi(context, dependencies) {
     ]);
   }
 
+  // Report whether streaming text has an open tool payload tag.
   function hasOpenToolPayload(rawText) {
     return !!openToolPayloadInfo(rawText);
   }
 
+  // Remove trailing open tool payload markup from streaming text.
   function stripOpenToolPayload(rawText) {
     const source = String(rawText || '');
     const openPayload = openToolPayloadInfo(source);
     return openPayload ? source.slice(0, openPayload.pos) : source;
   }
 
+  // Detect a partial activity tag suffix during streaming.
   function trailingPartialActivityMarkerInfo(rawText) {
     const source = String(rawText || '');
     const lowerSource = source.toLowerCase();
@@ -751,12 +770,14 @@ export function createMessagesUi(context, dependencies) {
     return best;
   }
 
+  // Remove a trailing partial activity tag from streaming text.
   function stripTrailingPartialActivityMarker(rawText) {
     const source = String(rawText || '');
     const partialMarker = trailingPartialActivityMarkerInfo(source);
     return partialMarker ? source.slice(0, source.length - partialMarker.length) : source;
   }
 
+  // Parse a trailing JSON shorthand into a shared file payload.
   function sharedFilePayloadFromTrailingShorthand(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return null;
@@ -794,6 +815,7 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
+  // Build one synthetic tool segment for a shared file shorthand.
   function sharedFileSegmentFromTrailingShorthand(sharedFile) {
     const safePath = sharedFile && sharedFile.path ? sharedFile.path : '';
     return {
@@ -810,6 +832,7 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
+  // Convert trailing file shorthands into tool segments.
   function normalizeTrailingSharedFileShorthandSegments(rawSegments) {
     const inputSegments = Array.isArray(rawSegments) ? rawSegments : [];
     const outputSegments = [];
@@ -893,6 +916,7 @@ export function createMessagesUi(context, dependencies) {
     return outputSegments;
   }
 
+  // Timeline parsing.
   function parseMessageTimeline(rawText) {
     const source = String(rawText || '');
     const lowerSource = source.toLowerCase();
@@ -1115,6 +1139,8 @@ export function createMessagesUi(context, dependencies) {
 
   // Thought state helpers.
   // Read the set of expanded thought indices for one row.
+
+  // Per-message expansion state.
   function getExpandedThoughtIndices($msgRow) {
     const rawValue = String($msgRow.attr('data-expanded-thoughts') || '').trim();
     if (!rawValue) {
@@ -1281,6 +1307,8 @@ export function createMessagesUi(context, dependencies) {
 
   // Activity timeline rendering.
   // Render thoughts, tool calls, and visible text into the assistant timeline.
+
+  // Search and read-page tool rendering.
   function isSearchToolSegment(segment) {
     const toolId = String(segment.toolId || '').toLowerCase();
     const alias = String(segment.alias || '').toLowerCase();
@@ -1291,11 +1319,13 @@ export function createMessagesUi(context, dependencies) {
       || !!(segment.toolUi && segment.toolUi.compact);
   }
 
+  // Extract the search query string from one tool segment.
   function searchQueryFromSegment(segment) {
     const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
     return formatSearchQueryValue(args.query || args.q || '').trim();
   }
 
+  // Append one query fragment without duplicates.
   function appendUniqueSearchPart(parts, value) {
     const text = String(value || '').replace(/\s+/g, ' ').trim();
     if (text && !parts.includes(text)) {
@@ -1303,6 +1333,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Flatten list-like search arguments into query parts.
   function appendSearchList(parts, value) {
     if (!Array.isArray(value)) {
       return;
@@ -1312,6 +1343,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Format one search argument value for display.
   function formatSearchQueryValue(value) {
     if (value === null || value === undefined) {
       return '';
@@ -1385,6 +1417,7 @@ export function createMessagesUi(context, dependencies) {
     return parts.join(' ').replace(/\s+/g, ' ').trim();
   }
 
+  // Build a stable key for one search tool segment.
   function searchSegmentKey(segment, fallbackIndex) {
     const safeSegment = segment && typeof segment === 'object' ? segment : {};
     const alias = String(safeSegment.alias || '').trim();
@@ -1405,6 +1438,7 @@ export function createMessagesUi(context, dependencies) {
     return '';
   }
 
+  // Report whether one segment is a read-page tool call.
   function isReadPageToolSegment(segment) {
     const toolId = String(segment.toolId || '').toLowerCase();
     const alias = String(segment.alias || '').toLowerCase();
@@ -1414,6 +1448,7 @@ export function createMessagesUi(context, dependencies) {
       || uiKind === 'read_page';
   }
 
+  // Report whether one segment is a write-file tool call.
   function isWriteToolSegment(segment) {
     const toolId = String(segment.toolId || '').toLowerCase();
     const alias = String(segment.alias || '').toLowerCase();
@@ -1424,6 +1459,7 @@ export function createMessagesUi(context, dependencies) {
       || toolName === 'write file';
   }
 
+  // Report whether one segment is an edit-file tool call.
   function isEditToolSegment(segment) {
     const toolId = String(segment.toolId || '').toLowerCase();
     const alias = String(segment.alias || '').toLowerCase();
@@ -1434,6 +1470,7 @@ export function createMessagesUi(context, dependencies) {
       || toolName === 'edit file';
   }
 
+  // Build a minimal citation source record from one URL.
   function sourceFromUrl(value, rank) {
     const rawUrl = String(value || '').trim();
     if (!rawUrl) {
@@ -1462,6 +1499,7 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
+  // Normalize one search result into a chip record.
   function normalizeSearchSourceItem(item, rank) {
     if (typeof item === 'string') {
       return sourceFromUrl(item, rank);
@@ -1497,6 +1535,7 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
+  // Flatten nested containers into source candidate arrays.
   function collectSourceCandidates(container) {
     if (Array.isArray(container)) {
       return container;
@@ -1519,6 +1558,7 @@ export function createMessagesUi(context, dependencies) {
       .flat();
   }
 
+  // Extract search result sources from one tool segment.
   function searchSourcesFromSegment(segment) {
     const structured = segment.structuredContent && typeof segment.structuredContent === 'object'
       ? segment.structuredContent
@@ -1537,6 +1577,7 @@ export function createMessagesUi(context, dependencies) {
     ].map(normalizeSearchSourceItem));
   }
 
+  // Extract read-page sources from one tool segment.
   function readPageSourcesFromSegment(segment) {
     const structured = segment.structuredContent && typeof segment.structuredContent === 'object'
       ? segment.structuredContent
@@ -1557,10 +1598,12 @@ export function createMessagesUi(context, dependencies) {
       .filter(Boolean);
   }
 
+  // Register search sources from one segment.
   function addSearchSourcesToCitationRegistry(registry, segment) {
     addSegmentCitationSources(registry, segment);
   }
 
+  // Register search sources from every segment.
   function addAllSearchSourcesToCitationRegistry(registry, segments) {
     addSegmentsCitationSources(
       registry,
@@ -1570,6 +1613,7 @@ export function createMessagesUi(context, dependencies) {
     );
   }
 
+  // Render one inline search source chip.
   function renderSourceChip(chip) {
     const source = chip && typeof chip === 'object' ? chip : {};
     const domain = String(source.display_domain || source.domain || '').trim();
@@ -1595,6 +1639,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Remove duplicate search sources by URL and id.
   function dedupeSearchSources(sources) {
     const seen = {};
     return (Array.isArray(sources) ? sources : []).filter(function keepFirstSource(source) {
@@ -1612,6 +1657,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Render source chips with a More overflow control.
   function renderSearchSourcesWithOverflow(sources, maxVisible) {
     const items = Array.isArray(sources) ? sources : [];
     const visibleLimit = Number.isInteger(maxVisible) && maxVisible > 0 ? maxVisible : 3;
@@ -1631,6 +1677,7 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
+  // Render one search tool activity card.
   function renderSearchToolCard(segment, toolSegmentIndex, options) {
     const renderOptions = options || {};
     const hasResult = segment.result !== null && segment.result !== undefined;
@@ -1683,6 +1730,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Render a batch of related search tool cards.
   function renderSearchToolGroup(searchItems, options) {
     const renderOptions = options || {};
     if (!Array.isArray(searchItems) || searchItems.length === 0) {
@@ -1751,6 +1799,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Render one read-page tool activity card.
   function renderReadPageToolCard(readItems) {
     const items = Array.isArray(readItems) ? readItems : [];
     const firstItem = items[0] || {};
@@ -1787,11 +1836,13 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Read the target path from one write tool segment.
   function writePathFromSegment(segment) {
     const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
     return String(args.path || args.file || args.filename || '').trim();
   }
 
+  // Read file content from one write tool segment.
   function writeContentFromSegment(segment) {
     const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
     if (args.content !== undefined && args.content !== null) {
@@ -1806,6 +1857,7 @@ export function createMessagesUi(context, dependencies) {
     return '';
   }
 
+  // Render collapsed or expanded write preview lines.
   function renderWritePreviewLines(content, isExpanded, path) {
     const lines = String(content || '').split(/\r?\n/);
     const maxLines = isExpanded ? WRITE_PREVIEW_EXPANDED_LINES : WRITE_PREVIEW_COLLAPSED_LINES;
@@ -1823,6 +1875,7 @@ export function createMessagesUi(context, dependencies) {
     return rowsHtml;
   }
 
+  // Render one write-file tool activity card.
   function renderWriteToolCard(segment, toolSegmentIndex, options) {
     const renderOptions = options || {};
     const content = writeContentFromSegment(segment);
@@ -1850,6 +1903,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Parse one tool segment result JSON into an object.
   function parseToolResultObject(segment) {
     const rawResult = segment && segment.result !== null && segment.result !== undefined
       ? String(segment.result)
@@ -1869,6 +1923,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Shared file and compression cards.
   function formatByteSize(bytes) {
     const size = Number(bytes);
     if (!Number.isFinite(size) || size < 0) {
@@ -1883,6 +1938,7 @@ export function createMessagesUi(context, dependencies) {
     return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MB`;
   }
 
+  // Normalize one shared file payload for UI rendering.
   function normalizeSharedFilePayload(candidate) {
     if (!candidate || typeof candidate !== 'object') {
       return null;
@@ -1933,6 +1989,7 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
+  // Extract a shared file payload from one tool segment.
   function sharedFileFromSegment(segment) {
     const candidates = [
       segment && segment.structuredContent,
@@ -1950,6 +2007,7 @@ export function createMessagesUi(context, dependencies) {
     return null;
   }
 
+  // Report whether one segment represents a shared file.
   function isSharedFileToolSegment(segment) {
     if (isSandboxShareFileToolSegment(segment)) {
       return Boolean(sharedFileFromSegment(segment));
@@ -1960,6 +2018,7 @@ export function createMessagesUi(context, dependencies) {
     return /share[_-\s]?file|download[_-\s]?file/.test(toolIdentityText(segment));
   }
 
+  // Report whether one segment is a context compression marker.
   function isCompressionContextSegment(segment) {
     const alias = String(segment && (segment.alias || segment.toolId || segment.toolName || '') || '').trim().toLowerCase();
     const toolUi = segment && segment.toolUi && typeof segment.toolUi === 'object' ? segment.toolUi : {};
@@ -1971,10 +2030,12 @@ export function createMessagesUi(context, dependencies) {
       || String(structured.kind || '').toLowerCase() === 'context_compression';
   }
 
+  // Read display text from one compression context segment.
   function compressionContextText(segment) {
     return String(segment && segment.result ? segment.result : '').trim();
   }
 
+  // Render one context compression activity card.
   function renderCompressionContextCard(segment, toolSegmentIndex) {
     const text = compressionContextText(segment);
     if (!text) {
@@ -1993,6 +2054,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Build the pending row shown during compression.
   function buildCompressionPendingRow() {
     return $(`
       <div class="msg msg-compression-marker msg-compression-marker--pending" data-message-key="context-compression-pending">
@@ -2012,6 +2074,7 @@ export function createMessagesUi(context, dependencies) {
     `);
   }
 
+  // Append a context compression pending row to the chat.
   function appendCompressionPending() {
     const existing = dom.$messagesInner.find('.msg-compression-marker--pending').last();
     if (existing.length) {
@@ -2024,11 +2087,13 @@ export function createMessagesUi(context, dependencies) {
     return $row;
   }
 
+  // Remove one compression pending row from the chat.
   function removeCompressionPending($row) {
     const target = $row && $row.length ? $row : dom.$messagesInner.find('.msg-compression-marker--pending');
     target.remove();
   }
 
+  // Report whether segments contain only compression markers.
   function isCompressionOnlyActivitySegments(segments) {
     return Array.isArray(segments)
       && segments.length > 0
@@ -2037,6 +2102,7 @@ export function createMessagesUi(context, dependencies) {
       });
   }
 
+  // Resolve the download URL for one shared file card.
   function sharedFileDownloadUrl(file, options) {
     if (!file) {
       return '';
@@ -2057,6 +2123,7 @@ export function createMessagesUi(context, dependencies) {
     return `/api/shared-file/download/?${params.toString()}`;
   }
 
+  // Build image preview metadata for one shared file.
   function sharedFileImageRender(file) {
     const render = file && file.render && typeof file.render === 'object' ? file.render : null;
     if (render && String(render.type || '').toLowerCase() === 'image') {
@@ -2090,6 +2157,7 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
+  // Attachment card helpers.
   function normalizeAttachmentCardFile(file, options) {
     const renderOptions = options || {};
     if (!file) {
@@ -2101,14 +2169,17 @@ export function createMessagesUi(context, dependencies) {
     return attachmentUi.normalizeAttachment(file);
   }
 
+  // Read the filename from one attachment record.
   function attachmentFilename(file) {
     return String((file && (file.filename || file.name)) || 'File').trim() || 'File';
   }
 
+  // Read the MIME type from one attachment record.
   function attachmentMimeType(file) {
     return String((file && (file.mimeType || file.mime_type || file.type)) || '').trim().toLowerCase();
   }
 
+  // Build a short type label for one attachment.
   function attachmentTypeLabel(file) {
     const rawLabel = String((file && (file.typeLabel || file.type_label || file.mimeType || file.mime_type)) || '').trim();
     if (rawLabel && rawLabel.toLowerCase() !== 'file') {
@@ -2127,10 +2198,12 @@ export function createMessagesUi(context, dependencies) {
     return rawLabel || 'File';
   }
 
+  // Read the byte size from one attachment record.
   function attachmentSizeBytes(file) {
     return Number(file && (file.sizeBytes ?? file.size_bytes ?? file.size ?? -1));
   }
 
+  // Resolve the content URL for one attachment card.
   function attachmentSourceUrl(file, options) {
     const renderOptions = options || {};
     if (!file) {
@@ -2142,6 +2215,7 @@ export function createMessagesUi(context, dependencies) {
     return String(file.dataUrl || file.previewDataUrl || file.contentUrl || '').trim();
   }
 
+  // Resolve the download URL for one attachment card.
   function attachmentDownloadUrl(file, options) {
     const renderOptions = options || {};
     if (!file) {
@@ -2153,10 +2227,12 @@ export function createMessagesUi(context, dependencies) {
     return String(file.contentUrl || (!/^data:/i.test(file.dataUrl || '') ? file.dataUrl : '') || '').trim();
   }
 
+  // Read the display kind from one attachment record.
   function attachmentDisplayKind(file) {
     return String((file && (file.displayKind || file.display_kind || file.kind)) || '').trim().toLowerCase();
   }
 
+  // Media attachment rendering.
   function isAudioAttachment(file) {
     const mimeType = attachmentMimeType(file);
     const filename = attachmentFilename(file).toLowerCase();
@@ -2166,6 +2242,7 @@ export function createMessagesUi(context, dependencies) {
       || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)$/i.test(filename);
   }
 
+  // Report whether one attachment should render as video.
   function isVideoAttachment(file) {
     const mimeType = attachmentMimeType(file);
     const filename = attachmentFilename(file).toLowerCase();
@@ -2175,6 +2252,7 @@ export function createMessagesUi(context, dependencies) {
       || /\.(mp4|webm|mov|m4v|ogv|avi|mkv)$/i.test(filename);
   }
 
+  // Report whether one attachment should render as an image.
   function isImageAttachment(file) {
     const mimeType = attachmentMimeType(file);
     const filename = attachmentFilename(file).toLowerCase();
@@ -2184,12 +2262,14 @@ export function createMessagesUi(context, dependencies) {
       || /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i.test(filename);
   }
 
+  // Build type and size metadata text for media cards.
   function mediaMetaText(file) {
     const typeLabel = attachmentTypeLabel(file);
     const sizeText = formatByteSize(attachmentSizeBytes(file));
     return [typeLabel, sizeText].filter(Boolean).join(' / ');
   }
 
+  // Render one download button for an attachment card.
   function renderAttachmentDownloadButton(file, options, className) {
     const href = attachmentDownloadUrl(file, options);
     if (!href) {
@@ -2202,6 +2282,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Render one image attachment card.
   function renderImageAttachmentCard(file, options) {
     const renderOptions = options || {};
     const sharedRender = renderOptions.source === 'shared_file' ? sharedFileImageRender(file) : null;
@@ -2238,6 +2319,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Render one generic file attachment chip.
   function renderGenericAttachmentCard(file, options) {
     const renderOptions = options || {};
     const filename = attachmentFilename(file);
@@ -2258,6 +2340,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Infer image, audio, video, or file from metadata.
   function inferredAttachmentDisplayKind(file) {
     let displayKind = attachmentDisplayKind(file);
     if (!displayKind || displayKind === 'file') {
@@ -2274,6 +2357,7 @@ export function createMessagesUi(context, dependencies) {
     return displayKind;
   }
 
+  // Render one compact chip for a user upload.
   function renderUserUploadAttachmentChip(file) {
     const filename = attachmentFilename(file);
     const badgeLabel = inferredAttachmentDisplayKind(file).toUpperCase();
@@ -2289,6 +2373,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Render one audio attachment player card.
   function renderAudioAttachmentCard(file, options) {
     const renderOptions = options || {};
     const src = attachmentSourceUrl(file, renderOptions);
@@ -2319,6 +2404,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Render one video attachment player card.
   function renderVideoAttachmentCard(file, options) {
     const renderOptions = options || {};
     const src = attachmentSourceUrl(file, renderOptions);
@@ -2356,6 +2442,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Render the correct attachment card for one file record.
   function renderAttachmentCard(file, options) {
     const renderOptions = options || {};
     const normalized = normalizeAttachmentCardFile(file, renderOptions);
@@ -2377,6 +2464,7 @@ export function createMessagesUi(context, dependencies) {
     return renderGenericAttachmentCard(normalized, renderOptions);
   }
 
+  // Render message attachments.
   function renderMessageAttachments(attachments, options) {
     const cards = (attachments || [])
       .map(function renderOneAttachment(attachment) {
@@ -2391,6 +2479,7 @@ export function createMessagesUi(context, dependencies) {
     return `<div class="msg-attachments msg-attachments--${escapeAttributeValue((options && options.side) || 'message')}">${cards.join('')}</div>`;
   }
 
+  // Format seconds as m:ss for media controls.
   function formatMediaTime(seconds) {
     const value = Number(seconds);
     if (!Number.isFinite(value) || value < 0) {
@@ -2402,10 +2491,12 @@ export function createMessagesUi(context, dependencies) {
     return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
   }
 
+  // Handle media element from card.
   function mediaElementFromCard(card) {
     return card ? card.querySelector('audio, video') : null;
   }
 
+  // Handle buffered progress percent.
   function bufferedProgressPercent(media, duration, progressPercent) {
     const buffered = media && media.buffered;
     if (!buffered || !Number.isFinite(duration) || duration <= 0) {
@@ -2426,6 +2517,7 @@ export function createMessagesUi(context, dependencies) {
     return Math.max(progressPercent, Math.min(100, (bufferedEnd / duration) * 100));
   }
 
+  // Handle stop media frame sync.
   function stopMediaFrameSync(card) {
     const frameId = activeMediaFrameIds.get(card);
     if (frameId) {
@@ -2434,6 +2526,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Handle start media frame sync.
   function startMediaFrameSync(card) {
     if (!card || activeMediaFrameIds.has(card)) {
       return;
@@ -2452,6 +2545,7 @@ export function createMessagesUi(context, dependencies) {
     activeMediaFrameIds.set(card, window.requestAnimationFrame(syncFrame));
   }
 
+  // Sync media card.
   function syncMediaCard(card) {
     const media = mediaElementFromCard(card);
     if (!card || !media) {
@@ -2495,6 +2589,7 @@ export function createMessagesUi(context, dependencies) {
     syncFullscreenControls(card);
   }
 
+  // Handle preview media seek.
   function previewMediaSeek(card, value) {
     const media = mediaElementFromCard(card);
     const duration = Number(media && media.duration);
@@ -2514,6 +2609,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Handle force pause media.
   function forcePauseMedia(card, media) {
     if (!card || !media) {
       return;
@@ -2524,6 +2620,7 @@ export function createMessagesUi(context, dependencies) {
     syncMediaCard(card);
   }
 
+  // Handle force play media.
   function forcePlayMedia(card, media) {
     if (!card || !media) {
       return;
@@ -2546,6 +2643,7 @@ export function createMessagesUi(context, dependencies) {
     syncMediaCard(card);
   }
 
+  // Toggle media card.
   function toggleMediaCard(card) {
     const media = mediaElementFromCard(card);
     if (!media) {
@@ -2558,6 +2656,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Handle commit media seek.
   function commitMediaSeek(range) {
     const card = range && range.closest('[data-media-card]');
     const media = mediaElementFromCard(card);
@@ -2573,6 +2672,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Sync fullscreen controls.
   function syncFullscreenControls(card) {
     if (!card) {
       return;
@@ -2587,6 +2687,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Handle ensure floating media root.
   function ensureFloatingMediaRoot() {
     let root = document.getElementById('floating-media-root');
     if (!root) {
@@ -2597,6 +2698,7 @@ export function createMessagesUi(context, dependencies) {
     return root;
   }
 
+  // Open floating video card.
   function openFloatingVideoCard(card) {
     if (!card || card.classList.contains('is-floating')) {
       return;
@@ -2611,6 +2713,7 @@ export function createMessagesUi(context, dependencies) {
     card.classList.add('is-floating');
   }
 
+  // Handle dock floating video card.
   function dockFloatingVideoCard(card) {
     if (!card || !card.classList.contains('is-floating')) {
       return;
@@ -2625,12 +2728,14 @@ export function createMessagesUi(context, dependencies) {
     card.classList.remove('is-floating');
   }
 
+  // Close floating video card.
   function closeFloatingVideoCard(card) {
     const media = mediaElementFromCard(card);
     forcePauseMedia(card, media);
     dockFloatingVideoCard(card);
   }
 
+  // Media player events.
   function bindAttachmentMediaEvents() {
     $(document)
       .on('click.mediaAttachments', '[data-media-card] [data-media-action="toggle"]', function onMediaToggle(event) {
@@ -2719,6 +2824,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Render shared image file card.
   function renderSharedImageFileCard(file) {
     return renderAttachmentCard(file, {
       side: 'assistant',
@@ -2727,6 +2833,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Render shared file card.
   function renderSharedFileCard(segment) {
     const file = sharedFileFromSegment(segment);
     const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
@@ -2747,6 +2854,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Collect pinned shared file cards.
   function collectPinnedSharedFileCards(segments) {
     const safeSegments = Array.isArray(segments) ? segments : [];
     const cards = [];
@@ -2771,6 +2879,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Report whether image view tool segment.
   function isImageViewToolSegment(segment) {
     const identity = toolIdentityText(segment);
     if (/view[_-\s]?image|read[_-\s]?image/.test(identity)) {
@@ -2780,6 +2889,7 @@ export function createMessagesUi(context, dependencies) {
     return result && result.kind === 'image';
   }
 
+  // Handle image result from segment.
   function imageResultFromSegment(segment) {
     const candidates = [
       segment && segment.structuredContent,
@@ -2800,6 +2910,7 @@ export function createMessagesUi(context, dependencies) {
     return null;
   }
 
+  // Handle sandbox image data url.
   function sandboxImageDataUrl(imageResult) {
     const preview = imageResult && imageResult.preview && typeof imageResult.preview === 'object'
       ? imageResult.preview
@@ -2821,6 +2932,7 @@ export function createMessagesUi(context, dependencies) {
     return `data:${mime};base64,${dataBase64}`;
   }
 
+  // Handle edit mode from segment.
   function editModeFromSegment(segment) {
     const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
     const mode = String(args.mode || '').trim().toLowerCase();
@@ -2830,11 +2942,13 @@ export function createMessagesUi(context, dependencies) {
     return 'match';
   }
 
+  // Handle edit path from segment.
   function editPathFromSegment(segment, result) {
     const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
     return String((result && (result.p || result.path)) || args.path || args.file || args.filename || '').trim();
   }
 
+  // Parse unified diff rows.
   function parseUnifiedDiffRows(diffText) {
     const rows = [];
     const lines = String(diffText || '').split(/\r?\n/);
@@ -2880,6 +2994,7 @@ export function createMessagesUi(context, dependencies) {
     return rows;
   }
 
+  // Handle fallback edit rows.
   function fallbackEditRows(segment) {
     const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
     const mode = editModeFromSegment(segment);
@@ -2911,11 +3026,13 @@ export function createMessagesUi(context, dependencies) {
     return rows;
   }
 
+  // Handle edit rows from segment.
   function editRowsFromSegment(segment, result) {
     const rows = parseUnifiedDiffRows(result && result.ud ? result.ud : '');
     return rows.length > 0 ? rows : fallbackEditRows(segment);
   }
 
+  // Render edit rows.
   function renderEditRows(rows, isExpanded, language) {
     const safeRows = Array.isArray(rows) ? rows : [];
     const maxRows = isExpanded ? EDIT_PREVIEW_EXPANDED_ROWS : EDIT_PREVIEW_COLLAPSED_ROWS;
@@ -2940,6 +3057,7 @@ export function createMessagesUi(context, dependencies) {
     return rowsHtml;
   }
 
+  // Render one edit-file tool activity card.
   function renderEditToolCard(segment, toolSegmentIndex, options) {
     const renderOptions = options || {};
     const result = parseToolResultObject(segment);
@@ -2974,12 +3092,14 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Handle truncate inline text.
   function truncateInlineText(value, maxLength) {
     const text = String(value || '').replace(/\s+/g, ' ').trim();
     const limit = maxLength || 140;
     return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
   }
 
+  // Handle compact tool value.
   function compactToolValue(value) {
     if (value === null || value === undefined) {
       return '';
@@ -2996,6 +3116,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Handle utf8 byte length.
   function utf8ByteLength(value) {
     const text = String(value || '');
     if (typeof TextEncoder !== 'undefined') {
@@ -3004,11 +3125,13 @@ export function createMessagesUi(context, dependencies) {
     return unescape(encodeURIComponent(text)).length;
   }
 
+  // Handle text line count.
   function textLineCount(value) {
     const text = String(value || '');
     return text ? text.split(/\r?\n/).length : 0;
   }
 
+  // Handle truncate text preview.
   function truncateTextPreview(value, maxChars) {
     const text = String(value || '');
     const limit = Math.max(0, Number(maxChars) || 0);
@@ -3022,6 +3145,7 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
+  // Handle heavy tool keys for segment.
   function heavyToolKeysForSegment(segment) {
     if (isWriteToolSegment(segment)) {
       return HEAVY_TOOL_ARGUMENT_KEYS.write;
@@ -3038,6 +3162,7 @@ export function createMessagesUi(context, dependencies) {
     return [];
   }
 
+  // Handle tool identity text.
   function toolIdentityText(segment) {
     const safeSegment = segment && typeof segment === 'object' ? segment : {};
     return [
@@ -3049,10 +3174,12 @@ export function createMessagesUi(context, dependencies) {
     ].join(' ').toLowerCase();
   }
 
+  // Handle tool server id.
   function toolServerId(segment) {
     return String(segment && segment.serverId || '').trim().toLowerCase();
   }
 
+  // Report whether mcp sandbox tool segment.
   function isMcpSandboxToolSegment(segment) {
     const serverId = toolServerId(segment);
     if (serverId === 'sandbox') {
@@ -3062,6 +3189,7 @@ export function createMessagesUi(context, dependencies) {
     return alias.startsWith('sandbox__');
   }
 
+  // Report whether sandbox python tool segment.
   function isSandboxPythonToolSegment(segment) {
     if (!isMcpSandboxToolSegment(segment)) {
       return false;
@@ -3070,6 +3198,7 @@ export function createMessagesUi(context, dependencies) {
     return toolId === 'sandbox_python' || toolId === 'python';
   }
 
+  // Report whether sandbox share file tool segment.
   function isSandboxShareFileToolSegment(segment) {
     if (!isMcpSandboxToolSegment(segment)) {
       return false;
@@ -3078,6 +3207,7 @@ export function createMessagesUi(context, dependencies) {
     return toolId === 'share_file';
   }
 
+  // Report whether sandbox tool segment.
   function isSandboxToolSegment(segment) {
     if (isMcpSandboxToolSegment(segment)) {
       const toolId = String(segment && segment.toolId || '').trim().toLowerCase();
@@ -3088,6 +3218,7 @@ export function createMessagesUi(context, dependencies) {
     return /sandbox|bash|shell|exec|deep[-_\s]?think|container/.test(toolIdentityText(segment));
   }
 
+  // Parse sandbox result.
   function parseSandboxResult(segment) {
     const rawResult = segment && segment.result !== null && segment.result !== undefined
       ? String(segment.result)
@@ -3127,6 +3258,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Handle sandbox input text.
   function sandboxInputText(segment) {
     const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
     const command = args.command || args.cmd || args.code || args.input || '';
@@ -3137,6 +3269,7 @@ export function createMessagesUi(context, dependencies) {
     return String(command || '');
   }
 
+  // Handle sandbox input preview text.
   function sandboxInputPreviewText(segment) {
     const preview = truncateTextPreview(sandboxInputText(segment), SANDBOX_INPUT_PREVIEW_CHARS);
     if (!preview.truncated) {
@@ -3145,6 +3278,7 @@ export function createMessagesUi(context, dependencies) {
     return `${preview.text}\n\n... ${preview.omittedChars} more characters omitted`;
   }
 
+  // Handle sandbox language.
   function sandboxLanguage(segment) {
     const identity = toolIdentityText(segment);
     if (/python/.test(identity)) {
@@ -3156,6 +3290,7 @@ export function createMessagesUi(context, dependencies) {
     return 'plaintext';
   }
 
+  // Render sandbox stream block.
   function renderSandboxStreamBlock(label, content, streamClass, language) {
     const text = String(content || '');
     if (!text) {
@@ -3171,6 +3306,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Handle sandbox status class.
   function sandboxStatusClass(segment, result) {
     if (result && (result.ok === false || (result.exitCode !== null && result.exitCode !== undefined && Number(result.exitCode) !== 0))) {
       return ' is-error';
@@ -3178,6 +3314,7 @@ export function createMessagesUi(context, dependencies) {
     return toolStatusClass(segment);
   }
 
+  // Render sandbox image tool block.
   function renderSandboxImageToolBlock(segment, toolSegmentIndex) {
     const image = imageResultFromSegment(segment);
     if (!image) {
@@ -3225,6 +3362,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Render sandbox tool block.
   function renderSandboxToolBlock(segment, toolSegmentIndex) {
     const status = toolStatusText(segment);
     const detail = reasoningToolDetail(segment);
@@ -3259,6 +3397,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Handle remember loaded sandbox images.
   function rememberLoadedSandboxImages($root) {
     const root = $root && $root.length ? $root : dom.$messagesInner;
     root.find('.msg-sandbox-image-frame.is-loaded .msg-sandbox-image[data-sandbox-image-src]').each(function rememberImage() {
@@ -3270,6 +3409,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Sync sandbox image frames for src.
   function syncSandboxImageFramesForSrc(src) {
     const normalizedSrc = String(src || '').trim();
     if (!normalizedSrc) {
@@ -3302,6 +3442,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Handle ensure sandbox image preload.
   function ensureSandboxImagePreload(src) {
     const normalizedSrc = String(src || '').trim();
     if (!normalizedSrc) {
@@ -3327,6 +3468,7 @@ export function createMessagesUi(context, dependencies) {
     preloadImage.src = normalizedSrc;
   }
 
+  // Handle mark sandbox image loaded.
   function markSandboxImageLoaded(imageEl) {
     if (!imageEl) {
       return;
@@ -3343,6 +3485,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Handle mark sandbox image error.
   function markSandboxImageError(imageEl) {
     const src = String((imageEl && imageEl.getAttribute && imageEl.getAttribute('data-sandbox-image-src')) || (imageEl && imageEl.currentSrc) || (imageEl && imageEl.src) || '');
     if (src) {
@@ -3354,6 +3497,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Handle hydrate sandbox images.
   function hydrateSandboxImages($root) {
     const root = $root && $root.length ? $root : dom.$messagesInner;
     root.find('.msg-sandbox-image[data-sandbox-image-src]').each(function hydrateImage() {
@@ -3392,6 +3536,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Handle hydrate shared image cards.
   function hydrateSharedImageCards($root) {
     const root = $root && $root.length ? $root : dom.$messagesInner;
     root.find('.msg-shared-image').each(function hydrateSharedImage() {
@@ -3425,6 +3570,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Handle sanitize mermaid svg.
   function sanitizeMermaidSvg(svg) {
     if (typeof DOMPurify !== 'undefined' && DOMPurify.sanitize) {
       return DOMPurify.sanitize(String(svg || ''), {
@@ -3434,6 +3580,7 @@ export function createMessagesUi(context, dependencies) {
     return String(svg || '');
   }
 
+  // Handle read root css var.
   function readRootCssVar(name, fallback) {
     if (typeof document === 'undefined' || !document.documentElement) {
       return fallback;
@@ -3443,6 +3590,7 @@ export function createMessagesUi(context, dependencies) {
     return raw || fallback;
   }
 
+  // Build mermaid theme variables.
   function buildMermaidThemeVariables() {
     return {
       background: 'transparent',
@@ -3460,6 +3608,7 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
+  // Parse css color to rgb.
   function parseCssColorToRgb(value) {
     const color = String(value || '').trim().toLowerCase();
     if (!color || color === 'none' || color === 'transparent') {
@@ -3491,6 +3640,7 @@ export function createMessagesUi(context, dependencies) {
     return null;
   }
 
+  // Handle relative luminance.
   function relativeLuminance(rgb) {
     if (!rgb) {
       return 0;
@@ -3504,6 +3654,7 @@ export function createMessagesUi(context, dependencies) {
     return (0.2126 * channels[0]) + (0.7152 * channels[1]) + (0.0722 * channels[2]);
   }
 
+  // Handle contrast ratio.
   function contrastRatio(firstRgb, secondRgb) {
     const first = relativeLuminance(firstRgb);
     const second = relativeLuminance(secondRgb);
@@ -3512,6 +3663,7 @@ export function createMessagesUi(context, dependencies) {
     return (lighter + 0.05) / (darker + 0.05);
   }
 
+  // Read svg shape fill from app state.
   function getSvgShapeFill(shapeEl) {
     if (!shapeEl) {
       return null;
@@ -3524,6 +3676,7 @@ export function createMessagesUi(context, dependencies) {
       || parseCssColorToRgb((shapeEl.getAttribute('style') || '').match(/fill\s*:\s*([^;]+)/i)?.[1]);
   }
 
+  // Handle apply mermaid label contrast.
   function applyMermaidLabelContrast(svgRoot) {
     if (!svgRoot || !svgRoot.querySelectorAll) {
       return;
@@ -3553,6 +3706,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Render mermaid latex labels.
   function renderMermaidLatexLabels(svgRoot) {
     if (!svgRoot || !svgRoot.querySelectorAll || typeof document === 'undefined') {
       return;
@@ -3610,6 +3764,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Handle enhance mermaid svg.
   function enhanceMermaidSvg(canvasEl) {
     if (!canvasEl || !canvasEl.querySelector) {
       return;
@@ -3622,6 +3777,7 @@ export function createMessagesUi(context, dependencies) {
     applyMermaidLabelContrast(svgRoot);
   }
 
+  // Read mermaid renderer from app state.
   function getMermaidRenderer() {
     if (typeof window !== 'undefined' && window.mermaid) {
       return window.mermaid;
@@ -3632,6 +3788,7 @@ export function createMessagesUi(context, dependencies) {
     return null;
   }
 
+  // Mermaid diagram rendering.
   function configureMermaid() {
     const mermaidApi = getMermaidRenderer();
     if (!mermaidApi || !mermaidApi.initialize) {
@@ -3648,6 +3805,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Handle hydrate mermaid diagrams.
   function hydrateMermaidDiagrams($root) {
     const root = $root && $root.length ? $root : dom.$messagesInner;
     root.find('.md-mermaid-card').each(function hydrateMermaidCard() {
@@ -3715,6 +3873,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Handle tool display name.
   function toolDisplayName(segment) {
     if (isSearchToolSegment(segment)) {
       return 'Search';
@@ -3738,6 +3897,7 @@ export function createMessagesUi(context, dependencies) {
     return String(segment.toolName || segment.toolId || segment.alias || 'Tool').trim();
   }
 
+  // Handle tool status text.
   function toolStatusText(segment) {
     const rawStatus = segment.toolUi && segment.toolUi.status ? String(segment.toolUi.status).trim().toLowerCase() : '';
     if (rawStatus === 'error' || rawStatus === 'timeout') {
@@ -3746,6 +3906,7 @@ export function createMessagesUi(context, dependencies) {
     return segment.result !== null && segment.result !== undefined ? 'Done' : 'Running';
   }
 
+  // Handle tool status class.
   function toolStatusClass(segment) {
     const status = toolStatusText(segment).toLowerCase();
     if (status === 'error' || status === 'timeout') {
@@ -3757,6 +3918,7 @@ export function createMessagesUi(context, dependencies) {
     return ' is-done';
   }
 
+  // Handle reasoning tool detail.
   function reasoningToolDetail(segment) {
     if (isSearchToolSegment(segment)) {
       return searchQueryFromSegment(segment) || 'sources';
@@ -3807,6 +3969,7 @@ export function createMessagesUi(context, dependencies) {
     }).join(' · ');
   }
 
+  // Handle tool icon html.
   function toolIconHtml(segment) {
     if (isSearchToolSegment(segment) || isReadPageToolSegment(segment)) {
       return icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON || '';
@@ -3829,6 +3992,7 @@ export function createMessagesUi(context, dependencies) {
     return '';
   }
 
+  // Render reasoning tool row.
   function renderReasoningToolRow(segment, toolSegmentIndex) {
     const name = toolDisplayName(segment);
     const detail = reasoningToolDetail(segment);
@@ -3849,6 +4013,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Render reasoning tool item.
   function renderReasoningToolItem(item) {
     const segment = item && item.segment ? item.segment : item;
     const toolIndex = item && Number.isInteger(item.toolIndex) ? item.toolIndex : undefined;
@@ -3883,6 +4048,7 @@ export function createMessagesUi(context, dependencies) {
     return renderReasoningToolRow(segment, toolIndex);
   }
 
+  // Handle reasoning tool step title.
   function reasoningToolStepTitle(segment) {
     if (isSearchToolSegment(segment)) {
       return toolStatusText(segment) === 'Done' ? 'Searched sources' : 'Searching sources';
@@ -3918,20 +4084,24 @@ export function createMessagesUi(context, dependencies) {
     return toolDisplayName(segment);
   }
 
+  // Handle reasoning toggle label.
   function reasoningToggleLabel() {
     return 'Thought';
   }
 
+  // Report whether  thought segments.
   function hasThoughtSegments(segments) {
     return (Array.isArray(segments) ? segments : []).some(function hasThought(segment) {
       return segment && segment.type === 'thought';
     });
   }
 
+  // Report whether  reasoning marker.
   function hasReasoningMarker(rawText) {
     return /<\/?(?:think|thinking|reasoning|analysis)>/i.test(String(rawText || ''));
   }
 
+  // Handle should use reasoning shell.
   function shouldUseReasoningShell($msgRow, segments, rawText, renderOptions) {
     const options = renderOptions || {};
     const rawHasReasoningMarker = hasReasoningMarker(rawText);
@@ -3949,10 +4119,12 @@ export function createMessagesUi(context, dependencies) {
       || trustedSegmentThoughts;
   }
 
+  // Report whether  closed reasoning.
   function hasClosedReasoning(rawText) {
     return /<\/(?:think|thinking|reasoning|analysis)>/i.test(String(rawText || ''));
   }
 
+  // Handle split long reasoning sentence.
   function splitLongReasoningSentence(sentence, targetLength) {
     const words = String(sentence || '').trim().split(/\s+/).filter(Boolean);
     const chunks = [];
@@ -3974,6 +4146,7 @@ export function createMessagesUi(context, dependencies) {
     return chunks;
   }
 
+  // Handle split reasoning text.
   function splitReasoningText(content) {
     const normalized = String(content || '').replace(/\s+/g, ' ').trim();
     if (!normalized) {
@@ -4020,6 +4193,7 @@ export function createMessagesUi(context, dependencies) {
     return chunks.length > 0 ? chunks : [normalized];
   }
 
+  // Render reasoning thought text.
   function renderReasoningThoughtText(content) {
     const text = String(content || '').trim();
     if (!text) {
@@ -4028,6 +4202,7 @@ export function createMessagesUi(context, dependencies) {
     return `<div class="msg-reasoning-text">${escHtml(text)}</div>`;
   }
 
+  // Render pending tool call placeholder.
   function renderPendingToolCallPlaceholder() {
     return `
       <div class="msg-tool-pending-card" aria-live="polite">
@@ -4041,6 +4216,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Render reasoning group.
   function renderReasoningGroup(items, thoughtIndex, isExpanded, toggleLabel, options) {
     const safeItems = Array.isArray(items) ? items : [];
     const groupOptions = options || {};
@@ -4133,6 +4309,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Render thought block.
   function renderThoughtBlock(content, thoughtIndex, isExpanded) {
     return `
       <div class="msg-thoughts-wrapper msg-reasoning-wrapper${isExpanded ? ' expanded' : ''}" data-thought-index="${thoughtIndex}">
@@ -4144,6 +4321,7 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Create activity block.
   function createActivityBlock(key, innerHtml) {
     const safeKey = String(key || 'block');
     return {
@@ -4322,6 +4500,7 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Handle apply activity blocks.
   function applyActivityBlocks($stream, blocks) {
     const safeBlocks = Array.isArray(blocks) ? blocks : [];
     const streamEl = $stream[0];
@@ -4385,6 +4564,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Render activity timeline.
   function renderActivityTimeline($msgRow, segments, options) {
     const renderOptions = options || {};
     const useMarkdown = renderOptions.markdown !== false;
@@ -4759,12 +4939,14 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Handle search segment count.
   function searchSegmentCount(segments) {
     return (Array.isArray(segments) ? segments : []).filter(function onlySearchSegment(segment) {
       return segment && segment.type === 'tool' && isSearchToolSegment(segment);
     }).length;
   }
 
+  // Handle clear search batch hold.
   function clearSearchBatchHold($msgRow) {
     const holdState = $msgRow.data('searchBatchHoldState');
     if (holdState && holdState.timer) {
@@ -4775,6 +4957,7 @@ export function createMessagesUi(context, dependencies) {
     $msgRow.removeData('searchBatchHoldRaw');
   }
 
+  // Handle clear pre tool text hold.
   function clearPreToolTextHold($msgRow) {
     const holdState = $msgRow.data('preToolTextHoldState');
     if (holdState && holdState.timer) {
@@ -4785,6 +4968,7 @@ export function createMessagesUi(context, dependencies) {
     $msgRow.removeData('preToolTextHoldRaw');
   }
 
+  // Handle should hold pre tool text.
   function shouldHoldPreToolText($msgRow, parsed, rawText) {
     const segments = Array.isArray(parsed && parsed.segments) ? parsed.segments : [];
     if (!segments.length || segments.some(function hasTool(segment) { return segment && segment.type === 'tool'; })) {
@@ -4839,6 +5023,7 @@ export function createMessagesUi(context, dependencies) {
     return true;
   }
 
+  // Handle should hold streaming search batch.
   function shouldHoldStreamingSearchBatch($msgRow, parsed, rawText) {
     const count = searchSegmentCount(parsed.segments);
     if (count === 0) {
@@ -4890,7 +5075,6 @@ export function createMessagesUi(context, dependencies) {
     const parsed = parseMessageTimeline(rawText);
     renderActivityTimeline($msgRow, parsed.segments, { rawText });
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
-    scheduleCitationAnnotations($msgRow[0]);
   }
 
   // Parse and render one assistant transcript during active streaming.
@@ -4953,6 +5137,7 @@ export function createMessagesUi(context, dependencies) {
     return $();
   }
 
+  // Open the tool inspector for one activity card.
   function openToolInspectorFromCard($card) {
     const index = parseInt($card.attr('data-tool-segment-index') || '-1', 10);
     if (!Number.isInteger(index) || index < 0) {
@@ -4972,6 +5157,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Expand or collapse extra search source chips.
   function toggleSearchSources($button) {
     const $card = $button.closest('.msg-search-card');
     const $row = sourceMessageRowForActivityCard($card);
@@ -4995,6 +5181,7 @@ export function createMessagesUi(context, dependencies) {
     $card.find('.msg-search-chip--more-expanded .msg-search-chip-domain').text(HIDE_LABEL);
   }
 
+  // Expand or collapse one write preview card.
   function toggleWriteCard($card) {
     const $row = sourceMessageRowForActivityCard($card);
     const cardIndex = parseInt($card.attr('data-write-segment-index') || '-1', 10);
@@ -5028,6 +5215,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Expand or collapse one edit preview card.
   function toggleEditCard($card) {
     const $row = sourceMessageRowForActivityCard($card);
     const cardIndex = parseInt($card.attr('data-edit-segment-index') || '-1', 10);
@@ -5057,6 +5245,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Expand or collapse one compression context card.
   function toggleCompressionContext($button) {
     const $card = $button.closest('.msg-compression-context');
     const $json = $card.find('.msg-compression-context-json').first();
@@ -5065,6 +5254,7 @@ export function createMessagesUi(context, dependencies) {
     $button.text(isOpen ? 'Compressed context active' : 'Hide compressed context');
   }
 
+  // Start panning inside an expanded write preview.
   function startWritePreviewPan(event, $preview) {
     if (event.button !== 1) {
       return;
@@ -5228,7 +5418,6 @@ export function createMessagesUi(context, dependencies) {
         reasoningMode: viewOptions.reasoningMode === true,
         trustThoughtSegments: viewOptions.reasoningMode === true || hasReasoningMarker(text)
       });
-      scheduleCitationAnnotations($row[0]);
     } else {
       renderMessageHtml($row, text);
     }
@@ -5237,6 +5426,8 @@ export function createMessagesUi(context, dependencies) {
   }
 
   // Append one user or assistant message to the stream.
+
+  // Public message API.
   function appendMessage(role, text, attachments, timestamp, options) {
     const viewOptions = options || {};
     const $row = buildMessageRow(role, text, attachments, timestamp, viewOptions);
@@ -5371,6 +5562,7 @@ export function createMessagesUi(context, dependencies) {
     fallbackCopy(text, onCopied);
   }
 
+  // Clipboard and reasoning drawer.
   function copyCodeBlock($button) {
     const $btn = $button || $();
     const $card = $btn.closest('.md-code-card, .md-mermaid-card');
@@ -5408,6 +5600,7 @@ export function createMessagesUi(context, dependencies) {
   const REASONING_DRAWER_MAX_WIDTH = 720;
   const REASONING_DRAWER_CLOSE_WIDTH = 220;
 
+  // Read the maximum width allowed for the reasoning drawer.
   function reasoningDrawerMaxWidth() {
     return Math.max(
       REASONING_DRAWER_MIN_WIDTH,
@@ -5415,6 +5608,7 @@ export function createMessagesUi(context, dependencies) {
     );
   }
 
+  // Apply one pixel width to the reasoning drawer.
   function setReasoningDrawerWidth(width) {
     const clamped = Math.max(
       REASONING_DRAWER_MIN_WIDTH,
@@ -5423,10 +5617,12 @@ export function createMessagesUi(context, dependencies) {
     $('#reasoningDrawer').css('--reasoning-drawer-width', `${clamped}px`);
   }
 
+  // Reset the reasoning drawer to its default width.
   function resetReasoningDrawerWidth() {
     setReasoningDrawerWidth(REASONING_DRAWER_DEFAULT_WIDTH);
   }
 
+  // Sync drawer content from one reasoning wrapper.
   function syncReasoningDrawerFromWrapper($wrapper) {
     const $drawer = $('#reasoningDrawer');
     const $body = $('#reasoningDrawerBody');
@@ -5460,6 +5656,7 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Open the reasoning drawer for one message wrapper.
   function openReasoningDrawer($wrapper) {
     const $drawer = $('#reasoningDrawer');
     const $backdrop = $('#reasoningDrawerBackdrop');
@@ -5493,6 +5690,7 @@ export function createMessagesUi(context, dependencies) {
     syncReasoningDrawerFromWrapper($wrapper);
   }
 
+  // Close the reasoning drawer and clear its content.
   function closeReasoningDrawer() {
     const $drawer = $('#reasoningDrawer');
     const $backdrop = $('#reasoningDrawerBackdrop');
@@ -5517,6 +5715,7 @@ export function createMessagesUi(context, dependencies) {
     }, 250);
   }
 
+  // Bind drag-to-resize behavior on the reasoning drawer.
   function bindReasoningDrawerResize() {
     const $handle = $('#reasoningDrawerResizeHandle');
     if (!$handle.length) {
@@ -5608,7 +5807,6 @@ export function createMessagesUi(context, dependencies) {
   bindReasoningDrawerResize();
   bindAttachmentMediaEvents();
   bindCitationPreviewCards(document);
-  bindCitationAnnotationHighlights(document);
 
   return {
     appendMessage,

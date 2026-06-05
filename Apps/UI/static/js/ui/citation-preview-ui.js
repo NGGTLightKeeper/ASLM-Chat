@@ -1,33 +1,20 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { escHtml, escapeAttributeValue } from '../main/utils.js';
-import {
-  collectPreviewHighlightNeedles,
-  findRangesInText,
-} from './citation-highlight-matching.js';
 
+
+// Preview data helpers.
+// Parse citation preview JSON stored on one chip element.
 function parseCitationPreviewData(chip) {
   try {
     const parsed = JSON.parse(String(chip && chip.getAttribute('data-citation-preview') || ''));
-    if (!parsed || typeof parsed !== 'object') {
-      return null;
-    }
-    try {
-      const annotation = JSON.parse(String(chip && chip.getAttribute('data-citation-annotation') || ''));
-      if (annotation && annotation.status === 'ready' && Array.isArray(annotation.matches)) {
-        parsed.annotation = annotation;
-      }
-    } catch (_error) {
-      // Annotation data is optional; legacy citation previews still render.
-    }
-    const annotationState = chip && chip.getAttribute('data-citation-annotation-state');
-    parsed.isLoading = chip && (annotationState === 'loading' || chip.classList.contains('is-citation-annotating') || (!annotationState && !parsed.annotation));
-    return parsed;
+    return parsed && typeof parsed === 'object' ? parsed : null;
   } catch (_error) {
     return null;
   }
 }
 
+// Format one evidence-kind label for the preview footer.
 function previewEvidenceLabel(value) {
   const evidence = String(value || '').trim();
   if (!evidence) {
@@ -44,41 +31,15 @@ function previewEvidenceLabel(value) {
     .replace(/\b\w/g, function titleCase(letter) { return letter.toUpperCase(); });
 }
 
+// Build the hover-card HTML for one citation preview payload.
 function renderCitationPreviewHtml(data) {
-  if (data.isLoading || (!data.annotation && !data.preview)) {
-    return `
-      <div class="msg-citation-preview-head">
-        <div class="msg-citation-preview-skeleton-favicon skeleton-wave"></div>
-        <div class="msg-citation-preview-title-wrap" style="width: 70%; display: flex; flex-direction: column; gap: 6px;">
-          <div class="msg-citation-preview-skeleton-title skeleton-wave"></div>
-          <div class="msg-citation-preview-skeleton-domain skeleton-wave"></div>
-        </div>
-      </div>
-      <div class="msg-citation-preview-text msg-citation-preview-skeleton-body">
-        <div class="msg-citation-preview-skeleton-line skeleton-wave" style="width: 100%;"></div>
-        <div class="msg-citation-preview-skeleton-line skeleton-wave" style="width: 90%;"></div>
-        <div class="msg-citation-preview-skeleton-line skeleton-wave" style="width: 95%;"></div>
-        <div class="msg-citation-preview-skeleton-line skeleton-wave" style="width: 60%;"></div>
-      </div>
-      <div class="msg-citation-preview-footer">
-        <div class="msg-citation-preview-skeleton-footer-left skeleton-wave"></div>
-        <div class="msg-citation-preview-skeleton-footer-right skeleton-wave"></div>
-      </div>
-    `;
-  }
-
-  const annotationPreview = data.annotation && data.annotation.previewText
-    ? String(data.annotation.previewText)
-    : '';
-  const evidenceLabel = previewEvidenceLabel(annotationPreview ? 'parsed' : data.evidenceKind);
+  const evidenceLabel = previewEvidenceLabel(data.evidenceKind);
   const faviconHtml = data.faviconUrl
     ? `<img class="msg-citation-preview-favicon" src="${escapeAttributeValue(data.faviconUrl)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
     : '';
   const fallbackStyle = data.faviconUrl ? ' style="display:none;"' : '';
-  const rawPreviewText = annotationPreview || data.preview || '';
-  const previewText = rawPreviewText.length > 400 ? rawPreviewText.slice(0, 397) + '...' : rawPreviewText;
-  const previewHtml = previewText
-    ? `<div class="msg-citation-preview-text">${highlightPreviewHtml(previewText, data.annotation)}</div>`
+  const previewHtml = data.preview
+    ? `<div class="msg-citation-preview-text">${escHtml(data.preview)}</div>`
     : '';
   const dateHtml = data.date
     ? `<div class="msg-citation-preview-date">${escHtml(data.date)}</div>`
@@ -111,29 +72,9 @@ function renderCitationPreviewHtml(data) {
   `;
 }
 
-function highlightPreviewHtml(text, annotation) {
-  const source = String(text || '');
-  const needles = collectPreviewHighlightNeedles(annotation, source);
-  if (!needles.length) {
-    return escHtml(source);
-  }
 
-  const ranges = findRangesInText(source, needles);
-  if (!ranges.length) {
-    return escHtml(source);
-  }
-
-  let html = '';
-  let cursor = 0;
-  ranges.forEach(function appendRange(range) {
-    html += escHtml(source.slice(cursor, range.start));
-    html += `<span class="msg-citation-highlight is-active">${escHtml(source.slice(range.start, range.end))}</span>`;
-    cursor = range.end;
-  });
-  html += escHtml(source.slice(cursor));
-  return html;
-}
-
+// Clipboard helpers.
+// Copy text with a hidden textarea fallback for older browsers.
 function fallbackCopyText(text, onDone) {
   const textarea = document.createElement('textarea');
   textarea.value = text;
@@ -150,6 +91,7 @@ function fallbackCopyText(text, onDone) {
   document.body.removeChild(textarea);
 }
 
+// Copy text using the Clipboard API with textarea fallback.
 function copyTextToClipboard(text, onDone) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(onDone).catch(function fallbackClipboard() {
@@ -160,6 +102,9 @@ function copyTextToClipboard(text, onDone) {
   fallbackCopyText(text, onDone);
 }
 
+
+// Citation preview cards.
+// Bind hover and focus preview cards for citation chips under one root.
 export function bindCitationPreviewCards(root) {
   const eventRoot = root || document;
   if (!eventRoot || eventRoot.__aslmCitationPreviewBound) {
@@ -172,16 +117,19 @@ export function bindCitationPreviewCards(root) {
   let activeChip = null;
   let previewEl = null;
 
+  // Cancel a pending delayed open timer.
   function cancelOpen() {
     clearTimeout(openTimer);
     openTimer = null;
   }
 
+  // Cancel a pending delayed close timer.
   function cancelClose() {
     clearTimeout(closeTimer);
     closeTimer = null;
   }
 
+  // Hide the floating preview card.
   function hidePreview() {
     if (previewEl) {
       previewEl.classList.remove('is-visible');
@@ -189,12 +137,14 @@ export function bindCitationPreviewCards(root) {
     activeChip = null;
   }
 
+  // Schedule hiding the preview after the pointer leaves the chip.
   function scheduleClose() {
     cancelOpen();
     cancelClose();
     closeTimer = setTimeout(hidePreview, 180);
   }
 
+  // Create or return the singleton preview card element.
   function ensurePreview() {
     if (previewEl) {
       return previewEl;
@@ -228,6 +178,7 @@ export function bindCitationPreviewCards(root) {
     return previewEl;
   }
 
+  // Position the preview card near the active citation chip.
   function positionPreview(chip) {
     const card = ensurePreview();
     const chipRect = chip.getBoundingClientRect();
@@ -244,6 +195,7 @@ export function bindCitationPreviewCards(root) {
     card.style.top = `${Math.max(12, top)}px`;
   }
 
+  // Render and show the preview card for one chip.
   function showPreview(chip) {
     const data = parseCitationPreviewData(chip);
     if (!data || !data.url) {
@@ -256,6 +208,7 @@ export function bindCitationPreviewCards(root) {
     positionPreview(chip);
   }
 
+  // Open the preview after a short hover delay.
   function scheduleOpen(chip) {
     cancelOpen();
     cancelClose();
@@ -304,13 +257,6 @@ export function bindCitationPreviewCards(root) {
   window.addEventListener('resize', function onCitationPreviewResize() {
     if (activeChip && previewEl && previewEl.classList.contains('is-visible')) {
       positionPreview(activeChip);
-    }
-  });
-
-  eventRoot.addEventListener('citation-annotation-updated', function onAnnotationUpdated(event) {
-    const chip = event.target;
-    if (chip && chip === activeChip && previewEl && previewEl.classList.contains('is-visible')) {
-      showPreview(chip);
     }
   });
 }

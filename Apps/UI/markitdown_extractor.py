@@ -13,6 +13,7 @@ _MARKITDOWN_INSTANCE = None
 _MARKITDOWN_IMPORT_ERROR = False
 
 
+# Return a shared MarkItDown converter instance when available.
 def _get_markitdown_instance():
     global _MARKITDOWN_INSTANCE, _MARKITDOWN_IMPORT_ERROR
     if _MARKITDOWN_INSTANCE is not None:
@@ -28,6 +29,7 @@ def _get_markitdown_instance():
     return _MARKITDOWN_INSTANCE
 
 
+# Run one MarkItDown conversion for the given bytes.
 def _extract_once(file_bytes: bytes, *, name: str, mime: str) -> str:
     converter = _get_markitdown_instance()
     if converter is None:
@@ -43,9 +45,8 @@ def _extract_once(file_bytes: bytes, *, name: str, mime: str) -> str:
     return str(getattr(result, "text_content", "") or "")
 
 
+# Return Markdown extracted from document bytes, or an empty string on failure.
 def extract_markdown(file_bytes: bytes, *, name: str, mime: str) -> str:
-    """Return Markdown extracted from document bytes, or an empty string on failure."""
-
     payload = bytes(file_bytes or b"")
     if not payload or len(payload) > MARKITDOWN_MAX_INPUT_BYTES:
         return ""

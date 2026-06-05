@@ -1,23 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Content processor: extract and score text from raw HTML.
-
-Refactored from legacy src/content_processor.py:
-  - Removed all sys.path.insert hacks and importlib.util config loading
-  - Profile/settings system replaced by typed core.config.SearchConfig
-  - Internal imports (semantic, gliner) use absolute package paths
-  - PreviewPayload and build_preview_payload preserved for compatibility
-
-Public API
-----------
-PreviewPayload    -- dataclass: text + quality/semantic scores
-build_preview_payload(url, raw_html, query, settings) -> PreviewPayload
-Helper functions (used by page_normalizer and services):
-  _preclean_html, _extract_text_with_bs4, _regex_html_to_text,
-  _normalize_text, _dedupe_blocks, _get_boilerplate_filter
-"""
-
 from __future__ import annotations
 
 import html as html_lib
@@ -29,9 +11,7 @@ from typing import Any, Iterable, Optional
 
 logger = logging.getLogger("core.extract.content_processor")
 
-# ---------------------------------------------------------------------------
-# LaTeX processing: index_text (BM25) and llm_text (model)
-# ---------------------------------------------------------------------------
+# LaTeX processing: index_text (BM25) and llm_text (model).
 
 _LATEX_CMD_RE = re.compile(r"\\[a-zA-Z]+")
 _LATEX_SPAN_RE = re.compile(
@@ -99,20 +79,14 @@ _KNOWN_MACROS: frozenset[str] = (
 )
 
 
+# Return sorted list of \cmd names in text not in _KNOWN_MACROS.
 def _unknown_macros(text: str) -> list[str]:
-    """Return sorted list of \\cmd names in *text* not in _KNOWN_MACROS."""
     found = {m[1:] for m in _LATEX_CMD_RE.findall(text)}
     return sorted(found - _KNOWN_MACROS)
 
 
+# Build pylatexenc LatexWalker context with unknown macros as 1-arg pass-through.
 def _make_walker_context(unknown: list[str]):
-    """Build a pylatexenc LatexWalker context with unknown macros as 1-arg pass-through.
-
-    Built-in pylatexenc definitions take precedence (prepend=False); our specs
-    only apply for macros that pylatexenc genuinely does not know.
-    Returns None if pylatexenc API is unavailable or *unknown* is empty.
-    The caller should fall back to a plain LatexWalker() when None is returned.
-    """
     if not unknown:
         return None
     try:
@@ -129,14 +103,8 @@ def _make_walker_context(unknown: list[str]):
         return None
 
 
+# Build pylatexenc latex2text context with unknown macros as 1-arg pass-through.
 def _make_l2t_context(unknown: list[str]):
-    """Build a pylatexenc latex2text context with unknown macros as 1-arg pass-through.
-
-    Built-in pylatexenc definitions take precedence (prepend=False); our specs
-    only apply for macros that pylatexenc genuinely does not know.
-    Returns None if pylatexenc API is unavailable or *unknown* is empty.
-    The caller should fall back to plain LatexNodes2Text() when None is returned.
-    """
     if not unknown:
         return None
     try:
@@ -152,8 +120,8 @@ def _make_l2t_context(unknown: list[str]):
         return None
 
 
+# True when text likely contains LaTeX markup.
 def _has_latex(text: str) -> bool:
-    """Quick heuristic: True when text likely contains LaTeX markup."""
     if not text:
         return False
     if "$$" in text or "\\[" in text or "\\(" in text:
@@ -165,14 +133,8 @@ def _has_latex(text: str) -> bool:
     return len(_LATEX_CMD_RE.findall(text)) >= 3
 
 
+# Convert LaTeX markup to plain text suitable for BM25 tokenisation.
 def _clean_latex_for_index(text: str) -> str:
-    """Convert LaTeX markup to plain text suitable for BM25 tokenisation.
-
-    Uses pylatexenc.LatexNodes2Text when available; falls back to a simple
-    regex stripper so BM25 is never blocked by a missing optional dep.
-    Unknown macros are registered as 1-arg pass-through so their content
-    is preserved rather than silently dropped.
-    """
     if not _has_latex(text):
         return text
     try:
@@ -189,8 +151,8 @@ def _clean_latex_for_index(text: str) -> str:
     return re.sub(r"[\$\{\}]", " ", cleaned)
 
 
+# Recursively transpile a pylatexenc node to readable text for the LLM.
 def _node_to_text(node) -> str:  # noqa: ANN001
-    """Recursively transpile a pylatexenc node to readable text for the LLM."""
     from pylatexenc.latexwalker import (
         LatexCharsNode, LatexMacroNode, LatexGroupNode,
         LatexMathNode, LatexEnvironmentNode, LatexCommentNode,
@@ -261,16 +223,8 @@ def _node_to_text(node) -> str:  # noqa: ANN001
     return str(getattr(node, "chars", "") or "")
 
 
+# Transpile LaTeX markup to human-readable notation for the LLM.
 def _render_latex_for_llm(text: str) -> str:
-    """Transpile LaTeX markup to human-readable notation for the LLM.
-
-    Walks the entire text through LatexWalker. Plain-text regions become
-    LatexCharsNode and pass through unchanged, so non-LaTeX content is safe.
-    Only activated when _has_latex() is True (cheap heuristic).
-    Unknown macros are registered as 1-arg pass-through so their content
-    is preserved rather than silently dropped.
-    Falls back gracefully to _clean_latex_for_index when pylatexenc is absent.
-    """
     if not _has_latex(text):
         return text
 
@@ -285,9 +239,7 @@ def _render_latex_for_llm(text: str) -> str:
         return _clean_latex_for_index(text)
 
 
-# ---------------------------------------------------------------------------
-# BM25 helpers (no external deps; used for paragraph compression)
-# ---------------------------------------------------------------------------
+# BM25 helpers (no external deps; used for paragraph compression).
 
 _TOKEN_RE = re.compile(r"\b\w+\b")
 _BM25_K1 = 1.5
@@ -295,12 +247,13 @@ _BM25_B = 0.75
 _BM25_MIN_TOKEN_LEN = 2
 
 
+# Tokenize text for BM25 (words longer than _BM25_MIN_TOKEN_LEN).
 def _bm25_tokenize(text: str) -> list[str]:
     return [t.lower() for t in _TOKEN_RE.findall(text or "") if len(t) > _BM25_MIN_TOKEN_LEN]
 
 
+# Return BM25 score of each paragraph against query_terms.
 def _bm25_score_paragraphs(paragraphs: list[str], query_terms: list[str]) -> list[float]:
-    """Return BM25 score of each paragraph against query_terms."""
     if not paragraphs or not query_terms:
         return [0.0] * len(paragraphs)
 
@@ -330,8 +283,8 @@ def _bm25_score_paragraphs(paragraphs: list[str], query_terms: list[str]) -> lis
     return scores
 
 
+# Return (should_run, device) based on hardware profile and page quality.
 def _should_run_gliner(quality_score: float, hw_profile: str) -> tuple[bool, str]:
-    """Return (should_run, device) based on hardware profile and page quality."""
     if hw_profile == "full_gpu":
         # GPU available: densify any page that passed basic quality bar
         return quality_score >= 0.20, "cuda"
@@ -339,24 +292,24 @@ def _should_run_gliner(quality_score: float, hw_profile: str) -> tuple[bool, str
     return False, ""
 
 
+# Re-rank paragraphs by BM25 + GLiNER hybrid; fit to max_chars.
 def _gliner_compress(
     paragraphs: list[str],
     query_terms: list[str],
     max_chars: int,
     device: str = "cpu",
+    query_type: str | None = None,
 ) -> tuple[str, bool]:
-    """Re-rank paragraphs by BM25 + GLiNER entity-density hybrid, fit to max_chars.
-
-    Returns (compressed_text, used_gliner).
-    used_gliner=False means GLiNER was unavailable; caller should fall back.
-    Hybrid score: 55 % BM25 relevance + 45 % entity density.
-    """
     if not paragraphs:
         return "", False
 
     try:
-        from core.extract.gliner_wrapper import score_entity_density
-        gliner_scores = score_entity_density(paragraphs, device=device)
+        from core.extract.gliner_wrapper import get_labels_for_query, score_entity_density_with_entities
+        labels = get_labels_for_query(" ".join(query_terms), query_type=query_type)
+        gliner_scored = score_entity_density_with_entities(
+            paragraphs, labels=labels, device=device,
+        )
+        gliner_scores = [s for s, _ in gliner_scored]
     except Exception:
         return "", False
 
@@ -382,13 +335,8 @@ def _gliner_compress(
     return ("\n\n".join(result) if result else ""), True
 
 
+# Select top paragraphs by BM25 relevance that fit within max_chars.
 def compress_to_budget(text: str, query: str, max_chars: int) -> str:
-    """Select top paragraphs by BM25 relevance that fit within max_chars.
-
-    Runs in O(n*m) time (n paragraphs, m query terms). No GPU required.
-    Preserves original paragraph order in the output for readability.
-    Falls back to simple truncation when query is empty or text is short.
-    """
     if not text or len(text) <= max_chars:
         return text
 
@@ -432,8 +380,8 @@ def compress_to_budget(text: str, query: str, max_chars: int) -> str:
     return "\n\n".join(result) if result else text[:max_chars]
 
 
+# Fallback BM25 query from URL path segments and page title.
 def derive_read_page_focus(url: str, markdown: str) -> str:
-    """Fallback BM25 query from URL path segments and page title (not for direct use as primary focus)."""
     from urllib.parse import unquote, urlparse
 
     parts: list[str] = []
@@ -463,8 +411,8 @@ def derive_read_page_focus(url: str, markdown: str) -> str:
     return " ".join(parts).strip()
 
 
+# Prefer explicit focus; else derive from URL/title; else empty.
 def _resolve_read_page_compress_query(focus: str, url: str, markdown: str) -> str:
-    """Prefer explicit focus; otherwise derive from URL/title; else empty (head-truncate in compress_to_budget)."""
     explicit = (focus or "").strip()
     if explicit:
         return explicit
@@ -475,6 +423,7 @@ def _resolve_read_page_compress_query(focus: str, url: str, markdown: str) -> st
         return ""
 
 
+# Shrink long read_page output with BM25 or GLiNER before the hard max_chars cap.
 def compress_read_page_markdown(
     markdown: str,
     *,
@@ -486,7 +435,6 @@ def compress_read_page_markdown(
     enable_compress: bool = True,
     enable_gliner: bool = False,
 ) -> str:
-    """Shrink long read_page output with BM25 or GLiNER before the hard max_chars cap."""
     text = markdown or ""
     if not text:
         return text
@@ -521,9 +469,7 @@ def compress_read_page_markdown(
     return text
 
 
-# ---------------------------------------------------------------------------
-# Tag / noise constants
-# ---------------------------------------------------------------------------
+# Tag / noise constants.
 
 _NOISE_TAGS = {
     "script", "style", "nav", "header", "footer", "aside", "form",
@@ -549,9 +495,7 @@ _WHITESPACE_RE = re.compile(r"[ \t\r\f\v]+")
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
-# ---------------------------------------------------------------------------
-# Preview settings (simple defaults; extended profile support via config)
-# ---------------------------------------------------------------------------
+# Preview settings (defaults merged with SearchConfig and hardware profile).
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
     "output_chars": 1_400,
@@ -576,8 +520,8 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
 }
 
 
+# Return current preview settings merged with hardware profile defaults.
 def get_preview_settings(*, apply_hardware_profile: bool = True) -> dict[str, Any]:
-    """Return current preview settings merged with hardware profile defaults."""
     settings = dict(_DEFAULT_SETTINGS)
     try:
         from core.config import load_search_config
@@ -618,10 +562,6 @@ def get_preview_settings(*, apply_hardware_profile: bool = True) -> dict[str, An
     return settings
 
 
-# ---------------------------------------------------------------------------
-# PreviewPayload
-# ---------------------------------------------------------------------------
-
 @dataclass
 class PreviewPayload:
     text: str = ""
@@ -630,18 +570,24 @@ class PreviewPayload:
     clean_chars: int = 0
     used_gliner: bool = False
     strategy_used: str = ""
+    extraction_status: str = ""
+    policy_family: str = ""
+    chunks_selected: int = 0
+    seo_rejected: int = 0
+    nav_rejected: int = 0
 
 
-# ---------------------------------------------------------------------------
-# HTML cleaning helpers (used by page_normalizer)
-# ---------------------------------------------------------------------------
+# HTML cleaning helpers (used by page_normalizer).
 
+
+# Collapse whitespace and unescape HTML entities in text.
 def _normalize_text(text: str) -> str:
     return _WHITESPACE_RE.sub(
         " ", html_lib.unescape(text or "").replace("\u00a0", " ")
     ).strip(" -|\t\r\n")
 
 
+# Join paragraph blocks into a single pipe-separated line.
 def _single_line(text: str) -> str:
     blocks = [_normalize_text(piece) for piece in re.split(r"\n\s*\n", text or "")]
     return " | ".join(block for block in blocks if block)
@@ -650,18 +596,8 @@ def _single_line(text: str) -> str:
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
 
 
+# Truncate text to max_chars, preferring a sentence boundary when possible.
 def _truncate_at_sentence(text: str, max_chars: int) -> str:
-    """Truncate *text* to *max_chars*, trying to end on a sentence boundary.
-
-    Strategy:
-      1. If text fits — return as-is.
-      2. Look for the last sentence-ending punctuation (. ! ?) within the
-         budget.  Accept it only when at least 60 % of the budget is used,
-         so we don't return a tiny fragment for a page that starts with a
-         short sentence.
-      3. Fall back to the hard character limit stripped of trailing
-         punctuation if no good boundary is found.
-    """
     if len(text) <= max_chars:
         return text
 
@@ -678,6 +614,7 @@ def _truncate_at_sentence(text: str, max_chars: int) -> str:
     return window.rstrip(" ,;:|-")
 
 
+# Strip scripts/styles and tags; return normalized plain text.
 def _regex_html_to_text(raw_html: str) -> str:
     no_js = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", raw_html or "",
                    flags=re.IGNORECASE | re.DOTALL)
@@ -685,8 +622,113 @@ def _regex_html_to_text(raw_html: str) -> str:
     return _normalize_text(_TAG_RE.sub(" ", no_js))
 
 
+_SERP_REF_ATTR = "data-aslm-serp-ref"
+_MIN_SERP_SNIPPET_CHARS = 20
+_MIN_SERP_TITLE_CHARS = 12
+_MIN_PAGE_TITLE_CHARS = 8
+_MIN_META_DESC_CHARS = 24
+
+
+# Best-effort page title / description when SERP snippet is absent.
+def _extract_page_title_reference(raw_html: str) -> str:
+    if not raw_html:
+        return ""
+    try:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(raw_html, "html.parser")
+        if soup.title and soup.title.string:
+            title = _normalize_text(str(soup.title.string))
+            if len(title) >= _MIN_PAGE_TITLE_CHARS:
+                return title
+        for attrs in ({"property": "og:title"}, {"name": "twitter:title"}):
+            node = soup.find("meta", attrs=attrs)
+            if node and node.get("content"):
+                title = _normalize_text(str(node["content"]))
+                if len(title) >= _MIN_PAGE_TITLE_CHARS:
+                    return title
+        desc = soup.find("meta", attrs={"name": "description"})
+        if desc and desc.get("content"):
+            text = _normalize_text(str(desc["content"]))
+            if len(text) >= _MIN_META_DESC_CHARS:
+                return text
+    except Exception as exc:
+        logger.debug("page title reference extraction failed: %s", exc)
+
+    m = re.search(r"<title[^>]*>(.*?)</title>", raw_html, flags=re.IGNORECASE | re.DOTALL)
+    if m:
+        title = _normalize_text(html_lib.unescape(m.group(1)))
+        if len(title) >= _MIN_PAGE_TITLE_CHARS:
+            return title
+    return ""
+
+
+# Resolve SEO/SERP reference text and its source label.
+def _resolve_serp_reference(
+    settings: dict[str, Any],
+    raw_html: str,
+) -> tuple[str, str]:
+    snippet = _normalize_text(str(settings.get("serp_snippet") or ""))
+    if len(snippet) >= _MIN_SERP_SNIPPET_CHARS:
+        return snippet, "serp_snippet"
+
+    serp_title = _normalize_text(str(settings.get("serp_title") or ""))
+    if len(serp_title) >= _MIN_SERP_TITLE_CHARS:
+        return serp_title, "serp_title"
+
+    page_title = _extract_page_title_reference(raw_html)
+    if page_title:
+        return page_title, "page_title"
+    return "", ""
+
+
+# Prepend SERP snippet into HTML so extractors can align against it.
+def _inject_serp_reference_into_html(raw_html: str, reference: str) -> str:
+    reference = _normalize_text(reference)
+    if not raw_html or not reference:
+        return raw_html
+    try:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(raw_html, "html.parser")
+        body = soup.body
+        if body is None:
+            body = soup.new_tag("body")
+            if soup.html:
+                soup.html.append(body)
+            else:
+                soup.append(body)
+        marker = soup.new_tag("p")
+        marker[_SERP_REF_ATTR] = "1"
+        marker.string = reference
+        body.insert(0, marker)
+        return str(soup)
+    except Exception as exc:
+        logger.debug("serp reference inject failed, using string prepend: %s", exc)
+        escaped = html_lib.escape(reference)
+        return f'<p {_SERP_REF_ATTR}="1">{escaped}</p>{raw_html}'
+
+
+# Remove injected or duplicated SERP reference blocks from extracted text.
+def _strip_serp_reference_blocks(text: str, reference: str) -> str:
+    ref_norm = _normalize_text(reference)
+    if not text or not ref_norm:
+        return text
+    kept: list[str] = []
+    for block in _split_blocks(text):
+        block_norm = _normalize_text(block)
+        if not block_norm:
+            continue
+        if block_norm == ref_norm:
+            continue
+        if len(ref_norm) >= 40 and ref_norm in block_norm and len(block_norm) <= len(ref_norm) + 40:
+            continue
+        kept.append(block)
+    return "\n\n".join(kept).strip() if kept else text.strip()
+
+
+# Remove noise tags and noise-marker nodes from HTML.
 def _preclean_html(raw_html: str) -> str:
-    """Remove noise tags and noise-marker nodes from HTML."""
     if not raw_html:
         return ""
     try:
@@ -720,6 +762,119 @@ def _preclean_html(raw_html: str) -> str:
     return str(soup)
 
 
+# Re-split over-merged trafilatura output when possible.
+def _split_trafilatura_sections(text: str) -> str:
+    if not text or "\n\n" in text:
+        return text
+    parts = re.split(r"\n(?=\d+\.\s)", text)
+    if len(parts) > 1:
+        return "\n\n".join(p.strip() for p in parts if p.strip())
+    return text
+
+
+# Structural flat-text nav heuristic (short lines, separators, low sentence density).
+def _flat_nav_structural_ratio(text: str) -> float:
+    if not text or len(text) < 40:
+        return 0.0
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines:
+        return 0.0
+
+    short_line_ratio = sum(1 for l in lines if len(l.split()) <= 4) / len(lines)
+    seps = len(re.findall(r"[|›»·•]", text))
+    sep_density = min(seps / max(len(text), 1) * 15, 1.0)
+
+    parts = re.split(r"[.!?;:。！？]+", text)
+    parts = [p.strip() for p in parts if p.strip()]
+    sentence_ratio = (
+        sum(1 for p in parts if 8 <= len(p.split()) <= 90) / len(parts)
+        if parts else 0.0
+    )
+
+    score = (
+        0.55 * short_line_ratio
+        + 0.30 * sep_density
+        - 0.35 * sentence_ratio
+    )
+    return max(0.0, min(score, 1.0))
+
+
+# Pick trafilatura or DOM blocks, whichever yields cleaner structure.
+def _choose_extraction(
+    cleaned_html: str,
+    *,
+    url: str = "",
+    min_clean_chars: int = 220,
+) -> tuple[str, str, dict[str, int | str]]:
+    dom_stats: dict[str, int | str] = {}
+    traf = _extract_text_with_trafilatura(cleaned_html)
+    traf = _split_trafilatura_sections(traf)
+    dom_text, dom_stats = _extract_text_with_dom_blocks(cleaned_html, url=url)
+
+    traf_n = len(_normalize_text(traf))
+    dom_n = len(_normalize_text(dom_text))
+    traf_paras = len(_split_blocks(traf))
+    dom_paras = len(_split_blocks(dom_text)) if dom_text else 0
+
+    traf_has_table = "|" in traf and traf.count("\n") >= 4
+    traf_nav_heavy = _flat_nav_structural_ratio(traf) > 0.18
+    total_dom_cand = int(dom_stats.get("total_candidates", 0))
+    dom_nav_rej = int(dom_stats.get("nav_rejected", 0))
+    dom_cleaned_heavily = (
+        total_dom_cand > 0 and dom_nav_rej / total_dom_cand >= 0.35 and dom_paras >= 1
+    )
+
+    prefer_dom = False
+    if dom_stats.get("extraction_status") == "nav_heavy":
+        prefer_dom = dom_n > traf_n
+    elif dom_cleaned_heavily:
+        prefer_dom = True
+    elif traf_has_table and not traf_nav_heavy and traf_n >= min_clean_chars:
+        prefer_dom = False
+    elif dom_n >= min_clean_chars:
+        if traf_n < min_clean_chars:
+            prefer_dom = True
+        elif traf_paras <= 1 and dom_paras >= 2:
+            prefer_dom = True
+        elif dom_paras >= traf_paras + 2:
+            prefer_dom = True
+        elif traf_nav_heavy:
+            prefer_dom = True
+
+    structural_min = min(200, min_clean_chars)
+
+    if prefer_dom and dom_n >= structural_min:
+        return dom_text, "dom_blocks", dom_stats
+    if dom_cleaned_heavily and dom_n >= structural_min:
+        return dom_text, "dom_blocks", dom_stats
+    if traf_n >= min_clean_chars:
+        return traf, "trafilatura", dom_stats
+    if dom_n >= min_clean_chars:
+        return dom_text, "dom_blocks", dom_stats
+    if dom_cleaned_heavily and dom_n > 0:
+        return dom_text, "dom_blocks", dom_stats
+    if traf_n > dom_n:
+        return traf, "trafilatura", dom_stats
+    return dom_text or traf, "dom_blocks" if dom_text else "trafilatura", dom_stats
+
+
+# DOM-aware block extraction (replaces naïve bs4 fallback).
+def _extract_text_with_dom_blocks(
+    cleaned_html: str,
+    *,
+    url: str = "",
+) -> tuple[str, dict[str, int | str]]:
+    from core.extract.dom_block_extractor import extract_dom_blocks
+
+    blocks, stats = extract_dom_blocks(cleaned_html, url=url)
+    if stats.get("extraction_status") == "nav_heavy":
+        return "", stats
+    if not blocks:
+        return "", stats
+    return "\n\n".join(blocks), stats
+
+
+# Extract leaf block tags via BeautifulSoup.
 def _extract_text_with_bs4(cleaned_html: str) -> str:
     if not cleaned_html:
         return ""
@@ -742,8 +897,9 @@ def _extract_text_with_bs4(cleaned_html: str) -> str:
     return "\n\n".join(blocks)
 
 
+# Return a callable that returns True for boilerplate text blocks.
 def _get_boilerplate_filter():
-    """Return a callable that returns True for boilerplate text blocks."""
+    # Fallback boilerplate check using noise markers and minimum length.
     def _fallback(text: str) -> bool:
         compact = _normalize_text(text).lower()
         if len(compact) < 40:
@@ -752,6 +908,7 @@ def _get_boilerplate_filter():
     return _fallback
 
 
+# Deduplicate blocks by exact text and token signature.
 def _dedupe_blocks(blocks: Iterable[str]) -> list[str]:
     deduped: list[str] = []
     seen_exact: set[str] = set()
@@ -774,15 +931,16 @@ def _dedupe_blocks(blocks: Iterable[str]) -> list[str]:
     return deduped
 
 
+# Split text into normalized paragraph blocks.
 def _split_blocks(text: str) -> list[str]:
     pieces = re.split(r"\n\s*\n|(?<=\.)\s{2,}", text or "")
     return [n for p in pieces if (n := _normalize_text(p))]
 
 
-# ---------------------------------------------------------------------------
-# Quality scoring
-# ---------------------------------------------------------------------------
+# Quality scoring and trafilatura extraction.
 
+
+# Extract main text via trafilatura (tables on, comments off).
 def _extract_text_with_trafilatura(cleaned_html: str) -> str:
     if not cleaned_html:
         return ""
@@ -808,6 +966,7 @@ def _extract_text_with_trafilatura(cleaned_html: str) -> str:
     return text or ""
 
 
+# Filter boilerplate blocks and dedupe; return joined text and block count.
 def _clean_extracted_text(text: str) -> tuple[str, int]:
     is_boilerplate = _get_boilerplate_filter()
     blocks = _split_blocks(text)
@@ -816,6 +975,7 @@ def _clean_extracted_text(text: str) -> tuple[str, int]:
     return "\n\n".join(deduped), len(deduped)
 
 
+# Heuristic quality score in [0, 1] from length, blocks, and noise markers.
 def _estimate_quality(text: str, block_count: int) -> float:
     compact = _normalize_text(text)
     if not compact:
@@ -833,10 +993,10 @@ def _estimate_quality(text: str, block_count: int) -> float:
     return max(0.0, min(round(score, 4), 1.0))
 
 
-# ---------------------------------------------------------------------------
-# Semantic extraction (optional)
-# ---------------------------------------------------------------------------
+# Semantic extraction (optional).
 
+
+# Optional embedding-based chunk selection when mode is semantic.
 def _semantic_extract(text: str, query: str, settings: dict[str, Any]) -> tuple[str, float]:
     if settings.get("mode") != "semantic" or not query.strip():
         return text, 0.0
@@ -866,12 +1026,8 @@ def _semantic_extract(text: str, query: str, settings: dict[str, Any]) -> tuple[
     return preview_text or text, max(0.0, min(round(semantic_score, 4), 1.0))
 
 
-# ---------------------------------------------------------------------------
-# build_preview_payload (main entry point for content_processor)
-# ---------------------------------------------------------------------------
-
+# Pre-warm embedding models if semantic mode is active.
 def warm_preview_models(settings: Optional[dict[str, Any]] = None) -> None:
-    """Pre-warm embedding models if semantic mode is active."""
     active = dict(settings or get_preview_settings())
     if active.get("mode") == "semantic":
         try:
@@ -882,6 +1038,7 @@ def warm_preview_models(settings: Optional[dict[str, Any]] = None) -> None:
             pass
 
 
+# Extract a relevance-scored, query-focused preview from raw HTML.
 def build_preview_payload(
     url: str,
     raw_html: str,
@@ -889,53 +1046,110 @@ def build_preview_payload(
     domain_info: Optional[Any] = None,
     settings: Optional[dict[str, Any]] = None,
 ) -> PreviewPayload:
-    """Extract a relevance-scored, query-focused preview from raw HTML."""
-    active_settings = dict(settings or get_preview_settings())
-    cleaned_html = _preclean_html(raw_html)
+    from core.extract.profile_chunk_selector import (
+        compress_chunks_profiled,
+        policy_family,
+        resolve_chunk_policy,
+    )
 
+    active_settings = dict(settings or get_preview_settings())
+    query_type = str(active_settings.get("query_type") or "general")
+    fam = policy_family(query_type)
+    policy = resolve_chunk_policy(
+        query_type,
+        char_budget=int(active_settings.get("output_chars", 1_400)),
+    )
+    active_settings["output_chars"] = policy.char_budget
+
+    seo_reference, seo_reference_source = _resolve_serp_reference(active_settings, raw_html)
+    if seo_reference:
+        active_settings["seo_reference"] = seo_reference
+        active_settings["seo_reference_source"] = seo_reference_source
+
+    working_html = raw_html
     _did_use_gliner = False
     strategy_parts: list[str] = []
-    extracted = _extract_text_with_trafilatura(cleaned_html)
-    if extracted:
-        strategy_parts.append("trafilatura")
+    if seo_reference_source == "serp_snippet" and seo_reference:
+        working_html = _inject_serp_reference_into_html(raw_html, seo_reference)
+        strategy_parts.append("serp_inject")
+    elif seo_reference_source == "page_title":
+        strategy_parts.append("title_ref")
 
-    if len(_normalize_text(extracted)) < int(active_settings.get("min_clean_chars", 220)):
+    cleaned_html = _preclean_html(working_html)
+    nav_rejected = 0
+    extraction_status = "ok"
+    chunks_selected = 0
+    seo_rejected = 0
+
+    min_clean = int(active_settings.get("min_clean_chars", 220))
+    extracted, extract_method, dom_stats = _choose_extraction(
+        cleaned_html, url=url, min_clean_chars=min_clean,
+    )
+    if extract_method:
+        strategy_parts.append(extract_method)
+    nav_rejected = int(dom_stats.get("nav_rejected", 0))
+    extraction_status = str(dom_stats.get("extraction_status", "ok"))
+    if extraction_status == "nav_heavy" and not extracted.strip():
+        strategy_parts.append("nav_gate")
+
+    dom_had_cleanup = nav_rejected >= 3 and extract_method == "dom_blocks"
+    if len(_normalize_text(extracted)) < min_clean and not dom_had_cleanup:
         bs4_text = _extract_text_with_bs4(cleaned_html)
         if len(_normalize_text(bs4_text)) > len(_normalize_text(extracted)):
             extracted = bs4_text
-            strategy_parts.append("bs4")
+            strategy_parts.append("bs4_last_resort")
 
-    if len(_normalize_text(extracted)) < int(active_settings.get("min_clean_chars", 220)):
+    if len(_normalize_text(extracted)) < min_clean and not dom_had_cleanup:
         regex_text = _regex_html_to_text(cleaned_html or raw_html)
         if len(regex_text) > len(_normalize_text(extracted)):
             extracted = regex_text
             strategy_parts.append("regex")
 
     cleaned_text, block_count = _clean_extracted_text(extracted)
+    if seo_reference:
+        cleaned_text = _strip_serp_reference_blocks(cleaned_text, seo_reference)
+        if (
+            query.strip()
+            and cleaned_text.strip()
+            and seo_reference_source in {"serp_snippet", "serp_title"}
+        ):
+            from core.extract.micro_chunk_worker import prune_micro_chunks
+
+            cleaned_text, micro_dbg = prune_micro_chunks(
+                cleaned_text,
+                query,
+                reference_text=seo_reference,
+            )
+            if micro_dbg.clauses_dropped or micro_dbg.sentences_dropped:
+                strategy_parts.append("micro_prune")
+
     quality_score = _estimate_quality(cleaned_text, block_count)
+    if extraction_status == "nav_heavy":
+        quality_score = min(quality_score, 0.15)
 
-    output_chars = max(120, int(active_settings.get("output_chars", 1_400)))
+    output_chars = max(120, int(active_settings.get("output_chars", policy.char_budget)))
 
-    # BM25 compression: always runs before semantic, no GPU required.
-    # When semantic is enabled we give it 2x budget so it has room to pick
-    # the best chunks; otherwise compress directly to output_chars.
+    compress_debug: dict[str, object] = {}
     if query.strip() and cleaned_text:
-        bm25_budget = (
-            output_chars * 2
-            if active_settings.get("mode") == "semantic"
-            else output_chars
+        compressed, compress_debug = compress_chunks_profiled(
+            cleaned_text,
+            query,
+            query_type=query_type,
+            char_budget=output_chars,
         )
-        compressed = compress_to_budget(cleaned_text, query, bm25_budget)
         if compressed.strip():
-            if compressed != cleaned_text:
-                strategy_parts.append("bm25")
+            strategy_parts.append("profiled")
             cleaned_text = compressed
+            chunks_selected = int(compress_debug.get("chunks_selected", 0))
+            seo_rejected = int(compress_debug.get("rejected_seo", 0))
 
-    # GLiNER densification: hybrid BM25 + entity-density re-ranking.
-    # Runs after BM25 pre-selection, before semantic, on paragraphs that fit
-    # within 2x output budget. Skipped when enable_gliner=False or conditions
-    # (hardware profile + quality score) are not met.
-    if active_settings.get("enable_gliner", False) and query.strip() and cleaned_text:
+    _depth_types = frozenset({"technical", "academic", "medical", "troubleshooting"})
+    if (
+        active_settings.get("enable_gliner", False)
+        and query.strip()
+        and cleaned_text
+        and query_type in _depth_types
+    ):
         try:
             from core.config.hardware import get_hardware_profile
             hw = get_hardware_profile()
@@ -947,7 +1161,11 @@ def build_preview_payload(
             query_terms_for_gliner = _bm25_tokenize(query)
             gliner_budget = output_chars * 2 if active_settings.get("mode") == "semantic" else output_chars
             gliner_text, used_gliner = _gliner_compress(
-                paragraphs_for_gliner, query_terms_for_gliner, gliner_budget, device=gliner_device
+                paragraphs_for_gliner,
+                query_terms_for_gliner,
+                gliner_budget,
+                device=gliner_device,
+                query_type=query_type,
             )
             if gliner_text.strip() and used_gliner:
                 cleaned_text = gliner_text
@@ -961,14 +1179,21 @@ def build_preview_payload(
     if not preview_text.strip():
         preview_text = cleaned_text
 
-    compact_preview = _single_line(preview_text)
+    compact_preview = preview_text.strip()
+    if "\n\n" not in compact_preview and " | " in compact_preview:
+        compact_preview = compact_preview.replace(" | ", "\n\n")
     compact_preview = _truncate_at_sentence(compact_preview, output_chars)
 
-    # Transpile any remaining LaTeX spans to human-readable notation.
-    # Runs after truncation so we don't waste CPU on discarded text.
     if _has_latex(compact_preview):
         compact_preview = _render_latex_for_llm(compact_preview)
         strategy_parts.append("latex")
+
+    if not compact_preview.strip() and extraction_status == "nav_heavy":
+        extraction_status = "nav_heavy_empty"
+
+    if not compact_preview.strip() and seo_reference:
+        compact_preview = _truncate_at_sentence(seo_reference, output_chars)
+        strategy_parts.append("ref_fallback")
 
     return PreviewPayload(
         text=compact_preview,
@@ -977,4 +1202,9 @@ def build_preview_payload(
         clean_chars=len(_normalize_text(cleaned_text)),
         used_gliner=_did_use_gliner,
         strategy_used="+".join(strategy_parts) if strategy_parts else "empty",
+        extraction_status=extraction_status,
+        policy_family=fam,
+        chunks_selected=chunks_selected,
+        seo_rejected=seo_rejected,
+        nav_rejected=nav_rejected,
     )

@@ -1,19 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Registry-aware academic search fetcher.
-
-This module provides a unified interface for searching academic aggregators
-(Google Scholar, arXiv, PubMed, OpenAlex, etc.) based on the configurations
-defined in academic_registry.json.
-
-It avoids blind retries and instead selects the optimal method (HTTP,
-Camoufox, or JSON API) for each domain as prescribed by the registry.
-
-Public API
-----------
-AcademicFetcher -- async fetcher that executes academic searches
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -32,10 +18,6 @@ from core.models.search import SearchResult
 
 logger = logging.getLogger("core.fetch.academic_fetcher")
 
-# ---------------------------------------------------------------------------
-# Default Headers
-# ---------------------------------------------------------------------------
-
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -50,11 +32,13 @@ _ACADEMIC_SNIPPET_MAX_EXTRA = 900
 _ACADEMIC_SNIPPET_HARD_CAP = 1_800
 
 
+# Keep only URLs that look like PDFs.
 def _normalize_pdf_url(url: str) -> str:
     value = str(url or "").strip()
     return value if value and looks_like_pdf_url(value) else ""
 
 
+# Derive arxiv PDF URL from abs link or validate direct PDF URL.
 def _arxiv_pdf_url(url: str) -> str:
     value = str(url or "").strip()
     if not value:
@@ -63,10 +47,7 @@ def _arxiv_pdf_url(url: str) -> str:
         return value.replace("/abs/", "/pdf/", 1)
     return _normalize_pdf_url(value)
 
-# ---------------------------------------------------------------------------
-# Registry Loader
-# ---------------------------------------------------------------------------
-
+# Load academic_registry.json domain entries.
 def _load_academic_registry() -> list[dict[str, Any]]:
     try:
         reg_path = os.path.join(
@@ -80,22 +61,16 @@ def _load_academic_registry() -> list[dict[str, Any]]:
         logger.error("Failed to load academic registry: %s", exc)
         return []
 
-# ---------------------------------------------------------------------------
-# AcademicFetcher
-# ---------------------------------------------------------------------------
-
+# Registry-driven academic search (HTTP, JSON API, or Camoufox per domain).
 class AcademicFetcher:
-    """Orchestrates searches across multiple academic aggregators.
 
-    Uses the optimal backend for each source as defined in the registry.
-    """
-
+    # Load registry and set HTTP timeout.
     def __init__(self, timeout: float = 15.0):
         self._timeout = timeout
         self._registry = _load_academic_registry()
 
+    # Friendly JSON/HTTP engines with response_time_ms <= 1200.
     def _fast_entries(self, topics: Optional[list[str]] = None) -> list[dict[str, Any]]:
-        """Return lightweight academic engines safe for fast web search."""
         wanted_topics = {str(item).lower() for item in (topics or []) if str(item).strip()}
         out: list[dict[str, Any]] = []
         for entry in self._registry:
@@ -117,19 +92,13 @@ class AcademicFetcher:
             out.append(entry)
         return out
 
-    # -- Dispatchers ---------------------------------------------------------
-
+    # Search matching registry engines in parallel.
     async def search(
         self,
         query: str,
         target_domains: Optional[list[str]] = None,
         max_results: int = 10,
     ) -> list[SearchResult]:
-        """Search across academic engines.
-
-        If target_domains is not specified, searches all academic engines
-        concurrently (up to a reasonable limit).
-        """
         results: list[SearchResult] = []
         
         # Filter engines to search
@@ -159,6 +128,7 @@ class AcademicFetcher:
 
         return results
 
+    # Fast path: only lightweight friendly engines.
     async def search_fast(
         self,
         query: str,
@@ -166,7 +136,6 @@ class AcademicFetcher:
         max_results: int = 8,
         topics: Optional[list[str]] = None,
     ) -> list[SearchResult]:
-        """Search only lightweight academic engines suitable for fast web search."""
         engines_to_probe = self._fast_entries(topics=topics)
         if not engines_to_probe:
             return []
@@ -180,13 +149,13 @@ class AcademicFetcher:
                 logger.warning("Fast academic engine failed: %s", res)
         return merged
 
+    # Dispatch by registry method: json_api, camoufox, or http.
     async def _fetch_engine(
         self,
         entry: dict[str, Any],
         query: str,
         max_results: int,
     ) -> list[SearchResult]:
-        """Fetch results from a single engine entry using its prescribed method."""
         name = entry.get("pattern", "unknown")
         method = entry.get("method", "http")
         url_template = entry.get("json_api_hint")
@@ -208,15 +177,13 @@ class AcademicFetcher:
             logger.warning("Fetch failed for academic engine %s: %s", name, exc)
             return []
 
-    # -- Backend Implementation ----------------------------------------------
-
+    # Fetch one registry entry via its JSON API template.
     async def _fetch_json_api(
         self,
         entry: dict[str, Any],
         query: str,
         max_results: int,
     ) -> list[SearchResult]:
-        """Handle REST API engines (OpenAlex, Crossref, etc.)."""
         import httpx
         
         domain = entry.get("pattern", "")
@@ -240,13 +207,13 @@ class AcademicFetcher:
         # Parse results based on domain
         return self._parse_json_result(domain, data, max_results, query=query)
 
+    # Fetch one registry entry via Camoufox browser subprocess.
     async def _fetch_camoufox(
         self,
         entry: dict[str, Any],
         query: str,
         max_results: int,
     ) -> list[SearchResult]:
-        """Handle SPA/Hardened engines via Camoufox."""
         from core.fetch.camoufox_fetcher import fetch_with_camoufox
         
         domain = entry.get("pattern", "")
@@ -260,13 +227,13 @@ class AcademicFetcher:
 
         return self._parse_html_result(domain, result.html, url, max_results)
 
+    # Fetch one registry entry via plain HTTP GET.
     async def _fetch_http(
         self,
         entry: dict[str, Any],
         query: str,
         max_results: int,
     ) -> list[SearchResult]:
-        """Handle moderate/friendly engines via HTTP."""
         import httpx
         
         domain = entry.get("pattern", "")
@@ -279,10 +246,8 @@ class AcademicFetcher:
 
         return self._parse_html_result(domain, html, url, max_results, query=query)
 
-    # -- Parsing Logic -------------------------------------------------------
-
+    # Build domain-specific search URL for web scraping backends.
     def _build_web_search_url(self, domain: str, query: str) -> str:
-        """Heuristically build web search URLs for known academic domains."""
         q = quote_plus(query)
         if "scholar.google.com" in domain:
             return f"https://scholar.google.com/scholar?q={q}&hl=en"
@@ -298,6 +263,7 @@ class AcademicFetcher:
         # Generic fallback
         return f"https://{domain}/search?q={q}"
 
+    # Parse HTML search results page into SearchResult list.
     def _parse_html_result(
         self,
         domain: str,
@@ -306,7 +272,6 @@ class AcademicFetcher:
         max_results: int,
         query: str = "",
     ) -> list[SearchResult]:
-        """Fallback to Trafilatura-based HTML result extraction if no specific parser exists."""
         from bs4 import BeautifulSoup
         import trafilatura
         
@@ -394,6 +359,7 @@ class AcademicFetcher:
             
         return results
 
+    # Parse JSON API response into SearchResult list (domain-specific).
     def _parse_json_result(
         self,
         domain: str,
@@ -401,13 +367,14 @@ class AcademicFetcher:
         max_results: int,
         query: str = "",
     ) -> list[SearchResult]:
-        """Map heterogeneous API responses to SearchResult models."""
         results: list[SearchResult] = []
 
+        # Join author display names up to limit.
         def _join_authors(names: list[str], limit: int = 3) -> str:
             picked = [item for item in names if item][:limit]
             return ", ".join(picked)
 
+        # Reconstruct OpenAlex abstract from inverted index.
         def _openalex_abstract(item: dict[str, Any]) -> str:
             inv = item.get("abstract_inverted_index")
             if not isinstance(inv, dict):
@@ -579,6 +546,7 @@ class AcademicFetcher:
         return results
 
 
+# Remove JATS XML tags from Crossref abstracts.
 def _strip_jats(text: str) -> str:
     value = str(text or "").strip()
     if not value:
@@ -588,12 +556,14 @@ def _strip_jats(text: str) -> str:
     return " ".join(value.split())
 
 
+# Collapse whitespace and strip trailing ellipsis from snippet text.
 def _clean_snippet_text(text: str) -> str:
     value = " ".join(str(text or "").split()).strip()
     value = re.sub(r"(?:\s*(?:\.{3}|…)+\s*)+$", "", value)
     return value
 
 
+# Trim text to a sentence boundary near target_chars, capped at hard_cap.
 def _trim_to_sentence(text: str, target_chars: int, hard_cap: int) -> str:
     value = _clean_snippet_text(text)
     if not value:
@@ -621,6 +591,7 @@ def _trim_to_sentence(text: str, target_chars: int, hard_cap: int) -> str:
     return cut.strip(" ,;:-")
 
 
+# Build relevance-scored snippet with optional metadata suffix.
 def _build_dynamic_snippet(
     *,
     query: str,
@@ -657,6 +628,7 @@ def _build_dynamic_snippet(
     return snippet or meta
 
 
+# Ensure sentence candidate ends cleanly when source had trailing ellipsis.
 def _finalize_sentence_candidate(text: str) -> str:
     raw = str(text or "").strip()
     cleaned = _clean_snippet_text(raw)

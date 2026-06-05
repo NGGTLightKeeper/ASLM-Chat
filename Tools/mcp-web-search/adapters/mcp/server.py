@@ -27,7 +27,6 @@ from adapters.mcp.search_query_contract import (
     coerce_search_query,
 )
 from core.config import load_search_config
-from core.query.gte_evidence_reranker import warm_up as _gte_warm_up
 from services import run_read_page, run_web_search_rich
 from services.web_search import shutdown_web_search
 
@@ -37,10 +36,11 @@ except Exception:  # pragma: no cover - optional during non-MCP imports
     FastMCPContext = Any  # type: ignore[assignment]
 
 
+# Walk parent directories until ASLM project root markers are found.
 def _find_aslm_root() -> Path:
     current = Path(__file__).resolve().parent
     for p in [current, *current.parents]:
-        if (p / "SYSTEM_PROMPT.md").exists() or (p / ".git").exists():
+        if (p / "Tools" / "SYSTEM_PROMPT.md").exists() or (p / ".git").exists():
             return p
     return current.parents[3] if len(current.parents) > 3 else current
 
@@ -120,6 +120,7 @@ class ReadPageUiOutput(BaseModel):
     sources: list[ReadPageSourceOutput]
 
 
+# Send periodic MCP log pings while a long-running coroutine is in flight.
 async def _keepalive(context: FastMCPContext | dict[str, Any] | None, message: str, coro):
     done = asyncio.Event()
     t0 = time.perf_counter()
@@ -186,6 +187,7 @@ async def _keepalive(context: FastMCPContext | dict[str, Any] | None, message: s
             await ping_task
 
 
+# Best-effort MCP progress notification when a live session context exists.
 async def _report_progress(
     context: FastMCPContext | dict[str, Any] | None,
     progress: float,
@@ -201,6 +203,7 @@ async def _report_progress(
         await report(progress, total, message)
 
 
+# Split numbered search result blocks from a single model_context string.
 def _split_search_result_blocks(text: str) -> list[str]:
     normalized = (text or "").replace("\r\n", "\n").strip()
     if not normalized:
@@ -208,6 +211,7 @@ def _split_search_result_blocks(text: str) -> list[str]:
     return [part.strip() for part in _RESULT_BLOCK_SPLIT_RE.split(normalized) if part.strip()]
 
 
+# Normalize a URL host into a bare registrable domain label.
 def _source_domain(url: str) -> str:
     host = urlparse(url or "").netloc.lower()
     if "@" in host:
@@ -217,6 +221,7 @@ def _source_domain(url: str) -> str:
     return host.removeprefix("www.")
 
 
+# Build a short human-readable label from a domain name.
 def _display_domain(domain: str) -> str:
     parts = [part for part in (domain or "").split(".") if part]
     if len(parts) >= 2:
@@ -228,10 +233,12 @@ def _display_domain(domain: str) -> str:
     return label.replace("-", " ").title()
 
 
+# DuckDuckGo favicon URL for a source domain chip.
 def _favicon_url(domain: str) -> str:
     return f"https://icons.duckduckgo.com/ip3/{domain}.ico" if domain else ""
 
 
+# Build one read_page source metadata record for UI chips.
 def _read_page_source(url: str, rank: int, result_text: str = "") -> dict[str, object]:
     domain = _source_domain(url)
     ok = not str(result_text or "").lstrip().lower().startswith("error:")
@@ -245,6 +252,7 @@ def _read_page_source(url: str, rank: int, result_text: str = "") -> dict[str, o
     }
 
 
+# Assemble the structured read_page payload for one or many URLs.
 def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, object]:
     sources = [
         _read_page_source(url, index, results[index - 1] if index - 1 < len(results) else "")
@@ -266,6 +274,7 @@ def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, object]
     return payload
 
 
+# FastMCP tool handler for ranked web search with structured UI output.
 async def web_search(
     query: WebSearchQuery,
     effort: str = "medium",
@@ -318,8 +327,6 @@ async def web_search(
         )
 
     logger.info("mcp.web_search.start query_preview=%r", query_text[:160])
-    # Warm up GTE reranker in background so it's ready after search completes.
-    _gte_warm_up(ttl_seconds=300.0)
     await _report_progress(context, 0, 100, "search_started")
     try:
         payload = await _keepalive(
@@ -361,6 +368,7 @@ web_search.__doc__ = WEB_SEARCH_TOOL_DESCRIPTION
 web_search = mcp.tool()(web_search)
 
 
+# FastMCP tool handler for single or batched page reads.
 async def read_page(
     url: str | list[str],
     focus: str = "",
@@ -371,8 +379,6 @@ async def read_page(
         isinstance(url, list),
         url[:2] if isinstance(url, list) else str(url)[:160],
     )
-    # Warm up GTE reranker in background — read_page results are often cited.
-    _gte_warm_up(ttl_seconds=300.0)
     started_at = time.perf_counter()
     write_search_io_event(
         {
@@ -458,10 +464,6 @@ if __name__ == "__main__":
             get_hosted_cache().evict_expired()
         except Exception as _e:
             logger.debug("cache eviction at startup failed: %s", _e)
-
-        # Pre-load GTE reranker in background so the first citation annotation
-        # request is fast. TTL=300s — model stays live for 5 min after startup.
-        _gte_warm_up(ttl_seconds=300.0)
 
         mcp.run()
     finally:

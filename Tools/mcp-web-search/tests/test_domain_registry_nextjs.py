@@ -1,7 +1,11 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 from core.registry.domain_registry import get_registry
 
+
+# Domain registry — cursor.com help URLs use nextjs_rsc parsing.
 
 def test_domain_registry_marks_cursor_as_nextjs_rsc() -> None:
     registry = get_registry()

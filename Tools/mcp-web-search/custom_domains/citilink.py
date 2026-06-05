@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import json
@@ -6,6 +8,7 @@ import re
 from custom_domains.retail_common import format_price_value, normalize_availability, strip_html_fragment
 
 
+# Extract product metadata from Citilink product HTML (JSON-LD and inline fields).
 def extract_citilink_metadata(raw_html: str) -> dict[str, str]:
     meta: dict[str, str] = {}
 

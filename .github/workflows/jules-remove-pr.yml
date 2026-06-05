@@ -1,0 +1,54 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+name: Jules - Remove PR
+
+on:
+  pull_request:
+    types:
+      - opened
+
+permissions:
+  pull-requests: write
+
+jobs:
+  close-jules-pr:
+    if: |
+      startsWith(github.event.pull_request.head.ref, 'jules-docs-dev-') ||
+      startsWith(github.event.pull_request.head.ref, 'jules-patchnotes-dev-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Close Jules automation pull request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const number = pr.number;
+
+            if (pr.state !== "open") {
+              core.info(`PR #${number} is already ${pr.state}; nothing to do.`);
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: number,
+              body: [
+                "This pull request was closed automatically by CI.",
+                "",
+                "Head branch `jules-docs-dev-*` / `jules-patchnotes-dev-*` is merged by the Jules automation pipeline; an open PR is not required.",
+              ].join("\n"),
+            });
+
+            await github.rest.pulls.update({
+              owner,
+              repo,
+              pull_number: number,
+              state: "closed",
+            });
+
+            core.info(`Closed PR #${number} (head: ${pr.head.ref}).`);

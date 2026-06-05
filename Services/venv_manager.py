@@ -19,10 +19,10 @@ STATE_FILE_NAME = ".aslm_venv_state.json"
 ACTIVE_VENV_ENV = "ASLM_CHAT_ACTIVE_VENV"
 
 
-# Read venv requirements configuration.
-def load_config() -> dict[str, Any]:
-    """Return the internal venv configuration."""
+# Configuration loading
 
+# Read venv requirements from Settings/venv_requirements.json.
+def load_config() -> dict[str, Any]:
     if not REQUIREMENTS_FILE.exists():
         return {"fileVersion": 1, "venvs": []}
 
@@ -34,10 +34,8 @@ def load_config() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {"fileVersion": 1, "venvs": []}
 
 
-# Return normalized venv definitions.
+# Return normalized venv definitions from the requirements file.
 def iter_venv_configs() -> list[dict[str, Any]]:
-    """Return valid venv entries from the requirements configuration."""
-
     raw_venvs = load_config().get("venvs", [])
     if not isinstance(raw_venvs, list):
         return []
@@ -76,8 +74,6 @@ def iter_venv_configs() -> list[dict[str, Any]]:
 
 # Resolve one venv config by id.
 def get_venv_config(venv_id: str) -> dict[str, Any] | None:
-    """Return one venv config by id."""
-
     normalized_id = str(venv_id or "").strip()
     for config in iter_venv_configs():
         if config["id"] == normalized_id:
@@ -85,10 +81,8 @@ def get_venv_config(venv_id: str) -> dict[str, Any] | None:
     return None
 
 
-# Resolve one tool directory to its venv id.
+# Resolve the venv id assigned to a tool directory name.
 def get_tool_venv_id(tool_dir_name: str) -> str:
-    """Return the venv id assigned to a tool directory."""
-
     normalized_name = str(tool_dir_name or "").strip()
     for config in iter_venv_configs():
         if config.get("tool") == normalized_name:
@@ -96,10 +90,10 @@ def get_tool_venv_id(tool_dir_name: str) -> str:
     return ""
 
 
-# Return the absolute venv path.
-def get_venv_path(venv_id: str) -> Path:
-    """Return the absolute path for a configured venv."""
+# Path resolution
 
+# Return the absolute filesystem path for a configured venv.
+def get_venv_path(venv_id: str) -> Path:
     config = get_venv_config(venv_id)
     if config is None:
         raise KeyError(f"Unknown ASLM-Chat venv: {venv_id}")
@@ -108,20 +102,16 @@ def get_venv_path(venv_id: str) -> Path:
     return path if path.is_absolute() else BASE_DIR / path
 
 
-# Return the Python executable inside a venv.
+# Return the Python executable inside a configured venv.
 def get_venv_python(venv_id: str) -> Path:
-    """Return the Python executable for a configured venv."""
-
     venv_path = get_venv_path(venv_id)
     scripts_dir = "Scripts" if os.name == "nt" else "bin"
     executable_name = "python.exe" if os.name == "nt" else "python"
     return venv_path / scripts_dir / executable_name
 
 
-# Return the Python executable for a tool venv when configured.
+# Return the tool venv Python executable when the tool is mapped in config.
 def get_tool_python(tool_dir_name: str) -> Path | None:
-    """Return the Python executable assigned to a tool directory."""
-
     venv_id = get_tool_venv_id(tool_dir_name)
     if not venv_id:
         return None
@@ -130,10 +120,10 @@ def get_tool_python(tool_dir_name: str) -> Path | None:
     return python_path if python_path.exists() else None
 
 
-# Run one subprocess command.
-def _run(command: list[str], *, log: bool, cwd: Path | None = None) -> bool:
-    """Run one command and optionally stream output to the console."""
+# Internal helpers
 
+# Run one subprocess command and optionally stream output to the console.
+def _run(command: list[str], *, log: bool, cwd: Path | None = None) -> bool:
     try:
         result = subprocess.run(
             command,
@@ -153,10 +143,8 @@ def _run(command: list[str], *, log: bool, cwd: Path | None = None) -> bool:
     return result.returncode == 0
 
 
-# Compute a dependency signature.
+# Compute a stable hash for one venv package manifest.
 def _packages_signature(packages: list[str], packages_no_deps: list[str] | None = None) -> str:
-    """Return a stable signature for one venv package manifest."""
-
     payload = json.dumps(
         {"packages": packages, "packagesNoDeps": packages_no_deps or []},
         ensure_ascii=True,
@@ -165,10 +153,8 @@ def _packages_signature(packages: list[str], packages_no_deps: list[str] | None 
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-# Read the stored venv state.
+# Read persisted install state for one venv directory.
 def _read_state(venv_path: Path) -> dict[str, Any]:
-    """Return persisted state for one venv."""
-
     state_path = venv_path / STATE_FILE_NAME
     if not state_path.exists():
         return {}
@@ -181,10 +167,8 @@ def _read_state(venv_path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-# Write the stored venv state.
+# Persist the package signature after a successful install.
 def _write_state(venv_path: Path, packages: list[str], packages_no_deps: list[str] | None = None) -> None:
-    """Persist the package signature for one venv."""
-
     state_path = venv_path / STATE_FILE_NAME
     no_deps = packages_no_deps or []
     payload = {
@@ -194,10 +178,8 @@ def _write_state(venv_path: Path, packages: list[str], packages_no_deps: list[st
     state_path.write_text(json.dumps(payload, indent=4, ensure_ascii=False), encoding="utf-8")
 
 
-# Create a virtual environment.
+# Create a Python virtual environment for one configured venv id.
 def _create_venv(venv_id: str, log: bool) -> bool:
-    """Create a Python virtual environment for one ASLM-Chat part."""
-
     venv_path = get_venv_path(venv_id)
     venv_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -212,7 +194,7 @@ def _create_venv(venv_id: str, log: bool) -> bool:
     return _run([sys.executable, "-m", "virtualenv", str(venv_path)], log=log)
 
 
-# Install packages into one venv.
+# Install one package list into a venv via pip.
 def _pip_install(
     python_path: Path,
     packages: list[str],
@@ -242,14 +224,13 @@ def _pip_install(
     return _run(command, log=log)
 
 
+# Install regular and no-deps package lists for one venv id.
 def _install_packages(
     venv_id: str,
     packages: list[str],
     packages_no_deps: list[str],
     log: bool,
 ) -> bool:
-    """Install the configured packages into one venv."""
-
     if not packages and not packages_no_deps:
         return True
 
@@ -268,10 +249,10 @@ def _install_packages(
     return True
 
 
-# Ensure one configured venv exists and has its packages.
-def ensure_venv(venv_id: str, *, log: bool = True) -> bool:
-    """Create or update one internal ASLM-Chat venv."""
+# Public venv lifecycle
 
+# Create or update one configured ASLM-Chat venv when packages changed.
+def ensure_venv(venv_id: str, *, log: bool = True) -> bool:
     config = get_venv_config(venv_id)
     if config is None:
         if log:
@@ -288,9 +269,15 @@ def ensure_venv(venv_id: str, *, log: bool = True) -> bool:
 
     state = _read_state(venv_path)
     if state.get("packagesHash") == _packages_signature(packages, packages_no_deps):
-        if log:
-            print(f"[ASLM-Chat] Venv '{venv_id}' is up to date.")
-        return True
+        if not python_path.exists():
+            if log:
+                print(
+                    f"[ASLM-Chat] Venv '{venv_id}' state is current but Python is missing; reinstalling."
+                )
+        else:
+            if log:
+                print(f"[ASLM-Chat] Venv '{venv_id}' is up to date.")
+            return True
 
     if not _install_packages(venv_id, packages, packages_no_deps, log):
         return False
@@ -299,10 +286,8 @@ def ensure_venv(venv_id: str, *, log: bool = True) -> bool:
     return True
 
 
-# Ensure all configured venvs.
+# Create or update every venv listed in the requirements file.
 def ensure_all(*, log: bool = True) -> bool:
-    """Create or update every configured ASLM-Chat venv."""
-
     ok = True
     for config in iter_venv_configs():
         ok = ensure_venv(str(config["id"]), log=log) and ok
@@ -311,8 +296,6 @@ def ensure_all(*, log: bool = True) -> bool:
 
 # Run a Python command inside one configured venv.
 def run_venv_python(venv_id: str, args: list[str], *, log: bool = True) -> bool:
-    """Run a Python command inside one configured venv."""
-
     if not ensure_venv(venv_id, log=log):
         return False
 
@@ -321,6 +304,4 @@ def run_venv_python(venv_id: str, args: list[str], *, log: bool = True) -> bool:
 
 # Run a Python code snippet inside one configured venv.
 def run_venv_code(venv_id: str, code: str, *, log: bool = True) -> bool:
-    """Run Python code inside one configured venv."""
-
     return run_venv_python(venv_id, ["-c", code], log=log)

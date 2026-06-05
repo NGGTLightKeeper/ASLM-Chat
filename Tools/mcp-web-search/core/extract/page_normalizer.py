@@ -1,29 +1,11 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Page normalizer: turns raw HTML into a clean, structured markdown document.
-
-Refactored from legacy src/page_normalizer.py:
-  - Removed all try/except import fallbacks for internal modules
-  - content_processor imported via absolute package path (core.extract)
-  - Removed references to legacy method tags such as [PREVIEW_BOT]
-  - All constants and helpers preserved
-
-Public API
-----------
-normalize_page(url, raw_html, fallback_text) -> str   # markdown
-"""
-
 from __future__ import annotations
 
 import html as html_lib
 import re
 from typing import Optional
 from urllib.parse import urlparse
-
-# ---------------------------------------------------------------------------
-# Optional dependency probes
-# ---------------------------------------------------------------------------
 
 try:
     import trafilatura  # type: ignore
@@ -37,10 +19,6 @@ try:
 except Exception:
     _HAS_BS4 = False
 
-# ---------------------------------------------------------------------------
-# Reuse helpers from content_processor (absolute package import)
-# ---------------------------------------------------------------------------
-
 from core.extract.content_processor import (
     _preclean_html,
     _extract_text_with_bs4,
@@ -50,31 +28,19 @@ from core.extract.content_processor import (
     _get_boilerplate_filter,
 )
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 _MAX_OUTPUT_CHARS = 50_000
 _WHITESPACE_RE = re.compile(r"[ \t\r\f\v]+")
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 _TAG_RE = re.compile(r"<[^>]+>")
 
-# Patterns that indicate a line is a markdown-style heading
 _MD_HEADING_RE = re.compile(r"^#{1,6}\s")
-# Patterns for list items
 _MD_LIST_RE = re.compile(r"^(\s*[-*•]\s|\s*\d+[.)]\s)")
-# Patterns for blockquotes
 _MD_QUOTE_RE = re.compile(r"^>\s?")
-# Patterns for code fences
 _MD_CODE_FENCE_RE = re.compile(r"^```")
 
 
-# ---------------------------------------------------------------------------
-# Meta extraction
-# ---------------------------------------------------------------------------
-
+# Extract metadata using trafilatura (CPU only).
 def _extract_meta_trafilatura(raw_html: str) -> dict[str, str]:
-    """Extract metadata using trafilatura (CPU only)."""
     meta: dict[str, str] = {}
     try:
         obj = trafilatura.extract_metadata(raw_html)
@@ -91,8 +57,8 @@ def _extract_meta_trafilatura(raw_html: str) -> dict[str, str]:
     return meta
 
 
+# Extract metadata from HTML using regex / bs4.
 def _extract_meta_fallback(raw_html: str) -> dict[str, str]:
-    """Extract metadata from HTML using regex / bs4."""
     meta: dict[str, str] = {}
 
     m = re.search(r"<title[^>]*>(.*?)</title>", raw_html, re.IGNORECASE | re.DOTALL)
@@ -120,8 +86,8 @@ def _extract_meta_fallback(raw_html: str) -> dict[str, str]:
     return meta
 
 
+# Build a meta dict from HTML, fallback text, and URL.
 def _extract_meta(raw_html: Optional[str], fallback_text: Optional[str], url: str) -> dict[str, str]:
-    """Build a meta dict from whatever sources are available."""
     meta: dict[str, str] = {}
 
     if raw_html:
@@ -142,12 +108,8 @@ def _extract_meta(raw_html: Optional[str], fallback_text: Optional[str], url: st
     return meta
 
 
-# ---------------------------------------------------------------------------
-# Content extraction
-# ---------------------------------------------------------------------------
-
+# Use trafilatura with include_formatting=True for markdown-like output.
 def _extract_with_trafilatura_formatted(cleaned_html: str, url: str = "") -> str:
-    """Use trafilatura with include_formatting=True for markdown-like output."""
     if not cleaned_html:
         return ""
     try:
@@ -167,8 +129,8 @@ def _extract_with_trafilatura_formatted(cleaned_html: str, url: str = "") -> str
     return text or ""
 
 
+# Extract and return the main textual content from HTML or fallback.
 def _extract_content(raw_html: Optional[str], fallback_text: Optional[str], url: str) -> str:
-    """Extract and return the main textual content."""
     if raw_html:
         cleaned_html = _preclean_html(raw_html)
         min_chars = 200
@@ -193,12 +155,8 @@ def _extract_content(raw_html: Optional[str], fallback_text: Optional[str], url:
     return ""
 
 
-# ---------------------------------------------------------------------------
-# Post-cleaning
-# ---------------------------------------------------------------------------
-
+# Split text into blocks by double-newlines, preserving markdown structure.
 def _split_blocks_structured(text: str) -> list[str]:
-    """Split text into blocks by double-newlines, preserving markdown structure."""
     pieces = re.split(r"\n\s*\n", text or "")
     blocks: list[str] = []
     for piece in pieces:
@@ -221,6 +179,7 @@ def _split_blocks_structured(text: str) -> list[str]:
     return blocks
 
 
+# True when block is markdown heading, list, quote, or code fence.
 def _is_structured_block(block: str) -> bool:
     return bool(
         _MD_HEADING_RE.match(block)
@@ -230,8 +189,8 @@ def _is_structured_block(block: str) -> bool:
     )
 
 
+# Clean and deduplicate blocks while preserving markdown structure.
 def _clean_content(text: str, strict: bool = True) -> str:
-    """Clean and deduplicate blocks while preserving markdown structure."""
     is_boilerplate = _get_boilerplate_filter()
     blocks = _split_blocks_structured(text)
 
@@ -256,15 +215,11 @@ def _clean_content(text: str, strict: bool = True) -> str:
     return "\n\n".join(deduped)
 
 
-# ---------------------------------------------------------------------------
-# Fallback segmentation
-# ---------------------------------------------------------------------------
-
 _SENTENCE_END_RE = re.compile(r'(?<=[.!?])\s+(?=[A-ZА-ЯЁ"])')
 
 
+# Segment a wall-of-text into reasonable blocks.
 def _fallback_segment(text: str) -> str:
-    """Segment a wall-of-text into reasonable blocks."""
     parts = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
     if len(parts) > 1:
         return "\n\n".join(parts)
@@ -290,6 +245,7 @@ def _fallback_segment(text: str) -> str:
     return "\n\n".join(paragraphs)
 
 
+# Turn short non-sentence lines into markdown headings.
 def _segment_lines(lines: list[str]) -> str:
     result: list[str] = []
     for line in lines:
@@ -305,12 +261,8 @@ def _segment_lines(lines: list[str]) -> str:
     return "\n\n".join(result)
 
 
-# ---------------------------------------------------------------------------
-# Assembly
-# ---------------------------------------------------------------------------
-
+# Assemble the final markdown document with meta header.
 def _build_markdown(meta: dict[str, str], content: str) -> str:
-    """Assemble the final markdown document."""
     parts: list[str] = []
 
     title = meta.get("title", "").strip() or "Untitled"
@@ -340,31 +292,12 @@ def _build_markdown(meta: dict[str, str], content: str) -> str:
     return text
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
+# Produce a clean, structured markdown representation of a web page.
 def normalize_page(
     url: str,
     raw_html: Optional[str] = None,
     fallback_text: Optional[str] = None,
 ) -> str:
-    """Produce a clean, structured markdown representation of a web page.
-
-    Parameters
-    ----------
-    url : str
-        The page URL (used for meta and as trafilatura hint).
-    raw_html : str | None
-        The original HTML of the page, if available.
-    fallback_text : str | None
-        Already-extracted text; used when raw_html is not available.
-
-    Returns
-    -------
-    str
-        A markdown document with meta header and cleaned content.
-    """
     meta = _extract_meta(raw_html, fallback_text, url)
     content = _extract_content(raw_html, fallback_text, url)
 

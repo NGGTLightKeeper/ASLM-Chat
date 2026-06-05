@@ -1,39 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-_camoufox_worker.py — Isolated subprocess worker for camoufox page fetching.
-
-Protocol
---------
-stdin  : one JSON line with the request payload:
-         {
-           "url": "https://...",
-           "wait_sec": 4.0,
-           "headless": true,
-           "humanize": true,
-           "geoip": false,
-           "locale": "en-US",
-           "proxy": null,
-           "warmup_urls": ["https://www.wikipedia.org/"],
-           "warmup_count": 1,
-           "timeout_sec": 45.0
-         }
-stdout : one JSON line — result:
-         {"ok": true, "html": "...", "url": "...", "title": "...", "method": "camoufox"}
-       | {"ok": false, "error": "..."}
-stderr : ignored by caller
-
-Running in a separate process means:
-  - Camoufox browser process is cleanly isolated from the MCP event loop
-  - A hung browser can be killed via proc.kill() without dangling threads
-  - Playwright/camoufox asyncio loop conflicts don't affect the parent loop
-
-Exit codes
-----------
-  0  normal exit (ok=true or ok=false with error message)
-  1  startup failure (bad import, bad JSON, etc.)
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -43,27 +9,19 @@ import re
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Force UTF-8 stdout
-# ---------------------------------------------------------------------------
+# Force UTF-8 stdout.
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-# ---------------------------------------------------------------------------
-# Make the project root importable
-# ---------------------------------------------------------------------------
+# Make the project root importable.
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
+# Write success JSON (html, url, title, inner_text) to stdout.
 def _ok(html: str, url: str, title: str, inner_text: str = "") -> None:
     sys.stdout.write(
         json.dumps(
@@ -82,11 +40,13 @@ def _ok(html: str, url: str, title: str, inner_text: str = "") -> None:
     sys.stdout.flush()
 
 
+# Write error JSON to stdout.
 def _fail(msg: str) -> None:
     sys.stdout.write(json.dumps({"ok": False, "error": msg}, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
 
+# Parse <title> from HTML for the worker response.
 def _extract_title(html: str) -> str:
     m = _TITLE_RE.search(html)
     if m:
@@ -94,10 +54,6 @@ def _extract_title(html: str) -> str:
         return html_lib.unescape(m.group(1)).strip()[:500]
     return ""
 
-
-# ---------------------------------------------------------------------------
-# OS randomised browser profile
-# ---------------------------------------------------------------------------
 
 import random  # noqa: E402 (after sys.path setup)
 
@@ -127,12 +83,14 @@ _PLATFORM_BY_OS = {"windows": "Win32", "macos": "MacIntel", "linux": "Linux x86_
 _OS_WEIGHTS = [("windows", 0.70), ("macos", 0.20), ("linux", 0.10)]
 
 
+# Weighted random OS for browser fingerprint rotation.
 def _pick_os() -> str:
     keys = [k for k, _ in _OS_WEIGHTS]
     weights = [w for _, w in _OS_WEIGHTS]
     return random.choices(keys, weights=weights, k=1)[0]
 
 
+# Build locale-specific Camoufox browser profile dict.
 def _build_profile(locale: str) -> dict:
     os_name = _pick_os()
     tz_pool = _TZ_BY_LOCALE.get(locale, ["UTC"])
@@ -146,10 +104,7 @@ def _build_profile(locale: str) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Browser interaction helpers
-# ---------------------------------------------------------------------------
-
+# Apply navigator and viewport overrides on the Playwright page.
 async def _apply_profile(page, profile: dict) -> None:
     init_script = (
         "Object.defineProperty(navigator, 'language', {get: () => '%s'});"
@@ -173,6 +128,7 @@ async def _apply_profile(page, profile: dict) -> None:
         pass
 
 
+# Scroll the page partially to mimic human reading behavior.
 async def _human_scroll(page) -> None:
     try:
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.25)")
@@ -183,6 +139,7 @@ async def _human_scroll(page) -> None:
         pass
 
 
+# Visit warmup URLs before the target to build a natural session.
 async def _warmup(page, warmup_urls: list[str], count: int, timeout_sec: float) -> None:
     targets = random.sample(warmup_urls, min(count, len(warmup_urls))) if warmup_urls else []
     for wu in targets:
@@ -194,10 +151,7 @@ async def _warmup(page, warmup_urls: list[str], count: int, timeout_sec: float) 
             continue
 
 
-# ---------------------------------------------------------------------------
-# Main async fetch
-# ---------------------------------------------------------------------------
-
+# Load url in Camoufox and emit HTML JSON on stdout.
 async def _fetch(payload: dict) -> None:
     url: str = payload.get("url", "")
     if not url:
@@ -270,10 +224,7 @@ async def _fetch(payload: dict) -> None:
         _fail(f"camoufox error: {type(exc).__name__}: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
+# stdin: JSON line; stdout: one JSON line with html or error.
 def main() -> None:
     try:
         raw = sys.stdin.buffer.read()

@@ -1,22 +1,5 @@
 ﻿# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Read Page service.
-
-Fetch a single URL as clean markdown text. Supports:
-  - Standard HTTP fetch (httpx в†’ curl_cffi)
-  - Reddit JSON endpoint
-  - YouTube transcript (yt-dlp в†’ youtube-transcript-api)
-  - page_normalizer for HTML в†’ markdown conversion
-
-Replaces the scattered read_page logic from legacy src/engine.py.
-
-Public API
-----------
-ReadPageService         -- async service class
-run_read_page(url, ...) -- top-level convenience coroutine
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -66,26 +49,26 @@ trace_logger = logging.getLogger("trace.read_page")
 _READ_PAGE_STRATEGY_VERSION = "2026-04-followups-v1"
 
 
+# True for HTTP redirect status codes.
 def _is_redirect_status(status_code: int) -> bool:
     return status_code in {301, 302, 303, 307, 308}
 
-
-# ---------------------------------------------------------------------------
-# URL classification helpers
-# ---------------------------------------------------------------------------
 
 _SKIP_HOSTS = ("twitter.com", "x.com", "vimeo.com", "tiktok.com")
 _YT_HOSTS = ("youtube.com", "youtu.be", "www.youtube.com", "m.youtube.com")
 
 
+# Extract normalized host from URL (no www/m prefix).
 def _host(url: str) -> str:
     return urlparse(url).netloc.lower().removeprefix("www.").removeprefix("m.")
 
 
+# True for YouTube watch/short URLs.
 def _is_youtube(url: str) -> bool:
     return _host(url) in ("youtube.com", "youtu.be")
 
 
+# True when read_page should not fetch HTML (non-text hosts/extensions).
 def _is_skippable(url: str) -> bool:
     from core.extract.pdf_extractor import looks_like_pdf_url
 
@@ -96,6 +79,7 @@ def _is_skippable(url: str) -> bool:
     return any(_host(url) == s or _host(url).endswith("." + s) for s in _SKIP_HOSTS)
 
 
+# Cache key including strategy tag and DNS variant label.
 def _cache_key_for_read(url: str, *, strategy_tag: str, variant: str = "") -> str:
     parsed = urlparse(url)
     query_items = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k != "__rpv"]
@@ -106,6 +90,7 @@ def _cache_key_for_read(url: str, *, strategy_tag: str, variant: str = "") -> st
     return urlunparse(parsed._replace(query=query))
 
 
+# Label DNS-shop variant URLs for cache/trace.
 def _variant_label(url: str) -> str:
     if url.endswith("/.xaml"):
         return "dns_xaml"
@@ -114,6 +99,7 @@ def _variant_label(url: str) -> str:
     return "default"
 
 
+# True when extracted markdown is too short or mostly boilerplate.
 def _is_weak_extraction(markdown: str, *, min_length: int) -> bool:
     if not markdown:
         return True
@@ -137,6 +123,7 @@ def _is_weak_extraction(markdown: str, *, min_length: int) -> bool:
     return False
 
 
+# Apply GLiNER/read_page compression budget from config.
 def _apply_read_page_budget(
     markdown: str,
     *,
@@ -158,41 +145,35 @@ def _apply_read_page_budget(
     )
 
 
+# Wrap already-extracted fallback text in minimal markdown headers.
 def _fallback_text_to_markdown(url: str, text: str) -> str:
-    """Wrap already-extracted fallback text in minimal markdown headers."""
-
     host = _host(url)
     body = text.strip()
     return f"**Site:** {host}\n**URL:** {url}\n\n---\n\n{body}"
 
 
+# Convert raw DOM innerText to minimal markdown (SPA last resort).
 def _inner_text_to_markdown(url: str, inner_text: str) -> str:
-    """Convert raw DOM innerText to minimal markdown. Used as last-resort SPA fallback."""
-
     lines = [line for line in inner_text.splitlines() if line.strip()]
     return _fallback_text_to_markdown(url, "\n\n".join(lines))
 
 
+# Extract Next.js RSC text and wrap as minimal markdown.
 def _nextjs_rsc_to_markdown(url: str, raw_html: str) -> str:
-    """Extract Next.js RSC text and wrap it as minimal markdown."""
-
     text = extract_nextjs_rsc_text(raw_html)
     if not text:
         return ""
     return _fallback_text_to_markdown(url, text)
 
 
-# ---------------------------------------------------------------------------
-# YouTube transcript
-# ---------------------------------------------------------------------------
-
+# Parse 11-char YouTube video id from URL.
 def _youtube_video_id(url: str) -> str | None:
     m = re.search(r"(?:v=|/v/|youtu\.be/|/embed/|/shorts/)([A-Za-z0-9_-]{11})", url)
     return m.group(1) if m else None
 
 
+# Fetch YouTube transcript: youtube-transcript-api, then yt-dlp fallback.
 async def _fetch_youtube_transcript(url: str) -> str:
-    """Fetch YouTube transcript: youtube-transcript-api в†’ yt-dlp fallback."""
     video_id = _youtube_video_id(url)
     if not video_id:
         return f"Error: Could not extract video ID from: {url}"
@@ -337,12 +318,8 @@ async def _fetch_youtube_transcript(url: str) -> str:
     return result or f"Error: No transcript available for: {url}"
 
 
-# ---------------------------------------------------------------------------
-# Standard HTTP fetch
-# ---------------------------------------------------------------------------
-
+# Fetch HTML via httpx with per-redirect SSRF checks.
 async def _fetch_httpx(url: str, timeout: float, tls_verify: bool = True) -> str | None:
-    """Fetch HTML with SSRF checks before the request and after each redirect."""
     try:
         import httpx
 
@@ -375,8 +352,8 @@ async def _fetch_httpx(url: str, timeout: float, tls_verify: bool = True) -> str
     return None
 
 
+# curl_cffi HTML fetch with the same redirect-by-redirect SSRF checks.
 async def _fetch_curl_cffi(url: str, timeout: int) -> str | None:
-    """curl_cffi fallback with the same redirect-by-redirect SSRF checks."""
     loop = asyncio.get_running_loop()
 
     def _sync() -> str | None:
@@ -413,8 +390,8 @@ async def _fetch_curl_cffi(url: str, timeout: int) -> str | None:
     return await loop.run_in_executor(_io_pool, _sync)
 
 
+# Fetch PDF bytes with SSRF checks and MAX_PDF_BYTES ceiling.
 async def _fetch_pdf_bytes(url: str, timeout: float, tls_verify: bool = True) -> bytes:
-    """Fetch PDF bytes with SSRF checks and the shared PDF size ceiling."""
     from core.extract.pdf_extractor import MAX_PDF_BYTES, looks_like_pdf_bytes
 
     try:
@@ -490,8 +467,8 @@ async def _fetch_pdf_bytes(url: str, timeout: float, tls_verify: bool = True) ->
     return await loop.run_in_executor(_io_pool, _sync)
 
 
+# Download PDF and return markdown via pdf_bytes_to_markdown.
 async def _read_pdf(url: str, timeout: float, tls_verify: bool, max_chars: int) -> str:
-    """Fetch and extract a PDF into markdown."""
     from core.extract.pdf_extractor import pdf_bytes_to_markdown
 
     data = await _fetch_pdf_bytes(url, timeout=timeout, tls_verify=tls_verify)
@@ -508,8 +485,8 @@ async def _read_pdf(url: str, timeout: float, tls_verify: bool, max_chars: int) 
     return markdown
 
 
+# Race httpx vs curl_cffi; first non-antibot response wins.
 async def _fetch_race(url: str, timeout: float, tls_verify: bool = True) -> str | None:
-    """Race httpx vs curl_cffi вЂ” first non-antibot response wins, loser cancelled."""
     t_httpx = asyncio.create_task(_fetch_httpx(url, timeout, tls_verify=tls_verify))
     t_curl = asyncio.create_task(_fetch_curl_cffi(url, int(timeout) + 3))
     pending: set = {t_httpx, t_curl}
@@ -530,10 +507,6 @@ async def _fetch_race(url: str, timeout: float, tls_verify: bool = True) -> str 
     return result
 
 
-# ---------------------------------------------------------------------------
-# ReadPageService
-# ---------------------------------------------------------------------------
-
 @dataclass
 class ReadPageOptions:
     timeout: float = 20.0
@@ -551,9 +524,8 @@ class ReadPageVariantAttempt:
     winner: bool
 
 
+# Fetch a single URL and return clean markdown text.
 class ReadPageService:
-    """Fetch a single page and return clean markdown text."""
-
     def __init__(self, options: Optional[ReadPageOptions] = None) -> None:
         cfg = load_search_config()
         self._cfg = cfg
@@ -564,9 +536,8 @@ class ReadPageService:
         )
         self._focus = (self._opts.focus or "").strip()
 
+    # Fetch raw HTML through Camoufox within read_page's deadline.
     async def _fetch_camoufox_raw_html(self, url: str, opts: ReadPageOptions) -> str | None:
-        """Fetch raw HTML through Camoufox within read_page's global deadline."""
-
         camoufox_kwargs: dict[str, object] = {
             "wait_sec": 4.0,
             "timeout_sec": min(float(opts.timeout), 20.0),
@@ -585,6 +556,7 @@ class ReadPageService:
             return None
         return raw_html
 
+    # HTTP race or Camoufox depending on domain registry tier.
     async def _fetch_raw_html(self, url: str, opts: ReadPageOptions, original_url: str) -> str | None:
         if self._registry.needs_camoufox(url):
             return await self._fetch_camoufox_raw_html(url, opts)
@@ -594,13 +566,16 @@ class ReadPageService:
             raw_html = await self._fetch_camoufox_raw_html(url, opts)
         return raw_html
 
+    # Return per-variant trace for debugging (no user-facing read).
     async def trace(self, url: str) -> list[ReadPageVariantAttempt]:
         _, attempts = await self._read(url.strip(), collect_attempts=True)
         return attempts
 
+    # Like read() but also returns variant attempt trace.
     async def read_with_trace(self, url: str) -> tuple[str, list[ReadPageVariantAttempt]]:
         return await self._read(url.strip(), collect_attempts=True)
 
+    # Core read pipeline: special hosts, variants, normalize, budget.
     async def _read(
         self,
         url: str,
@@ -614,6 +589,8 @@ class ReadPageService:
         attempts: list[ReadPageVariantAttempt] = []
 
         logger.info("read_page url=%r fetch_url=%r", url, fetch_url)
+
+        # SSRF and fast-path handlers (Stack Exchange, X, GitHub, etc.).
         try:
             validate_public_fetch_url(fetch_url)
         except UnsafeFetchUrl as exc:
@@ -718,6 +695,7 @@ class ReadPageService:
                 max_chars=opts.max_chars,
             ), attempts
 
+        # DNS-shop and generic HTML fetch with cache + weak-extraction retries.
         fetch_candidates = _dns_variant_urls(url) if _host(url) == "dns-shop.ru" else [fetch_url]
         markdown = ""
         raw_html: str | None = None
@@ -915,8 +893,8 @@ class ReadPageService:
 
         return markdown, attempts
 
+    # Public entry: fetch URL as markdown with global deadline.
     async def read(self, url: str) -> str:
-        """Fetch a URL and return its content as clean markdown."""
         url = url.strip()
         deadline = max(float(self._opts.timeout), 30.0)
         try:
@@ -930,17 +908,13 @@ class ReadPageService:
         return markdown
 
 
-# ---------------------------------------------------------------------------
-# Top-level convenience coroutine
-# ---------------------------------------------------------------------------
-
+# Convenience entry point for MCP adapter and CLI.
 async def run_read_page(
     url: str,
     timeout: float = 20.0,
     max_chars: int = 20_000,
     focus: str = "",
 ) -> str:
-    """Convenience entry point for MCP adapter and CLI."""
     opts = ReadPageOptions(
         timeout=timeout,
         max_chars=max_chars,

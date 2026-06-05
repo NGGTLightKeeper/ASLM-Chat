@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Container-side facade — native execution only (no Docker path)."""
-
 from __future__ import annotations
 
 from sandbox.exec import (
@@ -12,6 +10,7 @@ from sandbox.exec import (
 from sandbox.jobs import JOB_REGISTRY
 
 
+# List background jobs; refresh native running jobs whose process has exited.
 def list_background_jobs() -> dict:
     for listed in JOB_REGISTRY.list_jobs():
         if listed.get("runtime") == "native" and listed.get("status") == "running":
@@ -27,6 +26,7 @@ def list_background_jobs() -> dict:
     return {"jobs": JOB_REGISTRY.list_jobs()}
 
 
+# Poll a background job and return incremental stdout/stderr since last read.
 def foreground_background_job(job_id: str) -> dict:
     job = JOB_REGISTRY.get(job_id)
     process = job.process
@@ -43,6 +43,7 @@ def foreground_background_job(job_id: str) -> dict:
     }
 
 
+# Terminate a running background job's process group, then mark it killed.
 def kill_background_job(job_id: str) -> dict:
     job = JOB_REGISTRY.get(job_id)
     process = job.process

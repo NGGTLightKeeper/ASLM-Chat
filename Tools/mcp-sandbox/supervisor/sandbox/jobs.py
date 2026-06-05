@@ -16,6 +16,7 @@ from sandbox.responses import SandboxToolError
 JOB_ID_PREFIX = "bg_"
 
 
+# Record for a single background bash job (native or docker runtime).
 @dataclass
 class BackgroundJob:
     job_id: str
@@ -47,6 +48,7 @@ class BackgroundJob:
         }
 
 
+# Thread-safe registry of background jobs and bounded incremental output reads.
 class JobRegistry:
     def __init__(self) -> None:
         self._jobs: dict[str, BackgroundJob] = {}
@@ -104,6 +106,7 @@ class JobRegistry:
             shutil.rmtree(job.host_job_dir, ignore_errors=True)
         return job
 
+    # Read a slice of a spool file with head/tail truncation when over MAX_OUTPUT_BYTES.
     def _read_bounded_text(self, path: Path, *, start: int = 0) -> tuple[str, int]:
         size = path.stat().st_size
         start = max(0, min(start, size))
@@ -170,8 +173,8 @@ class JobRegistry:
             job.exit_code = -9
         return job
 
+    # Remove finished jobs older than ttl_seconds; returns count removed.
     def purge_stale(self, ttl_seconds: float = 3600.0) -> int:
-        """Remove finished jobs older than ttl_seconds. Returns count removed."""
         import shutil
         cutoff = time.time() - ttl_seconds
         with self._lock:

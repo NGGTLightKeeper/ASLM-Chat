@@ -55,12 +55,16 @@ export function createChatController(context, dependencies) {
     refreshContextUsageNow();
   }
 
+
+  // Context usage helpers.
+  // Collect both context-usage buttons that are present in the DOM.
   function contextUsageButtons() {
     return [dom.$contextUsageBtn, dom.$contextUsageBtnConv].filter(function keep($el) {
       return $el && $el.length;
     });
   }
 
+  // Sync disabled state on context compression controls.
   function syncContextCompressionButtons() {
     const disabled = !!state.isChatGenerating || contextCompressionInFlight;
     contextUsageButtons().forEach(function syncButton($btn) {
@@ -71,6 +75,7 @@ export function createChatController(context, dependencies) {
     });
   }
 
+  // Format token counts in compact K/M notation for button labels.
   function formatCompactTokens(value) {
     const numericValue = Number(value) || 0;
     if (numericValue >= 1000000) {
@@ -82,10 +87,12 @@ export function createChatController(context, dependencies) {
     return numericValue.toLocaleString(intlLocaleTag());
   }
 
+  // Format token counts with full locale grouping for tooltips.
   function formatDetailedTokens(value) {
     return (Number(value) || 0).toLocaleString(intlLocaleTag());
   }
 
+  // Build the short aria-label shown on the context usage ring.
   function buildContextUsageLabel(percent, used, windowTokens) {
     const remaining = Math.max(0, 100 - percent);
     return t('context.usageLabel', {
@@ -96,6 +103,7 @@ export function createChatController(context, dependencies) {
     }, `Context: ${percent}% used, ${remaining}% remaining. ${formatCompactTokens(used)} / ${formatCompactTokens(windowTokens)} tokens.`);
   }
 
+  // Build the multi-line tooltip shown on hover for the context ring.
   function buildContextUsageTooltip(percent, used, windowTokens) {
     const remaining = Math.max(0, 100 - percent);
     return [
@@ -106,6 +114,7 @@ export function createChatController(context, dependencies) {
     ].join('\n');
   }
 
+  // Apply ring progress and accessibility text to one context button.
   function updateContextUsageButtonMetrics($btn, percent, label, tooltip) {
     const boundedPercent = Math.max(0, Math.min(100, percent));
     const circumference = 37.7;
@@ -120,6 +129,7 @@ export function createChatController(context, dependencies) {
       .attr('aria-label', label);
   }
 
+  // Render context usage metrics and warning states on all ring buttons.
   function setContextUsageUi(payload) {
     const ratio = Math.max(0, Math.min(1, Number(payload && payload.ratio) || 0));
     const percent = Math.round(ratio * 100);
@@ -164,6 +174,7 @@ export function createChatController(context, dependencies) {
     syncContextCompressionButtons();
   }
 
+  // Toggle the compressing spinner state while a compression request runs.
   function setContextCompressionBusy(isBusy) {
     contextCompressionInFlight = !!isBusy;
     if (contextCompressionInFlight) {
@@ -183,6 +194,7 @@ export function createChatController(context, dependencies) {
     setContextUsageUi(state.contextUsage || {});
   }
 
+  // Read draft text from the active composer for usage estimation.
   function getContextUsageDraftText(overrideText) {
     if (overrideText !== undefined && overrideText !== null) {
       return String(overrideText || '');
@@ -193,6 +205,7 @@ export function createChatController(context, dependencies) {
     return String(activeInput && activeInput.length ? activeInput.val() : '');
   }
 
+  // Fetch fresh context usage metrics from the backend.
   async function refreshContextUsageNow(options) {
     const refreshOptions = options || {};
     if (contextUsageRefreshPromise && !refreshOptions.force) {
@@ -220,6 +233,7 @@ export function createChatController(context, dependencies) {
     }
   }
 
+  // Start periodic context usage refresh while the page is open.
   function startContextUsagePolling() {
     if (contextUsagePollTimer !== null) {
       return;
@@ -230,6 +244,7 @@ export function createChatController(context, dependencies) {
     }, contextUsagePollIntervalMs);
   }
 
+  // Run manual or forced context compression for the active chat.
   async function triggerContextCompression(force) {
     if (state.isChatGenerating || contextCompressionInFlight) {
       return { applied: false, reason: 'busy' };
@@ -276,6 +291,7 @@ export function createChatController(context, dependencies) {
     }
   }
 
+  // Auto-compress context when usage crosses the server threshold before send.
   async function maybeAutoCompressContextBeforeSend(draftText) {
     const freshUsage = await refreshContextUsageNow({
       draftText,
@@ -303,6 +319,7 @@ export function createChatController(context, dependencies) {
     }
   }
 
+  // Debounce context usage refresh while the user types in the composer.
   function scheduleContextUsageRefresh() {
     if (contextUsageTimer !== null) {
       window.clearTimeout(contextUsageTimer);
@@ -313,6 +330,8 @@ export function createChatController(context, dependencies) {
     }, 250);
   }
 
+
+  // Attachment payload helpers.
   // Normalize pending attachments into the request-safe shape.
   function clonePendingAttachments(attachments) {
     return (attachments || [])
@@ -345,6 +364,7 @@ export function createChatController(context, dependencies) {
     return payloads;
   }
 
+  // Collect unique uploaded file ids referenced by pending attachments.
   function collectUploadedFileIds(attachments) {
     const ids = [];
     const seen = new Set();

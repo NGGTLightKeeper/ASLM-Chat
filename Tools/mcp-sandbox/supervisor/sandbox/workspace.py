@@ -37,9 +37,8 @@ MAX_FILE_READ_BYTES = max(MAX_READ_BYTES, MAX_IMAGE_PREVIEW_BYTES, TEXT_SAMPLE_B
 LEGACY_UPLOAD_ROOT_PREFIXES = ("mnt/data/User",)
 
 
+# Return accepted model-facing workspace root aliases.
 def model_root_aliases() -> tuple[str, ...]:
-    """Return accepted model-facing workspace root aliases."""
-
     aliases = [DEFAULT_TASK_DIR]
     seen: set[str] = set()
     result: list[str] = []
@@ -52,9 +51,11 @@ def model_root_aliases() -> tuple[str, ...]:
     return tuple(result)
 
 
-def smart_decode(bytes_data: bytes) -> tuple[str, str | None]:
-    """Decode bytes with a small fallback chain."""
+# Encoding and newlines
 
+
+# Decode bytes with a small fallback chain.
+def smart_decode(bytes_data: bytes) -> tuple[str, str | None]:
     if not bytes_data:
         return "", "utf-8"
 
@@ -94,9 +95,8 @@ def smart_decode(bytes_data: bytes) -> tuple[str, str | None]:
     return bytes_data.decode("utf-8", errors="replace"), "utf-8"
 
 
+# Detect the dominant newline style in text.
 def detect_newline_style(text: str) -> str:
-    """Detect the dominant newline style in text."""
-
     crlf = text.count("\r\n")
     normalized = text.replace("\r\n", "")
     cr = normalized.count("\r")
@@ -109,27 +109,29 @@ def detect_newline_style(text: str) -> str:
     return "\n"
 
 
+# Normalize all newline variants to LF.
 def normalize_newlines(text: str) -> str:
-    """Normalize all newline variants to LF."""
-
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def workspace_root() -> Path:
-    """Return the resolved host workspace root."""
+# Workspace roots
 
+
+# Return the resolved host workspace root.
+def workspace_root() -> Path:
     return Path(HOST_WORKSPACE).resolve()
 
 
+# Return the sandbox workspace root exposed to the model.
 def task_root() -> Path:
-    """Return the sandbox workspace root exposed to the model."""
-
     return (workspace_root() / DEFAULT_TASK_DIR).resolve()
 
 
-def normalize_relative_path(path: str) -> str:
-    """Normalize a workspace-relative path to POSIX form."""
+# Path normalization
 
+
+# Normalize a workspace-relative path to POSIX form.
+def normalize_relative_path(path: str) -> str:
     normalized = str(path or ".").replace("\\", "/").strip()
     if not normalized:
         normalized = "."
@@ -138,9 +140,8 @@ def normalize_relative_path(path: str) -> str:
     return normalized.lstrip("/")
 
 
+# Normalize model-facing paths and tolerate workspace-root aliases.
 def normalize_model_relative_path(path: str) -> str:
-    """Normalize model-facing paths and tolerate workspace-root aliases."""
-
     normalized = normalize_relative_path(path)
     legacy_upload = _legacy_upload_relative_path(normalized)
     if legacy_upload is not None:
@@ -165,9 +166,8 @@ def normalize_model_relative_path(path: str) -> str:
     return normalized
 
 
+# Map old upload paths from the prompt contract into the task workspace.
 def _legacy_upload_relative_path(normalized_path: str) -> str | None:
-    """Map old upload paths from the prompt contract into the task workspace."""
-
     normalized = normalize_relative_path(normalized_path)
     for prefix in LEGACY_UPLOAD_ROOT_PREFIXES:
         if normalized == prefix:
@@ -178,9 +178,11 @@ def _legacy_upload_relative_path(normalized_path: str) -> str | None:
     return None
 
 
-def validate_model_path(rel_path: str, kind: str = "path") -> None:
-    """Reject unsafe paths; allow absolute Linux paths inside the container."""
+# Path validation and resolution
 
+
+# Reject unsafe paths; allow absolute Linux paths inside the container.
+def validate_model_path(rel_path: str, kind: str = "path") -> None:
     raw = str(rel_path or ".").replace("\\", "/").strip()
     if not raw or raw == ".":
         return
@@ -216,9 +218,8 @@ def validate_model_path(rel_path: str, kind: str = "path") -> None:
         )
 
 
+# Resolve a model-facing path relative to the provided cwd.
 def resolve_model_path(path: str, cwd: str = ".") -> str:
-    """Resolve a model-facing path relative to the provided cwd."""
-
     raw = str(path or ".").replace("\\", "/").strip()
     normalized_cwd = normalize_model_relative_path(cwd)
     if not raw or raw == ".":
@@ -250,16 +251,14 @@ def resolve_model_path(path: str, cwd: str = ".") -> str:
     return posixpath.normpath(f"{normalized_cwd}/{raw}")
 
 
+# Convert an absolute workspace path to a POSIX relative path.
 def to_workspace_posix(path: Path) -> str:
-    """Convert an absolute workspace path to a POSIX relative path."""
-
     rel_path = path.resolve().relative_to(workspace_root())
     return rel_path.as_posix() or "."
 
 
+# Resolve a path inside the workspace root.
 def get_secure_path(rel_path: str) -> Path:
-    """Resolve a path inside the workspace root."""
-
     normalized = normalize_relative_path(rel_path)
     full_path = (workspace_root() / normalized).resolve()
 
@@ -269,17 +268,12 @@ def get_secure_path(rel_path: str) -> Path:
     return full_path
 
 
+# Resolve a path to a sandbox-safe location (container vs host rules).
 def get_secure_task_path(rel_path: str, kind: str = "path") -> Path:
-    """Resolve a path to a sandbox-safe location.
-
-    Inside the container, absolute Linux paths are returned as-is — the Docker
-    isolation layer is the security boundary there.  On the host, only paths
-    under the workspace sandbox root are permitted.
-    """
-
     validate_model_path(rel_path, kind=kind)
 
     raw = str(rel_path or ".").replace("\\", "/").strip()
+    # Inside the container, absolute Linux paths bypass task_root resolution.
     if IN_CONTAINER and raw.startswith("/"):
         return Path(posixpath.normpath(raw))
 
@@ -295,9 +289,8 @@ def get_secure_task_path(rel_path: str, kind: str = "path") -> Path:
     return full_path
 
 
+# Return True when path is inside root.
 def is_within(path: Path, root: Path) -> bool:
-    """Return True when path is inside root."""
-
     try:
         path.resolve().relative_to(root.resolve())
         return True
@@ -305,9 +298,8 @@ def is_within(path: Path, root: Path) -> bool:
         return False
 
 
+# Raise if path is a symlink whose target escapes the task root.
 def _reject_symlink_escape(path: Path, original: str) -> None:
-    """Raise if path is a symlink whose target escapes the task root."""
-
     if not path.is_symlink():
         return
 
@@ -318,6 +310,7 @@ def _reject_symlink_escape(path: Path, original: str) -> None:
         )
 
 
+# Return True when an absolute path is under the model workspace.
 def _is_workspace_absolute_path(path: str) -> bool:
     raw = str(path or "").replace("\\", "/").strip()
     if not raw.startswith("/"):
@@ -332,6 +325,7 @@ def _is_workspace_absolute_path(path: str) -> bool:
     return False
 
 
+# Reject absolute paths outside the model workspace for image-only tools.
 def _reject_non_workspace_absolute_path(path: str, kind: str) -> None:
     raw = str(path or "").replace("\\", "/").strip()
     if raw.startswith("/") and not _is_workspace_absolute_path(raw):
@@ -341,6 +335,7 @@ def _reject_non_workspace_absolute_path(path: str, kind: str) -> None:
         )
 
 
+# Return file size or raise FileNotFoundError with a normalized path.
 def _stat_size(path: Path, original: str) -> int:
     try:
         return path.stat().st_size
@@ -348,6 +343,7 @@ def _stat_size(path: Path, original: str) -> int:
         raise FileNotFoundError(f"File not found: {normalize_model_relative_path(original)}") from exc
 
 
+# Reject reads above max_bytes with a structured file_too_large error.
 def _reject_oversized_read(path: Path, original: str, max_bytes: int | None = None) -> int:
     limit = MAX_FILE_READ_BYTES if max_bytes is None else max(1, int(max_bytes))
     size_bytes = _stat_size(path, original)
@@ -368,11 +364,11 @@ def _reject_oversized_read(path: Path, original: str, max_bytes: int | None = No
     return size_bytes
 
 
+# Host import
 
 
+# Return True when a host path is allowed for import.
 def is_allowed_host_import(source: Path) -> bool:
-    """Return True when a host path is allowed for import."""
-
     resolved = source.resolve()
     if is_within(resolved, task_root()):
         return True
@@ -384,9 +380,11 @@ def is_allowed_host_import(source: Path) -> bool:
     return False
 
 
-def render_numbered_context(text: str, start_line: int, end_line: int) -> str:
-    """Render a numbered text excerpt with context lines."""
+# Text preview helpers
 
+
+# Render a numbered text excerpt with context lines.
+def render_numbered_context(text: str, start_line: int, end_line: int) -> str:
     lines = text.split("\n")
     total_lines = len(lines)
     context_start = max(1, start_line - CONTEXT_LINES)
@@ -398,9 +396,8 @@ def render_numbered_context(text: str, start_line: int, end_line: int) -> str:
     )
 
 
+# Build preview metadata for one text match.
 def build_match_preview(text: str, start_index: int, needle_len: int) -> dict[str, Any]:
-    """Build preview metadata for one text match."""
-
     start_line = text[:start_index].count("\n") + 1
     end_line = start_line + text[start_index : start_index + needle_len].count("\n")
     return {
@@ -410,11 +407,16 @@ def build_match_preview(text: str, start_index: int, needle_len: int) -> dict[st
     }
 
 
+# MIME, binary, and image helpers
+
+
+# Guess MIME type from file extension.
 def _guess_mime(path: Path) -> str:
     mime_type, _ = mimetypes.guess_type(str(path))
     return mime_type or "application/octet-stream"
 
 
+# Heuristic check whether sample bytes look binary.
 def _is_probably_binary(data: bytes, mime_type: str) -> bool:
     if mime_type.startswith(TEXT_MIME_PREFIX):
         return False
@@ -440,18 +442,20 @@ def _is_probably_binary(data: bytes, mime_type: str) -> bool:
     return (text_like / len(sample)) < 0.85
 
 
+# Return basic image dimensions for common formats without full decoding.
 def _image_dimensions(data: bytes, mime_type: str) -> dict[str, int] | None:
-    """Return basic image dimensions for common formats without full decoding."""
-
     try:
+        # PNG: width/height stored as big-endian uint32 at bytes 16-23.
         if mime_type == "image/png" and data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
             width, height = struct.unpack(">II", data[16:24])
             return {"width": width, "height": height}
 
+        # GIF: logical screen dimensions at bytes 6-9.
         if mime_type == "image/gif" and data[:6] in (b"GIF87a", b"GIF89a") and len(data) >= 10:
             width, height = struct.unpack("<HH", data[6:10])
             return {"width": width, "height": height}
 
+        # JPEG: scan markers until a Start-of-Frame segment is found.
         if mime_type == "image/jpeg" and data.startswith(b"\xff\xd8"):
             offset = 2
             sof_markers = {
@@ -493,6 +497,7 @@ def _image_dimensions(data: bytes, mime_type: str) -> dict[str, int] | None:
                     return {"width": width, "height": height}
                 offset += segment_length
 
+        # WebP: VP8X extended header or VP8L lossless bit-packed dimensions.
         if mime_type == "image/webp" and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
             chunk = data[12:16]
             if chunk == b"VP8X" and len(data) >= 30:
@@ -510,6 +515,7 @@ def _image_dimensions(data: bytes, mime_type: str) -> dict[str, int] | None:
     return None
 
 
+# Build read_image result dict with optional base64 preview.
 def _image_payload(
     path: str,
     data: bytes,
@@ -553,6 +559,7 @@ def _image_payload(
     }
 
 
+# Return True when a directory listing entry should be skipped.
 def _should_skip_entry(name: str, include_hidden: bool) -> bool:
     if name in IGNORED_DIR_NAMES:
         return True
@@ -561,6 +568,7 @@ def _should_skip_entry(name: str, include_hidden: bool) -> bool:
     return False
 
 
+# Extract a 1-based line range from normalized text.
 def _line_slice(
     text: str,
     start_line: int | None = None,
@@ -576,6 +584,7 @@ def _line_slice(
     return "\n".join(lines[start - 1 : end]), start, end, total_lines
 
 
+# Truncate UTF-8 text to max_bytes.
 def _truncate_text(text: str, max_bytes: int) -> tuple[str, bool]:
     encoded = text.encode("utf-8")
     if len(encoded) <= max_bytes:
@@ -585,14 +594,16 @@ def _truncate_text(text: str, max_bytes: int) -> tuple[str, bool]:
     return truncated, True
 
 
+# File operations
+
+
+# List files and directories inside the task workspace.
 def ls(
     path: str = ".",
     depth: int = 1,
     max_entries: int = MAX_LS_ENTRIES,
     include_hidden: bool = False,
 ) -> dict[str, Any]:
-    """List files and directories inside the task workspace."""
-
     target = get_secure_task_path(path)
     if not target.exists():
         raise FileNotFoundError(f"Path not found: {normalize_model_relative_path(path)}")
@@ -607,6 +618,7 @@ def ls(
 
     base_depth = len(target.relative_to(task_root()).parts)
 
+    # Depth-limited recursive walk with entry cap.
     def _walk(current: Path) -> None:
         nonlocal truncated
         if truncated:
@@ -663,14 +675,13 @@ def ls(
     }
 
 
+# Read a file from the task workspace.
 def read(
     path: str,
     start_line: int | None = None,
     end_line: int | None = None,
     max_bytes: int = MAX_READ_BYTES,
 ) -> dict[str, Any]:
-    """Read a file from the task workspace."""
-
     target = get_secure_task_path(path)
     _reject_symlink_escape(target, path)
     if not target.is_file():
@@ -686,6 +697,7 @@ def read(
     if mime_type.startswith(IMAGE_MIME_PREFIX):
         return _image_payload(normalized_path, data, mime_type)
 
+    # Binary files return metadata only; text files are decoded and optionally sliced.
     if _is_probably_binary(data, mime_type):
         return {
             "result": {
@@ -730,9 +742,8 @@ def read(
     }
 
 
+# Return file metadata without loading the full file into memory.
 def describe(path: str) -> dict[str, Any]:
-    """Return file metadata without loading the full file into memory."""
-
     target = get_secure_task_path(path)
     _reject_symlink_escape(target, path)
     if not target.is_file():
@@ -768,13 +779,12 @@ def describe(path: str) -> dict[str, Any]:
     }
 
 
+# Read image metadata and, when small enough, an inline preview.
 def read_image(
     path: str,
     include_preview: bool = True,
     max_preview_bytes: int = MAX_IMAGE_PREVIEW_BYTES,
 ) -> dict[str, Any]:
-    """Read image metadata and, when small enough, an inline preview."""
-
     _reject_non_workspace_absolute_path(path, "view_image")
     target = get_secure_task_path(path)
     _reject_symlink_escape(target, path)
@@ -808,9 +818,8 @@ def read_image(
     )
 
 
+# Write a UTF-8 text file inside the task workspace.
 def write(path: str, content: str) -> dict[str, Any]:
-    """Write a UTF-8 text file inside the task workspace."""
-
     target = get_secure_task_path(path)
     # Note: _reject_symlink_escape is intentionally not called here.
     # For a new (non-existent) file it would be a no-op (is_symlink() = False).
@@ -824,7 +833,6 @@ def write(path: str, content: str) -> dict[str, Any]:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8", newline="")
 
-
     return {
         "result": {
             "path": normalize_model_relative_path(path),
@@ -837,9 +845,8 @@ def write(path: str, content: str) -> dict[str, Any]:
     }
 
 
+# Replace exact text matches inside a text file.
 def edit(path: str, old_str: str, new_str: str, replace_all: bool = False) -> dict[str, Any]:
-    """Replace exact text matches inside a text file."""
-
     target = get_secure_task_path(path)
     _reject_symlink_escape(target, path)
     if not target.is_file():
@@ -869,6 +876,7 @@ def edit(path: str, old_str: str, new_str: str, replace_all: bool = False) -> di
             },
         )
 
+    # Ambiguous multi-match edits require replace_all or more context.
     if match_count > 1 and not replace_all:
         previews = []
         start = 0
@@ -895,7 +903,6 @@ def edit(path: str, old_str: str, new_str: str, replace_all: bool = False) -> di
 
     final_text = updated_normalized if newline_style == "\n" else updated_normalized.replace("\n", newline_style)
     target.write_text(final_text, encoding="utf-8", newline="")
-
 
     updated_lines = updated_normalized.splitlines()
     change_start = normalized_content[:match_index].count("\n") + 1
@@ -931,6 +938,7 @@ def edit(path: str, old_str: str, new_str: str, replace_all: bool = False) -> di
     }
 
 
+# Split normalized text into lines preserving trailing newline flag.
 def _split_edit_lines(text: str) -> tuple[list[str], bool]:
     normalized = normalize_newlines(text)
     has_trailing_newline = normalized.endswith("\n")
@@ -942,6 +950,7 @@ def _split_edit_lines(text: str) -> tuple[list[str], bool]:
     return lines, has_trailing_newline
 
 
+# Parse a 1-based line range string into start, end, and insert-mode flag.
 def _parse_line_range(range_str: Any, total_lines: int) -> tuple[int, int, bool]:
     if isinstance(range_str, (list, tuple)):
         if len(range_str) != 2:
@@ -980,6 +989,7 @@ def _parse_line_range(range_str: Any, total_lines: int) -> tuple[int, int, bool]
     return start, end, False
 
 
+# Normalize edit content into a list of lines.
 def _new_edit_lines(content: str) -> list[str]:
     normalized = normalize_newlines(content)
     if normalized == "":
@@ -990,6 +1000,7 @@ def _new_edit_lines(content: str) -> list[str]:
     return lines
 
 
+# Build compact numbered context around edited lines.
 def _render_compact_line_edit_context(
     lines: list[str],
     highlight_start: int,
@@ -1062,6 +1073,7 @@ def _render_compact_line_edit_context(
     return chosen_text, chosen_start, chosen_end, truncated or chosen_truncated
 
 
+# Replace or insert text by 1-based line range inside a text file.
 def edit_lines(
     path: str,
     range_str: Any,
@@ -1069,8 +1081,6 @@ def edit_lines(
     anchor: str | None = None,
     context_lines: int = 2,
 ) -> dict[str, Any]:
-    """Replace or insert text by 1-based line range inside a text file."""
-
     target = get_secure_task_path(path)
     _reject_symlink_escape(target, path)
     if not target.is_file():
@@ -1087,6 +1097,7 @@ def edit_lines(
     total_before = len(original_lines)
     start, end, is_insert = _parse_line_range(range_str, total_before)
 
+    # Optional anchor line check with nearby-line suggestion on mismatch.
     if anchor is not None:
         if is_insert:
             actual = original_lines[start - 1] if start <= total_before else ""
@@ -1119,6 +1130,7 @@ def edit_lines(
             )
 
     replacement_lines = _new_edit_lines(content)
+    # Insert before start line, or replace the inclusive start:end range.
     if is_insert:
         updated_lines = (
             original_lines[: start - 1]
@@ -1140,7 +1152,6 @@ def edit_lines(
     if newline_style != "\n":
         final_text = final_text.replace("\n", newline_style)
     target.write_text(final_text, encoding="utf-8", newline="")
-
 
     highlight_start = start
     highlight_end = start + max(lines_after, 1) - 1
@@ -1181,6 +1192,10 @@ def edit_lines(
     }
 
 
+# Search
+
+
+# Find files and directories inside the task workspace.
 def find(
     path: str = ".",
     name_pattern: str | None = None,
@@ -1188,8 +1203,6 @@ def find(
     max_depth: int = 8,
     max_results: int = MAX_FIND_RESULTS,
 ) -> dict[str, Any]:
-    """Find files and directories inside the task workspace."""
-
     target = get_secure_task_path(path)
     if not target.exists():
         raise FileNotFoundError(f"Path not found: {normalize_model_relative_path(path)}")
@@ -1283,6 +1296,7 @@ def find(
     }
 
 
+# Search text files inside the task workspace.
 def grep(
     pattern: str,
     path: str = ".",
@@ -1292,8 +1306,6 @@ def grep(
     context_after: int = 0,
     max_results: int = MAX_GREP_RESULTS,
 ) -> dict[str, Any]:
-    """Search text files inside the task workspace."""
-
     target = get_secure_task_path(path)
     if not target.exists():
         raise FileNotFoundError(f"Path not found: {normalize_model_relative_path(path)}")
@@ -1311,6 +1323,7 @@ def grep(
     warnings: list[str] = []
     truncated = False
 
+    # Single file: grep directly; directory: collect candidates then scan each file.
     if target.is_file():
         _reject_symlink_escape(target, path)
         _reject_oversized_read(target, path)
@@ -1387,9 +1400,11 @@ def grep(
     }
 
 
-def mkdir(path: str, parents: bool = True) -> dict[str, Any]:
-    """Create a directory inside the task workspace."""
+# Directory operations
 
+
+# Create a directory inside the task workspace.
+def mkdir(path: str, parents: bool = True) -> dict[str, Any]:
     target = get_secure_task_path(path)
     existed = target.exists()
     if existed and not target.is_dir():
@@ -1411,9 +1426,8 @@ def mkdir(path: str, parents: bool = True) -> dict[str, Any]:
     }
 
 
+# Move or rename a file or directory inside the task workspace.
 def move(src: str, dst: str, overwrite: bool = False) -> dict[str, Any]:
-    """Move or rename a file or directory inside the task workspace."""
-
     source = get_secure_task_path(src, kind="src")
     destination = get_secure_task_path(dst, kind="dst")
     if not source.exists():
@@ -1443,9 +1457,8 @@ def move(src: str, dst: str, overwrite: bool = False) -> dict[str, Any]:
     }
 
 
+# Delete a file or directory inside the task workspace.
 def delete(path: str, recursive: bool = False) -> dict[str, Any]:
-    """Delete a file or directory inside the task workspace."""
-
     target = get_secure_task_path(path)
     if not target.exists():
         raise FileNotFoundError(f"Path not found: {normalize_model_relative_path(path)}")
@@ -1472,9 +1485,11 @@ def delete(path: str, recursive: bool = False) -> dict[str, Any]:
     }
 
 
-def copy_into_workspace(host_path: str, dest_path: str | None = None) -> dict[str, Any]:
-    """Copy a host file or directory into the task workspace."""
+# Host import and workspace reset
 
+
+# Copy a host file or directory into the task workspace.
+def copy_into_workspace(host_path: str, dest_path: str | None = None) -> dict[str, Any]:
     source = Path(os.path.expanduser(host_path))
     if not source.is_absolute():
         source = (Path.cwd() / source).resolve()
@@ -1519,9 +1534,8 @@ def copy_into_workspace(host_path: str, dest_path: str | None = None) -> dict[st
     }
 
 
+# Clear the dedicated sandbox workspace without deleting its root.
 def clear_workspace() -> dict[str, Any]:
-    """Clear the dedicated sandbox workspace without deleting its root."""
-
     root = task_root()
     cleared: list[str] = []
 

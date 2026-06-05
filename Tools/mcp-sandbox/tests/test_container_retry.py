@@ -1,10 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Tests for container.py idempotent retry logic (_ensure_container_running).
-
-All tests here work entirely with mocked Docker CLI — no real container needed.
-"""
-
 from __future__ import annotations
 
 import sys
@@ -26,7 +21,7 @@ import sandbox.docker_host as docker_host_mod  # noqa: E402
 
 container_mod = docker_host_mod
 
-# Helper: build a fake subprocess result
+# Build a fake subprocess result with returncode 0.
 def _ok(stdout: str = "", stderr: str = "") -> MagicMock:
     m = MagicMock()
     m.returncode = 0
@@ -35,6 +30,7 @@ def _ok(stdout: str = "", stderr: str = "") -> MagicMock:
     return m
 
 
+# Build a fake subprocess result with non-zero returncode.
 def _fail(stderr: str = "error", returncode: int = 1) -> MagicMock:
     m = MagicMock()
     m.returncode = returncode
@@ -43,10 +39,9 @@ def _fail(stderr: str = "error", returncode: int = 1) -> MagicMock:
     return m
 
 
-# ── _inspect_container ────────────────────────────────────────────────
+# _inspect_container.
 
 class TestInspectContainer(unittest.TestCase):
-    """_inspect_container must parse docker inspect output correctly."""
 
     def test_returns_none_when_container_missing(self) -> None:
         with patch.object(docker_host_mod, "_run_command", return_value=_fail("No such container", 1)):
@@ -80,7 +75,8 @@ class TestInspectContainer(unittest.TestCase):
         self.assertIsNone(result)
 
 
-# ── _force_remove ─────────────────────────────────────────────────────
+# _force_remove.
+
 
 class TestForceRemove(unittest.TestCase):
     def test_success(self) -> None:
@@ -99,7 +95,8 @@ class TestForceRemove(unittest.TestCase):
         self.assertFalse(ok)
 
 
-# ── _start_existing ───────────────────────────────────────────────────
+# _start_existing.
+
 
 class TestStartExisting(unittest.TestCase):
     def test_returns_true_when_container_running_after_start(self) -> None:
@@ -119,8 +116,8 @@ class TestStartExisting(unittest.TestCase):
             ok, msg = container_mod._start_existing()
         self.assertFalse(ok)
 
+    # docker start returns 0 but container dies immediately.
     def test_returns_false_when_not_running_after_start(self) -> None:
-        """docker start returns 0 but container dies immediately."""
         import json
         # start OK, then inspect shows not running
         dead_payload = json.dumps([{"State": {"Running": False, "Status": "exited"}, "Mounts": []}])
@@ -130,7 +127,8 @@ class TestStartExisting(unittest.TestCase):
         self.assertFalse(ok)
 
 
-# ── _build_run_command ────────────────────────────────────────────────
+# _build_run_command.
+
 
 class TestBuildRunCommand(unittest.TestCase):
     def test_mounts_task_root_under_workspace_sandbox(self) -> None:
@@ -144,16 +142,16 @@ class TestBuildRunCommand(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("-w") + 1], MODEL_WORKSPACE_CONTAINER)
         self.assertNotIn("--security-opt", cmd)
 
+    # Without SANDBOX_DEV_BIND=1 the src tree must NOT be bind-mounted.
     def test_no_supervisor_source_mount_by_default(self) -> None:
-        """Without SANDBOX_DEV_BIND=1 the src tree must NOT be bind-mounted."""
         with patch.object(docker_host_mod, "DEV_BIND", False):
             cmd = container_mod._build_run_command("image:test", include_storage_limit=False)
         # The path appears as an -e env var, but must NOT appear as a -v bind mount.
         bind_entry = f":{container_mod.SUPERVISOR_SRC}:ro"
         self.assertNotIn(bind_entry, cmd)
 
+    # With SANDBOX_DEV_BIND=1 the src tree is bind-mounted read-only.
     def test_mounts_supervisor_source_read_only_when_dev_bind_enabled(self) -> None:
-        """With SANDBOX_DEV_BIND=1 the src tree is bind-mounted read-only."""
         src_dir = ROOT / "src"
         with patch.object(docker_host_mod, "DEV_BIND", True), \
              patch.object(docker_host_mod, "SUPERVISOR_SRC_HOST", str(src_dir)):
@@ -177,8 +175,8 @@ class TestBuildRunCommand(unittest.TestCase):
 
         self.assertIn(f"{venv}:{container_mod.SUPERVISOR_VENV}:ro", cmd)
 
+    # Without SANDBOX_DEV_BIND=1 the venv must NOT be bind-mounted.
     def test_no_venv_mount_without_dev_bind(self) -> None:
-        """Without SANDBOX_DEV_BIND=1 the venv must NOT be bind-mounted."""
         temp_dir = ROOT / ".test_workspace" / "__venv_mount_test2"
         shutil.rmtree(temp_dir, ignore_errors=True)
         try:
@@ -211,7 +209,8 @@ class TestBuildRunCommand(unittest.TestCase):
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-# ── _ensure_image ─────────────────────────────────────────────────────
+# _ensure_image.
+
 
 class TestEnsureImage(unittest.TestCase):
     def test_existing_image_with_runtime_label_is_reused(self) -> None:
@@ -254,13 +253,11 @@ class TestEnsureImage(unittest.TestCase):
         setup_mock.assert_called_once()
 
 
-# ── _ensure_container_running (integration) ───────────────────────────
+# _ensure_container_running (integration).
 
 class TestEnsureContainerRunning(unittest.TestCase):
-    """High-level idempotent ensure with mocked Docker."""
-
+    # Simulate _ensure_docker_running returning True.
     def _mock_docker_ok(self) -> MagicMock:
-        """Simulate _ensure_docker_running returning True."""
         m = MagicMock(return_value=(True, "Docker daemon is running."))
         return m
 
@@ -278,8 +275,8 @@ class TestEnsureContainerRunning(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("running", msg.lower())
 
+    # If volume is wrong, old container is removed and a new one created.
     def test_recreates_container_on_volume_mismatch(self) -> None:
-        """If volume is wrong, old container is removed and a new one created."""
         import json
         # First inspect: running but wrong volume
         bad_payload = json.dumps([{"State": {"Running": True, "Status": "running"}, "Mounts": [{"Source": "/wrong"}]}])
@@ -304,8 +301,8 @@ class TestEnsureContainerRunning(unittest.TestCase):
 
         self.assertTrue(ok)
 
+    # Name-conflict error during create triggers a retry.
     def test_retries_on_name_conflict(self) -> None:
-        """Name-conflict error during create triggers a retry."""
         import json, os as os_mod
         from sandbox.config import HOST_WORKSPACE, DEFAULT_TASK_DIR
         mount = os_mod.path.normpath(os_mod.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR))
@@ -332,8 +329,8 @@ class TestEnsureContainerRunning(unittest.TestCase):
 
         self.assertTrue(ok, f"Expected success after retry, got: {msg}")
 
+    # Concurrent _ensure_container_running calls must not race each other.
     def test_concurrent_calls_serialized(self) -> None:
-        """Concurrent _ensure_container_running calls must not race each other."""
         results: list[tuple[bool, str]] = []
         errors: list[Exception] = []
         active_inspects = 0

@@ -1,13 +1,8 @@
-"""Canonical search pipeline mode names and backward-compatible aliases.
-
-``rules`` — rules/class_profiles routing only; ASLM embedding models are not loaded.
-
-``aslm_embedding`` — same search stack, but on ``effort=high`` encoder/decoder may run
-when enabled in config or via ``ASLM_WEB_SEARCH_NEURAL_*`` env vars.
-"""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
+# Canonical pipeline mode names: rules (profiles only) and aslm_embedding (optional neural on high effort).
 PIPELINE_MODE_ALIASES: dict[str, str] = {
     "legacy": "rules",
     "rules": "rules",
@@ -23,6 +18,7 @@ CANONICAL_PIPELINE_MODES = frozenset({"rules", "aslm_embedding"})
 PIPELINE_MODE_CHOICES = tuple(sorted(PIPELINE_MODE_ALIASES))
 
 
+# Map config/env aliases to a canonical pipeline mode string.
 def normalize_pipeline_mode(value: str | None) -> str:
     raw = (value or "rules").strip().lower()
     if not raw:

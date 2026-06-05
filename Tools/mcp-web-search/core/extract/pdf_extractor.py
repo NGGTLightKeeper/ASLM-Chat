@@ -1,12 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""PDF text extraction helpers.
-
-The fetch layer sometimes receives application/pdf content from URLs that do
-not end with ".pdf" (for example arxiv.org/pdf/<id>). This module turns those
-bytes into bounded markdown and deletes the temporary file after parsing.
-"""
-
 from __future__ import annotations
 
 import re
@@ -28,6 +21,7 @@ _PDF_DUMP_MARKERS = (
 )
 
 
+# True when URL path or query indicates a PDF resource.
 def looks_like_pdf_url(url: str) -> bool:
     parsed = urlparse(url)
     path = parsed.path.lower()
@@ -40,12 +34,13 @@ def looks_like_pdf_url(url: str) -> bool:
     return False
 
 
+# True when raw bytes start with the PDF magic header.
 def looks_like_pdf_bytes(data: bytes) -> bool:
     return data.lstrip().startswith(b"%PDF-")
 
 
+# True when decoded text looks like a PDF object stream, not article body.
 def looks_like_pdf_text_dump(text: str) -> bool:
-    """Return True for PDF object streams decoded as text."""
     if not text:
         return False
     head = text.lstrip()[:12000]
@@ -55,8 +50,8 @@ def looks_like_pdf_text_dump(text: str) -> bool:
     return marker_count >= 3
 
 
+# True when text is likely arbitrary binary decoded as UTF-8.
 def looks_like_decoded_binary(text: str) -> bool:
-    """Detect arbitrary binary payloads that were decoded as text."""
     if looks_like_pdf_text_dump(text):
         return True
     sample = text[:12000]
@@ -69,6 +64,7 @@ def looks_like_decoded_binary(text: str) -> bool:
     return control_count / length > 0.005 or replacement_count / length > 0.01
 
 
+# Write PDF bytes to a temp file, extract markdown, then delete the temp file.
 def pdf_bytes_to_markdown(
     *,
     url: str,
@@ -76,7 +72,6 @@ def pdf_bytes_to_markdown(
     title: str = "",
     max_chars: int = MAX_PDF_TEXT_CHARS,
 ) -> str:
-    """Extract PDF bytes into a bounded markdown document."""
     if not data:
         return ""
     if len(data) > MAX_PDF_BYTES:
@@ -98,6 +93,7 @@ def pdf_bytes_to_markdown(
                 pass
 
 
+# Extract a local PDF file into a bounded markdown document.
 def pdf_file_to_markdown(
     *,
     url: str,
@@ -105,11 +101,6 @@ def pdf_file_to_markdown(
     title: str = "",
     max_chars: int = MAX_PDF_TEXT_CHARS,
 ) -> str:
-    """Extract a local PDF file into a bounded markdown document.
-
-    Uses pymupdf4llm when available (produces proper markdown with headers,
-    bold, italic, tables). Falls back to PyMuPDF get_text("text") otherwise.
-    """
     try:
         import pymupdf4llm  # type: ignore
         import contextlib

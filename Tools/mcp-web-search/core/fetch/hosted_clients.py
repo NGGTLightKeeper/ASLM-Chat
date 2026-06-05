@@ -1,20 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-hosted_clients.py — Sync HTTP clients for API-key-based search providers.
-
-Providers: Tavily, Brave Search, Bing Web Search, SerpAPI.
-Each client is synchronous (runs inside ThreadPoolExecutor, same pattern as
-DDGSClient) and returns list[SearchResult].  Results are normalized to the
-same SearchResult model used everywhere in the pipeline.
-
-Public API
-----------
-available_hosted_engines()              → list[str] of engine names with active keys
-search_with_hosted(engine, query, ...)  → list[SearchResult]  (sync, for executor)
-async_hosted_search(engine, query, ...) → async wrapper recording EngineRouter telemetry
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +8,7 @@ import logging
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from typing import Any, Optional
 
 from pathlib import Path
 
@@ -44,10 +29,6 @@ logger = logging.getLogger("core.fetch.hosted_clients")
 #              exactly as it would on a directly fetched page — no pre-truncation.
 TAVILY_SEARCH_DEPTH: str = "advanced"
 
-# ---------------------------------------------------------------------------
-# Shared thread pool (same strategy as ddgs_client.py)
-# ---------------------------------------------------------------------------
-
 import atexit
 import threading
 
@@ -55,6 +36,7 @@ _pool: Optional[ThreadPoolExecutor] = None
 _pool_lock = threading.Lock()
 
 
+# Thread pool for sync hosted API calls.
 def _get_pool() -> ThreadPoolExecutor:
     global _pool
     if _pool is None:
@@ -81,8 +63,8 @@ _page_cache = None
 _page_cache_lock = threading.Lock()
 
 
+# Shared SourceCache for Tavily raw_content pre-population.
 def _get_page_cache():
-    """Return the shared SourceCache instance (for page content pre-population)."""
     global _page_cache
     if _page_cache is None:
         with _page_cache_lock:
@@ -92,30 +74,92 @@ def _get_page_cache():
     return _page_cache
 
 
+# Wrap plain text in minimal HTML for SourceCache / preview pipeline.
 def _wrap_as_html(text: str) -> str:
-    """Wrap plain extracted text in minimal HTML.
-
-    Stored as raw_html in SourceCache so that build_preview_payload()
-    can run trafilatura / BeautifulSoup / BM25 on it unchanged —
-    the same path as any directly fetched page.
-    No content is discarded here; truncation is the pipeline's job.
-    """
     import html as _html
     return f"<html><body><article>{_html.escape(text)}</article></body></html>"
 
 
-# ---------------------------------------------------------------------------
-# Result hash helper (mirrors engine_router._result_hash)
-# ---------------------------------------------------------------------------
+def _append_hosted_text(parts: list[str], label: str, value: Any, seen: set[str]) -> None:
+    """Collect all useful text from a hosted provider result item."""
+    if value is None or isinstance(value, bool):
+        return
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            nested_label = f"{label}.{key}" if label else str(key)
+            _append_hosted_text(parts, nested_label, nested, seen)
+        return
+    if isinstance(value, list):
+        for idx, nested in enumerate(value):
+            nested_label = f"{label}[{idx}]" if label else str(idx)
+            _append_hosted_text(parts, nested_label, nested, seen)
+        return
 
+    text = " ".join(str(value).split())
+    if not text or text in seen:
+        return
+    seen.add(text)
+    parts.append(f"{label}: {text}" if label else text)
+
+
+def _hosted_item_content(item: dict[str, Any], *, first_fields: tuple[str, ...] = ()) -> str:
+    """Return the complete text payload a hosted provider exposed for one result.
+
+    Hosted APIs differ wildly: some return one snippet, others include nested
+    rich snippets, highlights, dates, breadcrumbs, or extracted content.  We keep
+    all textual fields, with the important fields first, and let the normal
+    preview pipeline decide what is relevant.
+    """
+    parts: list[str] = []
+    seen: set[str] = set()
+
+    for field in first_fields:
+        if field in item:
+            _append_hosted_text(parts, field, item.get(field), seen)
+
+    for field, value in item.items():
+        if field in first_fields:
+            continue
+        _append_hosted_text(parts, field, value, seen)
+
+    return "\n".join(parts).strip()
+
+
+def _cache_hosted_content(engine: str, results: list[SearchResult], content_map: dict[str, str]) -> None:
+    """Pre-populate SourceCache so hosted result text goes through preview parsing."""
+    if not content_map:
+        return
+
+    page_cache = _get_page_cache()
+    title_by_url = {r.url: r.title for r in results}
+    cached = 0
+    for url, full_text in content_map.items():
+        if not full_text:
+            continue
+        try:
+            existing = page_cache.get_cached(url)
+            if existing and page_cache.is_fresh(url) and (existing.clean_text or existing.raw_html):
+                continue
+            page_cache.cache_page(
+                url,
+                title_by_url.get(url, ""),
+                clean_text="",
+                raw_html=_wrap_as_html(full_text),
+            )
+            cached += 1
+        except Exception:
+            pass
+    logger.debug(
+        "[%s] pre-populated page cache for %d/%d urls",
+        engine, cached, len(results),
+    )
+
+
+# Stable hash of top-5 URLs for router telemetry.
 def _result_hash(results: list[SearchResult]) -> int:
     urls = "||".join(r.url for r in results[:5])
     return int(hashlib.md5(urls.encode()).hexdigest()[:8], 16)
 
-
-# ---------------------------------------------------------------------------
-# Registry of which engines need which key fields
-# ---------------------------------------------------------------------------
 
 _ENGINE_KEY_ATTR: dict[str, str] = {
     "tavily":  "tavily_api_key",
@@ -127,8 +171,8 @@ _ENGINE_KEY_ATTR: dict[str, str] = {
 HOSTED_ENGINES: list[str] = list(_ENGINE_KEY_ATTR)
 
 
+# Return hosted engine names that have an API key configured.
 def available_hosted_engines() -> list[str]:
-    """Return names of hosted engines whose API key is configured."""
     keys = load_api_keys().search
     return [
         name for name, attr in _ENGINE_KEY_ATTR.items()
@@ -136,24 +180,15 @@ def available_hosted_engines() -> list[str]:
     ]
 
 
-# ---------------------------------------------------------------------------
-# Tavily
-# ---------------------------------------------------------------------------
-
+# Tavily Search API (POST /search); advanced depth returns raw_content.
 class TavilyClient:
-    """
-    Tavily Search API — POST /search.
-
-    Docs: https://docs.tavily.com/docs/rest-api/api-reference
-    Response (basic):    {"results": [{"title", "url", "content", "score"}]}
-    Response (advanced): same + "raw_content" per result (full page text)
-    """
 
     BASE_URL = "https://api.tavily.com/search"
     TIMEOUT = 15.0
 
     _DAYS_MAP = {"d": 1, "w": 7, "m": 30, "y": 365}
 
+    # POST search; returns results plus url→full_text map for SourceCache.
     def search_with_content(
         self,
         query: str,
@@ -162,14 +197,6 @@ class TavilyClient:
         timelimit: Optional[str] = None,
         search_depth: str = TAVILY_SEARCH_DEPTH,
     ) -> tuple[list[SearchResult], dict[str, str]]:
-        """
-        Search Tavily and return (results, content_map).
-
-        content_map: url → raw_content (full page text when search_depth="advanced",
-        otherwise the shorter content snippet).  The caller stores this in
-        SourceCache so that the extraction pipeline runs on the full text
-        without a second HTTP fetch.  No truncation is applied here.
-        """
         import requests
 
         api_key = load_api_keys().search.tavily_api_key
@@ -214,7 +241,10 @@ class TavilyClient:
 
             # full_text: everything Tavily has — fed into SourceCache as-is.
             # Truncation/compression is the pipeline's job (BM25 / GliNER).
-            full_text = raw_content or content
+            full_text = _hosted_item_content(
+                item,
+                first_fields=("title", "raw_content", "content", "published_date"),
+            ) or raw_content or content
             if full_text:
                 content_map[url] = full_text
 
@@ -224,10 +254,12 @@ class TavilyClient:
                 snippet=snippet,
                 engine="hosted:tavily",
                 published_date=str(item.get("published_date") or ""),
+                provider_content=full_text,
             ))
 
         return results, content_map
 
+    # Search without returning the raw_content side map.
     def search(
         self,
         query: str,
@@ -236,43 +268,33 @@ class TavilyClient:
         timelimit: Optional[str] = None,
         search_depth: str = TAVILY_SEARCH_DEPTH,
     ) -> list[SearchResult]:
-        """Convenience wrapper — returns only results (no content_map)."""
         results, _ = self.search_with_content(
             query, max_results, timelimit=timelimit, search_depth=search_depth,
         )
         return results
 
 
-# ---------------------------------------------------------------------------
-# Brave Search
-# ---------------------------------------------------------------------------
-
+# Brave Search API (GET /res/v1/web/search).
 class BraveClient:
-    """
-    Brave Search API — GET /res/v1/web/search.
-
-    Docs: https://api.search.brave.com/app/documentation/web-search/get-started
-    Header: X-Subscription-Token
-    Response: {"web": {"results": [{"title", "url", "description"}]}}
-    """
 
     BASE_URL = "https://api.search.brave.com/res/v1/web/search"
     TIMEOUT = 10.0
 
     _FRESHNESS_MAP = {"d": "pd", "w": "pw", "m": "pm", "y": "py"}
 
-    def search(
+    # GET web search results and retain the full provider payload.
+    def search_with_content(
         self,
         query: str,
         max_results: int = 10,
         *,
         timelimit: Optional[str] = None,
-    ) -> list[SearchResult]:
+    ) -> tuple[list[SearchResult], dict[str, str]]:
         import requests
 
         api_key = load_api_keys().search.brave_api_key
         if not api_key:
-            return []
+            return [], {}
 
         params: dict = {"q": query, "count": min(max_results, 20)}
         if timelimit and timelimit in self._FRESHNESS_MAP:
@@ -293,44 +315,31 @@ class BraveClient:
             data = resp.json()
         except Exception as exc:
             logger.warning("[brave] request failed: %s", exc)
-            return []
+            return [], {}
 
         out: list[SearchResult] = []
+        content_map: dict[str, str] = {}
         for item in data.get("web", {}).get("results", []):
             url = item.get("url") or ""
             title = item.get("title") or ""
             snippet = item.get("description") or ""
             if not url:
                 continue
+            full_text = _hosted_item_content(
+                item,
+                first_fields=("title", "description", "extra_snippets", "page_age", "age"),
+            )
+            if full_text:
+                content_map[url] = full_text
             out.append(SearchResult(
                 url=url,
                 title=title,
                 snippet=snippet[:2000],
                 engine="hosted:brave",
                 published_date=str(item.get("page_age") or item.get("age") or ""),
+                provider_content=full_text,
             ))
-        return out
-
-
-# ---------------------------------------------------------------------------
-# Bing Web Search
-# ---------------------------------------------------------------------------
-
-class BingClient:
-    """
-    Bing Web Search API v7 — GET /v7.0/search.
-
-    Docs: https://learn.microsoft.com/en-us/bing/search-apis/bing-web-search/reference/endpoints
-    Header: Ocp-Apim-Subscription-Key
-    Response: {"webPages": {"value": [{"name", "url", "snippet"}]}}
-    """
-
-    BASE_URL = "https://api.bing.microsoft.com/v7.0/search"
-    TIMEOUT = 10.0
-
-    # Bing freshness uses ISO 8601 interval: "2024-01-01..2024-12-31"
-    # For simplicity we use the `freshness` shorthand Bing accepts.
-    _FRESHNESS_MAP = {"d": "Day", "w": "Week", "m": "Month"}
+        return out, content_map
 
     def search(
         self,
@@ -339,11 +348,33 @@ class BingClient:
         *,
         timelimit: Optional[str] = None,
     ) -> list[SearchResult]:
+        results, _ = self.search_with_content(
+            query, max_results, timelimit=timelimit,
+        )
+        return results
+
+
+# Bing Web Search API v7.
+class BingClient:
+
+    BASE_URL = "https://api.bing.microsoft.com/v7.0/search"
+    TIMEOUT = 10.0
+
+    _FRESHNESS_MAP = {"d": "Day", "w": "Week", "m": "Month"}
+
+    # GET web search results and retain the full provider payload.
+    def search_with_content(
+        self,
+        query: str,
+        max_results: int = 10,
+        *,
+        timelimit: Optional[str] = None,
+    ) -> tuple[list[SearchResult], dict[str, str]]:
         import requests
 
         api_key = load_api_keys().search.bing_api_key
         if not api_key:
-            return []
+            return [], {}
 
         params: dict = {"q": query, "count": min(max_results, 50), "responseFilter": "Webpages"}
         if timelimit and timelimit in self._FRESHNESS_MAP:
@@ -360,42 +391,31 @@ class BingClient:
             data = resp.json()
         except Exception as exc:
             logger.warning("[bing] request failed: %s", exc)
-            return []
+            return [], {}
 
         out: list[SearchResult] = []
+        content_map: dict[str, str] = {}
         for item in data.get("webPages", {}).get("value", []):
             url = item.get("url") or ""
             title = item.get("name") or ""
             snippet = item.get("snippet") or ""
             if not url:
                 continue
+            full_text = _hosted_item_content(
+                item,
+                first_fields=("name", "snippet", "datePublished", "dateLastCrawled"),
+            )
+            if full_text:
+                content_map[url] = full_text
             out.append(SearchResult(
                 url=url,
                 title=title,
                 snippet=snippet[:2000],
                 engine="hosted:bing",
                 published_date=str(item.get("datePublished") or item.get("dateLastCrawled") or ""),
+                provider_content=full_text,
             ))
-        return out
-
-
-# ---------------------------------------------------------------------------
-# SerpAPI (Google engine)
-# ---------------------------------------------------------------------------
-
-class SerpApiClient:
-    """
-    SerpAPI — GET /search.json.
-
-    Docs: https://serpapi.com/search-api
-    Response: {"organic_results": [{"title", "link", "snippet"}]}
-    """
-
-    BASE_URL = "https://serpapi.com/search.json"
-    TIMEOUT = 12.0
-
-    # SerpAPI uses tbs (to-be-searched) for time range.
-    _TBS_MAP = {"d": "qdr:d", "w": "qdr:w", "m": "qdr:m", "y": "qdr:y"}
+        return out, content_map
 
     def search(
         self,
@@ -404,11 +424,33 @@ class SerpApiClient:
         *,
         timelimit: Optional[str] = None,
     ) -> list[SearchResult]:
+        results, _ = self.search_with_content(
+            query, max_results, timelimit=timelimit,
+        )
+        return results
+
+
+# SerpAPI Google engine (GET /search.json).
+class SerpApiClient:
+
+    BASE_URL = "https://serpapi.com/search.json"
+    TIMEOUT = 12.0
+
+    _TBS_MAP = {"d": "qdr:d", "w": "qdr:w", "m": "qdr:m", "y": "qdr:y"}
+
+    # GET Google organic results via SerpAPI and retain the full provider payload.
+    def search_with_content(
+        self,
+        query: str,
+        max_results: int = 10,
+        *,
+        timelimit: Optional[str] = None,
+    ) -> tuple[list[SearchResult], dict[str, str]]:
         import requests
 
         api_key = load_api_keys().search.serpapi_api_key
         if not api_key:
-            return []
+            return [], {}
 
         params: dict = {
             "q": query,
@@ -430,38 +472,50 @@ class SerpApiClient:
             data = resp.json()
         except Exception as exc:
             logger.warning("[serpapi] request failed: %s", exc)
-            return []
+            return [], {}
 
         out: list[SearchResult] = []
+        content_map: dict[str, str] = {}
         for item in data.get("organic_results", []):
             url = item.get("link") or ""
             title = item.get("title") or ""
             snippet = item.get("snippet") or ""
             if not url:
                 continue
+            full_text = _hosted_item_content(
+                item,
+                first_fields=("title", "snippet", "date", "snippet_highlighted_words", "rich_snippet"),
+            )
+            if full_text:
+                content_map[url] = full_text
             out.append(SearchResult(
                 url=url,
                 title=title,
                 snippet=snippet[:2000],
                 engine="hosted:serpapi",
                 published_date=str(item.get("date") or ""),
+                provider_content=full_text,
             ))
-        return out
+        return out, content_map
 
+    def search(
+        self,
+        query: str,
+        max_results: int = 10,
+        *,
+        timelimit: Optional[str] = None,
+    ) -> list[SearchResult]:
+        results, _ = self.search_with_content(
+            query, max_results, timelimit=timelimit,
+        )
+        return results
 
-# ---------------------------------------------------------------------------
-# Dispatch table
-# ---------------------------------------------------------------------------
 
 _API_QUERY_STRIP_RE = re.compile(r'[\[\]*\\]')
 
 
+# Strip characters that break hosted API parsers ([ ] * \ unbalanced quotes).
 def _sanitize_query_for_api(query: str) -> str:
-    """Strip characters that break hosted API query parsers (Brave, Tavily, Bing).
-
-    Removes `[`, `]`, `*`, backslash and unbalanced double-quotes.
-    DDGS handles these itself, so this is only applied to hosted providers.
-    """
     query = _API_QUERY_STRIP_RE.sub("", query)
     if query.count('"') % 2 != 0:
         query = query.replace('"', "")
@@ -476,6 +530,7 @@ _CLIENTS: dict[str, object] = {
 }
 
 
+# Sync dispatch with HostedSearchCache get → API → set.
 def search_with_hosted(
     engine: str,
     query: str,
@@ -485,18 +540,6 @@ def search_with_hosted(
     query_type: str = "general",
     bypass_cache: bool = False,
 ) -> list[SearchResult]:
-    """
-    Synchronous dispatch to the correct hosted client.  Safe to run in a thread.
-
-    Cache flow:
-      1. Check HostedSearchCache — return hit immediately (no API call).
-      2. Call the provider client.
-      3. Store results in cache with TTL based on query_type.
-
-    The cache key is (engine, normalized_query, timelimit) — independent of
-    which API key was used, so multiple keys for the same provider share one
-    cache entry.
-    """
     client = _CLIENTS.get(engine)
     if client is None:
         logger.error("[hosted] unknown engine: %s", engine)
@@ -518,10 +561,68 @@ def search_with_hosted(
     return results
 
 
-# ---------------------------------------------------------------------------
-# Async wrapper with telemetry
-# ---------------------------------------------------------------------------
+def search_with_hosted_content(
+    engine: str,
+    query: str,
+    max_results: int = 10,
+    *,
+    timelimit: Optional[str] = None,
+    query_type: str = "general",
+    bypass_cache: bool = False,
+) -> tuple[list[SearchResult], dict[str, str]]:
+    """Search a hosted provider and return both SERP results and provider text.
 
+    All hosted clients expose this Tavily-style shape.  ``content_map`` contains
+    the complete textual payload the provider returned for each URL, ready to be
+    cached as raw_html and processed by the shared preview pipeline.
+    """
+    client = _CLIENTS.get(engine)
+    if client is None:
+        logger.error("[hosted] unknown engine: %s", engine)
+        return [], {}
+
+    cache = get_hosted_cache()
+
+    if not bypass_cache:
+        cached = cache.get(engine, query, timelimit)
+        if cached is not None:
+            logger.debug("[%s] cache hit (%d results)", engine, len(cached))
+            content_map = {
+                r.url: (
+                    r.provider_content
+                    or _hosted_item_content(
+                        {
+                            "title": r.title,
+                            "snippet": r.snippet,
+                            "published_date": r.published_date,
+                            "engine": r.engine,
+                        },
+                        first_fields=("title", "snippet", "published_date"),
+                    )
+                )
+                for r in cached
+                if r.url and (r.provider_content or r.title or r.snippet or r.published_date)
+            }
+            return cached, content_map
+
+    sanitized = _sanitize_query_for_api(query)
+    if hasattr(client, "search_with_content"):
+        results, content_map = client.search_with_content(  # type: ignore[attr-defined]
+            sanitized,
+            max_results,
+            timelimit=timelimit,
+        )
+    else:
+        results = client.search(sanitized, max_results, timelimit=timelimit)  # type: ignore[union-attr]
+        content_map = {}
+
+    ttl = NEGATIVE_TTL if not results else query_ttl(query_type)
+    cache.set(engine, query, results, timelimit=timelimit, ttl=ttl)
+
+    return results, content_map
+
+
+# Async hosted search in thread; hosted provider payloads pre-populate SourceCache.
 async def async_hosted_search(
     engine: str,
     query: str,
@@ -530,16 +631,6 @@ async def async_hosted_search(
     timelimit: Optional[str] = None,
     query_type: str = "general",
 ) -> list[SearchResult]:
-    """
-    Run a hosted provider search in a thread and record telemetry to EngineRouter.
-
-    For Tavily: calls search_with_content() and pre-populates SourceCache with the
-    full raw_content so that _fetch_preview_one() gets a cache-hit.  The extraction
-    pipeline (trafilatura → BM25 → GliNER) then runs on the full text unchanged —
-    no content is discarded at the provider level.
-
-    Falls back to [] on any error so the caller can safely merge results.
-    """
     from core.fetch.engine_router import get_router
 
     loop = asyncio.get_running_loop()
@@ -547,61 +638,15 @@ async def async_hosted_search(
 
     results: list[SearchResult] = []
     try:
-        search_cache = get_hosted_cache()
-
-        if engine == "tavily":
-            # 1. Check search result cache first.
-            cached = search_cache.get("tavily", query, timelimit)
-            if cached is not None:
-                logger.debug("[tavily] search cache hit (%d results)", len(cached))
-                return cached
-
-            # 2. Fetch from Tavily (includes full raw_content).
-            tavily_client: TavilyClient = _CLIENTS["tavily"]  # type: ignore[assignment]
-            results, content_map = await loop.run_in_executor(
-                _get_pool(),
-                lambda: tavily_client.search_with_content(
-                    query, max_results, timelimit=timelimit,
-                ),
-            )
-
-            # 3. Pre-populate SourceCache with full page content so that
-            #    _fetch_preview_one() gets a cache-hit and trafilatura/BM25
-            #    run on the full text without a second HTTP fetch.
-            if content_map:
-                page_cache = _get_page_cache()
-                for url, full_text in content_map.items():
-                    try:
-                        title = next((r.title for r in results if r.url == url), "")
-                        page_cache.cache_page(
-                            url, title,
-                            clean_text="",
-                            raw_html=_wrap_as_html(full_text),
-                        )
-                    except Exception:
-                        pass
-                logger.debug(
-                    "[tavily] pre-populated page cache for %d/%d urls",
-                    len(content_map), len(results),
-                )
-
-            # 4. Save search results to search result cache with proper TTL.
-            search_cache.set(
-                "tavily", query, results,
+        results, content_map = await loop.run_in_executor(
+            _get_pool(),
+            lambda: search_with_hosted_content(
+                engine, query, max_results,
                 timelimit=timelimit,
-                ttl=NEGATIVE_TTL if not results else query_ttl(query_type),
-            )
-
-        else:
-            # For non-Tavily engines search_with_hosted handles its own caching.
-            results = await loop.run_in_executor(
-                _get_pool(),
-                lambda: search_with_hosted(
-                    engine, query, max_results,
-                    timelimit=timelimit,
-                    query_type=query_type,
-                ),
-            )
+                query_type=query_type,
+            ),
+        )
+        _cache_hosted_content(engine, results, content_map)
     except Exception as exc:
         logger.warning("[%s] async_hosted_search failed: %s", engine, exc)
         results = []

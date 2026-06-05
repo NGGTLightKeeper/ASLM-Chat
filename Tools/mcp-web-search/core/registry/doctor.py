@@ -1,38 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Registry Doctor — static validation for domain and trust registry data.
-
-Usage
------
-    python -m core.registry.doctor verify          # exit 0 on pass, 1 on failure
-    python -m core.registry.doctor report          # print full report, always exit 0
-    python -m core.registry.doctor stats           # counts only
-
-Checks
-------
-Domain registry
-  - All profile JSON files parse and contain required keys (profile, domains)
-  - domain tier values are one of: friendly, moderate, hardened, fortress, unknown
-  - domain method values are one of: http, xml_feed, json_api, nodriver, camoufox, official_api, skip
-  - No pattern in a profile file is duplicated within that same file
-  - Cross-profile duplicate patterns are listed (not failed unless --strict-duplicates)
-  - Monolith-only patterns (in domain_registry.json but not in any profile) are reported
-  - Profile-only patterns (in profiles but not in monolith) are counted
-
-Trust registry
-  - All profile JSON files parse and contain required keys (profile, domains)
-  - trust tier values are one of: A, B, C (uppercase after load)
-  - No pattern is duplicated within the same profile file
-  - Cross-profile duplicate patterns are listed
-  - Monolith-only patterns are reported
-  - class_affinity values are floats in [0.0, 1.5]
-  - _global.json present and has tiers + blacklist
-
-Schema
-  - numeric fields (rps, burst, base_weight, class_weights, etc.) are finite numbers
-  - aliases are lowercase strings
-"""
-
 from __future__ import annotations
 
 import json
@@ -54,29 +21,31 @@ _DOMAIN_VALID_METHODS = frozenset({"http", "xml_feed", "json_api", "nodriver", "
 _TRUST_VALID_TIERS = frozenset({"A", "B", "C"})
 
 
-# ---------------------------------------------------------------------------
-# Report dataclass
-# ---------------------------------------------------------------------------
-
+# Aggregated validation errors, warnings, and info messages.
 @dataclass
 class DoctorReport:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     infos: list[str] = field(default_factory=list)
 
+    # Append one error message.
     def error(self, msg: str) -> None:
         self.errors.append(msg)
 
+    # Append one warning message.
     def warn(self, msg: str) -> None:
         self.warnings.append(msg)
 
+    # Append one info message.
     def info(self, msg: str) -> None:
         self.infos.append(msg)
 
+    # True when no errors were recorded.
     @property
     def ok(self) -> bool:
         return not self.errors
 
+    # Print errors, and optionally warnings and info, to stdout.
     def print(self, *, verbose: bool = True) -> None:
         if self.errors:
             print(f"\n{'='*60}")
@@ -96,10 +65,7 @@ class DoctorReport:
         print(f"\n{status}: {len(self.errors)} errors, {len(self.warnings)} warnings")
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
+# Parse JSON file; return None on failure.
 def _load_json(path: Path) -> dict[str, Any] | None:
     try:
         return json.loads(path.read_text(encoding="utf-8-sig"))
@@ -107,16 +73,18 @@ def _load_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
+# Yield domain entries from profile data, skipping section headers.
 def _iter_domains(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [e for e in data.get("domains", []) if isinstance(e, dict) and "_section" not in e]
 
 
+# Normalized pattern string from one domain entry.
 def _pattern(entry: dict[str, Any]) -> str:
     return str(entry.get("pattern", "")).strip().lower()
 
 
+# Collect pattern → profile stems from all profile JSON files.
 def _load_profile_patterns(profiles_dir: Path, skip: frozenset[str]) -> dict[str, list[str]]:
-    """Return {pattern -> [profile_name, ...]} from all profile files."""
     pattern_to_profiles: dict[str, list[str]] = defaultdict(list)
     for path in sorted(profiles_dir.glob("*.json")):
         if path.name.lower() in skip:
@@ -131,12 +99,8 @@ def _load_profile_patterns(profiles_dir: Path, skip: frozenset[str]) -> dict[str
     return dict(pattern_to_profiles)
 
 
-# ---------------------------------------------------------------------------
-# Domain registry checks
-# ---------------------------------------------------------------------------
-
+# Validate domain_profiles/ and return pattern → profile stems map.
 def check_domain_profiles(report: DoctorReport) -> dict[str, list[str]]:
-    """Validate domain_profiles/ and return pattern→[profile] map."""
     profiles_dir = DOMAIN_PROFILES_DIR
     if not profiles_dir.is_dir():
         report.error(f"domain_profiles/ directory not found: {profiles_dir}")
@@ -211,8 +175,8 @@ def check_domain_profiles(report: DoctorReport) -> dict[str, list[str]]:
     return dict(pattern_to_profiles)
 
 
+# Report domain patterns present only in domain_registry.json monolith.
 def check_domain_monolith(report: DoctorReport, profile_patterns: dict[str, list[str]]) -> None:
-    """Report monolith-only domain patterns."""
     if not DOMAIN_REGISTRY_PATH.is_file():
         report.info("domain_registry.json not found (already removed or not present)")
         return
@@ -238,12 +202,8 @@ def check_domain_monolith(report: DoctorReport, profile_patterns: dict[str, list
         )
 
 
-# ---------------------------------------------------------------------------
-# Trust registry checks
-# ---------------------------------------------------------------------------
-
+# Validate trust_registry_profiles/ and return pattern → profile stems map.
 def check_trust_profiles(report: DoctorReport) -> dict[str, list[str]]:
-    """Validate trust_registry_profiles/ and return pattern→[profile] map."""
     profiles_dir = TRUST_PROFILES_DIR
     if not profiles_dir.is_dir():
         report.error(f"trust_registry_profiles/ directory not found: {profiles_dir}")
@@ -327,8 +287,8 @@ def check_trust_profiles(report: DoctorReport) -> dict[str, list[str]]:
     return dict(pattern_to_profiles)
 
 
+# Report trust patterns present only in trust_registry.json monolith.
 def check_trust_monolith(report: DoctorReport, profile_patterns: dict[str, list[str]]) -> None:
-    """Report monolith-only trust patterns."""
     if not TRUST_REGISTRY_PATH.is_file():
         report.info("trust_registry.json not found (already removed or not present)")
         return
@@ -354,10 +314,7 @@ def check_trust_monolith(report: DoctorReport, profile_patterns: dict[str, list[
         )
 
 
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
-
+# Run all domain and trust registry validation checks.
 def run_checks(*, strict_duplicates: bool = False) -> DoctorReport:
     report = DoctorReport()
 
@@ -376,6 +333,7 @@ def run_checks(*, strict_duplicates: bool = False) -> DoctorReport:
     return report
 
 
+# CLI entry: verify, report, or stats subcommands for registry validation.
 def main(argv: list[str] | None = None) -> int:
     import argparse
 

@@ -1,43 +1,11 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""
-Query normalizer: canonical form of a search query for cache-key generation.
-
-Goal: semantically similar queries → same cache key, so results are reused
-without hitting the search engine again.
-
-Algorithm (lightweight, no external deps):
-  1. Lowercase all characters
-  2. Extract word tokens via Unicode-aware regex (min 2 chars)
-  3. Remove multilingual stopwords
-  4. Deduplicate tokens
-  5. Sort alphabetically
-
-Result: "what is python asyncio tutorial" → "asyncio python tutorial"
-        "tutorial python async"          → "async python tutorial"  ← same key
-
-Intentional trade-off: term ORDER is discarded, so "not python" and "python not"
-map to the same key. This is acceptable because:
-  a) "not" is a stopword and is removed anyway
-  b) For queries where word order is semantically critical, the cache TTL is
-     short (journalistic queries) and cache misses are acceptable
-
-Public API
-----------
-QUERY_STOPWORDS         frozenset[str]    — shared by services and core
-COMPOSITE_TOKENS        dict[str, str]    — tech token normalizations (e.g. ".net" → "dotnet")
-normalize_query_key(q)  str               — canonical form for hashing
-"""
-
 from __future__ import annotations
 
 import re
 
 
-# ---------------------------------------------------------------------------
-# Stopwords (multilingual)
-# ---------------------------------------------------------------------------
-
+# Multilingual stopwords stripped before cache-key hashing.
 QUERY_STOPWORDS: frozenset[str] = frozenset({
     # English
     "the", "this", "that", "with", "from", "into", "about", "what", "which",
@@ -69,13 +37,9 @@ QUERY_STOPWORDS: frozenset[str] = frozenset({
     "의", "을", "를", "이", "가", "에", "와", "과", "도", "은", "는",
 })
 
-
-# ---------------------------------------------------------------------------
-# Normalizer
-# ---------------------------------------------------------------------------
-
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 
+# Tech token normalizations applied before word-token extraction (e.g. ".net" → "dotnet").
 COMPOSITE_TOKENS: dict[str, str] = {
     "c++": "cpp",
     "c#": "csharp",
@@ -92,32 +56,23 @@ COMPOSITE_TOKENS: dict[str, str] = {
 }
 
 
+# Canonical cache key: lowercase, stopwords removed, terms sorted (order discarded).
 def normalize_query_key(query: str) -> str:
-    """Return the canonical cache key for *query*.
-
-    Strips stopwords, deduplicates, sorts terms alphabetically.
-    Falls back to ``query.strip().lower()`` when normalization produces an
-    empty string (e.g. a query that consists entirely of stopwords).
-    """
     if not query or not query.strip():
         return ""
 
     lowered = query.lower()
-    # Replace known composite tokens before applying \w+ regex so that
-    # "C#" isn't reduced to empty and "C++" isn't reduced to "c".
     for token, replacement in COMPOSITE_TOKENS.items():
         lowered = lowered.replace(token, replacement)
 
     tokens = _WORD_RE.findall(lowered)
     content = sorted({t for t in tokens if len(t) >= 2 and t not in QUERY_STOPWORDS})
 
-    # If every term was a stopword, fall back to lowercased original so the
-    # query still gets a unique (exact) key rather than collapsing to "".
     return " ".join(content) if content else lowered.strip()
 
 
+# Order-preserving canonical query string for strict cache keys.
 def normalize_exact_query_key(query: str) -> str:
-    """Return an order-preserving canonical query string for strict cache keys."""
     if not query or not query.strip():
         return ""
 

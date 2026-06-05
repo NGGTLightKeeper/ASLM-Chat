@@ -17,9 +17,8 @@ TOOL_META = {
 }
 
 
+# Send a best-effort progress notification when the client supports it.
 async def _report_progress(ctx: Context | None, progress: float, message: str) -> None:
-    """Send a best-effort progress notification when the client supports it."""
-
     if ctx is None:
         return
 
@@ -29,9 +28,8 @@ async def _report_progress(ctx: Context | None, progress: float, message: str) -
         pass
 
 
+# Register sandbox tools on a FastMCP instance.
 def register_tools(mcp) -> None:
-    """Register sandbox tools on a FastMCP instance."""
-
     for tool_definition in TOOLS:
         tool_id = tool_definition["id"]
         parameters = tool_definition.get("parameters", {}).get("properties", {})

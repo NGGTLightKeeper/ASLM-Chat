@@ -6,10 +6,9 @@ from dataclasses import dataclass
 from typing import Any
 
 
+# Structured error raised by sandbox helpers.
 @dataclass
 class SandboxToolError(Exception):
-    """Structured error raised by sandbox helpers."""
-
     error_type: str
     message: str
     result: dict[str, Any] | None = None
@@ -20,6 +19,7 @@ class SandboxToolError(Exception):
         return self.message
 
 
+# Wrap a successful tool result in the sandbox v2 envelope.
 def success_response(
     tool: str,
     result: dict[str, Any] | None = None,
@@ -27,8 +27,6 @@ def success_response(
     warnings: list[str] | None = None,
     truncated: bool = False,
 ) -> dict[str, Any]:
-    """Wrap a successful tool result in the sandbox v2 envelope."""
-
     return {
         "ok": True,
         "tool": tool,
@@ -39,6 +37,7 @@ def success_response(
     }
 
 
+# Wrap a failed tool result in the sandbox v2 envelope.
 def error_response(
     tool: str,
     error_type: str,
@@ -48,8 +47,6 @@ def error_response(
     warnings: list[str] | None = None,
     truncated: bool = False,
 ) -> dict[str, Any]:
-    """Wrap a failed tool result in the sandbox v2 envelope."""
-
     return {
         "ok": False,
         "tool": tool,
@@ -63,9 +60,8 @@ def error_response(
     }
 
 
+# Map Python exceptions into typed sandbox v2 errors.
 def exception_response(tool: str, exc: Exception) -> dict[str, Any]:
-    """Map Python exceptions into typed sandbox v2 errors."""
-
     if isinstance(exc, SandboxToolError):
         return error_response(
             tool,

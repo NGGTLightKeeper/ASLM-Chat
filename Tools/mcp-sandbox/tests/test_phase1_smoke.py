@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Quick smoke tests for Phase 1 changes."""
-
 import os
 import sys
 import shutil
@@ -17,6 +15,7 @@ from sandbox.api import handle_tool
 from sandbox.config import MAX_CAT_FILE_BYTES
 
 
+# Clear task_root except preserved fixture dirs before smoke tests.
 def setup():
     task = workspace.task_root()
     task.mkdir(parents=True, exist_ok=True)
@@ -110,8 +109,8 @@ def test_grep_with_few_results():
     print(stdout)
 
 
-def test_grep_clustered():
-    # Create many files with matches to trigger clustering
+def test_grep_falls_through_to_real_bash_with_many_files():
+    # Grep is not routed through the legacy intent controller; exec_bash handles it.
     for i in range(40):
         handle_tool("write", {
             "path": f"pkg/file_{i}.py",
@@ -135,7 +134,7 @@ def test_grep_clustered():
     stdout = result["result"]["stdout"]
     assert "foo" in stdout
     assert not result["result"].get("routed", False)
-    print("PASS: grep fallback")
+    print("PASS: grep falls through to real bash")
     print(stdout[:500])
     print("...")
 
@@ -147,7 +146,7 @@ if __name__ == "__main__":
         test_small_file_metadata_header,
         test_head_metadata,
         test_grep_with_few_results,
-        test_grep_clustered,
+        test_grep_falls_through_to_real_bash_with_many_files,
     ]
     passed = 0
     failed = 0

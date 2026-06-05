@@ -46,8 +46,7 @@ _XML_EXPECTED_TAGS = {
     "atom": ("feed",),
 }
 
-# URL normalization helpers.
-# Normalize a domain string.
+# Normalize a domain string from URL or bare host.
 def normalize_domain(url_or_domain: str) -> str:
     raw = (url_or_domain or "").strip().lower()
     if "://" in raw:
@@ -56,8 +55,7 @@ def normalize_domain(url_or_domain: str) -> str:
         raw = raw[4:]
     return raw.strip("/")
 
-# URL normalization helpers.
-# Normalize a URL path.
+# Normalize URL path; bare input treated as path on https host.
 def normalize_path(url_or_domain: str) -> str:
     raw = (url_or_domain or "").strip()
     if not raw:
@@ -68,13 +66,11 @@ def normalize_path(url_or_domain: str) -> str:
     path = parsed.path or "/"
     return path if path.startswith("/") else f"/{path}"
 
-# URL normalization helpers.
-# Build a base URL for a domain.
+# Build https base URL for a normalized domain.
 def _base_url_for_domain(domain: str) -> str:
     return f"https://{normalize_domain(domain)}"
 
-# Payload helpers.
-# Flatten nested JSON into plain text.
+# Flatten nested JSON into plain text for content sniffing.
 def _flatten_json(obj, depth: int = 0, max_depth: int = 5) -> str:
     if depth > max_depth:
         return ""
@@ -94,7 +90,6 @@ def _flatten_json(obj, depth: int = 0, max_depth: int = 5) -> str:
         return obj.strip()
     return ""
 
-# Probe candidate models.
 # Candidate endpoint discovered during probing.
 @dataclass
 class ProbeCandidate:
@@ -106,8 +101,7 @@ class ProbeCandidate:
     transform_kind: str = ""
     discovered_from_url: str = ""
 
-    # Identity helpers.
-    # Build a stable deduplication key.
+    # Build a stable deduplication key for this candidate.
     def key(self) -> tuple:
         return (
             self.domain,
@@ -117,7 +111,6 @@ class ProbeCandidate:
             self.transform_kind,
         )
 
-# Endpoint strategy models.
 # Resolved endpoint strategy for one domain.
 @dataclass
 class EndpointStrategy:
@@ -131,7 +124,6 @@ class EndpointStrategy:
     confidence: float = 0.0
     rewritten_url: str = ""
 
-    # Strategy helpers.
     # Map endpoint type to extraction method.
     @property
     def method(self) -> str:
@@ -143,13 +135,12 @@ class EndpointStrategy:
             return "xml_feed"
         return "http"
 
-    # Strategy helpers.
-    # Return whether the strategy is seed-only.
+    # Return whether the strategy is seed-only (sitemap/rss/atom/xml_feed).
     @property
     def is_seed_only(self) -> bool:
         return self.endpoint_type in {"sitemap", "rss", "atom", "xml_feed"} and self.scope == "domain"
 
-# Probe candidate builders.
+# Build deduplicated probe candidates for a domain and optional sample URL.
 def build_probe_candidates(domain: str, sample_url: str = "") -> List[ProbeCandidate]:
     normalized_domain = normalize_domain(domain)
     if not normalized_domain:
@@ -220,11 +211,10 @@ def build_probe_candidates(domain: str, sample_url: str = "") -> List[ProbeCandi
         deduped.append(candidate)
     return deduped
 
-# Overlay storage.
+# Persist discovered endpoint strategies and validation state in SQLite.
 class EndpointOverlayStore:
-    """Persist discovered endpoint strategies and their validation state."""
 
-    # Construction helpers.
+    # Open overlay DB and ensure endpoint_overlay table exists.
     def __init__(
         self,
         db_path: Optional[str] = None,
@@ -243,13 +233,13 @@ class EndpointOverlayStore:
             os.makedirs(db_dir, exist_ok=True)
         self._init_db()
 
-    # SQLite helpers.
+    # Open SQLite connection with row factory.
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
-    # SQLite helpers.
+    # Create endpoint_overlay table if missing.
     def _init_db(self) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -277,7 +267,7 @@ class EndpointOverlayStore:
                 """
             )
 
-    # SQLite helpers.
+    # Fetch existing overlay row matching probe candidate key.
     def _fetch_existing(self, conn: sqlite3.Connection, candidate: ProbeCandidate) -> Optional[sqlite3.Row]:
         return conn.execute(
             """
@@ -287,7 +277,7 @@ class EndpointOverlayStore:
             candidate.key(),
         ).fetchone()
 
-    # Lookup helpers.
+    # Return best validated EndpointStrategy for domain and optional URL path.
     def lookup_validated(self, domain: str, url: Optional[str] = None) -> Optional[EndpointStrategy]:
         normalized_domain = normalize_domain(domain)
         if not normalized_domain:
@@ -352,7 +342,7 @@ class EndpointOverlayStore:
         self._lookup_cache[cache_key] = None
         return None
 
-    # Lookup helpers.
+    # List validated domain-scoped seed endpoint URLs for domain.
     def get_validated_seed_urls(self, domain: str) -> List[str]:
         normalized_domain = normalize_domain(domain)
         if not normalized_domain:
@@ -377,7 +367,7 @@ class EndpointOverlayStore:
 
 _overlay_store: Optional[EndpointOverlayStore] = None
 
-# Singleton access helpers.
+# Shared EndpointOverlayStore singleton (optional db_path override).
 def get_endpoint_overlay(db_path: Optional[str] = None) -> EndpointOverlayStore:
     global _overlay_store
     if _overlay_store is None or (db_path and _overlay_store.db_path != db_path):

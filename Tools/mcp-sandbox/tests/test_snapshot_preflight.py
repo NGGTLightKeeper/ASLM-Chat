@@ -20,6 +20,7 @@ import sandbox.docker_host as docker_host_mod  # noqa: E402
 
 
 class SnapshotPreflightTests(unittest.TestCase):
+    # Failed preflight must block docker commit.
     def test_snapshot_preflight_failure_blocks_docker_commit(self) -> None:
         with patch.object(docker_host_mod, "_ensure_container_running", return_value=(True, "ok")), \
              patch.object(docker_host_mod, "_run_snapshot_preflight", return_value={
@@ -33,6 +34,7 @@ class SnapshotPreflightTests(unittest.TestCase):
         self.assertIn("Snapshot preflight failed", result["error"])
         run_mock.assert_not_called()
 
+    # docker commit runs only after preflight passes.
     def test_snapshot_commit_runs_after_passing_preflight(self) -> None:
         commit_result = MagicMock(returncode=0, stdout="sha256:abc", stderr="")
         with patch.object(docker_host_mod, "_ensure_container_running", return_value=(True, "ok")), \

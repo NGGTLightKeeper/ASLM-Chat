@@ -23,14 +23,18 @@ export function createSkillsUi(context) {
   let $middle = null;
   let $detail = null;
 
+  // Skill tree helpers.
+  // Read the folder list from the latest skills payload.
   function folderList() {
     return Array.isArray(state.payload.folders) ? state.payload.folders : [];
   }
 
+  // Find one skill folder record by name.
   function findFolder(name) {
     return folderList().find((folder) => String(folder.name || '') === String(name || '')) || null;
   }
 
+  // Walk a directory tree and invoke a visitor for every node.
   function walkFiles(nodes, visitor) {
     (Array.isArray(nodes) ? nodes : []).forEach(function visit(node) {
       if (!node || typeof node !== 'object') {
@@ -43,6 +47,7 @@ export function createSkillsUi(context) {
     });
   }
 
+  // Return the first file path inside one folder for default selection.
   function firstFile(folder) {
     if (!folder) {
       return '';
@@ -59,6 +64,7 @@ export function createSkillsUi(context) {
     return found;
   }
 
+  // Pick a default folder and file when the current selection is invalid.
   function selectFallback() {
     if (findFolder(state.selectedFolder)) {
       if (!state.selectedFile) {
@@ -74,6 +80,9 @@ export function createSkillsUi(context) {
     }
   }
 
+
+  // Skills manager lifecycle.
+  // Load skills payload from the backend and refresh all surfaces.
   async function loadSkills() {
     state.payload = await getJson('/api/skills/');
     selectFallback();
@@ -82,6 +91,7 @@ export function createSkillsUi(context) {
     renderOverlay();
   }
 
+  // Render the compact skills summary in the settings sidebar.
   function renderSidebarSummary() {
     if (!dom.$skillsSettingsContent || !dom.$skillsSettingsContent.length) {
       return;
@@ -96,6 +106,7 @@ export function createSkillsUi(context) {
     dom.$skillsSettingsContent.append($btn).append($summary);
   }
 
+  // Create the full-screen skills manager overlay when needed.
   function ensureOverlay() {
     if ($overlay && $overlay.length) {
       return;
@@ -116,6 +127,7 @@ export function createSkillsUi(context) {
     });
   }
 
+  // Open the skills manager modal and load data.
   function openManager() {
     ensureOverlay();
     $('body').addClass('skills-manager-open');
@@ -123,6 +135,7 @@ export function createSkillsUi(context) {
     loadSkills().catch(showError);
   }
 
+  // Close the skills manager modal.
   function closeManager() {
     $('body').removeClass('skills-manager-open');
     if ($overlay) {
@@ -130,6 +143,7 @@ export function createSkillsUi(context) {
     }
   }
 
+  // Surface one skills error in the detail pane or a dialog.
   function showError(error) {
     const message = error && error.message ? error.message : String(error);
     if ($detail && $detail.length) {
@@ -140,6 +154,7 @@ export function createSkillsUi(context) {
     }
   }
 
+  // Show a simple acknowledgement dialog.
   function showMessageDialog(title, message) {
     return showConfirmDialog({
       title,
@@ -150,6 +165,7 @@ export function createSkillsUi(context) {
     });
   }
 
+  // Inline dialog helpers.
   function showTextDialog(options) {
     ensureOverlay();
     return new Promise(function textDialogPromise(resolve) {
@@ -208,6 +224,7 @@ export function createSkillsUi(context) {
     });
   }
 
+  // Show a confirm or cancel dialog inside the skills manager.
   function showConfirmDialog(options) {
     ensureOverlay();
     return new Promise(function confirmDialogPromise(resolve) {
@@ -256,6 +273,7 @@ export function createSkillsUi(context) {
     '.py', '.sh', '.toml', '.ts', '.txt', '.yaml', '.yml'
   ]);
 
+  // Read one File object as UTF-8 text.
   function readFileAsText(file) {
     return new Promise(function readPromise(resolve, reject) {
       const reader = new FileReader();
@@ -267,12 +285,14 @@ export function createSkillsUi(context) {
     });
   }
 
+  // Read the first path segment from a relative import path.
   function firstPathSegment(relativePath) {
     const norm = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
     const slash = norm.indexOf('/');
     return slash === -1 ? norm : norm.slice(0, slash);
   }
 
+  // Strip the skill root prefix from one relative path.
   function pathWithinSkillRoot(relativePath, rootName) {
     const norm = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
     if (!rootName) {
@@ -286,11 +306,13 @@ export function createSkillsUi(context) {
     return slash === -1 ? '' : norm.slice(slash + 1);
   }
 
+  // Report whether one filename extension is allowed for import.
   function isAllowedImportFileName(fileName) {
     const ext = ('.' + String(fileName || '').split('.').pop()).toLowerCase();
     return ALLOWED_IMPORT_EXTENSIONS.has(ext);
   }
 
+  // Read every entry from one directory reader batch.
   async function readAllDirectoryEntries(dirReader) {
     const all = [];
     let batch = [];
@@ -301,6 +323,7 @@ export function createSkillsUi(context) {
     return all;
   }
 
+  // Collect allowed files from one filesystem entry tree.
   async function collectFilesFromEntry(entry, prefix) {
     const results = [];
     if (entry.isFile) {
@@ -322,6 +345,7 @@ export function createSkillsUi(context) {
     return results;
   }
 
+  // Collect files from one dropped directory entry.
   async function collectFilesFromDirectoryEntry(dirEntry) {
     const reader = dirEntry.createReader();
     const children = await readAllDirectoryEntries(reader);
@@ -333,6 +357,7 @@ export function createSkillsUi(context) {
     return files;
   }
 
+  // Collect files from one File System Access directory.
   async function collectFilesFromDirectoryHandle(dirHandle, prefix) {
     const results = [];
     for await (const childHandle of dirHandle.values()) {
@@ -352,6 +377,7 @@ export function createSkillsUi(context) {
     return results;
   }
 
+  // Collect files from one flat FileList under a skill root.
   async function collectFilesFromFileList(fileList, rootName, skillName) {
     const arr = Array.from(fileList instanceof FileList ? fileList : (fileList.files || []));
     const files = [];
@@ -377,6 +403,7 @@ export function createSkillsUi(context) {
     return files;
   }
 
+  // Group imported files by top-level skill folder name.
   async function groupFileListBySkillRoot(fileList, explicitName) {
     const arr = Array.from(fileList instanceof FileList ? fileList : (fileList.files || []));
     const groups = new Map();
@@ -412,6 +439,7 @@ export function createSkillsUi(context) {
     return [{ skillName: target, files: collected }];
   }
 
+  // Resolve one import source into skill folder payloads.
   async function resolveImportPayloads(source, explicitName) {
     const nameHint = String(explicitName || state.selectedFolder || '').trim();
 
@@ -489,6 +517,7 @@ export function createSkillsUi(context) {
     throw new Error(t('skills.importNoFiles'));
   }
 
+  // Upload one resolved skill import to the backend.
   async function importSkillFromSource(source, explicitName) {
     const payloads = await resolveImportPayloads(source, explicitName);
     if (!payloads.length) {
@@ -518,6 +547,7 @@ export function createSkillsUi(context) {
     return lastName;
   }
 
+  // Show the add-skills import dialog.
   function showAddSkillsDialog() {
     ensureOverlay();
     return new Promise(function addDialogPromise(resolve) {
@@ -657,6 +687,7 @@ export function createSkillsUi(context) {
     });
   }
 
+  // Skill folder mutations.
   async function createSkill() {
     const name = await showTextDialog({
       title: t('skills.newSkill'),
@@ -674,6 +705,7 @@ export function createSkillsUi(context) {
     renderOverlay();
   }
 
+  // Rename one skill folder on the server.
   async function renameSkill(folderName) {
     const nextName = await showTextDialog({
       title: t('skills.renameSkill'),
@@ -690,6 +722,7 @@ export function createSkillsUi(context) {
     renderOverlay();
   }
 
+  // Delete one skill folder on the server.
   async function deleteSkill(folderName) {
     const confirmed = await showConfirmDialog({
       title: t('skills.deleteSkill'),
@@ -712,6 +745,7 @@ export function createSkillsUi(context) {
     renderOverlay();
   }
 
+  // Create one new file inside a skill folder.
   async function createFile(folderName) {
     const filePath = await showTextDialog({
       title: t('skills.newSkillFile'),
@@ -736,6 +770,7 @@ export function createSkillsUi(context) {
     renderOverlay();
   }
 
+  // Delete one file from a skill folder.
   async function deleteFile(folderName, filePath, options) {
     if (!filePath) {
       return;
@@ -764,6 +799,7 @@ export function createSkillsUi(context) {
     renderOverlay();
   }
 
+  // Skills tree UI rendering.
   function expandDirAncestors(folderName, dirPath) {
     if (!dirPath) {
       return;
@@ -774,6 +810,7 @@ export function createSkillsUi(context) {
     }
   }
 
+  // Update expanded directory paths after a rename.
   function remapExpandedDirs(folderName, oldPath, newPath) {
     const prefix = `${folderName}/${oldPath}`;
     const nextPrefix = `${folderName}/${newPath}`;
@@ -788,6 +825,7 @@ export function createSkillsUi(context) {
     state.expandedDirs = next;
   }
 
+  // Focus the active chat composer input.
   function focusComposerInput() {
     requestAnimationFrame(function focusComposer() {
       const $input = $middle && $middle.find('.skills-edit-input').first();
@@ -797,6 +835,7 @@ export function createSkillsUi(context) {
     });
   }
 
+  // Enter inline create mode at one tree location.
   function enterEditModeAt(folderName, parentPath, createKind) {
     state.editMode = {
       skillName: folderName,
@@ -809,6 +848,7 @@ export function createSkillsUi(context) {
     focusComposerInput();
   }
 
+  // Rename one directory in the skills tree.
   async function renameTreeDirectory(folderName, dirPath) {
     const baseName = dirPath.split('/').pop() || dirPath;
     const newName = await showTextDialog({
@@ -837,6 +877,7 @@ export function createSkillsUi(context) {
     renderOverlay();
   }
 
+  // Rename one file in the skills tree.
   async function renameTreeFile(folderName, filePath) {
     const baseName = filePath.split('/').pop() || filePath;
     const newName = await showTextDialog({
@@ -862,6 +903,7 @@ export function createSkillsUi(context) {
     renderOverlay();
   }
 
+  // Render action buttons for one directory row.
   function renderDirTools(folderName, dirPath) {
     const $tools = $('<div class="skills-tree-node-tools">');
     const $newFile = $('<button type="button" class="skills-tree-tool-btn">')
@@ -883,6 +925,7 @@ export function createSkillsUi(context) {
     return $tools.append($newFile).append($rename);
   }
 
+  // Render action buttons for one file row.
   function renderFileTools(folderName, filePath) {
     const $tools = $('<div class="skills-tree-node-tools">');
     const $rename = $('<button type="button" class="skills-tree-tool-btn">')
@@ -896,6 +939,7 @@ export function createSkillsUi(context) {
     return $tools.append($rename);
   }
 
+  // Sync one skill checkbox in the composer menu.
   function syncComposerSkillCheckbox(folderName) {
     const folder = findFolder(folderName);
     if (!folder) {
@@ -910,12 +954,14 @@ export function createSkillsUi(context) {
     });
   }
 
+  // Enable or disable one skill folder for the active chat.
   async function setEnabled(folderName, enabled) {
     state.payload = await patchJson('/api/skills/enabled/', { folder: folderName, enabled });
     syncComposerSkillCheckbox(folderName);
     renderOverlay();
   }
 
+  // Rebuild the composer skills flyout menu.
   function renderComposerSkillsMenu() {
     if (!dom.$composerSkillsHosts || !dom.$composerSkillsHosts.length) {
       return;
@@ -990,6 +1036,7 @@ export function createSkillsUi(context) {
     }
   }
 
+  // Load the selected skill file content from the server.
   async function loadCurrentFile() {
     if (!state.selectedFolder || !state.selectedFile) {
       state.currentFile = null;
@@ -1000,6 +1047,7 @@ export function createSkillsUi(context) {
     );
   }
 
+  // Render the full skills manager overlay shell.
   function renderOverlay() {
     if (!$overlay || !$overlay.length || !$overlay.hasClass('is-open')) {
       return;
@@ -1009,6 +1057,7 @@ export function createSkillsUi(context) {
     renderDetailPane();
   }
 
+  // Render the skills sidebar tree list.
   function renderTreeList() {
     if (!$middle || !$middle.length) {
       return;
@@ -1030,6 +1079,7 @@ export function createSkillsUi(context) {
       .forEach((folder) => $group.append(renderSkillFolder(folder)));
   }
 
+  // Render the skills tree pane with folders and files.
   function renderTreePane() {
     if (!$middle || !$middle.length) {
       return;
@@ -1065,6 +1115,7 @@ export function createSkillsUi(context) {
     renderTreeList();
   }
 
+  // Render one skill folder section in the tree.
   function renderSkillFolder(folder) {
     const folderName = String(folder.name || '');
     const isExpanded = state.expandedSkills.has(folderName);
@@ -1121,6 +1172,7 @@ export function createSkillsUi(context) {
     return $wrap.append($cascade);
   }
 
+  // Append tree nodes into one cascade submenu.
   function appendTreeToCascade($cascade, folderName, nodes, depth) {
     (Array.isArray(nodes) ? nodes : []).forEach(function visit(node) {
       if (!node || typeof node !== 'object') {
@@ -1143,6 +1195,7 @@ export function createSkillsUi(context) {
     });
   }
 
+  // Render one directory row in the skills tree.
   function renderDirRow(folderName, node, depth) {
     const path = String(node.path || '');
     const key = `${folderName}/${path}`;
@@ -1174,6 +1227,7 @@ export function createSkillsUi(context) {
     return $rowWrap.append($row).append(renderDirTools(folderName, path)).append($toggle);
   }
 
+  // Render one file row in the skills tree.
   function renderFileRow(folderName, node, depth) {
     const path = String(node.path || '');
     const selected = folderName === state.selectedFolder && path === state.selectedFile;
@@ -1201,6 +1255,7 @@ export function createSkillsUi(context) {
     return $rowWrap.append($file).append(renderFileTools(folderName, path)).append($delete);
   }
 
+  // Render the inline create-or-rename composer row.
   function renderEditComposer(folderName, parentPath, depth) {
     const editMode = state.editMode;
     if (!editMode) {
@@ -1254,6 +1309,7 @@ export function createSkillsUi(context) {
     return $row;
   }
 
+  // Format one file path for the detail pane header.
   function formatDetailFilePath(folderName, filePath) {
     const folder = String(folderName || '').trim();
     const file = String(filePath || '').trim().replace(/^\/+/, '');
@@ -1266,6 +1322,7 @@ export function createSkillsUi(context) {
     return `${folder}/${file}`;
   }
 
+  // Render the skills file detail pane.
   function renderDetailPane() {
     if (!$detail || !$detail.length) {
       return;
@@ -1313,12 +1370,14 @@ export function createSkillsUi(context) {
     }
   }
 
+  // Skill detail pane.
   function metaBlock(label, value) {
     return $('<div class="skills-meta-block">')
       .append($('<div class="skills-meta-label">').text(label))
       .append($('<div class="skills-meta-value">').text(value));
   }
 
+  // Format one created-at timestamp for display.
   function formatCreatedAt(timestamp) {
     const value = Number(timestamp);
     if (!Number.isFinite(value) || value <= 0) {
@@ -1337,15 +1396,18 @@ export function createSkillsUi(context) {
     });
   }
 
+  // Enter source edit mode for the selected skill file.
   function enterEditMode(folderName) {
     enterEditModeAt(folderName, deriveEditParentPath(folderName), 'folder');
   }
 
+  // Leave source edit mode and return to preview.
   function exitEditMode() {
     state.editMode = null;
     renderTreePane();
   }
 
+  // Derive the parent directory for inline tree editing.
   function deriveEditParentPath(folderName) {
     const file = state.selectedFile;
     if (!file || state.selectedFolder !== folderName) {
@@ -1358,6 +1420,7 @@ export function createSkillsUi(context) {
     return parts.slice(0, -1).join('/');
   }
 
+  // Submit one inline folder create or rename action.
   async function submitComposerFolder(folderName, parentPath, name) {
     const dirPath = parentPath ? `${parentPath}/${name}` : name;
     state.payload = await postJson('/api/skills/directory/', { folder: folderName, path: dirPath });
@@ -1367,6 +1430,7 @@ export function createSkillsUi(context) {
     exitEditMode();
   }
 
+  // Submit one inline file create action.
   async function submitComposerFile(folderName, parentPath, rawName) {
     const allowedExtensions = Array.isArray(state.payload.allowed_extensions)
       ? state.payload.allowed_extensions
@@ -1395,6 +1459,7 @@ export function createSkillsUi(context) {
     exitEditMode();
   }
 
+  // Open the floating actions menu for one skill folder.
   function openSkillActions(folder, $anchor) {
     $('.skills-action-menu').remove();
     const $menu = $('<div class="skills-action-menu" role="menu">');
@@ -1436,6 +1501,7 @@ export function createSkillsUi(context) {
     }, 0);
   }
 
+  // Render markdown preview for the selected skill file.
   function renderPreview($panel) {
     const file = state.currentFile && state.currentFile.file === state.selectedFile
       ? state.currentFile
@@ -1454,10 +1520,12 @@ export function createSkillsUi(context) {
     $panel.append($preview);
   }
 
+  // Remove YAML front matter from skill markdown content.
   function stripFrontMatter(content) {
     return String(content || '').replace(/^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, '');
   }
 
+  // Render the source editor for the selected skill file.
   function renderSourceEditor($panel) {
     const file = state.currentFile;
     const content = file && typeof file.content === 'string' ? file.content : '';
@@ -1524,6 +1592,7 @@ export function createSkillsUi(context) {
     requestAnimationFrame(syncEditor);
   }
 
+  // Highlight source text with highlight.js when available.
   function highlightCode(source, filePath) {
     const text = String(source || '');
     if (typeof hljs === 'undefined' || !hljs.highlight) {
@@ -1539,6 +1608,7 @@ export function createSkillsUi(context) {
     }
   }
 
+  // Infer a highlight language from one file path.
   function languageForPath(filePath) {
     const lower = String(filePath || '').toLowerCase();
     if (lower.endsWith('.md')) return 'markdown';
@@ -1554,6 +1624,7 @@ export function createSkillsUi(context) {
     return '';
   }
 
+  // Escape plain text for skills manager HTML output.
   function escapeHtml(value) {
     return String(value || '')
       .replace(/&/g, '&amp;')
@@ -1561,6 +1632,7 @@ export function createSkillsUi(context) {
       .replace(/>/g, '&gt;');
   }
 
+  // Skills manager bootstrap.
   function init() {
     renderSidebarSummary();
     renderComposerSkillsMenu();

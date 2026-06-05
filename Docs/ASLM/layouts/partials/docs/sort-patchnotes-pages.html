@@ -1,0 +1,5 @@
+{{- /*
+  Patch note pages: YYYYMMDDHHmm filename prefix, newest first.
+  Expects a page collection (e.g. .Pages).
+*/ -}}
+{{- return (sort . ".File.ContentBaseName" "desc") -}}

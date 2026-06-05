@@ -90,20 +90,19 @@ class UploadedFileManifest:
     table_preview: str | None
     recommended_tools: list[str]
 
+    # Return a JSON-serializable dict for the dataclass.
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
+# Return a display-safe basename for an uploaded file.
 def normalize_upload_name(name: str) -> str:
-    """Return a display-safe basename for an uploaded file."""
-
     clean_name = Path(str(name or "").replace("\\", "/")).name.strip()
     return clean_name or "uploaded-file"
 
 
+# Return a stable MIME value for an uploaded file.
 def guess_upload_mime(name: str, mime: str | None = None) -> str:
-    """Return a stable MIME value for an uploaded file."""
-
     clean_mime = str(mime or "").strip().lower()
     if clean_mime:
         return clean_mime
@@ -111,9 +110,8 @@ def guess_upload_mime(name: str, mime: str | None = None) -> str:
     return guessed_mime or "application/octet-stream"
 
 
+# Return whether an upload should be treated as text-like.
 def is_probably_text_upload(name: str, mime: str) -> bool:
-    """Return whether an upload should be treated as text-like."""
-
     normalized_mime = str(mime or "").strip().lower()
     normalized_name = normalize_upload_name(name).lower()
     upload_path = Path(normalized_name)
@@ -124,6 +122,9 @@ def is_probably_text_upload(name: str, mime: str) -> bool:
     return any(suffix.lower() in TEXT_FILE_EXTENSIONS for suffix in upload_path.suffixes)
 
 
+# Upload text extraction helpers.
+
+# Return whether a byte sample contains binary markers.
 def _has_binary_markers(sample: bytes) -> bool:
     if b"\x00" in sample:
         return True
@@ -134,6 +135,7 @@ def _has_binary_markers(sample: bytes) -> bool:
     return control_count / len(sample) > 0.02
 
 
+# Decode text bytes.
 def _decode_text_bytes(file_bytes: bytes, *, explicit_text: bool) -> tuple[str, bool]:
     sample = file_bytes[:8192]
     if _has_binary_markers(sample):
@@ -154,6 +156,7 @@ def _decode_text_bytes(file_bytes: bytes, *, explicit_text: bool) -> tuple[str, 
     return "", False
 
 
+# Return whether decoded text looks printable enough to treat as text.
 def _looks_like_text(text: str) -> bool:
     if not text:
         return True
@@ -162,6 +165,7 @@ def _looks_like_text(text: str) -> bool:
     return printable / max(len(sample), 1) >= 0.92
 
 
+# Trim text preview.
 def _trim_text_preview(text: str, *, source_truncated: bool) -> tuple[str | None, int, bool]:
     normalized = str(text or "").strip()
     total_chars = len(normalized)
@@ -174,6 +178,7 @@ def _trim_text_preview(text: str, *, source_truncated: bool) -> tuple[str | None
     return preview, total_chars, truncated
 
 
+# Build table preview.
 def _build_table_preview(name: str, text: str) -> str | None:
     suffix = Path(normalize_upload_name(name)).suffix.lower()
     if suffix not in {".csv", ".tsv"}:
@@ -194,6 +199,7 @@ def _build_table_preview(name: str, text: str) -> str | None:
     return "\n".join(rows) if rows else None
 
 
+# Build zip tree.
 def _build_zip_tree(file_bytes: bytes) -> list[str] | None:
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
@@ -208,6 +214,7 @@ def _build_zip_tree(file_bytes: bytes) -> list[str] | None:
         return None
 
 
+# Extract xml text.
 def _extract_xml_text(xml_bytes: bytes) -> str:
     try:
         root = ElementTree.fromstring(xml_bytes)
@@ -222,6 +229,7 @@ def _extract_xml_text(xml_bytes: bytes) -> str:
     return " ".join(parts)
 
 
+# Extract pdf text.
 def _extract_pdf_text(file_bytes: bytes) -> str:
     try:
         import fitz
@@ -237,6 +245,7 @@ def _extract_pdf_text(file_bytes: bytes) -> str:
         return ""
 
 
+# Extract docx text.
 def _extract_docx_text(archive: zipfile.ZipFile) -> str:
     try:
         document_xml = archive.read("word/document.xml")
@@ -245,6 +254,7 @@ def _extract_docx_text(archive: zipfile.ZipFile) -> str:
     return _extract_xml_text(document_xml)
 
 
+# Extract pptx text.
 def _extract_pptx_text(archive: zipfile.ZipFile) -> str:
     slide_names = sorted(
         name for name in archive.namelist()
@@ -258,6 +268,7 @@ def _extract_pptx_text(archive: zipfile.ZipFile) -> str:
     return "\n".join(slides)
 
 
+# Extract xlsx text.
 def _extract_xlsx_text(archive: zipfile.ZipFile) -> str:
     shared_strings: list[str] = []
     try:
@@ -309,6 +320,7 @@ def _extract_xlsx_text(archive: zipfile.ZipFile) -> str:
     return "\n\n".join(rows)
 
 
+# Extract document text.
 def _extract_document_text(file_bytes: bytes, name: str, mime: str) -> str:
     suffix = Path(normalize_upload_name(name)).suffix.lower()
     normalized_mime = str(mime or "").lower()
@@ -337,6 +349,7 @@ def _extract_document_text(file_bytes: bytes, name: str, mime: str) -> str:
     return ""
 
 
+# Build the model-facing manifest for one uploaded file.
 def build_uploaded_file_manifest(
     file_bytes: bytes,
     *,
@@ -347,8 +360,6 @@ def build_uploaded_file_manifest(
     file_id: str | None = None,
     tool_server_id: str = "sandbox",
 ) -> UploadedFileManifest:
-    """Build the model-facing manifest for one uploaded file."""
-
     raw_bytes = bytes(file_bytes or b"")
     clean_name = normalize_upload_name(name)
     clean_mime = guess_upload_mime(clean_name, mime)

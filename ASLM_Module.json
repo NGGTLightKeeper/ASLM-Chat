@@ -24,7 +24,9 @@
             "Data/downloads_bridge_cache",
             "Data/venvs",
             "Settings/settings.json",
+            "Skills",
             "MCP/mcp.json",
+            "Tools/mcp-web-search/models",
             "db.sqlite3"
         ],
         "runFirstRunAfterUpdate": true
@@ -117,17 +119,6 @@
             "engine": "python-runtime",
             "getExec": "main.py get_setting --key console_log_level",
             "setExec": "main.py set_setting --key console_log_level --value {value}"
-        },
-        {
-            "key": "citation-alignment-enabled",
-            "name": "Citation alignment (GTE)",
-            "description": "Off: legacy chips use the search snippet only. On: GTE-parsed excerpts and paragraph highlighting.",
-            "type": "bool",
-            "default": false,
-            "engine": "python-runtime",
-            "getExec": "main.py get_setting --key citation-alignment-enabled",
-            "setExec": "main.py set_setting --key citation-alignment-enabled --value {value}",
-            "value": false
         },
         {
             "key": "llm-engine",

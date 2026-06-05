@@ -10,10 +10,8 @@ from typing import Any
 from .settings import BASE_DIR
 
 
-# Read module manifest
+# Load the local module manifest when it exists and is valid JSON.
 def _load_module_manifest() -> dict[str, Any] | None:
-    """Return the local module manifest when it exists and is valid."""
-
     json_path = BASE_DIR / "ASLM_Module.json"
     if not json_path.exists():
         return None
@@ -26,19 +24,16 @@ def _load_module_manifest() -> dict[str, Any] | None:
 
     return data if isinstance(data, dict) else None
 
-# Print separator line
-def _print_separator() -> None:
-    """Print a standard separator line for console output."""
 
+# Print a standard separator line for console output.
+def _print_separator() -> None:
     print("------------------------------------------------------")
 
 
-# Print technical module data
+# Print module metadata and startup time to the console.
 class PrintTechData:
-    # Print startup information
+    # Print module manifest details and the current startup timestamp.
     def PTD_Print(self) -> None:
-        """Print module metadata and the current startup time."""
-
         _print_separator()
 
         # Read and print module manifest details when available.

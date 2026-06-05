@@ -1,0 +1,85 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+name: Tests - Django
+
+on:
+  push:
+    branches-ignore:
+      - 'jules-docs-dev-*'
+      - 'jules-patchnotes-dev-*'
+  pull_request:
+
+concurrency:
+  group: tests-django-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  django-data:
+    name: Apps.Data
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Cache server venv
+        uses: actions/cache@v5
+        with:
+          path: Data/venvs/server
+          key: aslm-chat-venv-server-${{ runner.os }}-${{ hashFiles('Settings/venv_requirements.json') }}
+          restore-keys: |
+            aslm-chat-venv-server-${{ runner.os }}-
+
+      - name: Prepare server venv
+        run: |
+          python -c "from Services import venv_manager; import sys; sys.exit(0 if venv_manager.ensure_venv('server', log=True) else 1)"
+          VENV_PYTHON=$(python -c "from Services import venv_manager; print(venv_manager.get_venv_python('server'))")
+          echo "VENV_PYTHON=${VENV_PYTHON}" >> "$GITHUB_ENV"
+          test -x "$VENV_PYTHON"
+
+      - name: Run Django tests
+        env:
+          DJANGO_SETTINGS_MODULE: ASLM.settings
+        run: |
+          "$VENV_PYTHON" manage.py test Apps.Data.tests --verbosity=1
+
+  django-ui:
+    name: Apps.UI
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Cache server venv
+        uses: actions/cache@v5
+        with:
+          path: Data/venvs/server
+          key: aslm-chat-venv-server-${{ runner.os }}-${{ hashFiles('Settings/venv_requirements.json') }}
+          restore-keys: |
+            aslm-chat-venv-server-${{ runner.os }}-
+
+      - name: Prepare server venv
+        run: |
+          python -c "from Services import venv_manager; import sys; sys.exit(0 if venv_manager.ensure_venv('server', log=True) else 1)"
+          VENV_PYTHON=$(python -c "from Services import venv_manager; print(venv_manager.get_venv_python('server'))")
+          echo "VENV_PYTHON=${VENV_PYTHON}" >> "$GITHUB_ENV"
+          test -x "$VENV_PYTHON"
+
+      - name: Run Django tests
+        env:
+          DJANGO_SETTINGS_MODULE: ASLM.settings
+        run: |
+          "$VENV_PYTHON" manage.py test Apps.UI.tests --verbosity=1

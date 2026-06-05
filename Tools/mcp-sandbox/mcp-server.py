@@ -35,25 +35,22 @@ if not IN_CONTAINER:
     _api.list_background_jobs = list_background_jobs
 
 
+# Expose this tool server for engines that support tool-calling.
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
-    """Expose this tool server for engines that support tool-calling."""
-
     return engine in ("ollama-service", "lms", "openai", "google-genai")
 
 
+# Dispatch one sandbox v2 tool.
 def call_tool(
     tool_id: str,
     arguments: dict[str, Any] | None,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Dispatch one sandbox v2 tool."""
-
     return handle_tool(tool_id, arguments or {}, context or {})
 
 
+# Register sandbox tools on a FastMCP instance.
 def register_tools(mcp) -> None:
-    """Register sandbox tools on a FastMCP instance."""
-
     from sandbox.tools import register_tools as register_fastmcp_tools
 
     register_fastmcp_tools(mcp)

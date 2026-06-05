@@ -157,10 +157,12 @@ export function createAttachmentsUi(context) {
 
 
   // Preview rendering.
+  // Build the subtitle shown under one pending attachment chip.
   function previewLabel(attachment) {
     return attachment.typeLabel || attachment.mimeType || 'File';
   }
 
+  // Build the badge text shown on non-image attachment chips.
   function uploadIconLabel(attachment) {
     const kind = String(attachment.displayKind || attachment.kind || '').toLowerCase();
     if (kind === 'image') {
@@ -187,6 +189,7 @@ export function createAttachmentsUi(context) {
     return 'FILE';
   }
 
+  // Report whether one File object should be treated as an image.
   function isImageFile(file) {
     const name = String(file && file.name ? file.name : '').toLowerCase();
     const mimeType = String(file && file.type ? file.type : '').toLowerCase();
@@ -194,6 +197,7 @@ export function createAttachmentsUi(context) {
       || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(name);
   }
 
+  // Infer display kind and label for one selected file.
   function displayKindForFile(file) {
     const name = String(file && file.name ? file.name : '').toLowerCase();
     const mimeType = String(file && file.type ? file.type : '').toLowerCase();
@@ -291,6 +295,7 @@ export function createAttachmentsUi(context) {
 
 
   // File input handling.
+  // Read one File object as a data URL for local previews.
   function readFileAsDataUrl(file) {
     return new Promise(function resolveFile(resolve, reject) {
       const reader = new FileReader();
@@ -304,6 +309,7 @@ export function createAttachmentsUi(context) {
     });
   }
 
+  // Upload one file to the server and merge the response into pending state.
   async function uploadOneFile(file, pendingAttachment) {
     const formData = new FormData();
     formData.append('files', file, file.name || 'file');
@@ -413,6 +419,9 @@ export function createAttachmentsUi(context) {
     });
   }
 
+
+  // Clipboard and drag-drop helpers.
+  // Build a filename for one pasted image blob.
   function clipboardImageName(mimeType, index) {
     const normalizedMime = String(mimeType || '').toLowerCase();
     const extensionByMime = {
@@ -427,6 +436,7 @@ export function createAttachmentsUi(context) {
     return `pasted-image-${Date.now()}-${index + 1}.${extension}`;
   }
 
+  // Normalize one clipboard image File with a generated filename when needed.
   function normalizeClipboardImageFile(file, index) {
     if (!file || !isImageFile(file)) {
       return null;
@@ -446,6 +456,7 @@ export function createAttachmentsUi(context) {
     }
   }
 
+  // Collect unique image files from a clipboard DataTransfer.
   function collectClipboardImageFiles(clipboardData) {
     const files = [];
     const seen = new Set();
@@ -485,6 +496,7 @@ export function createAttachmentsUi(context) {
     return files;
   }
 
+  // Queue pasted clipboard images when the clipboard carries files.
   function handleClipboardPaste(clipboardData) {
     const files = collectClipboardImageFiles(clipboardData);
     if (!files.length) {
@@ -502,6 +514,7 @@ export function createAttachmentsUi(context) {
     $(event.target).val('');
   }
 
+  // Queue files dropped onto the chat shell overlay.
   function handleDroppedFiles(files) {
     queueFiles(files || []);
   }

@@ -34,9 +34,9 @@
     "page_ttl_seconds": 86400
   },
   "models": {
-    "pipeline": "rules",
-    "enable_encoder": false,
-    "enable_decoder": false,
+    "pipeline": "aslm_embedding",
+    "enable_encoder": true,
+    "enable_decoder": true,
     "search_device": "cpu",
     "keep_loaded": false
   },

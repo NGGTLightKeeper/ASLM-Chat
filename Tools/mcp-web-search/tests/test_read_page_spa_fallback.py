@@ -1,3 +1,5 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
 from __future__ import annotations
 
 import asyncio
@@ -24,6 +26,8 @@ class _FakeCamoufoxResult:
     error: str = ""
     duration_sec: float = 0.0
 
+
+# ReadPageService — camoufox fallback after weak network HTML extraction.
 
 def test_read_page_uses_camoufox_after_weak_network_extraction(monkeypatch) -> None:
     monkeypatch.setattr("services.read_page._cache.get_cached", lambda url: None)

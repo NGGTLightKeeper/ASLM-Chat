@@ -1,0 +1,374 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+from __future__ import annotations
+
+import hashlib
+import html
+import json
+import re
+import time
+from urllib.parse import parse_qs, urljoin, urlparse
+
+from bs4 import BeautifulSoup
+
+from .models import ShoppingProduct
+
+
+PRICE_MARKER_RE = r"[$€£₽₴]|zł|руб\.?|грн\.?|р\."
+PRICE_CURRENCY_FIRST_RE = re.compile(
+    rf"(?P<currency>{PRICE_MARKER_RE})\s*"
+    r"(?P<amount>\d[\d\s.,]{1,14})",
+    re.IGNORECASE,
+)
+PRICE_AMOUNT_FIRST_RE = re.compile(
+    r"(?P<amount2>\d[\d\s.,]{1,14})\s*"
+    rf"(?P<currency2>{PRICE_MARKER_RE})",
+    re.IGNORECASE,
+)
+CURRENCY_MAP = {
+    "$": "USD",
+    "€": "EUR",
+    "£": "GBP",
+    "₽": "RUB", "руб": "RUB", "руб.": "RUB", "р": "RUB", "р.": "RUB",
+    "₴": "UAH", "грн": "UAH", "грн.": "UAH",
+    "zł": "PLN",
+}
+
+
+def compact(text: str, *, limit: int = 260) -> str:
+    return re.sub(r"\s+", " ", html.unescape(text or "")).strip()[:limit].rstrip()
+
+
+def source_domain(url: str) -> str:
+    return (urlparse(url or "").netloc or "").lower().removeprefix("www.")
+
+
+def normalize_url(raw: str, base: str = "") -> str:
+    value = html.unescape(raw or "").strip()
+    if not value:
+        return ""
+    if value.startswith("/url?") or value.startswith("https://www.google.") and "/url?" in value:
+        target = parse_qs(urlparse(value).query).get("q", [""])[0]
+        if target:
+            value = target
+    if value.startswith("//"):
+        value = "https:" + value
+    if base and value.startswith("/"):
+        value = urljoin(base, value)
+    return value
+
+
+def parse_price(text: str, *, default_currency: str = "", allow_bare: bool = False) -> tuple[str, float | None, str]:
+    source = text or ""
+    match = None
+    for candidate in PRICE_CURRENCY_FIRST_RE.finditer(source):
+        if candidate.start() > 0 and source[candidate.start() - 1] in "0123456789,.":
+            continue
+        match = candidate
+        break
+    if match is None:
+        for candidate in PRICE_AMOUNT_FIRST_RE.finditer(source):
+            if candidate.end() < len(source) and source[candidate.end() : candidate.end() + 1].isdigit():
+                continue
+            if _bare_integer_before_spaced_currency(candidate.group("amount2") or ""):
+                continue
+            match = candidate
+            break
+    if not match:
+        if not allow_bare:
+            return "", None, ""
+        bare_amount = parse_amount_value(source)
+        if bare_amount is None:
+            return "", None, ""
+        return compact(source, limit=80), bare_amount, default_currency.upper()
+    groups = match.groupdict()
+    currency_raw = (groups.get("currency") or groups.get("currency2") or "").lower().rstrip(".")
+    amount_raw = groups.get("amount") or groups.get("amount2") or ""
+    amount = parse_amount_value(amount_raw)
+    if amount is None:
+        return "", None, ""
+    currency = default_currency.upper() or CURRENCY_MAP.get(currency_raw, currency_raw.upper())
+    return compact(match.group(0), limit=80), amount, currency
+
+
+def parse_amount_value(raw: str) -> float | None:
+    value = (raw or "").replace("\xa0", " ").strip()
+    if not value or re.search(r"[^\d\s.,]", value):
+        return None
+    value = re.sub(r"\s*([,.])\s*", r"\1", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    if not value or not re.search(r"\d", value):
+        return None
+
+    decimal_sep = ""
+    if "," in value and "." in value:
+        decimal_sep = "," if value.rfind(",") > value.rfind(".") else "."
+    elif value.count(",") == 1:
+        tail = value.rsplit(",", 1)[1]
+        decimal_sep = "," if 1 <= len(tail) <= 2 else ""
+    elif value.count(".") == 1:
+        tail = value.rsplit(".", 1)[1]
+        decimal_sep = "." if 1 <= len(tail) <= 2 else ""
+
+    if decimal_sep:
+        integer_part, decimal_part = value.rsplit(decimal_sep, 1)
+        if not decimal_part.isdigit() or len(decimal_part) > 2:
+            return None
+    else:
+        integer_part, decimal_part = value, ""
+
+    other_sep = "." if decimal_sep == "," else ","
+    grouping_sep = ""
+    if decimal_sep:
+        grouping_sep = other_sep if other_sep in integer_part else ""
+    elif "," in integer_part and "." not in integer_part:
+        grouping_sep = ","
+    elif "." in integer_part and "," not in integer_part:
+        grouping_sep = "."
+
+    if grouping_sep:
+        groups = integer_part.split(grouping_sep)
+        if not _valid_grouped_integer(groups):
+            return None
+        integer_digits = "".join(groups)
+    elif other_sep in integer_part:
+        groups = integer_part.split(other_sep)
+        if not _valid_grouped_integer(groups):
+            return None
+        integer_digits = "".join(groups)
+    elif " " in integer_part:
+        groups = integer_part.split(" ")
+        if not _valid_grouped_integer(groups):
+            return None
+        integer_digits = "".join(groups)
+    else:
+        integer_digits = integer_part
+
+    if not integer_digits.isdigit():
+        return None
+
+    normalized = integer_digits
+    if decimal_part:
+        normalized = f"{normalized}.{decimal_part}"
+    try:
+        return float(normalized)
+    except ValueError:
+        return None
+
+
+def _bare_integer_before_spaced_currency(raw: str) -> bool:
+    value = raw or ""
+    stripped = value.strip()
+    return len(stripped) >= 4 and stripped.isdigit() and value[-1:].isspace()
+
+
+def _valid_grouped_integer(groups: list[str]) -> bool:
+    if len(groups) <= 1:
+        return bool(groups and groups[0].isdigit())
+    if not groups[0].isdigit() or not (1 <= len(groups[0]) <= 3):
+        return False
+    return all(group.isdigit() and len(group) == 3 for group in groups[1:])
+
+
+def product_id(url: str, title: str, source: str) -> str:
+    payload = f"{source}\n{url}\n{title}".encode("utf-8", errors="replace")
+    return hashlib.sha256(payload).hexdigest()[:16]
+
+
+def score_product(product: ShoppingProduct) -> float:
+    score = 0.2
+    if product.price_text:
+        score += 0.35
+    if product.url.startswith("http"):
+        score += 0.15
+    if product.snippet:
+        score += 0.1
+    if product.seller or product.availability:
+        score += 0.1
+    return round(min(score, 1.0), 3)
+
+
+def parse_products(
+    html_text: str,
+    *,
+    provider: str,
+    lane: str,
+    method: str,
+    base_url: str,
+    default_currency: str = "",
+) -> list[ShoppingProduct]:
+    if not html_text:
+        return []
+    soup = BeautifulSoup(html_text, "html.parser")
+    products: list[ShoppingProduct] = []
+    products.extend(_jsonld_products(
+        soup,
+        provider=provider,
+        lane=lane,
+        method=method,
+        base_url=base_url,
+        default_currency=default_currency,
+    ))
+    products.extend(_card_products(
+        soup,
+        provider=provider,
+        lane=lane,
+        method=method,
+        base_url=base_url,
+        default_currency=default_currency,
+    ))
+    return _dedupe(products)
+
+
+def _make_product(
+    *,
+    title: str,
+    url: str,
+    provider: str,
+    lane: str,
+    method: str,
+    price_text: str = "",
+    price_value: float | None = None,
+    currency: str = "",
+    snippet: str = "",
+    seller: str = "",
+    availability: str = "",
+) -> ShoppingProduct:
+    if not price_text or price_value is None or not currency:
+        raise ValueError("shopping product requires a parsed price")
+    product = ShoppingProduct(
+        id=product_id(url, title, provider),
+        title=compact(title, limit=220),
+        url=url,
+        source=provider,
+        source_domain=source_domain(url),
+        lane=lane,
+        price_text=price_text,
+        price_value=price_value,
+        currency=currency,
+        seller=seller,
+        availability=availability,
+        snippet=compact(snippet, limit=700),
+        fetched_at=time.time(),
+        meta={"method": method},
+    )
+    product.confidence = score_product(product)
+    return product
+
+
+def _jsonld_products(
+    soup: BeautifulSoup,
+    *,
+    provider: str,
+    lane: str,
+    method: str,
+    base_url: str,
+    default_currency: str,
+) -> list[ShoppingProduct]:
+    out: list[ShoppingProduct] = []
+    for script in soup.find_all("script", attrs={"type": re.compile("ld\\+json", re.I)}):
+        payload = script.get_text(" ", strip=True)
+        if not payload:
+            continue
+        try:
+            data = json.loads(payload)
+        except Exception:
+            continue
+        queue = data if isinstance(data, list) else [data]
+        for item in queue:
+            if not isinstance(item, dict):
+                continue
+            graph = item.get("@graph")
+            if isinstance(graph, list):
+                queue.extend(x for x in graph if isinstance(x, dict))
+                continue
+            item_type = item.get("@type")
+            item_types = item_type if isinstance(item_type, list) else [item_type]
+            if "Product" not in item_types:
+                continue
+            offers = _first_offer(item.get("offers"))
+            title = compact(str(item.get("name") or ""))
+            url = normalize_url(str(item.get("url") or offers.get("url") or base_url), base_url)
+            price = str(offers.get("price") or "")
+            currency = str(offers.get("priceCurrency") or default_currency).upper()
+            price_value = parse_amount_value(price)
+            price_text = compact(price, limit=80) if price_value is not None else ""
+            if title and url and price_text and price_value is not None and currency:
+                out.append(_make_product(
+                    title=title,
+                    url=url,
+                    provider=provider,
+                    lane=lane,
+                    method=method,
+                    price_text=price_text,
+                    price_value=price_value,
+                    currency=currency,
+                    snippet=str(item.get("description") or ""),
+                    availability=str(offers.get("availability") or "").rsplit("/", 1)[-1],
+                ))
+    return out
+
+
+def _first_offer(raw: object) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                return item
+    return {}
+
+
+def _card_products(
+    soup: BeautifulSoup,
+    *,
+    provider: str,
+    lane: str,
+    method: str,
+    base_url: str,
+    default_currency: str,
+) -> list[ShoppingProduct]:
+    out: list[ShoppingProduct] = []
+    for anchor in soup.find_all("a", href=True):
+        title = compact(anchor.get_text(" ", strip=True), limit=220)
+        url = normalize_url(anchor.get("href", ""), base_url)
+        if len(title) < 8 or not url.startswith("http"):
+            continue
+        parent = anchor
+        for _ in range(3):
+            if parent.parent is None:
+                break
+            parent = parent.parent
+        context = compact(parent.get_text(" ", strip=True), limit=900)
+        price_text, price_value, currency = parse_price(title, default_currency=default_currency)
+        if not price_text:
+            price_text, price_value, currency = parse_price(context, default_currency=default_currency)
+        if not price_text or price_value is None or not currency:
+            continue
+        out.append(_make_product(
+            title=title,
+            url=url,
+            provider=provider,
+            lane=lane,
+            method=method,
+            price_text=price_text,
+            price_value=price_value,
+            currency=currency,
+            snippet=context,
+        ))
+    return out
+
+
+def _dedupe(products: list[ShoppingProduct]) -> list[ShoppingProduct]:
+    out: list[ShoppingProduct] = []
+    seen_urls: set[str] = set()
+    seen_titles: set[str] = set()
+    for product in sorted(products, key=lambda item: item.confidence, reverse=True):
+        title_key = re.sub(r"\W+", " ", product.title.lower()).strip()[:90]
+        url_key = product.url.split("#", 1)[0]
+        if url_key in seen_urls or title_key in seen_titles:
+            continue
+        seen_urls.add(url_key)
+        seen_titles.add(title_key)
+        out.append(product)
+    return out

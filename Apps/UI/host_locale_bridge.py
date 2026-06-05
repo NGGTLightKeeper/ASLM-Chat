@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper. All Rights Reserved.
 
-"""Map ASLM ``host_locale.json`` to Django template context and client bootstrap JSON."""
-
 from __future__ import annotations
 
 import json
@@ -23,9 +21,8 @@ _RTL_PRIMARY_SUBTAGS: Final[frozenset[str]] = frozenset(
 )
 
 
+# Return whether the UI should use right-to-left layout.
 def is_rtl_language(language_code: str | None) -> bool:
-    """Return whether the UI should use right-to-left layout."""
-
     code = (language_code or "en").strip()
     if not code:
         return False
@@ -38,9 +35,8 @@ def is_rtl_language(language_code: str | None) -> bool:
     return primary in _RTL_PRIMARY_SUBTAGS
 
 
+# Convert BCP-47 to a value suitable for the HTML ``lang`` attribute.
 def language_to_html_lang(language_code: str) -> str:
-    """Convert BCP-47 to a value suitable for the HTML ``lang`` attribute."""
-
     parts = language_code.split("-", 1)
     if len(parts) == 1:
         return parts[0].lower()
@@ -50,9 +46,8 @@ def language_to_html_lang(language_code: str) -> str:
     return f"{primary.lower()}-{region}"
 
 
+# Return keys for ``base.html`` and the client locale bootstrap.
 def build_host_locale_template_context() -> dict[str, Any]:
-    """Return keys for ``base.html`` and the client locale bootstrap."""
-
     raw = load_host_locale()
     host_language_raw = get_language()
     effective = resolve_effective_locale_from_snapshot()
@@ -85,6 +80,7 @@ def build_host_locale_template_context() -> dict[str, Any]:
     }
 
 
+# Escape JSON before embedding it in a script tag.
 def _json_for_script_tag(value: dict[str, Any]) -> str:
     return (
         json.dumps(value, ensure_ascii=False)

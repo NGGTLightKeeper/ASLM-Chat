@@ -44,7 +44,6 @@ urlpatterns = [
     path("api/skills/import/", views.skills_import_api, name="skills_import_api"),
     path("api/skills/path/", views.skills_path_api, name="skills_path_api"),
     path("api/favicon/", views.favicon_api, name="favicon_api"),
-    path("api/citation_annotations/", views.citation_annotations_api, name="citation_annotations_api"),
     path("api/browser_portal/frame/", views.browser_portal_frame_api, name="browser_portal_frame_api"),
     path("api/browser_portal/event/", views.browser_portal_event_api, name="browser_portal_event_api"),
 

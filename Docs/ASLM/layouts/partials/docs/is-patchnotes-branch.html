@@ -1,0 +1,10 @@
+{{- /* Returns "true" when $node is the Patch Notes section (listing its note pages). */ -}}
+{{- $node := .node -}}
+{{- if not $node -}}false{{- else if eq $node.Title "Patch Notes" -}}true{{- else -}}
+{{- $dir := "" -}}
+{{- with $node.File -}}
+    {{- $dir = .Dir | replace "\\" "/" | strings.TrimSuffix "/" -}}
+{{- end -}}
+{{- $rel := $node.RelPermalink | default "" | replace "\\" "/" -}}
+{{- if or (eq $dir "docs/PatchNotes") (strings.Contains $rel "/docs/patchnotes") -}}true{{- else -}}false{{- end -}}
+{{- end -}}

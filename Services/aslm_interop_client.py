@@ -1,5 +1,4 @@
 # Copyright NGGT.LightKeeper. All Rights Reserved.
-"""Minimal client for the ASLM host module interop HTTP API (localhost JSON)."""
 
 from __future__ import annotations
 
@@ -10,6 +9,7 @@ import urllib.request
 from typing import Any
 
 
+# Resolve the ASLM host module interop base URL from the environment.
 def _base_url() -> str:
     url = (os.environ.get("ASLM_MODULE_INTEROP_BASE_URL") or "").strip()
     if not url:
@@ -20,15 +20,15 @@ def _base_url() -> str:
     return url.rstrip("/") + "/"
 
 
+# Fetch installed and running modules from GET /v1/registry.
 def get_registry() -> dict[str, Any]:
-    """GET /v1/registry — installed and running modules plus interopBaseUrl."""
     req = urllib.request.Request(_base_url() + "v1/registry", method="GET")
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
+# Ask ASLM to start the given module ids via POST /v1/modules/start.
 def request_start(*, caller_module_id: str, module_ids: list[str]) -> dict[str, Any]:
-    """POST /v1/modules/start — ask ASLM to start the given module ids."""
     body = json.dumps(
         {"callerModuleId": caller_module_id, "moduleIds": list(module_ids)},
         ensure_ascii=False,

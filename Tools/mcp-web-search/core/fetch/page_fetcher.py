@@ -1,21 +1,4 @@
-﻿# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
-
-"""
-Page fetcher: httpx -> curl_cffi -> give up.
-
-Refactored from legacy src/page_fetcher.py:
-  - Removed all try/except import fallbacks for internal modules
-  - page_normalizer imported by absolute package path (core.extract)
-  - Anti-bot detection extracted to shared core.fetch.antibot module
-  - SourceCache type import uses TYPE_CHECKING to avoid circular deps
-
-No browsers, no fallback runtime modes. Designed for cache-first retrieval where
-the goal is cheap, fast page downloads with strict budgets.
-
-Public API
-----------
-PageFetcher    -- async fetcher that stores results in SourceCache
-"""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 from __future__ import annotations
 
@@ -32,13 +15,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger("core.fetch.page_fetcher")
 
 
+# True for HTTP redirect status codes we follow manually.
 def _is_redirect_status(status_code: int) -> bool:
     return status_code in {301, 302, 303, 307, 308}
 
-
-# ---------------------------------------------------------------------------
-# Anti-bot detection
-# ---------------------------------------------------------------------------
 
 from core.fetch.antibot import is_antibot
 from core.fetch.constants import DEFAULT_UA
@@ -53,11 +33,6 @@ from core.fetch.url_utils import (
     validate_redirect_target,
 )
 
-
-# ---------------------------------------------------------------------------
-# Default headers
-# ---------------------------------------------------------------------------
-
 _HEADERS = {
     "User-Agent": DEFAULT_UA,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -69,8 +44,8 @@ _SKIP_HOSTS = ("twitter.com", "x.com", "vimeo.com", "tiktok.com")
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
+# Return True for URLs that cannot be usefully scraped as text.
 def is_skippable(url: str) -> bool:
-    """Return True for URLs that cannot be usefully scraped as text."""
     from urllib.parse import urlparse
     from core.extract.pdf_extractor import looks_like_pdf_url
 
@@ -83,18 +58,16 @@ def is_skippable(url: str) -> bool:
     return any(host == s or host.endswith("." + s) for s in _SKIP_HOSTS)
 
 
-# ---------------------------------------------------------------------------
-# Per-domain async rate limiter
-# ---------------------------------------------------------------------------
-
+# Simple per-domain rate limiter using asyncio.
 class _DomainThrottle:
-    """Simple per-domain rate limiter using asyncio."""
 
+    # min_interval derived from requests-per-second cap.
     def __init__(self, rps: float = 1.0) -> None:
         self._min_interval = 1.0 / max(rps, 0.01)
         self._last: dict[str, float] = defaultdict(float)
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
+    # Sleep until the domain is allowed another request.
     async def acquire(self, domain: str) -> None:
         async with self._locks[domain]:
             now = time.monotonic()
@@ -104,16 +77,10 @@ class _DomainThrottle:
             self._last[domain] = time.monotonic()
 
 
-# ---------------------------------------------------------------------------
-# PageFetcher
-# ---------------------------------------------------------------------------
-
+# Async page fetcher: httpx → curl_cffi; stores results in SourceCache.
 class PageFetcher:
-    """Async page fetcher: httpx -> curl_cffi -> give up.
 
-    Stores successful fetches in a SourceCache instance.
-    """
-
+    # Configure cache, concurrency, per-domain throttle, and TLS policy.
     def __init__(
         self,
         cache: SourceCache,
@@ -130,11 +97,8 @@ class PageFetcher:
         self._store_raw_html = store_raw_html
         self._tls_verify = tls_verify
 
-    # -- Single URL fetch ----------------------------------------------------
-
-
+    # httpx GET with per-redirect SSRF validation.
     async def _fetch_httpx(self, url: str) -> tuple[str, int]:
-        """Try fetching with httpx, checking every redirect target."""
         import httpx
 
         current_url = validate_public_fetch_url(url)
@@ -158,8 +122,8 @@ class PageFetcher:
                 return "", r.status_code
             return r.text, r.status_code
 
+    # httpx streaming PDF download with redirect checks.
     async def _fetch_pdf_httpx(self, url: str, max_bytes: int) -> tuple[bytes, int]:
-        """Try fetching PDF bytes with httpx, checking every redirect target."""
         import httpx
 
         current_url = validate_public_fetch_url(url)
@@ -192,10 +156,11 @@ class PageFetcher:
                     return b"".join(chunks), r.status_code
             return b"", 0
 
+    # curl_cffi fallback with SSRF checks on each redirect.
     async def _fetch_curl_cffi(self, url: str) -> tuple[str, int]:
-        """Fallback: curl_cffi with SSRF checks for every redirect."""
         loop = asyncio.get_running_loop()
 
+        # Sync curl_cffi GET in the shared I/O pool.
         def _sync() -> tuple[str, int]:
             from curl_cffi import requests as cffi_req
 
@@ -220,10 +185,11 @@ class PageFetcher:
 
         return await loop.run_in_executor(_io_pool, _sync)
 
+    # curl_cffi PDF fallback with redirect checks.
     async def _fetch_pdf_curl_cffi(self, url: str, max_bytes: int) -> tuple[bytes, int]:
-        """Fallback: fetch PDF bytes with curl_cffi and checked redirects."""
         loop = asyncio.get_running_loop()
 
+        # Sync curl_cffi PDF GET in the shared I/O pool.
         def _sync() -> tuple[bytes, int]:
             from curl_cffi import requests as cffi_req
 
@@ -251,8 +217,8 @@ class PageFetcher:
 
         return await loop.run_in_executor(_io_pool, _sync)
 
+    # Try httpx, then curl_cffi; returns (raw_html, status_code).
     async def _fetch_single(self, url: str) -> tuple[str, int]:
-        """Try httpx, then curl_cffi. Returns (raw_html, status_code)."""
         from urllib.parse import urlparse
         try:
             validate_public_fetch_url(url)
@@ -284,8 +250,8 @@ class PageFetcher:
 
         return "", 0
 
+    # Fetch PDF bytes bounded by MAX_PDF_BYTES.
     async def _fetch_pdf_bytes(self, url: str) -> bytes:
-        """Fetch PDF bytes, bounded by the shared PDF size limit."""
         from core.extract.pdf_extractor import MAX_PDF_BYTES, looks_like_pdf_bytes
 
         try:
@@ -310,8 +276,8 @@ class PageFetcher:
 
         return b""
 
+    # Download PDF, extract markdown, cache.
     async def _fetch_pdf_normalize_cache(self, url: str) -> CachedPage | None:
-        """Fetch a PDF, extract text, and cache markdown."""
         from core.extract.pdf_extractor import pdf_bytes_to_markdown
 
         data = await self._fetch_pdf_bytes(url)
@@ -333,10 +299,8 @@ class PageFetcher:
         self._cache.cache_page(url, title, clean_text, "", status="ok")
         return self._cache.get_cached(url)
 
-    # -- Normalize + store ---------------------------------------------------
-
+    # Fetch one URL, normalize, and store in cache.
     async def _fetch_normalize_cache(self, url: str) -> CachedPage | None:
-        """Fetch a single URL, normalize, and store in cache."""
         async with self._sem:
             from core.extract.pdf_extractor import looks_like_decoded_binary, looks_like_pdf_text_dump, looks_like_pdf_url
 
@@ -400,17 +364,12 @@ class PageFetcher:
             self._cache.cache_page(url, title, clean_text, stored_html, status="ok")
             return self._cache.get_cached(url)
 
-    # -- Public API ----------------------------------------------------------
-
+    # Fetch up to budget URLs; skip URLs already fresh in cache.
     async def fetch_and_cache(
         self,
         urls: list[str],
         budget: int = 10,
     ) -> dict[str, CachedPage | None]:
-        """Fetch up to *budget* URLs, cache them, return url -> CachedPage map.
-
-        Skips URLs that are already fresh in the cache.
-        """
         results: dict[str, CachedPage | None] = {}
         to_fetch: list[str] = []
 

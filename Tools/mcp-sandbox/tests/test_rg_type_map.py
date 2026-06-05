@@ -1,7 +1,5 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Tests for dynamic rg type map loading and derived code-extension detection."""
-
 import os
 import sys
 import subprocess
@@ -17,7 +15,7 @@ from sandbox.config import RG_TYPE_TO_GLOB, _load_rg_type_map, _RG_TYPE_FALLBACK
 from sandbox.presenters import _CODE_EXTENSIONS, _TEXT_EXTENSIONS
 
 
-# ── _load_rg_type_map ────────────────────────────────────────────────
+# _load_rg_type_map.
 
 def test_returns_nonempty_dict():
     result = _load_rg_type_map()
@@ -41,24 +39,24 @@ def test_glob_format():
     print(f"PASS: all {len(result)} glob values start with '*.'")
 
 
+# 'py' alias must be derived even though rg uses 'python' as canonical name.
 def test_short_alias_derived():
-    """'py' alias must be derived even though rg uses 'python' as canonical name."""
     result = _load_rg_type_map()
     assert "py" in result, "'py' alias missing"
     assert result["py"] == "*.py", f"Expected '*.py', got {result['py']!r}"
     print(f"PASS: short alias 'py' maps to {result['py']}")
 
 
+# When rg is unavailable, must return fallback dict.
 def test_fallback_on_rg_unavailable():
-    """When rg is unavailable, must return fallback dict."""
     with patch("subprocess.run", side_effect=FileNotFoundError("rg not found")):
         result = _load_rg_type_map()
     assert result == _RG_TYPE_FALLBACK
     print("PASS: fallback returned when rg is unavailable")
 
 
+# Non-zero rg exit code triggers fallback.
 def test_fallback_on_rg_nonzero_exit():
-    """Non-zero rg exit code triggers fallback."""
     import subprocess as sp
     mock_proc = sp.CompletedProcess(args=[], returncode=1, stdout="", stderr="err")
     with patch("subprocess.run", return_value=mock_proc):
@@ -67,7 +65,7 @@ def test_fallback_on_rg_nonzero_exit():
     print("PASS: fallback returned on non-zero exit code")
 
 
-# ── Module-level RG_TYPE_TO_GLOB ─────────────────────────────────────
+# Module-level RG_TYPE_TO_GLOB.
 
 def test_module_level_map_is_dict():
     assert isinstance(RG_TYPE_TO_GLOB, dict)
@@ -75,7 +73,7 @@ def test_module_level_map_is_dict():
     print(f"PASS: module-level RG_TYPE_TO_GLOB has {len(RG_TYPE_TO_GLOB)} entries")
 
 
-# ── _CODE_EXTENSIONS derivation ──────────────────────────────────────
+# _CODE_EXTENSIONS derivation.
 
 def test_code_extensions_nonempty():
     assert len(_CODE_EXTENSIONS) > 0

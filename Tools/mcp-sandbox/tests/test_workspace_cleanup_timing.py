@@ -34,6 +34,7 @@ import sandbox.workspace as workspace_mod  # noqa: E402
     "Set RUN_SANDBOX_CLEANUP_TIMING=1 to run the real-time cleanup timing test.",
 )
 class WorkspaceCleanupTimingTests(unittest.TestCase):
+    # Real-time idle staging and recycle with handle_tool write.
     def test_background_monitor_timing_with_real_tool_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace_root = Path(tmpdir)

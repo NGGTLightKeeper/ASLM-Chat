@@ -13,8 +13,9 @@ _ANTIBOT_SINGLE = (
     "you need to enable javascript",
 )
 
+
+# Return True when the response body looks like an anti-bot wall.
 def is_antibot(text: str) -> bool:
-    """Return True when the response body looks like an anti-bot wall."""
     t = text[:2_000].lower()
     if any(m in t for m in _ANTIBOT_SINGLE):
         return True
