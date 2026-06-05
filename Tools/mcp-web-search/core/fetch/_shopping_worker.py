@@ -46,7 +46,8 @@ async def _run(payload: dict) -> dict:
         raise ValueError("empty query")
     effort = str(payload.get("effort") or "medium")
     limit = max(1, int(payload.get("limit") or 8))
-    result = await search_shopping(query, effort=effort, limit=limit)
+    language = str(payload.get("language") or "en")
+    result = await search_shopping(query, effort=effort, limit=limit, language=language)
     return result_to_jsonable(result)
 
 

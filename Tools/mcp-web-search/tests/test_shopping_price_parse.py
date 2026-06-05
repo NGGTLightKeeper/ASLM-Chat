@@ -30,6 +30,8 @@ from core.fetch.shopping.parse import parse_amount_value, parse_price
         ("from $5.58", 5.58, "USD"),
         ("₽ 12 345", 12345.0, "RUB"),
         ("12 345 руб", 12345.0, "RUB"),
+        ("¥12 345", 12345.0, "JPY"),
+        ("12 345 円", 12345.0, "JPY"),
     ],
 )
 def test_parse_price_accepts_common_precise_formats(text: str, amount: float, currency: str) -> None:
@@ -128,12 +130,12 @@ def test_parse_price_does_not_infer_missing_currency() -> None:
 
 
 @pytest.mark.unit
-def test_parse_price_uses_provider_currency_for_marked_html_prices() -> None:
+def test_parse_price_prefers_marked_html_currency_over_provider_default() -> None:
     price_text, price_value, currency = parse_price("5,58$", default_currency="GBP")
 
     assert price_text == "5,58$"
     assert price_value == pytest.approx(5.58)
-    assert currency == "GBP"
+    assert currency == "USD"
 
 
 @pytest.mark.unit
@@ -145,3 +147,8 @@ def test_parse_price_allows_bare_amount_only_for_structured_fields() -> None:
     assert price_text == "1299"
     assert price_value == pytest.approx(1299.0)
     assert currency == "USD"
+
+
+@pytest.mark.unit
+def test_parse_price_rejects_rating_as_ruble_price() -> None:
+    assert parse_price("Видеокарта RTX 5070 5.0 Рейтинг магазина", default_currency="RUB") == ("", None, "")

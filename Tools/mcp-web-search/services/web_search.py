@@ -2604,8 +2604,8 @@ _SHOPPING_EFFORT_LIMITS = {
 }
 _SHOPPING_WORKER_TIMEOUTS = {
     "low": 3.5,
-    "medium": 6.5,
-    "high": 10.5,
+    "medium": 8.5,
+    "high": 11.5,
 }
 
 
@@ -3648,10 +3648,11 @@ class WebSearchService:
                     provider_query,
                     effort=effort,
                     limit=shopping_limit,
+                    language=lang,
                     worker_timeout=_shopping_worker_timeout_for_effort(effort),
                 )
             )
-            _trace(req_id, "shopping.worker.started", limit=shopping_limit, effort=effort)
+            _trace(req_id, "shopping.worker.started", limit=shopping_limit, effort=effort, language=lang)
 
         # --- 2. Provider fetch → merge → dedup → triage ---
         deduped, triage, effective_query = await self._run_with_zero_result_fallback(

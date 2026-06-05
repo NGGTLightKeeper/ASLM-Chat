@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 from .models import ShoppingProduct
 
 
-PRICE_MARKER_RE = r"[$€£₽₴]|zł|руб\.?|грн\.?|р\."
+PRICE_MARKER_RE = r"[$€£₽₴¥]|zł|руб\.?|грн\.?|р\.?|円"
 PRICE_CURRENCY_FIRST_RE = re.compile(
     rf"(?P<currency>{PRICE_MARKER_RE})\s*"
     r"(?P<amount>\d[\d\s.,]{1,14})",
@@ -31,6 +31,7 @@ CURRENCY_MAP = {
     "£": "GBP",
     "₽": "RUB", "руб": "RUB", "руб.": "RUB", "р": "RUB", "р.": "RUB",
     "₴": "UAH", "грн": "UAH", "грн.": "UAH",
+    "¥": "JPY", "円": "JPY",
     "zł": "PLN",
 }
 
@@ -87,7 +88,9 @@ def parse_price(text: str, *, default_currency: str = "", allow_bare: bool = Fal
     amount = parse_amount_value(amount_raw)
     if amount is None:
         return "", None, ""
-    currency = default_currency.upper() or CURRENCY_MAP.get(currency_raw, currency_raw.upper())
+    if _looks_like_rating_ruble_false_positive(match, source, amount):
+        return "", None, ""
+    currency = CURRENCY_MAP.get(currency_raw, currency_raw.upper()) or default_currency.upper()
     return compact(match.group(0), limit=80), amount, currency
 
 
@@ -160,6 +163,16 @@ def _bare_integer_before_spaced_currency(raw: str) -> bool:
     value = raw or ""
     stripped = value.strip()
     return len(stripped) >= 4 and stripped.isdigit() and value[-1:].isspace()
+
+
+def _looks_like_rating_ruble_false_positive(match: re.Match[str], source: str, amount: float) -> bool:
+    groups = match.groupdict()
+    currency_raw = (groups.get("currency") or groups.get("currency2") or "").lower().rstrip(".")
+    if currency_raw != "р" or amount > 5:
+        return False
+    before = source[max(0, match.start() - 18):match.start()].lower()
+    after = source[match.end():match.end() + 18].lower()
+    return "рейтинг" in before or "рейтинг" in after or "rating" in before or "rating" in after
 
 
 def _valid_grouped_integer(groups: list[str]) -> bool:
@@ -341,8 +354,13 @@ def _card_products(
             parent = parent.parent
         context = compact(parent.get_text(" ", strip=True), limit=900)
         price_text, price_value, currency = parse_price(title, default_currency=default_currency)
+        price_from_title = bool(price_text)
         if not price_text:
             price_text, price_value, currency = parse_price(context, default_currency=default_currency)
+        if _looks_like_price_filter_title(title):
+            continue
+        if not price_from_title and not _has_enough_product_title_signal(title):
+            continue
         if not price_text or price_value is None or not currency:
             continue
         out.append(_make_product(
@@ -357,6 +375,27 @@ def _card_products(
             snippet=context,
         ))
     return out
+
+
+def _looks_like_price_filter_title(title: str) -> bool:
+    value = compact(title, limit=120).lower()
+    if not value:
+        return False
+    if re.match(r"^(under|unter|over|über|ueber|до|от)\s+[\d\s.,]+", value, flags=re.I):
+        return True
+    if re.match(r"^[\d\s.,]+\s*(?:[$€£₽₴¥]|руб\.?|грн\.?|р\.?|円)\s*[-–]\s*[\d\s.,]+", value, flags=re.I):
+        return True
+    if re.match(r"^[\d\s.,]+\s*[-–]\s*[\d\s.,]+\s*(?:[$€£₽₴¥]|руб\.?|грн\.?|р\.?|円)", value, flags=re.I):
+        return True
+    return False
+
+
+def _has_enough_product_title_signal(title: str) -> bool:
+    value = compact(title, limit=120).lower()
+    tokens = re.findall(r"[\w]+", value, flags=re.UNICODE)
+    if len(tokens) >= 4:
+        return True
+    return bool(re.search(r"\b[a-zа-яё]{2,}\s*\d{2,}\b|\b\d{2,}\s*[a-zа-яё]{2,}\b", value, flags=re.I))
 
 
 def _dedupe(products: list[ShoppingProduct]) -> list[ShoppingProduct]:

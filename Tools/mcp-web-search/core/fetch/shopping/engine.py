@@ -25,6 +25,11 @@ EFFORT_HARD_TIMEOUT_MS = {
     "medium": 5000,
     "high": 9000,
 }
+REGIONAL_EFFORT_HARD_TIMEOUT_MS = {
+    "low": 4000,
+    "medium": 7500,
+    "high": 10000,
+}
 EFFORT_BUFFER_GRACE_MS = {
     "low": 0,
     "medium": 350,
@@ -89,6 +94,7 @@ class ShoppingSearchEngine:
         *,
         effort: str = "medium",
         limit: int = 12,
+        language: str = "en",
         hard_timeout_ms: int | None = None,
     ) -> ShoppingSearchResult:
         started = time.perf_counter()
@@ -97,12 +103,12 @@ class ShoppingSearchEngine:
         primary_limit = max(1, round(limit * primary_ratio))
         secondary_limit = max(0, limit - primary_limit)
 
-        timeout_ms = hard_timeout_ms if hard_timeout_ms is not None else EFFORT_HARD_TIMEOUT_MS[effort]
+        timeout_ms = hard_timeout_ms if hard_timeout_ms is not None else self._hard_timeout_for_effort(effort, language)
         grace_ms = EFFORT_BUFFER_GRACE_MS[effort]
         buffer = _SearchBuffer()
         tasks = {
-            asyncio.create_task(self._timed_lane(query, "primary", limit)): "primary",
-            asyncio.create_task(self._timed_secondary_lane(query, limit)): "secondary",
+            asyncio.create_task(self._timed_lane(query, "primary", limit, language=language)): "primary",
+            asyncio.create_task(self._timed_secondary_lane(query, limit, language=language)): "secondary",
         }
         partial = False
         partial_reason = ""
@@ -126,6 +132,8 @@ class ShoppingSearchEngine:
                         partial_reason = f"{lane}_error:{type(exc).__name__}"
                     buffer.update(lane, products, attempts, elapsed_ms)
                 if pending and self._buffer_can_fill_limit(buffer, primary_limit, secondary_limit, limit):
+                    if self._should_wait_for_regional_primary(language, pending, tasks, buffer):
+                        continue
                     grace_timeout = min(grace_ms / 1000, max(0.0, deadline - time.perf_counter()))
                     if grace_timeout > 0:
                         grace_done, pending = await asyncio.wait(
@@ -201,23 +209,33 @@ class ShoppingSearchEngine:
             partial_reason=partial_reason,
         )
 
+    def _hard_timeout_for_effort(self, effort: str, language: str) -> int:
+        lang = (language or "en").split("-", 1)[0].lower()
+        if lang != "en":
+            return REGIONAL_EFFORT_HARD_TIMEOUT_MS.get(effort, REGIONAL_EFFORT_HARD_TIMEOUT_MS["medium"])
+        return EFFORT_HARD_TIMEOUT_MS.get(effort, EFFORT_HARD_TIMEOUT_MS["medium"])
+
     async def _timed_lane(
         self,
         query: str,
         lane: str,
         limit: int,
+        *,
+        language: str = "en",
     ) -> tuple[list[ShoppingProduct], list[ShoppingProviderAttempt], int]:
         started = time.perf_counter()
-        products, attempts = await self._lane(query, lane, limit)
+        products, attempts = await self._lane(query, lane, limit, language=language)
         return products, attempts, int((time.perf_counter() - started) * 1000)
 
     async def _timed_secondary_lane(
         self,
         query: str,
         limit: int,
+        *,
+        language: str = "en",
     ) -> tuple[list[ShoppingProduct], list[ShoppingProviderAttempt], int]:
         started = time.perf_counter()
-        products, attempts = await self._secondary_lane(query, limit)
+        products, attempts = await self._secondary_lane(query, limit, language=language)
         return products, attempts, int((time.perf_counter() - started) * 1000)
 
     def _buffer_can_fill_limit(
@@ -234,12 +252,32 @@ class ShoppingSearchEngine:
         merged = self._merge_products(primary_products, secondary_products, primary_limit, secondary_fetch_limit, total_limit)
         return len(merged) >= total_limit
 
-    async def _lane(self, query: str, lane: str, limit: int) -> tuple[list[ShoppingProduct], list[ShoppingProviderAttempt]]:
+    def _should_wait_for_regional_primary(
+        self,
+        language: str,
+        pending: set[asyncio.Task],
+        tasks: dict[asyncio.Task, str],
+        buffer: "_SearchBuffer",
+    ) -> bool:
+        if (language or "en").split("-", 1)[0].lower() == "en":
+            return False
+        if buffer.products.get("primary"):
+            return False
+        return any(tasks.get(task) == "primary" for task in pending)
+
+    async def _lane(
+        self,
+        query: str,
+        lane: str,
+        limit: int,
+        *,
+        language: str = "en",
+    ) -> tuple[list[ShoppingProduct], list[ShoppingProviderAttempt]]:
         if limit <= 0:
             return [], []
         attempts: list[ShoppingProviderAttempt] = []
         products: list[ShoppingProduct] = []
-        providers = self._ranked_available(lane)
+        providers = self._ranked_available(lane, language=language)
         for provider in providers:
             provider_products, provider_attempts = await self._provider(query, provider)
             attempts.extend(provider_attempts)
@@ -249,10 +287,16 @@ class ShoppingSearchEngine:
                     break
         return products[:limit], attempts
 
-    async def _secondary_lane(self, query: str, limit: int) -> tuple[list[ShoppingProduct], list[ShoppingProviderAttempt]]:
+    async def _secondary_lane(
+        self,
+        query: str,
+        limit: int,
+        *,
+        language: str = "en",
+    ) -> tuple[list[ShoppingProduct], list[ShoppingProviderAttempt]]:
         if limit <= 0:
             return [], []
-        providers = self._ranked_available("secondary")
+        providers = self._ranked_available("secondary", language=language)
         if not providers:
             return [], []
         main = providers[0]
@@ -283,11 +327,11 @@ class ShoppingSearchEngine:
                     break
         return self._dedupe_products(products)[:limit], attempts
 
-    def _ranked_available(self, lane: str) -> list[ShoppingProvider]:
-        providers = providers_for_lane(lane)
+    def _ranked_available(self, lane: str, *, language: str = "en") -> list[ShoppingProvider]:
+        providers = providers_for_lane(lane, language=language)
         available = [provider for provider in providers if self.state.available(provider)]
         unavailable = [provider for provider in providers if provider not in available]
-        return sorted(available, key=lambda p: p.weight, reverse=True) + sorted(unavailable, key=lambda p: p.weight, reverse=True)
+        return available + unavailable
 
     async def _provider(self, query: str, provider: ShoppingProvider) -> tuple[list[ShoppingProduct], list[ShoppingProviderAttempt]]:
         url = provider.url_builder(query)
@@ -437,9 +481,15 @@ class ShoppingSearchEngine:
             product.favicon_url = self.assets.favicon_proxy_url(domain)
 
 
-async def search_shopping(query: str, *, effort: str = "medium", limit: int = 12) -> ShoppingSearchResult:
+async def search_shopping(
+    query: str,
+    *,
+    effort: str = "medium",
+    limit: int = 12,
+    language: str = "en",
+) -> ShoppingSearchResult:
     engine = ShoppingSearchEngine()
-    return await engine.search(query, effort=effort, limit=limit)
+    return await engine.search(query, effort=effort, limit=limit, language=language)
 
 
 def result_to_jsonable(result: ShoppingSearchResult) -> dict[str, Any]:

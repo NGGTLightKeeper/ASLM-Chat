@@ -53,6 +53,7 @@ async def async_shopping_search_worker(
     *,
     effort: str = "medium",
     limit: int = 8,
+    language: str = "en",
     worker_timeout: float | None = None,
 ) -> dict[str, Any]:
     timeout = float(worker_timeout if worker_timeout is not None else 8.0)
@@ -60,6 +61,7 @@ async def async_shopping_search_worker(
         "query": query,
         "effort": effort,
         "limit": max(1, int(limit)),
+        "language": language,
     }
 
     partial_buffer_path: str | None = None
