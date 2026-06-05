@@ -4,12 +4,10 @@ name: Tests - Django
 
 on:
   push:
+    branches-ignore:
+      - 'jules-docs-dev-*'
+      - 'jules-patchnotes-dev-*'
   pull_request:
-  issues:
-    types:
-      - opened
-      - edited
-      - reopened
 
 concurrency:
   group: tests-django-${{ github.ref }}

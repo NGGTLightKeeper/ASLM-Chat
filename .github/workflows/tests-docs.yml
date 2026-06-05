@@ -5,11 +5,6 @@ name: Tests - Docs
 on:
   push:
   pull_request:
-  issues:
-    types:
-      - opened
-      - edited
-      - reopened
 
 concurrency:
   group: tests-docs-${{ github.ref }}
