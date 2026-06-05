@@ -66,7 +66,7 @@ jobs:
               .map(b => b.name)
               .filter(n => n.startsWith('jules-patchnotes-dev-'));
 
-            const toMerge = [];
+            const toMerge = []; // { name: string, date: number }
 
             for (const docsBranch of docsBranches) {
               if (alreadyTracked.has(docsBranch)) {
@@ -83,8 +83,9 @@ jobs:
                 continue;
               }
 
-              const secondToLastSHA = docsCommits.data[1].sha;
-              const lastDocsSHA     = docsCommits.data[0].sha;
+              const secondToLastSHA  = docsCommits.data[1].sha;
+              const lastDocsSHA      = docsCommits.data[0].sha;
+              const secondToLastDate = new Date(docsCommits.data[1].commit.committer.date).getTime();
 
               // Check if secondToLastSHA is an ancestor of PR head
               let cmp;
@@ -136,7 +137,7 @@ jobs:
                   } catch (e) { core.warning(`Could not delete ${matchedPN}: ${e.message}`); }
                 } else {
                   core.info(`Queue patchnotes branch for merge: ${matchedPN}`);
-                  toMerge.push(matchedPN);
+                  toMerge.push({ name: matchedPN, date: secondToLastDate });
                 }
               } else {
                 // No patchnotes branch — work with docs branch directly
@@ -151,13 +152,17 @@ jobs:
                   } catch (e) { core.warning(`Could not delete ${docsBranch}: ${e.message}`); }
                 } else {
                   core.info(`Queue docs branch for merge: ${docsBranch}`);
-                  toMerge.push(docsBranch);
+                  toMerge.push({ name: docsBranch, date: secondToLastDate });
                 }
               }
             }
 
-            core.info(`Branches to merge: ${toMerge.join(', ') || '(none)'}`);
-            core.setOutput('new_branches', JSON.stringify(toMerge));
+            // Sort oldest → newest by the commit Jules branched from
+            toMerge.sort((a, b) => a.date - b.date);
+            const toMergeNames = toMerge.map(e => e.name);
+
+            core.info(`Branches to merge (sorted): ${toMergeNames.join(', ') || '(none)'}`);
+            core.setOutput('new_branches', JSON.stringify(toMergeNames));
 
       - name: Checkout PR head branch
         if: steps.find-branches.outputs.new_branches != '[]'
@@ -177,7 +182,7 @@ jobs:
 
           for branch in $(echo "$BRANCHES_JSON" | jq -r '.[]'); do
             git fetch origin "$branch"
-            git merge --squash "origin/$branch" --no-commit || true
+            git merge --squash -X theirs "origin/$branch" || true
             if ! git diff --cached --quiet; then
               git commit -m "chore: integrate Jules docs from ${branch} [skip ci]"
               echo "Committed squash of ${branch}"
