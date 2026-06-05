@@ -52,7 +52,7 @@ Part of `Tools/mcp-web-search/core/fetch`. This script acts as an isolated worke
 
 #### `async def _run(payload: dict) -> dict`
 
-**Purpose:** Core shopping search dispatcher. Pulls query, effort, and limit parameters from the payload and queries the underlying `search_shopping` engine.
+**Purpose:** Core shopping search dispatcher. Pulls query, effort, limit, and language parameters from the payload and queries the underlying `search_shopping` engine.
 
 **Steps:**
 
