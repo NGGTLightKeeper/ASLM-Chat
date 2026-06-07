@@ -1481,9 +1481,45 @@ def _get_local_gpu_devices() -> list[dict[str, Any]]:
     return devices
 
 
-# Resolve active engine
+# Raised when an explicit request targets a disabled engine.
+class RequestEngineResolutionError(ValueError):
+    """The requested engine is not enabled in settings."""
+
+
+# Resolve the default active engine without request context.
 def _get_active_engine(requested_engine: str | None = None) -> str:
     return settings.normalize_engine_name(requested_engine or settings.get_llm_engine())
+
+
+# Resolve one engine from an HTTP request body and/or query string.
+def _resolve_request_engine(request, data: dict[str, Any] | None = None) -> str:
+    explicit_engine = None
+    if isinstance(data, dict) and data.get("engine"):
+        explicit_engine = data.get("engine")
+    elif request.GET.get("engine"):
+        explicit_engine = request.GET.get("engine")
+
+    if explicit_engine:
+        canonical_engine = settings.normalize_engine_name(str(explicit_engine))
+        if canonical_engine not in settings.ENGINE_IDS:
+            raise RequestEngineResolutionError(
+                f"Unsupported engine '{canonical_engine}'."
+            )
+        if not settings.is_engine_enabled(canonical_engine):
+            raise RequestEngineResolutionError(
+                f"Engine '{canonical_engine}' is not enabled."
+            )
+        return canonical_engine
+
+    return settings.get_llm_engine()
+
+
+# Resolve one request engine or return a JSON error response.
+def _resolve_request_engine_or_response(request, data: dict[str, Any] | None = None):
+    try:
+        return _resolve_request_engine(request, data), None
+    except RequestEngineResolutionError as exc:
+        return None, JsonResponse({"error": str(exc)}, status=400)
 
 
 # Extract model name
@@ -3787,7 +3823,9 @@ def chat_api(request):
         chat_id = data.get("chat_id", "")
         attachments = _normalize_request_attachments(data)
         uploaded_file_ids = _normalize_uploaded_file_ids(data)
-        engine = _get_active_engine(data.get("engine"))
+        engine, engine_error = _resolve_request_engine_or_response(request, data)
+        if engine_error is not None:
+            return engine_error
         raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
         if isinstance(raw_tool_ids, str):
             raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
@@ -4209,7 +4247,9 @@ def abort_generation_api(request):
 
     try:
         data = _read_json_request_body(request)
-        engine = _get_active_engine(data.get("engine"))
+        engine, engine_error = _resolve_request_engine_or_response(request, data)
+        if engine_error is not None:
+            return engine_error
         generation_id = str(data.get("generation_id") or "").strip()
         if generation_id:
             with _generation_state_lock:
@@ -4319,7 +4359,9 @@ def regenerate_chat_api(request, chat_id):
 
         model_name = data.get("model", "")
         options = data.get("options", {}) or {}
-        engine = _get_active_engine(data.get("engine"))
+        engine, engine_error = _resolve_request_engine_or_response(request, data)
+        if engine_error is not None:
+            return engine_error
         raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
         if isinstance(raw_tool_ids, str):
             raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
@@ -4545,7 +4587,9 @@ def get_model_info_api(request):
     if not model_name:
         return JsonResponse({"error": "Model parameter is required"}, status=400)
 
-    engine = _get_active_engine(request.GET.get("engine"))
+    engine, engine_error = _resolve_request_engine_or_response(request)
+    if engine_error is not None:
+        return engine_error
     started_at = time.perf_counter()
 
     try:
@@ -4579,7 +4623,9 @@ def get_inference_info_api(request):
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
-    engine = _get_active_engine(request.GET.get("engine"))
+    engine, engine_error = _resolve_request_engine_or_response(request)
+    if engine_error is not None:
+        return engine_error
     model_name, model_source = _resolve_inference_model(engine, request.GET.get("model"))
     if not model_name:
         return JsonResponse(
@@ -4660,7 +4706,9 @@ def get_models_api(request):
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
-    engine = _get_active_engine(request.GET.get("engine"))
+    engine, engine_error = _resolve_request_engine_or_response(request)
+    if engine_error is not None:
+        return engine_error
     started_at = time.perf_counter()
     models = _load_models_for_engine(engine)
     _print_runtime_event(
@@ -4849,7 +4897,9 @@ def get_tools_api(request):
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
-    engine = _get_active_engine(request.GET.get("engine"))
+    engine, engine_error = _resolve_request_engine_or_response(request)
+    if engine_error is not None:
+        return engine_error
     model_name = str(request.GET.get("model", "") or "").strip() or None
     servers = _list_tool_servers_cached(engine, model_name)
     return JsonResponse({"tool_servers": servers, "servers": servers, "tools": servers})
@@ -4924,7 +4974,9 @@ def get_context_usage_api(request):
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
     try:
-        engine = _get_active_engine(request.GET.get("engine"))
+        engine, engine_error = _resolve_request_engine_or_response(request)
+        if engine_error is not None:
+            return engine_error
         model_name = str(request.GET.get("model") or _get_remembered_active_model(engine) or "").strip()
         chat_id = str(request.GET.get("chat_id") or "").strip()
         draft_text = str(request.GET.get("draft") or "")
@@ -4987,7 +5039,9 @@ def context_compress_api(request):
 
     try:
         data = _read_json_request_body(request)
-        engine = _get_active_engine(data.get("engine"))
+        engine, engine_error = _resolve_request_engine_or_response(request, data)
+        if engine_error is not None:
+            return engine_error
         model_name = str(data.get("model") or _get_remembered_active_model(engine) or "").strip()
         chat_id = str(data.get("chat_id") or "").strip()
         if not chat_id:

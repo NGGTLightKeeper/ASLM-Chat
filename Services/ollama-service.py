@@ -103,7 +103,7 @@ def _get_desired_state(requested_engine: str | None = None) -> OllamaDesiredStat
     active_engine = settings.get_llm_engine()
     resolved_engine = settings.normalize_engine_name(requested_engine or active_engine)
     is_enabled = bool(settings.get("ollama-service", False))
-    should_run = settings.is_ollama_engine(resolved_engine) and is_enabled
+    should_run = is_enabled
     return OllamaDesiredState(
         requested_engine=resolved_engine,
         active_engine=active_engine,

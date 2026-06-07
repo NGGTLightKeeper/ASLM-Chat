@@ -157,24 +157,45 @@ def cleanup_runtime(engine: str | None) -> None:
         cleanup()
 
 
+# Prepare every enabled engine runtime.
+def prepare_enabled_runtimes() -> None:
+    """Start or warm up each engine that is enabled in settings."""
+
+    for engine_id in settings.get_enabled_engine_ids():
+        try:
+            prepare_runtime(engine_id)
+        except Exception as exc:
+            logger.warning("Failed to prepare enabled engine %s: %s", engine_id, exc)
+
+
+# Release runtimes for engines that are no longer enabled.
+def cleanup_disabled_runtimes() -> None:
+    """Stop managed runtimes for engines that were disabled in settings."""
+
+    enabled_engine_ids = set(settings.get_enabled_engine_ids())
+    for engine_id in settings.ENGINE_IDS:
+        if engine_id in enabled_engine_ids:
+            continue
+        try:
+            cleanup_runtime(engine_id)
+        except Exception as exc:
+            logger.warning("Failed to clean up disabled engine %s: %s", engine_id, exc)
+
+
+# Align managed runtimes with the current enabled-engine flags.
+def sync_enabled_engine_runtimes() -> None:
+    """Prepare all enabled engines and release resources for disabled ones."""
+
+    prepare_enabled_runtimes()
+    cleanup_disabled_runtimes()
+
+
 # Switch runtime ownership between engines.
 def handle_engine_transition(previous_engine: str | None, next_engine: str | None) -> None:
-    """Switch runtime resources when the active engine changes."""
+    """Keep enabled engine runtimes in sync when settings change."""
 
-    previous = settings.normalize_engine_name(previous_engine)
-    current = settings.normalize_engine_name(next_engine)
-
-    if previous == current:
-        return
-
-    # Stop the previous runtime before starting the next one.
+    del previous_engine, next_engine
     try:
-        cleanup_runtime(previous)
+        sync_enabled_engine_runtimes()
     except Exception as exc:
-        logger.warning("Failed to clean up engine %s: %s", previous, exc)
-
-    # Keep engine switching non-fatal for the caller.
-    try:
-        prepare_runtime(current)
-    except Exception as exc:
-        logger.warning("Failed to prepare engine %s: %s", current, exc)
+        logger.warning("Failed to sync enabled engine runtimes: %s", exc)

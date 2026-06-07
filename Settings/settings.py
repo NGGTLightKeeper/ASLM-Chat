@@ -448,6 +448,14 @@ def set(key: str, value: Any) -> None:
     # Mirror the updated setting into the ASLM module manifest when available.
     _sync_module_manifest_setting(key, value)
 
+    if key in ENGINE_IDS:
+        try:
+            from API import llm_api
+
+            llm_api.sync_enabled_engine_runtimes()
+        except Exception as exc:
+            logger.warning("Failed to sync engine runtimes after setting %s: %s", key, exc)
+
 
 
 # Read the active LLM engine name.

@@ -194,6 +194,7 @@ def cmd_runserver(port: int, log: bool) -> None:
         handler_class=QuietWSGIRequestHandler,
     ) as httpd:
         app.load_in_background()
+        maybe_start_local_engine_service(log=log)
         if log:
             print(f"[ASLM-Chat] UI server listening at http://127.0.0.1:{port}/", flush=True)
         httpd.serve_forever()
@@ -326,21 +327,19 @@ def cmd_apply_aslm_locale(locale_file: str) -> None:
     print("[ASLM-Chat] Host locale snapshot updated.")
 
 
-# Start local engine service
+# Start enabled engine runtimes
 def maybe_start_local_engine_service(log: bool) -> None:
-    """Start the active local engine service when the current adapter needs it."""
-
-    from Settings import settings
-
-    if not settings.is_ollama_engine(settings.get_llm_engine()):
-        return
+    """Prepare every enabled engine runtime before the UI server handles requests."""
 
     try:
-        ollama_service = importlib.import_module("Services.ollama-service")
-        ollama_service.start_ollama()
+        llm_api = importlib.import_module("API.llm_api")
+        llm_api.sync_enabled_engine_runtimes()
     except ImportError as exc:
         if log:
-            print(f"[ASLM-Chat] Warning: Services.ollama-service could not be loaded. {exc}")
+            print(f"[ASLM-Chat] Warning: API.llm_api could not be loaded. {exc}")
+    except Exception as exc:
+        if log:
+            print(f"[ASLM-Chat] Warning: Failed to sync enabled engine runtimes. {exc}")
 
 
 def cmd_ollama_runtime(log: bool) -> None:
