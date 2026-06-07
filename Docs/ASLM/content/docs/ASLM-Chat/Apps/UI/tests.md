@@ -968,6 +968,32 @@ Part of `Apps\UI`. See **Related** for package index and callers.
 
 1. Read or write Django ORM records.
 
+#### `def LlmApiRuntimeSyncTests.test_sync_prepares_enabled_and_cleans_up_disabled(_mock_enabled, mock_prepare, mock_cleanup)`
+
+#### `def LlmApiRuntimeSyncTests.test_handle_engine_transition_calls_sync(mock_sync)`
+
+#### `def OllamaDesiredStateTests.test_desired_state_runs_when_enabled_even_if_active_engine_differs(_mock_get, _mock_active)`
+
+#### `def RequestEngineResolutionTests._build_request(query)`
+
+#### `def RequestEngineResolutionTests.test_resolve_defaults_to_active_engine(_mock_active)`
+
+#### `def RequestEngineResolutionTests.test_resolve_query_engine_when_enabled(_mock_enabled)`
+
+#### `def RequestEngineResolutionTests.test_resolve_rejects_disabled_engine(_mock_enabled)`
+
+#### `def RequestEngineResolutionTests.test_body_engine_takes_priority_over_query(_mock_enabled)`
+
+#### `def DisabledEngineApiTests.isolated_settings_payload(payload)`
+
+#### `def DisabledEngineApiTests.test_models_api_rejects_disabled_engine()`
+
+#### `def DisabledEngineApiTests.test_chat_api_accepts_engine_query_param(mock_generate, _mock_prepare_runtime)`
+
+#### `def RuntimeSettingsApiTests.setUp()`
+
+#### `def RuntimeSettingsApiTests.tearDown()`
+
 #### `def RuntimeSettingsApiTests.isolated_settings_payload(payload)`
 
 **Purpose:** Isolated settings payload.
@@ -1011,6 +1037,10 @@ Part of `Apps\UI`. See **Related** for package index and callers.
 #### `def RuntimeSettingsApiTests.test_runtime_settings_payload_does_not_expose_api_key(_mock_runtime_settings, _mock_engines)`
 
 **Purpose:** Verify runtime settings payload does not expose api key.
+
+#### `def ToolApiTests.setUp()`
+
+#### `def ToolApiTests.tearDown()`
 
 #### `def ToolApiTests.test_tools_api_returns_discovered_servers()`
 
@@ -1104,6 +1134,10 @@ Part of `Apps\UI`. See **Related** for package index and callers.
 
 1. Read or write Django ORM records.
 
+#### `def OllamaPresetApiTests.setUp()`
+
+#### `def OllamaPresetApiTests.tearDown()`
+
 #### `def OllamaPresetApiTests.test_model_info_includes_active_ollama_preset_defaults_and_servers(mock_get_model_settings)`
 
 **Purpose:** Verify model info includes active ollama preset defaults and servers.
@@ -1148,6 +1182,10 @@ Part of `Apps\UI`. See **Related** for package index and callers.
 **Steps:**
 
 1. Read or write Django ORM records.
+
+#### `def LmsPresetApiTests.setUp()`
+
+#### `def LmsPresetApiTests.tearDown()`
 
 #### `def LmsPresetApiTests.test_model_info_includes_active_lms_preset_defaults(mock_preset_settings, mock_model_settings)`
 
