@@ -32,6 +32,16 @@ urlpatterns = [
     path("api/inference_info/", views.get_inference_info_api, name="inference_info_api"),
     path("api/context_usage/", views.get_context_usage_api, name="context_usage_api"),
     path("api/context_compress/", views.context_compress_api, name="context_compress_api"),
+    path(
+        "api/context_compression/build_event/",
+        views.context_compression_build_event_api,
+        name="context_compression_build_event_api",
+    ),
+    path(
+        "api/context_compression/decide/",
+        views.context_compression_decide_api,
+        name="context_compression_decide_api",
+    ),
 
     # Tool discovery APIs.
     path("api/tools/", views.get_tools_api, name="tools_api"),

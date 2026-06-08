@@ -29,6 +29,7 @@ from Settings import settings as runtime_settings
 logger = logging.getLogger(__name__)
 
 TOOLS_DIR = Path(__file__).resolve().parent.parent / "Tools"
+MODULE_ROOT = Path(__file__).resolve().parent.parent
 SERVER_FILENAME = "mcp-server.py"
 WORKER_FILE = Path(__file__).resolve().parent.parent / "Services" / "tool_worker.py"
 SERVER_DISPATCHER_NAMES = ("call_tool", "run_tool", "execute_tool", "execute")
@@ -41,6 +42,7 @@ WORKER_MAX_TIMEOUT_SECONDS = 7200.0
 
 _SERVER_CACHE_SIGNATURE: tuple[tuple[str, int], ...] | None = None
 _SERVER_CACHE: dict[str, dict[str, Any]] = {}
+_SCOPED_REGISTRY_CACHE: dict[str, tuple[tuple[tuple[str, int], ...], dict[str, dict[str, Any]]]] = {}
 _WORKER_SESSION_LOCK = threading.Lock()
 _WORKER_SESSIONS: dict[str, "ExternalWorkerSession"] = {}
 _ASYNC_CALLABLE_RUNNER: "AsyncCallableRunner | None" = None
@@ -769,7 +771,27 @@ def reset_cache() -> None:
 
     _SERVER_CACHE_SIGNATURE = None
     _SERVER_CACHE = {}
+    _SCOPED_REGISTRY_CACHE.clear()
     user_mcp_client.shutdown_all()
+
+
+# Normalize one optional module directory path.
+def _normalize_module_dir(module_dir: str | Path | None) -> Path:
+    if module_dir is None:
+        return MODULE_ROOT
+    return Path(module_dir).resolve()
+
+
+# Build a stable cache key for one tools/module directory pair.
+def _registry_scope_key(tools_dir: Path, module_dir: Path) -> str:
+    return f"{tools_dir.resolve()}|{module_dir.resolve()}"
+
+
+# Resolve the tools directory for one registry scope.
+def _resolve_tools_dir(tools_dir: str | Path | None = None) -> Path:
+    if tools_dir is None:
+        return TOOLS_DIR
+    return Path(tools_dir).resolve()
 
 
 # Yield one server's source files.
@@ -787,14 +809,14 @@ def _iter_server_source_files(server_dir: Path):
 
 
 # Build the server cache signature.
-def _server_signature() -> tuple[tuple[str, int], ...]:
+def _server_signature_for(tools_dir: Path, module_dir: Path) -> tuple[tuple[str, int], ...]:
     """Build a stable signature for every local MCP server source file."""
 
-    if not TOOLS_DIR.exists():
+    if not tools_dir.exists():
         return ()
 
     entries: list[tuple[str, int]] = []
-    for child in sorted(TOOLS_DIR.iterdir(), key=lambda item: item.name.casefold()):
+    for child in sorted(tools_dir.iterdir(), key=lambda item: item.name.casefold()):
         server_file = child / SERVER_FILENAME
         if not child.is_dir() or not server_file.is_file():
             continue
@@ -807,24 +829,34 @@ def _server_signature() -> tuple[tuple[str, int], ...]:
 
             entries.append((str(source_file), stat.st_mtime_ns))
 
-    mcp_sig = mcp_json.mcp_json_signature()
+    mcp_sig = mcp_json.mcp_json_signature_for(module_dir)
     if mcp_sig is not None:
         entries.append(mcp_sig)
 
     return tuple(entries)
 
 
-# Yield server entrypoint files.
-def _iter_server_files():
-    """Yield top-level MCP server entrypoints from the Tools directory."""
+# Build the server cache signature.
+def _server_signature() -> tuple[tuple[str, int], ...]:
+    return _server_signature_for(TOOLS_DIR, MODULE_ROOT)
 
-    if not TOOLS_DIR.exists():
+
+# Yield server entrypoint files.
+def _iter_server_files_for(tools_dir: Path):
+    """Yield top-level MCP server entrypoints from one Tools directory."""
+
+    if not tools_dir.exists():
         return
 
-    for child in sorted(TOOLS_DIR.iterdir(), key=lambda item: item.name.casefold()):
+    for child in sorted(tools_dir.iterdir(), key=lambda item: item.name.casefold()):
         server_file = child / SERVER_FILENAME
         if child.is_dir() and server_file.is_file():
             yield server_file
+
+
+# Yield server entrypoint files.
+def _iter_server_files():
+    yield from _iter_server_files_for(TOOLS_DIR)
 
 
 # Load and normalize server definitions.
@@ -1097,18 +1129,29 @@ def _normalize_server_tools(raw_tools: Any, server_id: str) -> list[dict[str, An
 
 
 # Append servers from MCP/mcp.json to the registry payload.
-def _merge_user_mcp_servers(discovered: dict[str, dict[str, Any]]) -> None:
+def _merge_user_mcp_servers(
+    discovered: dict[str, dict[str, Any]],
+    *,
+    module_dir: Path | None = None,
+) -> None:
     """Append servers from ``MCP/mcp.json`` to the registry payload."""
 
     try:
-        mcp_json.ensure_default_mcp_json()
+        resolved_module_dir = _normalize_module_dir(module_dir)
+        if resolved_module_dir == MODULE_ROOT:
+            mcp_json.ensure_default_mcp_json()
         reserved = set(discovered.keys())
-        for entry in mcp_json.iter_user_mcp_entries(reserved):
+        entries = (
+            mcp_json.iter_user_mcp_entries(reserved)
+            if resolved_module_dir == MODULE_ROOT
+            else mcp_json.iter_user_mcp_entries_for(resolved_module_dir, reserved)
+        )
+        for entry in entries:
             tools, err = user_mcp_client.fetch_tool_definitions(entry)
             description = f"User MCP server ({entry.transport})"
             if err:
                 description = f"{description}. {err}"
-            placeholder = mcp_json.MCP_DIR / f".user_mcp_{entry.server_id}"
+            placeholder = resolved_module_dir / "MCP" / f".user_mcp_{entry.server_id}"
             discovered[entry.server_id] = {
                 "id": entry.server_id,
                 "name": entry.display_name,
@@ -1122,6 +1165,8 @@ def _merge_user_mcp_servers(discovered: dict[str, dict[str, Any]]) -> None:
                 "tool_handlers": {},
                 "server_file": placeholder,
                 "external": False,
+                "source_tools_dir": str(_resolve_tools_dir(resolved_module_dir / "Tools")),
+                "source_module_dir": str(resolved_module_dir),
             }
     except Exception as exc:
         logger.warning("Failed to merge user MCP servers: %s", exc)
@@ -1174,25 +1219,38 @@ def _extract_server_definition(module: ModuleType, folder_name: str, server_file
         "server_callable": server_callable,
         "tool_handlers": tool_handlers,
         "server_file": server_file,
+        "external": False,
+        "source_tools_dir": str(server_file.parent.parent),
+        "source_module_dir": str(server_file.parent.parent.parent),
     }
 
 
 # Refresh the server registry.
-def _ensure_registry_loaded() -> dict[str, dict[str, Any]]:
-    """Discover and cache valid local MCP-style server modules."""
+def _ensure_registry_loaded_for(
+    tools_dir: Path | None = None,
+    module_dir: Path | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Discover and cache valid local MCP-style server modules for one scope."""
 
-    global _SERVER_CACHE_SIGNATURE, _SERVER_CACHE
+    resolved_tools_dir = _resolve_tools_dir(tools_dir)
+    resolved_module_dir = _normalize_module_dir(module_dir)
+    scope_key = _registry_scope_key(resolved_tools_dir, resolved_module_dir)
+    signature = _server_signature_for(resolved_tools_dir, resolved_module_dir)
 
-    signature = _server_signature()
-    # The cache is keyed by file mtimes so local edits become visible without
-    # forcing a full rediscovery on every call.
-    if signature == _SERVER_CACHE_SIGNATURE:
-        return _SERVER_CACHE
+    cached = _SCOPED_REGISTRY_CACHE.get(scope_key)
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+
+    if resolved_tools_dir == TOOLS_DIR and resolved_module_dir == MODULE_ROOT:
+        global _SERVER_CACHE_SIGNATURE, _SERVER_CACHE
+        if signature == _SERVER_CACHE_SIGNATURE:
+            _SCOPED_REGISTRY_CACHE[scope_key] = (signature, _SERVER_CACHE)
+            return _SERVER_CACHE
 
     user_mcp_client.shutdown_all()
 
     discovered: dict[str, dict[str, Any]] = {}
-    for server_file in _iter_server_files():
+    for server_file in _iter_server_files_for(resolved_tools_dir):
         folder_name = server_file.parent.name
 
         try:
@@ -1201,15 +1259,26 @@ def _ensure_registry_loaded() -> dict[str, dict[str, Any]]:
             else:
                 module = _load_module(server_file)
                 server_definition = _extract_server_definition(module, folder_name, server_file)
+            server_definition["source_tools_dir"] = str(resolved_tools_dir)
+            server_definition["source_module_dir"] = str(resolved_module_dir)
             discovered[server_definition["id"]] = server_definition
         except Exception as exc:
             logger.warning("Skipping invalid MCP server module %s: %s", server_file, exc)
 
-    _merge_user_mcp_servers(discovered)
+    _merge_user_mcp_servers(discovered, module_dir=resolved_module_dir)
 
-    _SERVER_CACHE_SIGNATURE = signature
-    _SERVER_CACHE = discovered
-    return _SERVER_CACHE
+    _SCOPED_REGISTRY_CACHE[scope_key] = (signature, discovered)
+    if resolved_tools_dir == TOOLS_DIR and resolved_module_dir == MODULE_ROOT:
+        _SERVER_CACHE_SIGNATURE = signature
+        _SERVER_CACHE = discovered
+    return discovered
+
+
+# Refresh the server registry.
+def _ensure_registry_loaded() -> dict[str, dict[str, Any]]:
+    """Discover and cache valid local MCP-style server modules."""
+
+    return _ensure_registry_loaded_for(TOOLS_DIR, MODULE_ROOT)
 
 # Check whether one server is supported.
 def _server_is_supported(
@@ -1251,10 +1320,16 @@ def _server_is_supported(
         return False
 
 # List matching servers.
-def list_servers(engine: str | None = None, model_name: str | None = None) -> list[dict[str, Any]]:
+def list_servers(
+    engine: str | None = None,
+    model_name: str | None = None,
+    *,
+    tools_dir: str | Path | None = None,
+    module_dir: str | Path | None = None,
+) -> list[dict[str, Any]]:
     """Return discovered servers that support the current engine and model."""
 
-    registry = _ensure_registry_loaded()
+    registry = _ensure_registry_loaded_for(tools_dir, module_dir)
     return [
         _serialize_server(server_definition)
         for server_definition in registry.values()
@@ -1266,6 +1341,10 @@ def get_server(
     server_id: str | None,
     engine: str | None = None,
     model_name: str | None = None,
+    *,
+    tools_dir: str | Path | None = None,
+    module_dir: str | Path | None = None,
+    tool_source_map: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Return one discovered server when it is available in the current context."""
 
@@ -1273,10 +1352,18 @@ def get_server(
     if not normalized_id:
         return None
 
-    registry = _ensure_registry_loaded()
+    source = (tool_source_map or {}).get(normalized_id) or {}
+    scoped_tools_dir = source.get("tools_dir") or tools_dir
+    scoped_module_dir = source.get("module_dir") or module_dir
+
+    registry = _ensure_registry_loaded_for(scoped_tools_dir, scoped_module_dir)
     server_definition = registry.get(normalized_id)
     if not server_definition:
-        return None
+        if scoped_tools_dir is not None or scoped_module_dir is not None:
+            registry = _ensure_registry_loaded()
+            server_definition = registry.get(normalized_id)
+        if not server_definition:
+            return None
     if not _server_is_supported(server_definition, engine, model_name):
         return None
 
@@ -1315,6 +1402,8 @@ def build_ollama_tools(
     server_ids: str | list[str] | None,
     engine: str | None = None,
     model_name: str | None = None,
+    *,
+    tool_source_map: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Return Ollama-compatible tool payloads for one or more selected servers."""
 
@@ -1327,7 +1416,12 @@ def build_ollama_tools(
     tool_lookup: dict[str, dict[str, Any]] = {}
 
     for server_id in server_ids:
-        server_definition = get_server(server_id, engine=engine, model_name=model_name)
+        server_definition = get_server(
+            server_id,
+            engine=engine,
+            model_name=model_name,
+            tool_source_map=tool_source_map,
+        )
         if not server_definition:
             continue
 
@@ -1352,7 +1446,12 @@ def build_ollama_tools(
     if tools and _is_debug_logging_enabled():
         selected_servers = []
         for server_id in server_ids:
-            server_definition = get_server(server_id, engine=engine, model_name=model_name)
+            server_definition = get_server(
+                server_id,
+                engine=engine,
+                model_name=model_name,
+                tool_source_map=tool_source_map,
+            )
             if server_definition:
                 selected_servers.append(server_definition["id"])
 
@@ -1651,7 +1750,14 @@ def call_ollama_tool(
     call_context.setdefault("tool_alias", tool_definition["alias"])
     if not server_definition.get("user_mcp"):
         call_context.setdefault("server_file", str(server_definition["server_file"]))
-    call_context.setdefault("tools_dir", str(TOOLS_DIR))
+    call_context.setdefault(
+        "tools_dir",
+        str(server_definition.get("source_tools_dir") or TOOLS_DIR),
+    )
+    call_context.setdefault(
+        "module_dir",
+        str(server_definition.get("source_module_dir") or MODULE_ROOT),
+    )
     started_at = time.perf_counter()
 
     if _is_debug_logging_enabled():
