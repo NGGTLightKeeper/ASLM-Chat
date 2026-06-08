@@ -67,8 +67,8 @@ except Exception:
 
 
 try:
-    from ddgs import DDGS
-    from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
+    from core.ddgs import DDGS
+    from core.ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
     _DDGS_AVAILABLE = True
     _EXCEPTION_CLASSES = (RatelimitException, TimeoutException, DDGSException)
 except ImportError:
@@ -429,7 +429,7 @@ class DDGSClient:
         cache_ttl: Optional[int] = None,
     ) -> list[dict]:
         if not _DDGS_AVAILABLE:
-            logger.error("ddgs is not installed: pip install ddgs")
+            logger.error("vendored core.ddgs search provider is unavailable")
             return []
 
         query = self._sanitize_query(query)

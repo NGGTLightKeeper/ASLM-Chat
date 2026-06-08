@@ -3,7 +3,17 @@ import time
 from core.fetch import ddgs_client
 from core.fetch.engine_router import EngineRouter
 from core.fetch.engine_stats import BACKUP_ENGINES, PRIMARY_ENGINES, make_registry
+from core.ddgs.engines import ENGINES
 from core.models.search import SearchResult
+
+
+def test_ddgs_client_uses_vendored_search_core() -> None:
+    assert ddgs_client._DDGS_AVAILABLE is True
+    assert ddgs_client.DDGS.__module__ == "core.ddgs"
+
+
+def test_router_backends_exist_in_vendored_search_core() -> None:
+    assert set(PRIMARY_ENGINES + BACKUP_ENGINES) <= set(ENGINES["text"])
 
 
 def test_router_keeps_backup_engines_out_of_primary_pool() -> None:
@@ -90,4 +100,3 @@ def test_fallback_paths_never_use_ddgs_auto_or_aggregate_backends() -> None:
     assert "auto" not in ddgs_client.BACKEND_SITE_QUERY
     assert all("," not in backend for backend in ddgs_client.BACKEND_FALLBACK)
     assert all("," not in backend for backend in ddgs_client.BACKEND_SITE_QUERY)
-
