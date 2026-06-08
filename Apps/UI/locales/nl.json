@@ -1,8 +1,7 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - Geavanceerde systeemtaalmodellen",
-    "profileTitle": "Profiel - ASLM Chat"
+    "appDescription": "ASLM - Geavanceerde systeemtaalmodellen"
   },
   "sidebar": {
     "chats": "Gesprekken",
@@ -11,7 +10,6 @@
     "chatOptions": "Chatopties",
     "rename": "Hernoemen",
     "delete": "Verwijderen",
-    "account": "Profiel",
     "ago": "{time} geleden"
   },
   "chat": {
@@ -75,18 +73,6 @@
     "sampling": "Steekproef",
     "advanced": "Geavanceerd",
     "custom": "Aangepast"
-  },
-  "profile": {
-    "backToChat": "Terug naar chat",
-    "account": "Profiel",
-    "user": "Gebruiker",
-    "localAccount": "Lokaal account",
-    "general": "Algemeen",
-    "username": "Gebruikersnaam",
-    "email": "E-mail",
-    "memberSince": "Lid sinds",
-    "dangerZone": "Gevarenzone",
-    "signOut": "Uitloggen"
   },
   "engines": {
     "ollama-service": "Ollama",

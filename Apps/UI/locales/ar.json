@@ -1,8 +1,7 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - نماذج لغوية نظامية متقدمة",
-    "profileTitle": "الملف الشخصي - ASLM Chat"
+    "appDescription": "ASLM - نماذج لغوية نظامية متقدمة"
   },
   "sidebar": {
     "chats": "المحادثات",
@@ -11,7 +10,6 @@
     "chatOptions": "خيارات المحادثة",
     "rename": "إعادة التسمية",
     "delete": "حذف",
-    "account": "الحساب",
     "ago": "منذ {time}"
   },
   "chat": {
@@ -75,18 +73,6 @@
     "sampling": "أخذ العينات",
     "advanced": "متقدّم",
     "custom": "مخصّص"
-  },
-  "profile": {
-    "backToChat": "العودة إلى المحادثة",
-    "account": "الحساب",
-    "user": "المستخدم",
-    "localAccount": "حساب محلي",
-    "general": "عام",
-    "username": "اسم المستخدم",
-    "email": "البريد الإلكتروني",
-    "memberSince": "عضو منذ",
-    "dangerZone": "منطقة الخطر",
-    "signOut": "تسجيل الخروج"
   },
   "engines": {
     "ollama-service": "Ollama",

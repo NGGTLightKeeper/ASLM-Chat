@@ -1,8 +1,7 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - Mô hình ngôn ngữ hệ thống nâng cao",
-    "profileTitle": "Hồ sơ - ASLM Chat"
+    "appDescription": "ASLM - Mô hình ngôn ngữ hệ thống nâng cao"
   },
   "sidebar": {
     "chats": "Cuộc trò chuyện",
@@ -11,7 +10,6 @@
     "chatOptions": "Tùy chọn cuộc trò chuyện",
     "rename": "Đổi tên",
     "delete": "Xóa",
-    "account": "Tài khoản",
     "ago": "{time} trước"
   },
   "chat": {
@@ -75,18 +73,6 @@
     "sampling": "Lấy mẫu",
     "advanced": "Nâng cao",
     "custom": "Tùy chỉnh"
-  },
-  "profile": {
-    "backToChat": "Quay lại trò chuyện",
-    "account": "Tài khoản",
-    "user": "Người dùng",
-    "localAccount": "Tài khoản cục bộ",
-    "general": "Chung",
-    "username": "Tên người dùng",
-    "email": "Thư điện tử",
-    "memberSince": "Thành viên từ",
-    "dangerZone": "Vùng nguy hiểm",
-    "signOut": "Đăng xuất"
   },
   "engines": {
     "ollama-service": "Ollama",

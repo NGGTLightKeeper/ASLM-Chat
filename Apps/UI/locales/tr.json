@@ -1,8 +1,7 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - Gelişmiş Sistem Dil Modelleri",
-    "profileTitle": "Profil - ASLM Chat"
+    "appDescription": "ASLM - Gelişmiş Sistem Dil Modelleri"
   },
   "sidebar": {
     "chats": "Sohbetler",
@@ -11,7 +10,6 @@
     "chatOptions": "Sohbet seçenekleri",
     "rename": "Yeniden adlandır",
     "delete": "Sil",
-    "account": "Hesap",
     "ago": "{time} önce"
   },
   "chat": {
@@ -75,18 +73,6 @@
     "sampling": "Örnekleme",
     "advanced": "Gelişmiş",
     "custom": "Özel"
-  },
-  "profile": {
-    "backToChat": "Sohbete dön",
-    "account": "Hesap",
-    "user": "Kullanıcı",
-    "localAccount": "Yerel hesap",
-    "general": "Genel",
-    "username": "Kullanıcı adı",
-    "email": "E-posta",
-    "memberSince": "Üyelik tarihi",
-    "dangerZone": "Tehlikeli Bölge",
-    "signOut": "Oturumu kapat"
   },
   "engines": {
     "ollama-service": "Ollama",

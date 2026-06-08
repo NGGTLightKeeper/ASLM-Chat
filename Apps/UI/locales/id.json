@@ -1,8 +1,7 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - Model Bahasa Sistem Lanjutan",
-    "profileTitle": "Profil - ASLM Chat"
+    "appDescription": "ASLM - Model Bahasa Sistem Lanjutan"
   },
   "sidebar": {
     "chats": "Obrolan",
@@ -11,7 +10,6 @@
     "chatOptions": "Opsi obrolan",
     "rename": "Ubah nama",
     "delete": "Hapus",
-    "account": "Akun",
     "ago": "{time} lalu"
   },
   "chat": {
@@ -75,18 +73,6 @@
     "sampling": "Pengambilan sampel",
     "advanced": "Lanjutan",
     "custom": "Kustom"
-  },
-  "profile": {
-    "backToChat": "Kembali ke obrolan",
-    "account": "Akun",
-    "user": "Pengguna",
-    "localAccount": "Akun lokal",
-    "general": "Umum",
-    "username": "Nama pengguna",
-    "email": "Surel",
-    "memberSince": "Anggota sejak",
-    "dangerZone": "Zona Bahaya",
-    "signOut": "Keluar"
   },
   "engines": {
     "ollama-service": "Ollama",

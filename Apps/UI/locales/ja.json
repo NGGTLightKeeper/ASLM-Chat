@@ -1,8 +1,7 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - 高度なシステム言語モデル",
-    "profileTitle": "プロフィール - ASLM Chat"
+    "appDescription": "ASLM - 高度なシステム言語モデル"
   },
   "sidebar": {
     "chats": "チャット",
@@ -11,7 +10,6 @@
     "chatOptions": "チャットのオプション",
     "rename": "名前を変更",
     "delete": "削除",
-    "account": "アカウント",
     "ago": "{time}前"
   },
   "chat": {
@@ -75,18 +73,6 @@
     "sampling": "サンプリング",
     "advanced": "詳細",
     "custom": "カスタム"
-  },
-  "profile": {
-    "backToChat": "チャットに戻る",
-    "account": "アカウント",
-    "user": "ユーザー",
-    "localAccount": "ローカルアカウント",
-    "general": "一般",
-    "username": "ユーザー名",
-    "email": "メール",
-    "memberSince": "登録日",
-    "dangerZone": "危険な操作",
-    "signOut": "サインアウト"
   },
   "engines": {
     "ollama-service": "Ollama",

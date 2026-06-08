@@ -1441,6 +1441,8 @@ class MainViewTests(ToolRegistryTestMixin, TestCase):
         self.assertContains(response, "/static/css/vendor/katex.min.css?v=")
         self.assertContains(response, "/static/js/vendor/katex.min.js?v=")
         self.assertContains(response, "/static/js/vendor/mermaid.min.js?v=")
+        self.assertNotContains(response, "/profile/")
+        self.assertNotContains(response, "account-btn")
 
 
 # Ensure Ollama-only thinking parameters are normalized before request dispatch.

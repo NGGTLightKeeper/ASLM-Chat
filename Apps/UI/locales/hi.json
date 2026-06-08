@@ -1,8 +1,7 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - उन्नत सिस्टम भाषा मॉडल",
-    "profileTitle": "प्रोफ़ाइल - ASLM Chat"
+    "appDescription": "ASLM - उन्नत सिस्टम भाषा मॉडल"
   },
   "sidebar": {
     "chats": "चैट",
@@ -11,7 +10,6 @@
     "chatOptions": "चैट विकल्प",
     "rename": "नाम बदलें",
     "delete": "हटाएँ",
-    "account": "खाता",
     "ago": "{time} पहले"
   },
   "chat": {
@@ -75,18 +73,6 @@
     "sampling": "सैंपलिंग",
     "advanced": "उन्नत",
     "custom": "कस्टम"
-  },
-  "profile": {
-    "backToChat": "चैट पर वापस",
-    "account": "खाता",
-    "user": "उपयोगकर्ता",
-    "localAccount": "स्थानीय खाता",
-    "general": "सामान्य",
-    "username": "उपयोगकर्ता नाम",
-    "email": "ईमेल",
-    "memberSince": "सदस्यता से",
-    "dangerZone": "खतरा क्षेत्र",
-    "signOut": "साइन आउट"
   },
   "engines": {
     "ollama-service": "Ollama",

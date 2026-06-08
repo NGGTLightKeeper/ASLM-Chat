@@ -1,8 +1,7 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - 고급 시스템 언어 모델",
-    "profileTitle": "프로필 - ASLM Chat"
+    "appDescription": "ASLM - 고급 시스템 언어 모델"
   },
   "sidebar": {
     "chats": "채팅",
@@ -11,7 +10,6 @@
     "chatOptions": "채팅 옵션",
     "rename": "이름 바꾸기",
     "delete": "삭제",
-    "account": "계정",
     "ago": "{time} 전"
   },
   "chat": {
@@ -75,18 +73,6 @@
     "sampling": "샘플링",
     "advanced": "고급",
     "custom": "사용자 정의"
-  },
-  "profile": {
-    "backToChat": "채팅으로 돌아가기",
-    "account": "계정",
-    "user": "사용자",
-    "localAccount": "로컬 계정",
-    "general": "일반",
-    "username": "사용자 이름",
-    "email": "이메일",
-    "memberSince": "가입일",
-    "dangerZone": "위험 구역",
-    "signOut": "로그아웃"
   },
   "engines": {
     "ollama-service": "Ollama",

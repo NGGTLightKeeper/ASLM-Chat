@@ -1,8 +1,7 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - Modelos de Linguagem de Sistema Avançados",
-    "profileTitle": "Perfil - ASLM Chat"
+    "appDescription": "ASLM - Modelos de Linguagem de Sistema Avançados"
   },
   "sidebar": {
     "chats": "Conversas",
@@ -11,7 +10,6 @@
     "chatOptions": "Opções da conversa",
     "rename": "Renomear",
     "delete": "Excluir",
-    "account": "Conta",
     "ago": "há {time}"
   },
   "chat": {
@@ -75,18 +73,6 @@
     "sampling": "Amostragem",
     "advanced": "Avançado",
     "custom": "Personalizado"
-  },
-  "profile": {
-    "backToChat": "Voltar ao chat",
-    "account": "Conta",
-    "user": "Usuário",
-    "localAccount": "Conta local",
-    "general": "Geral",
-    "username": "Nome de usuário",
-    "email": "E-mail",
-    "memberSince": "Membro desde",
-    "dangerZone": "Zona de perigo",
-    "signOut": "Sair"
   },
   "engines": {
     "ollama-service": "Ollama",

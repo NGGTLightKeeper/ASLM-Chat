@@ -1,8 +1,7 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - Modèles de langage système avancés",
-    "profileTitle": "Profil - ASLM Chat"
+    "appDescription": "ASLM - Modèles de langage système avancés"
   },
   "sidebar": {
     "chats": "Discussions",
@@ -11,7 +10,6 @@
     "chatOptions": "Options de la discussion",
     "rename": "Renommer",
     "delete": "Supprimer",
-    "account": "Compte",
     "ago": "il y a {time}"
   },
   "chat": {
@@ -75,18 +73,6 @@
     "sampling": "Échantillonnage",
     "advanced": "Avancé",
     "custom": "Personnalisé"
-  },
-  "profile": {
-    "backToChat": "Retour à la discussion",
-    "account": "Compte",
-    "user": "Utilisateur",
-    "localAccount": "Compte local",
-    "general": "Général",
-    "username": "Nom d'utilisateur",
-    "email": "E-mail",
-    "memberSince": "Membre depuis",
-    "dangerZone": "Zone dangereuse",
-    "signOut": "Se déconnecter"
   },
   "engines": {
     "ollama-service": "Ollama",

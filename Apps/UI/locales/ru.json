@@ -1,8 +1,7 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM — продвинутые системные языковые модели",
-    "profileTitle": "Профиль — ASLM Chat"
+    "appDescription": "ASLM — продвинутые системные языковые модели"
   },
   "sidebar": {
     "chats": "Чаты",
@@ -11,7 +10,6 @@
     "chatOptions": "Параметры чата",
     "rename": "Переименовать",
     "delete": "Удалить",
-    "account": "Аккаунт",
     "ago": "{time} назад"
   },
   "chat": {
@@ -75,18 +73,6 @@
     "sampling": "Сэмплирование",
     "advanced": "Дополнительно",
     "custom": "Своё"
-  },
-  "profile": {
-    "backToChat": "Вернуться в чат",
-    "account": "Аккаунт",
-    "user": "Пользователь",
-    "localAccount": "Локальный аккаунт",
-    "general": "Общие",
-    "username": "Имя пользователя",
-    "email": "Эл. почта",
-    "memberSince": "В системе с",
-    "dangerZone": "Опасная зона",
-    "signOut": "Выйти"
   },
   "engines": {
     "ollama-service": "Ollama",

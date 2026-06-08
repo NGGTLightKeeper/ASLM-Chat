@@ -1,8 +1,7 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM — розширені системні мовні моделі",
-    "profileTitle": "Профіль — ASLM Chat"
+    "appDescription": "ASLM — розширені системні мовні моделі"
   },
   "sidebar": {
     "chats": "Чати",
@@ -11,7 +10,6 @@
     "chatOptions": "Параметри чату",
     "rename": "Перейменувати",
     "delete": "Видалити",
-    "account": "Обліковий запис",
     "ago": "{time} тому"
   },
   "chat": {
@@ -75,18 +73,6 @@
     "sampling": "Семплінг",
     "advanced": "Розширені",
     "custom": "Власні"
-  },
-  "profile": {
-    "backToChat": "Назад до чату",
-    "account": "Обліковий запис",
-    "user": "Користувач",
-    "localAccount": "Локальний обліковий запис",
-    "general": "Загальні",
-    "username": "Ім'я користувача",
-    "email": "Електронна пошта",
-    "memberSince": "Учасник з",
-    "dangerZone": "Небезпечна зона",
-    "signOut": "Вийти"
   },
   "engines": {
     "ollama-service": "Ollama",

@@ -1,8 +1,7 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - 進階系統語言模型",
-    "profileTitle": "個人資料 - ASLM Chat"
+    "appDescription": "ASLM - 進階系統語言模型"
   },
   "sidebar": {
     "chats": "對話",
@@ -11,7 +10,6 @@
     "chatOptions": "對話選項",
     "rename": "重新命名",
     "delete": "刪除",
-    "account": "帳號",
     "ago": "{time} 前"
   },
   "chat": {
@@ -75,18 +73,6 @@
     "sampling": "取樣",
     "advanced": "進階",
     "custom": "自訂"
-  },
-  "profile": {
-    "backToChat": "返回對話",
-    "account": "帳號",
-    "user": "使用者",
-    "localAccount": "本機帳號",
-    "general": "一般",
-    "username": "使用者名稱",
-    "email": "電子郵件",
-    "memberSince": "加入日期",
-    "dangerZone": "危險區域",
-    "signOut": "登出"
   },
   "engines": {
     "ollama-service": "Ollama",

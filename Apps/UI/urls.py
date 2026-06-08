@@ -10,7 +10,6 @@ urlpatterns = [
     # Page routes.
     path("", views.MainView.as_view(), name="main"),
     path("chat/<uuid:chat_id>/", views.ChatView.as_view(), name="chat_view"),
-    path("profile/", views.ProfileView.as_view(), name="profile"),
 
     # Chat APIs.
     path("api/generate/", views.generate_api, name="generate_api"),

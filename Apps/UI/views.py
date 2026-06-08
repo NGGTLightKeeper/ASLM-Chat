@@ -6239,19 +6239,6 @@ def browser_portal_event_api(request):
     return JsonResponse(payload)
 
 
-# Additional page views.
-
-# Render the profile page.
-class ProfileView(TemplateView):
-    template_name = "main/profile.html"
-
-    # Build the profile page context.
-    def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
-        context = super().get_context_data(**kwargs)
-        context.update(_build_base_context())
-        return context
-
-
 # Render the preloaded chat page.
 class ChatView(TemplateView):
     template_name = "main/main.html"
