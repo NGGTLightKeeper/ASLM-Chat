@@ -37,7 +37,6 @@ from core.query.aslm_embedding_runtime import SearchModelSession
 from core.query.routing_score import (
     QueryClassWeight,
     allocate_source_budget,
-    compute_routing_score,
     ensure_general_fallback,
     normalize_class_mix,
 )
@@ -48,6 +47,15 @@ from core.extract.page_normalizer import normalize_page
 from core.registry.trust_registry import get_trust_registry
 from core.registry.domain_reputation import get_reputation_store, domain_from_url
 from core.registry.domain_registry import get_registry
+from core.search.triage import (
+    TIER_TRUST_SCORES as _TIER_TRUST_SCORES,
+    apply_candidate_scores,
+    apply_registry_routing as _core_apply_registry_routing,
+    resolve_result_trust_tier as _core_resolve_result_trust_tier,
+    triage_one_result as _core_triage_one_result,
+    triage_results as _core_triage_results,
+    triage_soft_score as _core_triage_soft_score,
+)
 from core.fetch.antibot import is_antibot
 from core.fetch.stackexchange_fetcher import fetch_stackexchange_question, is_stackexchange_question_url
 from custom_domains.github import fetch_github_page, is_github_url
@@ -1115,28 +1123,7 @@ def _triage_soft_score(
     index: int,
     total: int,
 ) -> float:
-    title = (result.title or "").strip()
-    snippet = (result.snippet or "").strip()
-    pos_score = 1.0 - (index / max(total - 1, 1))
-    snip_score = min(1.0, len(snippet) / 300)
-    lex = _lexical_score(query, title, snippet, result.url)
-    tier_trust = _TIER_TRUST_SCORES.get(result.trust_tier or "unknown", 0.5)
-    date_boost = 0.08 if _DATE_SIGNAL_RE.search(snippet) else 0.0
-    hub_pen = _hub_penalty(result.url, title, snippet)
-    routing = max(0.45, min(1.65, float(getattr(result, "routing_score", 1.0) or 1.0)))
-    snippet_rel = max(0.0, min(1.0, float(getattr(result, "snippet_relevance_score", 0.0) or 0.0)))
-
-    score = (
-        0.25 * pos_score
-        + 0.10 * snip_score
-        + 0.40 * lex
-        + 0.15 * tier_trust
-        + 0.10 * snippet_rel
-        + 0.08 * ((routing - 1.0) / 0.65)
-        + date_boost
-        - 0.20 * hub_pen
-    )
-    return max(0.0, min(1.0, score))
+    return _core_triage_soft_score(result, query, index=index, total=total)
 
 
 # Run cheap triage for one SERP result (skip/fetch_policy/score).
@@ -1149,71 +1136,19 @@ def _triage_one_result(
     trust_reg=None,
     rep_store=None,
 ) -> TriageResult:
-    url = result.url
-    title = (result.title or "").strip()
-    snippet = (result.snippet or "").strip()
-    title_lower = title.lower()
-
-    _resolve_result_trust_tier(result, url, trust_reg=trust_reg, rep_store=rep_store)
-
-    if len(snippet) < 30 or (len(snippet) < 60 and len(title) < 20):
-        return TriageResult(skip=True, fetch_policy="cheap", score=0.0)
-
-    if any(p in title_lower for p in _SKIP_TITLE_PATTERNS):
-        return TriageResult(skip=True, fetch_policy="cheap", score=0.0)
-
-    if trust_reg is not None:
-        try:
-            if trust_reg.is_blacklisted(url):
-                return TriageResult(skip=True, fetch_policy="cheap", score=0.0)
-        except Exception as _e:
-            logger.debug("trust_reg.is_blacklisted failed for %s: %s", url, _e)
-
-    if rep_store is not None:
-        try:
-            if rep_store.is_auto_blacklisted(domain_from_url(url)):
-                return TriageResult(skip=True, fetch_policy="cheap", score=0.0)
-        except Exception as _e:
-            logger.debug("rep_store.is_auto_blacklisted failed for %s: %s", url, _e)
-
-    score = _triage_soft_score(result, query, index=index, total=total)
-    if score < 0.10:
-        return TriageResult(skip=True, fetch_policy="cheap", score=score)
-    if score >= 0.50:
-        return TriageResult(skip=False, fetch_policy="race", score=score)
-    return TriageResult(skip=False, fetch_policy="cheap", score=score)
+    return _core_triage_one_result(
+        result,
+        query,
+        index=index,
+        total=total,
+        trust_reg=trust_reg,
+        rep_store=rep_store,
+    )
 
 
 # Cheap per-result triage; populates result.trust_tier when missing.
 def _triage_results(results: list[SearchResult], query: str) -> list[TriageResult]:
-    try:
-        trust_reg = get_trust_registry()
-    except Exception as _e:
-        logger.debug("trust_registry unavailable: %s", _e)
-        trust_reg = None
-
-    try:
-        rep_store = get_reputation_store()
-    except Exception as _e:
-        logger.debug("reputation_store unavailable: %s", _e)
-        rep_store = None
-
-    total = len(results)
-    out: list[TriageResult] = []
-
-    for idx, result in enumerate(results):
-        out.append(
-            _triage_one_result(
-                result,
-                query,
-                index=idx,
-                total=total,
-                trust_reg=trust_reg,
-                rep_store=rep_store,
-            )
-        )
-
-    return out
+    return _core_triage_results(results, query)
 
 
 # Rank preview candidates by triage score so the strongest sources parse first.
@@ -1264,15 +1199,7 @@ def _apply_domain_cap(results: list[SearchResult]) -> list[SearchResult]:
 
 # Attach domain-registry routing_score and debug to each result.
 def _apply_registry_routing(results: list[SearchResult], class_mix: list[QueryClassWeight]) -> None:
-    for result in results:
-        try:
-            routing = compute_routing_score(result.url, class_mix)
-            result.routing_score = routing.multiplier
-            result.routing_debug = routing.debug
-        except Exception as exc:
-            logger.debug("routing_score failed url=%s: %s", result.url, exc)
-            result.routing_score = 1.0
-            result.routing_debug = {}
+    _core_apply_registry_routing(results, class_mix)
 
 
 # Score SERP snippets with ASLM decoder when enabled.
@@ -1309,14 +1236,14 @@ def _apply_snippet_decoder(
         _trace(req_id, "neural.decoder.snippet", used=False, reason="inference_failed", error=str(exc))
         logger.error("req=%s snippet decoder inference failed: %s", req_id, exc, exc_info=True)
         return
-    scores: list[float] = []
+    scores = apply_candidate_scores(
+        results,
+        (prediction.score for prediction in predictions),
+        debug_key="snippet_decoder_top",
+        debug_values=(prediction.top(5) for prediction in predictions),
+    )
     sample: list[dict[str, Any]] = []
-    for result, prediction in zip(results, predictions, strict=False):
-        score = max(0.0, min(1.0, float(prediction.score or 0.0)))
-        scores.append(score)
-        result.snippet_relevance_score = score
-        result.routing_debug = dict(result.routing_debug or {})
-        result.routing_debug["snippet_decoder_top"] = prediction.top(5)
+    for result, prediction, score in zip(results, predictions, scores, strict=False):
         if len(sample) < 5:
             sample.append({
                 "url": (result.url or "")[:100],
@@ -1382,17 +1309,18 @@ def _apply_parsed_decoder(
         _trace(req_id, "neural.decoder.parsed", used=False, reason="inference_failed", error=str(exc))
         logger.error("req=%s parsed decoder inference failed: %s", req_id, exc, exc_info=True)
         return
-    scores: list[float] = []
+    scores = apply_candidate_scores(
+        results,
+        (prediction.score for prediction in predictions),
+        field="parsed_relevance_score",
+        debug_key="parsed_decoder_top",
+        debug_values=(prediction.top(5) for prediction in predictions),
+    )
     sample: list[dict[str, Any]] = []
     with_preview = 0
-    for result, prediction, payload in zip(results, predictions, payloads, strict=False):
-        score = max(0.0, min(1.0, float(prediction.score or 0.0)))
-        scores.append(score)
+    for result, prediction, payload, score in zip(results, predictions, payloads, scores, strict=False):
         if (payload.text or "").strip():
             with_preview += 1
-        result.parsed_relevance_score = score
-        result.routing_debug = dict(result.routing_debug or {})
-        result.routing_debug["parsed_decoder_top"] = prediction.top(5)
         if len(sample) < 5:
             sample.append({
                 "url": (result.url or "")[:100],
@@ -1467,18 +1395,6 @@ def _dedup_results(results: list[SearchResult]) -> list[SearchResult]:
         out.append(r)
     return out
 
-
-_TIER_TRUST_SCORES = {
-    "A": 1.0,
-    "B": 0.75,
-    "C": 0.45,
-    "friendly": 1.0,
-    "moderate": 0.75,
-    "hardened": 0.35,
-    "fortress": 0.05,
-    "?": 0.50,
-    "unknown": 0.50,
-}
 
 _TRUST_BLEND_WEIGHTS: dict[str, tuple[float, float]] = {
     "academic": (0.80, 0.20),
@@ -1685,20 +1601,7 @@ def _resolve_result_trust_tier(
     trust_reg,
     rep_store,
 ) -> None:
-    if (result.trust_tier or "?") != "?":
-        return
-    if trust_reg is not None:
-        tier = trust_reg.get_tier(url)
-        if tier:
-            result.trust_tier = tier
-            return
-    if rep_store is not None:
-        try:
-            promoted = rep_store.get_promoted_tier(domain_from_url(url))
-            if promoted in {"B", "C"}:
-                result.trust_tier = promoted
-        except Exception as _e:
-            logger.debug("rep_store.get_promoted_tier failed for %s: %s", url, _e)
+    _core_resolve_result_trust_tier(result, url, trust_reg=trust_reg, rep_store=rep_store)
 
 
 from core.fetch.constants import DEFAULT_UA as _UA
@@ -3098,6 +3001,7 @@ class WebSearchOptions:
     timelimit: Optional[str] = None   # DDGS time filter: "d", "w", "m", "y"
     effort: str = "medium"
     effort_multiplier: int = 1
+    routing_profile: Optional[str] = None
 
 
 # Orchestrate fast web search across DDGS and hosted search APIs.
@@ -3140,21 +3044,47 @@ class WebSearchService:
         use_fast_academic = opts.use_fast_academic and bool({"academic", "medical"} & set(query_types))
         n_hosted = len(hosted_engines)
         ddgs_multiplier = max(1, pool_multiplier - n_hosted)
-        default_ddgs_attempts = 4 if _normalize_search_effort(opts.effort) == "high" else 2
+        routing_profile = str(
+            opts.routing_profile or getattr(self._cfg.search, "routing_profile", "stability")
+        ).lower()
+        if routing_profile not in {"stability", "quality"}:
+            routing_profile = "stability"
+        default_ddgs_attempts = (
+            int(getattr(self._cfg.search, "quality_ddgs_attempts", 4))
+            if routing_profile == "quality"
+            else int(getattr(self._cfg.search, "stability_ddgs_attempts", 2))
+        )
         ddgs_hedge = max(
             1,
             int(opts.ddgs_hedge_count)
             if opts.ddgs_hedge_count is not None
             else max(1, default_ddgs_attempts - n_hosted),
         )
+        ddgs_worker_timeout = opts.ddgs_worker_timeout
+        if routing_profile == "quality":
+            ddgs_worker_timeout = max(
+                float(ddgs_worker_timeout or 0.0),
+                float(getattr(self._cfg.search, "quality_ddgs_worker_timeout", 26.0)),
+            )
         hosted_max = fetch_max
         academic_budget = sum((source_budget or {}).get(name, 0) for name in ("academic", "medical"))
         academic_max = min(fetch_max, max(3, academic_budget or 8))
+        effective_mix = class_mix or _build_legacy_class_mix(query)
+        engine_class_weights = {
+            item.name: float(item.weight)
+            for item in effective_mix
+            if float(item.weight) > 0.0
+        }
 
         _trace(req_id, "providers.config",
                n_hosted=n_hosted, ddgs_multiplier=ddgs_multiplier,
                ddgs_hedge=ddgs_hedge, hosted_engines=hosted_engines,
-               fast_academic=use_fast_academic)
+               fast_academic=use_fast_academic, routing_profile=routing_profile,
+               ddgs_worker_timeout=ddgs_worker_timeout)
+        logger.info(
+            "search routing profile=%s ddgs_attempts=%d query_types=%s",
+            routing_profile, ddgs_hedge, query_types,
+        )
 
         ddgs_task = asyncio.create_task(
             async_ddgs_search(
@@ -3162,12 +3092,14 @@ class WebSearchService:
                 max_results=fetch_max * ddgs_multiplier,
                 query_type=query_type,
                 query_types=query_types,
+                class_weights=engine_class_weights,
                 lang=lang,
                 timelimit=opts.timelimit,
                 hedge_count=ddgs_hedge,
-                worker_timeout=opts.ddgs_worker_timeout,
+                worker_timeout=ddgs_worker_timeout,
                 engine_timeout=opts.ddgs_engine_timeout,
                 max_retries=opts.ddgs_max_retries,
+                routing_profile=routing_profile,
             )
         )
         hosted_tasks: dict[str, asyncio.Task] = {
@@ -3222,7 +3154,6 @@ class WebSearchService:
         merged = merged[: fetch_max * pool_multiplier * 2]
         merged = _enrich_pdf_urls(merged)
         deduped = _apply_domain_cap(_dedup_results(merged))
-        effective_mix = class_mix or _build_legacy_class_mix(query)
         _apply_registry_routing(deduped, effective_mix)
         _apply_snippet_decoder(
             deduped, query, model_session, effort=opts.effort, req_id=req_id,
@@ -3232,6 +3163,21 @@ class WebSearchService:
                merged=len(merged), deduped=len(deduped))
 
         triage = _triage_results(deduped, query) if deduped else []
+        if routing_profile == "quality" and triage:
+            ranked = sorted(
+                zip(deduped, triage),
+                key=lambda item: item[1].score,
+                reverse=True,
+            )
+            deduped = [item[0] for item in ranked]
+            triage = [item[1] for item in ranked]
+            _trace(
+                req_id,
+                "quality.meta_rank",
+                candidates=len(deduped),
+                engines=list(dict.fromkeys(result.engine for result in deduped[:12])),
+                top_scores=[round(item.score, 3) for item in triage[:8]],
+            )
         return deduped, triage
 
     # Build progressively simpler query variants for zero-result fallback.
@@ -4066,7 +4012,8 @@ def _effort_hard_timeout(effort: str, hard_timeout: float | None) -> float:
         return float(effort_cfg.low_hard_timeout)
     if effort == "high":
         return float(effort_cfg.high_hard_timeout)
-    return float(effort_cfg.medium_hard_timeout)
+    base = float(effort_cfg.medium_hard_timeout)
+    return base
 
 
 # WebSearchOptions tuned for low/medium/high effort from config.
@@ -4096,6 +4043,7 @@ def _build_effort_options(
             total_timeout=float(effort_cfg.low_preview_total_timeout),
             timelimit=timelimit,
             effort=resolved_effort,
+            routing_profile="stability",
         )
     if resolved_effort == "high":
         multiplier = max(1, int(effort_cfg.high_multiplier))
@@ -4115,6 +4063,7 @@ def _build_effort_options(
             timelimit=timelimit,
             effort=resolved_effort,
             effort_multiplier=multiplier,
+            routing_profile="quality",
         )
     return WebSearchOptions(
         max_results=max_results,
@@ -4124,6 +4073,7 @@ def _build_effort_options(
         total_timeout=float(effort_cfg.medium_preview_total_timeout),
         timelimit=timelimit,
         effort=resolved_effort,
+        routing_profile="stability",
     )
 
 

@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import ceil
 from types import TracebackType
 from typing import Any, ClassVar
@@ -144,7 +145,9 @@ class DDGS:
         backend: str = "auto",
         language: str | None = None,
         query_types: list[str] | None = None,
+        class_weights: dict[str, float] | None = None,
         max_attempts: int = 2,
+        routing_profile: str = "stability",
         **kwargs: str,
     ) -> list[dict[str, Any]]:
         """Perform a search across engines in the given category.
@@ -180,25 +183,26 @@ class DDGS:
                 set(ENGINES[category]),
                 language=language,
                 query_types=set(query_types or ("general",)),
-                max_attempts=max(1, max_attempts),
+                class_weights=class_weights,
+                max_attempts=max(1, max_attempts + 2),
+                routing_profile=routing_profile,
             )
         else:
             plan = [name for name in requested if name in ENGINES[category]]
 
         results: list[dict[str, Any]] = []
         seen_urls: set[str] = set()
+        result_by_url: dict[str, dict[str, Any]] = {}
         err: BaseException | None = None
         hard_deadline = time.perf_counter() + max(1.0, float(self._timeout or 5))
         per_engine_limit = max_results
         if auto and max_results:
-            per_engine_limit = max(1, ceil(max_results / max(1, len(plan))))
-        for index, name in enumerate(plan):
-            remaining = hard_deadline - time.perf_counter()
-            if remaining <= 0:
-                break
-            attempts_left = max(1, len(plan) - index)
-            fair_share = max(1.0, remaining / attempts_left)
-            attempt_timeout = min(remaining, fair_share, ROUTING_STATE.attempt_timeout(name, remaining))
+            per_engine_limit = max(1, ceil(max_results / max(1, max_attempts)))
+        attempted: set[str] = set()
+        successful_attempts = 0
+        total_attempt_limit = max_attempts + 2 if auto else len(plan)
+
+        def run_engine(name: str, attempt_timeout: float) -> tuple[str, list[Any], BaseException | None, float]:
             started = time.perf_counter()
             try:
                 engine_results = self._engine(name, attempt_timeout).search(
@@ -209,32 +213,108 @@ class DDGS:
                     page=page,
                     **kwargs,
                 ) or []
-                latency = time.perf_counter() - started
+                return name, engine_results, None, time.perf_counter() - started
+            except Exception as ex:  # noqa: BLE001
+                return name, [], ex, time.perf_counter() - started
+
+        while plan and len(attempted) < total_attempt_limit:
+            remaining = hard_deadline - time.perf_counter()
+            if remaining <= 0:
+                break
+            wave_size = 1
+            if auto and routing_profile == "quality":
+                wave_size = ROUTING_STATE.quality_concurrency(set(ENGINES[category]))
+                if wave_size == 1:
+                    logger.info("quality search throttled to sequential execution after timeout pressure")
+            wave: list[str] = []
+            while plan and len(wave) < wave_size and len(attempted) + len(wave) < total_attempt_limit:
+                name = plan.pop(0)
+                if name not in attempted and name not in wave:
+                    wave.append(name)
+            if not wave:
+                break
+
+            attempts_left = max(1, total_attempt_limit - len(attempted))
+            waves_left = max(1, ceil(attempts_left / len(wave)))
+            fair_share = max(1.0, remaining / waves_left)
+            jobs = [
+                (name, min(remaining, fair_share, ROUTING_STATE.attempt_timeout(name, remaining)))
+                for name in wave
+            ]
+            attempted.update(wave)
+            if len(jobs) == 1:
+                outcomes = [run_engine(*jobs[0])]
+            else:
+                with ThreadPoolExecutor(max_workers=2, thread_name_prefix="ddgs-quality") as executor:
+                    futures = [executor.submit(run_engine, *job) for job in jobs]
+                    outcomes = [future.result() for future in as_completed(futures)]
+
+            needs_replan = False
+            for name, engine_results, engine_error, latency in outcomes:
+                if engine_error is not None:
+                    err = engine_error
+                    ROUTING_STATE.record(name, latency, False, engine_error)
+                    logger.info("Error in engine %s: %r", name, engine_error)
+                    needs_replan = True
+                    continue
+
                 ROUTING_STATE.record(name, latency, bool(engine_results))
+                needs_replan = needs_replan or not engine_results
                 added = 0
                 for result in engine_results:
                     item = dict(result.__dict__)
                     url = str(item.get("href") or "").strip()
-                    if not url or url in seen_urls:
+                    if not url:
+                        continue
+                    if url in seen_urls:
+                        existing = result_by_url[url]
+                        existing["_votes"] = int(existing.get("_votes", 1)) + 1
+                        engines = list(existing.get("_engines") or [existing.get("_engine")])
+                        if name not in engines:
+                            engines.append(name)
+                        existing["_engines"] = engines
                         continue
                     seen_urls.add(url)
                     item["_engine"] = name
+                    item["_engines"] = [name]
+                    item["_votes"] = 1
                     results.append(item)
+                    result_by_url[url] = item
                     added += 1
                     if per_engine_limit and added >= per_engine_limit:
                         break
                     if max_results and len(results) >= max_results:
                         break
+                if added:
+                    successful_attempts += 1
                 if not auto and results:
                     break
-            except Exception as ex:  # noqa: BLE001
-                err = ex
-                ROUTING_STATE.record(name, time.perf_counter() - started, False, ex)
-                logger.info("Error in engine %s: %r", name, ex)
+            if needs_replan and auto:
+                fallback = ROUTING_STATE.plan(
+                    set(ENGINES[category]) - attempted,
+                    language=language,
+                    query_types=set(query_types or ("general",)),
+                    class_weights=class_weights,
+                    max_attempts=max(1, total_attempt_limit - len(attempted)),
+                    prefer_tier="B" if routing_profile == "stability" else None,
+                    routing_profile=routing_profile,
+                )
+                plan = fallback + [candidate for candidate in plan if candidate not in fallback]
             if max_results and len(results) >= max_results:
+                break
+            if auto and successful_attempts >= max_attempts:
                 break
 
         if results:
+            if routing_profile == "quality":
+                results.sort(key=lambda item: int(item.get("_votes", 1)), reverse=True)
+            logger.info(
+                "search profile=%s attempted=%s successful=%d results=%d",
+                routing_profile,
+                sorted(attempted),
+                successful_attempts,
+                len(results),
+            )
             return results[:max_results] if max_results else results
 
         if "timed out" in f"{err}":

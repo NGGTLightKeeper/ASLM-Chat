@@ -40,9 +40,11 @@ def main() -> None:
     max_results: int        = int(payload.get("max_results", 10))
     query_type: str         = str(payload.get("query_type", "general"))
     query_types             = payload.get("query_types")  # list[str] | None
+    class_weights           = payload.get("class_weights")  # dict[str, float] | None
     lang: str               = str(payload.get("lang", "en"))
     timelimit               = payload.get("timelimit")    # str | None
     hedge_count: int        = int(payload.get("hedge_count", 2))
+    routing_profile: str     = str(payload.get("routing_profile", "stability"))
 
     # DDGSClient construction params.
     proxies: list[str]        = list(payload.get("proxies") or [])
@@ -77,9 +79,11 @@ def main() -> None:
             max_results=max_results,
             query_type=query_type,
             query_types=query_types,
+            class_weights=class_weights,
             lang=lang,
             timelimit=timelimit,
             hedge_count=hedge_count,
+            routing_profile=routing_profile,
             partial_buffer_path=partial_buffer_path,
         )
     except Exception as exc:

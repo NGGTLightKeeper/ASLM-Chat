@@ -5,6 +5,7 @@ from random import SystemRandom
 from typing import Any, ClassVar
 
 from ..base import BaseSearchEngine
+from ..exceptions import DDGSException
 from ..results import TextResult
 
 random = SystemRandom()
@@ -58,21 +59,32 @@ class Google(BaseSearchEngine[TextResult]):
         **kwargs: str,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Build a payload for the Google search request."""
-        self.http_client.client.set_cookies("google.com", {"CONSENT": "YES+"})
-        safesearch_base = {"on": "2", "moderate": "1", "off": "0"}
+        self.http_client.client.set_cookies("https://www.google.com", {"CONSENT": "YES+"})
+        safesearch_base = {"on": "high", "moderate": "medium", "off": "off"}
         start = (page - 1) * 10
         payload = {
             "q": query,
-            "filter": safesearch_base[safesearch.lower()],
+            "filter": "0",
+            "safe": safesearch_base[safesearch.lower()],
             "start": str(start),
+            "ie": "utf8",
+            "oe": "utf8",
         }
         country, lang = region.split("-")
         payload["hl"] = f"{lang}-{country.upper()}"  # interface language
         payload["lr"] = f"lang_{lang}"  # restricts to results written in a particular language
         payload["cr"] = f"country{country.upper()}"  # restricts to results written in a particular country
+        payload["gl"] = country.upper()
         if timelimit:
             payload["tbs"] = f"qdr:{timelimit}"
         return payload
+
+    def pre_process_html(self, html_text: str) -> str:
+        """Surface Google's short bot-protection pages as routing failures."""
+        lower = html_text.lower()
+        if len(html_text) < 5000 and ("/sorry/" in lower or "unusual traffic" in lower):
+            raise DDGSException("google captcha")
+        return html_text
 
     def post_extract_results(self, results: list[TextResult]) -> list[TextResult]:
         """Post-process search results."""

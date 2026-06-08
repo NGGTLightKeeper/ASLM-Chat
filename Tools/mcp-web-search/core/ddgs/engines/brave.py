@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from typing import Any, ClassVar
+from urllib.parse import urlparse
 
 from ..base import BaseSearchEngine
 from ..results import TextResult
@@ -35,8 +36,13 @@ class Brave(BaseSearchEngine[TextResult]):
     ) -> dict[str, Any]:
         """Build a payload for the search request."""
         payload = {"q": query, "source": "web"}
-        country, _lang = region.lower().split("-")
-        cookies = {country: country, "useLocation": "0"}
+        country, lang = region.lower().split("-")
+        cookies = {
+            "country": country,
+            "useLocation": "0",
+            "summarizer": "0",
+            "ui_lang": f"{lang}-{country}",
+        }
         if safesearch != "moderate":
             cookies["safesearch"] = "strict" if safesearch == "on" else "off"
         self.http_client.client.set_cookies("https://search.brave.com", cookies)
@@ -45,3 +51,11 @@ class Brave(BaseSearchEngine[TextResult]):
         if page > 1:
             payload["offset"] = f"{page - 1}"
         return payload
+
+    def post_extract_results(self, results: list[TextResult]) -> list[TextResult]:
+        """Discard partial and internal links, which are commonly ad blocks."""
+        return [
+            result
+            for result in results
+            if result.title and urlparse(result.href).scheme in {"http", "https"} and urlparse(result.href).netloc
+        ]

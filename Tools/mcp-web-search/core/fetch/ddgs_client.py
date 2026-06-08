@@ -343,7 +343,9 @@ class DDGSClient:
         cache_ttl: Optional[int] = None,
         language: str | None = None,
         query_types: list[str] | None = None,
+        class_weights: dict[str, float] | None = None,
         max_attempts: int = 1,
+        routing_profile: str = "stability",
     ) -> list[dict]:
         if not _DDGS_AVAILABLE:
             logger.error("vendored core.ddgs search provider is unavailable")
@@ -361,7 +363,9 @@ class DDGSClient:
             timelimit=timelimit or "",
             language=language or "",
             query_types=query_types or [],
+            class_weights=class_weights or {},
             max_attempts=max_attempts,
+            routing_profile=routing_profile,
         )
         cached = self._cache_get(cache_key)
         if cached is not None:
@@ -384,7 +388,9 @@ class DDGSClient:
                     "region": region,
                     "language": language,
                     "query_types": query_types,
+                    "class_weights": class_weights,
                     "max_attempts": max_attempts,
+                    "routing_profile": routing_profile,
                 }
                 if timelimit:
                     ddgs_kwargs["timelimit"] = timelimit
@@ -436,7 +442,9 @@ class DDGSClient:
         cache_ttl: Optional[int] = None,
         language: str | None = None,
         query_types: list[str] | None = None,
+        class_weights: dict[str, float] | None = None,
         max_attempts: int = 1,
+        routing_profile: str = "stability",
     ) -> list[SearchResult]:
         raw = self.search_sync(
             query=query,
@@ -447,7 +455,9 @@ class DDGSClient:
             cache_ttl=cache_ttl,
             language=language,
             query_types=query_types,
+            class_weights=class_weights,
             max_attempts=max_attempts,
+            routing_profile=routing_profile,
         )
         results: list[SearchResult] = []
         for item in raw:
@@ -473,9 +483,11 @@ class DDGSClient:
         max_results: int = 10,
         query_type: str = "general",
         query_types: Optional[list[str]] = None,
+        class_weights: Optional[dict[str, float]] = None,
         lang: str = "en",
         timelimit: Optional[str] = None,
         hedge_count: int = 2,
+        routing_profile: str = "stability",
         partial_buffer_path: str | None = None,
     ) -> list[SearchResult]:
         # Normalise: use query_types when available, fall back to single type
@@ -508,7 +520,9 @@ class DDGSClient:
             cache_ttl=ttl,
             language=lang,
             query_types=_qtypes,
+            class_weights=class_weights,
             max_attempts=max(1, hedge_count),
+            routing_profile=routing_profile,
         )
         if result:
             _write_partial_results(partial_buffer_path, result)
@@ -594,11 +608,13 @@ async def async_ddgs_search(
     max_results: int = 10,
     query_type: str = "general",
     query_types: Optional[list[str]] = None,
+    class_weights: Optional[dict[str, float]] = None,
     lang: str = "en",
     timelimit: Optional[str] = None,
     use_subprocess: Optional[bool] = None,
     worker_timeout: Optional[float] = None,
     hedge_count: int = 2,
+    routing_profile: str = "stability",
     engine_timeout: Optional[int] = None,
     max_retries: Optional[int] = None,
 ) -> list[SearchResult]:
@@ -620,9 +636,11 @@ async def async_ddgs_search(
             "max_results": max_results,
             "query_type": query_type,
             "query_types": query_types,
+            "class_weights": class_weights,
             "lang": lang,
             "timelimit": timelimit,
             "hedge_count": hedge_count,
+            "routing_profile": routing_profile,
             "proxies": list(client.proxies or []),
             "cache_db": client._cache_db,
             "cache_ttl": int(client.cache_ttl),
@@ -723,9 +741,11 @@ async def async_ddgs_search(
             max_results=max_results,
             query_type=query_type,
             query_types=query_types,
+            class_weights=class_weights,
             lang=lang,
             timelimit=timelimit,
             hedge_count=hedge_count,
+            routing_profile=routing_profile,
         )
 
     loop = asyncio.get_running_loop()

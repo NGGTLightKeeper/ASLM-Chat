@@ -179,6 +179,7 @@ PRIMARY_ENGINES = [
 ]
 
 BACKUP_ENGINES = [
+    "bing",
     "startpage",
     "mojeek",
     "brave",
