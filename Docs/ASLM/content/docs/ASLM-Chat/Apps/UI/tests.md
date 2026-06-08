@@ -125,6 +125,10 @@ Part of `Apps\UI`. See **Related** for package index and callers.
 
 **Purpose:** Type `ChatApiTests` defined in `tests.py`.
 
+### `class GenerateApiTests`
+
+**Purpose:** Exercise stateless generate API without persisting chat rows.
+
 ### `class RuntimeSettingsApiTests`
 
 **Purpose:** Type `RuntimeSettingsApiTests` defined in `tests.py`.
@@ -967,6 +971,34 @@ Part of `Apps\UI`. See **Related** for package index and callers.
 **Steps:**
 
 1. Read or write Django ORM records.
+
+#### `def GenerateApiTests.setUp()`
+
+**Purpose:** Set up the test fixture.
+
+#### `def GenerateApiTests.test_generate_api_streams_without_db_writes(_mock_engine, mock_generate, _mock_prepare_runtime)`
+
+**Purpose:** Verify generate api streams without db writes.
+
+#### `def GenerateApiTests.test_generate_api_passes_messages_to_generate(_mock_engine, mock_generate, _mock_prepare_runtime)`
+
+**Purpose:** Verify generate api passes messages to generate.
+
+#### `def GenerateApiTests.test_generate_api_rejects_missing_model()`
+
+**Purpose:** Verify generate api rejects missing model.
+
+#### `def GenerateApiTests.test_generate_api_supports_inline_attachments(_mock_engine, mock_generate, _mock_prepare_runtime)`
+
+**Purpose:** Verify generate api supports inline attachments.
+
+#### `def GenerateApiTests.test_generate_api_passes_tool_servers_to_generate(_mock_engine, mock_generate, _mock_prepare_runtime, _mock_model_settings)`
+
+**Purpose:** Verify generate api passes tool servers to generate.
+
+#### `def GenerateApiTests.test_generate_api_replays_llm_transcript_in_history(_mock_engine, mock_generate, _mock_prepare_runtime)`
+
+**Purpose:** Verify generate api replays llm transcript in history.
 
 #### `def RuntimeSettingsApiTests.isolated_settings_payload(payload)`
 

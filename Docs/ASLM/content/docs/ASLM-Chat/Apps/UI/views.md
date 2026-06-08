@@ -18,6 +18,10 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 
 ## Classes
 
+### `class PreparedGenerationRequest`
+
+**Purpose:** Type `PreparedGenerationRequest` defined in `views.py`.
+
 ### `class MainView`
 
 **Purpose:** Type `MainView` defined in `views.py`.
@@ -49,6 +53,17 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 3. Iterate and transform or accumulate state.
 4. Parse or serialize JSON payloads.
 5. Build an HTTP response for the client.
+
+#### `def generate_api(request)`
+
+**Purpose:** Handle a stateless generation request for external modules.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Parse or serialize JSON payloads.
+4. Build an HTTP response for the client.
 
 #### `def chat_api(request)`
 
@@ -1104,6 +1119,33 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 1. Return the computed result to the caller.
 2. Iterate and transform or accumulate state.
 
+#### `def _llm_entries_from_assistant_transcript(transcript_entries, *, content_fallback=…) -> list[dict[str, Any]]`
+
+**Purpose:** Convert one assistant transcript into LLM history entries.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
+#### `def _normalize_attachments_from_mapping(data) -> list[dict[str, Any]]`
+
+**Purpose:** Normalize inline attachments from one request mapping.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
+#### `def _build_llm_entries_from_request_message(message, *, sandbox_enabled=…) -> list[dict[str, Any]]`
+
+**Purpose:** Build LLM history entries from one request-side history message.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
 #### `def _build_activity_segments(message) -> list[dict[str, Any]]`
 
 **Purpose:** Build activity segments
@@ -1482,7 +1524,94 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 
 **Purpose:** Insert a one-off system notice after the main system prompt, without persisting a message.
 
-#### `def _build_generate_kwargs(engine, model_name, llm_messages, think_value, think_level_value, clean_options, chat, selected_tool_servers, think_param_name, think_level_param_name, sync_operation_defaults) -> dict[str, Any]`
+#### `def _build_lms_sync_operation_defaults(engine, model_info_payload, think_value, think_level_value) -> dict[str, Any] | None`
+
+**Purpose:** Build LMS sync defaults for one generation request.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
+#### `def _prepare_generation_request(request, data, *, route, require_user_input=…, user_message=…, attachments=…, uploaded_file_ids=…) -> PreparedGenerationRequest | JsonResponse`
+
+**Purpose:** Validate and normalize one shared generation request payload.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Build an HTTP response for the client.
+
+#### `def _resolve_include_skills_baseline(data, history_messages) -> bool`
+
+**Purpose:** Resolve whether the skills inventory should be injected into the system prompt.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
+#### `def _normalize_request_history_messages(raw_messages) -> list[dict[str, Any]]`
+
+**Purpose:** Normalize request-side conversation history.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
+#### `def _request_message_has_context_compression_summary(message) -> bool`
+
+**Purpose:** Return whether one request history message stores a compression boundary.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
+#### `def _collect_recent_user_messages_from_history(history_messages, current_user_text) -> list[str]`
+
+**Purpose:** Collect recent user messages from request-side history.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
+#### `def _build_context_compression_source_entries_from_request(history_records_newest_first, *, sandbox_enabled=…) -> list[dict[str, Any]]`
+
+**Purpose:** Build chronological compression source entries from request history.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
+#### `def _split_request_conversation(data, history_messages) -> tuple[list[dict[str, Any]], str, list[dict[str, Any]], list[str]]`
+
+**Purpose:** Split request history and the current user turn.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
+#### `def _build_current_user_llm_entry(user_message, attachments, upload_manifests) -> dict[str, Any]`
+
+**Purpose:** Build the current user LLM entry for stateless generation.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
+#### `def _build_generate_llm_messages(history_messages, current_entry, system_prompt, engine, model_name, model_info_payload, *, session_id, sandbox_enabled=…) -> tuple[list[dict[str, Any]], dict[str, Any] | None]`
+
+**Purpose:** Build LLM messages for stateless generation from request payload.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
+#### `def _build_generate_kwargs(engine, model_name, llm_messages, think_value, think_level_value, clean_options, session_id, selected_tool_servers, think_param_name, think_level_param_name, sync_operation_defaults) -> dict[str, Any]`
 
 **Purpose:** Build generation kwargs
 
@@ -1491,7 +1620,7 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 1. Return the computed result to the caller.
 2. Iterate and transform or accumulate state.
 
-#### `def _stream_chat_response(chat, engine, generate_kwargs, assistant_message_record, generation_id, compression_event, model_info_payload, system_prompt, current_user_message_id)`
+#### `def _stream_chat_response(engine, generate_kwargs, generation_id, *, chat=…, assistant_message_record=…, session_id=…, compression_event=…, model_info_payload=…, system_prompt=…, current_user_message_id=…, persist_messages=…)`
 
 **Purpose:** Stream and save assistant response
 
