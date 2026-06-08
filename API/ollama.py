@@ -537,6 +537,7 @@ def _run_tool_loop(
         tool_server_ids,
         engine="ollama-service",
         model_name=model_name,
+        tool_source_map=tool_context.get("tool_source_map") if isinstance(tool_context, dict) else None,
     )
     base_kwargs = {key: value for key, value in call_kwargs.items() if key != "stream"}
 

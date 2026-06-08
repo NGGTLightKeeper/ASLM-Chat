@@ -1420,6 +1420,7 @@ def _run_tool_loop(
         tool_server_ids,
         engine="lms",
         model_name=model_name,
+        tool_source_map=tool_context.get("tool_source_map") if isinstance(tool_context, dict) else None,
     )
 
     if not tools:

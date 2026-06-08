@@ -2569,16 +2569,114 @@ def _read_json_request_body(request) -> dict[str, Any]:
 
 
 # Resolve selected tool servers
-def _resolve_tool_servers(engine: str, model_name: str, tool_server_ids: list[str]) -> list[dict[str, Any]]:
-    resolved = []
+def _build_tool_source_map(
+    tool_sources: list[dict[str, Any]] | None,
+    selected_tool_servers: list[dict[str, Any]] | None = None,
+) -> dict[str, dict[str, str]]:
+    tool_source_map: dict[str, dict[str, str]] = {}
+
+    for source in tool_sources or []:
+        if not isinstance(source, dict):
+            continue
+        module_dir = str(source.get("module_dir") or "").strip()
+        if not module_dir:
+            continue
+        tools_dir = str(source.get("tools_dir") or (Path(module_dir) / "Tools"))
+        raw_ids = source.get("tool_server_ids") or source.get("tool_ids") or []
+        if isinstance(raw_ids, str):
+            raw_ids = [raw_ids] if raw_ids.strip() else []
+        for raw_id in raw_ids:
+            server_id = str(raw_id or "").strip()
+            if server_id:
+                tool_source_map[server_id] = {
+                    "module_dir": module_dir,
+                    "tools_dir": tools_dir,
+                }
+
+    for server in selected_tool_servers or []:
+        if not isinstance(server, dict):
+            continue
+        server_id = str(server.get("id") or "").strip()
+        if not server_id or server_id in tool_source_map:
+            continue
+        module_dir = str(server.get("source_module_dir") or "").strip()
+        if not module_dir:
+            continue
+        tools_dir = str(server.get("source_tools_dir") or (Path(module_dir) / "Tools"))
+        tool_source_map[server_id] = {
+            "module_dir": module_dir,
+            "tools_dir": tools_dir,
+        }
+
+    return tool_source_map
+
+
+# Parse external tool source declarations from one request payload.
+def _parse_tool_sources(data: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_sources = data.get("tool_sources")
+    if not isinstance(raw_sources, list):
+        return []
+
+    parsed: list[dict[str, Any]] = []
+    for entry in raw_sources:
+        if not isinstance(entry, dict):
+            continue
+        module_dir = str(entry.get("module_dir") or "").strip()
+        if not module_dir:
+            continue
+        raw_ids = entry.get("tool_server_ids") or entry.get("tool_ids") or []
+        if isinstance(raw_ids, str):
+            raw_ids = [raw_ids] if raw_ids.strip() else []
+        tool_server_ids = [str(item).strip() for item in raw_ids if str(item).strip()]
+        parsed.append(
+            {
+                "module_dir": module_dir,
+                "tools_dir": str(entry.get("tools_dir") or (Path(module_dir) / "Tools")),
+                "tool_server_ids": tool_server_ids,
+            }
+        )
+    return parsed
+
+
+# Resolve selected tool servers
+def _resolve_tool_servers(
+    engine: str,
+    model_name: str,
+    tool_server_ids: list[str],
+    *,
+    tool_sources: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    resolved: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for source in tool_sources or []:
+        module_dir = str(source.get("module_dir") or "").strip()
+        tools_dir = source.get("tools_dir") or (Path(module_dir) / "Tools")
+        for raw_id in source.get("tool_server_ids") or []:
+            normalized = str(raw_id or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            server = tool_registry.get_server(
+                normalized,
+                engine=engine,
+                model_name=model_name,
+                tools_dir=tools_dir,
+                module_dir=module_dir,
+            )
+            if server is None:
+                raise ValueError(f"Unknown or unsupported tool server: {normalized}")
+            resolved.append(server)
+            seen.add(normalized)
+
     for raw_id in tool_server_ids:
         normalized = str(raw_id or "").strip()
-        if not normalized:
+        if not normalized or normalized in seen:
             continue
         server = tool_registry.get_server(normalized, engine=engine, model_name=model_name)
         if server is None:
             raise ValueError(f"Unknown or unsupported tool server: {normalized}")
         resolved.append(server)
+        seen.add(normalized)
     return resolved
 
 
@@ -3073,6 +3171,124 @@ def _build_manual_compression_event(
     }
 
 
+# Build one compression timeline event from stateless overflow data (for external modules).
+def _build_stateless_compression_event(
+    *,
+    engine: str,
+    model_name: str,
+    model_info_payload: dict[str, Any] | None,
+    force: bool,
+    used_history_chars: int,
+    history_budget_chars: int,
+    overflow_entries: list[dict[str, Any]],
+    summary_source_entries: list[dict[str, Any]],
+    recent_user_messages: list[str],
+    direct_user_directives: list[str],
+    summarize_with_model_enabled: bool = True,
+    debug_force_4k: bool = False,
+    trigger_ratio: float = LLM_HISTORY_COMPRESSION_TRIGGER_RATIO,
+    compression_mode: str = "manual",
+) -> dict[str, Any] | None:
+    compression = decide_compression(
+        used_history_chars=used_history_chars,
+        history_budget_chars=history_budget_chars,
+        model_info_payload=model_info_payload,
+        runtime_metadata_path=MODEL_RUNTIME_METADATA_PATH,
+        active_engine=engine,
+        active_model=model_name,
+        debug_force_4k=debug_force_4k,
+        trigger_ratio=trigger_ratio,
+    )
+
+    entries_to_summarize = list(overflow_entries)
+    summary_entries = list(summary_source_entries)
+    normalized_mode = str(compression_mode or "manual").strip().lower()
+
+    if normalized_mode == "auto":
+        if entries_to_summarize and compression.enabled:
+            if not summary_entries:
+                entries_to_summarize = []
+            else:
+                entries_to_summarize = list(summary_entries)
+        if compression.enabled and not entries_to_summarize and summary_entries:
+            entries_to_summarize = list(summary_entries)
+        should_compress = bool(entries_to_summarize) and compression.enabled
+    else:
+        if compression.enabled and not entries_to_summarize and summary_entries:
+            entries_to_summarize = list(summary_entries)
+        if force and not entries_to_summarize:
+            entries_to_summarize = list(summary_entries)
+        if force and not summary_entries:
+            return None
+        should_compress = bool(entries_to_summarize) and (compression.enabled or force)
+
+    if not should_compress:
+        return None
+
+    summarize_entries = list(summary_entries) if normalized_mode != "auto" else list(entries_to_summarize)
+    if not summarize_entries:
+        return None
+
+    summarize_with_model_callback = None
+    if summarize_with_model_enabled:
+        summarize_with_model_callback = lambda prompt_messages: _generate_history_summary_with_model(
+            engine=engine,
+            model_name=model_name,
+            prompt_messages=prompt_messages,
+            model_info_payload=model_info_payload,
+        )
+
+    try:
+        summary_text, summary_payload = build_structured_history_summary(
+            overflow_entries=summarize_entries,
+            recent_user_messages=recent_user_messages,
+            direct_user_directives=direct_user_directives,
+            summarize_with_model=summarize_with_model_callback,
+            max_overflow_entries=LLM_HISTORY_COMPRESSION_MAX_ITEMS,
+        )
+    except Exception as exc:
+        logger.warning("History compression summary failed: %s", exc)
+        summary_text, summary_payload = build_structured_history_summary(
+            overflow_entries=summarize_entries,
+            recent_user_messages=recent_user_messages,
+            direct_user_directives=direct_user_directives,
+            summarize_with_model=None,
+            max_overflow_entries=LLM_HISTORY_COMPRESSION_MAX_ITEMS,
+        )
+
+    if not summary_text and normalized_mode == "auto":
+        return None
+
+    summary_text, summary_payload = fit_summary_text(summary_payload, LLM_HISTORY_COMPRESSION_MAX_CHARS)
+    return {
+        "role": "tool",
+        "alias": "context_compression_summary",
+        "name": "context_compression_summary",
+        "tool_name": "context_compression_summary",
+        "tool_id": "context_compression_summary",
+        "tool_display_name": "Context Compression",
+        "server_id": "system",
+        "server_name": "System",
+        "arguments": {
+            "reason": compression.reason,
+            "history_budget_chars": history_budget_chars,
+            "used_history_chars": used_history_chars,
+            "context_window_tokens": compression.context_window_tokens,
+            "force": bool(force),
+        },
+        "content": summary_text,
+        "tool_ui": {
+            "status": "done",
+            "label": "Context compressed",
+            "kind": "context_compression",
+        },
+        "structured_content": {
+            "kind": "context_compression",
+            "summary": summary_payload,
+        },
+    }
+
+
 # Collect recent user messages.
 def _collect_recent_user_messages(chat: Chat, exclude_message_id: int) -> list[str]:
     messages = (
@@ -3354,6 +3570,8 @@ class PreparedGenerationRequest:
     think_level_value: Any
     clean_options: dict[str, Any]
     sync_operation_defaults: dict[str, Any] | None
+    tool_sources: list[dict[str, Any]]
+    external_tool_context: dict[str, Any]
 
 
 # Build LMS sync defaults for one generation request.
@@ -3404,6 +3622,8 @@ def _prepare_generation_request(
     if isinstance(raw_tool_ids, str):
         raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
     tool_server_ids = [str(s).strip() for s in raw_tool_ids if str(s).strip()]
+    tool_sources = _parse_tool_sources(data)
+    external_tool_context = data.get("tool_context") if isinstance(data.get("tool_context"), dict) else {}
 
     if not model_name:
         return JsonResponse({"error": "Missing model parameter"}, status=400)
@@ -3411,7 +3631,12 @@ def _prepare_generation_request(
         return JsonResponse({"error": "Missing message or attachments"}, status=400)
 
     _remember_active_model(engine, model_name)
-    selected_tool_servers = _resolve_tool_servers(engine, model_name, tool_server_ids)
+    selected_tool_servers = _resolve_tool_servers(
+        engine,
+        model_name,
+        tool_server_ids,
+        tool_sources=tool_sources,
+    )
     model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
     _sync_runtime_model_metadata(
         engine,
@@ -3472,6 +3697,8 @@ def _prepare_generation_request(
             think_value,
             think_level_value,
         ),
+        tool_sources=tool_sources,
+        external_tool_context=external_tool_context,
     )
 
 
@@ -3792,6 +4019,8 @@ def _build_generate_kwargs(
     think_param_name: str = "think",
     think_level_param_name: str = "think_level",
     sync_operation_defaults: dict[str, Any] | None = None,
+    tool_sources: list[dict[str, Any]] | None = None,
+    external_tool_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     generate_kwargs: dict[str, Any] = {
         "engine": engine,
@@ -3815,7 +4044,8 @@ def _build_generate_kwargs(
 
     if selected_tool_servers:
         generate_kwargs["tool_server_ids"] = [s["id"] for s in selected_tool_servers]
-        generate_kwargs["tool_context"] = {
+        tool_source_map = _build_tool_source_map(tool_sources, selected_tool_servers)
+        tool_context = {
             "chat_id": str(session_id),
             "engine": engine,
             "model_name": model_name,
@@ -3823,7 +4053,13 @@ def _build_generate_kwargs(
             "project_dir": str(settings.BASE_DIR),
             "selected_tool_server_ids": [s["id"] for s in selected_tool_servers],
             "sandbox_enabled": _selected_tools_include_sandbox(selected_tool_servers),
+            "tool_source_map": tool_source_map,
         }
+        if isinstance(external_tool_context, dict):
+            for key, value in external_tool_context.items():
+                if value not in {None, ""}:
+                    tool_context[key] = value
+        generate_kwargs["tool_context"] = tool_context
 
     return generate_kwargs
 
@@ -4372,6 +4608,8 @@ def generate_api(request):
             think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
             think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
             sync_operation_defaults=prepared.sync_operation_defaults,
+            tool_sources=prepared.tool_sources,
+            external_tool_context=prepared.external_tool_context,
         )
 
         generation_id = uuid.uuid4().hex
@@ -5593,6 +5831,111 @@ def get_context_usage_api(request):
         return JsonResponse(response_payload)
     except Exception as exc:
         logger.exception("Failed to build context usage payload")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Return whether history compression should run for one stateless usage snapshot.
+def context_compression_decide_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        engine, engine_error = _resolve_request_engine_or_response(request, data)
+        if engine_error is not None:
+            return engine_error
+        model_name = str(data.get("model") or _get_remembered_active_model(engine) or "").strip()
+        debug_force_4k = str(os.getenv("ASLM_DEBUG_CONTEXT_COMPRESSION_4K", "")).strip().lower() in {"1", "true", "yes", "on"}
+        model_info_payload = data.get("model_info")
+        if not isinstance(model_info_payload, dict):
+            model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
+
+        trigger_ratio = data.get("trigger_ratio")
+        try:
+            parsed_trigger_ratio = float(trigger_ratio) if trigger_ratio is not None else LLM_HISTORY_COMPRESSION_TRIGGER_RATIO
+        except (TypeError, ValueError):
+            parsed_trigger_ratio = LLM_HISTORY_COMPRESSION_TRIGGER_RATIO
+
+        compression = decide_compression(
+            used_history_chars=int(data.get("used_history_chars") or 0),
+            history_budget_chars=int(data.get("history_budget_chars") or 0),
+            model_info_payload=model_info_payload,
+            runtime_metadata_path=MODEL_RUNTIME_METADATA_PATH,
+            active_engine=engine,
+            active_model=model_name,
+            debug_force_4k=debug_force_4k,
+            trigger_ratio=parsed_trigger_ratio,
+        )
+        return JsonResponse({
+            "ok": True,
+            "enabled": compression.enabled,
+            "context_window_tokens": compression.context_window_tokens,
+            "history_budget_chars": compression.history_budget_chars,
+            "reason": compression.reason,
+        })
+    except Exception as exc:
+        logger.exception("Failed to decide context compression")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Build one compression event from stateless overflow data for external module consumers.
+def context_compression_build_event_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        engine, engine_error = _resolve_request_engine_or_response(request, data)
+        if engine_error is not None:
+            return engine_error
+        model_name = str(data.get("model") or _get_remembered_active_model(engine) or "").strip()
+        force = bool(data.get("force"))
+        debug_force_4k = str(os.getenv("ASLM_DEBUG_CONTEXT_COMPRESSION_4K", "")).strip().lower() in {"1", "true", "yes", "on"}
+        model_info_payload = data.get("model_info")
+        if not isinstance(model_info_payload, dict):
+            model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
+
+        overflow_entries = data.get("overflow_entries") or []
+        summary_source_entries = data.get("summary_source_entries") or []
+        if not isinstance(overflow_entries, list):
+            overflow_entries = []
+        if not isinstance(summary_source_entries, list):
+            summary_source_entries = []
+
+        recent_user_messages = data.get("recent_user_messages") or []
+        direct_user_directives = data.get("direct_user_directives") or []
+        if not isinstance(recent_user_messages, list):
+            recent_user_messages = []
+        if not isinstance(direct_user_directives, list):
+            direct_user_directives = []
+
+        trigger_ratio = data.get("trigger_ratio")
+        try:
+            parsed_trigger_ratio = float(trigger_ratio) if trigger_ratio is not None else LLM_HISTORY_COMPRESSION_TRIGGER_RATIO
+        except (TypeError, ValueError):
+            parsed_trigger_ratio = LLM_HISTORY_COMPRESSION_TRIGGER_RATIO
+
+        event = _build_stateless_compression_event(
+            engine=engine,
+            model_name=model_name,
+            model_info_payload=model_info_payload,
+            force=force,
+            used_history_chars=int(data.get("used_history_chars") or 0),
+            history_budget_chars=int(data.get("history_budget_chars") or 0),
+            overflow_entries=overflow_entries,
+            summary_source_entries=summary_source_entries,
+            recent_user_messages=[str(value) for value in recent_user_messages],
+            direct_user_directives=[str(value) for value in direct_user_directives],
+            summarize_with_model_enabled=bool(data.get("summarize_with_model", True)),
+            debug_force_4k=debug_force_4k,
+            trigger_ratio=parsed_trigger_ratio,
+            compression_mode=str(data.get("compression_mode") or "manual"),
+        )
+        if not event:
+            return JsonResponse({"ok": True, "event": None, "reason": "below_threshold"})
+        return JsonResponse({"ok": True, "event": event})
+    except Exception as exc:
+        logger.exception("Failed to build stateless compression event")
         return JsonResponse({"error": str(exc)}, status=500)
 
 

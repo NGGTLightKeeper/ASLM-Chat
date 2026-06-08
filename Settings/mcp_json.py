@@ -20,6 +20,23 @@ DEFAULT_MCP_JSON = (
     "}\n"
 )
 
+TransportKind = Literal["stdio", "http"]
+
+
+# One normalized MCP server entry from mcpServers.
+@dataclass(frozen=True)
+class UserMcpServerEntry:
+    config_key: str
+    server_id: str
+    display_name: str
+    transport: TransportKind
+    command: str | None
+    args: list[str]
+    env: dict[str, str] | None
+    cwd: str | None
+    url: str | None
+    headers: dict[str, str] | None
+
 
 # Build a stable slug from a display name for MCP server ids.
 def _slugify(value: str) -> str:
@@ -36,14 +53,134 @@ def ensure_default_mcp_json() -> None:
 
 
 # Return path and mtime for cache invalidation, or None when the file is absent.
-def mcp_json_signature() -> tuple[str, int] | None:
-    if not MCP_JSON_PATH.is_file():
+def mcp_json_signature_for(module_dir: Path | None = None) -> tuple[str, int] | None:
+    path = (Path(module_dir) if module_dir is not None else BASE_DIR) / "MCP" / "mcp.json"
+    if not path.is_file():
         return None
     try:
-        stat = MCP_JSON_PATH.stat()
+        stat = path.stat()
     except OSError:
         return None
-    return (str(MCP_JSON_PATH.resolve()), stat.st_mtime_ns)
+    return (str(path.resolve()), stat.st_mtime_ns)
+
+
+# Return path and mtime for cache invalidation, or None when the file is absent.
+def mcp_json_signature() -> tuple[str, int] | None:
+    return mcp_json_signature_for(BASE_DIR)
+
+
+# Pick a unique server id that does not collide with reserved ids.
+def _unique_server_id(base: str, taken: set[str]) -> str:
+    candidate = base
+    if candidate not in taken:
+        return candidate
+    prefixed = f"user_{base}"
+    if prefixed not in taken:
+        return prefixed
+    index = 2
+    while True:
+        probe = f"user_{base}_{index}"
+        if probe not in taken:
+            return probe
+        index += 1
+
+
+# Parse one module's mcp.json and return user server entries with stable ids.
+def iter_user_mcp_entries_for(module_dir: Path, reserved_ids: set[str]) -> list[UserMcpServerEntry]:
+    path = Path(module_dir) / "MCP" / "mcp.json"
+    if not path.is_file():
+        return []
+
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return []
+
+    if not isinstance(data, dict):
+        return []
+
+    servers = data.get("mcpServers")
+    if not isinstance(servers, dict):
+        return []
+
+    taken: set[str] = set(reserved_ids)
+    result: list[UserMcpServerEntry] = []
+
+    for raw_key, raw_entry in servers.items():
+        if not isinstance(raw_entry, dict):
+            continue
+        key = str(raw_key or "").strip()
+        if not key:
+            continue
+
+        url = str(raw_entry.get("url") or "").strip() or None
+        command = str(raw_entry.get("command") or "").strip() or None
+
+        if url and command:
+            continue
+        if not url and not command:
+            continue
+
+        base_id = _slugify(key)
+        server_id = _unique_server_id(base_id, taken)
+        taken.add(server_id)
+
+        args_raw = raw_entry.get("args")
+        args: list[str] = []
+        if isinstance(args_raw, list):
+            args = [str(a) for a in args_raw if str(a).strip()]
+
+        env: dict[str, str] | None = None
+        if isinstance(raw_entry.get("env"), dict):
+            env = {str(k): str(v) for k, v in raw_entry["env"].items()}
+
+        cwd_raw = raw_entry.get("cwd")
+        cwd = str(cwd_raw).strip() if isinstance(cwd_raw, str) and str(cwd_raw).strip() else None
+
+        headers: dict[str, str] | None = None
+        if isinstance(raw_entry.get("headers"), dict):
+            headers = {str(k): str(v) for k, v in raw_entry["headers"].items()}
+
+        if url:
+            result.append(
+                UserMcpServerEntry(
+                    config_key=key,
+                    server_id=server_id,
+                    display_name=key,
+                    transport="http",
+                    command=None,
+                    args=[],
+                    env=None,
+                    cwd=None,
+                    url=url,
+                    headers=headers,
+                )
+            )
+            continue
+
+        result.append(
+            UserMcpServerEntry(
+                config_key=key,
+                server_id=server_id,
+                display_name=key,
+                transport="stdio",
+                command=command,
+                args=args,
+                env=env,
+                cwd=cwd,
+                url=None,
+                headers=None,
+            )
+        )
+
+    return result
+
+
+# Parse mcp.json and return user server entries with stable ids.
+def iter_user_mcp_entries(reserved_ids: set[str]) -> list[UserMcpServerEntry]:
+    ensure_default_mcp_json()
+    return iter_user_mcp_entries_for(BASE_DIR, reserved_ids)
 
 
 # Return mcp.json contents, creating a default file when needed.
@@ -105,124 +242,6 @@ def validate_mcp_document(data: dict[str, Any]) -> None:
                 for hk, hv in headers.items():
                     if not isinstance(hk, str) or not isinstance(hv, str):
                         raise ValueError(f"mcpServers[{key!r}]: header keys and values must be strings")
-
-
-TransportKind = Literal["stdio", "http"]
-
-
-# One normalized MCP server entry from mcpServers.
-@dataclass(frozen=True)
-class UserMcpServerEntry:
-    config_key: str
-    server_id: str
-    display_name: str
-    transport: TransportKind
-    command: str | None
-    args: list[str]
-    env: dict[str, str] | None
-    cwd: str | None
-    url: str | None
-    headers: dict[str, str] | None
-
-
-# Pick a unique server id that does not collide with reserved ids.
-def _unique_server_id(base: str, taken: set[str]) -> str:
-    candidate = base
-    if candidate not in taken:
-        return candidate
-    prefixed = f"user_{base}"
-    if prefixed not in taken:
-        return prefixed
-    index = 2
-    while True:
-        probe = f"user_{base}_{index}"
-        if probe not in taken:
-            return probe
-        index += 1
-
-
-# Parse mcp.json and return user server entries with stable ids.
-def iter_user_mcp_entries(reserved_ids: set[str]) -> list[UserMcpServerEntry]:
-    ensure_default_mcp_json()
-    try:
-        data = load_parsed()
-    except ValueError:
-        return []
-
-    servers = data.get("mcpServers")
-    if not isinstance(servers, dict):
-        return []
-
-    taken: set[str] = set(reserved_ids)
-    result: list[UserMcpServerEntry] = []
-
-    for raw_key, raw_entry in servers.items():
-        if not isinstance(raw_entry, dict):
-            continue
-        key = str(raw_key or "").strip()
-        if not key:
-            continue
-
-        url = str(raw_entry.get("url") or "").strip() or None
-        command = str(raw_entry.get("command") or "").strip() or None
-
-        if url and command:
-            continue
-        if not url and not command:
-            continue
-
-        base_id = _slugify(key)
-        server_id = _unique_server_id(base_id, taken)
-        taken.add(server_id)
-
-        args_raw = raw_entry.get("args")
-        args: list[str] = []
-        if isinstance(args_raw, list):
-            args = [str(a) for a in args_raw if str(a).strip()]
-
-        env: dict[str, str] | None = None
-        if isinstance(raw_entry.get("env"), dict):
-            env = {str(k): str(v) for k, v in raw_entry["env"].items()}
-
-        cwd_raw = raw_entry.get("cwd")
-        cwd = str(cwd_raw).strip() if isinstance(cwd_raw, str) and str(cwd_raw).strip() else None
-
-        headers: dict[str, str] | None = None
-        if isinstance(raw_entry.get("headers"), dict):
-            headers = {str(k): str(v) for k, v in raw_entry["headers"].items()}
-
-        if url:
-            result.append(
-                UserMcpServerEntry(
-                    config_key=key,
-                    server_id=server_id,
-                    display_name=key,
-                    transport="http",
-                    command=None,
-                    args=[],
-                    env=None,
-                    cwd=None,
-                    url=url,
-                    headers=headers,
-                )
-            )
-        else:
-            result.append(
-                UserMcpServerEntry(
-                    config_key=key,
-                    server_id=server_id,
-                    display_name=key,
-                    transport="stdio",
-                    command=command,
-                    args=args,
-                    env=env,
-                    cwd=cwd,
-                    url=None,
-                    headers=None,
-                )
-            )
-
-    return result
 
 
 # Validate JSON and atomically write mcp.json.
