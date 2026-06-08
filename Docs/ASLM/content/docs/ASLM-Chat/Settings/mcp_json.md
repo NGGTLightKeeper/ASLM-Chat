@@ -27,6 +27,10 @@ draft: false
 
 **Purpose:** Return path and mtime for cache invalidation, or None when the file is absent.
 
+#### `def mcp_json_signature_for(module_dir) -> tuple[str, int] | None`
+
+**Purpose:** Return path and mtime for cache invalidation, or None when the file is absent.
+
 **Steps:**
 
 1. Return the computed result to the caller.
@@ -94,6 +98,17 @@ draft: false
 2. Iterate and transform or accumulate state.
 
 ---
+
+
+
+#### `def iter_user_mcp_entries_for(module_dir, reserved_ids) -> list[UserMcpServerEntry]`
+
+**Purpose:** Parse one module's mcp.json and return user server entries with stable ids.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
 
 ## Related
 

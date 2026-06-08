@@ -13,7 +13,7 @@ draft: false
 
 #### `urlpatterns`
 
-**Purpose:** Module constant `urlpatterns` ([path('', views.MainView.as_view(), name='main'), path('chat/<uuid:chat_id>/', v…).
+**Purpose:** Module constant `urlpatterns` ([path('', views.MainView.as_view(), name='main'), path('chat/<uuid:chat_id>/', v…). Includes new context compression APIs.
 
 ---
 
