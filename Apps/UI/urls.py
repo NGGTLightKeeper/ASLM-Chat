@@ -13,6 +13,7 @@ urlpatterns = [
     path("profile/", views.ProfileView.as_view(), name="profile"),
 
     # Chat APIs.
+    path("api/generate/", views.generate_api, name="generate_api"),
     path("api/chat/", views.chat_api, name="chat_api"),
     path("api/uploads/", views.upload_files_api, name="uploads_api"),
     path("api/uploads/<str:file_id>/content/", views.uploaded_file_content_api, name="uploaded_file_content_api"),

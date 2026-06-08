@@ -2772,7 +2772,6 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         ])
 
         body = "".join(_stream_chat_response(
-            chat,
             "ollama-service",
             {
                 "engine": "ollama-service",
@@ -2780,8 +2779,10 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
                 "messages": [],
                 "stream": True,
             },
-            assistant_message,
             "generation-1",
+            chat=chat,
+            assistant_message_record=assistant_message,
+            session_id=str(chat.id),
             model_info_payload={},
             system_prompt="System",
         ))
@@ -2840,7 +2841,6 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         ])
 
         body = "".join(_stream_chat_response(
-            chat,
             "ollama-service",
             {
                 "engine": "ollama-service",
@@ -2848,8 +2848,10 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
                 "messages": [],
                 "stream": True,
             },
-            assistant_message,
             "generation-1",
+            chat=chat,
+            assistant_message_record=assistant_message,
+            session_id=str(chat.id),
             model_info_payload={},
             system_prompt="System",
         ))
@@ -3178,6 +3180,192 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(b"".join(response.streaming_content).decode("utf-8"), "Hello")
         assistant_message = Message.objects.filter(role="assistant").latest("created_at")
         self.assertEqual(assistant_message.content, "Hello")
+
+
+# Exercise stateless generate API without persisting chat rows.
+class GenerateApiTests(ToolRegistryTestMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._resolve_request_engine", return_value="ollama-service")
+    def test_generate_api_streams_without_db_writes(self, _mock_engine, mock_generate, _mock_prepare_runtime):
+        mock_generate.return_value = [{"message": {"content": "Stateless reply"}}]
+
+        response = self.client.post(
+            reverse("generate_api"),
+            data='{"message":"Hello","model":"llama3"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.has_header("X-Chat-ID"))
+        self.assertTrue(response.has_header("X-Session-ID"))
+        self.assertTrue(response.has_header("X-Generation-ID"))
+        self.assertEqual(b"".join(response.streaming_content), b"Stateless reply")
+        self.assertEqual(Chat.objects.count(), 0)
+        self.assertEqual(Message.objects.count(), 0)
+
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._resolve_request_engine", return_value="ollama-service")
+    def test_generate_api_passes_messages_to_generate(self, _mock_engine, mock_generate, _mock_prepare_runtime):
+        mock_generate.return_value = [{"message": {"content": "Follow-up"}}]
+
+        response = self.client.post(
+            reverse("generate_api"),
+            data=json.dumps(
+                {
+                    "messages": [
+                        {"role": "user", "content": "Earlier question"},
+                        {"role": "assistant", "content": "Earlier answer"},
+                    ],
+                    "message": "Next question",
+                    "model": "llama3",
+                    "session_id": "module-session-1",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        b"".join(response.streaming_content)
+        kwargs = mock_generate.call_args.kwargs
+        messages = kwargs["messages"]
+        self.assertEqual(messages[-1], {"role": "user", "content": "Next question"})
+        self.assertIn({"role": "assistant", "content": "Earlier answer"}, messages)
+        self.assertEqual(response["X-Session-ID"], "module-session-1")
+
+    def test_generate_api_rejects_missing_model(self):
+        response = self.client.post(
+            reverse("generate_api"),
+            data='{"message":"Hello"}',
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Missing model parameter")
+
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._resolve_request_engine", return_value="ollama-service")
+    def test_generate_api_supports_inline_attachments(self, _mock_engine, mock_generate, _mock_prepare_runtime):
+        mock_generate.return_value = [{"message": {"content": "Seen"}}]
+
+        response = self.client.post(
+            reverse("generate_api"),
+            data=json.dumps(
+                {
+                    "model": "llama3",
+                    "attachments": [
+                        {
+                            "name": "note.txt",
+                            "mime_type": "text/plain",
+                            "data": "SGVsbG8=",
+                        },
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        b"".join(response.streaming_content)
+        messages = mock_generate.call_args.kwargs["messages"]
+        user_entry = messages[-1]
+        self.assertEqual(user_entry["role"], "user")
+        self.assertIn("note.txt", str(user_entry.get("content") or ""))
+
+    @patch(
+        "Apps.UI.views.llm_api.get_model_settings",
+        return_value={
+            "capabilities": ["tools"],
+            "template": "{{ if .Tools }}{{ end }}{{ if .ToolCalls }}{{ end }}",
+        },
+    )
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._resolve_request_engine", return_value="ollama-service")
+    def test_generate_api_passes_tool_servers_to_generate(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+        _mock_model_settings,
+    ):
+        self.write_server(
+            "time_suite",
+            '''
+            MCP_SERVER = {"id": "time_suite", "name": "Time Suite"}
+            TOOLS = [
+                {"id": "time_now", "name": "Current Time", "parameters": {"type": "object", "properties": {}}},
+            ]
+            def call_tool(tool_id, arguments, context=None):
+                return "ok"
+            ''',
+        )
+        mock_generate.return_value = [{"message": {"content": "Tool reply"}}]
+
+        response = self.client.post(
+            reverse("generate_api"),
+            data=json.dumps(
+                {
+                    "message": "What time is it?",
+                    "model": "llama3",
+                    "tool_server_ids": ["time_suite"],
+                    "session_id": "tool-session",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        b"".join(response.streaming_content)
+        kwargs = mock_generate.call_args.kwargs
+        self.assertEqual(kwargs["tool_server_ids"], ["time_suite"])
+        self.assertEqual(kwargs["tool_context"]["chat_id"], "tool-session")
+
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._resolve_request_engine", return_value="ollama-service")
+    def test_generate_api_replays_llm_transcript_in_history(self, _mock_engine, mock_generate, _mock_prepare_runtime):
+        mock_generate.return_value = [{"message": {"content": "Done"}}]
+
+        response = self.client.post(
+            reverse("generate_api"),
+            data=json.dumps(
+                {
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "content": "Calling tool",
+                            "llm_transcript": [
+                                {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "tool_calls": [{"id": "call-1", "function": {"name": "time_now", "arguments": "{}"}}],
+                                },
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": "call-1",
+                                    "content": "12:00",
+                                },
+                            ],
+                        }
+                    ],
+                    "message": "Continue",
+                    "model": "llama3",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        b"".join(response.streaming_content)
+        messages = mock_generate.call_args.kwargs["messages"]
+        self.assertTrue(any(entry.get("role") == "tool" and entry.get("content") == "12:00" for entry in messages))
 
 
 # Verify enabled-engine runtime synchronization.
