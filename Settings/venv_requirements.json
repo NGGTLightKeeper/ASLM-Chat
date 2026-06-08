@@ -45,7 +45,7 @@
                 "cffi==1.17.1",
                 "colorama==0.4.6",
                 "curl_cffi==0.7.0",
-                "ddgs==9.10.0",
+                "ddgs==9.14.4",
                 "duckduckgo-search==7.0.2",
                 "httpx==0.28.1",
                 "huggingface_hub==1.6.0",

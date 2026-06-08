@@ -1392,7 +1392,24 @@ def _apply_parsed_decoder(
     )
 
 
-# Dedup by normalized URL, domain+title, and snippet signature.
+# Normalize titles for conservative same-domain document-family deduplication.
+def _document_family_title(title: str) -> str:
+    normalized = (title or "").lower()
+    has_version_marker = bool(
+        re.search(r"\b(?:enterprise\s+server|server\s+version|version)\b", normalized)
+    )
+    normalized = re.sub(
+        r"\b(?:enterprise\s+server|server\s+version|version)\b",
+        " ",
+        normalized,
+    )
+    if has_version_marker:
+        normalized = re.sub(r"\bv?\d+(?:\.\d+){0,3}\b", " ", normalized)
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return " ".join(normalized.split())
+
+
+# Dedup by normalized URL, domain+title, document family, and snippet signature.
 def _dedup_results(results: list[SearchResult]) -> list[SearchResult]:
     seen_urls: set[str] = set()
     seen_keys: set[str] = set()
@@ -1404,10 +1421,18 @@ def _dedup_results(results: list[SearchResult]) -> list[SearchResult]:
         seen_urls.add(nu)
         domain = urlparse(r.url).netloc.lower()
         title_key = f"{domain}||{r.title.strip().lower()[:60]}"
+        family_title = _document_family_title(r.title)
+        family_key = f"{domain}||family||{family_title[:100]}" if len(family_title) >= 16 else ""
         snip_key = " ".join((r.snippet or "").lower().split()[:20])
-        if title_key in seen_keys or (snip_key and snip_key in seen_keys):
+        if (
+            title_key in seen_keys
+            or (family_key and family_key in seen_keys)
+            or (snip_key and snip_key in seen_keys)
+        ):
             continue
         seen_keys.add(title_key)
+        if family_key:
+            seen_keys.add(family_key)
         if snip_key:
             seen_keys.add(snip_key)
         out.append(r)
@@ -1595,6 +1620,32 @@ def _content_quality_signal(payload: PreviewPayload, result: SearchResult, query
             0.35 * semantic + 0.25 * quality + 0.25 * relevance + 0.15 * lex_component,
         )
     return min(1.0, 0.30 * quality + 0.40 * relevance + 0.30 * lex_component)
+
+
+_MAX_RERANK_SHIFT = 3
+
+
+# Reorder by measured score while keeping every result near its provider rank.
+def _bounded_rerank(
+    scored: list[tuple[float, int, SearchResult, PreviewPayload]],
+    *,
+    max_shift: int = _MAX_RERANK_SHIFT,
+) -> list[tuple[float, int, SearchResult, PreviewPayload]]:
+    if len(scored) <= 1 or max_shift <= 0:
+        return sorted(scored, key=lambda item: item[1])
+
+    remaining = list(scored)
+    ordered: list[tuple[float, int, SearchResult, PreviewPayload]] = []
+    for position in range(len(scored)):
+        eligible = [item for item in remaining if item[1] - max_shift <= position]
+        overdue = [item for item in eligible if item[1] + max_shift <= position]
+        if overdue:
+            chosen = min(overdue, key=lambda item: (item[1] + max_shift, -item[0], item[1]))
+        else:
+            chosen = min(eligible, key=lambda item: (-item[0], item[1]))
+        ordered.append(chosen)
+        remaining.remove(chosen)
+    return ordered
 
 
 # Fill trust_tier from static registry, then dynamic auto-promote.
@@ -2860,33 +2911,12 @@ def _format_results(
                     except Exception as _e:
                         logger.debug("rep_store.record failed domain=%s qt=%s: %s", domain, qt, _e)
 
-    scored.sort(key=lambda x: (-x[0], x[1]))
+    # Keep score-based improvements local to the provider's original order.
+    scored = _bounded_rerank(scored)
 
-    # -- Result selection: depth-first vs breadth-first ----------------------
-    #
-    # depth-first (unparsed_bonus > 0):
-    #   Take up to max_results parsed results first. Only when parsed results
-    #   are insufficient, append unparsed results that still score above the
-    #   threshold. The bonus is a backfill allowance, not a reserved quota.
-    #
-    # breadth-first (unparsed_bonus == 0):
-    #   Just take top max_results by score — volume beats depth for news/forum.
-    #
-    if output_profile.unparsed_bonus > 0:
-        parsed   = [(s, i, r, p) for s, i, r, p in scored if p.text]
-        unparsed = [(s, i, r, p) for s, i, r, p in scored if not p.text]
-        selected = parsed[:max_results]
-        backfill_limit = min(output_profile.unparsed_bonus, max(0, max_results - len(selected)))
-        for item in unparsed:
-            if backfill_limit <= 0:
-                break
-            if item[0] >= output_profile.min_score_unparsed:
-                selected.append(item)
-                backfill_limit -= 1
-        selected.sort(key=lambda x: (-x[0], x[1]))
-        final = selected[:max_results]
-    else:
-        final = scored[:max_results]
+    # Parsed content, lexical match, and quality affect score, but no separate
+    # parsed-first pass is allowed to bypass the provider-rank movement cap.
+    final = scored[:max_results]
 
     header = f"Search: {query}\n"
     lines: list[str] = [header]
@@ -2936,7 +2966,7 @@ def _format_results(
     return "\n".join(lines).strip()
 
 
-# Select rich sources parsed-first while preserving requested volume.
+# Select rich sources using measured score with bounded provider-rank movement.
 def _select_output_sources(
     results: list[SearchResult],
     payloads: list[PreviewPayload],
@@ -2983,30 +3013,7 @@ def _select_output_sources(
             logger.debug("source class cache write failed url=%s: %s", result.url, _e)
         scored.append((score, idx, result, payload))
 
-    scored.sort(key=lambda x: (-x[0], x[1]))
-    if output_profile.unparsed_bonus > 0:
-        parsed = [(s, i, r, p) for s, i, r, p in scored if p.text]
-        unparsed = [(s, i, r, p) for s, i, r, p in scored if not p.text]
-        selected = parsed[:max_results]
-        backfill_limit = min(output_profile.unparsed_bonus, max(0, max_results - len(selected)))
-        for item in unparsed:
-            if backfill_limit <= 0:
-                break
-            if item[0] >= output_profile.min_score_unparsed:
-                selected.append(item)
-                backfill_limit -= 1
-        if len(selected) < max_results:
-            selected_indexes = {item[1] for item in selected}
-            for item in unparsed:
-                if len(selected) >= max_results:
-                    break
-                if item[1] not in selected_indexes:
-                    selected.append(item)
-                    selected_indexes.add(item[1])
-        selected.sort(key=lambda x: (-x[0], x[1]))
-        final = selected[:max_results]
-    else:
-        final = scored[:max_results]
+    final = _bounded_rerank(scored)[:max_results]
 
     return [(result, payload) for _, _, result, payload in final]
 
@@ -3591,21 +3598,27 @@ class WebSearchService:
                 chosen_top_k=out_profile.max_results,
             )
 
-        ranked: list[SearchResult] = []
-        skipped: list[SearchResult] = []
-        for result, tr in zip(deduped, triage):
+        scored_structured: list[tuple[float, int, SearchResult, PreviewPayload]] = []
+        skipped_count = 0
+        for index, (result, tr) in enumerate(zip(deduped, triage)):
             result.score = tr.score
             result.method_hint = tr.fetch_policy
             if tr.skip:
-                skipped.append(result)
-            else:
-                ranked.append(result)
+                skipped_count += 1
+            scored_structured.append((tr.score, index, result, PreviewPayload()))
 
-        ranked.sort(key=lambda r: (float(r.score or 0.0), len(r.snippet or "")), reverse=True)
-        skipped.sort(key=lambda r: (float(r.score or 0.0), len(r.snippet or "")), reverse=True)
-        combined = ranked + skipped
+        combined = [
+            result
+            for _, _, result, _ in _bounded_rerank(scored_structured)
+        ]
         top_k = _effective_output_limit(out_profile, opts)
-        _trace(req_id, "structured.done", chosen_top_k=top_k, skipped=len(skipped), ranked=len(ranked))
+        _trace(
+            req_id,
+            "structured.done",
+            chosen_top_k=top_k,
+            skipped=skipped_count,
+            ranked=len(combined) - skipped_count,
+        )
         return combined[:top_k]
 
     # Structured payload for MCP structuredContent / UI clients.

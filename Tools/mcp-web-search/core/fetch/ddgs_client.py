@@ -29,7 +29,7 @@ from core.fetch.engine_router import (
     get_router,
 )
 from core.fetch.engine_stats import Observation
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 
 _shared_pool: Optional[ThreadPoolExecutor] = None
 _shared_pool_lock = Lock()
@@ -77,14 +77,10 @@ except ImportError:
 
 _RETRYABLE_ERRORS = ("ssl", "eof", "connect", "connection", "timeout", "reset", "broken pipe")
 _HARD_FAILURE_ERRORS = ("403", "forbidden")
+DEFAULT_REGION = "us-en"
+BACKUP_HEDGE_DELAY = 1.25
 _OPERATOR_TOKEN_RE = re.compile(r"(?<!\S)(?:-?site:[^\s]+|inurl:[^\s]+|intitle:[^\s]+|filetype:[^\s]+|(?:OR|\|))(?=\s|$)", re.IGNORECASE)
 _LEXICAL_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-]{2,}|[А-Яа-яЁё0-9_\-]{2,}")
-
-# Backup engine fires after hedge_delay if primary hasn't responded (see search_with_fallback).
-_HEDGE_MIN_DELAY: float = 0.5   # never hedge faster than 0.5s (avoid DDGS burst)
-_HEDGE_MAX_DELAY: float = 4.0   # never wait longer than 4s before hedging
-_HEDGE_DEFAULT_DELAY: float = 1.5  # used when no telemetry is available yet
-
 
 # News/journalistic queries go stale fast; technical content stays valid longer.
 _QUERY_TTL: dict[str, int] = {
@@ -218,10 +214,10 @@ def _timelimit_cache_ttl(timelimit: Optional[str], base_ttl: int) -> int:
 
 BACKEND_PRESETS: dict[str, str] = {
     # Authoritative, indexed, structured sources
-    "technical":       "google,brave",    # large index + strong code coverage
-    "troubleshooting": "google,brave",    # same — StackOverflow / GitHub issues
-    "academic":        "google,brave",    # Scholar results rank well here
-    "medical":         "google,brave",    # PubMed / NIH indexed by both
+    "technical":       "google",          # large index + strong code coverage
+    "troubleshooting": "google",          # same — StackOverflow / GitHub issues
+    "academic":        "google",          # Scholar results rank well here
+    "medical":         "google",          # PubMed / NIH indexed by both
     # Commercial / volatile
     "finance":         "google,yahoo",    # Yahoo Finance + Google News strong here
     "shopping":        "google,yahoo",    # product pages, price aggregators
@@ -232,8 +228,8 @@ BACKEND_PRESETS: dict[str, str] = {
     # Language override (bypass main routing)
     "ru":              "yandex,google",
 }
-BACKEND_FALLBACK = ["google,brave", "mojeek", "auto"]
-BACKEND_SITE_QUERY = ["yandex,yahoo", "auto"]
+BACKEND_FALLBACK = ["startpage", "mojeek", "brave", "yandex"]
+BACKEND_SITE_QUERY = ["yandex", "yahoo", "startpage"]
 
 # Each entry: list of (ddgs_backend, ddgs_region) pairs fired in parallel.
 # First non-empty result wins (same logic as the existing non-English path).
@@ -428,7 +424,7 @@ class DDGSClient:
         query: str,
         max_results: int = 10,
         backend: str = "auto",
-        region: str = "wt-wt",
+        region: str = DEFAULT_REGION,
         timelimit: Optional[str] = None,
         cache_ttl: Optional[int] = None,
     ) -> list[dict]:
@@ -511,7 +507,7 @@ class DDGSClient:
         query: str,
         max_results: int = 10,
         backend: str = "auto",
-        region: str = "wt-wt",
+        region: str = DEFAULT_REGION,
         timelimit: Optional[str] = None,
         cache_ttl: Optional[int] = None,
     ) -> list[SearchResult]:
@@ -637,20 +633,11 @@ class DDGSClient:
                         return degraded
             return []
 
-        # General queries — router-driven hedged search.
+        # General queries — primary lane with backup hot-swap.
         #
-        # Instead of a sequential fallback loop, we fire engines with a
-        # staggered start:
-        #
-        #   t=0          → primary fires
-        #   t=hedge_delay → backup fires IF primary hasn't returned yet
-        #   t=2*hedge_delay → tertiary fires IF neither has returned
-        #
-        # hedge_delay is adaptive: 80% of primary's p75 latency, bounded to
-        # [_HEDGE_MIN_DELAY, _HEDGE_MAX_DELAY]. No telemetry yet → default 1s.
-        #
-        # A threading.Event lets already-sleeping backup threads cancel
-        # immediately when the primary wins, so they don't waste DDGS quota.
+        # Like shopping core, backup providers do not compete with healthy
+        # primaries. A backup starts immediately after a primary returns an
+        # error/empty result, while one hard deadline bounds the whole lane.
         router = get_router()
         # Use the most restrictive TTL across all matched query types
         ttl = _effective_ttl(_qtypes, timelimit)
@@ -678,39 +665,24 @@ class DDGSClient:
         else:
             engines = router.pick_pool(n=hedge_count)
 
-        # Add one more tertiary hedge only when full hedging is requested
-        if hedge_count >= 2:
-            extra = router.available(exclude=set(engines))
-            if extra:
-                engines = (engines + [extra[0]])[:3]
-
-        # Adaptive hedge delay based on primary engine's p75 latency
-        primary_stats = router.registry.get(engines[0])
-        if primary_stats and primary_stats.latencies:
-            p75_lat = primary_stats.p95_latency  # use p95 for conservative threshold
-            hedge_delay = max(_HEDGE_MIN_DELAY, min(_HEDGE_MAX_DELAY, p75_lat * 0.8))
-        else:
-            hedge_delay = _HEDGE_DEFAULT_DELAY
-
-        logger.debug(
-            "hedged_search: engines=%s hedge_delay=%.2fs",
-            engines, hedge_delay,
+        backup_engines = router.pick_backup_pool()
+        logger.debug("provider lanes: primary=%s backup=%s", engines, backup_engines)
+        lane_client = DDGSClient(
+            proxies=self.proxies,
+            cache_db=self._cache_db,
+            cache_ttl=self.cache_ttl,
+            proxy_cooldown=self._proxy_cooldown,
+            request_delay=self.request_delay,
+            timeout=self.timeout,
+            max_retries=1,
         )
 
-        stop = threading.Event()
-
-        # Run one hedged engine after optional stagger delay.
-        def _hedged_search(engine: str, start_delay: float) -> list:
-            if start_delay > 0 and stop.wait(timeout=start_delay):
-                # stop was signalled before our delay expired → another engine won
-                return []
-            if stop.is_set():
-                return []
-
-            region = ENGINE_REGION_OVERRIDE.get(engine, "wt-wt")
+        # Run one engine and record its real-request observation.
+        def _search_engine(engine: str) -> list[SearchResult]:
+            region = ENGINE_REGION_OVERRIDE.get(engine, DEFAULT_REGION)
             t0 = time.perf_counter()
             try:
-                res = self.search_to_results(
+                res = lane_client.search_to_results(
                     query, max_results,
                     backend=engine,
                     region=region,
@@ -736,38 +708,50 @@ class DDGSClient:
             return res
 
         pool = _get_pool()
-        futs = {
-            pool.submit(_hedged_search, eng, i * hedge_delay): eng
-            for i, eng in enumerate(engines)
-        }
-        hedged_result: list[SearchResult] = []
-        overall_timeout = self.timeout + (hedge_delay * max(0, len(engines) - 1)) + 0.5
-        try:
-            for fut in as_completed(futs, timeout=overall_timeout):
+        pending = {pool.submit(_search_engine, engine): engine for engine in engines}
+        remaining_backups = iter(backup_engines)
+        result: list[SearchResult] = []
+        deadline = time.perf_counter() + max(0.5, float(self.timeout))
+        hedge_at = time.perf_counter() + min(BACKUP_HEDGE_DELAY, float(self.timeout) / 2)
+        backup_started = False
+        while pending and time.perf_counter() < deadline:
+            timeout_left = max(0.0, deadline - time.perf_counter())
+            wait_timeout = timeout_left
+            if not backup_started:
+                wait_timeout = min(wait_timeout, max(0.0, hedge_at - time.perf_counter()))
+            done, _ = wait(set(pending), timeout=wait_timeout, return_when=FIRST_COMPLETED)
+            if not done:
+                if not backup_started and time.perf_counter() >= hedge_at:
+                    backup = next(remaining_backups, None)
+                    if backup is not None:
+                        logger.info("provider hedge primary_pending=%s backup=%s", list(pending.values()), backup)
+                        pending[pool.submit(_search_engine, backup)] = backup
+                        backup_started = True
+                        continue
+                break
+            for fut in done:
+                engine = pending.pop(fut)
                 try:
-                    results = fut.result()
-                except Exception as _e:
-                    logger.debug("hedged future failed: %s", _e)
-                    results = []
-                if results:
-                    stop.set()  # cancel sleeping backup threads
-                    hedged_result = results
+                    engine_results = fut.result()
+                except Exception as exc:
+                    logger.debug("provider engine=%s failed: %s", engine, exc)
+                    engine_results = []
+                if engine_results:
+                    result = engine_results
                     break
-        except TimeoutError:
-            logger.debug(
-                "hedged_search timed out after %.2fs (engine timeout=%ss, engines=%s, hedge_delay=%.2fs)",
-                overall_timeout,
-                self.timeout,
-                engines,
-                hedge_delay,
-            )
-        finally:
-            stop.set()
-            # no pool.shutdown anymore
+                backup = next(remaining_backups, None)
+                if backup is not None:
+                    logger.info("provider hot-swap primary=%s backup=%s", engine, backup)
+                    pending[pool.submit(_search_engine, backup)] = backup
+                    backup_started = True
+            if result:
+                break
 
-        if hedged_result:
-            _write_partial_results(partial_buffer_path, hedged_result)
-            return hedged_result
+        for fut in pending:
+            fut.cancel()
+        if result:
+            _write_partial_results(partial_buffer_path, result)
+            return result
 
         for variant in self._degraded_query_variants(query):
             for backend in BACKEND_FALLBACK:

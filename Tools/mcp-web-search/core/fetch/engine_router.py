@@ -8,15 +8,17 @@ import random
 import threading
 from typing import Optional
 
-from core.fetch.engine_stats import EngineStats, Observation, make_registry
+from core.fetch.engine_stats import (
+    BACKUP_ENGINES,
+    PRIMARY_ENGINES,
+    EngineStats,
+    Observation,
+    make_registry,
+)
 
 logger = logging.getLogger("core.fetch.engine_router")
 
-# Some DDGS backends need non-default params (e.g. wikipedia region).
-ENGINE_REGION_OVERRIDE: dict[str, str] = {
-    # region=wt-wt causes DDGS to build "wt.wikipedia.org" (non-existent).
-    "wikipedia": "en-us",
-}
+ENGINE_REGION_OVERRIDE: dict[str, str] = {}
 
 
 # True if >= 50% of results have a non-trivial snippet (>= 30 chars).
@@ -47,7 +49,7 @@ class EngineRouter:
         registry: Optional[dict[str, EngineStats]] = None,
     ) -> None:
         self.registry: dict[str, EngineStats] = registry or make_registry()
-        self._lock = threading.RLock()  # RLock: pick_pool() calls pick() while holding the lock
+        self._lock = threading.RLock()
 
     # Engines currently in the hot tier.
     def hot(self) -> list[EngineStats]:
@@ -68,7 +70,10 @@ class EngineRouter:
     # Return the single best backend name (hot → warm → cold; 10% exploration).
     def pick(self) -> str:
         with self._lock:
-            candidates = self.hot() or self.warm() or self.cold()
+            primary_names = set(PRIMARY_ENGINES)
+            candidates = [engine for engine in self.hot() if engine.name in primary_names]
+            candidates = candidates or [engine for engine in self.warm() if engine.name in primary_names]
+            candidates = candidates or [engine for engine in self.cold() if engine.name in primary_names]
             if not candidates:
                 return "duckduckgo"
             if random.random() < 0.10:
@@ -78,17 +83,21 @@ class EngineRouter:
     # Return up to n backend names for parallel probing (hot, then warm, then cold).
     def pick_pool(self, n: int = 2) -> list[str]:
         with self._lock:
-            pool: list[str] = []
-            hot = sorted(self.hot(), key=lambda e: e.score, reverse=True)
-            warm = sorted(self.warm(), key=lambda e: e.score, reverse=True)
-            cold = sorted(self.cold(), key=lambda e: e.score, reverse=True)
-            for e in hot + warm + cold:
-                if len(pool) >= n:
-                    break
-                pool.append(e.name)
-            if not pool:
-                pool = [self.pick()]
-            return pool
+            return self._ranked_pool(PRIMARY_ENGINES, n)
+
+    # Return backup engines in reputation order; never mix them into primaries.
+    def pick_backup_pool(self, n: int = len(BACKUP_ENGINES)) -> list[str]:
+        with self._lock:
+            return self._ranked_pool(BACKUP_ENGINES, n)
+
+    def _ranked_pool(self, names: list[str], n: int) -> list[str]:
+        candidates = [
+            self.registry[name]
+            for name in names
+            if name in self.registry and not self.registry[name].is_tripped
+        ]
+        ranked = sorted(candidates, key=lambda e: (e.tier != "hot", e.tier == "cold", -e.score))
+        return [engine.name for engine in ranked[: max(1, n)]]
 
     # Return non-tripped engines not in exclude, sorted by score.
     def available(self, exclude: set[str]) -> list[str]:
