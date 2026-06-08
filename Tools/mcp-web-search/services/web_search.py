@@ -703,6 +703,14 @@ class TriageResult:
 
 
 @dataclass
+class PreviewFetchPlan:
+    results: list[SearchResult]
+    indices: list[int]
+    policies: list[str]
+    scores: list[float]
+
+
+@dataclass
 class SearchCycleContext:
     raw_query: str
     analysis_query: str
@@ -1206,6 +1214,27 @@ def _triage_results(results: list[SearchResult], query: str) -> list[TriageResul
         )
 
     return out
+
+
+# Rank preview candidates by triage score so the strongest sources parse first.
+def _build_preview_fetch_plan(
+    results: list[SearchResult],
+    triage: list[TriageResult],
+    limit: int,
+) -> PreviewFetchPlan:
+    candidates = [
+        (tr.score, idx, result, tr.fetch_policy)
+        for idx, (result, tr) in enumerate(zip(results, triage))
+        if not tr.skip
+    ]
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    selected = candidates[:max(0, limit)]
+    return PreviewFetchPlan(
+        results=[item[2] for item in selected],
+        indices=[item[1] for item in selected],
+        policies=[item[3] for item in selected],
+        scores=[item[0] for item in selected],
+    )
 
 
 # How many results from a single domain are allowed in the candidate pool
@@ -2059,6 +2088,7 @@ async def _fetch_previews(
     preview_settings: dict,
     loop,
     policies: list[str] | None = None,
+    priorities: list[float] | None = None,
     early_return_threshold: int = 0,
     req_id: str = "-",
     deadline: float | None = None,
@@ -2071,6 +2101,8 @@ async def _fetch_previews(
 
     if policies is None:
         policies = ["cheap"] * len(results)
+    if priorities is None:
+        priorities = [0.0] * len(results)
 
     sem = asyncio.Semaphore(concurrency)
     timeout = aiohttp.ClientTimeout(total=fetch_timeout)
@@ -2088,6 +2120,7 @@ async def _fetch_previews(
         fetch_timeout=fetch_timeout,
         total_timeout=total_timeout,
         early_return_threshold=early_return_threshold,
+        eager_high_score=sum(1 for score in priorities if score >= 0.50),
     )
 
     try:
@@ -2106,13 +2139,20 @@ async def _fetch_previews(
             timeout=timeout, connector=connector, connector_owner=True,
             headers={"User-Agent": _UA}
         ) as session:
-            tasks = [
-                asyncio.create_task(
-                    _fetch_preview_one(session, r, query, preview_settings, sem, loop, policy=p,
-                                       fetch_timeout=fetch_timeout, req_id=req_id)
+            def _start_task(idx: int) -> asyncio.Task:
+                return asyncio.create_task(
+                    _fetch_preview_one(
+                        session,
+                        results[idx],
+                        query,
+                        preview_settings,
+                        sem,
+                        loop,
+                        policy=policies[idx],
+                        fetch_timeout=fetch_timeout,
+                        req_id=req_id,
+                    )
                 )
-                for r, p in zip(results, policies)
-            ]
             effective_timeout = max(
                 total_timeout,
                 (fetch_timeout * _math.ceil(len(results) / max(concurrency, 1))) + 2.0,
@@ -2124,22 +2164,39 @@ async def _fetch_previews(
             _trace(req_id, "preview_batch.effective_timeout", effective_timeout=effective_timeout)
 
             # Map task → original index so we can reconstruct ordering
-            task_to_idx = {t: i for i, t in enumerate(tasks)}
             payloads: list[PreviewPayload] = [PreviewPayload()] * len(results)
-            pending: set = set(tasks)
+            high_count = sum(1 for score in priorities if score >= 0.50)
+            initial_width = min(max(1, high_count or concurrency), concurrency, len(results))
+            pending: dict[asyncio.Task, int] = {}
+            next_idx = 0
+
+            def _fill_slots(*, allow_reserve: bool) -> None:
+                nonlocal next_idx
+                while next_idx < len(results) and len(pending) < concurrency:
+                    if not allow_reserve and priorities[next_idx] < 0.50:
+                        break
+                    task = _start_task(next_idx)
+                    pending[task] = next_idx
+                    next_idx += 1
+
+            while next_idx < initial_width:
+                task = _start_task(next_idx)
+                pending[task] = next_idx
+                next_idx += 1
+
             good_count = 0
-            deadline = loop.time() + effective_timeout
+            batch_deadline = loop.time() + effective_timeout
 
             while pending:
-                remaining = max(0.01, deadline - loop.time())
-                done_batch, pending = await asyncio.wait(
-                    pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+                remaining = max(0.01, batch_deadline - loop.time())
+                done_batch, _ = await asyncio.wait(
+                    set(pending), timeout=remaining, return_when=asyncio.FIRST_COMPLETED
                 )
                 if not done_batch:
                     # Deadline reached
                     break
                 for task in done_batch:
-                    idx = task_to_idx[task]
+                    idx = pending.pop(task)
                     try:
                         payload = task.result()
                     except Exception as _e:
@@ -2152,23 +2209,28 @@ async def _fetch_previews(
                 if early_return_threshold and good_count >= early_return_threshold:
                     for t in pending:
                         t.cancel()
+                    cancelled = len(pending) + (len(results) - next_idx)
                     logger.debug(
                         "early_return: %d good preview(s) collected, cancelled %d remaining",
-                        good_count, len(pending),
+                        good_count, cancelled,
                     )
                     _trace(
                         req_id,
                         "preview_batch.early_return",
                         good_count=good_count,
-                        cancelled=len(pending),
+                        cancelled=cancelled,
                     )
                     break
+
+                high_pending = any(priorities[idx] >= 0.50 for idx in pending.values())
+                high_queued = next_idx < len(results) and priorities[next_idx] >= 0.50
+                _fill_slots(allow_reserve=not high_pending and not high_queued)
 
             # Cancel any tasks still pending (deadline exceeded without early-return)
             for t in pending:
                 t.cancel()
             if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
+                await asyncio.gather(*pending.keys(), return_exceptions=True)
 
     except Exception as exc:
         logger.debug("preview batch failed: %s", exc, exc_info=True)
@@ -3078,11 +3140,12 @@ class WebSearchService:
         use_fast_academic = opts.use_fast_academic and bool({"academic", "medical"} & set(query_types))
         n_hosted = len(hosted_engines)
         ddgs_multiplier = max(1, pool_multiplier - n_hosted)
+        default_ddgs_attempts = 4 if _normalize_search_effort(opts.effort) == "high" else 2
         ddgs_hedge = max(
             1,
             int(opts.ddgs_hedge_count)
             if opts.ddgs_hedge_count is not None
-            else max(1, 2 - n_hosted),
+            else max(1, default_ddgs_attempts - n_hosted),
         )
         hosted_max = fetch_max
         academic_budget = sum((source_budget or {}).get(name, 0) for name in ("academic", "medical"))
@@ -3423,20 +3486,16 @@ class WebSearchService:
             logger.debug("triage: skipped=%d race=%d cheap=%d (total=%d)",
                          skipped_count, race_count, len(triage) - skipped_count - race_count, len(triage))
 
-        # Build ordered fetch candidate list: non-skipped, up to preview_fetch_limit
-        to_fetch: list[SearchResult] = []
-        to_fetch_indices: list[int] = []
-        to_fetch_policies: list[str] = []
-        for i, (result, tr) in enumerate(zip(deduped, triage)):
-            if not tr.skip and len(to_fetch) < preview_fetch_limit:
-                to_fetch.append(result)
-                to_fetch_indices.append(i)
-                to_fetch_policies.append(tr.fetch_policy)
+        fetch_plan = _build_preview_fetch_plan(deduped, triage, preview_fetch_limit)
+        to_fetch = fetch_plan.results
+        to_fetch_indices = fetch_plan.indices
+        to_fetch_policies = fetch_plan.policies
         _trace(
             req_id,
             "fetch_plan.done",
             to_fetch=len(to_fetch),
             policies=to_fetch_policies[:],
+            scores=[round(score, 3) for score in fetch_plan.scores],
         )
 
         # -- Preview fetching --
@@ -3457,6 +3516,7 @@ class WebSearchService:
                 preview_settings=preview_settings,
                 loop=loop,
                 policies=to_fetch_policies,
+                priorities=fetch_plan.scores,
                 early_return_threshold=(
                     0
                     if _normalize_search_effort(opts.effort) == "high"
@@ -3750,16 +3810,17 @@ class WebSearchService:
                cheap=len(triage) - skipped_count - race_count, total=len(triage))
 
         # --- 4. Triage-aware fetch candidate list ---
-        # Only fetch pages where triage said skip=False, up to preview_fetch_limit.
-        to_fetch: list[SearchResult] = []
-        to_fetch_indices: list[int] = []
-        to_fetch_policies: list[str] = []
-        for i, (result, tr) in enumerate(zip(deduped, triage)):
-            if not tr.skip and len(to_fetch) < preview_fetch_limit:
-                to_fetch.append(result)
-                to_fetch_indices.append(i)
-                to_fetch_policies.append(tr.fetch_policy)
-        _trace(req_id, "rich.fetch_plan.done", to_fetch=len(to_fetch), policies=to_fetch_policies[:])
+        fetch_plan = _build_preview_fetch_plan(deduped, triage, preview_fetch_limit)
+        to_fetch = fetch_plan.results
+        to_fetch_indices = fetch_plan.indices
+        to_fetch_policies = fetch_plan.policies
+        _trace(
+            req_id,
+            "rich.fetch_plan.done",
+            to_fetch=len(to_fetch),
+            policies=to_fetch_policies[:],
+            scores=[round(score, 3) for score in fetch_plan.scores],
+        )
 
         # --- 5. Preview fetching ---
         loop = asyncio.get_running_loop()
@@ -3779,6 +3840,7 @@ class WebSearchService:
                 preview_settings=preview_settings,
                 loop=loop,
                 policies=to_fetch_policies,
+                priorities=fetch_plan.scores,
                 early_return_threshold=(
                     0
                     if _normalize_search_effort(opts.effort) == "high"

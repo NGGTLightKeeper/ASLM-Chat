@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Generic, Literal, TypeVar
 from lxml import html
 from lxml.etree import HTMLParser as LHTMLParser
 
+from .exceptions import DDGSException, RatelimitException
 from .http_client import HttpClient
 from .results import TextResult
 
@@ -60,6 +61,12 @@ class BaseSearchEngine(ABC, Generic[T]):
         resp = self.http_client.request(*args, **kwargs)
         if resp.status_code == 200:
             return resp.text
+        if resp.status_code == 429:
+            raise RatelimitException("HTTP 429")
+        if resp.status_code in (402, 403):
+            raise DDGSException(f"HTTP {resp.status_code} forbidden")
+        if resp.status_code >= 400:
+            raise DDGSException(f"HTTP {resp.status_code}")
         return None
 
     @cached_property

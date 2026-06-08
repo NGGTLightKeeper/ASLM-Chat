@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import atexit
 import contextlib
 import html as html_lib
 import hashlib
@@ -16,37 +15,11 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-import threading
 from threading import Lock
 from typing import Optional
 
 from core.models.search import SearchResult
 from core.fetch.thread_pool import io_pool as _io_pool
-from core.fetch.engine_router import (
-    ENGINE_REGION_OVERRIDE,
-    _quality_pass,
-    _result_hash,
-    get_router,
-)
-from core.fetch.engine_stats import Observation
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
-
-_shared_pool: Optional[ThreadPoolExecutor] = None
-_shared_pool_lock = Lock()
-
-# Dedicated thread pool for DDGS sync search (rate-limited sleeps).
-def _get_pool() -> ThreadPoolExecutor:
-    global _shared_pool
-    if _shared_pool is None:
-        with _shared_pool_lock:
-            if _shared_pool is None:
-                # 10 workers: each search_sync sleeps 0.15–0.6s for rate-limiting,
-                # so 30 workers would block the entire pool under burst load.
-                pool = ThreadPoolExecutor(max_workers=10)
-                atexit.register(pool.shutdown, wait=False)
-                _shared_pool = pool
-    return _shared_pool
-
 logger = logging.getLogger("core.fetch.ddgs_client")
 
 
@@ -78,7 +51,6 @@ except ImportError:
 _RETRYABLE_ERRORS = ("ssl", "eof", "connect", "connection", "timeout", "reset", "broken pipe")
 _HARD_FAILURE_ERRORS = ("403", "forbidden")
 DEFAULT_REGION = "us-en"
-BACKUP_HEDGE_DELAY = 1.25
 _OPERATOR_TOKEN_RE = re.compile(r"(?<!\S)(?:-?site:[^\s]+|inurl:[^\s]+|intitle:[^\s]+|filetype:[^\s]+|(?:OR|\|))(?=\s|$)", re.IGNORECASE)
 _LEXICAL_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-]{2,}|[А-Яа-яЁё0-9_\-]{2,}")
 
@@ -101,22 +73,6 @@ _NEGATIVE_CACHE_TTL = 300     # 5 min — cache empty results to avoid hammering
 def _effective_ttl(query_types: list[str], timelimit: str | None = None) -> int:
     base = min((_QUERY_TTL.get(qt, 1_800) for qt in query_types), default=1_800)
     return _timelimit_cache_ttl(timelimit, base)
-
-
-# Union of BACKEND_PRESETS engines for all matched types (skips "auto").
-def _union_preset_engines(query_types: list[str]) -> list[str]:
-    seen: set[str] = set()
-    engines: list[str] = []
-    for qt in query_types:
-        preset_str = BACKEND_PRESETS.get(qt, "")
-        if not preset_str or preset_str == "auto":
-            continue
-        for backend in preset_str.split(","):
-            backend = backend.strip()
-            if backend and backend not in seen:
-                seen.add(backend)
-                engines.append(backend)
-    return engines
 
 
 # TTL caps for time-filtered queries: fresher filter → shorter cache lifetime.
@@ -212,50 +168,8 @@ def _timelimit_cache_ttl(timelimit: Optional[str], base_ttl: int) -> int:
     return min(cap, base_ttl)
 
 
-BACKEND_PRESETS: dict[str, str] = {
-    # Authoritative, indexed, structured sources
-    "technical":       "google",          # large index + strong code coverage
-    "troubleshooting": "google",          # same — StackOverflow / GitHub issues
-    "academic":        "google",          # Scholar results rank well here
-    "medical":         "google",          # PubMed / NIH indexed by both
-    # Commercial / volatile
-    "finance":         "google,yahoo",    # Yahoo Finance + Google News strong here
-    "shopping":        "google,yahoo",    # product pages, price aggregators
-    # Community / discussion
-    "forum":           "auto",            # DDG auto handles Reddit / SO well
-    "journalistic":    "auto",            # DDG news ranking is decent
-    "general":         "auto",
-    # Language override (bypass main routing)
-    "ru":              "yandex,google",
-}
 BACKEND_FALLBACK = ["startpage", "mojeek", "brave", "yandex"]
 BACKEND_SITE_QUERY = ["yandex", "yahoo", "startpage"]
-
-# Each entry: list of (ddgs_backend, ddgs_region) pairs fired in parallel.
-# First non-empty result wins (same logic as the existing non-English path).
-#
-# Backends are chosen for stability at the given region:
-#   - "duckduckgo" is always the anchor (most stable globally).
-#   - "google" handles most non-Latin scripts better than yahoo.
-#   - "yandex" has strong recall for ru/uk/be but tends to 403 on other langs.
-#   - "yahoo" covers ja/ko/zh reasonably well.
-#
-# Region codes follow DDGS convention: {lang}-{country} or {lang}-{lang}.
-# "wt-wt" means world-wide (no region filter).
-_LANG_BACKENDS: dict[str, list[tuple[str, str]]] = {
-    "ru": [("duckduckgo", "ru-ru"), ("yandex",     "ru-ru")],
-    "ar": [("duckduckgo", "ar-ar"), ("google",     "ar-ar")],
-    "he": [("duckduckgo", "il-he"), ("google",     "wt-wt")],
-    "zh": [("duckduckgo", "cn-zh"), ("google",     "cn-zh")],
-    "ja": [("duckduckgo", "jp-ja"), ("yahoo",      "jp-ja")],
-    "ko": [("duckduckgo", "kr-ko"), ("yahoo",      "kr-ko")],
-    "th": [("duckduckgo", "th-th"), ("google",     "th-th")],
-    "hi": [("duckduckgo", "in-en"), ("google",     "in-en")],
-    "el": [("duckduckgo", "gr-el"), ("google",     "wt-wt")],
-}
-# Fallback for languages not in the map (e.g. detected but no specific entry).
-# Uses the DDGS "{lang}-{lang}" convention with two stable backends.
-_LANG_BACKENDS_DEFAULT_BACKENDS = ("duckduckgo", "google")
 
 
 _MULTI_SPACE_RE = re.compile(r"\s{2,}")
@@ -427,6 +341,9 @@ class DDGSClient:
         region: str = DEFAULT_REGION,
         timelimit: Optional[str] = None,
         cache_ttl: Optional[int] = None,
+        language: str | None = None,
+        query_types: list[str] | None = None,
+        max_attempts: int = 1,
     ) -> list[dict]:
         if not _DDGS_AVAILABLE:
             logger.error("vendored core.ddgs search provider is unavailable")
@@ -442,12 +359,16 @@ class DDGSClient:
             backend=backend,
             region=region,
             timelimit=timelimit or "",
+            language=language or "",
+            query_types=query_types or [],
+            max_attempts=max_attempts,
         )
         cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
 
-        for attempt in range(self.max_retries):
+        attempts = 1 if backend in {"auto", "all"} else self.max_retries
+        for attempt in range(attempts):
             proxy = self._get_proxy()
             try:
                 if attempt > 0:
@@ -461,6 +382,9 @@ class DDGSClient:
                     "max_results": max_results,
                     "backend": backend,
                     "region": region,
+                    "language": language,
+                    "query_types": query_types,
+                    "max_attempts": max_attempts,
                 }
                 if timelimit:
                     ddgs_kwargs["timelimit"] = timelimit
@@ -483,7 +407,7 @@ class DDGSClient:
             except _EXCEPTION_CLASSES as error:
                 message = str(error)
                 log_level = logging.DEBUG if "No results found" in message else logging.WARNING
-                logger.log(log_level, "DDGS attempt %s/%s: %s", attempt + 1, self.max_retries, error)
+                logger.log(log_level, "DDGS attempt %s/%s: %s", attempt + 1, attempts, error)
                 if any(marker in message.lower() for marker in _HARD_FAILURE_ERRORS):
                     # Hard provider blocks like HTTP 403 won't recover within the
                     # same request; avoid wasting retries and cache the miss briefly.
@@ -494,7 +418,7 @@ class DDGSClient:
             except Exception as error:
                 message = str(error).lower()
                 if any(kw in message for kw in _RETRYABLE_ERRORS):
-                    logger.warning("DDGS attempt %s/%s: %s", attempt + 1, self.max_retries, error)
+                    logger.warning("DDGS attempt %s/%s: %s", attempt + 1, attempts, error)
                 else:
                     logger.debug("DDGS unexpected error: %s", error)
                     break
@@ -510,6 +434,9 @@ class DDGSClient:
         region: str = DEFAULT_REGION,
         timelimit: Optional[str] = None,
         cache_ttl: Optional[int] = None,
+        language: str | None = None,
+        query_types: list[str] | None = None,
+        max_attempts: int = 1,
     ) -> list[SearchResult]:
         raw = self.search_sync(
             query=query,
@@ -518,6 +445,9 @@ class DDGSClient:
             region=region,
             timelimit=timelimit,
             cache_ttl=cache_ttl,
+            language=language,
+            query_types=query_types,
+            max_attempts=max_attempts,
         )
         results: list[SearchResult] = []
         for item in raw:
@@ -530,7 +460,7 @@ class DDGSClient:
                     url=url,
                     title=normalize_snippet(item.get("title", "")),
                     snippet=snippet,
-                    engine=f"ddgs:{backend}",
+                    engine=f"ddgs:{item.get('_engine') or backend}",
                     published_date=_extract_snippet_date(snippet),
                 )
             )
@@ -566,189 +496,20 @@ class DDGSClient:
                         return results
             return []
 
-        # Non-English queries — run backends in parallel and take the first
-        # with results.  Backend pairs are language-specific (see _LANG_BACKENDS).
-        if lang != "en":
-            if lang in _LANG_BACKENDS:
-                parallel_backends = _LANG_BACKENDS[lang]
-            else:
-                # Unknown non-English lang: use DDGS convention region + two
-                # backends that handle most scripts without hard 403s.
-                region = f"{lang}-{lang}"
-                parallel_backends = [
-                    (_LANG_BACKENDS_DEFAULT_BACKENDS[0], region),
-                    (_LANG_BACKENDS_DEFAULT_BACKENDS[1], region),
-                ]
-                logger.debug(
-                    "multilingual: no entry for lang=%r, using default backends region=%s",
-                    lang, region,
-                )
-
-            logger.debug(
-                "multilingual: lang=%s backends=%s",
-                lang, [(be, reg) for be, reg in parallel_backends],
-            )
-            fast_client = DDGSClient(
-                request_delay=(0.0, 0.2),
-                max_retries=1,
-                cache_db=self._cache_db,
-                cache_ttl=self.cache_ttl,
-            )
-            pool = _get_pool()
-            futures = {
-                pool.submit(
-                    fast_client.search_to_results, query, max_results,
-                    backend=be, region=reg, timelimit=timelimit,
-                ): be
-                for be, reg in parallel_backends
-            }
-            result: list[SearchResult] = []
-            try:
-                for fut in as_completed(futures, timeout=self.timeout):
-                    try:
-                        res = fut.result()
-                        if res:
-                            _write_partial_results(partial_buffer_path, res)
-                            result = res
-                            break
-                    except Exception as _e:
-                        logger.debug("multilingual future failed: %s", _e)
-            except TimeoutError:
-                logger.debug("multilingual parallel search timed out after %ss", self.timeout)
-                # no pool.shutdown anymore
-            if result:
-                return result
-            for variant in self._degraded_query_variants(query):
-                for backend in BACKEND_FALLBACK:
-                    degraded = self.search_to_results(
-                        variant,
-                        max_results,
-                        backend=backend,
-                        region="wt-wt",
-                        timelimit=None,
-                    )
-                    if degraded:
-                        logger.info("ddgs fallback hit (multilingual) variant=%r backend=%s", variant, backend)
-                        _write_partial_results(partial_buffer_path, degraded)
-                        return degraded
-            return []
-
-        # General queries — primary lane with backup hot-swap.
-        #
-        # Like shopping core, backup providers do not compete with healthy
-        # primaries. A backup starts immediately after a primary returns an
-        # error/empty result, while one hard deadline bounds the whole lane.
-        router = get_router()
-        # Use the most restrictive TTL across all matched query types
+        # core.ddgs owns language routing, provider-family diversity, health,
+        # suspension, and latency-aware sequential attempts.
         ttl = _effective_ttl(_qtypes, timelimit)
-
-        # hedge_count controls how many DDGS backends fire in parallel.
-        # Callers reduce this when hosted API engines already cover the query.
-        hedge_count = max(1, hedge_count)
-
-        # Bias engine selection toward union of BACKEND_PRESETS for all
-        # matched query types, respecting the router's circuit-breaker state.
-        preset_engines = _union_preset_engines(_qtypes)
-        preferred = [
-            e for e in preset_engines
-            if e in router.registry and not router.registry[e].is_tripped
-        ]
-
-        if preferred:
-            router_fill = router.pick_pool(n=hedge_count + len(preferred))
-            merged = list(dict.fromkeys(preferred + router_fill))
-            engines = merged[:hedge_count]
-            logger.debug(
-                "preset routing: types=%s preferred=%s engines=%s",
-                _qtypes, preset_engines, engines,
-            )
-        else:
-            engines = router.pick_pool(n=hedge_count)
-
-        backup_engines = router.pick_backup_pool()
-        logger.debug("provider lanes: primary=%s backup=%s", engines, backup_engines)
-        lane_client = DDGSClient(
-            proxies=self.proxies,
-            cache_db=self._cache_db,
-            cache_ttl=self.cache_ttl,
-            proxy_cooldown=self._proxy_cooldown,
-            request_delay=self.request_delay,
-            timeout=self.timeout,
-            max_retries=1,
+        result = self.search_to_results(
+            query,
+            max_results,
+            backend="auto",
+            region=DEFAULT_REGION,
+            timelimit=timelimit,
+            cache_ttl=ttl,
+            language=lang,
+            query_types=_qtypes,
+            max_attempts=max(1, hedge_count),
         )
-
-        # Run one engine and record its real-request observation.
-        def _search_engine(engine: str) -> list[SearchResult]:
-            region = ENGINE_REGION_OVERRIDE.get(engine, DEFAULT_REGION)
-            t0 = time.perf_counter()
-            try:
-                res = lane_client.search_to_results(
-                    query, max_results,
-                    backend=engine,
-                    region=region,
-                    timelimit=timelimit,
-                    cache_ttl=ttl,
-                )
-                if res:
-                    _write_partial_results(partial_buffer_path, res)
-            except Exception as _e:
-                logger.debug("hedged search engine=%s failed: %s", engine, _e)
-                res = []
-            latency = time.perf_counter() - t0
-
-            raw = [{"body": r.snippet, "href": r.url} for r in res]
-            router.record(engine, Observation(
-                ts=time.time(),
-                latency=latency,
-                success=bool(res),
-                result_count=len(res),
-                quality_pass=_quality_pass(raw),
-                result_hash=_result_hash(raw),
-            ))
-            return res
-
-        pool = _get_pool()
-        pending = {pool.submit(_search_engine, engine): engine for engine in engines}
-        remaining_backups = iter(backup_engines)
-        result: list[SearchResult] = []
-        deadline = time.perf_counter() + max(0.5, float(self.timeout))
-        hedge_at = time.perf_counter() + min(BACKUP_HEDGE_DELAY, float(self.timeout) / 2)
-        backup_started = False
-        while pending and time.perf_counter() < deadline:
-            timeout_left = max(0.0, deadline - time.perf_counter())
-            wait_timeout = timeout_left
-            if not backup_started:
-                wait_timeout = min(wait_timeout, max(0.0, hedge_at - time.perf_counter()))
-            done, _ = wait(set(pending), timeout=wait_timeout, return_when=FIRST_COMPLETED)
-            if not done:
-                if not backup_started and time.perf_counter() >= hedge_at:
-                    backup = next(remaining_backups, None)
-                    if backup is not None:
-                        logger.info("provider hedge primary_pending=%s backup=%s", list(pending.values()), backup)
-                        pending[pool.submit(_search_engine, backup)] = backup
-                        backup_started = True
-                        continue
-                break
-            for fut in done:
-                engine = pending.pop(fut)
-                try:
-                    engine_results = fut.result()
-                except Exception as exc:
-                    logger.debug("provider engine=%s failed: %s", engine, exc)
-                    engine_results = []
-                if engine_results:
-                    result = engine_results
-                    break
-                backup = next(remaining_backups, None)
-                if backup is not None:
-                    logger.info("provider hot-swap primary=%s backup=%s", engine, backup)
-                    pending[pool.submit(_search_engine, backup)] = backup
-                    backup_started = True
-            if result:
-                break
-
-        for fut in pending:
-            fut.cancel()
         if result:
             _write_partial_results(partial_buffer_path, result)
             return result

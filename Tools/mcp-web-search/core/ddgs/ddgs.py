@@ -2,17 +2,15 @@
 
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor, wait
+import time
 from math import ceil
-from random import random, shuffle
 from types import TracebackType
 from typing import Any, ClassVar
 
 from .base import BaseSearchEngine
 from .engines import ENGINES
 from .exceptions import DDGSException, TimeoutException
-from .results import ResultsAggregator, TextResult
-from .similarity import SimpleFilterRanker
+from .routing import LANGUAGE_REGION, ROUTING_STATE, infer_language
 from .utils import _expand_proxy_tb_alias
 
 logger = logging.getLogger(__name__)
@@ -52,9 +50,7 @@ class DDGS:
         self._proxy = _expand_proxy_tb_alias(proxy) or os.environ.get("DDGS_PROXY")
         self._timeout = timeout
         self._verify = verify
-        self._engines_cache: dict[
-            type[BaseSearchEngine[Any]], BaseSearchEngine[Any]
-        ] = {}  # dict[engine_class, engine_instance]
+        self._engines_cache: dict[tuple[type[BaseSearchEngine[Any]], int], BaseSearchEngine[Any]] = {}
 
     def __enter__(self) -> "DDGS":  # noqa: PYI034
         """Enter the context manager and return the DDGS instance."""
@@ -86,14 +82,8 @@ class DDGS:
         """
         if isinstance(backend, list):  # deprecated
             backend = ",".join(backend)
-        backend_list = [x.strip() for x in backend.split(",")]
-        engine_keys = list(ENGINES[category].keys())
-        shuffle(engine_keys)
-        if "auto" in backend_list or "all" in backend_list:
-            keys = engine_keys
-            keys = ["wikipedia", "grokipedia"] + [k for k in keys if k not in ("wikipedia", "grokipedia")]
-        else:
-            keys = backend_list
+        backend_list = [x.strip() for x in backend.split(",") if x.strip()]
+        keys = list(ENGINES[category]) if any(x in {"auto", "all"} for x in backend_list) else backend_list
 
         engine_classes = []
         invalid_keys = []
@@ -114,21 +104,31 @@ class DDGS:
         instances = []
         for engine_class in engine_classes:
             # If already cached, use the cached instance
-            if engine_class in self._engines_cache:
-                instances.append(self._engines_cache[engine_class])
+            cache_key = (engine_class, int(self._timeout or 0))
+            if cache_key in self._engines_cache:
+                instances.append(self._engines_cache[cache_key])
             # If not cached, create a new instance
             else:
                 engine_instance = engine_class(proxy=self._proxy, timeout=self._timeout, verify=self._verify)
-                self._engines_cache[engine_class] = engine_instance
+                self._engines_cache[cache_key] = engine_instance
                 instances.append(engine_instance)
 
         if not instances:
             logger.warning("backend is not set. Using 'auto'")
             return self._get_engines(category, "auto")
 
-        # sorting by `engine.priority`
-        instances.sort(key=lambda e: (e.priority, random), reverse=True)
         return instances
+
+    def _engine(self, name: str, timeout: float) -> BaseSearchEngine[Any]:
+        engine_class = ENGINES["text"][name]
+        cache_key = (engine_class, max(1, int(timeout)))
+        if cache_key not in self._engines_cache:
+            self._engines_cache[cache_key] = engine_class(
+                proxy=self._proxy,
+                timeout=cache_key[1],
+                verify=self._verify,
+            )
+        return self._engines_cache[cache_key]
 
     def _search_sync(  # noqa: C901
         self,
@@ -142,6 +142,9 @@ class DDGS:
         max_results: int | None = 10,
         page: int = 1,
         backend: str = "auto",
+        language: str | None = None,
+        query_types: list[str] | None = None,
+        max_attempts: int = 2,
         **kwargs: str,
     ) -> list[dict[str, Any]]:
         """Perform a search across engines in the given category.
@@ -167,51 +170,69 @@ class DDGS:
             msg = "query is mandatory."
             raise DDGSException(msg)
 
-        engines = self._get_engines(category, backend)
-        len_unique_providers = len({engine.provider for engine in engines})
-        seen_providers: set[str] = set()
+        requested = [item.strip() for item in backend.split(",") if item.strip()]
+        auto = any(item in {"auto", "all"} for item in requested)
+        detected_language = infer_language(query)
+        language = detected_language if detected_language != "en" else (language or "en")
+        region = LANGUAGE_REGION.get(language, region)
+        if auto:
+            plan = ROUTING_STATE.plan(
+                set(ENGINES[category]),
+                language=language,
+                query_types=set(query_types or ("general",)),
+                max_attempts=max(1, max_attempts),
+            )
+        else:
+            plan = [name for name in requested if name in ENGINES[category]]
 
-        # Perform search
-        results_aggregator: ResultsAggregator[TextResult] = ResultsAggregator({"href"})
-        max_workers = min(len_unique_providers, ceil(max_results / 10) + 1) if max_results else len_unique_providers
-        if DDGS.threads:
-            max_workers = min(max_workers, DDGS.threads)
-        futures, err = {}, None
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="DDGS") as executor:
-            for i, engine in enumerate(engines, start=1):
-                if engine.provider in seen_providers:
-                    continue
-                future = executor.submit(
-                    engine.search,
+        results: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
+        err: BaseException | None = None
+        hard_deadline = time.perf_counter() + max(1.0, float(self._timeout or 5))
+        per_engine_limit = max_results
+        if auto and max_results:
+            per_engine_limit = max(1, ceil(max_results / max(1, len(plan))))
+        for index, name in enumerate(plan):
+            remaining = hard_deadline - time.perf_counter()
+            if remaining <= 0:
+                break
+            attempts_left = max(1, len(plan) - index)
+            fair_share = max(1.0, remaining / attempts_left)
+            attempt_timeout = min(remaining, fair_share, ROUTING_STATE.attempt_timeout(name, remaining))
+            started = time.perf_counter()
+            try:
+                engine_results = self._engine(name, attempt_timeout).search(
                     query,
                     region=region,
                     safesearch=safesearch,
                     timelimit=timelimit,
                     page=page,
                     **kwargs,
-                )
-                futures[future] = engine
-
-                if len(futures) >= max_workers or i >= max_workers:
-                    done, not_done = wait(futures, timeout=self._timeout, return_when="FIRST_EXCEPTION")
-                    for f, f_engine in futures.items():
-                        if f in done:
-                            try:
-                                if r := f.result():
-                                    results_aggregator.extend(r)
-                                    seen_providers.add(f_engine.provider)
-                            except Exception as ex:  # noqa: BLE001
-                                err = ex
-                                logger.info("Error in engine %s: %r", f_engine.name, ex)
-                    futures = {f: futures[f] for f in not_done}
-
-                if max_results and len(results_aggregator) >= max_results:
+                ) or []
+                latency = time.perf_counter() - started
+                ROUTING_STATE.record(name, latency, bool(engine_results))
+                added = 0
+                for result in engine_results:
+                    item = dict(result.__dict__)
+                    url = str(item.get("href") or "").strip()
+                    if not url or url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    item["_engine"] = name
+                    results.append(item)
+                    added += 1
+                    if per_engine_limit and added >= per_engine_limit:
+                        break
+                    if max_results and len(results) >= max_results:
+                        break
+                if not auto and results:
                     break
-
-        results = results_aggregator.extract_dicts()
-        # Rank results
-        ranker = SimpleFilterRanker()
-        results = ranker.rank(results, query)
+            except Exception as ex:  # noqa: BLE001
+                err = ex
+                ROUTING_STATE.record(name, time.perf_counter() - started, False, ex)
+                logger.info("Error in engine %s: %r", name, ex)
+            if max_results and len(results) >= max_results:
+                break
 
         if results:
             return results[:max_results] if max_results else results
