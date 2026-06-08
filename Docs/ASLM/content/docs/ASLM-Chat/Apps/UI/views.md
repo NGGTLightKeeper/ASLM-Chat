@@ -22,10 +22,6 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 
 **Purpose:** Type `MainView` defined in `views.py`.
 
-### `class ProfileView`
-
-**Purpose:** Type `ProfileView` defined in `views.py`.
-
 ### `class ChatView`
 
 **Purpose:** Type `ChatView` defined in `views.py`.
@@ -478,10 +474,6 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 2. Handle errors and map them to a safe response.
 3. Parse or serialize JSON payloads.
 4. Build an HTTP response for the client.
-
-#### `def ProfileView.get_context_data(**kwargs) -> dict[str, Any]`
-
-**Purpose:** Build the profile page context.
 
 #### `def ChatView.get_context_data(**kwargs) -> dict[str, Any]`
 
