@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from ..base import BaseSearchEngine
-from ..exceptions import DDGSException
+from ..exceptions import DDGSException, RatelimitException
 from ..results import TextResult
 
 
@@ -41,8 +41,17 @@ class StackOverflow(BaseSearchEngine[TextResult]):
                 timeout=self._api_timeout,
                 headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
             )
+            lowered = response.text.lower()
+            if response.status_code == 429 or (
+                "too many requests" in lowered
+                or "temporarily rate limited" in lowered
+                or "unusually high number of requests" in lowered
+            ):
+                raise RatelimitException("Stack Exchange IP rate limit")
             response.raise_for_status()
             return response.text
+        except RatelimitException:
+            raise
         except Exception as exc:
             raise DDGSException(f"Stack Exchange API request failed: {exc}") from exc
 

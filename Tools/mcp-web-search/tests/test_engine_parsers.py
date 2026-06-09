@@ -105,6 +105,24 @@ def test_stackoverflow_payload_uses_string_query_params() -> None:
     assert payload["pagesize"] == "10"
 
 
+def test_stackoverflow_reports_ip_block_as_rate_limit(monkeypatch) -> None:
+    class Response:
+        status_code = 400
+        text = "<h1>Too many requests</h1><p>This IP has been temporarily rate limited.</p>"
+
+        @staticmethod
+        def raise_for_status() -> None:
+            raise AssertionError("rate limit should be detected before generic HTTP handling")
+
+    monkeypatch.setattr(
+        "curl_cffi.requests.get",
+        lambda *_args, **_kwargs: Response(),
+    )
+
+    with pytest.raises(RatelimitException, match="Stack Exchange IP rate limit"):
+        StackOverflow(timeout=5).request("GET", StackOverflow.search_url, params={})
+
+
 def test_specialized_news_engines_parse_news_cards() -> None:
     brave_html = """
     <div data-type="news">
