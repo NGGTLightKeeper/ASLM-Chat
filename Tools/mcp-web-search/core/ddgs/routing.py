@@ -24,15 +24,19 @@ class EngineProfile:
 
 PROFILES: dict[str, EngineProfile] = {
     "google": EngineProfile("google", "google", "A", 1.00),
-    "duckduckgo": EngineProfile("duckduckgo", "bing", "A", 0.96),
+    "duckduckgo": EngineProfile("duckduckgo", "duckduckgo_yahoo", "A", 0.96),
     "brave": EngineProfile("brave", "brave", "A", 0.92),
     "brave_news": EngineProfile("brave_news", "brave", "specialized", 0.90, frozenset({"journalistic", "news"})),
-    "bing": EngineProfile("bing", "bing", "B", 0.84),
-    "bing_news": EngineProfile("bing_news", "bing", "specialized", 0.84, frozenset({"journalistic", "news"})),
     "yandex": EngineProfile("yandex", "yandex", "B", 0.80, frozenset({"ru"})),
-    "yahoo": EngineProfile("yahoo", "bing", "B", 0.78, frozenset({"zh", "ja", "ko", "finance"})),
+    "yahoo": EngineProfile("yahoo", "duckduckgo_yahoo", "B", 0.78, frozenset({"zh", "ja", "ko", "finance"})),
+    "qwant": EngineProfile("qwant", "qwant", "B", 0.76),
+    "yep": EngineProfile("yep", "yep", "B", 0.74),
     "mojeek": EngineProfile("mojeek", "mojeek", "B", 0.72),
     "startpage": EngineProfile("startpage", "google", "specialized", 0.68),
+    "stackoverflow": EngineProfile(
+        "stackoverflow", "stackexchange", "specialized", 0.88,
+        frozenset({"technical", "troubleshooting", "forum", "documentation"}),
+    ),
     "wikipedia": EngineProfile("wikipedia", "wikipedia", "specialized", 0.86, frozenset({"general"})),
     "grokipedia": EngineProfile("grokipedia", "grokipedia", "specialized", 0.45, frozenset({"general"})),
 }
@@ -59,18 +63,27 @@ ENGINE_CLASS_AFFINITY: dict[str, dict[str, float]] = {
     },
     "duckduckgo": {"general": 0.08, "forum": 0.16, "troubleshooting": 0.12},
     "brave_news": {"journalistic": 0.55, "news": 0.55, "finance": 0.18},
-    "bing": {"finance": 0.18, "legal": 0.14, "government": 0.14},
-    "bing_news": {"journalistic": 0.50, "news": 0.50, "finance": 0.18},
     "yahoo": {"finance": 0.28},
     "startpage": {
         "legal": 0.22, "medical": 0.20, "documentation": 0.18,
         "government": 0.18,
     },
     "wikipedia": {"general": 0.20, "education": 0.16},
+    "stackoverflow": {
+        "technical": 0.58, "troubleshooting": 0.62,
+        "forum": 0.42, "documentation": 0.20,
+    },
 }
-EARLY_SPECIALIST_CLASSES = frozenset({"journalistic", "news"})
-
-
+EARLY_SPECIALIST_CLASSES = frozenset({
+    "journalistic", "news", "technical", "troubleshooting", "forum",
+})
+CLASS_GATED_ENGINES = {
+    "brave_news": frozenset({"journalistic", "news"}),
+    "stackoverflow": frozenset({"technical", "troubleshooting", "forum", "documentation"}),
+}
+CLASS_GATE_MIN_SHARE = {
+    "brave_news": 0.35,
+}
 def infer_language(query: str) -> str:
     counts = {"ru": 0, "zh": 0, "ja": 0, "ko": 0, "ar": 0, "he": 0, "th": 0, "el": 0}
     total = 0
@@ -289,6 +302,27 @@ class RoutingState:
             score -= max(0.0, 0.15 * (1.0 - (now - provider.last_used_at) / 30.0))
         return score
 
+    @staticmethod
+    def _passes_class_gate(
+        name: str,
+        query_types: set[str],
+        class_weights: dict[str, float] | None,
+    ) -> bool:
+        gated_classes = CLASS_GATED_ENGINES.get(name)
+        if not gated_classes:
+            return True
+        if not gated_classes & query_types:
+            return False
+        min_share = CLASS_GATE_MIN_SHARE.get(name)
+        if min_share is None or not class_weights:
+            return True
+        total = sum(max(0.0, float(weight)) for weight in class_weights.values()) or 1.0
+        matching = sum(
+            max(0.0, float(class_weights.get(query_type, 0.0)))
+            for query_type in gated_classes
+        )
+        return matching / total >= min_share
+
     def plan(
         self,
         available: set[str],
@@ -302,9 +336,20 @@ class RoutingState:
     ) -> list[str]:
         with self._lock:
             self._refresh()
-        candidates = [PROFILES[name] for name in available if name in PROFILES and not self.engine(name).suspended]
+        candidates = [
+            PROFILES[name]
+            for name in available
+            if name in PROFILES
+            and not self.engine(name).suspended
+            and self._passes_class_gate(name, query_types, class_weights)
+        ]
         if not candidates:
-            candidates = [PROFILES[name] for name in available if name in PROFILES]
+            candidates = [
+                PROFILES[name]
+                for name in available
+                if name in PROFILES
+                and self._passes_class_gate(name, query_types, class_weights)
+            ]
         candidates.sort(
             key=lambda profile: self.score(profile, language, query_types, class_weights),
             reverse=True,
@@ -333,10 +378,26 @@ class RoutingState:
                 ),
                 None,
             )
-            best_a = next((profile for profile in candidates if profile.tier == "A"), None)
+            language_preferred = next(
+                (
+                    profile for profile in candidates
+                    if profile.name in LANGUAGE_PREFERRED.get(language, ())
+                ),
+                None,
+            )
+            best_a = next(
+                (
+                    profile for profile in candidates
+                    if profile.tier == "A"
+                    and (specialist is None or profile.provider != specialist.provider)
+                ),
+                None,
+            )
             best_b = next((profile for profile in candidates if profile.tier == "B"), None)
-            for profile in (specialist, best_a, best_b):
+            for profile in (language_preferred, specialist, best_a, best_b):
                 if profile is None or profile.name in plan:
+                    continue
+                if profile.provider in used_providers:
                     continue
                 plan.append(profile.name)
                 used_providers.add(profile.provider)

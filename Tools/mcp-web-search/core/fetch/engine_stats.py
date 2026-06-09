@@ -179,11 +179,13 @@ PRIMARY_ENGINES = [
 ]
 
 BACKUP_ENGINES = [
-    "bing",
     "startpage",
     "mojeek",
     "brave",
     "yandex",
+    "qwant",
+    "yep",
+    "stackoverflow",
 ]
 
 ALL_ENGINES = [*PRIMARY_ENGINES, *BACKUP_ENGINES]
@@ -192,7 +194,6 @@ ALL_ENGINES = [*PRIMARY_ENGINES, *BACKUP_ENGINES]
 HOSTED_ENGINES = [
     "tavily",
     "brave",
-    "bing",
     "serpapi",
 ]
 

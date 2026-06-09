@@ -20,7 +20,7 @@ class Yahoo(BaseSearchEngine[TextResult]):
 
     name = "yahoo"
     category = "text"
-    provider = "bing"
+    provider = "duckduckgo_yahoo"
 
     search_url = "https://search.yahoo.com/search"
     search_method = "GET"
@@ -56,7 +56,7 @@ class Yahoo(BaseSearchEngine[TextResult]):
         """Post-process search results."""
         post_results = []
         for result in results:
-            if result.href.startswith("https://www.bing.com/aclick?"):
+            if "/aclick?" in result.href:
                 continue
             if "/RU=" in result.href:
                 result.href = extract_url(result.href)

@@ -254,11 +254,23 @@ class DDGS:
                 if engine_error is not None:
                     err = engine_error
                     ROUTING_STATE.record(name, latency, False, engine_error)
-                    logger.info("Error in engine %s: %r", name, engine_error)
+                    logger.info(
+                        "engine.attempt engine=%s latency=%.3fs results=0 success=false error=%r",
+                        name,
+                        latency,
+                        engine_error,
+                    )
                     needs_replan = True
                     continue
 
                 ROUTING_STATE.record(name, latency, bool(engine_results))
+                logger.info(
+                    "engine.attempt engine=%s latency=%.3fs results=%d success=%s",
+                    name,
+                    latency,
+                    len(engine_results),
+                    str(bool(engine_results)).lower(),
+                )
                 needs_replan = needs_replan or not engine_results
                 added = 0
                 for result in engine_results:

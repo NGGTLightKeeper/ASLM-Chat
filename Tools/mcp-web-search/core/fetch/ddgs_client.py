@@ -99,6 +99,8 @@ def _serialise_results(results: list[SearchResult]) -> list[dict]:
             "method_hint": r.method_hint,
             "published_date": r.published_date,
             "pdf_url": r.pdf_url,
+            "consensus_votes": int(r.consensus_votes or 1),
+            "consensus_engines": list(r.consensus_engines or []),
         }
         for r in results
     ]
@@ -472,6 +474,10 @@ class DDGSClient:
                     snippet=snippet,
                     engine=f"ddgs:{item.get('_engine') or backend}",
                     published_date=_extract_snippet_date(snippet),
+                    consensus_votes=max(1, int(item.get("_votes") or 1)),
+                    consensus_engines=[
+                        str(name) for name in item.get("_engines") or [] if name
+                    ],
                 )
             )
         return results
@@ -597,6 +603,10 @@ def _deserialize_results(payload: list[dict]) -> list[SearchResult]:
                 score=float(item.get("score") or 0.0),
                 method_hint=str(item.get("method_hint") or ""),
                 published_date=str(item.get("published_date") or ""),
+                consensus_votes=max(1, int(item.get("consensus_votes") or 1)),
+                consensus_engines=[
+                    str(name) for name in item.get("consensus_engines") or [] if name
+                ],
             )
         )
     return results
@@ -653,6 +663,7 @@ async def async_ddgs_search(
 
         proc: Optional[asyncio.subprocess.Process] = None
         stdout: Optional[bytes] = None
+        stderr: Optional[bytes] = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, "-u", str(_WORKER_SCRIPT),
@@ -660,7 +671,7 @@ async def async_ddgs_search(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await asyncio.wait_for(
+            stdout, stderr = await asyncio.wait_for(
                 proc.communicate(json.dumps(request_payload, ensure_ascii=False).encode()),
                 timeout=max(0.1, float(worker_timeout)),
             )
@@ -709,6 +720,10 @@ async def async_ddgs_search(
                     Path(partial_buffer_path + ".tmp").unlink()
 
         # --- Parse result ---
+        stderr_text = (stderr or b"").decode("utf-8", errors="replace").strip()
+        for line in stderr_text.splitlines():
+            if line.strip():
+                logger.info("worker.trace %s", line.strip())
         if proc.returncode not in (0, None):
             logger.warning(
                 "DDGS worker exited code %s for query=%r",

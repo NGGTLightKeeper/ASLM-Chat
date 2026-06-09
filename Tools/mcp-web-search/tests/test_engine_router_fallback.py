@@ -1,10 +1,8 @@
 import time
-import base64
 import threading
 
 from core.ddgs.ddgs import DDGS
 from core.ddgs.engines import ENGINES
-from core.ddgs.engines.bing import Bing
 from core.ddgs.results import TextResult
 from core.ddgs.routing import PROFILES, ROUTING_STATE, HealthState, RoutingState, infer_language
 from core.fetch import ddgs_client
@@ -20,8 +18,14 @@ def test_router_backends_exist_in_vendored_search_core() -> None:
     assert set(PRIMARY_ENGINES + BACKUP_ENGINES) <= set(ENGINES["text"])
 
 
+def test_independent_b_tier_engines_use_distinct_provider_families() -> None:
+    assert PROFILES["qwant"].provider == "qwant"
+    assert PROFILES["yep"].provider == "yep"
+    assert PROFILES["qwant"].provider != PROFILES["yep"].provider
+
+
 def test_provider_family_links_are_explicit() -> None:
-    assert PROFILES["duckduckgo"].provider == PROFILES["yahoo"].provider == PROFILES["bing"].provider == "bing"
+    assert PROFILES["duckduckgo"].provider == PROFILES["yahoo"].provider == "duckduckgo_yahoo"
     assert PROFILES["google"].provider == PROFILES["startpage"].provider == "google"
 
 
@@ -83,7 +87,7 @@ def test_normal_plan_reserves_b_tier_after_a_tier() -> None:
     state = RoutingState()
 
     plan = state.plan(
-        {"google", "brave", "bing", "mojeek"},
+        {"google", "brave", "mojeek"},
         language="en",
         query_types={"general"},
         max_attempts=2,
@@ -97,7 +101,7 @@ def test_quality_plan_prefers_provider_diversity_without_forced_b_tier() -> None
     state = RoutingState()
 
     plan = state.plan(
-        {"google", "brave", "bing", "mojeek"},
+        {"google", "brave", "mojeek", "yandex"},
         language="en",
         query_types={"general"},
         max_attempts=3,
@@ -108,11 +112,28 @@ def test_quality_plan_prefers_provider_diversity_without_forced_b_tier() -> None
     assert len({PROFILES[name].provider for name in plan}) == len(plan)
 
 
+def test_stackoverflow_is_gated_by_query_class() -> None:
+    state = RoutingState()
+    available = {"google", "brave", "stackoverflow", "mojeek"}
+
+    general = state.plan(
+        available, language="en", query_types={"general"},
+        max_attempts=4, routing_profile="quality",
+    )
+    technical = state.plan(
+        available, language="en", query_types={"technical"},
+        max_attempts=4, routing_profile="quality",
+    )
+
+    assert "stackoverflow" not in general
+    assert "stackoverflow" in technical
+
+
 def test_quality_journalistic_plan_prefers_specialized_news_engine() -> None:
     state = RoutingState()
 
     plan = state.plan(
-        {"google", "brave", "brave_news", "bing", "bing_news"},
+        {"google", "brave", "brave_news", "mojeek", "yahoo"},
         language="en",
         query_types={"journalistic"},
         max_attempts=4,
@@ -120,14 +141,68 @@ def test_quality_journalistic_plan_prefers_specialized_news_engine() -> None:
     )
 
     assert plan[0] == "brave_news"
-    assert "bing_news" not in plan[:2]
+    assert len({PROFILES[name].provider for name in plan[:2]}) == 2
+
+
+def test_brave_news_is_excluded_from_non_news_quality_plan() -> None:
+    state = RoutingState()
+
+    plan = state.plan(
+        {"google", "brave", "brave_news", "duckduckgo", "mojeek", "yandex"},
+        language="en",
+        query_types={"general", "technical"},
+        class_weights={"general": 0.45, "technical": 0.55},
+        max_attempts=6,
+        routing_profile="quality",
+    )
+
+    assert "brave_news" not in plan
+
+
+def test_secondary_news_class_does_not_unlock_brave_news() -> None:
+    state = RoutingState()
+
+    plan = state.plan(
+        {"google", "brave", "brave_news", "duckduckgo", "mojeek"},
+        language="en",
+        query_types={"general", "journalistic"},
+        class_weights={"general": 0.80, "journalistic": 0.20},
+        max_attempts=5,
+        routing_profile="quality",
+    )
+
+    assert "brave_news" not in plan
+
+
+def test_yandex_remains_available_outside_russian_language() -> None:
+    state = RoutingState()
+    available = {"google", "brave", "duckduckgo", "mojeek", "yandex"}
+
+    english = state.plan(
+        available,
+        language="en",
+        query_types={"general"},
+        max_attempts=5,
+        routing_profile="quality",
+    )
+    russian = state.plan(
+        available,
+        language="ru",
+        query_types={"general"},
+        max_attempts=5,
+        routing_profile="quality",
+    )
+
+    assert "yandex" in english
+    assert english.index("yandex") < len(english) - 1
+    assert russian.index("yandex") < russian.index("mojeek")
 
 
 def test_stability_journalistic_plan_uses_specialist_on_first_wave() -> None:
     state = RoutingState()
 
     plan = state.plan(
-        {"google", "brave", "brave_news", "bing", "bing_news"},
+        {"google", "brave", "brave_news", "mojeek", "yahoo"},
         language="en",
         query_types={"general", "journalistic"},
         class_weights={"journalistic": 0.75, "general": 0.25},
@@ -156,7 +231,7 @@ def test_secondary_journalistic_class_does_not_displace_general_engines() -> Non
     state = RoutingState()
 
     plan = state.plan(
-        {"google", "brave", "brave_news", "bing"},
+        {"google", "brave", "brave_news", "mojeek"},
         language="en",
         query_types={"general", "journalistic"},
         class_weights={"general": 0.8, "journalistic": 0.2},
@@ -171,7 +246,7 @@ def test_weighted_routing_keeps_language_preference() -> None:
     state = RoutingState()
 
     plan = state.plan(
-        {"google", "brave", "bing", "yandex"},
+        {"google", "brave", "mojeek", "yandex"},
         language="ru",
         query_types={"technical"},
         class_weights={"technical": 1.0},
@@ -211,41 +286,6 @@ def test_quality_concurrency_throttles_after_systematic_timeouts() -> None:
     state.record("google", latency=0.5, success=True)
     state.record("brave", latency=0.5, success=True)
     assert state.quality_concurrency({"google", "brave"}) == 2
-
-
-def test_bing_direct_engine_decodes_redirect_url() -> None:
-    target = "https://docs.python.org/3/library/asyncio-task.html"
-    encoded = base64.urlsafe_b64encode(target.encode()).decode().rstrip("=")
-    result = TextResult(
-        title="asyncio task docs",
-        href=f"https://www.bing.com/ck/a?u=a1{encoded}&ntb=1",
-        body="docs",
-    )
-
-    output = Bing.post_extract_results(None, [result])
-
-    assert output[0].href == target
-
-
-def test_bing_direct_engine_uses_curl_cffi(monkeypatch) -> None:
-    calls = []
-
-    class Response:
-        status_code = 200
-        text = "<html></html>"
-
-    def fake_request(method, url, **kwargs):
-        calls.append((method, url, kwargs))
-        return Response()
-
-    from curl_cffi import requests as cffi_req
-
-    monkeypatch.setattr(cffi_req, "request", fake_request)
-    engine = Bing(timeout=7)
-
-    assert engine.request("GET", "https://www.bing.com/search", params={"q": "test"}) == "<html></html>"
-    assert calls[0][2]["impersonate"] == "chrome124"
-    assert calls[0][2]["timeout"] == 7.0
 
 
 def test_p95_reduces_attempt_timeout() -> None:
@@ -327,8 +367,8 @@ def test_auto_search_replans_to_b_tier_after_a_error(monkeypatch) -> None:
 
     class FakeResult:
         def __init__(self) -> None:
-            self.title = "Bing result"
-            self.href = "https://bing.example/result"
+            self.title = "Mojeek result"
+            self.href = "https://mojeek.example/result"
             self.body = "body"
 
     class FakeEngine:
@@ -343,8 +383,8 @@ def test_auto_search_replans_to_b_tier_after_a_error(monkeypatch) -> None:
 
     def fake_plan(available, *, prefer_tier=None, **_kwargs):
         if prefer_tier == "B":
-            return ["bing"] if "bing" in available else []
-        return [name for name in ("google", "brave", "bing") if name in available]
+            return ["mojeek"] if "mojeek" in available else []
+        return [name for name in ("google", "brave", "mojeek") if name in available]
 
     monkeypatch.setattr(ROUTING_STATE, "plan", fake_plan)
     monkeypatch.setattr(ROUTING_STATE, "record", lambda *_args, **_kwargs: None)
@@ -352,8 +392,8 @@ def test_auto_search_replans_to_b_tier_after_a_error(monkeypatch) -> None:
 
     results = DDGS(timeout=5).text("query", backend="auto", max_results=1, max_attempts=1)
 
-    assert calls == ["google", "bing"]
-    assert results[0]["_engine"] == "bing"
+    assert calls == ["google", "mojeek"]
+    assert results[0]["_engine"] == "mojeek"
 
 
 def test_quality_search_counts_only_engines_that_add_unique_results(monkeypatch) -> None:
@@ -378,7 +418,7 @@ def test_quality_search_counts_only_engines_that_add_unique_results(monkeypatch)
     monkeypatch.setattr(
         ROUTING_STATE,
         "plan",
-        lambda *_args, **_kwargs: ["google", "brave", "bing", "yandex"],
+        lambda *_args, **_kwargs: ["google", "brave", "mojeek", "yandex"],
     )
     monkeypatch.setattr(ROUTING_STATE, "record", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(DDGS, "_engine", lambda _self, name, _timeout: FakeEngine(name))
@@ -391,8 +431,8 @@ def test_quality_search_counts_only_engines_that_add_unique_results(monkeypatch)
         routing_profile="quality",
     )
 
-    assert set(calls) == {"google", "brave", "bing", "yandex"}
-    assert {row["_engine"] for row in rows} == {"google", "bing", "yandex"}
+    assert set(calls) == {"google", "brave", "mojeek", "yandex"}
+    assert {row["_engine"] for row in rows} == {"google", "mojeek", "yandex"}
 
 
 def test_quality_search_promotes_cross_engine_consensus(monkeypatch) -> None:
@@ -405,7 +445,7 @@ def test_quality_search_promotes_cross_engine_consensus(monkeypatch) -> None:
     rows_by_engine = {
         "google": [FakeResult("https://google-only.example"), FakeResult("https://consensus.example")],
         "brave": [FakeResult("https://brave-only.example"), FakeResult("https://consensus.example")],
-        "bing": [FakeResult("https://bing-only.example")],
+        "mojeek": [FakeResult("https://mojeek-only.example")],
     }
 
     class FakeEngine:
@@ -415,7 +455,7 @@ def test_quality_search_promotes_cross_engine_consensus(monkeypatch) -> None:
         def search(self, *_args, **_kwargs):
             return rows_by_engine[self.name]
 
-    monkeypatch.setattr(ROUTING_STATE, "plan", lambda *_args, **_kwargs: ["google", "brave", "bing"])
+    monkeypatch.setattr(ROUTING_STATE, "plan", lambda *_args, **_kwargs: ["google", "brave", "mojeek"])
     monkeypatch.setattr(ROUTING_STATE, "record", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(DDGS, "_engine", lambda _self, name, _timeout: FakeEngine(name))
 
@@ -458,7 +498,7 @@ def test_quality_search_runs_at_most_two_engines_in_parallel(monkeypatch) -> Non
                 active -= 1
             return [FakeResult(self.name)]
 
-    monkeypatch.setattr(ROUTING_STATE, "plan", lambda *_args, **_kwargs: ["google", "brave", "bing", "yandex"])
+    monkeypatch.setattr(ROUTING_STATE, "plan", lambda *_args, **_kwargs: ["google", "brave", "mojeek", "yandex"])
     monkeypatch.setattr(ROUTING_STATE, "record", lambda *_args, **_kwargs: None)
     def fake_quality_concurrency(available):
         throttle_inputs.append(available)

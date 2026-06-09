@@ -61,6 +61,14 @@ class Startpage(BaseSearchEngine[TextResult]):
             raise DDGSException("startpage captcha")
         return html_text
 
+    def post_extract_results(self, results: list[TextResult]) -> list[TextResult]:
+        """Discard Startpage tracking/navigation links that are not result URLs."""
+        return [
+            result
+            for result in results
+            if result.title and result.href.startswith(("http://", "https://"))
+        ]
+
     def build_payload(
         self,
         query: str,

@@ -19,7 +19,7 @@ class Duckduckgo(BaseSearchEngine[TextResult]):
 
     name = "duckduckgo"
     category = "text"
-    provider = "bing"
+    provider = "duckduckgo_yahoo"
 
     search_url = "https://html.duckduckgo.com/html/"
     search_method = "POST"

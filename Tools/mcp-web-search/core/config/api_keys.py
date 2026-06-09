@@ -21,7 +21,6 @@ class HostedSearchApiKeysSection:
     serper_api_key: str | None = None
     exa_api_key: str | None = None
     kagi_api_key: str | None = None
-    bing_api_key: str | None = None
     google_custom_search_api_key: str | None = None
     google_custom_search_cx: str | None = None
     yandex_api_key: str | None = None
@@ -55,10 +54,6 @@ class SearchApiKeysSection:
     @property
     def kagi_api_key(self) -> str | None:
         return self.hosted_api.kagi_api_key
-
-    @property
-    def bing_api_key(self) -> str | None:
-        return self.hosted_api.bing_api_key
 
     @property
     def google_custom_search_api_key(self) -> str | None:
@@ -140,7 +135,6 @@ def load_api_keys(path: Path | None = None) -> ApiKeysConfig:
                 serper_api_key=_read_nullable_str(hosted_api, "serper_api_key"),
                 exa_api_key=_read_nullable_str(hosted_api, "exa_api_key"),
                 kagi_api_key=_read_nullable_str(hosted_api, "kagi_api_key"),
-                bing_api_key=_read_nullable_str(hosted_api, "bing_api_key"),
                 google_custom_search_api_key=_read_nullable_str(hosted_api, "google_custom_search_api_key"),
                 google_custom_search_cx=_read_nullable_str(hosted_api, "google_custom_search_cx"),
                 yandex_api_key=_read_nullable_str(hosted_api, "yandex_api_key"),

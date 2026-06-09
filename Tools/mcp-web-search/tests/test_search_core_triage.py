@@ -7,6 +7,7 @@ from core.search.triage import (
     apply_registry_routing,
     TriageSession,
     triage_one_result,
+    triage_soft_score,
 )
 from services.web_search import _triage_one_result
 
@@ -70,3 +71,16 @@ def test_streaming_triage_session_applies_registry_and_decoder_score() -> None:
     assert result.routing_score > 0.0
     assert result.snippet_relevance_score == 0.9
     assert result.routing_debug["snippet_decoder_top"] == ["relevant"]
+
+
+def test_cross_engine_consensus_adds_bounded_triage_boost() -> None:
+    single = _result()
+    consensus = _result()
+    consensus.consensus_votes = 3
+    consensus.consensus_engines = ["google", "brave", "stackoverflow"]
+
+    single_score = triage_soft_score(single, "Python free threading docs", index=0, total=3)
+    consensus_score = triage_soft_score(consensus, "Python free threading docs", index=0, total=3)
+
+    assert consensus_score > single_score
+    assert consensus_score - single_score <= 0.12

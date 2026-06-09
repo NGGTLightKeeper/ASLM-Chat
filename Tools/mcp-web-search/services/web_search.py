@@ -2429,14 +2429,12 @@ def _badge_engine(engine: str) -> str:
         return provider.split(".", 1)[0].replace("-", "").capitalize()
     if "yandex" in e:
         return "Yandex"
-    # hosted:tavily / hosted:brave / hosted:bing / hosted:serpapi
+    # hosted:tavily / hosted:brave / hosted:serpapi
     if e.startswith("hosted:"):
         provider = e[len("hosted:"):]
         return provider.capitalize()
     if "brave" in e:
         return "Brave"
-    if "bing" in e:
-        return "Bing"
     return "DDGS"
 
 
@@ -3054,6 +3052,10 @@ class WebSearchService:
             if routing_profile == "quality"
             else int(getattr(self._cfg.search, "stability_ddgs_attempts", 2))
         )
+        if routing_profile == "quality" and {
+            "technical", "troubleshooting", "forum", "documentation"
+        } & set(query_types):
+            default_ddgs_attempts = max(default_ddgs_attempts, 5)
         ddgs_hedge = max(
             1,
             int(opts.ddgs_hedge_count)

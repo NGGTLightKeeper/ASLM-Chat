@@ -180,6 +180,7 @@ def triage_soft_score(result: SearchResult, query: str, *, index: int, total: in
     hub_penalty = _hub_penalty(result.url, title, snippet)
     routing = max(0.45, min(1.65, float(result.routing_score or 1.0)))
     snippet_rel = max(0.0, min(1.0, float(result.snippet_relevance_score or 0.0)))
+    consensus_boost = min(0.12, max(0, int(result.consensus_votes or 1) - 1) * 0.06)
     score = (
         0.25 * pos_score
         + 0.10 * snip_score
@@ -188,6 +189,7 @@ def triage_soft_score(result: SearchResult, query: str, *, index: int, total: in
         + 0.10 * snippet_rel
         + 0.08 * ((routing - 1.0) / 0.65)
         + date_boost
+        + consensus_boost
         - 0.20 * hub_penalty
     )
     return max(0.0, min(1.0, score))

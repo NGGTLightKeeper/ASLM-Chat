@@ -108,6 +108,7 @@ def test_github_whatsnew_bm25_compress_keeps_focus(whatsnew_rst_markdown: str) -
 # test_github_whatsnew_gliner_compress_keeps_focus — GLiNER compress under budget with focus terms.
 
 @pytest.mark.gliner
+@pytest.mark.skip(reason="manual GPU-only GLiNER probe; excluded from automated test runs")
 def test_github_whatsnew_gliner_compress_keeps_focus(whatsnew_rst_markdown: str) -> None:
     ready, reason = _gliner_runtime_ready()
     if not ready:
@@ -123,6 +124,7 @@ def test_github_whatsnew_gliner_compress_keeps_focus(whatsnew_rst_markdown: str)
 # test_github_whatsnew_gliner_and_bm25_both_under_budget — both compressors meet size and focus checks.
 
 @pytest.mark.gliner
+@pytest.mark.skip(reason="manual GPU-only GLiNER probe; excluded from automated test runs")
 def test_github_whatsnew_gliner_and_bm25_both_under_budget(whatsnew_rst_markdown: str) -> None:
     ready, reason = _gliner_runtime_ready()
     if not ready:
@@ -172,6 +174,7 @@ def test_read_page_service_whatsnew_bm25_path(
 # test_read_page_service_whatsnew_gliner_path — service.read with enable_gliner config and mocked fetch.
 
 @pytest.mark.gliner
+@pytest.mark.skip(reason="manual GPU-only GLiNER probe; excluded from automated test runs")
 def test_read_page_service_whatsnew_gliner_path(
     whatsnew_rst_markdown: str,
     monkeypatch: pytest.MonkeyPatch,

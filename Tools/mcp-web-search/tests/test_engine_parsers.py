@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from core.ddgs.engines.bing import Bing
-from core.ddgs.engines.bing_news import BingNews
 from core.ddgs.engines.brave import Brave
 from core.ddgs.engines.brave_news import BraveNews
 from core.ddgs.engines.google import Google
+from core.ddgs.engines.qwant import Qwant
 from core.ddgs.engines.startpage import Startpage
-from core.ddgs.exceptions import DDGSException
+from core.ddgs.engines.stackoverflow import StackOverflow
+from core.ddgs.engines.yep import Yep
+from core.ddgs.exceptions import DDGSException, RatelimitException
 from core.ddgs.results import TextResult
 
 
@@ -38,21 +39,6 @@ def test_brave_discards_partial_and_internal_ad_links() -> None:
     output = Brave.post_extract_results(None, results)
 
     assert [result.href for result in output] == ["https://example.com/page"]
-
-
-def test_bing_parser_removes_decorative_icon_text() -> None:
-    html = """
-    <ol id="b_results">
-      <li class="b_algo">
-        <h2><a href="https://example.com">Example</a></h2>
-        <div class="b_caption"><p><span class="algoSlug_icon">ICON</span>Useful snippet</p></div>
-      </li>
-    </ol>
-    """
-
-    output = Bing(timeout=5).extract_results(html)
-
-    assert output[0].body == "Useful snippet"
 
 
 def test_startpage_reuses_form_token(monkeypatch) -> None:
@@ -91,6 +77,34 @@ def test_startpage_reports_missing_token_as_failure(monkeypatch) -> None:
         engine.get_sc()
 
 
+def test_startpage_discards_relative_tracking_links() -> None:
+    output = Startpage.post_extract_results(None, [
+        TextResult(title="Good", href="https://example.com/page", body="body"),
+        TextResult(title="Tracking", href="/sp/click?foo=bar", body="body"),
+    ])
+
+    assert [result.href for result in output] == ["https://example.com/page"]
+
+
+def test_stackoverflow_api_parser_returns_question_metadata() -> None:
+    output = StackOverflow(timeout=5).extract_results(
+        '{"items":[{"title":"Why SSI aborts?","link":"https://stackoverflow.com/q/1",'
+        '"tags":["postgresql"],"score":12,"answer_count":3,"is_answered":true}]}'
+    )
+
+    assert output[0].href == "https://stackoverflow.com/q/1"
+    assert "3 answers" in output[0].body
+
+
+def test_stackoverflow_payload_uses_string_query_params() -> None:
+    payload = StackOverflow(timeout=5).build_payload(
+        "python asyncio timeout", "us-en", "moderate", None, page=2,
+    )
+
+    assert payload["page"] == "2"
+    assert payload["pagesize"] == "10"
+
+
 def test_specialized_news_engines_parse_news_cards() -> None:
     brave_html = """
     <div data-type="news">
@@ -98,17 +112,59 @@ def test_specialized_news_engines_parse_news_cards() -> None:
       <p class="desc">Brave description</p>
     </div>
     """
-    bing_html = """
-    <div class="newsitem">
-      <a class="title" href="https://news.example/bing">Bing title</a>
-      <div class="snippet">Bing description</div>
-    </div>
-    """
-
     brave = BraveNews(timeout=5).post_extract_results(BraveNews(timeout=5).extract_results(brave_html))
-    bing = BingNews(timeout=5).post_extract_results(BingNews(timeout=5).extract_results(bing_html))
 
     assert brave[0].href == "https://news.example/brave"
     assert brave[0].body == "Brave description"
-    assert bing[0].href == "https://news.example/bing"
-    assert bing[0].body == "Bing description"
+
+
+def test_qwant_parser_keeps_only_web_results() -> None:
+    output = Qwant(timeout=5).extract_results(
+        '{"status":"success","data":{"result":{"items":{"mainline":['
+        '{"type":"ads","items":[{"title":"Ad","url":"https://ads.example"}]},'
+        '{"type":"web","items":[{"title":"Result","url":"https://example.com/page","desc":"Body"}]}'
+        ']}}}}'
+    )
+
+    assert [(row.title, row.href, row.body) for row in output] == [
+        ("Result", "https://example.com/page", "Body"),
+    ]
+
+
+def test_qwant_and_yep_enable_safe_search_in_payloads() -> None:
+    qwant = Qwant(timeout=5).build_payload("query", "us-en", "on", None)
+    yep = Yep(timeout=5).build_payload("query", "us-en", "on", None)
+
+    assert qwant["safesearch"] == "2"
+    assert yep["safeSearch"] == "strict"
+
+
+def test_yep_parser_cleans_html_snippet_and_invalid_links() -> None:
+    output = Yep(timeout=5).extract_results(
+        '[null,{"results":['
+        '{"title":"Result","url":"https://example.com/page","snippet":"Use <b>predicate</b> locks &amp; SSI"},'
+        '{"title":"Internal","url":"/search?q=x","snippet":"ignore"}'
+        ']}]'
+    )
+
+    assert [(row.title, row.href, row.body) for row in output] == [
+        ("Result", "https://example.com/page", "Use predicate locks & SSI"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("engine", "body"),
+    [
+        (Qwant(timeout=5), '{"data":{"error_data":{"captchaUrl":"https://captcha.example"}}}'),
+        (Yep(timeout=5), "<html>Cloudflare challenge</html>"),
+    ],
+)
+def test_json_engines_report_antibot_as_rate_limit(monkeypatch, engine, body: str) -> None:
+    class Response:
+        status_code = 403
+        text = body
+
+    monkeypatch.setattr(engine.http_client, "request", lambda *_args, **_kwargs: Response())
+
+    with pytest.raises(RatelimitException, match="captcha"):
+        engine.request("GET", engine.search_url)

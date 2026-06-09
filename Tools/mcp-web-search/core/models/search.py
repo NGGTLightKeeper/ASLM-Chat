@@ -43,6 +43,9 @@ class SearchResult:
     parsed_relevance_score: float = 0.0
     routing_score: float = 1.0
     routing_debug: dict = field(default_factory=dict)
+    # Cross-engine agreement collected by the vendored DDGS core.
+    consensus_votes: int = 1
+    consensus_engines: list[str] = field(default_factory=list)
 
 
 # UI/model-facing representation of one ranked search source.
