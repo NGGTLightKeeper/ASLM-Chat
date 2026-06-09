@@ -38,7 +38,9 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
             "default": "medium",
             "description": (
                 "Search effort level. low is fast and mostly snippet-based; medium is the "
-                "current default; high expands the current search and scraping budget."
+                "default for ordinary answers, shopping, reviews, and comparisons; high is "
+                "an exceptional escalation for exhaustive or high-stakes work after medium "
+                "is insufficient."
             ),
         },
     },
