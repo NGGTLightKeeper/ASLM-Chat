@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
-from core.query.routing_score import QueryClassWeight
+from core.config import load_search_config
 from services.web_search import (
+    WebSearchOptions,
+    WebSearchService,
     _append_shopping_context,
     _build_shopping_payload,
-    _shopping_intent_weight,
+    _build_effort_options,
     _shopping_limit_for_effort,
     _shopping_source_from_product,
-    _should_run_shopping_core,
 )
 
 
@@ -37,18 +41,55 @@ def product() -> dict:
 
 
 @pytest.mark.unit
-def test_shopping_intent_uses_primary_class_as_strong_signal() -> None:
-    mix = [QueryClassWeight("shopping", 0.51), QueryClassWeight("general", 0.49)]
+def test_shopping_core_requires_explicit_option() -> None:
+    cfg = load_search_config()
+    default = _build_effort_options(
+        cfg, effort="medium", max_results=10, fetch_previews=True, timelimit=None,
+    )
+    enabled = _build_effort_options(
+        cfg, effort="medium", max_results=10, fetch_previews=True, timelimit=None, shopping=True,
+    )
 
-    assert _shopping_intent_weight(mix, ["shopping", "general"]) == 1.0
-    assert _should_run_shopping_core(mix, ["shopping", "general"])
+    assert default.shopping is False
+    assert enabled.shopping is True
 
 
 @pytest.mark.unit
-def test_shopping_intent_ignores_weak_secondary_signal() -> None:
-    mix = [QueryClassWeight("general", 0.8), QueryClassWeight("shopping", 0.2)]
+def test_technical_delivery_query_does_not_auto_start_shopping() -> None:
+    query = "CVE-2024-3094 XZ backdoor payload delivery mechanism"
+    service = WebSearchService(WebSearchOptions(shopping=False))
 
-    assert not _should_run_shopping_core(mix, ["general", "shopping"])
+    with patch.object(
+        service,
+        "_run_with_zero_result_fallback",
+        new_callable=AsyncMock,
+        return_value=([], [], query),
+    ):
+        with patch("services.web_search.async_shopping_search_worker", new_callable=AsyncMock) as worker:
+            asyncio.run(service.search_rich(query))
+
+    worker.assert_not_awaited()
+
+
+@pytest.mark.unit
+def test_explicit_shopping_option_starts_shopping_worker() -> None:
+    query = "Galaxy S26 screen protector prices"
+    service = WebSearchService(WebSearchOptions(shopping=True))
+
+    with patch.object(
+        service,
+        "_run_with_zero_result_fallback",
+        new_callable=AsyncMock,
+        return_value=([], [], query),
+    ):
+        with patch(
+            "services.web_search.async_shopping_search_worker",
+            new_callable=AsyncMock,
+            return_value={"products": []},
+        ) as worker:
+            asyncio.run(service.search_rich(query))
+
+    worker.assert_awaited_once()
 
 
 @pytest.mark.unit

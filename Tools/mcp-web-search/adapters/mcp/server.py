@@ -25,6 +25,7 @@ from adapters.mcp.search_query_contract import (
     WebSearchQuery,
     coerce_search_effort,
     coerce_search_query,
+    coerce_search_shopping,
 )
 from core.config import load_search_config
 from services import run_read_page, run_web_search_rich
@@ -278,11 +279,13 @@ def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, object]
 async def web_search(
     query: WebSearchQuery,
     effort: str = "medium",
+    shopping: bool = False,
     context: FastMCPContext | dict[str, Any] | None = None,
 ) -> CallToolResult:
     started_at = time.perf_counter()
     query_text = coerce_search_query(query)
     search_effort = coerce_search_effort(query if effort == "medium" else effort)
+    shopping_enabled = coerce_search_shopping(query if isinstance(query, dict) and not shopping else shopping)
     write_search_io_event(
         {
             "layer": "fastmcp_adapter",
@@ -291,6 +294,7 @@ async def web_search(
             "raw_query": query,
             "coerced_query": query_text,
             "effort": search_effort,
+            "shopping": shopping_enabled,
         }
     )
     if not query_text:
@@ -336,6 +340,7 @@ async def web_search(
                 query_text,
                 max_results=_WEB_SEARCH_RESULT_LIMIT,
                 effort=search_effort,
+                shopping=shopping_enabled,
             ),
         )
         await _report_progress(context, 100, 100, "search_done")

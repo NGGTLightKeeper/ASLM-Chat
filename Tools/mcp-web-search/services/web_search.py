@@ -2623,17 +2623,6 @@ _SHOPPING_WORKER_TIMEOUTS = {
 }
 
 
-def _shopping_intent_weight(class_mix: list[QueryClassWeight], query_types: list[str]) -> float:
-    weights = {item.name: float(item.weight or 0.0) for item in class_mix}
-    if query_types and query_types[0] == "shopping":
-        return max(1.0, weights.get("shopping", 0.0))
-    return weights.get("shopping", 0.0)
-
-
-def _should_run_shopping_core(class_mix: list[QueryClassWeight], query_types: list[str]) -> bool:
-    return _shopping_intent_weight(class_mix, query_types) >= 0.28
-
-
 def _shopping_limit_for_effort(effort: str, max_results: int) -> int:
     normalized = _normalize_search_effort(effort)
     base = _SHOPPING_EFFORT_LIMITS.get(normalized, _SHOPPING_EFFORT_LIMITS["medium"])
@@ -3000,6 +2989,7 @@ class WebSearchOptions:
     effort: str = "medium"
     effort_multiplier: int = 1
     routing_profile: Optional[str] = None
+    shopping: bool = False
 
 
 # Orchestrate fast web search across DDGS and hosted search APIs.
@@ -3662,7 +3652,7 @@ class WebSearchService:
             model_session=model_session,
             class_debug=class_debug,
         )
-        if _should_run_shopping_core(class_mix, query_types):
+        if opts.shopping:
             shopping_limit = _shopping_limit_for_effort(effort, opts.max_results)
             shopping_task = asyncio.create_task(
                 async_shopping_search_worker(
@@ -4026,6 +4016,7 @@ def _build_effort_options(
     max_results: int,
     fetch_previews: bool,
     timelimit: Optional[str],
+    shopping: bool = False,
 ) -> WebSearchOptions:
     resolved_effort = _normalize_search_effort(effort)
     effort_cfg = cfg.effort
@@ -4046,6 +4037,7 @@ def _build_effort_options(
             timelimit=timelimit,
             effort=resolved_effort,
             routing_profile="stability",
+            shopping=shopping,
         )
     if resolved_effort == "high":
         multiplier = max(1, int(effort_cfg.high_multiplier))
@@ -4066,6 +4058,7 @@ def _build_effort_options(
             effort=resolved_effort,
             effort_multiplier=multiplier,
             routing_profile="quality",
+            shopping=shopping,
         )
     return WebSearchOptions(
         max_results=max_results,
@@ -4076,6 +4069,7 @@ def _build_effort_options(
         timelimit=timelimit,
         effort=resolved_effort,
         routing_profile="stability",
+        shopping=shopping,
     )
 
 
@@ -4220,6 +4214,7 @@ async def run_web_search_rich(
     hard_timeout: float | None = None,
     time_range: Optional[str] = None,
     effort: str = "medium",
+    shopping: bool = False,
 ) -> dict[str, object]:
     cfg = load_search_config()
     constraints = parse_domain_constraints(query)
@@ -4244,6 +4239,7 @@ async def run_web_search_rich(
         max_results=max_results,
         fetch_previews=True,
         timelimit=resolved_timelimit,
+        shopping=shopping,
     )
     service = WebSearchService(options=opts)
     loop = asyncio.get_event_loop()

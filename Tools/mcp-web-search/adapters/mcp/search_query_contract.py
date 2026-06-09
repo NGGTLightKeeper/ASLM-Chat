@@ -43,6 +43,17 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
                 "is insufficient."
             ),
         },
+        "shopping": {
+            "type": "boolean",
+            "default": False,
+            "description": (
+                "Explicitly enable shopping providers and structured product/price results. "
+                "Set true when the user needs a specific product, its price, where to buy it, "
+                "or availability. With shopping=true, query must be only the search subject "
+                "(model, spec, SKU, product phrase) — no questions or filler prose. "
+                "Leave false for all other searches."
+            ),
+        },
     },
     "required": ["query"],
 }
@@ -60,6 +71,22 @@ def coerce_search_effort(value: Any = None) -> str:
     effort = str(value or "").strip().lower()
     effort = _EFFORT_ALIASES.get(effort, effort)
     return effort if effort in _EFFORT_VALUES else "medium"
+
+
+# Normalize the explicit shopping-provider opt-in argument.
+def coerce_search_shopping(value: Any = None) -> bool:
+    if isinstance(value, dict):
+        value = value.get("shopping", False)
+    elif isinstance(value, str):
+        parsed = _try_parse_json(value)
+        if isinstance(parsed, dict):
+            value = parsed.get("shopping", False)
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value) if isinstance(value, (int, float)) else False
 
 
 # Convert the public query argument into one provider-ready search string.

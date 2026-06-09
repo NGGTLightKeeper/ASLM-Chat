@@ -30,6 +30,15 @@ EFFORT:
                    or after medium leaves an important claim unresolved. Do not
                    use it first for ordinary shopping or recommendations.
 
+SHOPPING:
+  shopping=false    default. Never runs shopping providers.
+  shopping=true     use when the user needs a specific product, its price,
+                    where to buy it, or availability. The query must contain
+                    only the thing being searched — model, spec, SKU, or product
+                    phrase.
+                    Keep false for technical meanings such as payload delivery,
+                    deployment, or supply-chain analysis.
+
 QUALITY GATE (enforced automatically):
   The engine validates every query before sending it to the network.
   Only extreme violations return a BAD_QUERY error you must resolve:

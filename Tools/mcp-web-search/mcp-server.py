@@ -28,6 +28,7 @@ from adapters.mcp.search_query_contract import (
     SEARCH_QUERY_SCHEMA,
     coerce_search_effort,
     coerce_search_query,
+    coerce_search_shopping,
 )
 from adapters.mcp.logging_setup import setup_logging
 from core.config import load_search_config as _load_cfg
@@ -172,6 +173,7 @@ async def call_tool(
 
         query_text = coerce_search_query(args.get("query", ""))
         search_effort = coerce_search_effort(args)
+        shopping = coerce_search_shopping(args)
         write_search_io_event(
             {
                 "layer": "mcp_worker_bridge",
@@ -181,6 +183,7 @@ async def call_tool(
                 "raw_query": args.get("query", ""),
                 "coerced_query": query_text,
                 "effort": search_effort,
+                "shopping": shopping,
                 "context": context or {},
             }
         )
@@ -223,6 +226,7 @@ async def call_tool(
             query_text,
             max_results=_MAX_RESULTS,
             effort=search_effort,
+            shopping=shopping,
         )
         write_search_io_event(
             {
