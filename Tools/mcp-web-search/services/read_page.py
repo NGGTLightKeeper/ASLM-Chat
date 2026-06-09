@@ -47,6 +47,15 @@ from core.fetch.thread_pool import io_pool as _io_pool
 logger = logging.getLogger("services.read_page")
 trace_logger = logging.getLogger("trace.read_page")
 _READ_PAGE_STRATEGY_VERSION = "2026-04-followups-v1"
+_REDDIT_READ_TIMEOUT_SEC = 60.0
+
+
+# Global asyncio deadline for one read; Reddit needs room for curl + Camoufox JSON.
+def _read_page_deadline(url: str, opts: ReadPageOptions) -> float:
+    base = float(opts.timeout)
+    if _is_reddit(url):
+        return max(base, _REDDIT_READ_TIMEOUT_SEC)
+    return max(base, 30.0)
 
 
 # True for HTTP redirect status codes.
@@ -642,10 +651,15 @@ class ReadPageService:
             return await _fetch_youtube_transcript(url), attempts
 
         if _is_reddit(url):
+            reddit_timeout = max(float(opts.timeout), _REDDIT_READ_TIMEOUT_SEC)
             try:
-                return await _fetch_reddit_json(url), attempts
+                reddit_md = await _fetch_reddit_json(url, timeout=reddit_timeout)
             except Exception as exc:
                 logger.warning("Reddit fetch failed for %s: %s", url, exc)
+                return f"Error: Reddit fetch failed for {url}", attempts
+            if reddit_md and not reddit_md.startswith("Error:"):
+                return reddit_md, attempts
+            return reddit_md or f"Error: Reddit fetch failed for {url}", attempts
 
         if _host(url) == "amazon.com":
             try:
@@ -896,7 +910,7 @@ class ReadPageService:
     # Public entry: fetch URL as markdown with global deadline.
     async def read(self, url: str) -> str:
         url = url.strip()
-        deadline = max(float(self._opts.timeout), 30.0)
+        deadline = _read_page_deadline(url, self._opts)
         try:
             markdown, _ = await asyncio.wait_for(
                 self._read(url, collect_attempts=False),
@@ -915,8 +929,9 @@ async def run_read_page(
     max_chars: int = 20_000,
     focus: str = "",
 ) -> str:
+    effective_timeout = max(timeout, _REDDIT_READ_TIMEOUT_SEC) if _is_reddit(url) else timeout
     opts = ReadPageOptions(
-        timeout=timeout,
+        timeout=effective_timeout,
         max_chars=max_chars,
         focus=focus,
     )
