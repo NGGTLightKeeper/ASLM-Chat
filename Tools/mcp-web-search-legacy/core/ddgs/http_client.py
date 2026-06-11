@@ -23,7 +23,15 @@ class Response:
 class HttpClient:
     """HTTP client."""
 
-    def __init__(self, proxy: str | None = None, timeout: int | None = 10, *, verify: bool | str = True) -> None:
+    def __init__(
+        self,
+        proxy: str | None = None,
+        timeout: int | None = 10,
+        *,
+        verify: bool | str = True,
+        impersonate: str = "random",
+        impersonate_os: str = "random",
+    ) -> None:
         """Initialize the HttpClient object.
 
         Args:
@@ -31,13 +39,15 @@ class HttpClient:
                 example: "http://user:pass@example.com:3128". Defaults to None.
             timeout (int, optional): Timeout value for the HTTP client. Defaults to 10.
             verify: (bool | str):  True to verify, False to skip, or a str path to a PEM file. Defaults to True.
+            impersonate: primp browser profile (e.g. chrome124).
+            impersonate_os: primp OS profile (e.g. windows).
 
         """
         self.client = primp.Client(
             proxy=proxy,
             timeout=timeout,
-            impersonate="random",
-            impersonate_os="random",
+            impersonate=impersonate,
+            impersonate_os=impersonate_os,
             verify=verify if isinstance(verify, bool) else True,
             ca_cert_file=verify if isinstance(verify, str) else None,
         )

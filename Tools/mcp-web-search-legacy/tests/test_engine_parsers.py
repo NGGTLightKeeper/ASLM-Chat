@@ -20,6 +20,84 @@ def test_google_payload_separates_duplicate_filter_from_safesearch() -> None:
     assert payload["safe"] == "medium"
     assert payload["gl"] == "US"
     assert payload["ie"] == payload["oe"] == "utf8"
+    assert payload["gbv"] == "1"
+
+
+def test_google_desktop_xpath_parses_basic_serp() -> None:
+    html = """
+    <html><body>
+      <a href="/url?q=https%3A%2F%2Fwww.python.org%2F&amp;sa=U">
+        <h3>Welcome to Python.org</h3>
+        <div class="VwiC3b">The official home of the Python Programming Language.</div>
+      </a>
+      <a href="https://www.google.com/search?q=python"><h3>More</h3></a>
+    </body></html>
+    """
+    engine = Google(timeout=5)
+    results = engine.post_extract_results(engine.extract_results(html))
+
+    assert len(results) == 1
+    assert results[0].title == "Welcome to Python.org"
+    assert results[0].href == "https://www.python.org/"
+
+
+def test_google_post_extract_unwraps_redirect_links() -> None:
+    results = [
+        TextResult(
+            title="Example",
+            href="/url?q=https%3A%2F%2Fexample.com%2Fpage&sa=U",
+            body="snippet",
+        ),
+        TextResult(title="Internal", href="https://www.google.com/search?q=x", body=""),
+    ]
+
+    output = Google.post_extract_results(None, results)
+
+    assert len(output) == 1
+    assert output[0].href == "https://example.com/page"
+
+
+def test_google_accepts_consent_page_before_parsing() -> None:
+    consent_html = """
+    <html><body>
+      <title>Before you continue to Google Search</title>
+      <form action="https://consent.google.com/save" method="POST">
+        <input type="hidden" name="continue" value="https://www.google.com/search?q=python">
+        <input type="hidden" name="set_sc" value="true">
+        <input type="hidden" name="set_aps" value="true">
+      </form>
+    </body></html>
+    """
+    serp_html = """
+    <html><body>
+      <a href="/url?q=https%3A%2F%2Fexample.com%2F&amp;sa=U">
+        <h3>Example</h3>
+      </a>
+    </body></html>
+  """
+    engine = Google(timeout=5)
+    calls: list[tuple[str, str]] = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append((method, url))
+        if method == "GET" and "google.com/search" in url:
+            return consent_html
+        if method == "POST" and "consent.google.com/save" in url:
+            return serp_html
+        if method == "GET" and url == "https://www.google.com/search?q=python":
+            return serp_html
+        return ""
+
+    engine.request = fake_request  # type: ignore[method-assign]
+    engine.http_client.request = lambda method, url, **kwargs: type(  # type: ignore[method-assign]
+        "Resp", (), {"status_code": 200, "text": fake_request(method, url, **kwargs)}
+    )()
+
+    results = engine.search("python", region="us-en", safesearch="moderate", timelimit=None, page=1) or []
+
+    assert [call[0] for call in calls] == ["GET", "POST"]
+    assert len(results) == 1
+    assert results[0].href == "https://example.com/"
 
 
 def test_google_detects_short_captcha_page() -> None:

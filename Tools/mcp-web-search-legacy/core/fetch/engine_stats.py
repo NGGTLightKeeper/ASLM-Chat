@@ -185,7 +185,6 @@ BACKUP_ENGINES = [
     "yandex",
     "qwant",
     "yep",
-    "stackoverflow",
 ]
 
 ALL_ENGINES = [*PRIMARY_ENGINES, *BACKUP_ENGINES]

@@ -46,10 +46,11 @@
     "keep_loaded": false
   },
   "query": {
-    "year_hint_mode": "timelimit",
+    "year_hint_mode": "none",
     "year_hint_current": "m",
     "year_hint_prev": "y",
-    "year_hint_older": null
+    "year_hint_older": null,
+    "auto_type_timelimit_enabled": false
   },
   "effort": {
     "low_hard_timeout": 12.0,

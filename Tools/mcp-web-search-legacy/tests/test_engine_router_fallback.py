@@ -83,6 +83,32 @@ def test_suspended_engine_is_skipped() -> None:
     assert "google" not in plan
 
 
+def test_plan_tier_wave_returns_only_requested_tier() -> None:
+    state = RoutingState()
+    available = {"google", "brave", "duckduckgo", "mojeek", "yandex", "qwant"}
+
+    a_plan = state.plan_tier_wave(
+        available, tier="A", count=2, language="en", query_types={"technical"},
+    )
+    b_plan = state.plan_tier_wave(
+        available, tier="B", count=2, language="en", query_types={"technical"},
+    )
+
+    assert len(a_plan) == 2
+    assert all(PROFILES[name].tier == "A" for name in a_plan)
+    assert len(b_plan) == 2
+    assert all(PROFILES[name].tier == "B" for name in b_plan)
+    assert not set(a_plan) & set(b_plan)
+
+
+def test_a_tier_engine_count_scales_with_effort() -> None:
+    from core.ddgs.routing import a_tier_engine_count
+
+    assert a_tier_engine_count("low") == 1
+    assert a_tier_engine_count("medium") == 2
+    assert a_tier_engine_count("high") == 3
+
+
 def test_normal_plan_reserves_b_tier_after_a_tier() -> None:
     state = RoutingState()
 
@@ -110,23 +136,6 @@ def test_quality_plan_prefers_provider_diversity_without_forced_b_tier() -> None
 
     assert plan[:2] == ["google", "brave"]
     assert len({PROFILES[name].provider for name in plan}) == len(plan)
-
-
-def test_stackoverflow_is_gated_by_query_class() -> None:
-    state = RoutingState()
-    available = {"google", "brave", "stackoverflow", "mojeek"}
-
-    general = state.plan(
-        available, language="en", query_types={"general"},
-        max_attempts=4, routing_profile="quality",
-    )
-    technical = state.plan(
-        available, language="en", query_types={"technical"},
-        max_attempts=4, routing_profile="quality",
-    )
-
-    assert "stackoverflow" not in general
-    assert "stackoverflow" in technical
 
 
 def test_quality_journalistic_plan_prefers_specialized_news_engine() -> None:

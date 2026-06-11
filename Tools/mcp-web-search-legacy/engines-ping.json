@@ -1,0 +1,159 @@
+{
+  "tool": "ping_engines",
+  "started_at": "2026-06-10T13:45:50.926942Z",
+  "ended_at": "2026-06-10T13:45:54.735431Z",
+  "query": "python",
+  "timeout_seconds": 15,
+  "summary": {
+    "total": 13,
+    "ok": 10,
+    "empty": 0,
+    "error": 2,
+    "disabled": 1
+  },
+  "engines": [
+    {
+      "name": "brave",
+      "tier": "A",
+      "enabled": true,
+      "status": "ok",
+      "latency_seconds": 0.973,
+      "result_count": 3,
+      "sample_url": "https://www.python.org/",
+      "sample_title": "Welcome to Python.org",
+      "error": ""
+    },
+    {
+      "name": "duckduckgo",
+      "tier": "A",
+      "enabled": true,
+      "status": "ok",
+      "latency_seconds": 0.907,
+      "result_count": 3,
+      "sample_url": "https://www.python.org/",
+      "sample_title": "Welcome to Python.org",
+      "error": ""
+    },
+    {
+      "name": "google",
+      "tier": "A",
+      "enabled": true,
+      "status": "error",
+      "latency_seconds": 0.943,
+      "result_count": 0,
+      "sample_url": "",
+      "sample_title": "",
+      "error": "DDGSException: HTTP 429"
+    },
+    {
+      "name": "brave_news",
+      "tier": "specialized",
+      "enabled": true,
+      "status": "ok",
+      "latency_seconds": 1.028,
+      "result_count": 3,
+      "sample_url": "https://a-z-animals.com/blog/a-115-pound-python-swallowed-a-77-pound-deer-in-florida-biologists-say-it-changes-everything",
+      "sample_title": "A 115-Pound Python Swallowed a 77-Pound Deer in Florida. Biologists Say It Changes Everything. - A-Z Animals",
+      "error": ""
+    },
+    {
+      "name": "grokipedia",
+      "tier": "specialized",
+      "enabled": true,
+      "status": "ok",
+      "latency_seconds": 0.738,
+      "result_count": 1,
+      "sample_url": "https://grokipedia.com/page/ajagara",
+      "sample_title": "Ajagara",
+      "error": ""
+    },
+    {
+      "name": "startpage",
+      "tier": "specialized",
+      "enabled": true,
+      "status": "ok",
+      "latency_seconds": 1.446,
+      "result_count": 3,
+      "sample_url": "https://www.python.org/",
+      "sample_title": "Welcome to Python.org",
+      "error": ""
+    },
+    {
+      "name": "wikipedia",
+      "tier": "specialized",
+      "enabled": true,
+      "status": "ok",
+      "latency_seconds": 0.384,
+      "result_count": 1,
+      "sample_url": "https://en.wikipedia.org/wiki/Python",
+      "sample_title": "Python",
+      "error": ""
+    },
+    {
+      "name": "mojeek",
+      "tier": "B",
+      "enabled": true,
+      "status": "ok",
+      "latency_seconds": 2.297,
+      "result_count": 3,
+      "sample_url": "https://www.python.org/downloads/",
+      "sample_title": "Download Python | Python.org",
+      "error": ""
+    },
+    {
+      "name": "qwant",
+      "tier": "B",
+      "enabled": true,
+      "status": "ok",
+      "latency_seconds": 0.962,
+      "result_count": 3,
+      "sample_url": "https://www.python.org/",
+      "sample_title": "Welcome to Python.org",
+      "error": ""
+    },
+    {
+      "name": "yahoo",
+      "tier": "B",
+      "enabled": true,
+      "status": "error",
+      "latency_seconds": 1.643,
+      "result_count": 0,
+      "sample_url": "",
+      "sample_title": "",
+      "error": "DDGSException: No results found."
+    },
+    {
+      "name": "yandex",
+      "tier": "B",
+      "enabled": true,
+      "status": "ok",
+      "latency_seconds": 1.094,
+      "result_count": 3,
+      "sample_url": "https://www.python.org/",
+      "sample_title": "The official home of the Python Programming Language",
+      "error": ""
+    },
+    {
+      "name": "yep",
+      "tier": "B",
+      "enabled": true,
+      "status": "ok",
+      "latency_seconds": 1.333,
+      "result_count": 3,
+      "sample_url": "https://en.wikipedia.org/wiki/Python_(film)",
+      "sample_title": "Python (film)",
+      "error": ""
+    },
+    {
+      "name": "stackoverflow",
+      "tier": "?",
+      "enabled": false,
+      "status": "disabled",
+      "latency_seconds": null,
+      "result_count": 0,
+      "sample_url": "",
+      "sample_title": "",
+      "error": ""
+    }
+  ]
+}

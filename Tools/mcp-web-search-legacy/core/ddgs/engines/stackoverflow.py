@@ -9,8 +9,9 @@ from ..results import TextResult
 
 
 class StackOverflow(BaseSearchEngine[TextResult]):
-    """Specialist engine for programming questions."""
+    """Specialist engine for programming questions (disabled — not used in auto routing)."""
 
+    disabled = True
     name = "stackoverflow"
     category = "text"
     provider = "stackexchange"

@@ -1,0 +1,148 @@
+{
+  "tool": "benchmark_routing_compare",
+  "started_at": "2026-06-10T13:34:47.413968Z",
+  "ended_at": "2026-06-10T13:34:55.860525Z",
+  "config": {
+    "strategies": [
+      "legacy",
+      "tiered_ab"
+    ],
+    "max_results": 10,
+    "max_attempts": 3,
+    "timeout_seconds": 15,
+    "tiered_ab_a_engines": {
+      "low": 1,
+      "medium": 2,
+      "high": 3
+    }
+  },
+  "summary": {
+    "cases": 1,
+    "tiered_ab_wins": 0,
+    "legacy_wins": 1,
+    "ties": 0
+  },
+  "cases": [
+    {
+      "case_id": "custom-1",
+      "query": "Chromadb docs",
+      "effort": "medium",
+      "query_types": [
+        "technical"
+      ],
+      "expect_domains": [],
+      "winner_heuristic": "legacy",
+      "runs": {
+        "legacy": {
+          "strategy": "legacy",
+          "effort": "medium",
+          "elapsed_seconds": 3.437,
+          "result_count": 10,
+          "engines_attempted": [
+            "brave",
+            "qwant",
+            "yandex"
+          ],
+          "engines_with_results": [
+            "brave",
+            "qwant",
+            "yandex"
+          ],
+          "engine_histogram": {
+            "brave": 4,
+            "yandex": 4,
+            "qwant": 2
+          },
+          "tier_histogram": {
+            "A": 4,
+            "B": 6
+          },
+          "top_domains": [
+            "docs.trychroma.com",
+            "github.com",
+            "cookbook.chromadb.dev",
+            "www.datacamp.com",
+            "pypi.org",
+            "www.geeksforgeeks.org",
+            "medium.com"
+          ],
+          "expect_domain_hits": {},
+          "stackoverflow_count": 0,
+          "errors": [],
+          "sample_urls": [
+            "https://docs.trychroma.com/docs/overview/getting-started",
+            "https://www.datacamp.com/tutorial/chromadb-tutorial-step-by-step-guide",
+            "https://pypi.org/project/chromadb/",
+            "https://github.com/chroma-core/chroma",
+            "https://cookbook.chromadb.dev/"
+          ],
+          "score": {
+            "a_tier_share": 0.4,
+            "b_tier_share": 0.6,
+            "expect_domain_hits": 0,
+            "engine_diversity": 3,
+            "stackoverflow_penalty": 0,
+            "latency_seconds": 3.437
+          },
+          "a_tier_planned": 2
+        },
+        "tiered_ab": {
+          "strategy": "tiered_ab",
+          "effort": "medium",
+          "elapsed_seconds": 4.784,
+          "result_count": 9,
+          "engines_attempted": [
+            "brave",
+            "mojeek",
+            "yahoo",
+            "yandex"
+          ],
+          "engines_with_results": [
+            "brave",
+            "mojeek",
+            "yahoo",
+            "yandex"
+          ],
+          "engine_histogram": {
+            "brave": 3,
+            "mojeek": 2,
+            "yandex": 2,
+            "yahoo": 2
+          },
+          "tier_histogram": {
+            "A": 3,
+            "B": 6
+          },
+          "top_domains": [
+            "docs.trychroma.com",
+            "www.datacamp.com",
+            "pypi.org",
+            "pydigger.com",
+            "stackoverflow.com",
+            "docs.langchain.com",
+            "cookbook.chromadb.dev"
+          ],
+          "expect_domain_hits": {},
+          "stackoverflow_count": 1,
+          "errors": [],
+          "sample_urls": [
+            "https://docs.trychroma.com/docs/overview/getting-started",
+            "https://www.datacamp.com/tutorial/chromadb-tutorial-step-by-step-guide",
+            "https://pypi.org/project/chromadb/",
+            "https://pydigger.com/pypi/chromadb-client",
+            "https://stackoverflow.com/questions/78589963/insert-thousands-of-documents-into-a-chroma-db"
+          ],
+          "score": {
+            "a_tier_share": 0.333,
+            "b_tier_share": 0.667,
+            "expect_domain_hits": 0,
+            "engine_diversity": 4,
+            "stackoverflow_penalty": 1,
+            "latency_seconds": 4.784
+          },
+          "a_tier_planned": 2
+        }
+      }
+    }
+  ]
+}

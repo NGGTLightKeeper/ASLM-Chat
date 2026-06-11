@@ -33,10 +33,6 @@ PROFILES: dict[str, EngineProfile] = {
     "yep": EngineProfile("yep", "yep", "B", 0.74),
     "mojeek": EngineProfile("mojeek", "mojeek", "B", 0.72),
     "startpage": EngineProfile("startpage", "google", "specialized", 0.68),
-    "stackoverflow": EngineProfile(
-        "stackoverflow", "stackexchange", "specialized", 0.88,
-        frozenset({"technical", "troubleshooting", "forum", "documentation"}),
-    ),
     "wikipedia": EngineProfile("wikipedia", "wikipedia", "specialized", 0.86, frozenset({"general"})),
     "grokipedia": EngineProfile("grokipedia", "grokipedia", "specialized", 0.45, frozenset({"general"})),
 }
@@ -69,17 +65,12 @@ ENGINE_CLASS_AFFINITY: dict[str, dict[str, float]] = {
         "government": 0.18,
     },
     "wikipedia": {"general": 0.20, "education": 0.16},
-    "stackoverflow": {
-        "technical": 0.58, "troubleshooting": 0.62,
-        "forum": 0.42, "documentation": 0.20,
-    },
 }
 EARLY_SPECIALIST_CLASSES = frozenset({
     "journalistic", "news", "technical", "troubleshooting", "forum",
 })
 CLASS_GATED_ENGINES = {
     "brave_news": frozenset({"journalistic", "news"}),
-    "stackoverflow": frozenset({"technical", "troubleshooting", "forum", "documentation"}),
 }
 CLASS_GATE_MIN_SHARE = {
     "brave_news": 0.35,
@@ -418,6 +409,75 @@ class RoutingState:
                 if len(plan) >= max_attempts:
                     break
         return plan
+
+    def plan_tier_wave(
+        self,
+        available: set[str],
+        *,
+        tier: str,
+        count: int,
+        language: str,
+        query_types: set[str],
+        class_weights: dict[str, float] | None = None,
+        exclude: set[str] | None = None,
+    ) -> list[str]:
+        """Rank engines for one tier (A or B) with provider diversity."""
+        exclude = exclude or set()
+        with self._lock:
+            self._refresh()
+        candidates = [
+            PROFILES[name]
+            for name in available
+            if name in PROFILES
+            and name not in exclude
+            and PROFILES[name].tier == tier
+            and not self.engine(name).suspended
+            and self._passes_class_gate(name, query_types, class_weights)
+        ]
+        if not candidates:
+            candidates = [
+                PROFILES[name]
+                for name in available
+                if name in PROFILES
+                and name not in exclude
+                and PROFILES[name].tier == tier
+                and self._passes_class_gate(name, query_types, class_weights)
+            ]
+        candidates.sort(
+            key=lambda profile: self.score(profile, language, query_types, class_weights),
+            reverse=True,
+        )
+        plan: list[str] = []
+        used_providers: set[str] = set()
+        for profile in candidates:
+            if profile.provider in used_providers:
+                continue
+            plan.append(profile.name)
+            used_providers.add(profile.provider)
+            if len(plan) >= max(1, count):
+                break
+        if len(plan) < max(1, count):
+            for profile in candidates:
+                if profile.name not in plan:
+                    plan.append(profile.name)
+                    if len(plan) >= max(1, count):
+                        break
+        return plan
+
+
+def a_tier_engine_count(effort: str) -> int:
+    """How many distinct A-tier engines to run in wave one (by search effort)."""
+    return {"low": 1, "medium": 2, "high": 3}.get(str(effort or "medium").strip().lower(), 2)
+
+
+def a_tier_result_cap(max_results: int, a_count: int) -> int:
+    """Max unique URLs to keep from each A-tier engine in wave one."""
+    return max(1, min(3, math.ceil(max(1, max_results) / max(2, a_count * 2))))
+
+
+def b_tier_result_cap(remaining: int, engines_left: int) -> int:
+    """Dynamic per-engine cap while filling the pool from B-tier."""
+    return max(1, math.ceil(max(1, remaining) / max(1, engines_left)))
 
 
 _STATE_DB = Path(__file__).resolve().parents[2] / "tmp" / "ddgs_routing_state.sqlite"

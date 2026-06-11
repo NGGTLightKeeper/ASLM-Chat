@@ -4092,7 +4092,11 @@ async def run_web_search(
     if rejection:
         return rejection
     # Type-based timelimit is disabled when the query explicitly anchors an older year.
-    type_tl = _resolve_auto_timelimit(query_for_search)
+    type_tl = (
+        _resolve_auto_timelimit(query_for_search)
+        if cfg.query.auto_type_timelimit_enabled
+        else None
+    )
     # Use the more restrictive of the two signals.
     auto_timelimit = _stricter_timelimit(year_tl, type_tl)
     explicit_timelimit = (
@@ -4172,7 +4176,11 @@ async def run_web_search_structured(
     rejection = validate_search_query(query_for_search)
     if rejection:
         return []
-    type_tl = _resolve_auto_timelimit(query_for_search)
+    type_tl = (
+        _resolve_auto_timelimit(query_for_search)
+        if cfg.query.auto_type_timelimit_enabled
+        else None
+    )
     auto_timelimit = _stricter_timelimit(year_tl, type_tl)
     explicit_timelimit = (
         _normalize_time_range(time_range)
@@ -4223,7 +4231,11 @@ async def run_web_search_rich(
     rejection = validate_search_query(query_for_search)
     if rejection:
         return _rejected_search_payload(query_for_search, rejection)
-    type_tl = _resolve_auto_timelimit(query_for_search)
+    type_tl = (
+        _resolve_auto_timelimit(query_for_search)
+        if cfg.query.auto_type_timelimit_enabled
+        else None
+    )
     auto_timelimit = _stricter_timelimit(year_tl, type_tl)
     explicit_timelimit = (
         _normalize_time_range(time_range)

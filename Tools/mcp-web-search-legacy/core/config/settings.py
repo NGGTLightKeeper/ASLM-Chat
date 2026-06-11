@@ -71,6 +71,7 @@ class QuerySection:
     year_hint_current: Optional[str] = "m"  # year == this year  → last month
     year_hint_prev: Optional[str] = "y"     # year == last year  → last year
     year_hint_older: Optional[str] = None  # year < last year  → no restriction
+    auto_type_timelimit_enabled: bool = True  # infer timelimit from query type
 
 
 @dataclass
@@ -214,6 +215,7 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             year_hint_current=_optional_string(q.get("year_hint_current", _MISSING), "m"),
             year_hint_prev=_optional_string(q.get("year_hint_prev", _MISSING), "y"),
             year_hint_older=_optional_string(q.get("year_hint_older", _MISSING), None),
+            auto_type_timelimit_enabled=bool(q.get("auto_type_timelimit_enabled", True)),
         ),
         models=ModelsSection(
             pipeline=normalize_pipeline_mode(models.get("pipeline", "rules")),

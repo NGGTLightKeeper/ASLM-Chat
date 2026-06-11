@@ -11,7 +11,14 @@ from typing import Any, ClassVar
 from .base import BaseSearchEngine
 from .engines import ENGINES
 from .exceptions import DDGSException, TimeoutException
-from .routing import LANGUAGE_REGION, ROUTING_STATE, infer_language
+from .routing import (
+    LANGUAGE_REGION,
+    ROUTING_STATE,
+    a_tier_engine_count,
+    a_tier_result_cap,
+    b_tier_result_cap,
+    infer_language,
+)
 from .utils import _expand_proxy_tb_alias
 
 logger = logging.getLogger(__name__)
@@ -148,6 +155,8 @@ class DDGS:
         class_weights: dict[str, float] | None = None,
         max_attempts: int = 2,
         routing_profile: str = "stability",
+        routing_strategy: str = "legacy",
+        effort: str = "medium",
         **kwargs: str,
     ) -> list[dict[str, Any]]:
         """Perform a search across engines in the given category.
@@ -172,6 +181,25 @@ class DDGS:
         if not query:
             msg = "query is mandatory."
             raise DDGSException(msg)
+
+        if routing_strategy == "tiered_ab" and any(
+            item in {"auto", "all"} for item in backend.split(",")
+        ):
+            return self._search_sync_tiered_ab(
+                category=category,
+                query=query,
+                region=region,
+                safesearch=safesearch,
+                timelimit=timelimit,
+                max_results=max_results,
+                page=page,
+                language=language,
+                query_types=query_types,
+                class_weights=class_weights,
+                max_attempts=max_attempts,
+                effort=effort,
+                **kwargs,
+            )
 
         requested = [item.strip() for item in backend.split(",") if item.strip()]
         auto = any(item in {"auto", "all"} for item in requested)
@@ -326,6 +354,212 @@ class DDGS:
                 sorted(attempted),
                 successful_attempts,
                 len(results),
+            )
+            return results[:max_results] if max_results else results
+
+        if "timed out" in f"{err}":
+            raise TimeoutException(err)
+        raise DDGSException(err or "No results found.")
+
+    def _search_sync_tiered_ab(  # noqa: C901
+        self,
+        *,
+        category: str,
+        query: str,
+        region: str,
+        safesearch: str,
+        timelimit: str | None,
+        max_results: int | None,
+        page: int,
+        language: str | None,
+        query_types: list[str] | None,
+        class_weights: dict[str, float] | None,
+        max_attempts: int,
+        effort: str,
+        **kwargs: str,
+    ) -> list[dict[str, Any]]:
+        """Wave 1: A-tier (count scales with effort). Wave 2: B-tier fills the pool."""
+        detected_language = infer_language(query)
+        language = detected_language if detected_language != "en" else (language or "en")
+        region = LANGUAGE_REGION.get(language, region)
+        query_type_set = set(query_types or ("general",))
+        available = set(ENGINES[category])
+        a_target = a_tier_engine_count(effort)
+        a_cap = a_tier_result_cap(max_results or 10, a_target)
+        hard_deadline = time.perf_counter() + max(1.0, float(self._timeout or 5))
+        attempted: set[str] = set()
+        a_successes = 0
+        results: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
+        result_by_url: dict[str, dict[str, Any]] = {}
+        err: BaseException | None = None
+
+        def run_engine(name: str, attempt_timeout: float) -> tuple[str, list[Any], BaseException | None, float]:
+            started = time.perf_counter()
+            try:
+                engine_results = self._engine(name, attempt_timeout).search(
+                    query,
+                    region=region,
+                    safesearch=safesearch,
+                    timelimit=timelimit,
+                    page=page,
+                    **kwargs,
+                ) or []
+                return name, engine_results, None, time.perf_counter() - started
+            except Exception as ex:  # noqa: BLE001
+                return name, [], ex, time.perf_counter() - started
+
+        def absorb(
+            name: str,
+            engine_results: list[Any],
+            *,
+            per_engine_limit: int,
+        ) -> int:
+            added = 0
+            for result in engine_results:
+                item = dict(result.__dict__)
+                url = str(item.get("href") or "").strip()
+                if not url:
+                    continue
+                if url in seen_urls:
+                    existing = result_by_url[url]
+                    existing["_votes"] = int(existing.get("_votes", 1)) + 1
+                    engines = list(existing.get("_engines") or [existing.get("_engine")])
+                    if name not in engines:
+                        engines.append(name)
+                    existing["_engines"] = engines
+                    continue
+                seen_urls.add(url)
+                item["_engine"] = name
+                item["_engines"] = [name]
+                item["_votes"] = 1
+                results.append(item)
+                result_by_url[url] = item
+                added += 1
+                if per_engine_limit and added >= per_engine_limit:
+                    break
+                if max_results and len(results) >= max_results:
+                    break
+            return added
+
+        a_reserve = ROUTING_STATE.plan_tier_wave(
+            available,
+            tier="A",
+            count=max(a_target * 2, a_target + 1),
+            language=language,
+            query_types=query_type_set,
+            class_weights=class_weights,
+        )
+        a_wave: list[str] = []
+        while a_reserve and len(a_wave) < a_target:
+            name = a_reserve.pop(0)
+            if name not in attempted and name not in a_wave:
+                a_wave.append(name)
+
+        remaining = hard_deadline - time.perf_counter()
+        if remaining > 0 and a_wave:
+            jobs = [
+                (
+                    name,
+                    min(remaining, ROUTING_STATE.attempt_timeout(name, remaining)),
+                )
+                for name in a_wave
+            ]
+            attempted.update(a_wave)
+            if len(jobs) == 1:
+                outcomes = [run_engine(*jobs[0])]
+            else:
+                with ThreadPoolExecutor(max_workers=min(3, len(jobs)), thread_name_prefix="ddgs-tiered-a") as executor:
+                    futures = [executor.submit(run_engine, *job) for job in jobs]
+                    outcomes = [future.result() for future in as_completed(futures)]
+
+            for name, engine_results, engine_error, latency in outcomes:
+                if engine_error is not None:
+                    err = engine_error
+                    ROUTING_STATE.record(name, latency, False, engine_error)
+                    logger.info(
+                        "tiered_ab.a engine=%s latency=%.3fs success=false error=%r",
+                        name, latency, engine_error,
+                    )
+                    continue
+                ROUTING_STATE.record(name, latency, bool(engine_results))
+                added = absorb(name, engine_results, per_engine_limit=a_cap)
+                if added:
+                    a_successes += 1
+                logger.info(
+                    "tiered_ab.a engine=%s latency=%.3fs added=%d cap=%d",
+                    name, latency, added, a_cap,
+                )
+
+            while a_successes < a_target and a_reserve and (hard_deadline - time.perf_counter()) > 0:
+                name = a_reserve.pop(0)
+                if name in attempted:
+                    continue
+                attempted.add(name)
+                remaining = hard_deadline - time.perf_counter()
+                timeout = min(remaining, ROUTING_STATE.attempt_timeout(name, remaining))
+                name, engine_results, engine_error, latency = run_engine(name, timeout)
+                if engine_error is not None:
+                    err = engine_error
+                    ROUTING_STATE.record(name, latency, False, engine_error)
+                    continue
+                ROUTING_STATE.record(name, latency, bool(engine_results))
+                added = absorb(name, engine_results, per_engine_limit=a_cap)
+                if added:
+                    a_successes += 1
+
+        if max_results and len(results) >= max_results:
+            logger.info(
+                "tiered_ab done phase=A attempted=%s results=%d",
+                sorted(attempted), len(results),
+            )
+            return results[:max_results]
+
+        b_budget = max(1, max_attempts)
+        b_reserve = ROUTING_STATE.plan_tier_wave(
+            available,
+            tier="B",
+            count=b_budget + 2,
+            language=language,
+            query_types=query_type_set,
+            class_weights=class_weights,
+            exclude=attempted,
+        )
+        b_successes = 0
+        while b_reserve and b_successes < b_budget and (hard_deadline - time.perf_counter()) > 0:
+            if max_results and len(results) >= max_results:
+                break
+            name = b_reserve.pop(0)
+            if name in attempted:
+                continue
+            attempted.add(name)
+            remaining_slots = (max_results or 10) - len(results)
+            engines_left = max(1, len(b_reserve) + 1)
+            b_cap = b_tier_result_cap(remaining_slots, engines_left)
+            remaining = hard_deadline - time.perf_counter()
+            timeout = min(remaining, ROUTING_STATE.attempt_timeout(name, remaining))
+            name, engine_results, engine_error, latency = run_engine(name, timeout)
+            if engine_error is not None:
+                err = engine_error
+                ROUTING_STATE.record(name, latency, False, engine_error)
+                logger.info(
+                    "tiered_ab.b engine=%s latency=%.3fs success=false error=%r",
+                    name, latency, engine_error,
+                )
+                continue
+            ROUTING_STATE.record(name, latency, bool(engine_results))
+            added = absorb(name, engine_results, per_engine_limit=b_cap)
+            if added:
+                b_successes += 1
+            logger.info(
+                "tiered_ab.b engine=%s latency=%.3fs added=%d cap=%d pool=%d",
+                name, latency, added, b_cap, len(results),
+            )
+
+        if results:
+            logger.info(
+                "tiered_ab done attempted=%s a_ok=%d b_ok=%d results=%d",
+                sorted(attempted), a_successes, b_successes, len(results),
             )
             return results[:max_results] if max_results else results
 
