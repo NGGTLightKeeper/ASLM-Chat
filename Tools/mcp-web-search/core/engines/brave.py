@@ -1,0 +1,127 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+from __future__ import annotations
+
+from ..fetch.profiles import build_nav_headers, pick
+from .models import EngineParseResult, EngineRequest, SearchResult
+from .parsing import (
+    classify_parse,
+    first_attribute,
+    first_cards,
+    first_node_text,
+    parse_html,
+    split_region,
+    valid_http_url,
+)
+
+
+# Brave Search SERP parser.
+class BraveParser:
+    name = "brave"
+    search_url = "https://search.brave.com/search"
+
+    _BLOCK_MARKERS = ("captcha", "challenge-platform", "verify you are human", "rate limit")
+    _EMPTY_MARKERS = ("no results found", "couldn't find any results")
+    _VARIANTS = (
+        ("data_type_web", "div[data-type='web']"),
+        ("result_class", ".result"),
+    )
+
+    # Build the HTTP request for a Brave search query using a random browser profile.
+    @staticmethod
+    def build_request(
+        query: str,
+        *,
+        region: str = "us-en",
+        safesearch: str = "moderate",
+        timelimit: str | None = None,
+        page: int = 1,
+    ) -> EngineRequest:
+        country, language = split_region(region)
+        profile = pick()
+        params = {"q": query, "source": "web"}
+        if timelimit:
+            mapped = {"d": "pd", "w": "pw", "m": "pm", "y": "py"}.get(timelimit)
+            if mapped:
+                params["tf"] = mapped
+        if page > 1:
+            params["offset"] = str(page - 1)
+
+        cookies = {
+            "country": country,
+            "useLocation": "0",
+            "summarizer": "0",
+            "ui_lang": f"{language}-{country}",
+        }
+        if safesearch != "moderate":
+            cookies["safesearch"] = "strict" if safesearch == "on" else "off"
+
+        # Sec-Fetch-Site=same-origin: pretending to search from within brave.com.
+        headers = build_nav_headers(
+            profile,
+            referer="https://search.brave.com/",
+            sec_fetch_site="same-origin",
+        )
+        return EngineRequest(
+            method="GET",
+            url=BraveParser.search_url,
+            params=params,
+            headers=headers,
+            cookies=cookies,
+            primp_target=profile.primp_target,
+            primp_os=profile.primp_os,
+        )
+
+    # Parse a raw Brave SERP HTML document into an EngineParseResult.
+    def parse(self, document: str) -> EngineParseResult:
+        lowered = document.lower()
+        blocked = any(marker in lowered for marker in self._BLOCK_MARKERS)
+        explicit_empty = any(marker in lowered for marker in self._EMPTY_MARKERS)
+
+        tree = parse_html(document)
+        variant, cards = first_cards(tree, self._VARIANTS)
+
+        results: list[SearchResult] = []
+        malformed = 0
+        for card in cards:
+            title = first_node_text(
+                card,
+                (
+                    ".snippet-title",
+                    ".title",
+                    "h2",
+                ),
+            )
+            href = first_attribute(
+                card,
+                (
+                    "a:has(.title)",
+                    "a:has(.snippet-title)",
+                    "h2 a",
+                    "a",
+                ),
+                "href",
+            )
+            snippet = first_node_text(
+                card,
+                (
+                    ".snippet .content",
+                    ".snippet-description",
+                    ".description",
+                    "p",
+                ),
+            )
+            if not title or not valid_http_url(href):
+                malformed += 1
+                continue
+            results.append(SearchResult(title=title, url=href, snippet=snippet))
+
+        return classify_parse(
+            engine=self.name,
+            results=results,
+            parser_variant=variant,
+            cards_seen=len(cards),
+            malformed_cards=malformed,
+            blocked=blocked and not results,
+            explicit_empty=explicit_empty,
+        )
