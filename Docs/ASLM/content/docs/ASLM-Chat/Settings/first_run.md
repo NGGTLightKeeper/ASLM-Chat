@@ -86,7 +86,8 @@ draft: false
 
 **Steps:**
 
-1. Iterate and transform or accumulate state.
+1. Handle errors and map them to a safe response.
+2. Iterate and transform or accumulate state.
 
 #### `def _print_summary(settings_file, initial) -> None`
 
