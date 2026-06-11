@@ -110,12 +110,15 @@ class PrimpTransport:
     # Execute one HTTP request synchronously using the matching primp client.
     def _fetch_sync(self, request: EngineRequest) -> TransportResponse:
         host = request.url.split("/", 3)[2]
+        headers = dict(request.headers)
+        if request.cookies:
+            headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in request.cookies.items())
         response = self._client(host, request.primp_target, request.primp_os).request(
             request.method,
             request.url,
             params=request.params or None,
             data=request.data or None,
-            headers=request.headers or None,
+            headers=headers or None,
         )
         return TransportResponse(status=response.status_code, body=response.content, transport="primp")
 
