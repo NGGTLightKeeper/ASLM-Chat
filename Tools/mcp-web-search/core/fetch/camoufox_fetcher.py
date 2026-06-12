@@ -1,0 +1,340 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+from core.fetch.thread_pool import io_pool as _io_pool
+
+logger = logging.getLogger("core.fetch.camoufox_fetcher")
+
+_WORKER_SCRIPT = Path(__file__).parent / "_camoufox_worker.py"
+
+
+# Kill a process and its children (Firefox spawned by Camoufox).
+def _kill_process_tree(pid: int) -> None:
+    try:
+        if sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                timeout=5.0,
+            )
+        else:
+            import signal
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    except Exception as exc:
+        logger.debug("_kill_process_tree(%d) failed: %s", pid, exc)
+
+
+# Outcome of a single Camoufox subprocess fetch.
+@dataclass
+class FetchResult:
+    url: str
+    success: bool = False
+    html: str = ""
+    text: str = ""           # normalised text (populated after normalisation)
+    inner_text: str = ""     # raw DOM innerText, populated for SPA fallback
+    title: str = ""
+    method: str = "camoufox"
+    error: str = ""
+    duration_sec: float = 0.0
+
+
+_available_cache: Optional[bool] = None
+
+
+# Return True if the camoufox package and its browser binary exist.
+def is_camoufox_available() -> bool:
+    global _available_cache
+    if _available_cache is not None:
+        return _available_cache
+
+    try:
+        import camoufox  # noqa: F401
+        from camoufox.pkgman import INSTALL_DIR, LAUNCH_FILE, OS_NAME
+
+        launch_rel = LAUNCH_FILE.get(OS_NAME)
+        if not launch_rel:
+            _available_cache = False
+            return False
+
+        install_dir = Path(str(INSTALL_DIR))
+        if OS_NAME == "mac":
+            launch_path = (
+                install_dir / "Camoufox.app" / "Contents" / "Resources" / launch_rel
+            ).resolve()
+        else:
+            launch_path = install_dir / launch_rel
+
+        _available_cache = launch_path.exists()
+        if not _available_cache:
+            logger.debug("camoufox binary not found at %s", launch_path)
+    except Exception as exc:
+        logger.debug("camoufox not available: %s", exc)
+        _available_cache = False
+
+    return bool(_available_cache)
+
+
+# Run the Camoufox worker subprocess with an arbitrary JSON payload.
+async def _run_camoufox_worker(
+    url: str,
+    payload: dict[str, object],
+    *,
+    process_timeout: float,
+) -> FetchResult:
+    t0 = time.perf_counter()
+    payload_bytes = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, str(_WORKER_SCRIPT),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        return FetchResult(url=url, error=f"failed to start worker: {exc}",
+                           duration_sec=time.perf_counter() - t0)
+
+    try:
+        stdout_bytes, _ = await asyncio.wait_for(
+            proc.communicate(input=payload_bytes),
+            timeout=process_timeout,
+        )
+    except asyncio.TimeoutError:
+        _kill_process_tree(proc.pid)
+        return FetchResult(
+            url=url,
+            error=f"worker timeout after {process_timeout:.0f}s",
+            duration_sec=time.perf_counter() - t0,
+        )
+    except Exception as exc:
+        _kill_process_tree(proc.pid)
+        return FetchResult(url=url, error=f"worker communicate error: {exc}",
+                           duration_sec=time.perf_counter() - t0)
+
+    duration = time.perf_counter() - t0
+    if not stdout_bytes:
+        return FetchResult(url=url, error="worker produced no output", duration_sec=duration)
+
+    try:
+        data = json.loads(stdout_bytes.decode("utf-8", errors="replace").strip())
+    except json.JSONDecodeError as exc:
+        return FetchResult(url=url, error=f"bad JSON from worker: {exc}", duration_sec=duration)
+
+    if not data.get("ok"):
+        return FetchResult(
+            url=url,
+            error=str(data.get("error", "unknown worker error")),
+            duration_sec=duration,
+        )
+
+    raw_html: str = data.get("html", "")
+    inner_text: str = data.get("inner_text", "")
+    title: str = data.get("title", "")
+    return FetchResult(
+        url=url,
+        success=True,
+        html=raw_html,
+        inner_text=inner_text,
+        title=title,
+        method="camoufox",
+        duration_sec=duration,
+    )
+
+
+# Open thread HTML in Camoufox, then fetch .json in-page with session cookies.
+async def fetch_page_json_with_camoufox(
+    page_url: str,
+    *,
+    json_query: str = "limit=50&depth=3",
+    wait_sec: float = 4.0,
+    headless: bool = True,
+    humanize: bool = True,
+    geoip: bool = False,
+    locale: str = "en-US",
+    proxy: Optional[dict] = None,
+    warmup_urls: Optional[list[str]] = None,
+    warmup_count: int = 0,
+    timeout_sec: float = 45.0,
+    process_timeout: float = 0.0,
+) -> FetchResult:
+    if not process_timeout:
+        process_timeout = timeout_sec + 15.0
+
+    payload: dict[str, object] = {
+        "url": page_url,
+        "wait_sec": wait_sec,
+        "headless": headless,
+        "humanize": humanize,
+        "geoip": geoip,
+        "locale": locale,
+        "proxy": proxy,
+        "warmup_urls": warmup_urls or ["https://www.wikipedia.org/"],
+        "warmup_count": warmup_count,
+        "timeout_sec": timeout_sec,
+        "fetch_json_from_page": True,
+        "json_query": json_query,
+    }
+    result = await _run_camoufox_worker(page_url, payload, process_timeout=process_timeout)
+    if not result.success:
+        return result
+
+    raw_json = (result.html or result.inner_text or "").strip()
+    if not raw_json.startswith("["):
+        return FetchResult(
+            url=page_url,
+            error="invalid json payload from in-page fetch",
+            duration_sec=result.duration_sec,
+        )
+    return result
+
+
+# Fetch url in an isolated Camoufox subprocess; returns FetchResult.
+async def fetch_with_camoufox(
+    url: str,
+    *,
+    wait_sec: float = 4.0,
+    headless: bool = True,
+    humanize: bool = True,
+    geoip: bool = False,
+    locale: str = "en-US",
+    proxy: Optional[dict] = None,
+    warmup_urls: Optional[list[str]] = None,
+    warmup_count: int = 1,
+    timeout_sec: float = 45.0,
+    process_timeout: float = 0.0,   # wall-clock timeout for the child process; 0 = timeout_sec + 15
+    normalize: bool = True,          # run page_normalizer on raw HTML
+) -> FetchResult:
+    t0 = time.perf_counter()
+
+    if not process_timeout:
+        process_timeout = timeout_sec + 15.0
+
+    payload = {
+        "url": url,
+        "wait_sec": wait_sec,
+        "headless": headless,
+        "humanize": humanize,
+        "geoip": geoip,
+        "locale": locale,
+        "proxy": proxy,
+        "warmup_urls": warmup_urls or ["https://www.wikipedia.org/"],
+        "warmup_count": warmup_count,
+        "timeout_sec": timeout_sec,
+    }
+    worker_result = await _run_camoufox_worker(url, payload, process_timeout=process_timeout)
+    if not worker_result.success:
+        worker_result.duration_sec = time.perf_counter() - t0
+        return worker_result
+
+    duration = worker_result.duration_sec
+    raw_html = worker_result.html
+    inner_text = worker_result.inner_text
+    title = worker_result.title
+
+    if not raw_html or len(raw_html) < 200:
+        return FetchResult(url=url, error="insufficient HTML content", duration_sec=duration)
+
+    # Anti-bot wall check.
+    try:
+        from core.fetch.antibot import is_antibot
+        if is_antibot(raw_html):
+            return FetchResult(url=url, error="antibot wall detected", duration_sec=duration)
+    except Exception:
+        pass
+
+    # Optional HTML → clean text via page_normalizer.
+    clean_text = ""
+    if normalize:
+        try:
+            loop = asyncio.get_running_loop()
+            from core.extract.page_normalizer import normalize_page
+            clean_text = await loop.run_in_executor(
+                _io_pool, lambda: normalize_page(url, raw_html, "")
+            )
+        except Exception as exc:
+            logger.debug("page_normalizer failed for %s: %s", url, exc)
+
+    logger.info(
+        "camoufox_fetcher: %s -> ok html=%d text=%d dur=%.1fs",
+        url, len(raw_html), len(clean_text), duration,
+    )
+
+    return FetchResult(
+        url=url,
+        success=True,
+        html=raw_html,
+        text=clean_text,
+        inner_text=inner_text,
+        title=title,
+        method="camoufox",
+        duration_sec=duration,
+    )
+
+
+# Fetch multiple URLs with limited concurrency (keep max_concurrency at 1–2).
+async def fetch_batch_with_camoufox(
+    urls: list[str],
+    *,
+    max_concurrency: int = 2,
+    timeout_sec: float = 45.0,
+    process_timeout: float = 0.0,
+    wait_sec: float = 4.0,
+    headless: bool = True,
+    humanize: bool = True,
+    geoip: bool = False,
+    locale: str = "en-US",
+    proxy: Optional[dict] = None,
+    warmup_urls: Optional[list[str]] = None,
+    warmup_count: int = 1,
+    normalize: bool = True,
+) -> list[FetchResult]:
+    if not urls:
+        return []
+
+    sem = asyncio.Semaphore(max_concurrency)
+
+    # Fetch one URL under the batch semaphore.
+    async def _one(url: str) -> FetchResult:
+        async with sem:
+            return await fetch_with_camoufox(
+                url,
+                wait_sec=wait_sec,
+                headless=headless,
+                humanize=humanize,
+                geoip=geoip,
+                locale=locale,
+                proxy=proxy,
+                warmup_urls=warmup_urls,
+                warmup_count=warmup_count,
+                timeout_sec=timeout_sec,
+                process_timeout=process_timeout,
+                normalize=normalize,
+            )
+
+    tasks = [_one(u) for u in urls]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    out: list[FetchResult] = []
+    for url, r in zip(urls, results):
+        if isinstance(r, Exception):
+            out.append(FetchResult(url=url, error=str(r)))
+        else:
+            out.append(r)
+    return out

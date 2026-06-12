@@ -1,0 +1,33 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from core.config import load_search_config
+
+from .source_cache import CachedPage, SourceCache, canonicalize_url, content_hash, url_hash
+
+# Server root is two levels up from this file (core/cache/__init__.py).
+_CACHE_PATH = Path(__file__).resolve().parents[2] / "_cache" / "source_cache.db"
+
+_page_cache: SourceCache | None = None
+
+
+# Shared SourceCache singleton for read_page (decoupled from the search pipeline).
+def get_page_cache() -> SourceCache:
+    global _page_cache
+    if _page_cache is None:
+        ttl = int(load_search_config().cache.page_ttl_seconds)
+        _page_cache = SourceCache(str(_CACHE_PATH), default_ttl=ttl)
+    return _page_cache
+
+
+__all__ = [
+    "CachedPage",
+    "SourceCache",
+    "canonicalize_url",
+    "content_hash",
+    "get_page_cache",
+    "url_hash",
+]

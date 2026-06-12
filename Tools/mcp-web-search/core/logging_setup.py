@@ -1,0 +1,51 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+from __future__ import annotations
+
+import logging
+import logging.handlers
+from pathlib import Path
+
+# Mirrors the legacy adapters/mcp/logging_setup.py: same format, same rotating files,
+# same logger names, so read_page logs are byte-compatible with the old pipeline. Only
+# the read_page-relevant loggers are wired here (web_search/serp loggers are not).
+_LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
+
+_SERVICE_LOGS: dict[str, str] = {
+    "services.read_page": "read_page.log",
+    "trace.read_page": "read_page_trace.log",
+    "core": "core.log",
+}
+
+_FORMAT = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
+
+# Configure rotating file handlers for every read_page service logger.
+def setup_logging(
+    log_dir: Path | None = None,
+    level: int = logging.INFO,
+    max_bytes: int = 5 * 1024 * 1024,
+    backup_count: int = 3,
+) -> None:
+    target_dir = log_dir or _LOG_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    formatter = logging.Formatter(_FORMAT, datefmt=_DATE_FORMAT)
+
+    for logger_name, filename in _SERVICE_LOGS.items():
+        log = logging.getLogger(logger_name)
+        log.setLevel(level)
+
+        if any(isinstance(handler, logging.handlers.RotatingFileHandler) for handler in log.handlers):
+            continue
+
+        handler = logging.handlers.RotatingFileHandler(
+            target_dir / filename,
+            encoding="utf-8",
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+        )
+        handler.setFormatter(formatter)
+        log.addHandler(handler)
+        log.propagate = False
