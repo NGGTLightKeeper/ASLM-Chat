@@ -22,7 +22,10 @@ TOOLS = [
     {
         "id": "serp_search",
         "name": "SERP Search",
-        "description": "Return up to three raw SERP sources from Google, Brave, and DuckDuckGo.",
+        "description": (
+            "Return raw SERP sources from Google, Brave, DuckDuckGo, Yandex, Qwant, "
+            "Yep, and Startpage (Startpage serves Google's result index)."
+        ),
         "parameters": {
             "type": "object",
             "properties": {

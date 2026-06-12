@@ -85,7 +85,7 @@ class AiohttpTransport:
 class PrimpTransport:
 
     # Initialize timeout and a thread-pool executor for blocking primp calls.
-    def __init__(self, *, timeout_seconds: float = 8.0, max_workers: int = 2) -> None:
+    def __init__(self, *, timeout_seconds: float = 8.0, max_workers: int = 4) -> None:
         self.timeout_seconds = max(0.1, float(timeout_seconds))
         self._executor = ThreadPoolExecutor(
             max_workers=max(1, int(max_workers)),
@@ -136,18 +136,36 @@ class PrimpTransport:
 # Route each engine to one known transport without retry chains.
 class AdaptiveTransport:
 
-    # Initialize all transports: fast aiohttp for DDG, primp for Brave, httpx for Google.
+    # Initialize all transports: specialized httpx for Google, primp for hosts that
+    # reject generic TLS (Brave, Yandex, Startpage SERPs and the Qwant/Yep APIs),
+    # fast aiohttp for DuckDuckGo.
     def __init__(self, *, timeout_seconds: float = 8.0) -> None:
         self._fast = AiohttpTransport(timeout_seconds=timeout_seconds)
-        self._impersonated = PrimpTransport(timeout_seconds=timeout_seconds)
+        # One impersonated worker per impersonated host so all engines can run
+        # concurrently without starving each other on the thread pool.
+        self._impersonated = PrimpTransport(
+            timeout_seconds=timeout_seconds,
+            max_workers=len(self._IMPERSONATED_HOSTS) + 1,
+        )
         self._httpx = HttpxTransport(timeout_seconds=timeout_seconds)
+
+    # Hosts whose anti-bot TLS fingerprinting requires browser impersonation.
+    _IMPERSONATED_HOSTS = frozenset(
+        {
+            "search.brave.com",
+            "yandex.com",
+            "www.startpage.com",
+            "api.qwant.com",
+            "api.yep.com",
+        }
+    )
 
     # Forward the request to the appropriate transport based on the target host.
     async def fetch(self, request: EngineRequest) -> TransportResponse:
         host = request.url.split("/", 3)[2]
         if host == "www.google.com":
             return await self._httpx.fetch(request)
-        if host == "search.brave.com":
+        if host in self._IMPERSONATED_HOSTS:
             return await self._impersonated.fetch(request)
         return await self._fast.fetch(request)
 

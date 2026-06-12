@@ -12,11 +12,28 @@ from urllib.parse import urlparse
 
 import orjson
 
-from ..engines import BraveParser, DuckDuckGoParser, GoogleParser, ParseStatus
+from ..engines import (
+    BraveParser,
+    DuckDuckGoParser,
+    GoogleParser,
+    ParseStatus,
+    QwantParser,
+    StartpageParser,
+    YandexParser,
+    YepParser,
+)
 from ..engines.models import EngineParseResult, EngineRequest
 from ..fetch.transport import AdaptiveTransport, TransportResponse
 
-DEFAULT_ENGINES = (GoogleParser, BraveParser, DuckDuckGoParser)
+DEFAULT_ENGINES = (
+    GoogleParser,
+    BraveParser,
+    DuckDuckGoParser,
+    YandexParser,
+    QwantParser,
+    YepParser,
+    StartpageParser,
+)
 
 
 # Protocol for transport backends accepted by SerpApi.
@@ -24,6 +41,29 @@ class SerpTransport(Protocol):
     async def fetch(self, request: EngineRequest) -> TransportResponse: ...
 
     async def close(self) -> None: ...
+
+
+# Build one engine's request, using its optional async builder when present.
+#
+# Most engines build a stateless request synchronously. Engines that need a
+# preflight call (e.g. Startpage prefetching its sc token) expose an async
+# build_request_async(transport, ...) instead; both produce a plain EngineRequest,
+# so the rest of the pipeline stays uniform with no per-engine branches.
+async def _build_engine_request(
+    parser: Any,
+    transport: SerpTransport,
+    query: str,
+    *,
+    region: str,
+    safesearch: str,
+    timelimit: str | None,
+) -> EngineRequest:
+    builder = getattr(parser, "build_request_async", None)
+    if builder is not None:
+        return await builder(
+            transport, query, region=region, safesearch=safesearch, timelimit=timelimit
+        )
+    return parser.build_request(query, region=region, safesearch=safesearch, timelimit=timelimit)
 
 
 # Serialize a payload to indented JSON bytes using orjson.
@@ -112,7 +152,6 @@ class SerpApi:
         timelimit: str | None,
     ) -> dict[str, Any]:
         parser = parser_type()
-        request = parser.build_request(query, region=region, safesearch=safesearch, timelimit=timelimit)
         fetch_started = time.perf_counter()
         http_status: int | None = None
         response_bytes = 0
@@ -121,6 +160,14 @@ class SerpApi:
         parse_ms = 0.0
         try:
             async with asyncio.timeout(self.timeout_seconds):
+                request = await _build_engine_request(
+                    parser,
+                    self._transport,
+                    query,
+                    region=region,
+                    safesearch=safesearch,
+                    timelimit=timelimit,
+                )
                 response = await self._transport.fetch(request)
             fetch_ms = (time.perf_counter() - fetch_started) * 1000
             http_status = response.status
