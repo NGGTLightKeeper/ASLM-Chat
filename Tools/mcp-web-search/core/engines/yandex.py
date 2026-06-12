@@ -27,6 +27,7 @@ _SUPPORTED_LANGS = frozenset(
 # results with stable b-serp-item__* markup, which is what searxng relies on.
 class YandexParser:
     name = "yandex"
+    provider_family = "yandex"
     search_url = "https://yandex.com/search/site/"
 
     _BLOCK_MARKERS = ("showcaptcha", "smartcaptcha", "checkcaptcha", "robot check", "captcha")

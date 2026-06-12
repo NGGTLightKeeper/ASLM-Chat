@@ -18,6 +18,7 @@ from .parsing import (
 # Brave Search SERP parser.
 class BraveParser:
     name = "brave"
+    provider_family = "brave"
     search_url = "https://search.brave.com/search"
 
     _BLOCK_MARKERS = ("captcha", "challenge-platform", "verify you are human", "rate limit")

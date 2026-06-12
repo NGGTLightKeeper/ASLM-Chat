@@ -28,6 +28,7 @@ def _unwrap_url(value: str) -> str:
 # DuckDuckGo HTML SERP parser.
 class DuckDuckGoParser:
     name = "duckduckgo"
+    provider_family = "duckduckgo"
     search_url = "https://html.duckduckgo.com/html/"
 
     _BLOCK_MARKERS = ("anomaly-modal", "challenge-form", "verify you are human", "captcha")

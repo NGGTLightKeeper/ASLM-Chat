@@ -42,6 +42,9 @@ def _is_internal(value: str) -> bool:
 # Google SERP parser with structural fallbacks and degradation reporting.
 class GoogleParser:
     name = "google"
+    # Engines sharing a provider family serve the same underlying index; consensus
+    # voting counts one vote per family, not per engine.
+    provider_family = "google"
     search_url = "https://www.google.com/search"
 
     _BLOCK_MARKERS = (

@@ -20,6 +20,7 @@ _SAFESEARCH = {"off": "0", "moderate": "1", "on": "2"}
 # 'web' blocks hold organic results (ads and side modules are skipped).
 class QwantParser:
     name = "qwant"
+    provider_family = "qwant"
     search_url = "https://api.qwant.com/v3/search/web"
 
     # Build a Qwant API request for the requested locale and safe-search level.

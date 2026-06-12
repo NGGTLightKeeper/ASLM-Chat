@@ -123,6 +123,11 @@ async def _run_camoufox_worker(
             error=f"worker timeout after {process_timeout:.0f}s",
             duration_sec=time.perf_counter() - t0,
         )
+    except asyncio.CancelledError:
+        # Task cancellation (deadline, shutdown) must not leak the browser process:
+        # CancelledError is a BaseException, so the handlers below never see it.
+        _kill_process_tree(proc.pid)
+        raise
     except Exception as exc:
         _kill_process_tree(proc.pid)
         return FetchResult(url=url, error=f"worker communicate error: {exc}",

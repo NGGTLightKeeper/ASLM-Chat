@@ -23,6 +23,7 @@ _SAFESEARCH = {"off": "off", "moderate": "moderate", "on": "strict"}
 # under 'results'. Snippets contain highlight markup that is stripped to text.
 class YepParser:
     name = "yep"
+    provider_family = "yep"
     search_url = "https://api.yep.com/search"
 
     # Build a Yep API request for the requested language and safe-search level.

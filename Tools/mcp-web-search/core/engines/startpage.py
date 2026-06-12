@@ -101,6 +101,8 @@ async def _get_sc_code(transport: _Transport) -> str:
 # output is the same standard EngineParseResult every other engine returns.
 class StartpageParser:
     name = "startpage"
+    # Same Google index behind a different door — one consensus vote with Google.
+    provider_family = "google"
     search_url = _SEARCH_URL
 
     _BLOCK_MARKERS = ("/sp/captcha", "verify you are human", "px-captcha")

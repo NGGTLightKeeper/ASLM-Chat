@@ -88,6 +88,7 @@ def _error_parse_result(engine: str, message: str) -> EngineParseResult:
 def _parse_result_payload(
     result: EngineParseResult,
     *,
+    provider_family: str,
     limit: int,
     http_status: int | None,
     fetch_ms: float,
@@ -97,6 +98,7 @@ def _parse_result_payload(
 ) -> dict[str, Any]:
     return {
         "engine": result.engine,
+        "provider_family": provider_family,
         "status": result.status.value,
         "http_status": http_status,
         "fetch_ms": round(fetch_ms, 2),
@@ -116,15 +118,18 @@ def _parse_result_payload(
 class SerpApi:
 
     # Initialize the API with an optional pre-built transport and search limits.
+    # engines selects which parsers run; callers (tiering/health) pass a subset.
     def __init__(
         self,
         transport: SerpTransport | None = None,
         *,
         timeout_seconds: float = 8.0,
         source_limit: int = 3,
+        engines: tuple[type, ...] = DEFAULT_ENGINES,
     ) -> None:
         self.timeout_seconds = max(0.1, float(timeout_seconds))
         self.source_limit = max(1, int(source_limit))
+        self.engines = tuple(engines) or DEFAULT_ENGINES
         self._owns_transport = transport is None
         self._transport = transport or AdaptiveTransport(timeout_seconds=self.timeout_seconds)
 
@@ -190,6 +195,7 @@ class SerpApi:
             result = _error_parse_result(parser.name, f"{type(exc).__name__}: {exc}")
         return _parse_result_payload(
             result,
+            provider_family=str(getattr(parser, "provider_family", parser.name)),
             limit=self.source_limit,
             http_status=http_status,
             fetch_ms=fetch_ms,
@@ -202,7 +208,8 @@ class SerpApi:
     # buffer as each engine completes, yielding them in real time. The deadline is a
     # hard cutoff: producers still running when it fires are cancelled, and whatever
     # already reached the buffer is the result (timeouts are normal operation, not a
-    # fallback). Each item is either {"type": "source", ...} or {"type": "engine", ...}.
+    # fallback). Each item is {"type": "source" | "vote" | "engine", ...}; "vote" marks
+    # a URL re-surfaced by another engine (consensus signal for triage).
     async def search_stream(
         self,
         query: str,
@@ -231,13 +238,27 @@ class SerpApi:
             )
             for rank, source in enumerate(payload["sources"], 1):
                 url = str(source.get("url") or "")
-                if not url or url in seen:
+                if not url:
+                    continue
+                if url in seen:
+                    # Duplicate across engines is not noise — it is a consensus vote
+                    # the triage layer uses to upgrade the already-emitted source.
+                    await queue.put(
+                        {
+                            "type": "vote",
+                            "engine": payload["engine"],
+                            "provider_family": payload["provider_family"],
+                            "rank": rank,
+                            "url": {"url": url, "host": _host_of(url)},
+                        }
+                    )
                     continue
                 seen.add(url)
                 await queue.put(
                     {
                         "type": "source",
                         "engine": payload["engine"],
+                        "provider_family": payload["provider_family"],
                         "rank": rank,
                         "url": {"url": url, "host": _host_of(url)},
                         "serp": {
@@ -254,7 +275,7 @@ class SerpApi:
         async def produce() -> None:
             try:
                 async with asyncio.TaskGroup() as group:
-                    for parser_type in DEFAULT_ENGINES:
+                    for parser_type in self.engines:
                         group.create_task(run(parser_type), name=f"serp:{parser_type.name}")
             finally:
                 await queue.put(None)

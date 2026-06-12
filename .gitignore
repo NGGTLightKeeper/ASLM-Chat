@@ -246,6 +246,7 @@ Tools/mcp-web-search-legacy/**/*.bat
 Tools/mcp-web-search-legacy/core/debug
 Tools/mcp-web-search/scripts
 Tools/mcp-web-search/tmp/
+Tools/mcp-web-search/todo.md
 
 # Hugo documentation (Docs/ASLM)
 Docs/ASLM/assets/jsconfig.json
