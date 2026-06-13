@@ -8,11 +8,14 @@ from collections.abc import Coroutine
 from typing import Any
 
 
-# Run a top-level coroutine with winloop/uvloop when available, falling back to asyncio.
+# Run a top-level coroutine on the standard library asyncio loop.
+#
+# winloop/uvloop were dropped deliberately: their loops reject the `startupinfo`
+# argument Playwright passes to create_subprocess_exec ("startupinfo is not
+# supported"), which breaks any in-process browser (e.g. cloakbrowser). The stdlib
+# Proactor loop on Windows supports subprocess spawning, which both Playwright and
+# the camoufox subprocess worker rely on.
 def run_fast(coro: Coroutine[Any, Any, Any]) -> Any:
-    module_name = "winloop" if sys.platform == "win32" else "uvloop"
-    try:
-        loop_module = __import__(module_name)
-    except ImportError:
-        return asyncio.run(coro)
-    return loop_module.run(coro)
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    return asyncio.run(coro)

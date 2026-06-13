@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import parse_qs, unquote, urlparse
 
-from ..fetch.profiles import build_nav_headers, pick
+from ..fetch.profiles import accept_language_for, build_nav_headers, for_engine
 from .models import EngineParseResult, EngineRequest, SearchResult
 from .parsing import (
     classify_parse,
@@ -12,6 +12,7 @@ from .parsing import (
     first_cards,
     first_node_text,
     parse_html,
+    split_region,
     valid_http_url,
 )
 
@@ -48,7 +49,7 @@ class DuckDuckGoParser:
         timelimit: str | None = None,
         page: int = 1,
     ) -> EngineRequest:
-        profile = pick()
+        profile = for_engine("duckduckgo")
         data: dict[str, str] = {"q": query, "b": "", "l": region}
         if page > 1:
             data["s"] = str(10 + (page - 2) * 15)
@@ -60,10 +61,16 @@ class DuckDuckGoParser:
             data["kp"] = "1"
 
         # POST to html endpoint; Sec-Fetch-Site=same-site because form is on duckduckgo.com.
+        _, language = split_region(region)
+        extra: dict[str, str] = {}
+        accept_language = accept_language_for(language)
+        if accept_language:
+            extra["Accept-Language"] = accept_language
         headers = build_nav_headers(
             profile,
             referer="https://duckduckgo.com/",
             sec_fetch_site="same-site",
+            extra=extra or None,
         )
         return EngineRequest(
             method="POST",

@@ -207,7 +207,9 @@ class _FakeSerpApi:
             yield event
 
 
-async def _fake_reader(url: str, *, timeout: float = 0, max_chars: int = 0, focus: str = "") -> str:
+async def _fake_reader(
+    url: str, *, timeout: float = 0, max_chars: int = 0, focus: str = "", allow_browser: bool = True
+) -> str:
     await asyncio.sleep(0)
     return f"# parsed {url}"
 

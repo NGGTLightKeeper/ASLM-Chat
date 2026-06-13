@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..fetch.profiles import build_nav_headers, pick
+from ..fetch.profiles import accept_language_for, build_nav_headers, for_engine
 from .models import EngineParseResult, EngineRequest, SearchResult
 from .parsing import (
     classify_parse,
@@ -39,7 +39,7 @@ class BraveParser:
         page: int = 1,
     ) -> EngineRequest:
         country, language = split_region(region)
-        profile = pick()
+        profile = for_engine("brave")
         params = {"q": query, "source": "web"}
         if timelimit:
             mapped = {"d": "pd", "w": "pw", "m": "pm", "y": "py"}.get(timelimit)
@@ -58,10 +58,15 @@ class BraveParser:
             cookies["safesearch"] = "strict" if safesearch == "on" else "off"
 
         # Sec-Fetch-Site=same-origin: pretending to search from within brave.com.
+        extra: dict[str, str] = {}
+        accept_language = accept_language_for(language, country)
+        if accept_language:
+            extra["Accept-Language"] = accept_language
         headers = build_nav_headers(
             profile,
             referer="https://search.brave.com/",
             sec_fetch_site="same-origin",
+            extra=extra or None,
         )
         return EngineRequest(
             method="GET",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import parse_qs, unquote, urlparse
 
-from ..fetch.profiles import build_nav_headers, pick
+from ..fetch.profiles import build_nav_headers, for_engine
 from .models import EngineParseResult, EngineRequest, SearchResult
 from .parsing import (
     classify_parse,
@@ -72,7 +72,7 @@ class GoogleParser:
         page: int = 1,
     ) -> EngineRequest:
         country, language = split_region(region)
-        profile = pick()
+        profile = for_engine("google")
         params = {
             "q": query,
             "num": "3",

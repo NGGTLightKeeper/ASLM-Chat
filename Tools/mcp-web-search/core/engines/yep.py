@@ -7,7 +7,7 @@ import re
 from html import unescape
 from urllib.parse import urlparse
 
-from ..fetch.profiles import build_nav_headers, pick
+from ..fetch.profiles import accept_language_for, build_nav_headers, for_engine
 from .models import EngineParseResult, EngineRequest, ParseStatus, SearchResult
 from .parsing import split_region
 
@@ -37,23 +37,27 @@ class YepParser:
         page: int = 1,
     ) -> EngineRequest:
         _, language = split_region(region)
-        profile = pick()
+        profile = for_engine("yep")
         params = {
             "query": query,
             "safeSearch": _SAFESEARCH.get(safesearch, "moderate"),
             "limit": "20",
             "hl": language,
         }
+        extra = {
+            "Accept": "application/json",
+            "Origin": "https://yep.com",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+        }
+        accept_language = accept_language_for(language)
+        if accept_language:
+            extra["Accept-Language"] = accept_language
         headers = build_nav_headers(
             profile,
             referer="https://yep.com/",
             sec_fetch_site="same-site",
-            extra={
-                "Accept": "application/json",
-                "Origin": "https://yep.com",
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-            },
+            extra=extra,
         )
         return EngineRequest(
             method="GET",

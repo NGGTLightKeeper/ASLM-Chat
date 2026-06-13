@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from urllib.parse import urlparse
 
-from ..fetch.profiles import build_nav_headers, pick
+from ..fetch.profiles import accept_language_for, build_nav_headers, for_engine
 from .models import EngineParseResult, EngineRequest, ParseStatus, SearchResult
 from .parsing import split_region
 
@@ -34,7 +34,7 @@ class QwantParser:
         page: int = 1,
     ) -> EngineRequest:
         country, language = split_region(region)
-        profile = pick()
+        profile = for_engine("qwant")
         params = {
             "q": query,
             "count": "10",
@@ -46,16 +46,20 @@ class QwantParser:
             "display": "true",
             "llm": "false",
         }
+        extra = {
+            "Accept": "application/json",
+            "Origin": "https://www.qwant.com",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+        }
+        accept_language = accept_language_for(language, country)
+        if accept_language:
+            extra["Accept-Language"] = accept_language
         headers = build_nav_headers(
             profile,
             referer="https://www.qwant.com/",
             sec_fetch_site="same-site",
-            extra={
-                "Accept": "application/json",
-                "Origin": "https://www.qwant.com",
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-            },
+            extra=extra,
         )
         return EngineRequest(
             method="GET",

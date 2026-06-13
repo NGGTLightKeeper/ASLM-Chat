@@ -10,7 +10,7 @@ from html import unescape
 from typing import Protocol
 from urllib.parse import urlparse
 
-from ..fetch.profiles import build_nav_headers, pick
+from ..fetch.profiles import accept_language_for, build_nav_headers, for_engine
 from .models import EngineParseResult, EngineRequest, ParseStatus, SearchResult
 from .parsing import split_region
 
@@ -60,7 +60,7 @@ class _Transport(Protocol):
 async def _fetch_sc_code(transport: _Transport) -> str:
     from .parsing import first_attribute, parse_html
 
-    profile = pick()
+    profile = for_engine("startpage")
     headers = build_nav_headers(profile, referer=f"{_BASE_URL}/", sec_fetch_site="same-origin")
     request = EngineRequest(
         method="GET",
@@ -121,7 +121,7 @@ class StartpageParser:
     ) -> EngineRequest:
         country, language = split_region(region)
         sc_code = await _get_sc_code(transport)
-        profile = pick()
+        profile = for_engine("startpage")
 
         data: dict[str, str] = {
             "query": query,
@@ -161,11 +161,15 @@ class StartpageParser:
         }
         preferences = "N1N".join(f"{key}EEE{value}" for key, value in prefs.items())
 
+        extra = {"Origin": _BASE_URL}
+        accept_language = accept_language_for(language, country)
+        if accept_language:
+            extra["Accept-Language"] = accept_language
         headers = build_nav_headers(
             profile,
             referer=f"{_BASE_URL}/",
             sec_fetch_site="same-origin",
-            extra={"Origin": _BASE_URL},
+            extra=extra,
         )
         return EngineRequest(
             method="POST",

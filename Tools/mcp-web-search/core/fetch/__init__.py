@@ -2,7 +2,7 @@
 
 from ._base import TransportResponse
 from .httpx_transport import HttpxTransport
-from .profiles import BrowserProfile, build_nav_headers, pick
+from .profiles import BrowserProfile, build_nav_headers, for_engine, pick
 from .transport import AdaptiveTransport, AiohttpTransport, PrimpTransport
 
 __all__ = [
@@ -13,5 +13,6 @@ __all__ = [
     "PrimpTransport",
     "TransportResponse",
     "build_nav_headers",
+    "for_engine",
     "pick",
 ]

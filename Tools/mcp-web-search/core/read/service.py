@@ -347,6 +347,10 @@ class ReadPageOptions:
     timeout: float = 20.0
     max_chars: int = 20_000
     focus: str = ""
+    # When False, the heavy Camoufox browser path is disabled entirely. web_search
+    # sets this so the browser stays exclusive to the read_page tool: a wide search
+    # must be cheap/HTTP-only and skip browser-only sources rather than pay 7-16s a page.
+    allow_browser: bool = True
 
 
 # Global asyncio deadline for one read; Reddit needs room for curl + Camoufox JSON.
@@ -370,6 +374,11 @@ class ReadPageService:
             max_chars=cfg.extraction.max_page_chars,
         )
         self._focus = (self._opts.focus or "").strip()
+
+    # Whether the heavy browser (Camoufox) path may run. Disabled by web_search so the
+    # browser stays exclusive to the read_page tool.
+    def _browser_ok(self) -> bool:
+        return self._opts.allow_browser and is_camoufox_available()
 
     # Apply the read_page compression/GLiNER budget from config.
     def _apply_budget(self, markdown: str, url: str) -> str:
@@ -416,7 +425,7 @@ class ReadPageService:
     async def _fetch_candidate(
         self, url: str, *, camoufox_first: bool, http_method: str | None
     ) -> tuple[RawFetch, FetchResult | None]:
-        if camoufox_first and is_camoufox_available():
+        if camoufox_first and self._browser_ok():
             return await _fetch_camoufox(url, self._opts.timeout)
         if http_method == METHOD_HTTPX:
             return await _fetch_httpx(url, self._opts.timeout, tls_verify=self._cfg.search.tls_verify), None
@@ -462,7 +471,7 @@ class ReadPageService:
             if is_antibot(html):
                 if raw is not None:
                     self._profiles.record(cand, raw.attempt(success=False))
-                if method != METHOD_CAMOUFOX and is_camoufox_available():
+                if method != METHOD_CAMOUFOX and self._browser_ok():
                     raw, cam = await _fetch_camoufox(cand, self._opts.timeout)
                     if raw.html and not is_antibot(raw.html):
                         html, method = raw.html, METHOD_CAMOUFOX
@@ -500,7 +509,7 @@ class ReadPageService:
                 self._cache.cache_page(cache_key, "", clean_text="", raw_html=html)
 
             # Weak HTML extraction — retry through Camoufox (normalize → innerText → RSC).
-            if weak and method not in (METHOD_CAMOUFOX, "cache") and is_camoufox_available():
+            if weak and method not in (METHOD_CAMOUFOX, "cache") and self._browser_ok():
                 logger.info("weak extraction for %s — retrying via camoufox SPA fallback", cand)
                 craw, cres = await _fetch_camoufox(cand, self._opts.timeout)
                 if craw.html and cres is not None:
@@ -638,10 +647,13 @@ async def run_read_page(
     timeout: float = 20.0,
     max_chars: int = 20_000,
     focus: str = "",
+    allow_browser: bool = True,
 ) -> str:
     host = urlparse(url.strip()).netloc.lower().removeprefix("www.").removeprefix("m.")
     effective_timeout = max(timeout, _REDDIT_READ_TIMEOUT_SEC) if host == "reddit.com" else timeout
     service = ReadPageService(
-        options=ReadPageOptions(timeout=effective_timeout, max_chars=max_chars, focus=focus)
+        options=ReadPageOptions(
+            timeout=effective_timeout, max_chars=max_chars, focus=focus, allow_browser=allow_browser
+        )
     )
     return await service.read(url)

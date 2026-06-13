@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..fetch.profiles import build_nav_headers, pick
+from ..fetch.profiles import accept_language_for, build_nav_headers, for_engine
 from .models import EngineParseResult, EngineRequest, SearchResult
 from .parsing import (
     classify_parse,
@@ -48,7 +48,7 @@ class YandexParser:
         page: int = 1,
     ) -> EngineRequest:
         _, language = split_region(region)
-        profile = pick()
+        profile = for_engine("yandex")
         params = {
             "tmpl_version": "releases",
             "text": query,
@@ -61,10 +61,15 @@ class YandexParser:
         if page > 1:
             params["p"] = str(page - 1)
 
+        extra: dict[str, str] = {}
+        accept_language = accept_language_for(language)
+        if accept_language:
+            extra["Accept-Language"] = accept_language
         headers = build_nav_headers(
             profile,
             referer="https://yandex.com/",
             sec_fetch_site="same-origin",
+            extra=extra or None,
         )
         cookies = {"yp": "1716337604.sp.family%3A0#1685406411.szm.1:1920x1080:1920x999"}
         return EngineRequest(
