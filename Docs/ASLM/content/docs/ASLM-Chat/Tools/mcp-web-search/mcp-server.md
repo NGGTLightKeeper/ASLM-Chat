@@ -13,70 +13,40 @@ draft: false
 
 #### `def supports(engine, model_name) -> bool`
 
-**Purpose:** Report whether this bridge supports the given engine/model pair.
+**Purpose:** Return whether this server supports the given engine or model.
 
-#### `async def call_tool(tool_id, arguments, context) -> Any`
+#### `async def call_tool(tool_id, arguments, context) -> dict[str, Any]`
 
-**Purpose:** Dispatch MCP tool calls to web_search or read_page services.
+**Purpose:** Dispatch an ASLM tool call to the matching search implementation.
 
 **Steps:**
 
 1. Raise on invalid input or failure conditions.
 2. Return the computed result to the caller.
 3. Await async I/O or subprocess work.
-4. Iterate and transform or accumulate state.
 
 ---
 
 ## Private functions
 
-#### `def _maybe_parse_list(val) -> Any`
+#### `async def _call_web_search(args) -> dict[str, Any]`
 
-**Purpose:** Parse JSON-encoded list strings passed as tool arguments.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
-3. Parse or serialize JSON payloads.
-
-#### `def _source_domain(url) -> str`
-
-**Purpose:** Normalize a URL host into a bare registrable domain label.
+**Purpose:** Run the ranked web_search pipeline (the model-facing default tool).
 
 **Steps:**
 
 1. Return the computed result to the caller.
+2. Await async I/O or subprocess work.
+3. Handle errors and map them to a safe response.
 
-#### `def _display_domain(domain) -> str`
+#### `async def _call_serp_search(args) -> dict[str, Any]`
 
-**Purpose:** Build a short human-readable label from a domain name.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Iterate and transform or accumulate state.
-
-#### `def _favicon_url(domain) -> str`
-
-**Purpose:** DuckDuckGo favicon URL for a source domain chip.
-
-#### `def _read_page_source(url, rank, result_text) -> dict[str, object]`
-
-**Purpose:** Build one read_page source metadata record for UI chips.
+**Purpose:** Run the low-level raw SERP retrieval (unprocessed per-engine output).
 
 **Steps:**
 
 1. Return the computed result to the caller.
-
-#### `def _read_page_payload(urls, results) -> dict[str, object]`
-
-**Purpose:** Assemble the structured read_page payload for one or many URLs.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Iterate and transform or accumulate state.
+2. Await async I/O or subprocess work.
 
 ---
 
