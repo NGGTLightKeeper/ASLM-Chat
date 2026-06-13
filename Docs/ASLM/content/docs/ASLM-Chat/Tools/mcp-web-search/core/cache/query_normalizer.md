@@ -11,7 +11,7 @@ draft: false
 
 ## Public functions
 
-#### `def normalize_query_key(query) -> str`
+#### `def normalize_query_key(query: str) -> str`
 
 **Purpose:** Canonical cache key: lowercase, stopwords removed, terms sorted (order discarded).
 
@@ -20,7 +20,7 @@ draft: false
 1. Return the computed result to the caller.
 2. Iterate and transform or accumulate state.
 
-#### `def normalize_exact_query_key(query) -> str`
+#### `def normalize_exact_query_key(query: str) -> str`
 
 **Purpose:** Order-preserving canonical query string for strict cache keys.
 
