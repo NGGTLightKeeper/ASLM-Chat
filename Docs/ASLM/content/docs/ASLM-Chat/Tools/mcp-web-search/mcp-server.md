@@ -30,6 +30,10 @@ draft: false
 
 ## Private functions
 
+#### `def _evict_caches_once() -> None`
+
+**Purpose:** Reclaim disk from expired cache entries once per process, on first tool call.
+
 #### `def _maybe_parse_list(val) -> Any`
 
 **Purpose:** Parse JSON-encoded list strings passed as tool arguments.
