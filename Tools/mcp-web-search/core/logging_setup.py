@@ -7,13 +7,17 @@ import logging.handlers
 from pathlib import Path
 
 # Mirrors the legacy adapters/mcp/logging_setup.py: same format, same rotating files,
-# same logger names, so read_page logs are byte-compatible with the old pipeline. Only
-# the read_page-relevant loggers are wired here (web_search/serp loggers are not).
+# same logger names, so logs are byte-compatible with the old pipeline. Covers both the
+# web_search and read_page services plus the MCP adapter; serp_api/triage/health/quality
+# log under the `core` namespace and land in core.log via propagation.
 _LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
 
 _SERVICE_LOGS: dict[str, str] = {
+    "services.web_search": "web_search.log",
+    "trace.web_search": "web_search_trace.log",
     "services.read_page": "read_page.log",
     "trace.read_page": "read_page_trace.log",
+    "mcp.server": "mcp_trace.log",
     "core": "core.log",
 }
 

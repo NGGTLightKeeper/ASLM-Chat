@@ -41,7 +41,8 @@ from .quality import infer_query_language
 from .serp_api import SerpApi, _get_transport
 from .triage import TriageAction, TriageSession
 
-logger = logging.getLogger("core.search.web_search")
+logger = logging.getLogger("services.web_search")
+trace_logger = logging.getLogger("trace.web_search")
 
 # Engines take the parser's max; final cut happens after triage, not at the engine
 # (the parser scans the whole page either way — trimming early just wastes results).
@@ -156,6 +157,7 @@ class WebSearchService:
                     source.url,
                     timeout=profile.parse_timeout,
                     max_chars=profile.parse_max_chars,
+                    allow_browser=False,  # search is HTTP-only; browser is read_page-exclusive
                 )
             source.parsed_markdown = markdown or ""
             source.parsed_ok = bool(markdown) and not markdown.startswith("Error:")
@@ -189,6 +191,10 @@ class WebSearchService:
             region = {"ru": "ru-ru", "de": "de-de"}.get(language, "us-en")
 
         engines = select_engines(profile.name, self._tracker)
+        logger.info(
+            "web_search.start effort=%s region=%s language=%s engines=%s query=%r",
+            profile.name, region, language, [e.name for e in engines], query[:160],
+        )
         api = SerpApi(
             transport=_get_transport(8.0),
             timeout_seconds=8.0,
@@ -254,6 +260,11 @@ class WebSearchService:
                             score=decision.score,
                             families=[event["provider_family"]],
                         )
+                        trace_logger.info(
+                            "source engine=%s family=%s rank=%d action=%s score=%.3f url=%r",
+                            event["engine"], event["provider_family"], event["rank"],
+                            decision.action.name, decision.score, url,
+                        )
                         if decision.action == TriageAction.PARSE and parse_started_count < budget_during_stream:
                             spawn_parse(url)
                         else:
@@ -309,6 +320,12 @@ class WebSearchService:
 
         ranked = sorted(sources.values(), key=lambda s: s.score, reverse=True)
         top = ranked[: profile.max_results]
+        parsed_ok = sum(1 for s in top if s.parsed_ok)
+        logger.info(
+            "web_search.done effort=%s sources=%d parsed=%d/%d elapsed_ms=%.0f query=%r",
+            profile.name, len(top), parsed_ok, parse_started_count,
+            (time.perf_counter() - started) * 1000, query[:160],
+        )
         return {
             "query": query,
             "effort": profile.name,
