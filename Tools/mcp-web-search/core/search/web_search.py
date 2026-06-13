@@ -49,6 +49,21 @@ trace_logger = logging.getLogger("trace.web_search")
 _SOURCE_LIMIT = 20
 
 
+# Resolve a direct PDF URL for a result (already a PDF, or an arXiv abs → pdf link).
+# Ported from the legacy _infer_pdf_url so the model still gets direct PDF links.
+def _infer_pdf_url(url: str) -> str:
+    from core.extract.pdf_extractor import looks_like_pdf_url
+
+    u = (url or "").strip()
+    if not u:
+        return ""
+    if looks_like_pdf_url(u):
+        return u
+    if "arxiv.org/abs/" in u:
+        return u.replace("/abs/", "/pdf/", 1)
+    return ""
+
+
 # Per-effort budgets. parse_budget=0 means SERP-only (low is a fast path).
 @dataclass(frozen=True, slots=True)
 class EffortProfile:
@@ -343,6 +358,7 @@ class WebSearchService:
                     "rank": s.rank,
                     "score": round(s.score, 4),
                     "consensus_families": s.families,
+                    **({"pdf_url": pdf} if (pdf := _infer_pdf_url(s.url)) else {}),
                     **(
                         {
                             "parsed_ok": s.parsed_ok,
@@ -360,7 +376,29 @@ class WebSearchService:
         }
 
 
-# Convenience entry point mirroring run_serp_search.
+# Build the payload returned when an identical query is hard-blocked as a repeat.
+def _repeat_block_payload(query: str, effort: str, age: float) -> dict[str, Any]:
+    return {
+        "query": query,
+        "effort": effort,
+        "blocked": True,
+        "block_reason": "repeat",
+        "note": (
+            f"You already ran this exact search {age:.0f}s ago — the results were just "
+            "shown above. Re-issuing the same query is suppressed; reuse the previous "
+            "results, refine the query, or read_page one of those sources."
+        ),
+        "sources": [],
+    }
+
+
+# Cached/blocked/deduped entry point used by the MCP tool (run_web_search).
+#
+# Wraps the pure WebSearchService.search with the short-horizon "search memory":
+#   1. identical query within the block window → hard block (no engines hit);
+#   2. otherwise serve from the query-results cache when fresh, else run live;
+#   3. drop result URLs already shown to the model within the suppression window;
+#   4. record what was served, then warm the top unparsed URLs in the background.
 async def run_web_search(
     query: str,
     *,
@@ -369,7 +407,52 @@ async def run_web_search(
     safesearch: str = "moderate",
     timelimit: str | None = None,
 ) -> dict[str, Any]:
-    service = WebSearchService()
-    return await service.search(
-        query, effort=effort, region=region, safesearch=safesearch, timelimit=timelimit
+    from core.cache.hosted_cache import get_hosted_cache
+    from core.config import load_search_config
+
+    from .prefetch import get_prefetch_manager
+    from .recent_tracker import get_recent_tracker
+
+    cache_cfg = load_search_config().cache
+    tracker = get_recent_tracker()
+    cache = get_hosted_cache()
+    key_args = dict(region=region, safesearch=safesearch, timelimit=timelimit, effort=effort)
+    qkey = tracker.query_key(query, **key_args)
+
+    # 1. Identical query just served → hard block, no engines.
+    age = tracker.repeat_age(qkey, cache_cfg.repeat_block_window_seconds)
+    if age is not None:
+        logger.info("web_search.repeat_block age=%.0fs query=%r", age, query[:160])
+        return _repeat_block_payload(query, effort, age)
+
+    # 2. Fresh cache hit, else run the live pipeline and cache it.
+    payload = cache.get(query, **key_args)
+    if payload is not None:
+        payload = {**payload, "cached": True}
+    else:
+        payload = await WebSearchService().search(
+            query, effort=effort, region=region, safesearch=safesearch, timelimit=timelimit
+        )
+        payload["cached"] = False
+        cache.set(query, payload, is_empty=not payload.get("sources"), **key_args)
+
+    # 3. Drop sources the model was already shown within the suppression window.
+    sources = list(payload.get("sources") or [])
+    seen = tracker.recently_seen(
+        [s.get("url", "") for s in sources], cache_cfg.seen_source_window_seconds
     )
+    if seen:
+        kept = [s for s in sources if s.get("url") not in seen]
+        payload = {**payload, "sources": kept, "suppressed_seen": len(seen)}
+        sources = kept
+
+    # 4. Remember what we served, then warm the top unparsed URLs for likely read_page.
+    served_urls = [s.get("url", "") for s in sources]
+    horizon = max(cache_cfg.repeat_block_window_seconds, cache_cfg.seen_source_window_seconds, 60)
+    tracker.record(qkey, served_urls, horizon=float(horizon))
+
+    if cache_cfg.prefetch_max_urls > 0:
+        targets = [s.get("url", "") for s in sources if not s.get("markdown")]
+        get_prefetch_manager().schedule(targets[: cache_cfg.prefetch_max_urls])
+
+    return payload

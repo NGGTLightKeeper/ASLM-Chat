@@ -60,8 +60,12 @@ class ExtractionSection:
 
 @dataclass
 class CacheSection:
-    search_ttl_seconds: int = 1_800
+    search_ttl_seconds: int = 21_600        # 6 h — flat TTL for the query-results cache
+    search_negative_ttl_seconds: int = 300  # 5 min — empty/failed result sets
     page_ttl_seconds: int = 86_400
+    repeat_block_window_seconds: int = 30   # identical query within this → hard block
+    seen_source_window_seconds: int = 30    # drop sources served to the model within this
+    prefetch_max_urls: int = 4              # top uncached result URLs warmed per search (0 = off)
 
 
 # Year tokens in queries: timelimit (default), strip, or none — see year_hint_* fields.
@@ -207,8 +211,12 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             read_page_compress_target_chars=int(e.get("read_page_compress_target_chars", 10_000)),
         ),
         cache=CacheSection(
-            search_ttl_seconds=int(c.get("search_ttl_seconds", 1_800)),
+            search_ttl_seconds=int(c.get("search_ttl_seconds", 21_600)),
+            search_negative_ttl_seconds=int(c.get("search_negative_ttl_seconds", 300)),
             page_ttl_seconds=int(c.get("page_ttl_seconds", 86_400)),
+            repeat_block_window_seconds=int(c.get("repeat_block_window_seconds", 30)),
+            seen_source_window_seconds=int(c.get("seen_source_window_seconds", 30)),
+            prefetch_max_urls=int(c.get("prefetch_max_urls", 4)),
         ),
         query=QuerySection(
             year_hint_mode=str(q.get("year_hint_mode", "timelimit")),

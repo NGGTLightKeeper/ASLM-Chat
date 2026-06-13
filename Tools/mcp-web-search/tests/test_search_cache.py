@@ -1,0 +1,102 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+from __future__ import annotations
+
+import time
+
+from core.cache.hosted_cache import HostedSearchCache
+from core.search.recent_tracker import RecentSearchTracker
+from core.search.web_search import _infer_pdf_url
+
+
+# ── hosted_cache: query-results cache ───────────────────────────────────────────
+
+def test_hosted_cache_roundtrip(tmp_path):
+    cache = HostedSearchCache(str(tmp_path / "h.db"), default_ttl=100, negative_ttl=5)
+    payload = {"query": "q", "sources": [{"url": "https://a.com"}]}
+    cache.set("python asyncio", payload, effort="low")
+    got = cache.get("python asyncio", effort="low")
+    assert got is not None and got["sources"][0]["url"] == "https://a.com"
+
+
+def test_hosted_cache_key_is_param_sensitive(tmp_path):
+    cache = HostedSearchCache(str(tmp_path / "h.db"))
+    cache.set("q", {"x": 1}, effort="low")
+    # Different effort / region must miss.
+    assert cache.get("q", effort="medium") is None
+    assert cache.get("q", region="ru-ru", effort="low") is None
+    assert cache.get("q", effort="low") == {"x": 1}
+
+
+def test_hosted_cache_normalizes_query(tmp_path):
+    cache = HostedSearchCache(str(tmp_path / "h.db"))
+    cache.set("the python asyncio", {"hit": True}, effort="low")
+    # Stopwords/order are normalized away → same key.
+    assert cache.get("python asyncio", effort="low") == {"hit": True}
+
+
+def test_hosted_cache_expiry(tmp_path):
+    cache = HostedSearchCache(str(tmp_path / "h.db"), default_ttl=1)
+    cache.set("q", {"x": 1}, effort="low")
+    assert cache.get("q", effort="low") is not None
+    time.sleep(1.2)
+    assert cache.get("q", effort="low") is None
+
+
+def test_hosted_cache_negative_ttl_for_empty(tmp_path):
+    cache = HostedSearchCache(str(tmp_path / "h.db"), default_ttl=1000, negative_ttl=1)
+    cache.set("q", {"sources": []}, effort="low", is_empty=True)
+    assert cache.get("q", effort="low") is not None
+    time.sleep(1.2)
+    assert cache.get("q", effort="low") is None  # negative entry expired fast
+
+
+def test_hosted_cache_evict_expired(tmp_path):
+    cache = HostedSearchCache(str(tmp_path / "h.db"), default_ttl=1)
+    cache.set("q", {"x": 1}, effort="low")
+    time.sleep(1.2)
+    assert cache.evict_expired() == 1
+
+
+# ── recent_tracker: repeat block + source suppression ───────────────────────────
+
+def test_repeat_block_within_window():
+    t = RecentSearchTracker()
+    key = t.query_key("python asyncio", effort="low")
+    assert t.repeat_age(key, window=30) is None  # nothing recorded yet
+    t.record(key, ["https://a.com"])
+    age = t.repeat_age(key, window=30)
+    assert age is not None and age < 1.0
+
+
+def test_repeat_block_outside_window():
+    t = RecentSearchTracker()
+    key = t.query_key("q", effort="low")
+    t.record(key, [])
+    # A zero/elapsed window must not block.
+    assert t.repeat_age(key, window=0) is None
+
+
+def test_source_suppression():
+    t = RecentSearchTracker()
+    key = t.query_key("q1", effort="low")
+    t.record(key, ["https://a.com/x", "https://b.com/y"])
+    seen = t.recently_seen(["https://a.com/x", "https://c.com/z"], window=30)
+    assert "https://a.com/x" in seen and "https://c.com/z" not in seen
+
+
+def test_source_suppression_canonicalizes():
+    t = RecentSearchTracker()
+    t.record(t.query_key("q", effort="low"), ["https://www.a.com/x/"])
+    # Same URL with www + trailing slash variations is still recognised.
+    seen = t.recently_seen(["http://a.com/x"], window=30)
+    assert "http://a.com/x" in seen
+
+
+# ── pdf inference ───────────────────────────────────────────────────────────────
+
+def test_infer_pdf_url():
+    assert _infer_pdf_url("https://arxiv.org/abs/1706.03762") == "https://arxiv.org/pdf/1706.03762"
+    assert _infer_pdf_url("https://example.com/paper.pdf") == "https://example.com/paper.pdf"
+    assert _infer_pdf_url("https://example.com/page") == ""
+    assert _infer_pdf_url("") == ""

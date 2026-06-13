@@ -155,6 +155,13 @@ async def _call_serp_search(args: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+# Cancel outstanding background work (prefetch) at server shutdown.
+async def shutdown() -> None:
+    from core.search.prefetch import shutdown_prefetch
+
+    await shutdown_prefetch()
+
+
 # Dispatch an ASLM tool call to the matching search implementation.
 async def call_tool(
     tool_id: str,
