@@ -11,6 +11,16 @@ from typing import Any, Iterable, Optional
 
 logger = logging.getLogger("core.extract.content_processor")
 
+# Fastest available BeautifulSoup backend, chosen once: lxml's C parser when the
+# lxml package is present (it is — trafilatura depends on it), else the stdlib
+# html.parser. ~1.6x faster parsing with the same bs4 API, no new dependency.
+try:
+    import lxml  # noqa: F401
+
+    _BS_PARSER = "lxml"
+except ImportError:  # pragma: no cover — lxml is normally installed
+    _BS_PARSER = "html.parser"
+
 # LaTeX processing: index_text (BM25) and llm_text (model).
 
 _LATEX_CMD_RE = re.compile(r"\\[a-zA-Z]+")
@@ -636,7 +646,7 @@ def _extract_page_title_reference(raw_html: str) -> str:
     try:
         from bs4 import BeautifulSoup
 
-        soup = BeautifulSoup(raw_html, "html.parser")
+        soup = BeautifulSoup(raw_html, _BS_PARSER)
         if soup.title and soup.title.string:
             title = _normalize_text(str(soup.title.string))
             if len(title) >= _MIN_PAGE_TITLE_CHARS:
@@ -690,7 +700,7 @@ def _inject_serp_reference_into_html(raw_html: str, reference: str) -> str:
     try:
         from bs4 import BeautifulSoup
 
-        soup = BeautifulSoup(raw_html, "html.parser")
+        soup = BeautifulSoup(raw_html, _BS_PARSER)
         body = soup.body
         if body is None:
             body = soup.new_tag("body")
@@ -737,7 +747,7 @@ def _preclean_html(raw_html: str) -> str:
         logger.debug("BeautifulSoup unavailable during preclean, returning raw HTML: %s", exc)
         return raw_html
 
-    soup = BeautifulSoup(raw_html, "html.parser")
+    soup = BeautifulSoup(raw_html, _BS_PARSER)
 
     for tag_name in _NOISE_TAGS:
         for node in soup.find_all(tag_name):
@@ -884,7 +894,7 @@ def _extract_text_with_bs4(cleaned_html: str) -> str:
         logger.debug("trafilatura unavailable, skipping extraction: %s", exc)
         return ""
 
-    soup = BeautifulSoup(cleaned_html, "html.parser")
+    soup = BeautifulSoup(cleaned_html, _BS_PARSER)
     blocks: list[str] = []
     for node in soup.find_all(_BLOCK_TAGS):
         if node.name not in _LEAF_BLOCK_TAGS and node.find(_LEAF_BLOCK_TAGS):
