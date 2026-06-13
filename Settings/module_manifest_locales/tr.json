@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "ASLM Chat modülü",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "İlk kurulum",
+                "description": "settings.json oluşturur ve veritabanı geçişlerini uygular"
+            }
+        ],
+        "run": [
+            {
+                "name": "Arayüz sunucusu",
+                "description": "Django geliştirme sunucusunu başlatır"
+            },
+            {
+                "name": "Ollama çalışma zamanı",
+                "description": "Yönetilen Ollama hizmetini ayrı bir konsol oturumunda başlatır"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "Arayüz sunucusu bağlantı noktası",
+            "description": "Arayüz sunucusunun dinlediği bağlantı noktası"
+        },
+        "api-port": {
+            "name": "API sunucusu bağlantı noktası",
+            "description": "API sunucusunun dinlediği bağlantı noktası"
+        },
+        "aslm-host-theme": {
+            "name": "ASLM ana bilgisayar teması",
+            "description": "ASLM uygulamasından tema anlık görüntüsü; her modül başlatılışında uygulanır. Yalnızca ASLM tarafından yönetilir."
+        },
+        "aslm-host-locale": {
+            "name": "ASLM ana bilgisayar dili",
+            "description": "ASLM uygulamasından dil anlık görüntüsü; her modül başlatılışında uygulanır. Yalnızca ASLM tarafından yönetilir."
+        },
+        "console_log_level": {
+            "name": "Konsol günlük düzeyi",
+            "description": "ASLM-Chat'in ASLM konsoluna yazdığı çalışma zamanı ayrıntısı miktarı"
+        },
+        "llm-engine": {
+            "name": "Etkin LLM motoru",
+            "description": "Sohbet arayüzünde üretim için kullanılan motor"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "Ollama çıkarım hizmetinin kurulu olup olmadığı"
+        },
+        "ollama-service_path": {
+            "name": "Ollama yolu",
+            "description": "Ollama yürütülebilir dosyasının yolu"
+        },
+        "ollama-service_data": {
+            "name": "Ollama verileri",
+            "description": "Ollama veri dizininin yolu"
+        },
+        "ollama-service_models": {
+            "name": "Ollama modelleri",
+            "description": "Ollama model dizininin yolu"
+        },
+        "ollama-service_port": {
+            "name": "Ollama bağlantı noktası",
+            "description": "Yerel Ollama hizmetinin dinlediği bağlantı noktası"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "LM Studio entegrasyonunun kullanılabilir olup olmadığı"
+        },
+        "lms_url": {
+            "name": "LM Studio adresi",
+            "description": "LM Studio sunucu API'sinin temel adresi"
+        },
+        "openai": {
+            "name": "OpenAI uyumlu API",
+            "description": "OpenAI uyumlu bir API uç noktasının kullanılabilir olup olmadığı"
+        },
+        "openai_url": {
+            "name": "OpenAI uyumlu adres",
+            "description": "OpenAI uyumlu API uç noktasının temel URL'si"
+        },
+        "openai_api_key": {
+            "name": "OpenAI uyumlu API anahtarı",
+            "description": "Güvenli uç noktalar için isteğe bağlı API anahtarı"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "Google GenAI entegrasyonunun kullanılabilir olup olmadığı"
+        },
+        "google_genai_url": {
+            "name": "Google GenAI adresi",
+            "description": "Google GenAI Gemini API uç noktasının temel URL'si"
+        },
+        "google_genai_api_key": {
+            "name": "Google GenAI API anahtarı",
+            "description": "Google GenAI Gemini API istekleri için API anahtarı"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Ollama modelleri",
+                "description": "Resmi Ollama kitaplığında yayımlanan modeller."
+            }
+        ]
+    }
+}

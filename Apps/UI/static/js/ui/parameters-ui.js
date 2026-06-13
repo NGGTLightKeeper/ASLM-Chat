@@ -987,7 +987,7 @@ export function createParametersUi(context) {
       if (!$menu.length) {
         $menu = $('<div class="think-level-menu" role="menu" aria-label="Reasoning effort" style="display:none;">');
       }
-      $menu.empty().append($('<div class="think-level-menu-title">').text('Intelligence'));
+      $menu.empty().append($('<div class="think-level-menu-title">').text(t('composer.intelligence')));
 
       normalizedOptions.forEach(function appendOption(optionValue) {
         const normalizedValue = String(optionValue || '').trim().toLowerCase();

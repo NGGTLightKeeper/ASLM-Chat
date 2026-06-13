@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "Mô-đun ASLM Chat",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "Thiết lập lần đầu",
+                "description": "Tạo settings.json và áp dụng di chuyển cơ sở dữ liệu"
+            }
+        ],
+        "run": [
+            {
+                "name": "Máy chủ giao diện",
+                "description": "Khởi chạy máy chủ phát triển Django"
+            },
+            {
+                "name": "Runtime Ollama",
+                "description": "Khởi chạy dịch vụ Ollama được quản lý trong phiên console riêng"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "Cổng máy chủ giao diện",
+            "description": "Cổng mà máy chủ giao diện lắng nghe"
+        },
+        "api-port": {
+            "name": "Cổng máy chủ API",
+            "description": "Cổng mà máy chủ API lắng nghe"
+        },
+        "aslm-host-theme": {
+            "name": "Chủ đề host ASLM",
+            "description": "Ảnh chụp chủ đề từ ứng dụng ASLM; được áp dụng mỗi lần khởi động mô-đun. Chỉ do ASLM quản lý."
+        },
+        "aslm-host-locale": {
+            "name": "Ngôn ngữ host ASLM",
+            "description": "Ảnh chụp ngôn ngữ từ ứng dụng ASLM; được áp dụng mỗi lần khởi động mô-đun. Chỉ do ASLM quản lý."
+        },
+        "console_log_level": {
+            "name": "Mức nhật ký console",
+            "description": "Mức chi tiết runtime mà ASLM-Chat in ra console ASLM"
+        },
+        "llm-engine": {
+            "name": "Công cụ LLM đang hoạt động",
+            "description": "Công cụ dùng để tạo nội dung trong giao diện chat"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "Dịch vụ suy luận Ollama đã được cài đặt hay chưa"
+        },
+        "ollama-service_path": {
+            "name": "Đường dẫn Ollama",
+            "description": "Đường dẫn tới tệp thực thi Ollama"
+        },
+        "ollama-service_data": {
+            "name": "Dữ liệu Ollama",
+            "description": "Đường dẫn tới thư mục dữ liệu Ollama"
+        },
+        "ollama-service_models": {
+            "name": "Mô hình Ollama",
+            "description": "Đường dẫn tới thư mục mô hình Ollama"
+        },
+        "ollama-service_port": {
+            "name": "Cổng Ollama",
+            "description": "Cổng mà dịch vụ Ollama cục bộ lắng nghe"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "Tích hợp LM Studio có khả dụng hay không"
+        },
+        "lms_url": {
+            "name": "Địa chỉ LM Studio",
+            "description": "Địa chỉ cơ sở của API máy chủ LM Studio"
+        },
+        "openai": {
+            "name": "API tương thích OpenAI",
+            "description": "Điểm cuối API tương thích OpenAI có khả dụng hay không"
+        },
+        "openai_url": {
+            "name": "Địa chỉ tương thích OpenAI",
+            "description": "URL cơ sở của điểm cuối API tương thích OpenAI"
+        },
+        "openai_api_key": {
+            "name": "Khóa API tương thích OpenAI",
+            "description": "Khóa API tùy chọn cho các điểm cuối được bảo vệ"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "Tích hợp Google GenAI có khả dụng hay không"
+        },
+        "google_genai_url": {
+            "name": "Địa chỉ Google GenAI",
+            "description": "URL cơ sở của điểm cuối API Google GenAI Gemini"
+        },
+        "google_genai_api_key": {
+            "name": "Khóa API Google GenAI",
+            "description": "Khóa API cho các yêu cầu API Google GenAI Gemini"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Mô hình Ollama",
+                "description": "Các mô hình được xuất bản trong thư viện Ollama chính thức."
+            }
+        ]
+    }
+}
