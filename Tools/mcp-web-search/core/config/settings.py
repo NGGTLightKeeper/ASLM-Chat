@@ -79,37 +79,6 @@ class QuerySection:
 
 
 @dataclass
-class EffortSection:
-    low_hard_timeout: float = 9.0
-    medium_hard_timeout: float = 20.0
-    high_hard_timeout: float = 60.0
-    low_max_results: int = 5
-    high_multiplier: int = 3
-    low_total_context_budget: int = 6_000
-    low_candidate_pool_multiplier: int = 1
-    low_ddgs_hedge_count: int = 1
-    low_ddgs_worker_timeout: float = 8.0
-    medium_ddgs_worker_timeout: float = 10.0
-    high_ddgs_worker_timeout: float = 18.0
-    low_ddgs_engine_timeout: int = 5
-    low_ddgs_max_retries: int = 1
-    low_preview_fetch_timeout: float = 2.0
-    low_preview_total_timeout: float = 4.0
-    medium_preview_fetch_timeout: float = 6.0
-    medium_preview_total_timeout: float = 12.0
-    high_preview_fetch_timeout: float = 18.0
-    high_preview_total_timeout: float = 36.0
-    zero_result_fallback_max_results: int = 10
-    zero_result_fallback_candidate_pool_multiplier: int = 1
-    zero_result_fallback_ddgs_worker_timeout: float = 8.0
-    zero_result_fallback_ddgs_engine_timeout: int = 5
-    zero_result_fallback_ddgs_max_retries: int = 1
-    timeout_fallback_min_window: float = 3.0
-    timeout_fallback_max_window: float = 8.0
-    timeout_fallback_fraction: float = 0.4
-
-
-@dataclass
 class ModelsSection:
     pipeline: str = "aslm_embedding"
     enable_encoder: bool = True
@@ -125,7 +94,6 @@ class SearchConfig:
     cache: CacheSection = field(default_factory=CacheSection)
     query: QuerySection = field(default_factory=QuerySection)
     models: ModelsSection = field(default_factory=ModelsSection)
-    effort: "EffortSection" = field(default_factory=lambda: EffortSection())
 
 
 _cached_config: SearchConfig | None = None
@@ -167,7 +135,6 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
     c = raw.get("cache", {})
     q = raw.get("query", {})
     models = raw.get("models", {})
-    effort = raw.get("effort", {})
 
     config = SearchConfig(
         search=SearchSection(
@@ -231,43 +198,6 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             enable_decoder=bool(models.get("enable_decoder", False)),
             search_device=str(models.get("search_device", "cpu")),
             keep_loaded=bool(models.get("keep_loaded", False)),
-        ),
-        effort=EffortSection(
-            low_hard_timeout=float(effort.get("low_hard_timeout", 9.0)),
-            medium_hard_timeout=float(effort.get("medium_hard_timeout", 20.0)),
-            high_hard_timeout=float(effort.get("high_hard_timeout", 60.0)),
-            low_max_results=int(effort.get("low_max_results", 5)),
-            high_multiplier=int(effort.get("high_multiplier", 3)),
-            low_total_context_budget=int(effort.get("low_total_context_budget", 6_000)),
-            low_candidate_pool_multiplier=int(effort.get("low_candidate_pool_multiplier", 1)),
-            low_ddgs_hedge_count=int(effort.get("low_ddgs_hedge_count", 1)),
-            low_ddgs_worker_timeout=float(effort.get("low_ddgs_worker_timeout", 8.0)),
-            medium_ddgs_worker_timeout=float(effort.get("medium_ddgs_worker_timeout", 10.0)),
-            high_ddgs_worker_timeout=float(effort.get("high_ddgs_worker_timeout", 18.0)),
-            low_ddgs_engine_timeout=int(effort.get("low_ddgs_engine_timeout", 5)),
-            low_ddgs_max_retries=int(effort.get("low_ddgs_max_retries", 1)),
-            low_preview_fetch_timeout=float(effort.get("low_preview_fetch_timeout", 2.0)),
-            low_preview_total_timeout=float(effort.get("low_preview_total_timeout", 4.0)),
-            medium_preview_fetch_timeout=float(effort.get("medium_preview_fetch_timeout", 6.0)),
-            medium_preview_total_timeout=float(effort.get("medium_preview_total_timeout", 12.0)),
-            high_preview_fetch_timeout=float(effort.get("high_preview_fetch_timeout", 18.0)),
-            high_preview_total_timeout=float(effort.get("high_preview_total_timeout", 36.0)),
-            zero_result_fallback_max_results=int(effort.get("zero_result_fallback_max_results", 10)),
-            zero_result_fallback_candidate_pool_multiplier=int(
-                effort.get("zero_result_fallback_candidate_pool_multiplier", 1)
-            ),
-            zero_result_fallback_ddgs_worker_timeout=float(
-                effort.get("zero_result_fallback_ddgs_worker_timeout", 8.0)
-            ),
-            zero_result_fallback_ddgs_engine_timeout=int(
-                effort.get("zero_result_fallback_ddgs_engine_timeout", 5)
-            ),
-            zero_result_fallback_ddgs_max_retries=int(
-                effort.get("zero_result_fallback_ddgs_max_retries", 1)
-            ),
-            timeout_fallback_min_window=float(effort.get("timeout_fallback_min_window", 3.0)),
-            timeout_fallback_max_window=float(effort.get("timeout_fallback_max_window", 8.0)),
-            timeout_fallback_fraction=float(effort.get("timeout_fallback_fraction", 0.4)),
         ),
     )
 

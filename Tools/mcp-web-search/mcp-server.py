@@ -23,6 +23,23 @@ setup_logging()
 logger = logging.getLogger("mcp.server")
 
 _VALID_EFFORTS = frozenset({"low", "medium", "high"})
+_evicted = False
+
+
+# Reclaim disk from expired cache entries once per process, on first tool call.
+def _evict_caches_once() -> None:
+    global _evicted
+    if _evicted:
+        return
+    _evicted = True
+    try:
+        from core.cache import get_page_cache
+        from core.cache.hosted_cache import get_hosted_cache
+
+        get_hosted_cache().evict_expired()
+        get_page_cache().evict_stale()
+    except Exception as exc:  # noqa: BLE001 — housekeeping must never block a search
+        logger.debug("cache eviction skipped: %s", exc)
 
 MCP_SERVER = {
     "id": "web_search",
@@ -169,6 +186,7 @@ async def call_tool(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     args = dict(arguments or {})
+    _evict_caches_once()
     if tool_id == "web_search":
         return await _call_web_search(args)
     if tool_id == "serp_search":
