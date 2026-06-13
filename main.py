@@ -324,6 +324,10 @@ def cmd_apply_aslm_locale(locale_file: str) -> None:
         print("Error: host locale JSON must be an object.")
         sys.exit(1)
     save_host_locale_payload(data)
+    from Settings.module_manifest_locale import apply_manifest_locale
+
+    language = str(data.get("language", "en"))
+    apply_manifest_locale(language)
     print("[ASLM-Chat] Host locale snapshot updated.")
 
 

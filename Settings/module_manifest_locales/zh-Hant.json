@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "ASLM Chat 模組",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "首次執行設定",
+                "description": "產生 settings.json 並套用資料庫遷移"
+            }
+        ],
+        "run": [
+            {
+                "name": "UI 伺服器",
+                "description": "啟動 Django 開發伺服器"
+            },
+            {
+                "name": "Ollama 執行階段",
+                "description": "在專用主控台工作階段中啟動受管理的 Ollama 服務"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "UI 伺服器連接埠",
+            "description": "UI 伺服器監聽的連接埠"
+        },
+        "api-port": {
+            "name": "API 伺服器連接埠",
+            "description": "API 伺服器監聽的連接埠"
+        },
+        "aslm-host-theme": {
+            "name": "ASLM 主機主題",
+            "description": "來自 ASLM 應用程式的主題快照；在每次模組啟動時套用。僅由 ASLM 管理。"
+        },
+        "aslm-host-locale": {
+            "name": "ASLM 主機語言",
+            "description": "來自 ASLM 應用程式的語言快照；在每次模組啟動時套用。僅由 ASLM 管理。"
+        },
+        "console_log_level": {
+            "name": "主控台記錄層級",
+            "description": "ASLM-Chat 輸出至 ASLM 主控台的執行階段詳細資訊量"
+        },
+        "llm-engine": {
+            "name": "使用中 LLM 引擎",
+            "description": "在聊天介面中用於生成的引擎"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "是否已安裝 Ollama 推論服務"
+        },
+        "ollama-service_path": {
+            "name": "Ollama 路徑",
+            "description": "Ollama 可執行檔的路徑"
+        },
+        "ollama-service_data": {
+            "name": "Ollama 資料",
+            "description": "Ollama 資料目錄的路徑"
+        },
+        "ollama-service_models": {
+            "name": "Ollama 模型",
+            "description": "Ollama 模型目錄的路徑"
+        },
+        "ollama-service_port": {
+            "name": "Ollama 連接埠",
+            "description": "本機 Ollama 服務監聽的連接埠"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "LM Studio 整合是否可用"
+        },
+        "lms_url": {
+            "name": "LM Studio 位址",
+            "description": "LM Studio 伺服器 API 的基礎位址"
+        },
+        "openai": {
+            "name": "OpenAI 相容 API",
+            "description": "OpenAI 相容 API 端點是否可用"
+        },
+        "openai_url": {
+            "name": "OpenAI 相容位址",
+            "description": "OpenAI 相容 API 端點的基礎 URL"
+        },
+        "openai_api_key": {
+            "name": "OpenAI 相容 API 金鑰",
+            "description": "用於受保護端點的選用 API 金鑰"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "Google GenAI 整合是否可用"
+        },
+        "google_genai_url": {
+            "name": "Google GenAI 位址",
+            "description": "Google GenAI Gemini API 端點的基礎 URL"
+        },
+        "google_genai_api_key": {
+            "name": "Google GenAI API 金鑰",
+            "description": "用於 Google GenAI Gemini API 請求的 API 金鑰"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Ollama 模型",
+                "description": "官方 Ollama 程式庫中發佈的模型。"
+            }
+        ]
+    }
+}

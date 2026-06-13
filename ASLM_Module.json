@@ -2,7 +2,7 @@
     "fileVersion": 1,
     "id": "aslm-chat",
     "name": "ASLM Chat",
-    "description": "ASLM Chat Module",
+    "description": "ASLM Chat 模組",
     "version": "0.7.1.8",
     "author": "NGGT-ASLM",
     "type": "ui",
@@ -47,22 +47,22 @@
     "commands": {
         "firstRun": [
             {
-                "name": "First Run Setup",
-                "description": "Generates settings.json and applies database migrations",
+                "name": "首次執行設定",
+                "description": "產生 settings.json 並套用資料庫遷移",
                 "engine": "python-runtime",
                 "exec": "main.py first_run"
             }
         ],
         "run": [
             {
-                "name": "UI Server",
-                "description": "Launches the Django development server",
+                "name": "UI 伺服器",
+                "description": "啟動 Django 開發伺服器",
                 "engine": "python-runtime",
                 "exec": "main.py runserver"
             },
             {
-                "name": "Ollama Runtime",
-                "description": "Launches the managed Ollama service in a dedicated console session",
+                "name": "Ollama 執行階段",
+                "description": "在專用主控台工作階段中啟動受管理的 Ollama 服務",
                 "engine": "python-runtime",
                 "exec": "main.py ollama_runtime --log"
             }
@@ -71,8 +71,8 @@
     "settings": [
         {
             "key": "ui-port",
-            "name": "UI Server Port",
-            "description": "Port the UI server listens on",
+            "name": "UI 伺服器連接埠",
+            "description": "UI 伺服器監聽的連接埠",
             "type": "port",
             "default": 20000,
             "engine": "python-runtime",
@@ -81,8 +81,8 @@
         },
         {
             "key": "api-port",
-            "name": "API Server Port",
-            "description": "Port the UI server listens on",
+            "name": "API 伺服器連接埠",
+            "description": "API 伺服器監聽的連接埠",
             "type": "port",
             "default": 20001,
             "engine": "python-runtime",
@@ -91,24 +91,24 @@
         },
         {
             "key": "aslm-host-theme",
-            "name": "ASLM host theme",
-            "description": "Theme snapshot from the host ASLM app; applied on each module start. Managed only by ASLM.",
+            "name": "ASLM 主機主題",
+            "description": "來自 ASLM 應用程式的主題快照；在每次模組啟動時套用。僅由 ASLM 管理。",
             "type": "theme",
             "engine": "python-runtime",
             "setExec": "main.py apply_aslm_host_theme --file {value}"
         },
         {
             "key": "aslm-host-locale",
-            "name": "ASLM host locale",
-            "description": "Language snapshot from the host ASLM app; applied on each module start. Managed only by ASLM.",
+            "name": "ASLM 主機語言",
+            "description": "來自 ASLM 應用程式的語言快照；在每次模組啟動時套用。僅由 ASLM 管理。",
             "type": "locale",
             "engine": "python-runtime",
             "setExec": "main.py apply_aslm_locale --file {value}"
         },
         {
             "key": "console_log_level",
-            "name": "Console Log Level",
-            "description": "How much runtime detail ASLM-Chat prints into the ASLM console.",
+            "name": "主控台記錄層級",
+            "description": "ASLM-Chat 輸出至 ASLM 主控台的執行階段詳細資訊量",
             "type": "select",
             "default": "debug",
             "allowedValues": [
@@ -122,8 +122,8 @@
         },
         {
             "key": "llm-engine",
-            "name": "Active LLM Engine",
-            "description": "Engine used for chat generation in the UI",
+            "name": "使用中 LLM 引擎",
+            "description": "在聊天介面中用於生成的引擎",
             "type": "select",
             "default": "ollama-service",
             "allowedValues": [
@@ -140,7 +140,7 @@
         {
             "key": "ollama-service",
             "name": "Ollama",
-            "description": "Whether the Ollama inference service is installed",
+            "description": "是否已安裝 Ollama 推論服務",
             "type": "engine",
             "default": true,
             "engine": "python-runtime",
@@ -149,8 +149,8 @@
         },
         {
             "key": "ollama-service_path",
-            "name": "Ollama Path",
-            "description": "Path to the Ollama executable",
+            "name": "Ollama 路徑",
+            "description": "Ollama 可執行檔的路徑",
             "type": "path",
             "default": null,
             "engine": "python-runtime",
@@ -159,8 +159,8 @@
         },
         {
             "key": "ollama-service_data",
-            "name": "Ollama Data",
-            "description": "Path to the Ollama data directory",
+            "name": "Ollama 資料",
+            "description": "Ollama 資料目錄的路徑",
             "type": "data",
             "default": null,
             "engine": "python-runtime",
@@ -169,8 +169,8 @@
         },
         {
             "key": "ollama-service_models",
-            "name": "Ollama Models",
-            "description": "Path to the Ollama models directory",
+            "name": "Ollama 模型",
+            "description": "Ollama 模型目錄的路徑",
             "type": "models",
             "default": null,
             "engine": "python-runtime",
@@ -179,8 +179,8 @@
         },
         {
             "key": "ollama-service_port",
-            "name": "Ollama Port",
-            "description": "Port that the local Ollama service listens on",
+            "name": "Ollama 連接埠",
+            "description": "本機 Ollama 服務監聽的連接埠",
             "type": "port",
             "default": 20003,
             "engine": "python-runtime",
@@ -190,7 +190,7 @@
         {
             "key": "lms",
             "name": "LM Studio",
-            "description": "Whether LM Studio integration is available",
+            "description": "LM Studio 整合是否可用",
             "type": "engine",
             "default": true,
             "engine": "python-runtime",
@@ -199,8 +199,8 @@
         },
         {
             "key": "lms_url",
-            "name": "LM Studio Address",
-            "description": "Base address of the LM Studio Server API",
+            "name": "LM Studio 位址",
+            "description": "LM Studio 伺服器 API 的基礎位址",
             "type": "string",
             "default": "127.0.0.1:1234",
             "engine": "python-runtime",
@@ -210,8 +210,8 @@
         },
         {
             "key": "openai",
-            "name": "OpenAI-Compatible API",
-            "description": "Whether an OpenAI-compatible API endpoint is available",
+            "name": "OpenAI 相容 API",
+            "description": "OpenAI 相容 API 端點是否可用",
             "type": "engine",
             "default": true,
             "engine": "python-runtime",
@@ -220,8 +220,8 @@
         },
         {
             "key": "openai_url",
-            "name": "OpenAI-Compatible Address",
-            "description": "Base URL of the OpenAI-compatible API endpoint",
+            "name": "OpenAI 相容位址",
+            "description": "OpenAI 相容 API 端點的基礎 URL",
             "type": "string",
             "default": "127.0.0.1:1234/v1",
             "engine": "python-runtime",
@@ -231,8 +231,8 @@
         },
         {
             "key": "openai_api_key",
-            "name": "OpenAI-Compatible API Key",
-            "description": "Optional API key for secured OpenAI-compatible endpoints",
+            "name": "OpenAI 相容 API 金鑰",
+            "description": "用於受保護端點的選用 API 金鑰",
             "type": "password",
             "default": "",
             "engine": "python-runtime",
@@ -242,7 +242,7 @@
         {
             "key": "google-genai",
             "name": "Google GenAI",
-            "description": "Whether Google GenAI integration is available",
+            "description": "Google GenAI 整合是否可用",
             "type": "engine",
             "default": true,
             "engine": "python-runtime",
@@ -251,8 +251,8 @@
         },
         {
             "key": "google_genai_url",
-            "name": "Google GenAI Address",
-            "description": "Base URL of the Google GenAI Gemini API endpoint",
+            "name": "Google GenAI 位址",
+            "description": "Google GenAI Gemini API 端點的基礎 URL",
             "type": "string",
             "default": "generativelanguage.googleapis.com",
             "engine": "python-runtime",
@@ -261,8 +261,8 @@
         },
         {
             "key": "google_genai_api_key",
-            "name": "Google GenAI API Key",
-            "description": "API key for Google GenAI Gemini API requests",
+            "name": "Google GenAI API 金鑰",
+            "description": "用於 Google GenAI Gemini API 請求的 API 金鑰",
             "type": "password",
             "default": "",
             "engine": "python-runtime",
@@ -284,8 +284,8 @@
         "categories": [
             {
                 "id": "ollama-library",
-                "title": "Ollama Models",
-                "description": "Models published in the official Ollama library.",
+                "title": "Ollama 模型",
+                "description": "官方 Ollama 程式庫中發佈的模型。",
                 "groupKey": "ollama-models",
                 "targetRef": "ollama_models",
                 "sortOrder": 10
