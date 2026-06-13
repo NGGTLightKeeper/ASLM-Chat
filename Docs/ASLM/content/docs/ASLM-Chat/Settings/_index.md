@@ -21,6 +21,7 @@ Module configuration, host snapshots, MCP JSON, skills, and console helpers.
 | [host_theme](host_theme/) | `host_theme.py` | Host theme JSON snapshots |
 | [host_locale](host_locale/) | `host_locale.py` | Host locale JSON snapshots |
 | [console](console/) | `console.py` | Startup banner from `ASLM_Module.json` |
+| [module_manifest_locale](module_manifest_locale/) | `module_manifest_locale.py` | Patch manifest string catalogs for host UI |
 
 ---
 
