@@ -13,6 +13,7 @@ draft: false
 
 | Doc | Source | Role |
 | --- | --- | --- |
+| [search](search/) | `search/` | Web search core, caching, prefetch, recent tracker |
 | [models](models/) | `models/` | SERP/UI dataclasses |
 | [config](config/) | `config/` | `search_config.json`, API keys, hardware, pipeline modes |
 | [query](query/) | `query/` | Classification, constraints, routing, ASLM embeddings |

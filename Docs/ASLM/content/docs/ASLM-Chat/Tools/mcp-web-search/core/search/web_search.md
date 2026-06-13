@@ -5,7 +5,7 @@ draft: false
 
 ## Module `web_search`
 
-`Tools/mcp-web-search/services/web_search.py` — ASLM Chat Python module.
+`Tools/mcp-web-search/core/search/web_search.py` — ASLM Chat Python module.
 
 ---
 
@@ -112,9 +112,9 @@ End-to-end `web_search` MCP tool: validate query → classify → parallel retri
 3. Handle errors and map them to a safe response.
 4. Iterate and transform or accumulate state.
 
-#### `async def run_web_search(query, max_results, fetch_previews, timelimit, time_range, hard_timeout, effort) -> str`
+#### `async def run_web_search(query, *, effort=…, region=…, safesearch=…, timelimit=…) -> dict[str, Any]`
 
-**Purpose:** MCP/CLI entry: formatted text search with hard timeout and timelimit inference.
+**Purpose:** Cached/blocked/deduped entry point used by the MCP tool (run_web_search).
 
 **Steps:**
 
@@ -146,6 +146,11 @@ End-to-end `web_search` MCP tool: validate query → classify → parallel retri
 ---
 
 ## Private functions
+#### `def _repeat_block_payload(query, effort, age) -> dict[str, Any]`
+
+**Purpose:** Build the payload returned when an identical query is hard-blocked as a repeat.
+
+
 
 #### `def _shopping_intent_weight(class_mix, query_types) -> float`
 
@@ -737,7 +742,7 @@ End-to-end `web_search` MCP tool: validate query → classify → parallel retri
 1. Return the computed result to the caller.
 2. Iterate and transform or accumulate state.
 
-#### `def _infer_pdf_url(result) -> str`
+#### `def _infer_pdf_url(url) -> str`
 
 **Purpose:** Resolve direct PDF URL from result metadata or arxiv abs link.
 
@@ -969,4 +974,4 @@ End-to-end `web_search` MCP tool: validate query → classify → parallel retri
 
 ## Related
 
-- [services/_index](../../../_index/)
+- [search/_index](../_index/)

@@ -13,7 +13,6 @@ draft: false
 
 | Doc | Source | Role |
 | --- | --- | --- |
-| [web_search](web_search/) | `web_search.py` | Multi-engine search, scoring, previews, rich UI |
 | [read_page](read_page/) | `read_page.py` | Fetch and compress a single URL to markdown |
 
 ---

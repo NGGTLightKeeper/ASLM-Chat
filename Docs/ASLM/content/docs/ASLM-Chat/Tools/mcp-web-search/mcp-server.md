@@ -28,6 +28,10 @@ draft: false
 
 ---
 
+#### `async def shutdown() -> None`
+
+**Purpose:** Cancel outstanding background work (prefetch) at server shutdown.
+
 ## Private functions
 
 #### `def _maybe_parse_list(val) -> Any`
