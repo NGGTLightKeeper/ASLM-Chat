@@ -45,6 +45,7 @@ pytest tests/
 | [test_github_urls](test_github_urls/) | GitHub URL parsing + live blob |
 | [test_web_search_neural_domain_eval](test_web_search_neural_domain_eval/) | Neural eval trace (optional) |
 | [test_shopping_web_integration](test_shopping_web_integration/) | `test_shopping_web_integration.py` Shopping integration tests |
+| [test_search_core](test_search_core/) | `test_search_core.py` | Search core tests |
 
 ---
 
