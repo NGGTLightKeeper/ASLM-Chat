@@ -29,9 +29,14 @@ _SEARCH_URL = f"{_BASE_URL}/sp/search"
 # process-wide and refreshed at most once per TTL. The lock prevents a stampede
 # of homepage fetches when several searches start at once with a cold cache.
 _SC_TTL = 3600.0
+# After a failed scrape (cold/blocked homepage), back off this long before trying
+# again — otherwise every Startpage search serializes a fresh homepage fetch under
+# the global lock, turning one blocked homepage into a queue across all searches.
+_SC_RETRY_COOLDOWN = 30.0
 _SC_LOCK = asyncio.Lock()
 _sc_code: str = ""
 _sc_fetched_at: float = 0.0
+_sc_failed_at: float = 0.0
 
 
 # Collapse HTML markup and entities in a Startpage field into plain text.
@@ -79,7 +84,7 @@ async def _fetch_sc_code(transport: _Transport) -> str:
 
 # Return a cached sc token, refreshing it through the transport when stale.
 async def _get_sc_code(transport: _Transport) -> str:
-    global _sc_code, _sc_fetched_at
+    global _sc_code, _sc_fetched_at, _sc_failed_at
     now = time.monotonic()
     if _sc_code and (now - _sc_fetched_at) < _SC_TTL:
         return _sc_code
@@ -87,10 +92,16 @@ async def _get_sc_code(transport: _Transport) -> str:
         now = time.monotonic()
         if _sc_code and (now - _sc_fetched_at) < _SC_TTL:
             return _sc_code
+        # A recent scrape failure is still cooling down — reuse the stale/empty
+        # token instead of hammering the homepage on every search.
+        if (now - _sc_failed_at) < _SC_RETRY_COOLDOWN:
+            return _sc_code
         code = await _fetch_sc_code(transport)
         if code:
             _sc_code = code
             _sc_fetched_at = now
+        else:
+            _sc_failed_at = now
     return _sc_code
 
 

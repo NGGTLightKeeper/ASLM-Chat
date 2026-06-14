@@ -8,6 +8,7 @@ against silent regressions when a SERP's markup or API shape drifts.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from core.engines import QwantParser, StartpageParser, YandexParser, YepParser
@@ -153,3 +154,29 @@ def test_startpage_captcha_is_blocked():
 
 def test_startpage_missing_blob_is_changed():
     assert StartpageParser().parse("<html>no react here</html>").status == ParseStatus.CHANGED
+
+
+def test_startpage_sc_token_backs_off_after_failure(monkeypatch):
+    # A failing homepage scrape must not be retried on every search — otherwise one
+    # blocked homepage serializes a fresh fetch behind the global lock for all callers.
+    from core.engines import startpage as sp
+
+    monkeypatch.setattr(sp, "_sc_code", "", raising=False)
+    monkeypatch.setattr(sp, "_sc_fetched_at", 0.0, raising=False)
+    monkeypatch.setattr(sp, "_sc_failed_at", 0.0, raising=False)
+
+    calls = 0
+
+    async def _fail(_transport) -> str:
+        nonlocal calls
+        calls += 1
+        return ""
+
+    monkeypatch.setattr(sp, "_fetch_sc_code", _fail)
+
+    async def _run() -> None:
+        assert await sp._get_sc_code(object()) == ""  # first attempt scrapes
+        assert await sp._get_sc_code(object()) == ""  # within cooldown → no scrape
+
+    asyncio.run(_run())
+    assert calls == 1
