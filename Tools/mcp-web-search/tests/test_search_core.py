@@ -10,6 +10,7 @@ from core.search.health import (
     BreakerState,
     DEGRADATION_COOLDOWN,
     ERROR_COOLDOWN,
+    PROBE_TIMEOUT,
     EngineHealthTracker,
 )
 from core.search.quality import (
@@ -155,6 +156,20 @@ def test_breaker_failed_probe_backs_off_exponentially():
     health = tracker._health("brave")
     assert health.cooldown == ERROR_COOLDOWN * 2
     assert health.state == BreakerState.OPEN
+
+
+def test_breaker_abandoned_probe_is_expired_not_wedged():
+    # A half-open probe whose outcome is never recorded (e.g. the search deadline
+    # dropped the engine's status event) must not lock the engine out forever.
+    clock = _Clock()
+    tracker = EngineHealthTracker(clock=clock)
+    tracker.record("qwant", status="blocked", fetch_ms=100, results=0)
+    clock.now = ERROR_COOLDOWN + 1
+    assert tracker.allow("qwant")  # probe admitted...
+    assert not tracker.allow("qwant")  # ...and held while still in flight
+    # Outcome never arrives; once the probe ages past the timeout it is reclaimed.
+    clock.now += PROBE_TIMEOUT + 1
+    assert tracker.allow("qwant")
 
 
 # --- engine selection ------------------------------------------------------------

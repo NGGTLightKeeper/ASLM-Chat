@@ -4,7 +4,7 @@
 # NOT already get parsed content for, so a follow-up read_page on them is instant. Pages
 # are cached under the SAME key read_page looks up, so the warm HTML is actually reused.
 #
-# Process discipline (TODO "Дисциплина процессов"): this is NOT fire-and-forget. Every
+# Process discipline this is NOT fire-and-forget. Every
 # warm-up is one tracked asyncio.Task held in a registry, bounded by a hard timeout and a
 # concurrency semaphore, self-removing on completion, and cancellable via shutdown(). The
 # legacy prefetch was fire-and-forget; this is the disciplined replacement.
@@ -84,7 +84,7 @@ class PrefetchManager:
 
     # Schedule a tracked warm-up task for the given URLs. Returns the task (or None).
     def schedule(self, urls: list[str]) -> asyncio.Task | None:
-        targets = [u for u in dict.fromkeys(u for u in urls if u)]
+        targets = list(dict.fromkeys(u for u in urls if u))  # order-preserving dedup
         if not targets:
             return None
         task = asyncio.create_task(self._warm_batch(targets), name="prefetch")

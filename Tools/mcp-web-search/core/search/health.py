@@ -26,6 +26,11 @@ ERROR_COOLDOWN = 300.0
 # Backoff multiplier applied when a half-open probe fails again, and its cap.
 BACKOFF_FACTOR = 2.0
 MAX_COOLDOWN = 1800.0
+# A half-open probe is admitted but its outcome (record()) can be lost — e.g. the
+# search deadline cancels the producer before the engine's status event is consumed.
+# An in-flight probe older than this is treated as abandoned and a fresh one is
+# admitted, so a single lost outcome cannot lock the engine out for the process life.
+PROBE_TIMEOUT = 60.0
 
 # EWMA smoothing for fetch latency.
 _EWMA_ALPHA = 0.30
@@ -56,6 +61,8 @@ class EngineHealth:
     last_status: str = ""
     # True while a half-open probe is in flight (only one probe at a time).
     probe_inflight: bool = field(default=False, repr=False)
+    # When the in-flight probe was admitted, so an abandoned probe can be expired.
+    probe_started: float = field(default=0.0, repr=False)
 
 
 # In-memory health registry + circuit breaker for SERP engines.
@@ -86,10 +93,13 @@ class EngineHealthTracker:
                 return False
             health.state = BreakerState.HALF_OPEN
             health.probe_inflight = False
-        # HALF_OPEN: admit a single probe.
-        if health.probe_inflight:
+        # HALF_OPEN: admit a single probe. An in-flight probe whose outcome was
+        # never recorded (deadline lost the engine event) is expired so it cannot
+        # wedge the engine shut forever.
+        if health.probe_inflight and (now - health.probe_started) <= PROBE_TIMEOUT:
             return False
         health.probe_inflight = True
+        health.probe_started = now
         return True
 
     # Record the outcome of one engine call (its serp_api payload fields).
