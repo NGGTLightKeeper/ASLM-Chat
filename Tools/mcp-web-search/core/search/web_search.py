@@ -48,6 +48,38 @@ trace_logger = logging.getLogger("trace.web_search")
 # (the parser scans the whole page either way — trimming early just wastes results).
 _SOURCE_LIMIT = 20
 
+# Hosts that are read_page-only inside a search: surfaced as snippet sources but never
+# parsed inline, because their parse is too slow for a search's hot path (reddit's JSON
+# handler runs ~10s). Temporary — revisit once the warm browser lands with measured
+# per-domain efficiency, which may make some of these cheap enough to parse inline again.
+_READPAGE_ONLY_HOSTS = ("reddit.com",)
+
+# A domain the runtime profile store has learned to fetch slower than this is left
+# snippet-only in search (still readable via read_page). Tighter than read_page's own
+# avoid bar — a wide search cannot afford a multi-second page on the hot path.
+_INLINE_PARSE_SKIP_MS = 6_000.0
+
+
+# True when host is (a subdomain of) a read_page-only host.
+def _host_readpage_only(host: str) -> bool:
+    h = (host or "").lower().removeprefix("www.")
+    return any(h == d or h.endswith("." + d) for d in _READPAGE_ONLY_HOSTS)
+
+
+# Whether a source may be parsed inline during a search, or should stay snippet-only.
+# Combines the hard read_page-only set with the runtime "slow to parse" memory, so a
+# domain that has proven expensive is dropped from the parse hot path automatically.
+def _inline_parse_allowed(host: str, url: str) -> bool:
+    if _host_readpage_only(host):
+        return False
+    try:
+        from core.profiles import domain_of, get_runtime_profiles
+
+        hint = get_runtime_profiles().best_method(domain_of(url))
+    except Exception:  # noqa: BLE001 — a profile lookup must never sink a search
+        return True
+    return not (hint and hint.expected_fetch_ms > _INLINE_PARSE_SKIP_MS)
+
 
 # Resolve a direct PDF URL for a result (already a PDF, or an arXiv abs → pdf link).
 # Ported from the legacy _infer_pdf_url so the model still gets direct PDF links.
@@ -84,7 +116,7 @@ EFFORT_PROFILES: dict[str, EffortProfile] = {
 }
 
 
-# Pick engines for a tier, honoring the circuit breaker (TODO.md §6).
+# Pick engines for a tier, honoring the circuit breaker.
 # Never returns an empty list: low's lead pair falls back to Startpage, and as a
 # last resort Yandex is forced even through an open breaker.
 def select_engines(effort: str, tracker: EngineHealthTracker) -> list[type]:
@@ -234,6 +266,11 @@ class WebSearchService:
             if parse_started_count >= profile.parse_budget:
                 return
             source = sources[url]
+            # Snippet-only hosts (read_page-only / learned-slow) never spend a parse
+            # slot — they stay in the ranked output without their page being fetched.
+            if not _inline_parse_allowed(source.host, url):
+                trace_logger.info("parse.skip host=%s url=%r (snippet-only)", source.host, url)
+                return
             parse_started_count += 1
 
             async def run() -> None:

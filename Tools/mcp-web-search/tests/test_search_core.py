@@ -22,7 +22,13 @@ from core.search.quality import (
     year_match_score,
 )
 from core.search.triage import TriageAction, TriageSession
-from core.search.web_search import EFFORT_PROFILES, WebSearchService, select_engines
+from core.search.web_search import (
+    EFFORT_PROFILES,
+    WebSearchService,
+    _host_readpage_only,
+    _inline_parse_allowed,
+    select_engines,
+)
 
 
 # --- quality -----------------------------------------------------------------
@@ -205,6 +211,43 @@ def test_select_engines_medium_startpage_standby_when_google_open():
     names = [e.name for e in select_engines("medium", tracker)]
     assert "google" not in names
     assert "startpage" in names  # hot standby of the google family
+
+
+# --- inline-parse policy (read_page-only + learned-slow) -------------------------
+
+def test_readpage_only_matches_reddit_and_subdomains():
+    assert _host_readpage_only("reddit.com")
+    assert _host_readpage_only("www.reddit.com")
+    assert _host_readpage_only("old.reddit.com")
+    assert not _host_readpage_only("notreddit.com")
+    assert not _host_readpage_only("stackoverflow.com")
+
+
+def test_inline_parse_blocks_reddit():
+    assert not _inline_parse_allowed("www.reddit.com", "https://www.reddit.com/r/python/x")
+
+
+def test_inline_parse_skips_learned_slow_domain(monkeypatch):
+    import core.profiles as profiles
+    from core.profiles.models import ProfileHint
+
+    class _Profiles:
+        def __init__(self, ms):
+            self._ms = ms
+
+        def best_method(self, _domain):
+            return ProfileHint(method="httpx", expected_fetch_ms=self._ms, confidence=0.9)
+
+    # A domain remembered as slow → snippet-only; a fast one → parsed inline.
+    monkeypatch.setattr(profiles, "get_runtime_profiles", lambda: _Profiles(9_000.0))
+    assert not _inline_parse_allowed("slow.com", "https://slow.com/a")
+    monkeypatch.setattr(profiles, "get_runtime_profiles", lambda: _Profiles(800.0))
+    assert _inline_parse_allowed("fast.com", "https://fast.com/a")
+
+
+def test_inline_parse_allows_unknown_domain():
+    # No profile data yet → parse it (the store learns the cost from this very parse).
+    assert _inline_parse_allowed("brand-new-domain-xyz.com", "https://brand-new-domain-xyz.com/a")
 
 
 # --- orchestrator (synthetic stream, fake reader) --------------------------------

@@ -9,6 +9,9 @@ from dataclasses import dataclass
 METHOD_HTTPX = "httpx"
 METHOD_CURL_CFFI = "curl_cffi"
 METHOD_CAMOUFOX = "camoufox"
+# Warm persistent stealth-browser (cloakbrowser daemon). The cost-aware method
+# selector ranks it above the HTTP methods but below camoufox subprocess.
+METHOD_BROWSER = "browser"
 
 
 # Outcome of one fetch attempt against a URL, recorded into the runtime profile store.

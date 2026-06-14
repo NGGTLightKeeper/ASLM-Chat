@@ -78,6 +78,28 @@ class QuerySection:
     auto_type_timelimit_enabled: bool = True  # infer timelimit from query type
 
 
+# Warm-browser layer. Two independent axes: where the browser is
+# allowed as a fallback (browser_fallback) and which backend serves it (browser_backend).
+@dataclass
+class BrowserSection:
+    browser_fallback: str = "page"      # off | page (read_page only) | full (+ blocked SERP engines)
+    browser_backend: str = "warm"       # warm (cloakbrowser daemon) | legacy (camoufox subprocess)
+    daemon_url: str = "http://127.0.0.1:8765"
+    engine: str = "chromium"            # warm backend is chromium-only by design
+    autostart_daemon: bool = False      # spawn the daemon lazily if it is not reachable
+    headless: bool = True
+    humanize: bool = False
+    proxy: str = ""
+    nav_timeout: float = 30.0           # per-page navigation timeout (seconds)
+    wait: float = 3.0                   # post-load text-settle wait (seconds)
+    fetch_timeout: float = 45.0         # client-side ceiling for one /fetch round-trip
+    # Recycle thresholds (passed to the daemon; enforced daemon-side).
+    max_requests: int = 40
+    max_age_sec: float = 900.0
+    max_rss_mb: int = 2048              # RSS of the browser process tree → checkpoint + respawn
+    checkpoint_interval: float = 30.0   # idle storageState checkpoint cadence (seconds)
+
+
 @dataclass
 class ModelsSection:
     pipeline: str = "aslm_embedding"
@@ -94,11 +116,22 @@ class SearchConfig:
     cache: CacheSection = field(default_factory=CacheSection)
     query: QuerySection = field(default_factory=QuerySection)
     models: ModelsSection = field(default_factory=ModelsSection)
+    browser: BrowserSection = field(default_factory=BrowserSection)
 
 
 _cached_config: SearchConfig | None = None
 
 _MISSING = object()
+
+
+# Coerce a value to one of an allowed set (case-insensitive), falling back on default.
+def _one_of(value: object, allowed: set[str], default: str) -> str:
+    candidate = str(value or "").strip().lower()
+    if candidate in allowed:
+        return candidate
+    if value not in (None, ""):
+        logger.warning("config: invalid value %r (allowed: %s) — using %r", value, sorted(allowed), default)
+    return default
 
 
 # Coerce JSON values to optional strings (empty string → None).
@@ -135,6 +168,7 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
     c = raw.get("cache", {})
     q = raw.get("query", {})
     models = raw.get("models", {})
+    b = raw.get("browser", {})
 
     config = SearchConfig(
         search=SearchSection(
@@ -198,6 +232,27 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             enable_decoder=bool(models.get("enable_decoder", False)),
             search_device=str(models.get("search_device", "cpu")),
             keep_loaded=bool(models.get("keep_loaded", False)),
+        ),
+        browser=BrowserSection(
+            browser_fallback=_one_of(
+                b.get("browser_fallback", "page"), {"off", "page", "full"}, "page"
+            ),
+            browser_backend=_one_of(
+                b.get("browser_backend", "warm"), {"warm", "legacy"}, "warm"
+            ),
+            daemon_url=str(b.get("daemon_url", "http://127.0.0.1:8765")),
+            engine=str(b.get("engine", "chromium")),
+            autostart_daemon=bool(b.get("autostart_daemon", False)),
+            headless=bool(b.get("headless", True)),
+            humanize=bool(b.get("humanize", False)),
+            proxy=str(b.get("proxy", "")),
+            nav_timeout=float(b.get("nav_timeout", 30.0)),
+            wait=float(b.get("wait", 3.0)),
+            fetch_timeout=float(b.get("fetch_timeout", 45.0)),
+            max_requests=int(b.get("max_requests", 40)),
+            max_age_sec=float(b.get("max_age_sec", 900.0)),
+            max_rss_mb=int(b.get("max_rss_mb", 2048)),
+            checkpoint_interval=float(b.get("checkpoint_interval", 30.0)),
         ),
     )
 
