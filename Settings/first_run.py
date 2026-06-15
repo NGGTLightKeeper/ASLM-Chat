@@ -188,8 +188,8 @@ def _run_tool_bootstrap(log: bool) -> None:
         _ensure_playwright_browsers(browser_venv_id, log)
         _ensure_camoufox_binary(browser_venv_id, log)
 
-    _ensure_nltk_data(log)
-    _ensure_spacy_model(log)
+    # nltk/spacy bootstrap dropped: those deps (and the embedder/GLiNER stack) were
+    # removed — web search is BM25 + an optional CPU decoder re-ranker now.
     _ensure_aslm_embedding_models(log)
 
 

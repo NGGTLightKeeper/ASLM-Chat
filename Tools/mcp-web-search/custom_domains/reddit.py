@@ -129,34 +129,25 @@ def _strip_reddit_nav(text: str) -> str:
     return text[m.start() :].strip() if m else text.strip()
 
 
-# Fetch the rendered thread page in a real browser, return cleaned inner_text markdown.
-async def _fetch_reddit_camoufox_page(thread_url: str, timeout: float) -> str | None:
-    from core.fetch.camoufox_fetcher import fetch_with_camoufox, is_camoufox_available
+# Fetch the rendered thread page via the warm cloakbrowser; return cleaned inner_text markdown.
+async def _fetch_reddit_browser_page(thread_url: str, timeout: float) -> str | None:
+    from core.fetch.browser.client import browser_fetch
 
-    if not is_camoufox_available():
+    result = await browser_fetch(thread_url, nav_timeout=max(float(timeout), 30.0), wait_sec=5.0)
+    if not result.ok or not result.text:
+        logger.debug(
+            "reddit browser page fetch failed for %s: %s", thread_url, result.error or result.status
+        )
         return None
 
-    budget = max(float(timeout), 30.0)
-    result = await fetch_with_camoufox(
-        thread_url,
-        wait_sec=5.0,
-        timeout_sec=min(budget, 35.0),
-        process_timeout=min(budget + 5.0, 45.0),
-        warmup_count=0,
-        normalize=False,
-    )
-    if not result.success or not result.inner_text:
-        logger.debug("reddit camoufox page fetch failed for %s: %s", thread_url, result.error)
-        return None
-
-    text = _strip_reddit_nav(result.inner_text)
+    text = _strip_reddit_nav(result.text)
     if len(text.strip()) < 200:
-        logger.debug("reddit camoufox inner_text too short (%d chars) for %s", len(text), thread_url)
+        logger.debug("reddit browser inner_text too short (%d chars) for %s", len(text), thread_url)
         return None
     return text
 
 
-# Fetch thread: curl_cffi JSON first, then camoufox browser render as fallback.
+# Fetch thread: curl_cffi JSON first, then warm-browser render as fallback.
 async def fetch_reddit_json(url: str, timeout: float = 15.0) -> str:
     thread_url = reddit_thread_url(url)
     json_url = reddit_json_url(url)
@@ -170,14 +161,14 @@ async def fetch_reddit_json(url: str, timeout: float = 15.0) -> str:
         if data is not None:
             return reddit_data_to_markdown(data, url)
     except Exception as exc:
-        logger.info("reddit curl_cffi json blocked for %s: %s — trying camoufox", json_url, exc)
+        logger.info("reddit curl_cffi json blocked for %s: %s — trying browser", json_url, exc)
 
     try:
-        text = await _fetch_reddit_camoufox_page(thread_url, timeout)
+        text = await _fetch_reddit_browser_page(thread_url, timeout)
         if text:
             return text
     except Exception as exc:
-        logger.warning("reddit camoufox page fetch failed for %s: %s", thread_url, exc)
+        logger.warning("reddit browser page fetch failed for %s: %s", thread_url, exc)
 
     return f"Error: Reddit fetch failed for {url}"
 
