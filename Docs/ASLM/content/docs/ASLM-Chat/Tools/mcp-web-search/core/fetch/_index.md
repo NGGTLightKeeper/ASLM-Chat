@@ -35,3 +35,4 @@ draft: false
 
 - [core](../_index/)
 - [services/web_search](../../services/web_search/)
+| [browser](browser/) | `browser/` | Browser layer |

@@ -737,6 +737,14 @@ End-to-end `web_search` MCP tool: validate query → classify → parallel retri
 1. Return the computed result to the caller.
 2. Iterate and transform or accumulate state.
 
+#### `def _inline_parse_allowed(url) -> bool`
+
+**Purpose:** Whether a source may be parsed inline during a search, or should stay snippet-only. Two reasons to skip: a read_page-only custom-domain handler (reddit/x/ebay/youtube — browser/slow APIs), or a domain the runtime store has learned is too slow to parse. Either way the source still ranks and is returned; only its page is left for read_page.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
 #### `def _infer_pdf_url(result) -> str`
 
 **Purpose:** Resolve direct PDF URL from result metadata or arxiv abs link.
@@ -883,6 +891,15 @@ End-to-end `web_search` MCP tool: validate query → classify → parallel retri
 2. Handle errors and map them to a safe response.
 3. Iterate and transform or accumulate state.
 4. Parse or serialize JSON payloads.
+
+#### `def WebSearchService._decoder_rerank(query, sources) -> float`
+
+**Purpose:** Score sources with the CPU decoder and stash decoder_score on each; returns the blend weight actually used.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
 
 #### `async def WebSearchService._run_search_pipeline(query, lang, query_types, query_type, out_profile, opts, req_id, class_mix, source_budget, model_session) -> tuple[list[SearchResult], list]`
 

@@ -9,6 +9,14 @@ draft: false
 
 ---
 
+## Classes
+
+### `class EbayHandler`
+
+**Purpose:** Type `EbayHandler` defined in `ebay.py`. `scope = "read_page"`.
+
+---
+
 ## Public functions
 
 #### `async def fetch_ebay_snapshot(url, timeout, wait) -> dict[str, Any]`

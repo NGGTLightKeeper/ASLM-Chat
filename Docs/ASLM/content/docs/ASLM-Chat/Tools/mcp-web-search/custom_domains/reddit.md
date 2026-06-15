@@ -9,6 +9,14 @@ draft: false
 
 ---
 
+## Classes
+
+### `class RedditHandler`
+
+**Purpose:** Type `RedditHandler` defined in `reddit.py`. `scope = "read_page"`.
+
+---
+
 ## Public functions
 
 #### `def is_reddit(url) -> bool`

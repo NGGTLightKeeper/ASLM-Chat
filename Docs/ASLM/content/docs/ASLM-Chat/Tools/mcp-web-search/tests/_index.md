@@ -51,3 +51,5 @@ pytest tests/
 ## Related
 
 - [mcp-web-search](../_index/)
+| [test_browser_layer](test_browser_layer/) | `test_browser_layer.py` | Browser daemon tests |
+| [test_search_core](test_search_core/) | `test_search_core.py` | Core search tests |

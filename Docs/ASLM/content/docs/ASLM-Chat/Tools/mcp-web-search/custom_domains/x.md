@@ -9,6 +9,14 @@ draft: false
 
 ---
 
+## Classes
+
+### `class XHandler`
+
+**Purpose:** Type `XHandler` defined in `x.py`. `scope = "read_page"`.
+
+---
+
 ## Public functions
 
 #### `def x_status_id(url) -> str | None`

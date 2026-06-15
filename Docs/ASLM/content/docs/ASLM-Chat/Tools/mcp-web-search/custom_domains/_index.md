@@ -32,3 +32,5 @@ draft: false
 
 - [mcp-web-search](../_index/)
 - [services/read_page](../services/read_page/)
+| [base](base/) | `base.py` | custom-domains layer contract |
+| [youtube](youtube/) | `youtube.py` | YouTube watch/short metadata |

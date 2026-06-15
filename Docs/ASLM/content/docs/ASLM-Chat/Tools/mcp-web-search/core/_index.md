@@ -28,3 +28,4 @@ draft: false
 
 - [mcp-web-search](../_index/)
 - [services](../services/)
+| [search](search/) | `search/` | Search core logic |

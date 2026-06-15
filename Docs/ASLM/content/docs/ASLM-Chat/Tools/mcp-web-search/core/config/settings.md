@@ -13,7 +13,7 @@ draft: false
 
 ### `class SearchSection`
 
-**Purpose:** Type `SearchSection` defined in `settings.py`.
+**Purpose:** Type `SearchSection` defined in `settings.py`. Updated to reflect removed GLiNER settings.
 
 ### `class ExtractionSection`
 
@@ -33,7 +33,7 @@ draft: false
 
 ### `class ModelsSection`
 
-**Purpose:** Type `ModelsSection` defined in `settings.py`.
+**Purpose:** Type `ModelsSection` defined in `settings.py`. Updated to reflect decoder settings.
 
 ### `class SearchConfig`
 
