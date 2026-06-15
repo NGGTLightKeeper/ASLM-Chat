@@ -17,7 +17,7 @@ draft: false
 
 #### `async def fetch_reddit_json(url) -> str`
 
-**Purpose:** Fetch thread JSON API and format post title, body, and nested comments as markdown.
+**Purpose:** Fetch thread: curl_cffi JSON first, then warm-browser render as fallback.
 
 **Steps:**
 
@@ -27,6 +27,12 @@ draft: false
 4. Iterate and transform or accumulate state.
 
 ---
+
+## Private functions
+
+#### `async def _fetch_reddit_browser_page(thread_url, timeout) -> str | None`
+
+**Purpose:** Fetch the rendered thread page via the warm cloakbrowser; return cleaned inner_text markdown.
 
 ## Related
 

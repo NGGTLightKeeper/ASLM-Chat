@@ -57,25 +57,6 @@ draft: false
 
 1. Iterate and transform or accumulate state.
 
-#### `def _ensure_nltk_data(log) -> None`
-
-**Purpose:** Download the NLTK datasets expected by the tool stack.
-
-**Steps:**
-
-1. Raise on invalid input or failure conditions.
-2. Handle errors and map them to a safe response.
-3. Iterate and transform or accumulate state.
-
-#### `def _ensure_spacy_model(log) -> None`
-
-**Purpose:** Install the default spaCy English model when missing.
-
-**Steps:**
-
-1. Raise on invalid input or failure conditions.
-2. Spawn or communicate with a child process.
-
 #### `def _ensure_aslm_embedding_models(log) -> None`
 
 **Purpose:** Download ASLM web-search embedding models from Hugging Face when missing.
