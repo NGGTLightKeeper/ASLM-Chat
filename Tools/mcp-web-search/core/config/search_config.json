@@ -28,9 +28,7 @@
   },
   "models": {
     "pipeline": "aslm_embedding",
-    "enable_encoder": true,
     "enable_decoder": true,
-    "search_device": "cpu",
     "keep_loaded": false
   },
   "query": {

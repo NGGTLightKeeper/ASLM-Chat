@@ -293,58 +293,6 @@ def _bm25_score_paragraphs(paragraphs: list[str], query_terms: list[str]) -> lis
     return scores
 
 
-# Return (should_run, device) based on hardware profile and page quality.
-def _should_run_gliner(quality_score: float, hw_profile: str) -> tuple[bool, str]:
-    if hw_profile == "full_gpu":
-        # GPU available: densify any page that passed basic quality bar
-        return quality_score >= 0.20, "cuda"
-    # Limited VRAM / CPU-only: never run GLiNER on CPU.
-    return False, ""
-
-
-# Re-rank paragraphs by BM25 + GLiNER hybrid; fit to max_chars.
-def _gliner_compress(
-    paragraphs: list[str],
-    query_terms: list[str],
-    max_chars: int,
-    device: str = "cpu",
-    query_type: str | None = None,
-) -> tuple[str, bool]:
-    if not paragraphs:
-        return "", False
-
-    try:
-        from core.extract.gliner_wrapper import get_labels_for_query, score_entity_density_with_entities
-        labels = get_labels_for_query(" ".join(query_terms), query_type=query_type)
-        gliner_scored = score_entity_density_with_entities(
-            paragraphs, labels=labels, device=device,
-        )
-        gliner_scores = [s for s, _ in gliner_scored]
-    except Exception:
-        return "", False
-
-    bm25_scores = _bm25_score_paragraphs(paragraphs, query_terms) if query_terms else [0.0] * len(paragraphs)
-
-    max_b = max(bm25_scores) if bm25_scores else 0.0
-    bm25_norm = [s / max_b for s in bm25_scores] if max_b > 0 else [0.0] * len(paragraphs)
-
-    hybrid = [0.55 * b + 0.45 * g for b, g in zip(bm25_norm, gliner_scores)]
-    ranked = sorted(range(len(paragraphs)), key=lambda i: -hybrid[i])
-
-    selected: set[int] = set()
-    budget = max_chars
-    for idx in ranked:
-        cost = len(paragraphs[idx]) + 2
-        if cost <= budget:
-            selected.add(idx)
-            budget -= cost
-        if budget <= 0:
-            break
-
-    result = [paragraphs[i] for i in sorted(selected)]
-    return ("\n\n".join(result) if result else ""), True
-
-
 # Select top paragraphs by BM25 relevance that fit within max_chars.
 def compress_to_budget(text: str, query: str, max_chars: int) -> str:
     if not text or len(text) <= max_chars:
@@ -433,7 +381,7 @@ def _resolve_read_page_compress_query(focus: str, url: str, markdown: str) -> st
         return ""
 
 
-# Shrink long read_page output with BM25 or GLiNER before the hard max_chars cap.
+# Shrink long read_page output with BM25 relevance before the hard max_chars cap.
 def compress_read_page_markdown(
     markdown: str,
     *,
@@ -443,7 +391,6 @@ def compress_read_page_markdown(
     compress_threshold: int,
     compress_target: int,
     enable_compress: bool = True,
-    enable_gliner: bool = False,
 ) -> str:
     text = markdown or ""
     if not text:
@@ -453,26 +400,7 @@ def compress_read_page_markdown(
         budget = compress_target if compress_target > 0 else max_chars
         budget = min(budget, max_chars)
         query = _resolve_read_page_compress_query(focus, url, text)
-
-        if enable_gliner:
-            from core.config.hardware import get_hardware_profile
-
-            blocks = _split_blocks(text)
-            quality = _estimate_quality(text, len(blocks))
-            run_gliner, device = _should_run_gliner(quality, get_hardware_profile())
-            if run_gliner:
-                query_terms = _bm25_tokenize(query)
-                compressed, used_gliner = _gliner_compress(
-                    blocks, query_terms, budget, device=device
-                )
-                if used_gliner and compressed.strip():
-                    text = compressed
-                else:
-                    text = compress_to_budget(text, query, budget)
-            else:
-                text = compress_to_budget(text, query, budget)
-        else:
-            text = compress_to_budget(text, query, budget)
+        text = compress_to_budget(text, query, budget)
 
     if len(text) > max_chars:
         text = text[:max_chars].rsplit("\n", 1)[0] + "\n\n[...truncated]"
@@ -517,21 +445,14 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     "concurrency": 4,
     "rerank": "soft",
     "mode": "bm25",
-    "semantic_require_cuda": False,
     "semantic_min_score": 0.20,
-    "enable_gliner": False,
-    "gliner_tiers": (),
-    "gliner_max_chars": 2_500,
-    "gliner_max_entities": 8,
-    "gliner_trigger_min_score": 0.18,
     "preview_limit": 10,
-    "gliner_enabled_effective": False,
     "profile": "balanced",
 }
 
 
-# Return current preview settings merged with hardware profile defaults.
-def get_preview_settings(*, apply_hardware_profile: bool = True) -> dict[str, Any]:
+# Return current preview settings. Relevance is BM25-only (no GPU/embedding layers).
+def get_preview_settings() -> dict[str, Any]:
     settings = dict(_DEFAULT_SETTINGS)
     try:
         from core.config import load_search_config
@@ -539,36 +460,9 @@ def get_preview_settings(*, apply_hardware_profile: bool = True) -> dict[str, An
         settings["output_chars"] = cfg.search.preview_max_chars
         settings["min_clean_chars"] = cfg.search.preview_min_chars
         settings["preview_limit"] = cfg.search.preview_fetch_limit
-        settings["enable_gliner"] = cfg.search.enable_gliner
-        settings["gliner_trigger_min_score"] = cfg.search.gliner_trigger_min_score
     except Exception as exc:
         logger.debug("Preview settings config load failed, using built-ins: %s", exc)
         pass
-
-    # Apply hardware-based defaults: enable expensive layers only when GPU
-    # has sufficient free VRAM.
-    if apply_hardware_profile:
-        try:
-            from core.config.hardware import get_hardware_profile
-            profile = get_hardware_profile()
-            if profile == "cpu_safe":
-            # No GPU or not enough VRAM — BM25 only, no embedding models
-                settings["mode"] = "bm25"
-                settings["enable_gliner"] = False
-                settings["semantic_require_cuda"] = False
-            elif profile == "partial_gpu":
-            # Embeddings OK, GLiNER too memory-hungry
-                settings["mode"] = "bm25"
-                settings["enable_gliner"] = False
-                settings["semantic_require_cuda"] = False
-            else:
-            # full_gpu — all layers available
-                settings["mode"] = "bm25"
-            # GLiNER still opt-in via config; don't force-enable here
-        except Exception as exc:
-            logger.debug("Hardware profile detection failed, using default preview mode: %s", exc)
-            pass
-
     return settings
 
 
@@ -578,7 +472,6 @@ class PreviewPayload:
     semantic_score: float = 0.0
     quality_score: float = 0.0
     clean_chars: int = 0
-    used_gliner: bool = False
     strategy_used: str = ""
     extraction_status: str = ""
     policy_family: str = ""
@@ -1077,7 +970,6 @@ def build_preview_payload(
         active_settings["seo_reference_source"] = seo_reference_source
 
     working_html = raw_html
-    _did_use_gliner = False
     strategy_parts: list[str] = []
     if seo_reference_source == "serp_snippet" and seo_reference:
         working_html = _inject_serp_reference_into_html(raw_html, seo_reference)
@@ -1153,35 +1045,6 @@ def build_preview_payload(
             chunks_selected = int(compress_debug.get("chunks_selected", 0))
             seo_rejected = int(compress_debug.get("rejected_seo", 0))
 
-    _depth_types = frozenset({"technical", "academic", "medical", "troubleshooting"})
-    if (
-        active_settings.get("enable_gliner", False)
-        and query.strip()
-        and cleaned_text
-        and query_type in _depth_types
-    ):
-        try:
-            from core.config.hardware import get_hardware_profile
-            hw = get_hardware_profile()
-        except Exception:
-            hw = "cpu_safe"
-        run_gliner, gliner_device = _should_run_gliner(quality_score, hw)
-        if run_gliner:
-            paragraphs_for_gliner = _split_blocks(cleaned_text)
-            query_terms_for_gliner = _bm25_tokenize(query)
-            gliner_budget = output_chars * 2 if active_settings.get("mode") == "semantic" else output_chars
-            gliner_text, used_gliner = _gliner_compress(
-                paragraphs_for_gliner,
-                query_terms_for_gliner,
-                gliner_budget,
-                device=gliner_device,
-                query_type=query_type,
-            )
-            if gliner_text.strip() and used_gliner:
-                cleaned_text = gliner_text
-                _did_use_gliner = True
-                strategy_parts.append(f"gliner_{gliner_device[:3]}")
-
     preview_text, semantic_score = _semantic_extract(cleaned_text, query, active_settings)
     if preview_text != cleaned_text and preview_text.strip():
         strategy_parts.append("semantic")
@@ -1210,7 +1073,6 @@ def build_preview_payload(
         semantic_score=max(0.0, min(float(semantic_score or 0.0), 1.0)),
         quality_score=max(0.0, min(float(quality_score or 0.0), 1.0)),
         clean_chars=len(_normalize_text(cleaned_text)),
-        used_gliner=_did_use_gliner,
         strategy_used="+".join(strategy_parts) if strategy_parts else "empty",
         extraction_status=extraction_status,
         policy_family=fam,

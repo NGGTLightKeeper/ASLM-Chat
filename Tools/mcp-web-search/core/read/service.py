@@ -380,7 +380,7 @@ class ReadPageService:
     def _browser_ok(self) -> bool:
         return self._opts.allow_browser and is_camoufox_available()
 
-    # Apply the read_page compression/GLiNER budget from config.
+    # Apply the read_page BM25 compression budget from config.
     def _apply_budget(self, markdown: str, url: str) -> str:
         ext = self._cfg.extraction
         return compress_read_page_markdown(
@@ -391,7 +391,6 @@ class ReadPageService:
             compress_threshold=ext.read_page_compress_threshold_chars,
             compress_target=ext.read_page_compress_target_chars,
             enable_compress=ext.enable_read_page_compress,
-            enable_gliner=self._cfg.search.enable_gliner,
         )
 
     # Build the FetchContext handed to custom-domain handlers.
