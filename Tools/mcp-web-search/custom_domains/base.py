@@ -6,6 +6,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+# Handler scope: where a domain's bespoke handler is allowed to run.
+#   both       — usable by web_search inline parsing AND the read_page tool (default);
+#   read_page  — read_page tool only; web_search keeps the source as a snippet and never
+#                parses it inline (handlers that need a browser or a slow API: reddit, x,
+#                ebay, youtube). Cheap, fast handlers (github/stackexchange APIs) stay both.
+SCOPE_BOTH = "both"
+SCOPE_READ_PAGE = "read_page"
+
 # Unified contract for the custom-domains pass-through layer. read_page stays thin: it
 # asks `match(url)` for a handler and calls `handler.read(url, ctx)`. Two handler shapes
 # share this one API:
@@ -23,7 +31,7 @@ class PageResult:
     ok: bool = False
     method: str = ""          # winning fetch method (e.g. "github_api", "camoufox")
     blocked: bool = False
-    apply_budget: bool = False  # run read_page's compression/GLiNER budget on markdown
+    apply_budget: bool = False  # run read_page's BM25 compression budget on markdown
     error: str = ""
 
 
@@ -76,6 +84,8 @@ class FetchContext:
 class DomainHandler(Protocol):
     name: str
     fallback_to_generic: bool
+    # Optional; consumers read it via getattr(handler, "scope", SCOPE_BOTH).
+    scope: str
 
     def matches(self, url: str) -> bool: ...
 

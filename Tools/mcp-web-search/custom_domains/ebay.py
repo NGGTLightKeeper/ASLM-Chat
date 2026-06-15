@@ -155,6 +155,7 @@ _EBAY_HOSTS = frozenset({
 class EbayHandler:
     name = "ebay"
     fallback_to_generic = True
+    scope = "read_page"  # retail page is heavy/antibot; snippet-only in web_search
 
     # True for known eBay marketplace hosts.
     def matches(self, url: str) -> bool:

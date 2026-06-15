@@ -48,30 +48,24 @@ trace_logger = logging.getLogger("trace.web_search")
 # (the parser scans the whole page either way — trimming early just wastes results).
 _SOURCE_LIMIT = 20
 
-# Hosts that are read_page-only inside a search: surfaced as snippet sources but never
-# parsed inline, because their parse is too slow for a search's hot path (reddit's JSON
-# handler runs ~10s). Temporary — revisit once the warm browser lands with measured
-# per-domain efficiency, which may make some of these cheap enough to parse inline again.
-_READPAGE_ONLY_HOSTS = ("reddit.com",)
-
 # A domain the runtime profile store has learned to fetch slower than this is left
 # snippet-only in search (still readable via read_page). Tighter than read_page's own
 # avoid bar — a wide search cannot afford a multi-second page on the hot path.
 _INLINE_PARSE_SKIP_MS = 6_000.0
 
 
-# True when host is (a subdomain of) a read_page-only host.
-def _host_readpage_only(host: str) -> bool:
-    h = (host or "").lower().removeprefix("www.")
-    return any(h == d or h.endswith("." + d) for d in _READPAGE_ONLY_HOSTS)
-
-
 # Whether a source may be parsed inline during a search, or should stay snippet-only.
-# Combines the hard read_page-only set with the runtime "slow to parse" memory, so a
-# domain that has proven expensive is dropped from the parse hot path automatically.
-def _inline_parse_allowed(host: str, url: str) -> bool:
-    if _host_readpage_only(host):
-        return False
+# Two reasons to skip: a read_page-only custom-domain handler (reddit/x/ebay/youtube —
+# browser/slow APIs), or a domain the runtime store has learned is too slow to parse.
+# Either way the source still ranks and is returned; only its page is left for read_page.
+def _inline_parse_allowed(url: str) -> bool:
+    try:
+        import custom_domains
+
+        if custom_domains.is_read_page_only(url):
+            return False
+    except Exception:  # noqa: BLE001 — a handler lookup must never sink a search
+        pass
     try:
         from core.profiles import domain_of, get_runtime_profiles
 
@@ -96,7 +90,17 @@ def _infer_pdf_url(url: str) -> str:
     return ""
 
 
-# Per-effort budgets. parse_budget=0 means SERP-only (low is a fast path).
+# Per-effort contracts. Each tier is a distinct deal, not just a bigger budget:
+#
+#   low    — SERP-only. Pure HTTP, NO page parse, no browser, no model. Sub-2s.
+#   medium — HTTP page parsing only (no browser, no model). Hard-bounded to ~6-8s total:
+#            tight per-page parse cap and a short overall deadline.
+#   high   — deeper HTTP parse + limited warm-browser escalation + a CPU decoder
+#            re-ranker. The browser/decoder allowances are declared here; their wiring
+#            (read/service warm-browser, decoder content-stage) lands separately.
+#
+# parse_budget=0 means SERP-only. parse_timeout is the hard per-page cap (6s ceiling —
+# a wide search cannot afford a slow page; slow domains are left snippet-only anyway).
 @dataclass(frozen=True, slots=True)
 class EffortProfile:
     name: str
@@ -107,12 +111,14 @@ class EffortProfile:
     parse_max_chars: int
     deadline: float  # hard cap for the whole search
     max_results: int  # sources returned after ranking
+    allow_browser: bool  # high only: limited warm-browser escalation (HTTP-only until wired)
+    allow_decoder: bool  # high only: CPU decoder content-stage re-ranker (pending integration)
 
 
 EFFORT_PROFILES: dict[str, EffortProfile] = {
-    "low": EffortProfile("low", 0, 0, 0, 0.0, 0, 12.0, 8),
-    "medium": EffortProfile("medium", 4, 3, 1, 12.0, 8_000, 25.0, 10),
-    "high": EffortProfile("high", 8, 3, 1, 18.0, 20_000, 50.0, 16),
+    "low": EffortProfile("low", 0, 0, 0, 0.0, 0, 8.0, 8, False, False),
+    "medium": EffortProfile("medium", 3, 3, 1, 6.0, 8_000, 8.0, 10, False, False),
+    "high": EffortProfile("high", 8, 4, 1, 8.0, 20_000, 22.0, 16, True, True),
 }
 
 
@@ -171,6 +177,7 @@ class _Source:
     parsed_markdown: str = ""
     parsed_ok: bool = False
     parse_ms: float = 0.0
+    decoder_score: float = -1.0  # >=0 once the high-effort decoder re-ranker has scored it
 
 
 # Orchestrates one search: stream → triage → bounded eager parsing → ranking.
@@ -204,7 +211,10 @@ class WebSearchService:
                     source.url,
                     timeout=profile.parse_timeout,
                     max_chars=profile.parse_max_chars,
-                    allow_browser=False,  # search is HTTP-only; browser is read_page-exclusive
+                    # Search is HTTP-only today. high's profile.allow_browser will gate a
+                    # limited warm-browser escalation here once browser_fetch is wired into
+                    # the read service; the camoufox subprocess never runs inside a search.
+                    allow_browser=False,
                 )
             source.parsed_markdown = markdown or ""
             source.parsed_ok = bool(markdown) and not markdown.startswith("Error:")
@@ -217,6 +227,34 @@ class WebSearchService:
             source.parsed_ok = False
         finally:
             source.parse_ms = (time.perf_counter() - started) * 1000
+
+    # Score sources with the CPU decoder and stash decoder_score on each; returns the
+    # blend weight actually used (0 when the decoder is disabled, absent, or failed).
+    def _decoder_rerank(self, query: str, sources: dict[str, "_Source"]) -> float:
+        if not sources:
+            return 0.0
+        from core.config import load_search_config
+
+        models_cfg = load_search_config().models
+        if not models_cfg.enable_decoder:
+            return 0.0
+        from core.search.decoder_ranker import get_decoder_ranker
+
+        ranker = get_decoder_ranker()
+        if not ranker.available():
+            return 0.0
+        items = list(sources.values())
+        candidates = [
+            {"title": s.title, "url": s.url, "snippet": s.snippet, "preview": s.parsed_markdown[:2000]}
+            for s in items
+        ]
+        scores = ranker.score(query, candidates)
+        if len(scores) != len(items):
+            return 0.0
+        for source, score in zip(items, scores):
+            source.decoder_score = max(0.0, min(1.0, score))
+        logger.info("decoder.rerank scored=%d query=%r", len(items), query[:120])
+        return max(0.0, min(1.0, float(models_cfg.decoder_weight)))
 
     # Run one full search. Returns the aggregated, ranked payload.
     async def search(
@@ -266,9 +304,9 @@ class WebSearchService:
             if parse_started_count >= profile.parse_budget:
                 return
             source = sources[url]
-            # Snippet-only hosts (read_page-only / learned-slow) never spend a parse
-            # slot — they stay in the ranked output without their page being fetched.
-            if not _inline_parse_allowed(source.host, url):
+            # Snippet-only sources (read_page-only handler / learned-slow domain) never
+            # spend a parse slot — they stay in the ranked output without a page fetch.
+            if not _inline_parse_allowed(url):
                 trace_logger.info("parse.skip host=%s url=%r (snippet-only)", source.host, url)
                 return
             parse_started_count += 1
@@ -370,7 +408,17 @@ class WebSearchService:
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
 
-        ranked = sorted(sources.values(), key=lambda s: s.score, reverse=True)
+        # High-effort content-stage re-rank: blend the rules score with a CPU decoder
+        # relevance score over (query, title, url, snippet, parsed preview). No-op when
+        # the decoder is off/absent — the rules ranking stays in charge.
+        decoder_weight = self._decoder_rerank(query, sources) if profile.allow_decoder else 0.0
+
+        def _final_score(s: _Source) -> float:
+            if s.decoder_score < 0 or decoder_weight <= 0:
+                return s.score
+            return (1.0 - decoder_weight) * s.score + decoder_weight * s.decoder_score
+
+        ranked = sorted(sources.values(), key=_final_score, reverse=True)
         top = ranked[: profile.max_results]
         parsed_ok = sum(1 for s in top if s.parsed_ok)
         logger.info(
@@ -395,6 +443,7 @@ class WebSearchService:
                     "rank": s.rank,
                     "score": round(s.score, 4),
                     "consensus_families": s.families,
+                    **({"decoder_score": round(s.decoder_score, 4)} if s.decoder_score >= 0 else {}),
                     **({"pdf_url": pdf} if (pdf := _infer_pdf_url(s.url)) else {}),
                     **(
                         {

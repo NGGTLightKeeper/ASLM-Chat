@@ -162,6 +162,7 @@ from custom_domains.base import FetchContext, PageResult
 class XHandler:
     name = "x"
     fallback_to_generic = False
+    scope = "read_page"  # requires a browser; not for web_search inline parsing
 
     # True for x.com/twitter.com status permalinks.
     def matches(self, url: str) -> bool:

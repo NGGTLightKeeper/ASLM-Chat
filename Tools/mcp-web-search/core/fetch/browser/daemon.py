@@ -364,14 +364,35 @@ class BrowserDaemon:
             nav_timeout=args.nav_timeout,
             wait=args.wait,
         )
+        self.idle_shutdown_sec = max(0.0, float(getattr(args, "idle_shutdown_sec", 0.0)))
         self._stop_event = asyncio.Event()
+        self._started_at = time.monotonic()
+        self._idle_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         print("  starting chromium ...", flush=True)
         await self.browser.start()
         print("  chromium ready", flush=True)
+        if self.idle_shutdown_sec > 0:
+            self._idle_task = asyncio.create_task(self._idle_monitor(), name="bg:idle-shutdown")
+
+    # Self-terminate after idle_shutdown_sec without a served fetch (0 = eternal).
+    async def _idle_monitor(self) -> None:
+        try:
+            while not self._stop_event.is_set():
+                await asyncio.sleep(min(30.0, self.idle_shutdown_sec))
+                last = self.browser._last_used or self._started_at
+                idle = time.monotonic() - last
+                if self.browser._inflight == 0 and idle >= self.idle_shutdown_sec:
+                    print(f"idle {idle:.0f}s ≥ {self.idle_shutdown_sec:.0f}s — shutting down", flush=True)
+                    self._stop_event.set()
+                    return
+        except asyncio.CancelledError:
+            pass
 
     async def stop(self) -> None:
+        if self._idle_task is not None:
+            self._idle_task.cancel()
         await self.browser.stop()
 
     # POST /fetch {url, wait_ms?, timeout_ms?, html?} -> ScrapeResult json.
@@ -410,7 +431,9 @@ class BrowserDaemon:
 
 async def _serve(args: argparse.Namespace) -> None:
     daemon = BrowserDaemon(args)
-    print(f"Warm browser daemon: chromium headless={args.headless} proxy={'yes' if args.proxy else 'no'}")
+    idle = f"idle-shutdown={args.idle_shutdown_sec:.0f}s" if args.idle_shutdown_sec > 0 else "eternal"
+    print(f"Warm browser daemon: chromium headless={args.headless} "
+          f"proxy={'yes' if args.proxy else 'no'} {idle}")
     await daemon.start()
 
     runner = web.AppRunner(daemon.make_app())
@@ -446,6 +469,8 @@ def _parse_args() -> argparse.Namespace:
                    dest="checkpoint_interval")
     p.add_argument("--nav-timeout", type=float, default=cfg.nav_timeout, dest="nav_timeout")
     p.add_argument("--wait", type=float, default=cfg.wait)
+    p.add_argument("--idle-shutdown-sec", type=float, default=cfg.daemon_idle_shutdown_sec,
+                   dest="idle_shutdown_sec", help="self-terminate after this idle time; 0 = eternal")
     p.set_defaults(headless=cfg.headless)
     return p.parse_args()
 

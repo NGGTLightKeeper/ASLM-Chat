@@ -81,6 +81,8 @@ def test_browser_section_defaults():
     assert sec.browser_fallback == "page"
     assert sec.browser_backend == "warm"
     assert sec.max_rss_mb == 2048
+    assert sec.autostart_daemon is True             # spawn on first tool call
+    assert sec.daemon_idle_shutdown_sec == 1800.0   # 30 min, 0 = eternal
 
 
 def test_browser_config_validates_enums(tmp_path):
@@ -135,7 +137,7 @@ def test_client_warm_dispatches_to_daemon():
 
 
 def test_client_warm_unreachable_is_unavailable_not_crash():
-    client = BrowserClient(cfg=BrowserSection(browser_backend="warm"))
+    client = BrowserClient(cfg=BrowserSection(browser_backend="warm", autostart_daemon=False))
 
     class _Boom:
         async def post(self, *a, **k):
@@ -148,3 +150,33 @@ def test_client_warm_unreachable_is_unavailable_not_crash():
     result = asyncio.run(client.fetch("https://example.com"))
     assert result.status == STATUS_UNAVAILABLE
     assert asyncio.run(client.available()) is False
+
+
+def test_client_autostart_spawns_daemon_when_unreachable(monkeypatch):
+    client = BrowserClient(cfg=BrowserSection(browser_backend="warm", autostart_daemon=True))
+    state = {"up": False, "spawns": 0}
+
+    async def fake_probe() -> bool:
+        return state["up"]
+
+    def fake_spawn() -> None:
+        state["spawns"] += 1
+        state["up"] = True  # daemon comes up after spawn
+
+    monkeypatch.setattr(client, "_probe", fake_probe)
+    monkeypatch.setattr(client, "_spawn_process", fake_spawn)
+    assert asyncio.run(client._daemon_ready()) is True
+    assert state["spawns"] == 1
+
+
+def test_client_no_autostart_when_disabled(monkeypatch):
+    client = BrowserClient(cfg=BrowserSection(browser_backend="warm", autostart_daemon=False))
+    spawns: list[int] = []
+
+    async def fake_probe() -> bool:
+        return False
+
+    monkeypatch.setattr(client, "_probe", fake_probe)
+    monkeypatch.setattr(client, "_spawn_process", lambda: spawns.append(1))
+    assert asyncio.run(client._daemon_ready()) is False
+    assert spawns == []

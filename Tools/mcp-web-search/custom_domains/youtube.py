@@ -193,6 +193,7 @@ async def fetch_youtube_transcript(url: str) -> str:
 class YouTubeHandler:
     name = "youtube"
     fallback_to_generic = False
+    scope = "read_page"  # requires a browser; not for web_search inline parsing
 
     # True for YouTube watch/short URLs.
     def matches(self, url: str) -> bool:

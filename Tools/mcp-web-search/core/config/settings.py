@@ -44,8 +44,6 @@ class SearchSection:
     preview_max_chars: int = 4_000
     total_context_budget: int = 40_000  # max chars in total search output (0 = no limit)
     early_return_threshold: int = 0     # cancel remaining fetches after N good previews (0 = disabled)
-    enable_gliner: bool = False
-    gliner_trigger_min_score: float = 0.18
 
 
 @dataclass
@@ -86,7 +84,11 @@ class BrowserSection:
     browser_backend: str = "warm"       # warm (cloakbrowser daemon) | legacy (camoufox subprocess)
     daemon_url: str = "http://127.0.0.1:8765"
     engine: str = "chromium"            # warm backend is chromium-only by design
-    autostart_daemon: bool = False      # spawn the daemon lazily if it is not reachable
+    autostart_daemon: bool = True       # spawn the daemon lazily on the first tool call
+    # Daemon self-shuts-down after this many idle seconds (no fetch); 0 = eternal (run
+    # until the task is killed). Default 30 min so a tool-call-spawned daemon does not
+    # linger forever once searches stop.
+    daemon_idle_shutdown_sec: float = 1800.0
     headless: bool = True
     humanize: bool = False
     proxy: str = ""
@@ -103,9 +105,9 @@ class BrowserSection:
 @dataclass
 class ModelsSection:
     pipeline: str = "aslm_embedding"
-    enable_encoder: bool = True
-    enable_decoder: bool = True
-    search_device: str = "cpu"
+    enable_decoder: bool = True       # decoder content-stage re-ranker (high effort only, CPU)
+    decoder_model_dir: str = ""       # export dir; empty → <root>/models/aslm_embedding_decoder
+    decoder_weight: float = 0.45      # blend: final = (1-w)*rules_score + w*decoder_score
     keep_loaded: bool = False
 
 
@@ -198,8 +200,6 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             max_snippet_chars=int(s.get("max_snippet_chars", raw.get("max_snippet_chars", 2_000))),
             preview_min_chars=int(s.get("preview_min_chars", 600)),
             preview_max_chars=int(s.get("preview_max_chars", 4_000)),
-            enable_gliner=bool(s.get("enable_gliner", False)),
-            gliner_trigger_min_score=float(s.get("gliner_trigger_min_score", 0.18)),
         ),
         extraction=ExtractionSection(
             timeout_seconds=float(e.get("timeout_seconds", 25.0)),
@@ -228,9 +228,9 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
         ),
         models=ModelsSection(
             pipeline=normalize_pipeline_mode(models.get("pipeline", "rules")),
-            enable_encoder=bool(models.get("enable_encoder", False)),
             enable_decoder=bool(models.get("enable_decoder", False)),
-            search_device=str(models.get("search_device", "cpu")),
+            decoder_model_dir=str(models.get("decoder_model_dir", "")),
+            decoder_weight=float(models.get("decoder_weight", 0.45)),
             keep_loaded=bool(models.get("keep_loaded", False)),
         ),
         browser=BrowserSection(
@@ -242,7 +242,8 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             ),
             daemon_url=str(b.get("daemon_url", "http://127.0.0.1:8765")),
             engine=str(b.get("engine", "chromium")),
-            autostart_daemon=bool(b.get("autostart_daemon", False)),
+            autostart_daemon=bool(b.get("autostart_daemon", True)),
+            daemon_idle_shutdown_sec=float(b.get("daemon_idle_shutdown_sec", 1800.0)),
             headless=bool(b.get("headless", True)),
             humanize=bool(b.get("humanize", False)),
             proxy=str(b.get("proxy", "")),

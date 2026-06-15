@@ -192,6 +192,7 @@ _REDDIT_READ_TIMEOUT_SEC = 60.0
 class RedditHandler:
     name = "reddit"
     fallback_to_generic = False
+    scope = "read_page"  # browser/JSON path too slow for web_search inline parsing
 
     # True for Reddit thread comment URLs.
     def matches(self, url: str) -> bool:

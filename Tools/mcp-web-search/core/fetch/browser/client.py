@@ -13,9 +13,14 @@ config here, so callers never branch on it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import subprocess
+import sys
 import time
+from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from core.config import load_search_config
 
@@ -31,6 +36,10 @@ logger = logging.getLogger("core.fetch.browser.client")
 
 # Health probes are cached briefly so per-fetch availability checks stay free.
 _HEALTH_TTL = 5.0
+# How long to wait for an autostarted daemon to answer /health, and the minimum gap
+# between spawn attempts so a daemon that fails to come up is not respawned in a loop.
+_SPAWN_WAIT = 25.0
+_SPAWN_THROTTLE = 30.0
 
 
 # Routes page fetches to the configured browser backend (warm daemon or legacy subprocess).
@@ -41,6 +50,9 @@ class BrowserClient:
         self._http: Any | None = None              # lazily-built httpx.AsyncClient
         self._health_ok = False
         self._health_checked_at = 0.0
+        self._spawn_lock = asyncio.Lock()
+        self._spawn_attempted_at = 0.0
+        self._spawned = False                      # did we launch the daemon ourselves?
 
     # The browser layer is usable when not disabled and the chosen backend is reachable.
     async def available(self) -> bool:
@@ -50,22 +62,67 @@ class BrowserClient:
             from core.fetch.camoufox_fetcher import is_camoufox_available
 
             return is_camoufox_available()
-        return await self._daemon_healthy()
+        return await self._daemon_ready()
 
-    # Cached daemon /health probe.
-    async def _daemon_healthy(self) -> bool:
+    # Cached readiness: a raw /health probe, plus a lazy autostart on the first miss.
+    async def _daemon_ready(self) -> bool:
         now = time.monotonic()
         if now - self._health_checked_at < _HEALTH_TTL:
             return self._health_ok
         self._health_checked_at = now
+        ok = await self._probe()
+        if not ok and self._cfg.autostart_daemon:
+            ok = await self._autostart()
+        self._health_ok = ok
+        return ok
+
+    # A single uncached GET /health; True when the daemon answers 200.
+    async def _probe(self) -> bool:
         try:
-            client = self._client()
-            resp = await client.get(f"{self._cfg.daemon_url}/health")
-            self._health_ok = resp.status_code == 200
+            resp = await self._client().get(f"{self._cfg.daemon_url}/health")
+            return resp.status_code == 200
         except Exception as exc:  # noqa: BLE001
             logger.debug("browser daemon health probe failed: %s", exc)
-            self._health_ok = False
-        return self._health_ok
+            return False
+
+    # Spawn the daemon (once, throttled) and poll until it answers or times out.
+    async def _autostart(self) -> bool:
+        async with self._spawn_lock:
+            if await self._probe():            # another caller won the race
+                return True
+            now = time.monotonic()
+            if now - self._spawn_attempted_at < _SPAWN_THROTTLE:
+                return False
+            self._spawn_attempted_at = now
+            self._spawn_process()
+            deadline = time.monotonic() + _SPAWN_WAIT
+            while time.monotonic() < deadline:
+                await asyncio.sleep(0.5)
+                if await self._probe():
+                    logger.info("warm browser daemon autostarted on first tool call")
+                    return True
+            logger.warning("warm browser daemon did not come up within %.0fs", _SPAWN_WAIT)
+            return False
+
+    # Launch the daemon as a detached process (it reads its own config: idle-shutdown etc.).
+    def _spawn_process(self) -> None:
+        port = urlparse(self._cfg.daemon_url).port or 8765
+        root = Path(__file__).resolve().parents[3]
+        kwargs: dict[str, Any] = {
+            "cwd": str(root), "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL,
+        }
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008  # DETACHED_PROCESS
+        else:
+            kwargs["start_new_session"] = True
+        try:
+            subprocess.Popen(
+                [sys.executable, "-m", "core.fetch.browser.daemon", "--port", str(port)], **kwargs
+            )
+            self._spawned = True
+            logger.info("spawned warm browser daemon on port %d", port)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("failed to spawn warm browser daemon: %s", exc)
 
     # Build (once) the shared httpx client for daemon calls.
     def _client(self):
@@ -91,9 +148,13 @@ class BrowserClient:
         return await self._fetch_warm(url, wait_sec=wait_sec, nav_timeout=nav_timeout, family=family)
 
     # Warm path: POST /fetch to the daemon and adapt the JSON body to a BrowserFetch.
+    # Ensures the daemon is up first (lazy autostart on the first tool call).
     async def _fetch_warm(
         self, url: str, *, wait_sec: float | None, nav_timeout: float | None, family: str
     ) -> BrowserFetch:
+        if not await self._daemon_ready():
+            return BrowserFetch(url=url, status=STATUS_UNAVAILABLE, backend="warm",
+                                error="daemon unreachable")
         payload: dict[str, Any] = {"url": url, "engine": self._cfg.engine}
         if wait_sec is not None:
             payload["wait_ms"] = int(max(0.0, wait_sec) * 1000)
@@ -141,8 +202,16 @@ class BrowserClient:
             engine="camoufox", backend="legacy", ms=result.duration_sec * 1000, error=result.error,
         )
 
-    # Close the shared HTTP client (daemon lifecycle is not owned by the client).
+    # Close the shared HTTP client. A daemon we autostarted is asked to shut down too,
+    # so it does not outlive the process that spawned it (otherwise it self-terminates
+    # on its idle timeout). A daemon started out-of-band is left alone.
     async def aclose(self) -> None:
+        if self._spawned and self._http is not None:
+            try:
+                await self._http.post(f"{self._cfg.daemon_url}/shutdown")
+            except Exception:  # noqa: BLE001
+                pass
+            self._spawned = False
         if self._http is not None:
             try:
                 await self._http.aclose()

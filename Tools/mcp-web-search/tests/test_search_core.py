@@ -25,7 +25,6 @@ from core.search.triage import TriageAction, TriageSession
 from core.search.web_search import (
     EFFORT_PROFILES,
     WebSearchService,
-    _host_readpage_only,
     _inline_parse_allowed,
     select_engines,
 )
@@ -213,18 +212,21 @@ def test_select_engines_medium_startpage_standby_when_google_open():
     assert "startpage" in names  # hot standby of the google family
 
 
-# --- inline-parse policy (read_page-only + learned-slow) -------------------------
+# --- inline-parse policy (custom-domain scope + learned-slow) --------------------
 
-def test_readpage_only_matches_reddit_and_subdomains():
-    assert _host_readpage_only("reddit.com")
-    assert _host_readpage_only("www.reddit.com")
-    assert _host_readpage_only("old.reddit.com")
-    assert not _host_readpage_only("notreddit.com")
-    assert not _host_readpage_only("stackoverflow.com")
+def test_custom_domain_scope_marks_browser_heavy_readpage_only():
+    import custom_domains
+
+    assert custom_domains.is_read_page_only("https://www.reddit.com/r/Python/comments/a/b/")
+    assert custom_domains.is_read_page_only("https://www.youtube.com/watch?v=abc")
+    # API-backed handlers stay usable in web_search.
+    assert not custom_domains.is_read_page_only("https://github.com/python/cpython")
+    # A plain domain with no handler is unaffected.
+    assert not custom_domains.is_read_page_only("https://example.com/article")
 
 
-def test_inline_parse_blocks_reddit():
-    assert not _inline_parse_allowed("www.reddit.com", "https://www.reddit.com/r/python/x")
+def test_inline_parse_blocks_readpage_only_handler():
+    assert not _inline_parse_allowed("https://www.reddit.com/r/Python/comments/a/b/")
 
 
 def test_inline_parse_skips_learned_slow_domain(monkeypatch):
@@ -240,14 +242,47 @@ def test_inline_parse_skips_learned_slow_domain(monkeypatch):
 
     # A domain remembered as slow → snippet-only; a fast one → parsed inline.
     monkeypatch.setattr(profiles, "get_runtime_profiles", lambda: _Profiles(9_000.0))
-    assert not _inline_parse_allowed("slow.com", "https://slow.com/a")
+    assert not _inline_parse_allowed("https://slow.com/a")
     monkeypatch.setattr(profiles, "get_runtime_profiles", lambda: _Profiles(800.0))
-    assert _inline_parse_allowed("fast.com", "https://fast.com/a")
+    assert _inline_parse_allowed("https://fast.com/a")
 
 
 def test_inline_parse_allows_unknown_domain():
-    # No profile data yet → parse it (the store learns the cost from this very parse).
-    assert _inline_parse_allowed("brand-new-domain-xyz.com", "https://brand-new-domain-xyz.com/a")
+    # No handler and no profile data yet → parse it (the store learns from this parse).
+    assert _inline_parse_allowed("https://brand-new-domain-xyz.com/a")
+
+
+# --- decoder re-ranker (high-effort content stage) -------------------------------
+
+def test_decoder_ranker_unavailable_without_model(tmp_path):
+    from core.search.decoder_ranker import DecoderRanker
+
+    ranker = DecoderRanker(str(tmp_path / "no_model"))
+    assert ranker.available() is False
+    assert ranker.score("q", [{"title": "t", "url": "u"}]) == []
+
+
+def test_decoder_rerank_stashes_scores_and_weight(monkeypatch):
+    import core.search.decoder_ranker as dr
+    from core.search.web_search import WebSearchService, _Source
+
+    class _FakeRanker:
+        def available(self):
+            return True
+
+        def score(self, query, candidates):
+            return [0.1, 0.9][: len(candidates)]
+
+    monkeypatch.setattr(dr, "get_decoder_ranker", lambda: _FakeRanker())
+    svc = WebSearchService(tracker=EngineHealthTracker(clock=_Clock()))
+    sources = {
+        "a": _Source(url="a", host="a.com", title="A", snippet="", engine="g", rank=1, score=0.8, families=["g"]),
+        "b": _Source(url="b", host="b.com", title="B", snippet="", engine="g", rank=2, score=0.4, families=["g"]),
+    }
+    weight = svc._decoder_rerank("query", sources)
+    assert weight == 0.45  # config default blend weight
+    assert sources["a"].decoder_score == 0.1
+    assert sources["b"].decoder_score == 0.9
 
 
 # --- orchestrator (synthetic stream, fake reader) --------------------------------
