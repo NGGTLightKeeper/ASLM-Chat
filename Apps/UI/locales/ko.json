@@ -16,7 +16,9 @@
     "newChat": "새 채팅",
     "attachmentChat": "첨부 파일 채팅",
     "howCanIHelp": "무엇을 도와드릴까요?",
-    "welcomeTitle": "무엇을 도와드릴까요?"
+    "welcomeTitle": "무엇을 도와드릴까요?",
+    "renameTitle": "채팅 이름 바꾸기",
+    "renameLabel": "채팅 이름"
   },
   "composer": {
     "placeholder": "ASLM에게 메시지 보내기...",
@@ -72,7 +74,10 @@
     "settings": "설정",
     "sampling": "샘플링",
     "advanced": "고급",
-    "custom": "사용자 정의"
+    "custom": "사용자 정의",
+    "presetNameLabel": "프리셋 이름",
+    "presetNewTitle": "새 프리셋",
+    "presetRenameTitle": "프리셋 이름 바꾸기"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +176,6 @@
     "renameFolderAria": "폴더 이름 바꾸기",
     "renameFileAria": "파일 이름 바꾸기",
     "deleteFileAria": "파일 삭제",
-    "dialogOk": "확인",
-    "dialogCancel": "취소",
-    "dialogConfirm": "확인",
-    "dialogInput": "입력",
-    "valueRequired": "값이 필요합니다.",
     "createSkill": "스킬 만들기",
     "skillNamePlaceholder": "skill-name",
     "create": "만들기",
@@ -219,6 +219,13 @@
     "importNoSupported": "지원되는 텍스트 파일이 없습니다(.md, .txt, .py, …).",
     "importNoSupportedFor": "\"{name}\"에 대한 지원 파일이 없습니다."
   },
+  "dialog": {
+    "ok": "확인",
+    "cancel": "취소",
+    "confirm": "확인",
+    "input": "입력",
+    "valueRequired": "값이 필요합니다."
+  },
   "errors": {
     "generic": "문제가 발생했습니다",
     "network": "네트워크 오류"
@@ -227,7 +234,9 @@
     "deleteChat": "이 채팅을 삭제하시겠습니까?",
     "deleteChatNamed": "\"{title}\"을(를) 삭제하시겠습니까?",
     "deletePreset": "프리셋 \"{name}\"을(를) 삭제하시겠습니까?",
-    "unsaved": "저장하지 않은 변경 사항이 있습니다."
+    "unsaved": "저장하지 않은 변경 사항이 있습니다.",
+    "deleteChatTitle": "채팅 삭제",
+    "deletePresetTitle": "프리셋 삭제"
   },
   "toolInspector": {
     "title": "도구 검사기",

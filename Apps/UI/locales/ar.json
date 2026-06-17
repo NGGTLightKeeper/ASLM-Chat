@@ -16,7 +16,9 @@
     "newChat": "محادثة جديدة",
     "attachmentChat": "محادثة مرفقات",
     "howCanIHelp": "كيف يمكنني المساعدة؟",
-    "welcomeTitle": "كيف يمكنني المساعدة؟"
+    "welcomeTitle": "كيف يمكنني المساعدة؟",
+    "renameTitle": "إعادة تسمية المحادثة",
+    "renameLabel": "اسم المحادثة"
   },
   "composer": {
     "placeholder": "راسل ASLM...",
@@ -72,7 +74,10 @@
     "settings": "الإعدادات",
     "sampling": "أخذ العينات",
     "advanced": "متقدّم",
-    "custom": "مخصّص"
+    "custom": "مخصّص",
+    "presetNameLabel": "اسم الإعداد المسبق",
+    "presetNewTitle": "إعداد مسبق جديد",
+    "presetRenameTitle": "إعادة تسمية الإعداد المسبق"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +176,6 @@
     "renameFolderAria": "إعادة تسمية المجلد",
     "renameFileAria": "إعادة تسمية الملف",
     "deleteFileAria": "حذف الملف",
-    "dialogOk": "موافق",
-    "dialogCancel": "إلغاء",
-    "dialogConfirm": "تأكيد",
-    "dialogInput": "إدخال",
-    "valueRequired": "القيمة مطلوبة.",
     "createSkill": "إنشاء مهارة",
     "skillNamePlaceholder": "اسم-المهارة",
     "create": "إنشاء",
@@ -219,6 +219,13 @@
     "importNoSupported": "لم يُعثر على ملفات نصية مدعومة (.md و.txt و.py …).",
     "importNoSupportedFor": "لم يُعثر على ملفات مدعومة لـ \"{name}\"."
   },
+  "dialog": {
+    "ok": "موافق",
+    "cancel": "إلغاء",
+    "confirm": "تأكيد",
+    "input": "إدخال",
+    "valueRequired": "القيمة مطلوبة."
+  },
   "errors": {
     "generic": "حدث خطأ ما",
     "network": "خطأ في الشبكة"
@@ -227,7 +234,9 @@
     "deleteChat": "حذف هذه المحادثة؟",
     "deleteChatNamed": "حذف \"{title}\"؟",
     "deletePreset": "حذف الإعداد المسبق \"{name}\"؟",
-    "unsaved": "لديك تغييرات غير محفوظة."
+    "unsaved": "لديك تغييرات غير محفوظة.",
+    "deleteChatTitle": "حذف المحادثة",
+    "deletePresetTitle": "حذف الإعداد المسبق"
   },
   "toolInspector": {
     "title": "مفتش الأدوات",

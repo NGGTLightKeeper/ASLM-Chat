@@ -16,7 +16,9 @@
     "newChat": "Obrolan Baru",
     "attachmentChat": "Obrolan lampiran",
     "howCanIHelp": "Apa yang bisa saya bantu?",
-    "welcomeTitle": "Apa yang bisa saya bantu?"
+    "welcomeTitle": "Apa yang bisa saya bantu?",
+    "renameTitle": "Ubah nama obrolan",
+    "renameLabel": "Nama obrolan"
   },
   "composer": {
     "placeholder": "Kirim pesan ke ASLM...",
@@ -72,7 +74,10 @@
     "settings": "Pengaturan",
     "sampling": "Pengambilan sampel",
     "advanced": "Lanjutan",
-    "custom": "Kustom"
+    "custom": "Kustom",
+    "presetNameLabel": "Nama prasetel",
+    "presetNewTitle": "Prasetel baru",
+    "presetRenameTitle": "Ubah nama prasetel"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +176,6 @@
     "renameFolderAria": "Ganti nama folder",
     "renameFileAria": "Ganti nama berkas",
     "deleteFileAria": "Hapus berkas",
-    "dialogOk": "OK",
-    "dialogCancel": "Batal",
-    "dialogConfirm": "Konfirmasi",
-    "dialogInput": "Masukan",
-    "valueRequired": "Nilai wajib diisi.",
     "createSkill": "Buat keterampilan",
     "skillNamePlaceholder": "nama-keterampilan",
     "create": "Buat",
@@ -219,6 +219,13 @@
     "importNoSupported": "Tidak ada berkas teks yang didukung (.md, .txt, .py, …).",
     "importNoSupportedFor": "Tidak ada berkas didukung untuk \"{name}\"."
   },
+  "dialog": {
+    "ok": "OK",
+    "cancel": "Batal",
+    "confirm": "Konfirmasi",
+    "input": "Masukan",
+    "valueRequired": "Nilai wajib diisi."
+  },
   "errors": {
     "generic": "Terjadi kesalahan",
     "network": "Kesalahan jaringan"
@@ -227,7 +234,9 @@
     "deleteChat": "Hapus obrolan ini?",
     "deleteChatNamed": "Hapus \"{title}\"?",
     "deletePreset": "Hapus prasetel \"{name}\"?",
-    "unsaved": "Anda memiliki perubahan yang belum disimpan."
+    "unsaved": "Anda memiliki perubahan yang belum disimpan.",
+    "deleteChatTitle": "Hapus obrolan",
+    "deletePresetTitle": "Hapus prasetel"
   },
   "toolInspector": {
     "title": "Inspektor Alat",

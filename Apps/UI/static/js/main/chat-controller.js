@@ -2,6 +2,7 @@
 
 import { deleteJson, getCsrfToken, getJson, patchJson, postJson } from './api.js';
 import { intlLocaleTag, t } from './i18n.js';
+import { confirmDialog, textDialog } from '../ui/dialogs.js';
 
 // Chat controller.
 // Create the chat workflow controller for sending, loading, and mutating chats.
@@ -988,7 +989,12 @@ export function createChatController(context, dependencies) {
     const currentTitle = $item.find('.chat-item-title').text();
     historyUi.closeChatMenu();
 
-    const newTitle = window.prompt('Rename chat:', currentTitle);
+    const newTitle = await textDialog({
+      title: t('chat.renameTitle', null, 'Rename chat'),
+      label: t('chat.renameLabel', null, 'Chat name'),
+      value: currentTitle,
+      confirmText: t('sidebar.rename', null, 'Rename')
+    });
     if (!newTitle || !newTitle.trim() || newTitle.trim() === currentTitle) {
       return;
     }
@@ -1022,7 +1028,13 @@ export function createChatController(context, dependencies) {
     const title = $item.find('.chat-item-title').text();
     historyUi.closeChatMenu();
 
-    if (!window.confirm(t('confirm.deleteChatNamed', { title }, `Delete "${title}"?`))) {
+    const confirmed = await confirmDialog({
+      title: t('confirm.deleteChatTitle', null, 'Delete chat'),
+      message: t('confirm.deleteChatNamed', { title }, `Delete "${title}"?`),
+      confirmText: t('sidebar.delete', null, 'Delete'),
+      danger: true
+    });
+    if (!confirmed) {
       return;
     }
 

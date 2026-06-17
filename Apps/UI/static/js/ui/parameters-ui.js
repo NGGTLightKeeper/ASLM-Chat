@@ -15,6 +15,7 @@ import {
 } from '../main/utils.js';
 import { getJson, patchJson } from '../main/api.js';
 import { t } from '../main/i18n.js';
+import { messageDialog } from './dialogs.js';
 
 // Parameters UI.
 // Create helpers for model controls, tool selection, and option payloads.
@@ -234,7 +235,7 @@ export function createParametersUi(context) {
     try {
       data = await getJson('/api/mcp_config/');
     } catch (err) {
-      window.alert(err && err.message ? err.message : String(err));
+      await messageDialog(t('errors.generic', null, 'Something went wrong'), err && err.message ? err.message : String(err));
       return;
     }
 

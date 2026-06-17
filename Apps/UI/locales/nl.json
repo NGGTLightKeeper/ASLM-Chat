@@ -16,7 +16,9 @@
     "newChat": "Nieuwe chat",
     "attachmentChat": "Bijlagechat",
     "howCanIHelp": "Hoe kan ik helpen?",
-    "welcomeTitle": "Hoe kan ik helpen?"
+    "welcomeTitle": "Hoe kan ik helpen?",
+    "renameTitle": "Chat hernoemen",
+    "renameLabel": "Chatnaam"
   },
   "composer": {
     "placeholder": "Bericht aan ASLM...",
@@ -72,7 +74,10 @@
     "settings": "Instellingen",
     "sampling": "Steekproef",
     "advanced": "Geavanceerd",
-    "custom": "Aangepast"
+    "custom": "Aangepast",
+    "presetNameLabel": "Naam voorinstelling",
+    "presetNewTitle": "Nieuwe voorinstelling",
+    "presetRenameTitle": "Voorinstelling hernoemen"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +176,6 @@
     "renameFolderAria": "Map hernoemen",
     "renameFileAria": "Bestand hernoemen",
     "deleteFileAria": "Bestand verwijderen",
-    "dialogOk": "OK",
-    "dialogCancel": "Annuleren",
-    "dialogConfirm": "Bevestigen",
-    "dialogInput": "Invoer",
-    "valueRequired": "Waarde is verplicht.",
     "createSkill": "Vaardigheid maken",
     "skillNamePlaceholder": "vaardigheid-naam",
     "create": "Maken",
@@ -219,6 +219,13 @@
     "importNoSupported": "Geen ondersteunde tekstbestanden (.md, .txt, .py, …).",
     "importNoSupportedFor": "Geen ondersteunde bestanden voor \"{name}\"."
   },
+  "dialog": {
+    "ok": "OK",
+    "cancel": "Annuleren",
+    "confirm": "Bevestigen",
+    "input": "Invoer",
+    "valueRequired": "Waarde is verplicht."
+  },
   "errors": {
     "generic": "Er is iets misgegaan",
     "network": "Netwerkfout"
@@ -227,7 +234,9 @@
     "deleteChat": "Deze chat verwijderen?",
     "deleteChatNamed": "\"{title}\" verwijderen?",
     "deletePreset": "Voorinstelling \"{name}\" verwijderen?",
-    "unsaved": "Je hebt niet-opgeslagen wijzigingen."
+    "unsaved": "Je hebt niet-opgeslagen wijzigingen.",
+    "deleteChatTitle": "Chat verwijderen",
+    "deletePresetTitle": "Voorinstelling verwijderen"
   },
   "toolInspector": {
     "title": "Toolinspecteur",

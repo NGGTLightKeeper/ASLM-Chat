@@ -16,7 +16,9 @@
     "newChat": "New Chat",
     "attachmentChat": "Attachment chat",
     "howCanIHelp": "How can I help?",
-    "welcomeTitle": "How can I help?"
+    "welcomeTitle": "How can I help?",
+    "renameTitle": "Rename chat",
+    "renameLabel": "Chat name"
   },
   "composer": {
     "placeholder": "Message ASLM...",
@@ -72,7 +74,10 @@
     "settings": "Settings",
     "sampling": "Sampling",
     "advanced": "Advanced",
-    "custom": "Custom"
+    "custom": "Custom",
+    "presetNameLabel": "Preset name",
+    "presetNewTitle": "New preset",
+    "presetRenameTitle": "Rename preset"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -178,11 +183,6 @@
     "renameFolderAria": "Rename folder",
     "renameFileAria": "Rename file",
     "deleteFileAria": "Delete file",
-    "dialogOk": "OK",
-    "dialogCancel": "Cancel",
-    "dialogConfirm": "Confirm",
-    "dialogInput": "Input",
-    "valueRequired": "Value is required.",
     "createSkill": "Create skill",
     "skillNamePlaceholder": "skill-name",
     "create": "Create",
@@ -226,6 +226,13 @@
     "importNoSupported": "No supported text files found (.md, .txt, .py, …).",
     "importNoSupportedFor": "No supported text files found for \"{name}\"."
   },
+  "dialog": {
+    "ok": "OK",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "input": "Input",
+    "valueRequired": "Value is required."
+  },
   "errors": {
     "generic": "Something went wrong",
     "network": "Network error"
@@ -234,7 +241,9 @@
     "deleteChat": "Delete this chat?",
     "deleteChatNamed": "Delete \"{title}\"?",
     "deletePreset": "Delete preset \"{name}\"?",
-    "unsaved": "You have unsaved changes."
+    "unsaved": "You have unsaved changes.",
+    "deleteChatTitle": "Delete chat",
+    "deletePresetTitle": "Delete preset"
   },
   "toolInspector": {
     "title": "Tool Inspector",

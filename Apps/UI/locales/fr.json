@@ -16,7 +16,9 @@
     "newChat": "Nouvelle discussion",
     "attachmentChat": "Discussion avec pièces jointes",
     "howCanIHelp": "Comment puis-je vous aider ?",
-    "welcomeTitle": "Comment puis-je vous aider ?"
+    "welcomeTitle": "Comment puis-je vous aider ?",
+    "renameTitle": "Renommer la discussion",
+    "renameLabel": "Nom de la discussion"
   },
   "composer": {
     "placeholder": "Message à ASLM...",
@@ -72,7 +74,10 @@
     "settings": "Paramètres",
     "sampling": "Échantillonnage",
     "advanced": "Avancé",
-    "custom": "Personnalisé"
+    "custom": "Personnalisé",
+    "presetNameLabel": "Nom du préréglage",
+    "presetNewTitle": "Nouveau préréglage",
+    "presetRenameTitle": "Renommer le préréglage"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +176,6 @@
     "renameFolderAria": "Renommer le dossier",
     "renameFileAria": "Renommer le fichier",
     "deleteFileAria": "Supprimer le fichier",
-    "dialogOk": "OK",
-    "dialogCancel": "Annuler",
-    "dialogConfirm": "Confirmer",
-    "dialogInput": "Saisie",
-    "valueRequired": "La valeur est obligatoire.",
     "createSkill": "Créer une compétence",
     "skillNamePlaceholder": "nom-competence",
     "create": "Créer",
@@ -219,6 +219,13 @@
     "importNoSupported": "Aucun fichier texte pris en charge (.md, .txt, .py, …).",
     "importNoSupportedFor": "Aucun fichier pris en charge pour « {name} »."
   },
+  "dialog": {
+    "ok": "OK",
+    "cancel": "Annuler",
+    "confirm": "Confirmer",
+    "input": "Saisie",
+    "valueRequired": "La valeur est obligatoire."
+  },
   "errors": {
     "generic": "Une erreur s'est produite",
     "network": "Erreur réseau"
@@ -227,7 +234,9 @@
     "deleteChat": "Supprimer cette discussion ?",
     "deleteChatNamed": "Supprimer « {title} » ?",
     "deletePreset": "Supprimer le préréglage « {name} » ?",
-    "unsaved": "Vous avez des modifications non enregistrées."
+    "unsaved": "Vous avez des modifications non enregistrées.",
+    "deleteChatTitle": "Supprimer la discussion",
+    "deletePresetTitle": "Supprimer le préréglage"
   },
   "toolInspector": {
     "title": "Inspecteur d'outils",

@@ -16,7 +16,9 @@
     "newChat": "Neuer Chat",
     "attachmentChat": "Anhang-Chat",
     "howCanIHelp": "Wie kann ich helfen?",
-    "welcomeTitle": "Wie kann ich helfen?"
+    "welcomeTitle": "Wie kann ich helfen?",
+    "renameTitle": "Chat umbenennen",
+    "renameLabel": "Chat-Name"
   },
   "composer": {
     "placeholder": "Nachricht an ASLM …",
@@ -72,7 +74,10 @@
     "settings": "Einstellungen",
     "sampling": "Stichprobe",
     "advanced": "Erweitert",
-    "custom": "Benutzerdefiniert"
+    "custom": "Benutzerdefiniert",
+    "presetNameLabel": "Name der Voreinstellung",
+    "presetNewTitle": "Neue Voreinstellung",
+    "presetRenameTitle": "Voreinstellung umbenennen"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +176,6 @@
     "renameFolderAria": "Ordner umbenennen",
     "renameFileAria": "Datei umbenennen",
     "deleteFileAria": "Datei löschen",
-    "dialogOk": "OK",
-    "dialogCancel": "Abbrechen",
-    "dialogConfirm": "Bestätigen",
-    "dialogInput": "Eingabe",
-    "valueRequired": "Wert ist erforderlich.",
     "createSkill": "Skill erstellen",
     "skillNamePlaceholder": "skill-name",
     "create": "Erstellen",
@@ -219,6 +219,13 @@
     "importNoSupported": "Keine unterstützten Textdateien gefunden (.md, .txt, .py, …).",
     "importNoSupportedFor": "Keine unterstützten Textdateien für „{name}“ gefunden."
   },
+  "dialog": {
+    "ok": "OK",
+    "cancel": "Abbrechen",
+    "confirm": "Bestätigen",
+    "input": "Eingabe",
+    "valueRequired": "Wert ist erforderlich."
+  },
   "errors": {
     "generic": "Etwas ist schiefgelaufen",
     "network": "Netzwerkfehler"
@@ -227,7 +234,9 @@
     "deleteChat": "Diesen Chat löschen?",
     "deleteChatNamed": "„{title}“ löschen?",
     "deletePreset": "Voreinstellung „{name}“ löschen?",
-    "unsaved": "Sie haben ungespeicherte Änderungen."
+    "unsaved": "Sie haben ungespeicherte Änderungen.",
+    "deleteChatTitle": "Chat löschen",
+    "deletePresetTitle": "Voreinstellung löschen"
   },
   "toolInspector": {
     "title": "Tool-Inspektor",

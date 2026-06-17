@@ -2,6 +2,7 @@
 
 import { getJson, postJson } from './api.js';
 import { t } from './i18n.js';
+import { confirmDialog, textDialog } from '../ui/dialogs.js';
 import { LLM_PARAMETER_OPTION_SETS } from './constants.js';
 import { getEngineAdapter, normalizeEngineValue } from '../engines/engine-registry.js';
 import { isLocalHostname, normalizeAddressForParsing } from './utils.js';
@@ -751,7 +752,12 @@ export function createEngineManager(context, dependencies) {
       return;
     }
 
-    const requestedName = window.prompt('Preset name', '');
+    const requestedName = await textDialog({
+      title: t('settings.presetNewTitle', null, 'New preset'),
+      label: t('settings.presetNameLabel', null, 'Preset name'),
+      confirmText: t('settings.presetNew', null, 'New'),
+      required: false
+    });
     if (requestedName === null) {
       return;
     }
@@ -774,7 +780,12 @@ export function createEngineManager(context, dependencies) {
       return;
     }
 
-    const requestedName = window.prompt('Preset name', activePreset.name || '');
+    const requestedName = await textDialog({
+      title: t('settings.presetRenameTitle', null, 'Rename preset'),
+      label: t('settings.presetNameLabel', null, 'Preset name'),
+      value: activePreset.name || '',
+      confirmText: t('sidebar.rename', null, 'Rename')
+    });
     if (requestedName === null) {
       return;
     }
@@ -796,7 +807,13 @@ export function createEngineManager(context, dependencies) {
       return;
     }
 
-    if (!window.confirm(t('confirm.deletePreset', { name: activePreset.name }, `Delete preset "${activePreset.name}"?`))) {
+    const confirmed = await confirmDialog({
+      title: t('confirm.deletePresetTitle', null, 'Delete preset'),
+      message: t('confirm.deletePreset', { name: activePreset.name }, `Delete preset "${activePreset.name}"?`),
+      confirmText: t('settings.presetDelete', null, 'Delete'),
+      danger: true
+    });
+    if (!confirmed) {
       return;
     }
 

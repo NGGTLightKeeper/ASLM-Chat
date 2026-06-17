@@ -16,7 +16,9 @@
     "newChat": "Yeni Sohbet",
     "attachmentChat": "Ek dosyalı sohbet",
     "howCanIHelp": "Size nasıl yardımcı olabilirim?",
-    "welcomeTitle": "Size nasıl yardımcı olabilirim?"
+    "welcomeTitle": "Size nasıl yardımcı olabilirim?",
+    "renameTitle": "Sohbeti yeniden adlandır",
+    "renameLabel": "Sohbet adı"
   },
   "composer": {
     "placeholder": "ASLM'e mesaj yazın...",
@@ -72,7 +74,10 @@
     "settings": "Ayarlar",
     "sampling": "Örnekleme",
     "advanced": "Gelişmiş",
-    "custom": "Özel"
+    "custom": "Özel",
+    "presetNameLabel": "Ön ayar adı",
+    "presetNewTitle": "Yeni ön ayar",
+    "presetRenameTitle": "Ön ayarı yeniden adlandır"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +176,6 @@
     "renameFolderAria": "Klasörü yeniden adlandır",
     "renameFileAria": "Dosyayı yeniden adlandır",
     "deleteFileAria": "Dosyayı sil",
-    "dialogOk": "Tamam",
-    "dialogCancel": "İptal",
-    "dialogConfirm": "Onayla",
-    "dialogInput": "Giriş",
-    "valueRequired": "Değer gerekli.",
     "createSkill": "Beceri oluştur",
     "skillNamePlaceholder": "beceri-adi",
     "create": "Oluştur",
@@ -219,6 +219,13 @@
     "importNoSupported": "Desteklenen metin dosyası yok (.md, .txt, .py, …).",
     "importNoSupportedFor": "\"{name}\" için desteklenen dosya yok."
   },
+  "dialog": {
+    "ok": "Tamam",
+    "cancel": "İptal",
+    "confirm": "Onayla",
+    "input": "Giriş",
+    "valueRequired": "Değer gerekli."
+  },
   "errors": {
     "generic": "Bir şeyler ters gitti",
     "network": "Ağ hatası"
@@ -227,7 +234,9 @@
     "deleteChat": "Bu sohbet silinsin mi?",
     "deleteChatNamed": "\"{title}\" silinsin mi?",
     "deletePreset": "\"{name}\" ön ayarı silinsin mi?",
-    "unsaved": "Kaydedilmemiş değişiklikleriniz var."
+    "unsaved": "Kaydedilmemiş değişiklikleriniz var.",
+    "deleteChatTitle": "Sohbeti sil",
+    "deletePresetTitle": "Ön ayarı sil"
   },
   "toolInspector": {
     "title": "Araç Denetleyicisi",

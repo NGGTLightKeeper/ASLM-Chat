@@ -2,6 +2,7 @@
 
 import { getJson, patchJson, postJson, requestJson } from '../main/api.js';
 import { intlLocaleTag, t } from '../main/i18n.js';
+import { confirmDialog, messageDialog, textDialog } from './dialogs.js';
 
 // Skills manager UI.
 // Create the settings-sidebar entry and the modal customize surface.
@@ -150,122 +151,8 @@ export function createSkillsUi(context) {
       $detail.find('.skills-detail-error').remove();
       $detail.prepend($('<div class="skills-detail-error" role="alert">').text(message));
     } else {
-      showMessageDialog(t('skills.errorTitle'), message);
+      messageDialog(t('skills.errorTitle'), message);
     }
-  }
-
-  // Show a simple acknowledgement dialog.
-  function showMessageDialog(title, message) {
-    return showConfirmDialog({
-      title,
-      message,
-      confirmText: t('skills.dialogOk'),
-      cancelText: '',
-      danger: false
-    });
-  }
-
-  // Inline dialog helpers.
-  function showTextDialog(options) {
-    ensureOverlay();
-    return new Promise(function textDialogPromise(resolve) {
-      const dialogOptions = options || {};
-      const $backdrop = $('<div class="skills-inline-dialog-backdrop" role="dialog" aria-modal="true">');
-      const $dialog = $('<div class="skills-inline-dialog">');
-      const $title = $('<div class="skills-inline-dialog-title">').text(dialogOptions.title || t('skills.dialogInput'));
-      const $label = $('<label class="skills-inline-dialog-label">').text(dialogOptions.label || '');
-      const $input = $('<input class="skills-inline-dialog-input" type="text">')
-        .val(dialogOptions.value || '')
-        .attr('placeholder', dialogOptions.placeholder || '');
-      const $error = $('<div class="skills-inline-dialog-error" role="alert">').hide();
-      const $actions = $('<div class="skills-inline-dialog-actions">');
-      const $cancel = $('<button type="button" class="preset-action-btn">').text(t('skills.dialogCancel'));
-      const $confirm = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text(dialogOptions.confirmText || t('skills.dialogOk'));
-
-      function close(value) {
-        $backdrop.remove();
-        resolve(value);
-      }
-
-      function submit() {
-        const value = String($input.val() || '').trim();
-        if (!value) {
-          $error.text(t('skills.valueRequired')).show();
-          return;
-        }
-        close(value);
-      }
-
-      $cancel.on('click', function onCancel() {
-        close('');
-      });
-      $confirm.on('click', submit);
-      $input.on('keydown', function onKeyDown(ev) {
-        if (ev.key === 'Enter') {
-          ev.preventDefault();
-          submit();
-        } else if (ev.key === 'Escape') {
-          ev.preventDefault();
-          close('');
-        }
-      });
-
-      $actions.append($cancel).append($confirm);
-      $dialog.append($title).append($label.append($input)).append($error).append($actions);
-      $backdrop.append($dialog);
-      ($overlay || $('body')).append($backdrop);
-      requestAnimationFrame(function focusInput() {
-        $input.trigger('focus');
-        const input = $input.get(0);
-        if (input && input.select) {
-          input.select();
-        }
-      });
-    });
-  }
-
-  // Show a confirm or cancel dialog inside the skills manager.
-  function showConfirmDialog(options) {
-    ensureOverlay();
-    return new Promise(function confirmDialogPromise(resolve) {
-      const dialogOptions = options || {};
-      const $backdrop = $('<div class="skills-inline-dialog-backdrop" role="dialog" aria-modal="true">');
-      const $dialog = $('<div class="skills-inline-dialog">');
-      const $title = $('<div class="skills-inline-dialog-title">').text(dialogOptions.title || t('skills.dialogConfirm'));
-      const $message = $('<div class="skills-inline-dialog-message">').text(dialogOptions.message || '');
-      const $actions = $('<div class="skills-inline-dialog-actions">');
-      const cancelText = dialogOptions.cancelText === undefined ? t('skills.dialogCancel') : String(dialogOptions.cancelText || '');
-      const $confirm = $('<button type="button" class="preset-action-btn preset-action-btn-primary">')
-        .toggleClass('preset-action-btn-danger', Boolean(dialogOptions.danger))
-        .text(dialogOptions.confirmText || t('skills.dialogOk'));
-
-      function close(value) {
-        $backdrop.remove();
-        resolve(value);
-      }
-
-      if (cancelText) {
-        const $cancel = $('<button type="button" class="preset-action-btn">').text(cancelText);
-        $cancel.on('click', function onCancel() {
-          close(false);
-        });
-        $actions.append($cancel);
-      }
-
-      $confirm.on('click', function onConfirm() {
-        close(true);
-      });
-      $backdrop.on('click', function onBackdropClick(ev) {
-        if (ev.target === $backdrop[0]) {
-          close(false);
-        }
-      });
-
-      $actions.append($confirm);
-      $dialog.append($title).append($message).append($actions);
-      $backdrop.append($dialog);
-      ($overlay || $('body')).append($backdrop);
-    });
   }
 
   const ALLOWED_IMPORT_EXTENSIONS = new Set([
@@ -689,7 +576,7 @@ export function createSkillsUi(context) {
 
   // Skill folder mutations.
   async function createSkill() {
-    const name = await showTextDialog({
+    const name = await textDialog({
       title: t('skills.newSkill'),
       label: t('skills.skillFolderName'),
       placeholder: t('skills.skillFolderNamePlaceholder'),
@@ -707,7 +594,7 @@ export function createSkillsUi(context) {
 
   // Rename one skill folder on the server.
   async function renameSkill(folderName) {
-    const nextName = await showTextDialog({
+    const nextName = await textDialog({
       title: t('skills.renameSkill'),
       label: t('skills.newSkillFolderName'),
       value: folderName,
@@ -724,7 +611,7 @@ export function createSkillsUi(context) {
 
   // Delete one skill folder on the server.
   async function deleteSkill(folderName) {
-    const confirmed = await showConfirmDialog({
+    const confirmed = await confirmDialog({
       title: t('skills.deleteSkill'),
       message: t('skills.deleteSkillConfirm', { name: folderName }),
       confirmText: t('sidebar.delete'),
@@ -747,7 +634,7 @@ export function createSkillsUi(context) {
 
   // Create one new file inside a skill folder.
   async function createFile(folderName) {
-    const filePath = await showTextDialog({
+    const filePath = await textDialog({
       title: t('skills.newSkillFile'),
       label: t('skills.filePathInSkill'),
       value: 'SKILL.md',
@@ -777,7 +664,7 @@ export function createSkillsUi(context) {
     }
     const opts = options || {};
     if (!opts.skipConfirm) {
-      const confirmed = await showConfirmDialog({
+      const confirmed = await confirmDialog({
         title: t('skills.deleteFile'),
         message: t('skills.deleteFileConfirm'),
         confirmText: t('sidebar.delete'),
@@ -851,7 +738,7 @@ export function createSkillsUi(context) {
   // Rename one directory in the skills tree.
   async function renameTreeDirectory(folderName, dirPath) {
     const baseName = dirPath.split('/').pop() || dirPath;
-    const newName = await showTextDialog({
+    const newName = await textDialog({
       title: t('skills.renameFolder'),
       label: t('skills.folderName'),
       value: baseName,
@@ -880,7 +767,7 @@ export function createSkillsUi(context) {
   // Rename one file in the skills tree.
   async function renameTreeFile(folderName, filePath) {
     const baseName = filePath.split('/').pop() || filePath;
-    const newName = await showTextDialog({
+    const newName = await textDialog({
       title: t('skills.renameFile'),
       label: t('skills.fileName'),
       value: baseName,

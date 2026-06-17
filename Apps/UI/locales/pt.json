@@ -16,7 +16,9 @@
     "newChat": "Nova conversa",
     "attachmentChat": "Conversa com anexos",
     "howCanIHelp": "Em que posso ajudar?",
-    "welcomeTitle": "Em que posso ajudar?"
+    "welcomeTitle": "Em que posso ajudar?",
+    "renameTitle": "Renomear conversa",
+    "renameLabel": "Nome da conversa"
   },
   "composer": {
     "placeholder": "Mensagem para o ASLM...",
@@ -72,7 +74,10 @@
     "settings": "Definições",
     "sampling": "Amostragem",
     "advanced": "Avançado",
-    "custom": "Personalizado"
+    "custom": "Personalizado",
+    "presetNameLabel": "Nome da predefinição",
+    "presetNewTitle": "Nova predefinição",
+    "presetRenameTitle": "Renomear predefinição"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +176,6 @@
     "renameFolderAria": "Renomear pasta",
     "renameFileAria": "Renomear ficheiro",
     "deleteFileAria": "Eliminar ficheiro",
-    "dialogOk": "OK",
-    "dialogCancel": "Cancelar",
-    "dialogConfirm": "Confirmar",
-    "dialogInput": "Entrada",
-    "valueRequired": "O valor é obrigatório.",
     "createSkill": "Criar competência",
     "skillNamePlaceholder": "nome-competencia",
     "create": "Criar",
@@ -219,6 +219,13 @@
     "importNoSupported": "Nenhum ficheiro de texto suportado (.md, .txt, .py, …).",
     "importNoSupportedFor": "Nenhum ficheiro suportado para «{name}»."
   },
+  "dialog": {
+    "ok": "OK",
+    "cancel": "Cancelar",
+    "confirm": "Confirmar",
+    "input": "Entrada",
+    "valueRequired": "O valor é obrigatório."
+  },
   "errors": {
     "generic": "Algo correu mal",
     "network": "Erro de rede"
@@ -227,7 +234,9 @@
     "deleteChat": "Eliminar esta conversa?",
     "deleteChatNamed": "Eliminar \"{title}\"?",
     "deletePreset": "Eliminar a predefinição \"{name}\"?",
-    "unsaved": "Tem alterações por guardar."
+    "unsaved": "Tem alterações por guardar.",
+    "deleteChatTitle": "Eliminar conversa",
+    "deletePresetTitle": "Eliminar predefinição"
   },
   "toolInspector": {
     "title": "Inspetor de ferramentas",

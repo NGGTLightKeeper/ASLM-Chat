@@ -16,7 +16,9 @@
     "newChat": "Новий чат",
     "attachmentChat": "Чат з вкладеннями",
     "howCanIHelp": "Чим можу допомогти?",
-    "welcomeTitle": "Чим можу допомогти?"
+    "welcomeTitle": "Чим можу допомогти?",
+    "renameTitle": "Перейменувати чат",
+    "renameLabel": "Назва чату"
   },
   "composer": {
     "placeholder": "Напишіть ASLM...",
@@ -72,7 +74,10 @@
     "settings": "Налаштування",
     "sampling": "Семплінг",
     "advanced": "Розширені",
-    "custom": "Власні"
+    "custom": "Власні",
+    "presetNameLabel": "Назва шаблону",
+    "presetNewTitle": "Новий шаблон",
+    "presetRenameTitle": "Перейменувати шаблон"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +176,6 @@
     "renameFolderAria": "Перейменувати теку",
     "renameFileAria": "Перейменувати файл",
     "deleteFileAria": "Видалити файл",
-    "dialogOk": "Гаразд",
-    "dialogCancel": "Скасувати",
-    "dialogConfirm": "Підтвердження",
-    "dialogInput": "Введення",
-    "valueRequired": "Вкажіть значення.",
     "createSkill": "Створити навичку",
     "skillNamePlaceholder": "ім'я-навички",
     "create": "Створити",
@@ -219,6 +219,13 @@
     "importNoSupported": "Підтримувані текстові файли не знайдено (.md, .txt, .py, …).",
     "importNoSupportedFor": "Для «{name}» не знайдено підтримуваних текстових файлів."
   },
+  "dialog": {
+    "ok": "Гаразд",
+    "cancel": "Скасувати",
+    "confirm": "Підтвердження",
+    "input": "Введення",
+    "valueRequired": "Вкажіть значення."
+  },
   "errors": {
     "generic": "Щось пішло не так",
     "network": "Помилка мережі"
@@ -227,7 +234,9 @@
     "deleteChat": "Видалити цей чат?",
     "deleteChatNamed": "Видалити «{title}»?",
     "deletePreset": "Видалити шаблон «{name}»?",
-    "unsaved": "У вас є незбережені зміни."
+    "unsaved": "У вас є незбережені зміни.",
+    "deleteChatTitle": "Видалити чат",
+    "deletePresetTitle": "Видалити шаблон"
   },
   "toolInspector": {
     "title": "Інспектор інструментів",

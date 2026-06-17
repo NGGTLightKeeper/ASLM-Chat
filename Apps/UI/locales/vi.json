@@ -16,7 +16,9 @@
     "newChat": "Cuộc trò chuyện mới",
     "attachmentChat": "Cuộc trò chuyện có tệp đính kèm",
     "howCanIHelp": "Tôi có thể giúp gì?",
-    "welcomeTitle": "Tôi có thể giúp gì?"
+    "welcomeTitle": "Tôi có thể giúp gì?",
+    "renameTitle": "Đổi tên cuộc trò chuyện",
+    "renameLabel": "Tên cuộc trò chuyện"
   },
   "composer": {
     "placeholder": "Nhắn tin cho ASLM...",
@@ -72,7 +74,10 @@
     "settings": "Cài đặt",
     "sampling": "Lấy mẫu",
     "advanced": "Nâng cao",
-    "custom": "Tùy chỉnh"
+    "custom": "Tùy chỉnh",
+    "presetNameLabel": "Tên cấu hình sẵn",
+    "presetNewTitle": "Cấu hình sẵn mới",
+    "presetRenameTitle": "Đổi tên cấu hình sẵn"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +176,6 @@
     "renameFolderAria": "Đổi tên thư mục",
     "renameFileAria": "Đổi tên tệp",
     "deleteFileAria": "Xóa tệp",
-    "dialogOk": "OK",
-    "dialogCancel": "Hủy",
-    "dialogConfirm": "Xác nhận",
-    "dialogInput": "Nhập",
-    "valueRequired": "Giá trị là bắt buộc.",
     "createSkill": "Tạo kỹ năng",
     "skillNamePlaceholder": "ten-ky-nang",
     "create": "Tạo",
@@ -219,6 +219,13 @@
     "importNoSupported": "Không có tệp văn bản hỗ trợ (.md, .txt, .py, …).",
     "importNoSupportedFor": "Không có tệp hỗ trợ cho \"{name}\"."
   },
+  "dialog": {
+    "ok": "OK",
+    "cancel": "Hủy",
+    "confirm": "Xác nhận",
+    "input": "Nhập",
+    "valueRequired": "Giá trị là bắt buộc."
+  },
   "errors": {
     "generic": "Đã xảy ra lỗi",
     "network": "Lỗi mạng"
@@ -227,7 +234,9 @@
     "deleteChat": "Xóa cuộc trò chuyện này?",
     "deleteChatNamed": "Xóa \"{title}\"?",
     "deletePreset": "Xóa cấu hình sẵn \"{name}\"?",
-    "unsaved": "Bạn có thay đổi chưa lưu."
+    "unsaved": "Bạn có thay đổi chưa lưu.",
+    "deleteChatTitle": "Xóa cuộc trò chuyện",
+    "deletePresetTitle": "Xóa cấu hình sẵn"
   },
   "toolInspector": {
     "title": "Trình kiểm tra công cụ",
