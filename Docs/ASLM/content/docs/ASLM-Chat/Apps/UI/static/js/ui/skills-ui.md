@@ -65,26 +65,6 @@ Part of `Apps\UI\static\js\ui`. See **Related** for package index and callers.
 
 **Purpose:** Client function `showError` used by the chat shell.
 
-#### `function showMessageDialog(title, message)`
-
-**Purpose:** Client function `showMessageDialog` used by the chat shell.
-
-#### `function showTextDialog(options)`
-
-**Purpose:** Client function `showTextDialog` used by the chat shell.
-
-#### `function close(value)`
-
-**Purpose:** Client function `close` used by the chat shell.
-
-#### `function submit()`
-
-**Purpose:** Client function `submit` used by the chat shell.
-
-#### `function showConfirmDialog(options)`
-
-**Purpose:** Client function `showConfirmDialog` used by the chat shell.
-
 #### `function readFileAsText(file)`
 
 **Purpose:** Client function `readFileAsText` used by the chat shell.
