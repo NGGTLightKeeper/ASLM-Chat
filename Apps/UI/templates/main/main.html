@@ -10,6 +10,14 @@
 
 {# Main chat layout. #}
 <div class="chat-shell">
+    {# Apply the saved sidebar state before paint so it opens correctly without a collapse animation. #}
+    <script>
+        try {
+            if (localStorage.getItem('aslm.settingsSidebarCollapsed') === '1') {
+                document.currentScript.parentElement.classList.add('settings-collapsed');
+            }
+        } catch (e) {}
+    </script>
     {% csrf_token %}
 
     {# Conversation area. #}
@@ -149,9 +157,6 @@
     <aside class="sidebar sidebar-right" id="sidebarRight">
         <div class="sidebar-header">
             <span class="logo-name">{% t "settings.modelSettings" %}</span>
-            <button class="sidebar-collapse-btn" id="sidebarRightToggle" type="button" title="{% t "settings.collapse" %}" aria-label="{% t "settings.collapse" %}" aria-expanded="true">
-                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/arrow-left.svg' %}#icon"></use></svg>
-            </button>
         </div>
 
         <div class="settings-panel">
@@ -328,6 +333,11 @@
             </div>
         </div>
     </aside>
+
+    {# Floating collapse/expand toggle for the settings sidebar (fixed top-right). #}
+    <button class="sidebar-collapse-btn" id="sidebarRightToggle" type="button" title="{% t "settings.collapse" %}" aria-label="{% t "settings.collapse" %}" aria-expanded="true">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/arrow-left.svg' %}#icon"></use></svg>
+    </button>
 
 </div>
 
