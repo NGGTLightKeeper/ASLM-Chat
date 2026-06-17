@@ -21,6 +21,8 @@ draft: false
 | [cache](cache/) | `cache/` | SQLite source + hosted SERP caches |
 | [registry](registry/) | `registry/` | Domain/trust profiles, reputation, endpoints |
 | [debug](debug/) | `debug/` | Developer CLIs (not production MCP) |
+| [logging_setup](logging_setup/) | `logging_setup.py` | Configure log rotation |
+| [read](read/) | `read/` | Markdown read service |
 
 ---
 

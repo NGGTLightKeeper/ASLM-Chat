@@ -19,6 +19,15 @@ draft: false
 
 ## Private functions
 
+#### `def _venv_declares(packages, dist) -> bool`
+
+**Purpose:** Check if a venv's package manifest declares the given distribution.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
 #### `def _build_initial_settings(existing, ui_port, api_port) -> dict[str, Any]`
 
 **Purpose:** Build the initial settings payload for the first run.

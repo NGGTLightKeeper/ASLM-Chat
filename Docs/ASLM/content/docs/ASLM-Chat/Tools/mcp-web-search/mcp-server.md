@@ -30,6 +30,26 @@ draft: false
 
 ## Private functions
 
+#### `async def _call_serp_search(args) -> dict[str, Any]`
+
+**Purpose:** Call the SERP API adapter for a raw structured search.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Await async I/O or subprocess work.
+
+#### `async def _call_read_page(args) -> dict[str, Any]`
+
+**Purpose:** Fetch one or many URLs as markdown and wrap them in the structured payload.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Await async I/O or subprocess work.
+3. Iterate and transform or accumulate state.
+
 #### `def _maybe_parse_list(val) -> Any`
 
 **Purpose:** Parse JSON-encoded list strings passed as tool arguments.
