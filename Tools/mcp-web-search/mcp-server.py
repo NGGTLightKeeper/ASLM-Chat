@@ -125,7 +125,7 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
                 effort, shopping, query[:160])
     started = time.perf_counter()
     try:
-        result = await run_web_search(query, effort=effort)
+        result = await run_web_search(query, effort=effort, shopping=shopping)
     except Exception:
         logger.exception("mcp.web_search.failed query_preview=%r", query[:160])
         raise

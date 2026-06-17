@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from urllib.parse import parse_qs, unquote, urlparse
 
-from ..fetch.profiles import build_nav_headers, for_engine
+import random
+
+from ..fetch.profiles import for_engine
 from .models import EngineParseResult, EngineRequest, SearchResult
 from .parsing import (
     classify_parse,
@@ -20,6 +22,23 @@ from .parsing import (
 _GOOGLE_COOKIES = {
     "CONSENT": "YES+",
 }
+
+# Google Search App ("Google Go") user agents: Android Chrome + the " NSTNWV" GSA marker.
+# Google serves a clean, parseable mobile SERP to the GSA UA (the SearXNG approach); a
+# desktop Chrome UA gets a JS-gated/withheld page that yields zero organic results.
+_GSA_USER_AGENTS = (
+    "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0.6478.71 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/125.0.6422.165 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.6367.179 Mobile Safari/537.36",
+)
+
+
+# A random Google Search App user agent (Android UA + the " NSTNWV" Google-Go marker).
+def _gsa_user_agent() -> str:
+    return random.choice(_GSA_USER_AGENTS) + " NSTNWV"
 
 
 # Unwrap a Google redirect URL to the actual destination URL.
@@ -73,9 +92,9 @@ class GoogleParser:
     ) -> EngineRequest:
         country, language = split_region(region)
         profile = for_engine("google")
+        # Clean param set (no num/cr): those push Google into a degraded/withheld layout.
         params = {
             "q": query,
-            "num": "3",
             "filter": "0",
             "safe": {"on": "high", "moderate": "medium", "off": "off"}.get(safesearch, "medium"),
             "start": str(max(0, page - 1) * 10),
@@ -83,18 +102,17 @@ class GoogleParser:
             "oe": "utf8",
             "hl": f"{language}-{country.upper()}",
             "lr": f"lang_{language}",
-            "cr": f"country{country.upper()}",
         }
         if timelimit:
             params["tbs"] = f"qdr:{timelimit}"
 
-        # Sec-Fetch-Site=same-origin because we're pretending to search from google.com.
-        headers = build_nav_headers(
-            profile,
-            referer="https://www.google.com/",
-            sec_fetch_site="same-origin",
-            extra={"Accept-Language": f"{language}-{country.upper()},{language};q=0.9"},
-        )
+        # Google Search App identity: a GSA UA + Accept:*/* gets the clean, parseable
+        # mobile SERP. A desktop browser UA gets a JS-gated page with no organic results.
+        headers = {
+            "User-Agent": _gsa_user_agent(),
+            "Accept": "*/*",
+            "Accept-Language": f"{language}-{country.upper()},{language};q=0.9",
+        }
         return EngineRequest(
             method="GET",
             url=GoogleParser.search_url,
@@ -126,6 +144,7 @@ class GoogleParser:
                     ".VwiC3b",
                     ".yXK7lf",
                     "div[data-sncf]",
+                    ".ilUpNd",      # current GSA/mobile SERP snippet class
                 ),
             )
             if not title or not valid_http_url(href) or _is_internal(href):

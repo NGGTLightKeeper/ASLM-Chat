@@ -37,9 +37,10 @@ class RecentSearchTracker:
         safesearch: str = "moderate",
         timelimit: str | None = None,
         effort: str = "low",
+        shopping: bool = False,
     ) -> str:
         exact = normalize_exact_query_key(query)
-        return f"{exact}|{region}|{safesearch}|{timelimit or ''}|{effort}"
+        return f"{exact}|{region}|{safesearch}|{timelimit or ''}|{effort}|{int(bool(shopping))}"
 
     # Drop entries older than the larger of the two windows (cheap housekeeping).
     def _prune(self, now: float, horizon: float) -> None:

@@ -4,7 +4,7 @@
 # query plus the parameters that change the result (region/safesearch/timelimit/effort).
 #
 # Adapted from the legacy core/cache/hosted_cache.py, but with a FLAT TTL instead of
-# per-query-classification TTL — the in-process query classifier was retired (TODO §8),
+# per-query-classification TTL — the in-process query classifier was retired,
 # so classification is no longer available or needed. Empty/failed result sets get a
 # short negative TTL so a broken query is not hammered at every retry.
 
@@ -75,9 +75,10 @@ class HostedSearchCache:
         safesearch: str = "moderate",
         timelimit: str | None = None,
         effort: str = "low",
+        shopping: bool = False,
     ) -> str:
         normalized = normalize_query_key(query)
-        raw = f"{normalized}|{region}|{safesearch}|{timelimit or ''}|{effort}"
+        raw = f"{normalized}|{region}|{safesearch}|{timelimit or ''}|{effort}|{int(bool(shopping))}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     # Return a cached payload, or None when missing/expired.
@@ -89,9 +90,11 @@ class HostedSearchCache:
         safesearch: str = "moderate",
         timelimit: str | None = None,
         effort: str = "low",
+        shopping: bool = False,
     ) -> Optional[dict[str, Any]]:
         key = self.make_key(
-            query, region=region, safesearch=safesearch, timelimit=timelimit, effort=effort
+            query, region=region, safesearch=safesearch, timelimit=timelimit,
+            effort=effort, shopping=shopping,
         )
         try:
             row = self._get_conn().execute(
@@ -118,11 +121,13 @@ class HostedSearchCache:
         safesearch: str = "moderate",
         timelimit: str | None = None,
         effort: str = "low",
+        shopping: bool = False,
         is_empty: bool = False,
     ) -> None:
         ttl = self._negative_ttl if is_empty else self._default_ttl
         key = self.make_key(
-            query, region=region, safesearch=safesearch, timelimit=timelimit, effort=effort
+            query, region=region, safesearch=safesearch, timelimit=timelimit,
+            effort=effort, shopping=shopping,
         )
         try:
             data = json.dumps(payload, ensure_ascii=False, default=str)

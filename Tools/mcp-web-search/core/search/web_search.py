@@ -129,10 +129,14 @@ def _make_search_id() -> str:
     return f"srch_{secrets.token_hex(4)}"
 
 
-# Stable citation handle for a source's rank within a search (e.g. "a1b2c3d4-3").
+# Stable citation handle for a source's rank within a search. Byte-for-byte the legacy
+# format ("c<3-char-namespace>-<rank>", e.g. "cab1-3") so the model — tuned to that shape
+# — keeps citing correctly. search_id is "srch_<hex>"; the "srch" prefix is dropped and
+# the next 3 alphanumerics form the namespace.
 def _citation_id(search_id: str, rank: int) -> str:
-    compact = re.sub(r"[^a-z0-9]+", "", (search_id or "").lower())
-    return f"{compact}-{rank}"
+    compact = re.sub(r"[^a-z0-9]+", "", (search_id or "").lower()).removeprefix("srch")
+    namespace = (compact[:3] or "src").ljust(3, "0")
+    return f"c{namespace}-{rank}"
 
 
 # Build the model-visible text block the chat bridge reads from result["model_context"]:
@@ -176,6 +180,37 @@ def _build_model_context(
         lines.extend(block)
         total += len(btext)
     return "\n".join(lines).strip()
+
+
+# Adapt one shopping product into a citable source dict (price/seller/rating in the
+# snippet so it shows in model_context; structured fields kept for richer UI).
+def _shopping_product_dict(product: Any, *, citation_id: str, rank: int) -> dict[str, Any]:
+    price = str(getattr(product, "price_text", "") or "").strip()
+    if not price and getattr(product, "price_value", None):
+        price = f"{product.price_value:g} {getattr(product, 'currency', '') or ''}".strip()
+    rating = getattr(product, "rating", None)
+    bits = [b for b in (price, str(getattr(product, "seller", "") or ""),
+                        (f"rating {rating}" if rating else "")) if b]
+    source = str(getattr(product, "source", "") or "shopping")
+    return {
+        "id": citation_id,
+        "rank": rank,
+        "kind": "shopping",
+        "url": str(getattr(product, "url", "") or ""),
+        "host": str(getattr(product, "source_domain", "") or source),
+        "title": str(getattr(product, "title", "") or ""),
+        "snippet": " · ".join(bits),
+        "engine": f"shopping:{source}",
+        "score": float(getattr(product, "confidence", 0.0) or 0.0),
+        "consensus_families": [],
+        "price_text": price,
+        "currency": str(getattr(product, "currency", "") or ""),
+        "rating": rating,
+        "seller": str(getattr(product, "seller", "") or ""),
+        "availability": str(getattr(product, "availability", "") or ""),
+        "source": source,
+        "favicon_url": str(getattr(product, "favicon_url", "") or ""),
+    }
 
 
 # UI metadata block (source chips) the chat bridge surfaces alongside model_context.
@@ -342,6 +377,7 @@ class WebSearchService:
         region: str = "",
         safesearch: str = "moderate",
         timelimit: str | None = None,
+        shopping: bool = False,
     ) -> dict[str, Any]:
         profile = EFFORT_PROFILES.get(effort, EFFORT_PROFILES["low"])
         started = time.perf_counter()
@@ -545,6 +581,17 @@ class WebSearchService:
             }
             for rank, s in enumerate(top, 1)
         ]
+
+        # Shopping opt-in: merge structured product results (price/seller/rating) in as
+        # additional citable sources, continuing the citation-handle sequence. Off by
+        # default; failure is soft (web results still stand).
+        if shopping:
+            source_dicts.extend(
+                await self._shopping_sources(
+                    query, profile, language, search_id, start_rank=len(source_dicts) + 1
+                )
+            )
+
         model_context = _build_model_context(
             query, source_dicts,
             total_budget=int(search_cfg.total_context_budget or 0),
@@ -554,6 +601,7 @@ class WebSearchService:
             "query": query,
             "search_id": search_id,
             "effort": profile.name,
+            "shopping": shopping,
             "language": language,
             "region": region,
             "engines_used": [engine.name for engine in engines],
@@ -564,6 +612,29 @@ class WebSearchService:
             "engines": engine_payloads,
             "health": self._tracker.snapshot(),
         }
+
+    # Run the shopping engine and adapt products into citable source dicts (continuing the
+    # citation-handle sequence). Soft-fails to [] so a shopping error never sinks a search.
+    async def _shopping_sources(
+        self, query: str, profile: EffortProfile, language: str, search_id: str, *, start_rank: int
+    ) -> list[dict[str, Any]]:
+        try:
+            from core.fetch.shopping import search_shopping
+
+            result = await search_shopping(
+                query, effort=profile.name, limit=profile.max_results, language=language
+            )
+        except Exception:  # noqa: BLE001 — shopping is supplemental; never fail the search
+            logger.warning("shopping search failed for %r", query[:160], exc_info=True)
+            return []
+        dicts = [
+            _shopping_product_dict(p, citation_id=_citation_id(search_id, start_rank + i),
+                                   rank=start_rank + i)
+            for i, p in enumerate(result.products)
+        ]
+        if dicts:
+            logger.info("shopping.merged products=%d query=%r", len(dicts), query[:120])
+        return dicts
 
 
 # Build the payload returned when an identical query is hard-blocked as a repeat.
@@ -598,6 +669,7 @@ async def run_web_search(
     region: str = "",
     safesearch: str = "moderate",
     timelimit: str | None = None,
+    shopping: bool = False,
 ) -> dict[str, Any]:
     from core.cache.hosted_cache import get_hosted_cache
     from core.config import load_search_config
@@ -608,7 +680,9 @@ async def run_web_search(
     cache_cfg = load_search_config().cache
     tracker = get_recent_tracker()
     cache = get_hosted_cache()
-    key_args = dict(region=region, safesearch=safesearch, timelimit=timelimit, effort=effort)
+    # shopping is part of the cache/repeat key: shopping and non-shopping runs differ.
+    key_args = dict(region=region, safesearch=safesearch, timelimit=timelimit,
+                    effort=effort, shopping=shopping)
     qkey = tracker.query_key(query, **key_args)
 
     # 1. Identical query just served → hard block, no engines.
@@ -623,7 +697,8 @@ async def run_web_search(
         payload = {**payload, "cached": True}
     else:
         payload = await WebSearchService().search(
-            query, effort=effort, region=region, safesearch=safesearch, timelimit=timelimit
+            query, effort=effort, region=region, safesearch=safesearch,
+            timelimit=timelimit, shopping=shopping,
         )
         payload["cached"] = False
         cache.set(query, payload, is_empty=not payload.get("sources"), **key_args)
