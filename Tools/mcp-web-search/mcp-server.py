@@ -13,9 +13,11 @@ if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
 from core.logging_setup import setup_logging
+from core.read import run_read_page
 from core.search.serp_api import run_serp_search
 from core.search.web_search import run_web_search
 from core.search_io_logger import write_search_io_event
+from urllib.parse import urlparse
 
 # Wire rotating file logs (web_search.log / read_page.log / core.log / mcp_trace.log)
 # and the model IO log before anything runs, exactly like the legacy adapter.
@@ -75,6 +77,28 @@ TOOLS = [
                 "timelimit": {"type": "string", "enum": ["d", "w", "m", "y"]},
             },
             "required": ["query"],
+        },
+    },
+    {
+        "id": "read_page",
+        "name": "Read Page",
+        "description": (
+            "Fetch one or more URLs and return clean markdown (custom-domain handlers, "
+            "anti-bot escalation to the warm browser, PDF extraction, BM25 compression). "
+            "Pass a single URL string or a list of URLs."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "description": "A URL string or a list of URLs.",
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ],
+                },
+            },
+            "required": ["url"],
         },
     },
     {
@@ -172,6 +196,114 @@ async def _call_serp_search(args: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+# Parse a JSON-encoded list passed as a string tool argument (some callers stringify).
+def _maybe_parse_list(val: Any) -> Any:
+    if isinstance(val, str) and val.strip().startswith("["):
+        import json
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:  # noqa: BLE001
+            logger.debug("failed to parse list-like tool argument: %r", val[:200])
+    return val
+
+
+# Bare registrable host for a URL (no scheme/userinfo/port/www.).
+def _source_domain(url: str) -> str:
+    host = urlparse(url or "").netloc.lower()
+    if "@" in host:
+        host = host.rsplit("@", 1)[-1]
+    if ":" in host:
+        host = host.split(":", 1)[0]
+    return host.removeprefix("www.")
+
+
+# Short human label from a domain (example.com -> "Example").
+def _display_domain(domain: str) -> str:
+    parts = [p for p in (domain or "").split(".") if p]
+    if len(parts) >= 2:
+        label = parts[-2]
+    elif parts:
+        label = parts[0]
+    else:
+        return ""
+    return label.replace("-", " ").title()
+
+
+# DuckDuckGo favicon URL for a source chip.
+def _favicon_url(domain: str) -> str:
+    return f"https://icons.duckduckgo.com/ip3/{domain}.ico" if domain else ""
+
+
+# One read_page source record (UI chip metadata + ok flag from the result text).
+def _read_page_source(url: str, rank: int, result_text: str = "") -> dict[str, Any]:
+    domain = _source_domain(url)
+    ok = not str(result_text or "").lstrip().lower().startswith("error:")
+    return {
+        "rank": rank,
+        "url": (url or "").strip(),
+        "domain": domain,
+        "display_domain": _display_domain(domain) or domain,
+        "favicon_url": _favicon_url(domain),
+        "ok": ok,
+    }
+
+
+# Assemble the structured read_page payload for one or many URLs (legacy bridge shape).
+def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, Any]:
+    sources = [
+        _read_page_source(url, i, results[i - 1] if i - 1 < len(results) else "")
+        for i, url in enumerate(urls, 1)
+    ]
+    ok_count = sum(1 for s in sources if s.get("ok"))
+    status = "done" if ok_count == len(sources) else ("partial" if ok_count else "error")
+    return {
+        "query": ", ".join(urls),
+        "sources": sources,
+        "model_context": "\n\n".join(str(r or "") for r in results).strip(),
+        "ui": {
+            "kind": "read_page",
+            "status": status,
+            "result_count": len(sources),
+            "sources": sources,
+        },
+    }
+
+
+# Fetch one or many URLs as markdown and wrap them in the structured payload.
+async def _call_read_page(args: dict[str, Any]) -> dict[str, Any]:
+    import asyncio
+
+    from core.config import load_search_config
+
+    batch_limit = max(1, int(load_search_config().search.batch_query_limit))
+    url = _maybe_parse_list(args.get("url", ""))
+    write_search_io_event(
+        {"layer": "mcp_adapter", "phase": "read_page.request", "tool_id": "read_page", "url": url}
+    )
+
+    if isinstance(url, list):
+        urls = [u.strip() for u in url if isinstance(u, str) and u.strip()][:batch_limit]
+        logger.info("mcp.read_page.start batch=True urls=%d", len(urls))
+        results = await asyncio.gather(*[run_read_page(u) for u in urls], return_exceptions=True)
+        texts = [r if isinstance(r, str) else f"Error: {r}" for r in results]
+        payload = _read_page_payload(urls, texts)
+    else:
+        url_text = str(url).strip()
+        logger.info("mcp.read_page.start batch=False url=%r", url_text[:220])
+        text = await run_read_page(url_text)
+        payload = _read_page_payload([url_text], [text])
+
+    write_search_io_event(
+        {"layer": "mcp_adapter", "phase": "read_page.result", "tool_id": "read_page",
+         "result": payload}
+    )
+    logger.info("mcp.read_page.done status=%s count=%d",
+                payload["ui"]["status"], payload["ui"]["result_count"])
+    return payload
+
+
 # Cancel outstanding background work (prefetch) and release the warm browser at
 # server shutdown — a daemon this process autostarted is asked to stop so it does not
 # outlive us waiting on its idle timeout.
@@ -193,6 +325,8 @@ async def call_tool(
     _evict_caches_once()
     if tool_id == "web_search":
         return await _call_web_search(args)
+    if tool_id == "read_page":
+        return await _call_read_page(args)
     if tool_id == "serp_search":
         return await _call_serp_search(args)
     raise ValueError(f"Unknown tool: {tool_id}")

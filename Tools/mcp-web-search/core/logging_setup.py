@@ -18,6 +18,9 @@ _SERVICE_LOGS: dict[str, str] = {
     "services.read_page": "read_page.log",
     "trace.read_page": "read_page_trace.log",
     "mcp.server": "mcp_trace.log",
+    # Warm-browser layer (daemon + client + identity store). The daemon runs as its own
+    # windowless process, so file logging is the only way to see its activity.
+    "core.fetch.browser": "browser_daemon.log",
     "core": "core.log",
 }
 

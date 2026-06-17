@@ -483,14 +483,20 @@ class ReadPageService:
                 return await self._read_pdf(url)
 
             parse0 = time.perf_counter()
-            retail_meta = extract_retail_metadata(cand, html)
-            md = ""
-            if prefer_rsc:
-                md = _nextjs_rsc_to_markdown(cand, html)
-                if md:
-                    md = prepend_retail_metadata(md, retail_meta)
-            if not md:
-                md = prepend_retail_metadata(normalize_page(cand, html), retail_meta)
+            html_text: str = html
+
+            # Extraction (trafilatura/lxml) is CPU-bound; run it off the event loop so a
+            # pathological page can't block the loop — that would freeze sibling parses
+            # AND make the asyncio deadline unenforceable (timeouts fire only at awaits).
+            def _extract() -> str:
+                retail_meta = extract_retail_metadata(cand, html_text)
+                if prefer_rsc:
+                    rsc = _nextjs_rsc_to_markdown(cand, html_text)
+                    if rsc:
+                        return prepend_retail_metadata(rsc, retail_meta)
+                return prepend_retail_metadata(normalize_page(cand, html_text), retail_meta)
+
+            md = await asyncio.get_running_loop().run_in_executor(_io_pool, _extract)
             parse_ms = (time.perf_counter() - parse0) * 1000
             weak = _is_weak_extraction(md, min_length=min_len)
 
@@ -507,7 +513,10 @@ class ReadPageService:
                 logger.info("weak extraction for %s — retrying via warm browser SPA fallback", cand)
                 craw, cres = await _fetch_browser(cand, self._opts.timeout)
                 if craw.html and cres is not None:
-                    md, weak, method = self._spa_recover(cand, cres, md, min_len)
+                    # SPA recover also runs CPU-bound extraction — keep it off the loop.
+                    md, weak, method = await asyncio.get_running_loop().run_in_executor(
+                        _io_pool, self._spa_recover, cand, cres, md, min_len
+                    )
                     html = cres.html
                     self._profiles.record(cand, craw.attempt(quality=len(md), success=not weak))
                 else:
