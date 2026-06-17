@@ -42,6 +42,7 @@ from aiohttp import web
 
 from core.fetch.antibot import is_antibot
 from core.fetch.browser.identity_store import IdentityStore, get_identity_store
+from core.logging_setup import setup_logging
 
 logger = logging.getLogger("core.fetch.browser.daemon")
 
@@ -369,9 +370,9 @@ class BrowserDaemon:
         self._idle_task: asyncio.Task | None = None
 
     async def start(self) -> None:
-        print("  starting chromium ...", flush=True)
+        logger.info("daemon starting chromium ...")
         await self.browser.start()
-        print("  chromium ready", flush=True)
+        logger.info("daemon chromium ready")
         if self.idle_shutdown_sec > 0:
             self._idle_task = asyncio.create_task(self._idle_monitor(), name="bg:idle-shutdown")
 
@@ -383,7 +384,7 @@ class BrowserDaemon:
                 last = self.browser._last_used or self._started_at
                 idle = time.monotonic() - last
                 if self.browser._inflight == 0 and idle >= self.idle_shutdown_sec:
-                    print(f"idle {idle:.0f}s ≥ {self.idle_shutdown_sec:.0f}s — shutting down", flush=True)
+                    logger.info("idle %.0fs >= %.0fs — shutting down", idle, self.idle_shutdown_sec)
                     self._stop_event.set()
                     return
         except asyncio.CancelledError:
@@ -406,6 +407,11 @@ class BrowserDaemon:
         wait = float(data["wait_ms"]) / 1000 if "wait_ms" in data else None
         nav_timeout = float(data["timeout_ms"]) / 1000 if "timeout_ms" in data else None
         result = await self.browser.fetch(url, wait=wait, nav_timeout=nav_timeout)
+        logger.info(
+            "fetch status=%s ms=%.0f html=%d recycles=%d req=%d url=%r",
+            result.status, result.ms, len(result.html), self.browser._recycles,
+            self.browser._requests, url[:200],
+        )
         payload = asdict(result)
         if data.get("html") is False:
             payload.pop("html", None)
@@ -429,23 +435,24 @@ class BrowserDaemon:
 
 
 async def _serve(args: argparse.Namespace) -> None:
+    setup_logging()  # the daemon is windowless when autostarted — logs must go to a file
     daemon = BrowserDaemon(args)
     idle = f"idle-shutdown={args.idle_shutdown_sec:.0f}s" if args.idle_shutdown_sec > 0 else "eternal"
-    print(f"Warm browser daemon: chromium headless={args.headless} "
-          f"proxy={'yes' if args.proxy else 'no'} {idle}")
+    logger.info("warm browser daemon: chromium headless=%s proxy=%s %s",
+                args.headless, "yes" if args.proxy else "no", idle)
     await daemon.start()
 
     runner = web.AppRunner(daemon.make_app())
     await runner.setup()
     site = web.TCPSite(runner, args.host, args.port)
     await site.start()
-    print(f"Serving on http://{args.host}:{args.port}  (POST /shutdown or Ctrl+C to stop)", flush=True)
+    logger.info("serving on http://%s:%d (POST /shutdown or Ctrl+C to stop)", args.host, args.port)
     try:
         await daemon._stop_event.wait()
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
-        print("\nstopping ...", flush=True)
+        logger.info("daemon stopping ...")
         await daemon.stop()
         await runner.cleanup()
 

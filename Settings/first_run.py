@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import secrets
 import subprocess
 import sys
@@ -11,6 +12,18 @@ from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TOOLS_DIR = BASE_DIR / "Tools"
+
+
+# True when a venv's package manifest declares the given distribution (any version pin).
+# Lets browser-binary bootstrap follow what each venv actually installs rather than a
+# hardcoded tool list — tools stay independent, the installer just reads their manifests.
+def _venv_declares(packages: list[str], dist: str) -> bool:
+    dist = dist.lower()
+    for spec in packages:
+        name = re.split(r"[<>=!~;\[ ]", spec, 1)[0].strip().lower()
+        if name == dist:
+            return True
+    return False
 
 
 # Build the initial settings payload for the first run.
@@ -184,12 +197,18 @@ def _run_tool_bootstrap(log: bool) -> None:
             print(f"[ASLM-Chat] Tools directory not found, skipping tool bootstrap: {TOOLS_DIR}")
         return
 
-    for browser_venv_id in ("mcp-browser-agent", "mcp-web-search"):
-        _ensure_playwright_browsers(browser_venv_id, log)
-
-    # Camoufox is retired from web search (warm cloakbrowser is the only browser there);
-    # only mcp-browser-agent still needs the Camoufox binary.
-    _ensure_camoufox_binary("mcp-browser-agent", log)
+    # Provision browser binaries per what each venv's manifest declares, so this stays
+    # correct as tools add/drop browser backends (e.g. web search retiring Camoufox for
+    # the warm cloakbrowser) without editing a hardcoded tool list here.
+    for cfg in venv_manager.iter_venv_configs():
+        venv_id = str(cfg.get("id") or "")
+        if not venv_id:
+            continue
+        packages = list(cfg.get("packages", [])) + list(cfg.get("packages_no_deps", []))
+        if _venv_declares(packages, "playwright"):
+            _ensure_playwright_browsers(venv_id, log)
+        if _venv_declares(packages, "camoufox"):
+            _ensure_camoufox_binary(venv_id, log)
 
     # nltk/spacy bootstrap dropped: those deps (and the embedder/GLiNER stack) were
     # removed — web search is BM25 + an optional CPU decoder re-ranker now.

@@ -98,20 +98,29 @@ class BrowserClient:
             logger.warning("warm browser daemon did not come up within %.0fs", _SPAWN_WAIT)
             return False
 
-    # Launch the daemon as a detached process (it reads its own config: idle-shutdown etc.).
+    # Launch the daemon as a windowless background process (it reads its own config:
+    # idle-shutdown etc.). On Windows that means pythonw.exe (no console subsystem) plus
+    # CREATE_NO_WINDOW, so the long-lived daemon never pops a console window; its own
+    # process group keeps a parent-console Ctrl-C from reaching it.
     def _spawn_process(self) -> None:
         port = urlparse(self._cfg.daemon_url).port or 8765
         root = Path(__file__).resolve().parents[3]
+        executable = sys.executable
         kwargs: dict[str, Any] = {
             "cwd": str(root), "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL,
         }
         if sys.platform == "win32":
-            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008  # DETACHED_PROCESS
+            pythonw = Path(executable).with_name("pythonw.exe")
+            if pythonw.exists():
+                executable = str(pythonw)
+            kwargs["creationflags"] = (
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            )
         else:
             kwargs["start_new_session"] = True
         try:
             subprocess.Popen(
-                [sys.executable, "-m", "core.fetch.browser.daemon", "--port", str(port)], **kwargs
+                [executable, "-m", "core.fetch.browser.daemon", "--port", str(port)], **kwargs
             )
             self._spawned = True
             logger.info("spawned warm browser daemon on port %d", port)

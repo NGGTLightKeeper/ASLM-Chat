@@ -32,7 +32,7 @@
     "keep_loaded": false
   },
   "query": {
-    "year_hint_mode": "none",
+    "year_hint_mode": "timelimit",
     "year_hint_current": "m",
     "year_hint_prev": "y",
     "year_hint_older": null,

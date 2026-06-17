@@ -23,6 +23,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
+import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -120,6 +122,81 @@ EFFORT_PROFILES: dict[str, EffortProfile] = {
     "medium": EffortProfile("medium", 3, 3, 1, 6.0, 8_000, 8.0, 10, False, False),
     "high": EffortProfile("high", 8, 4, 1, 8.0, 20_000, 22.0, 16, True, True),
 }
+
+
+# Opaque per-search id; seeds the citation handles the model is told to cite with.
+def _make_search_id() -> str:
+    return f"srch_{secrets.token_hex(4)}"
+
+
+# Stable citation handle for a source's rank within a search (e.g. "a1b2c3d4-3").
+def _citation_id(search_id: str, rank: int) -> str:
+    compact = re.sub(r"[^a-z0-9]+", "", (search_id or "").lower())
+    return f"{compact}-{rank}"
+
+
+# Build the model-visible text block the chat bridge reads from result["model_context"]:
+# citation handles + Title/Domain/URL/(parsed Content | search Preview), capped to a
+# total budget. Operates on the serialised source dicts so the live and seen-suppressed
+# paths stay consistent. Empty results return the explicit "No results found" sentinel the
+# model and UI both understand (mirrors API/mcp.py::_serialize_tool_result).
+def _build_model_context(
+    query: str, sources: list[dict[str, Any]], *, total_budget: int, per_source_chars: int,
+) -> str:
+    if not sources:
+        return f"No results found for: {query}"
+    first_handle = sources[0].get("id") or "id-1"
+    lines: list[str] = [
+        f"Search results for: {query}",
+        "",
+        f"Cite sources only with the exact handles below, e.g. [{first_handle}]. "
+        "Put the handle right after the claim it supports; do not invent or renumber handles.",
+        "",
+        "Sources:",
+    ]
+    total = len("\n".join(lines))
+    for s in sources:
+        excerpt = str(s.get("markdown") or s.get("snippet") or "").strip()
+        if per_source_chars and len(excerpt) > per_source_chars:
+            excerpt = excerpt[:per_source_chars].rstrip() + " …"
+        label = "Content" if (s.get("parsed_ok") and s.get("markdown")) else "Preview"
+        block = [
+            f"Citation handle: [{s.get('id', '')}]",
+            f"Title: {s.get('title', '')}",
+            f"Domain: {s.get('host', '')}",
+            f"URL: {s.get('url', '')}",
+        ]
+        if excerpt:
+            block.append(f"{label}: {excerpt}")
+        block.append("")
+        btext = "\n".join(block)
+        if total_budget and total + len(btext) > total_budget:
+            lines.append("[...additional sources omitted: context budget reached]")
+            break
+        lines.extend(block)
+        total += len(btext)
+    return "\n".join(lines).strip()
+
+
+# UI metadata block (source chips) the chat bridge surfaces alongside model_context.
+def _build_ui(sources: list[dict[str, Any]]) -> dict[str, Any]:
+    chips = [
+        {
+            "rank": s.get("rank"),
+            "id": s.get("id"),
+            "url": s.get("url"),
+            "domain": s.get("host"),
+            "favicon_url": f"https://icons.duckduckgo.com/ip3/{s.get('host')}.ico" if s.get("host") else "",
+            "parsed": bool(s.get("parsed_ok")),
+        }
+        for s in sources
+    ]
+    return {
+        "kind": "web_search",
+        "status": "done" if chips else "empty",
+        "result_count": len(chips),
+        "sources": chips,
+    }
 
 
 # Pick engines for a tier, honoring the circuit breaker.
@@ -268,6 +345,14 @@ class WebSearchService:
     ) -> dict[str, Any]:
         profile = EFFORT_PROFILES.get(effort, EFFORT_PROFILES["low"])
         started = time.perf_counter()
+
+        # Fold the query's own date intent in: a trailing/comma year or freshness word
+        # derives a timelimit (stricter of it and any explicit one) and the year token is
+        # stripped so it doesn't skew the lexical match. Governed by the `query` config.
+        from core.config import load_search_config
+        from core.search.query_dates import resolve_query_dates
+
+        query, timelimit = resolve_query_dates(query, load_search_config().query, timelimit)
 
         # Region routing (§3.2): explicit region wins; otherwise Cyrillic and
         # friends route to their home region instead of us-en.
@@ -426,37 +511,56 @@ class WebSearchService:
             profile.name, len(top), parsed_ok, parse_started_count,
             (time.perf_counter() - started) * 1000, query[:160],
         )
+
+        # The chat bridge (API/mcp.py) reads result["model_context"] as the model-visible
+        # text and pairs it with "ui"/"sources" for chips; without model_context it cannot
+        # surface results at all. Build the serialised sources first, then derive both from
+        # them so this and the seen-suppressed path in run_web_search stay consistent.
+        from core.config import load_search_config
+
+        search_cfg = load_search_config().search
+        search_id = _make_search_id()
+        source_dicts: list[dict[str, Any]] = [
+            {
+                "id": _citation_id(search_id, rank),
+                "url": s.url,
+                "host": s.host,
+                "title": s.title,
+                "snippet": s.snippet,
+                "engine": s.engine,
+                "rank": rank,
+                "score": round(s.score, 4),
+                "consensus_families": s.families,
+                **({"decoder_score": round(s.decoder_score, 4)} if s.decoder_score >= 0 else {}),
+                **({"pdf_url": pdf} if (pdf := _infer_pdf_url(s.url)) else {}),
+                **(
+                    {
+                        "parsed_ok": s.parsed_ok,
+                        "parse_ms": round(s.parse_ms, 1),
+                        "markdown": s.parsed_markdown,
+                    }
+                    if s.parse_ms or s.parsed_markdown
+                    else {}
+                ),
+            }
+            for rank, s in enumerate(top, 1)
+        ]
+        model_context = _build_model_context(
+            query, source_dicts,
+            total_budget=int(search_cfg.total_context_budget or 0),
+            per_source_chars=int(search_cfg.preview_max_chars or 0),
+        )
         return {
             "query": query,
+            "search_id": search_id,
             "effort": profile.name,
             "language": language,
             "region": region,
             "engines_used": [engine.name for engine in engines],
             "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
-            "sources": [
-                {
-                    "url": s.url,
-                    "host": s.host,
-                    "title": s.title,
-                    "snippet": s.snippet,
-                    "engine": s.engine,
-                    "rank": s.rank,
-                    "score": round(s.score, 4),
-                    "consensus_families": s.families,
-                    **({"decoder_score": round(s.decoder_score, 4)} if s.decoder_score >= 0 else {}),
-                    **({"pdf_url": pdf} if (pdf := _infer_pdf_url(s.url)) else {}),
-                    **(
-                        {
-                            "parsed_ok": s.parsed_ok,
-                            "parse_ms": round(s.parse_ms, 1),
-                            "markdown": s.parsed_markdown,
-                        }
-                        if s.parse_ms or s.parsed_markdown
-                        else {}
-                    ),
-                }
-                for s in top
-            ],
+            "model_context": model_context,
+            "sources": source_dicts,
+            "ui": _build_ui(source_dicts),
             "engines": engine_payloads,
             "health": self._tracker.snapshot(),
         }
@@ -464,16 +568,18 @@ class WebSearchService:
 
 # Build the payload returned when an identical query is hard-blocked as a repeat.
 def _repeat_block_payload(query: str, effort: str, age: float) -> dict[str, Any]:
+    note = (
+        f"You already ran this exact search {age:.0f}s ago — the results were just "
+        "shown above. Re-issuing the same query is suppressed; reuse the previous "
+        "results, refine the query, or read_page one of those sources."
+    )
     return {
         "query": query,
         "effort": effort,
         "blocked": True,
         "block_reason": "repeat",
-        "note": (
-            f"You already ran this exact search {age:.0f}s ago — the results were just "
-            "shown above. Re-issuing the same query is suppressed; reuse the previous "
-            "results, refine the query, or read_page one of those sources."
-        ),
+        "note": note,
+        "model_context": note,  # bridge reads model_context as the model-visible text
         "sources": [],
     }
 
@@ -529,7 +635,19 @@ async def run_web_search(
     )
     if seen:
         kept = [s for s in sources if s.get("url") not in seen]
-        payload = {**payload, "sources": kept, "suppressed_seen": len(seen)}
+        # Rebuild the model-visible text and chips so handles match the kept sources.
+        search_cfg = load_search_config().search
+        payload = {
+            **payload,
+            "sources": kept,
+            "suppressed_seen": len(seen),
+            "model_context": _build_model_context(
+                query, kept,
+                total_budget=int(search_cfg.total_context_budget or 0),
+                per_source_chars=int(search_cfg.preview_max_chars or 0),
+            ),
+            "ui": _build_ui(kept),
+        }
         sources = kept
 
     # 4. Remember what we served, then warm the top unparsed URLs for likely read_page.
