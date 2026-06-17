@@ -18,7 +18,7 @@ draft: false
 | [engine_router](engine_router/) | `engine_router.py` | Quality-based engine ordering |
 | [engine_stats](engine_stats/) | `engine_stats.py` | Per-engine rolling metrics |
 | [page_fetcher](page_fetcher/) | `page_fetcher.py` | httpx + curl fetch → source cache |
-| [camoufox_fetcher](camoufox_fetcher/) | `camoufox_fetcher.py` | Headless browser fetch |
+| [browser](browser/) | `browser/` | Warm cloakbrowser daemon layer |
 | [academic_fetcher](academic_fetcher/) | `academic_fetcher.py` | arXiv / Semantic Scholar fast path |
 | [stackexchange_fetcher](stackexchange_fetcher/) | `stackexchange_fetcher.py` | Stack Exchange API |
 | [url_utils](url_utils/) | `url_utils.py` | SSRF-safe URL validation |
@@ -27,7 +27,6 @@ draft: false
 | [download_types](download_types/) | `download_types.py` | Non-HTML download detection |
 | [constants](constants/) | `constants.py` | `DEFAULT_UA` |
 | [_ddgs_worker](_ddgs_worker/) | `_ddgs_worker.py` | Isolated DDGS subprocess |
-| [_camoufox_worker](_camoufox_worker/) | `_camoufox_worker.py` | Isolated Camoufox subprocess |
 
 ---
 

@@ -15,6 +15,10 @@ draft: false
 
 **Purpose:** Report whether this bridge supports the given engine/model pair.
 
+#### `async def shutdown() -> None`
+
+**Purpose:** Cancel outstanding background work (prefetch) and release the warm browser at server shutdown.
+
 #### `async def call_tool(tool_id, arguments, context) -> Any`
 
 **Purpose:** Dispatch MCP tool calls to web_search or read_page services.

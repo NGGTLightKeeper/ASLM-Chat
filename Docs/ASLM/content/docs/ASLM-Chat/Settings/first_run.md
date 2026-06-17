@@ -51,7 +51,7 @@ draft: false
 
 #### `def _ensure_camoufox_binary(venv_id, log) -> None`
 
-**Purpose:** Download the Camoufox browser binary when the venv is available.
+**Purpose:** Download the Camoufox browser binary only when the mcp-browser-agent venv is available.
 
 **Steps:**
 

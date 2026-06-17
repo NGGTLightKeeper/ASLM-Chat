@@ -13,7 +13,7 @@ draft: false
 
 #### `async def fetch_ebay_snapshot(url, timeout, wait) -> dict[str, Any]`
 
-**Purpose:** Fetch eBay listing via Camoufox, then Patchright fallback; return extraction snapshot dict.
+**Purpose:** Fetch an eBay listing via the warm cloakbrowser and return an extraction snapshot dict.
 
 **Steps:**
 
