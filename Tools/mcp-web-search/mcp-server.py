@@ -172,11 +172,15 @@ async def _call_serp_search(args: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-# Cancel outstanding background work (prefetch) at server shutdown.
+# Cancel outstanding background work (prefetch) and release the warm browser at
+# server shutdown — a daemon this process autostarted is asked to stop so it does not
+# outlive us waiting on its idle timeout.
 async def shutdown() -> None:
+    from core.fetch.browser.client import shutdown_browser
     from core.search.prefetch import shutdown_prefetch
 
     await shutdown_prefetch()
+    await shutdown_browser()
 
 
 # Dispatch an ASLM tool call to the matching search implementation.

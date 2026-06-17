@@ -41,7 +41,6 @@
             "packages": [
                 "aiohttp==3.11.0",
                 "beautifulsoup4==4.12.3",
-                "camoufox==0.4.10",
                 "cffi==1.17.1",
                 "cloakbrowser==0.3.31",
                 "colorama==0.4.6",

@@ -3,12 +3,12 @@
 """Client seam for the warm-browser layer.
 
 Everything in the search pipeline depends only on this module's `browser_fetch`,
-`browser_available` and `shutdown_browser` — never on cloakbrowser, the daemon, or
-Camoufox directly. The backend (warm daemon vs legacy subprocess) is chosen from
-config here, so callers never branch on it.
+`browser_available` and `shutdown_browser` — never on cloakbrowser or the daemon
+directly. This is the single universal browser API: callers hand it a URL and get a
+`BrowserFetch` back, with no knowledge of how the page was rendered.
 
-  warm   → HTTP POST to the persistent cloakbrowser daemon (chromium).
-  legacy → one-shot Camoufox subprocess (the disposable-safety fallback path).
+  fetch → HTTP POST to the persistent cloakbrowser daemon (chromium), autostarted
+          on the first call.
 """
 
 from __future__ import annotations
@@ -25,9 +25,7 @@ from urllib.parse import urlparse
 from core.config import load_search_config
 
 from .models import (
-    STATUS_BLOCKED,
     STATUS_ERROR,
-    STATUS_OK,
     STATUS_UNAVAILABLE,
     BrowserFetch,
 )
@@ -42,7 +40,7 @@ _SPAWN_WAIT = 25.0
 _SPAWN_THROTTLE = 30.0
 
 
-# Routes page fetches to the configured browser backend (warm daemon or legacy subprocess).
+# Routes page fetches to the warm cloakbrowser daemon (autostarted on first use).
 class BrowserClient:
 
     def __init__(self, cfg=None) -> None:
@@ -54,14 +52,10 @@ class BrowserClient:
         self._spawn_attempted_at = 0.0
         self._spawned = False                      # did we launch the daemon ourselves?
 
-    # The browser layer is usable when not disabled and the chosen backend is reachable.
+    # The browser layer is usable when not disabled and the warm daemon is reachable.
     async def available(self) -> bool:
         if self._cfg.browser_fallback == "off":
             return False
-        if self._cfg.browser_backend == "legacy":
-            from core.fetch.camoufox_fetcher import is_camoufox_available
-
-            return is_camoufox_available()
         return await self._daemon_ready()
 
     # Cached readiness: a raw /health probe, plus a lazy autostart on the first miss.
@@ -143,8 +137,6 @@ class BrowserClient:
     ) -> BrowserFetch:
         if self._cfg.browser_fallback == "off":
             return BrowserFetch(url=url, status=STATUS_UNAVAILABLE, error="browser disabled")
-        if self._cfg.browser_backend == "legacy":
-            return await self._fetch_legacy(url, wait_sec=wait_sec, nav_timeout=nav_timeout)
         return await self._fetch_warm(url, wait_sec=wait_sec, nav_timeout=nav_timeout, family=family)
 
     # Warm path: POST /fetch to the daemon and adapt the JSON body to a BrowserFetch.
@@ -175,32 +167,6 @@ class BrowserClient:
             return BrowserFetch(url=url, status=STATUS_ERROR, backend="warm",
                                 error=f"bad daemon response (HTTP {resp.status_code})")
         return BrowserFetch.from_daemon(body, backend="warm")
-
-    # Legacy path: one-shot Camoufox subprocess adapted to a BrowserFetch.
-    async def _fetch_legacy(
-        self, url: str, *, wait_sec: float | None, nav_timeout: float | None
-    ) -> BrowserFetch:
-        from core.fetch.camoufox_fetcher import fetch_with_camoufox
-
-        timeout = nav_timeout if nav_timeout is not None else self._cfg.nav_timeout
-        result = await fetch_with_camoufox(
-            url,
-            wait_sec=self._cfg.wait if wait_sec is None else wait_sec,
-            headless=self._cfg.headless,
-            humanize=self._cfg.humanize,
-            timeout_sec=float(timeout),
-            normalize=False,
-        )
-        if result.success and result.html:
-            status = STATUS_OK
-        elif "antibot" in (result.error or "").lower():
-            status = STATUS_BLOCKED
-        else:
-            status = STATUS_ERROR
-        return BrowserFetch(
-            url=url, status=status, html=result.html, text=result.text, title=result.title,
-            engine="camoufox", backend="legacy", ms=result.duration_sec * 1000, error=result.error,
-        )
 
     # Close the shared HTTP client. A daemon we autostarted is asked to shut down too,
     # so it does not outlive the process that spawned it (otherwise it self-terminates

@@ -3,9 +3,8 @@
 """Persistent, supervised warm-browser daemon (chromium / cloakbrowser only).
 
 Keeps one stealth Chromium warm in-process and serves page fetches over a small HTTP
-API, so callers pay the cold-start cost once. The warm backend is chromium-only by
-design — Camoufox is worse on every axis and lives only as the legacy subprocess path
-behind core.fetch.browser.client.
+API, so callers pay the cold-start cost once. Chromium-only by design — it is the sole
+browser backend in web search.
 
 Supervision (the part the prototype scripts/browser_daemon.py lacked):
   * one identity context seeded from the IdentityStore on launch (earned cookies /

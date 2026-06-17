@@ -19,7 +19,8 @@ from core.extract.content_processor import compress_read_page_markdown
 from core.extract.nextjs_rsc import extract_nextjs_rsc_text
 from core.extract.page_normalizer import normalize_page
 from core.fetch.antibot import is_antibot
-from core.fetch.camoufox_fetcher import FetchResult, fetch_with_camoufox, is_camoufox_available
+from core.fetch.browser.client import browser_available, browser_fetch
+from core.fetch.browser.models import STATUS_TIMEOUT, BrowserFetch
 from core.fetch.constants import DEFAULT_UA as _UA
 from core.fetch.download_types import get_download_info
 from core.fetch.thread_pool import io_pool as _io_pool
@@ -32,7 +33,7 @@ from core.fetch.url_utils import (
     validate_redirect_target,
 )
 from core.profiles import (
-    METHOD_CAMOUFOX,
+    METHOD_BROWSER,
     METHOD_CURL_CFFI,
     METHOD_HTTPX,
     FetchAttempt,
@@ -250,23 +251,17 @@ async def _fetch_race(url: str, timeout: float, tls_verify: bool = True) -> RawF
     return last or RawFetch(None, METHOD_HTTPX, _UA, 0, 0.0)
 
 
-# Run Camoufox within read_page's deadline and adapt the result into a RawFetch.
-async def _fetch_camoufox(url: str, timeout: float) -> tuple[RawFetch, FetchResult | None]:
-    result = await fetch_with_camoufox(
-        url,
-        wait_sec=4.0,
-        timeout_sec=min(float(timeout), 20.0),
-        process_timeout=min(max(float(timeout) + 5.0, 10.0), 25.0),
-        warmup_count=0,
-        normalize=False,
-    )
-    if not result.success or not result.html:
-        detail = result.error or "unknown browser fetch failure"
-        logger.warning("Camoufox read_page fetch failed for %s: %s", url, detail)
-        timed_out = "timeout" in detail.lower()
-        return RawFetch(None, METHOD_CAMOUFOX, "camoufox", 0, result.duration_sec * 1000, timed_out=timed_out), None
+# Run the warm browser within read_page's deadline and adapt the result into a RawFetch.
+async def _fetch_browser(url: str, timeout: float) -> tuple[RawFetch, BrowserFetch | None]:
+    result = await browser_fetch(url, wait_sec=4.0, nav_timeout=min(float(timeout), 20.0))
+    if not result.ok or not result.html:
+        detail = result.error or f"status={result.status}"
+        logger.warning("warm browser read_page fetch failed for %s: %s", url, detail)
+        timed_out = result.status == STATUS_TIMEOUT or "timeout" in detail.lower()
+        engine = result.engine or "browser"
+        return RawFetch(None, METHOD_BROWSER, engine, 0, result.ms, blocked=result.blocked, timed_out=timed_out), None
     return RawFetch(
-        result.html, METHOD_CAMOUFOX, "camoufox", 200, result.duration_sec * 1000
+        result.html, METHOD_BROWSER, result.engine or "browser", 200, result.ms
     ), result
 
 
@@ -347,13 +342,13 @@ class ReadPageOptions:
     timeout: float = 20.0
     max_chars: int = 20_000
     focus: str = ""
-    # When False, the heavy Camoufox browser path is disabled entirely. web_search
-    # sets this so the browser stays exclusive to the read_page tool: a wide search
-    # must be cheap/HTTP-only and skip browser-only sources rather than pay 7-16s a page.
+    # When False, the warm browser path is disabled entirely. web_search sets this so
+    # the browser stays exclusive to the read_page tool: a wide search must be cheap/
+    # HTTP-only and skip browser-only sources rather than pay seconds a page.
     allow_browser: bool = True
 
 
-# Global asyncio deadline for one read; Reddit needs room for curl + Camoufox JSON.
+# Global asyncio deadline for one read; Reddit needs room for curl + browser render.
 def _read_page_deadline(url: str, opts: ReadPageOptions) -> float:
     base = float(opts.timeout)
     if _host(url) == "reddit.com" or _host(url).endswith(".reddit.com"):
@@ -375,10 +370,10 @@ class ReadPageService:
         )
         self._focus = (self._opts.focus or "").strip()
 
-    # Whether the heavy browser (Camoufox) path may run. Disabled by web_search so the
-    # browser stays exclusive to the read_page tool.
-    def _browser_ok(self) -> bool:
-        return self._opts.allow_browser and is_camoufox_available()
+    # Whether the warm browser path may run. Disabled by web_search so the browser
+    # stays exclusive to the read_page tool; otherwise gated on backend availability.
+    async def _browser_ok(self) -> bool:
+        return self._opts.allow_browser and await browser_available()
 
     # Apply the read_page BM25 compression budget from config.
     def _apply_budget(self, markdown: str, url: str) -> str:
@@ -411,21 +406,21 @@ class ReadPageService:
         hint = self._profiles.best_method(domain)
 
         prefer_rsc = req.prefer_rsc or bool(override and override.parsing_mode == "nextjs_rsc")
-        camoufox_first = req.camoufox_first or bool(override and override.required_method == METHOD_CAMOUFOX)
+        browser_first = req.browser_first or bool(override and override.required_method == METHOD_BROWSER)
         http_method: str | None = None
         if hint and not hint.avoid and hint.confidence >= 0.5:
-            if hint.method == METHOD_CAMOUFOX:
-                camoufox_first = True
+            if hint.method == METHOD_BROWSER:
+                browser_first = True
             elif hint.method in (METHOD_HTTPX, METHOD_CURL_CFFI):
                 http_method = hint.method
-        return camoufox_first, http_method, prefer_rsc
+        return browser_first, http_method, prefer_rsc
 
-    # Fetch one candidate URL with the chosen method (camoufox / single http / race).
+    # Fetch one candidate URL with the chosen method (warm browser / single http / race).
     async def _fetch_candidate(
-        self, url: str, *, camoufox_first: bool, http_method: str | None
-    ) -> tuple[RawFetch, FetchResult | None]:
-        if camoufox_first and self._browser_ok():
-            return await _fetch_camoufox(url, self._opts.timeout)
+        self, url: str, *, browser_first: bool, http_method: str | None
+    ) -> tuple[RawFetch, BrowserFetch | None]:
+        if browser_first and await self._browser_ok():
+            return await _fetch_browser(url, self._opts.timeout)
         if http_method == METHOD_HTTPX:
             return await _fetch_httpx(url, self._opts.timeout, tls_verify=self._cfg.search.tls_verify), None
         if http_method == METHOD_CURL_CFFI:
@@ -437,7 +432,7 @@ class ReadPageService:
     async def _generic_read(self, req: GenericRequest) -> PageResult:
         url = req.url
         min_len = self._cfg.extraction.min_content_length
-        camoufox_first, http_method, prefer_rsc = self._resolve_strategy(url, req)
+        browser_first, http_method, prefer_rsc = self._resolve_strategy(url, req)
         variants = req.url_variants or [url]
 
         markdown = ""
@@ -450,13 +445,13 @@ class ReadPageService:
             cached = self._cache.get_cached(cache_key)
 
             raw: RawFetch | None = None
-            cam: FetchResult | None = None
+            cam: BrowserFetch | None = None
             if cached and self._cache.is_fresh(cache_key) and cached.raw_html:
                 html: str | None = cached.raw_html
                 method = "cache"
             else:
                 raw, cam = await self._fetch_candidate(
-                    cand, camoufox_first=camoufox_first, http_method=http_method
+                    cand, browser_first=browser_first, http_method=http_method
                 )
                 html = raw.html
                 method = raw.method
@@ -470,10 +465,10 @@ class ReadPageService:
             if is_antibot(html):
                 if raw is not None:
                     self._profiles.record(cand, raw.attempt(success=False))
-                if method != METHOD_CAMOUFOX and self._browser_ok():
-                    raw, cam = await _fetch_camoufox(cand, self._opts.timeout)
+                if method != METHOD_BROWSER and await self._browser_ok():
+                    raw, cam = await _fetch_browser(cand, self._opts.timeout)
                     if raw.html and not is_antibot(raw.html):
-                        html, method = raw.html, METHOD_CAMOUFOX
+                        html, method = raw.html, METHOD_BROWSER
                     else:
                         if raw is not None:
                             self._profiles.record(cand, raw.attempt(success=False))
@@ -507,10 +502,10 @@ class ReadPageService:
             if method != "cache" and not weak and not is_antibot(html):
                 self._cache.cache_page(cache_key, "", clean_text="", raw_html=html)
 
-            # Weak HTML extraction — retry through Camoufox (normalize → innerText → RSC).
-            if weak and method not in (METHOD_CAMOUFOX, "cache") and self._browser_ok():
-                logger.info("weak extraction for %s — retrying via camoufox SPA fallback", cand)
-                craw, cres = await _fetch_camoufox(cand, self._opts.timeout)
+            # Weak HTML extraction — retry through the warm browser (normalize → innerText → RSC).
+            if weak and method not in (METHOD_BROWSER, "cache") and await self._browser_ok():
+                logger.info("weak extraction for %s — retrying via warm browser SPA fallback", cand)
+                craw, cres = await _fetch_browser(cand, self._opts.timeout)
                 if craw.html and cres is not None:
                     md, weak, method = self._spa_recover(cand, cres, md, min_len)
                     html = cres.html
@@ -546,27 +541,27 @@ class ReadPageService:
             )
         return PageResult(markdown=markdown, ok=True, method=winning_method, apply_budget=True)
 
-    # Recover the best markdown from a Camoufox SPA render: normalize → innerText → RSC.
+    # Recover the best markdown from a warm-browser SPA render: normalize → innerText → RSC.
     def _spa_recover(
-        self, url: str, cres: FetchResult, prev_md: str, min_len: int
+        self, url: str, cres: BrowserFetch, prev_md: str, min_len: int
     ) -> tuple[str, bool, str]:
         spa_md = normalize_page(url, cres.html)
         spa_weak = _is_weak_extraction(spa_md, min_length=min_len)
         if not spa_weak or len(spa_md) > len(prev_md or ""):
-            return spa_md, spa_weak, METHOD_CAMOUFOX
+            return spa_md, spa_weak, METHOD_BROWSER
 
-        if cres.inner_text and len(cres.inner_text.strip()) > min_len:
-            it_md = _inner_text_to_markdown(url, cres.inner_text)
+        if cres.text and len(cres.text.strip()) > min_len:
+            it_md = _inner_text_to_markdown(url, cres.text)
             if not _is_weak_extraction(it_md, min_length=min_len) or len(it_md) > len(prev_md or ""):
                 logger.info("SPA innerText fallback used for %s", url)
-                return it_md, _is_weak_extraction(it_md, min_length=min_len), "camoufox_innertext"
+                return it_md, _is_weak_extraction(it_md, min_length=min_len), "browser_innertext"
 
         rsc_md = _nextjs_rsc_to_markdown(url, cres.html)
         if rsc_md and (not _is_weak_extraction(rsc_md, min_length=min_len) or len(rsc_md) > len(prev_md or "")):
             logger.info("SPA Next.js RSC fallback used for %s", url)
-            return rsc_md, _is_weak_extraction(rsc_md, min_length=min_len), "camoufox_rsc"
+            return rsc_md, _is_weak_extraction(rsc_md, min_length=min_len), "browser_rsc"
 
-        return prev_md, True, METHOD_CAMOUFOX
+        return prev_md, True, METHOD_BROWSER
 
     # Download a PDF and return extracted markdown.
     async def _read_pdf(self, url: str) -> PageResult:

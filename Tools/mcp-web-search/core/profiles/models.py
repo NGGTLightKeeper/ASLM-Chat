@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # Canonical fetch-method identifiers recorded in runtime profiles. Generic read_page
-# uses the first three; terminal custom-domain handlers record their own names.
+# uses the HTTP methods plus the warm browser; terminal custom-domain handlers record
+# their own names.
 METHOD_HTTPX = "httpx"
 METHOD_CURL_CFFI = "curl_cffi"
-METHOD_CAMOUFOX = "camoufox"
-# Warm persistent stealth-browser (cloakbrowser daemon). The cost-aware method
-# selector ranks it above the HTTP methods but below camoufox subprocess.
+# Warm persistent stealth-browser (cloakbrowser daemon) — the only browser backend.
+# The cost-aware method selector ranks it last (above nothing) as the heavy fallback.
 METHOD_BROWSER = "browser"
 
 
@@ -48,6 +48,6 @@ class ProfileHint:
 # and overrides them while confidence is still low.
 @dataclass(frozen=True, slots=True)
 class DomainOverride:
-    required_method: str = ""      # force this fetch method (e.g. METHOD_CAMOUFOX)
+    required_method: str = ""      # force this fetch method (e.g. METHOD_BROWSER)
     parsing_mode: str = ""         # e.g. "nextjs_rsc"
     note: str = ""

@@ -76,12 +76,11 @@ class QuerySection:
     auto_type_timelimit_enabled: bool = True  # infer timelimit from query type
 
 
-# Warm-browser layer. Two independent axes: where the browser is
-# allowed as a fallback (browser_fallback) and which backend serves it (browser_backend).
+# Warm-browser layer (cloakbrowser daemon). browser_fallback controls where the
+# browser is allowed as a fallback; the backend is always the warm chromium daemon.
 @dataclass
 class BrowserSection:
     browser_fallback: str = "page"      # off | page (read_page only) | full (+ blocked SERP engines)
-    browser_backend: str = "warm"       # warm (cloakbrowser daemon) | legacy (camoufox subprocess)
     daemon_url: str = "http://127.0.0.1:8765"
     engine: str = "chromium"            # warm backend is chromium-only by design
     autostart_daemon: bool = True       # spawn the daemon lazily on the first tool call
@@ -236,9 +235,6 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
         browser=BrowserSection(
             browser_fallback=_one_of(
                 b.get("browser_fallback", "page"), {"off", "page", "full"}, "page"
-            ),
-            browser_backend=_one_of(
-                b.get("browser_backend", "warm"), {"warm", "legacy"}, "warm"
             ),
             daemon_url=str(b.get("daemon_url", "http://127.0.0.1:8765")),
             engine=str(b.get("engine", "chromium")),

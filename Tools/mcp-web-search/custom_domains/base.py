@@ -29,7 +29,7 @@ SCOPE_READ_PAGE = "read_page"
 class PageResult:
     markdown: str = ""
     ok: bool = False
-    method: str = ""          # winning fetch method (e.g. "github_api", "camoufox")
+    method: str = ""          # winning fetch method (e.g. "github_api", "browser")
     blocked: bool = False
     apply_budget: bool = False  # run read_page's BM25 compression budget on markdown
     error: str = ""
@@ -40,7 +40,7 @@ class PageResult:
 @dataclass(slots=True)
 class GenericRequest:
     url: str
-    camoufox_first: bool = False
+    browser_first: bool = False
     prefer_rsc: bool = False
     url_variants: list[str] = field(default_factory=list)
     metadata: dict[str, str] = field(default_factory=dict)

@@ -14,20 +14,17 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.fetch.camoufox_fetcher import fetch_with_camoufox, is_camoufox_available
-
 from custom_domains.common import extract_with_preferred_pipeline, looks_blocked, trim
 
 
-# Fetch eBay listing via the warm cloakbrowser (primary), with a Camoufox fallback;
-# return an extraction snapshot dict.
+# Fetch an eBay listing via the warm cloakbrowser and return an extraction snapshot dict.
 async def fetch_ebay_snapshot(url: str, timeout: float = 20.0, wait: float = 4.0) -> dict[str, Any]:
     started = time.perf_counter()
     candidates: list[dict[str, Any]] = []
     attempts_per_engine = 2
 
-    # Primary: warm cloakbrowser — ~1.4s warm with full HTML on eBay, vs camoufox's ~13s and
-    # a stunted page. Routed through the shared browser client (warm daemon, autostarted).
+    # Warm cloakbrowser — ~1.4s warm with full HTML on eBay. Routed through the shared
+    # browser client (warm daemon, autostarted on first call).
     from core.fetch.browser.client import browser_fetch
 
     for attempt in range(1, attempts_per_engine + 1):
@@ -53,39 +50,6 @@ async def fetch_ebay_snapshot(url: str, timeout: float = 20.0, wait: float = 4.0
                 }
             )
             break
-
-    # Fallback: legacy Camoufox subprocess (kept until the warm browser is proven everywhere).
-    if not candidates and is_camoufox_available():
-        for attempt in range(1, attempts_per_engine + 1):
-            result = await fetch_with_camoufox(
-                url,
-                timeout_sec=timeout,
-                process_timeout=timeout + 20.0,
-                wait_sec=wait,
-                warmup_count=0,
-                normalize=False,
-            )
-            html = result.html or ""
-            title = trim(result.title, 180)
-            blocked = looks_blocked(title, html)
-            if html and not blocked:
-                parsed = extract_with_preferred_pipeline(url, html, prefer_trafilatura=True)
-                candidates.append(
-                    {
-                        "source": "ebay",
-                        "url": url,
-                        "engine": "camoufox",
-                        "attempt": attempt,
-                        "status": 200 if result.success else 0,
-                        "final_url": result.url or url,
-                        "content_type": "",
-                        "title": title,
-                        "raw_html_chars": len(html),
-                        "blocked_like": blocked,
-                        **parsed,
-                    }
-                )
-                break
 
     if candidates:
         best = max(candidates, key=lambda item: (int(item["markdown_chars"]), int(item["raw_html_chars"])))
@@ -139,7 +103,7 @@ _EBAY_HOSTS = frozenset({
 })
 
 
-# Unified handler: fetch an eBay listing snapshot (Camoufox → Patchright).
+# Unified handler: fetch an eBay listing snapshot via the warm cloakbrowser.
 class EbayHandler:
     name = "ebay"
     fallback_to_generic = True

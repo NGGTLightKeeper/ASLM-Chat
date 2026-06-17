@@ -4,8 +4,8 @@
 # match(url) for a handler and calls handler.read(url, ctx). Order matters only in that
 # the first matching handler wins; the host tests below do not overlap.
 #
-# Domains needing only a forced fetch method (twitch/flashscore/sofascore → camoufox,
-# cursor → nextjs_rsc, citilink → camoufox) are NOT handlers — read_page's generic
+# Domains needing only a forced fetch method (twitch/flashscore/sofascore → browser,
+# cursor → nextjs_rsc, citilink → browser) are NOT handlers — read_page's generic
 # pipeline picks that up from core.profiles.known_domains. Only domains with bespoke
 # fetching (terminal APIs) or URL-variant logic (dns-shop) get a handler here.
 

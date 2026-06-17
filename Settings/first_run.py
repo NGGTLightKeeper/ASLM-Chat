@@ -186,7 +186,10 @@ def _run_tool_bootstrap(log: bool) -> None:
 
     for browser_venv_id in ("mcp-browser-agent", "mcp-web-search"):
         _ensure_playwright_browsers(browser_venv_id, log)
-        _ensure_camoufox_binary(browser_venv_id, log)
+
+    # Camoufox is retired from web search (warm cloakbrowser is the only browser there);
+    # only mcp-browser-agent still needs the Camoufox binary.
+    _ensure_camoufox_binary("mcp-browser-agent", log)
 
     # nltk/spacy bootstrap dropped: those deps (and the embedder/GLiNER stack) were
     # removed — web search is BM25 + an optional CPU decoder re-ranker now.

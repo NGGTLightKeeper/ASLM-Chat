@@ -4,22 +4,22 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from .models import METHOD_CAMOUFOX, DomainOverride
+from .models import METHOD_BROWSER, DomainOverride
 
 # Narrow, hand-curated domain knowledge — the only part of the legacy JSON domain
 # registry worth carrying over verbatim. Everything else is learned at runtime by
 # RuntimeDomainProfiles. These entries are hard overrides (always honoured) and also
 # seed the runtime store so read_page never wastes time on a doomed fallback chain.
 #
-# Source of truth in legacy: core/registry/domain_profiles/*.json (method=camoufox /
+# Source of truth in legacy: core/registry/domain_profiles/*.json (method=browser /
 # parsing_mode=nextjs_rsc). Keyed by registrable host without www./m. prefixes.
 KNOWN_DOMAINS: dict[str, DomainOverride] = {
-    "reddit.com": DomainOverride(required_method=METHOD_CAMOUFOX, note="JSON API blocked; needs browser session"),
-    "dns-shop.ru": DomainOverride(required_method=METHOD_CAMOUFOX, note="hardened retail SPA"),
-    "citilink.ru": DomainOverride(required_method=METHOD_CAMOUFOX, note="hardened retail SPA"),
-    "twitch.tv": DomainOverride(required_method=METHOD_CAMOUFOX, note="JS-gated"),
-    "flashscore.com": DomainOverride(required_method=METHOD_CAMOUFOX, note="JS-rendered scores"),
-    "sofascore.com": DomainOverride(required_method=METHOD_CAMOUFOX, note="JS-rendered scores"),
+    "reddit.com": DomainOverride(required_method=METHOD_BROWSER, note="JSON API blocked; needs browser session"),
+    "dns-shop.ru": DomainOverride(required_method=METHOD_BROWSER, note="hardened retail SPA"),
+    "citilink.ru": DomainOverride(required_method=METHOD_BROWSER, note="hardened retail SPA"),
+    "twitch.tv": DomainOverride(required_method=METHOD_BROWSER, note="JS-gated"),
+    "flashscore.com": DomainOverride(required_method=METHOD_BROWSER, note="JS-rendered scores"),
+    "sofascore.com": DomainOverride(required_method=METHOD_BROWSER, note="JS-rendered scores"),
     "cursor.com": DomainOverride(parsing_mode="nextjs_rsc", note="Next.js RSC payload"),
 }
 

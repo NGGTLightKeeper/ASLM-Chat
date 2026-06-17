@@ -14,8 +14,8 @@ circuit breaker. Parsing of early winners overlaps the tail of slow engines, so
 parse latency hides inside SERP latency.
 
 Process discipline (non-negotiable): every parse task is tracked and cancelled
-at the deadline; cancellation propagates into the read service, whose camoufox
-path kills the worker process tree on CancelledError. No fire-and-forget tasks.
+at the deadline. No fire-and-forget tasks. The persistent warm browser lives in
+its own daemon, so a cancelled search never leaves a browser process behind.
 """
 
 from __future__ import annotations
@@ -211,9 +211,9 @@ class WebSearchService:
                     source.url,
                     timeout=profile.parse_timeout,
                     max_chars=profile.parse_max_chars,
-                    # Search is HTTP-only today. high's profile.allow_browser will gate a
-                    # limited warm-browser escalation here once browser_fetch is wired into
-                    # the read service; the camoufox subprocess never runs inside a search.
+                    # Search stays HTTP-only: the warm browser is exclusive to the
+                    # read_page tool. Flip to profile.allow_browser to let high effort
+                    # escalate to the warm daemon (it autostarts) within parse_timeout.
                     allow_browser=False,
                 )
             source.parsed_markdown = markdown or ""
@@ -401,7 +401,7 @@ class WebSearchService:
             logger.warning("web_search deadline %.0fs hit for query=%r", profile.deadline, query)
         finally:
             # Hard rule: no task survives the search. Cancellation propagates into
-            # read_page → camoufox worker kill.
+            # read_page; the warm browser runs out-of-process in its own daemon.
             pending = [task for task in parse_tasks.values() if not task.done()]
             for task in pending:
                 task.cancel()

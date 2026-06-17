@@ -34,12 +34,12 @@
         "ncbi.nlm.nih.gov"
       ],
       "tier": "hardened",
-      "method": "camoufox",
+      "method": "browser",
       "rps": 0.5,
       "burst": 1,
       "response_time_ms": 6000,
       "json_api_hint": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=<q>&retmode=json",
-      "notes": "Raw HTTP via httpx gets 403. curl_cffi gets 200 but freezes on Cloudflare 'browser check' JS challenge. Web scraping strictly requires a JS-capable headless browser (camoufox/patchright). Alternatively, use official E-utilities API.",
+      "notes": "Raw HTTP via httpx gets 403. curl_cffi gets 200 but freezes on Cloudflare 'browser check' JS challenge. Web scraping strictly requires a JS-capable headless browser (warm cloakbrowser). Alternatively, use official E-utilities API.",
       "topics": [
         "academic",
         "medical"
@@ -48,12 +48,12 @@
     {
       "pattern": "semanticscholar.org",
       "tier": "hardened",
-      "method": "camoufox",
+      "method": "browser",
       "rps": 0.3,
       "burst": 1,
       "response_time_ms": 7500,
       "json_api_hint": "https://api.semanticscholar.org/graph/v1/paper/search",
-      "notes": "SPA/React heavy site. Simple HTTP fetch only yields a skeleton loading screen. Using camoufox (waiting for 'networkidle') successfully executes React, populates DOM, and allows Trafilatura to extract the paper titles and abstracts. Official API throws 429 without a key.",
+      "notes": "SPA/React heavy site. Simple HTTP fetch only yields a skeleton loading screen. Using a warm browser (waiting for 'networkidle') successfully executes React, populates DOM, and allows Trafilatura to extract the paper titles and abstracts. Official API throws 429 without a key.",
       "topics": [
         "academic",
         "tech"
@@ -66,7 +66,7 @@
       "rps": 0.5,
       "burst": 1,
       "response_time_ms": 1000,
-      "notes": "Protected by 'Anubis' JS Proof-of-Work challenge, but may selectively disable it for 'friendly' looking traffic with good delays. httpx can work. Fallback to camoufox if challenged.",
+      "notes": "Protected by 'Anubis' JS Proof-of-Work challenge, but may selectively disable it for 'friendly' looking traffic with good delays. httpx can work. Fallback to the warm browser if challenged.",
       "topics": [
         "academic"
       ]
@@ -82,7 +82,7 @@
       "burst": 10,
       "response_time_ms": 350,
       "json_api_hint": "https://api.openalex.org/works?search=<q>",
-      "notes": "Web UI is a heavy SPA and Trafilatura fails to extract content even with camoufox. However, the REST API is extremely friendly and high-quality, returning ~1MB of rich JSON instantly without auth. Strictly prefer API.",
+      "notes": "Web UI is a heavy SPA and Trafilatura fails to extract content even with a browser render. However, the REST API is extremely friendly and high-quality, returning ~1MB of rich JSON instantly without auth. Strictly prefer API.",
       "topics": [
         "academic"
       ]

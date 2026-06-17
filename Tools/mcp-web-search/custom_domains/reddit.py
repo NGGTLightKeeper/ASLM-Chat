@@ -175,11 +175,11 @@ async def fetch_reddit_json(url: str, timeout: float = 15.0) -> str:
 
 from custom_domains.base import FetchContext, PageResult
 
-# Reddit needs room for curl_cffi + a Camoufox browser session for the .json endpoint.
+# Reddit needs room for curl_cffi + a warm-browser render of the thread page.
 _REDDIT_READ_TIMEOUT_SEC = 60.0
 
 
-# Unified handler: fetch a Reddit thread as JSON (curl_cffi → Camoufox in-page).
+# Unified handler: fetch a Reddit thread as JSON (curl_cffi → warm-browser in-page).
 class RedditHandler:
     name = "reddit"
     fallback_to_generic = False

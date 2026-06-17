@@ -79,7 +79,6 @@ def test_identity_cookie_header_is_host_scoped(tmp_path):
 def test_browser_section_defaults():
     sec = BrowserSection()
     assert sec.browser_fallback == "page"
-    assert sec.browser_backend == "warm"
     assert sec.max_rss_mb == 2048
     assert sec.autostart_daemon is True             # spawn on first tool call
     assert sec.daemon_idle_shutdown_sec == 1800.0   # 30 min, 0 = eternal
@@ -88,12 +87,12 @@ def test_browser_section_defaults():
 def test_browser_config_validates_enums(tmp_path):
     cfg_path = tmp_path / "search_config.json"
     cfg_path.write_text(
-        json.dumps({"browser": {"browser_fallback": "bogus", "browser_backend": "legacy"}}),
+        json.dumps({"browser": {"browser_fallback": "bogus", "engine": "chromium"}}),
         encoding="utf-8",
     )
     cfg = load_search_config(path=cfg_path)
     assert cfg.browser.browser_fallback == "page"   # invalid → safe default
-    assert cfg.browser.browser_backend == "legacy"  # valid value preserved
+    assert cfg.browser.engine == "chromium"         # valid value preserved
 
 
 # ── client dispatch (mocked daemon) ────────────────────────────────────────────────
@@ -127,7 +126,7 @@ def test_client_off_returns_unavailable():
 
 
 def test_client_warm_dispatches_to_daemon():
-    client = BrowserClient(cfg=BrowserSection(browser_fallback="page", browser_backend="warm"))
+    client = BrowserClient(cfg=BrowserSection(browser_fallback="page"))
     fake = _FakeHttp({"url": "https://example.com", "status": "ok", "html": "<html>hi</html>", "ms": 12.0})
     client._http = fake
     result = asyncio.run(client.fetch("https://example.com", wait_sec=2.0))
@@ -137,7 +136,7 @@ def test_client_warm_dispatches_to_daemon():
 
 
 def test_client_warm_unreachable_is_unavailable_not_crash():
-    client = BrowserClient(cfg=BrowserSection(browser_backend="warm", autostart_daemon=False))
+    client = BrowserClient(cfg=BrowserSection(autostart_daemon=False))
 
     class _Boom:
         async def post(self, *a, **k):
@@ -153,7 +152,7 @@ def test_client_warm_unreachable_is_unavailable_not_crash():
 
 
 def test_client_autostart_spawns_daemon_when_unreachable(monkeypatch):
-    client = BrowserClient(cfg=BrowserSection(browser_backend="warm", autostart_daemon=True))
+    client = BrowserClient(cfg=BrowserSection(autostart_daemon=True))
     state = {"up": False, "spawns": 0}
 
     async def fake_probe() -> bool:
@@ -170,7 +169,7 @@ def test_client_autostart_spawns_daemon_when_unreachable(monkeypatch):
 
 
 def test_client_no_autostart_when_disabled(monkeypatch):
-    client = BrowserClient(cfg=BrowserSection(browser_backend="warm", autostart_daemon=False))
+    client = BrowserClient(cfg=BrowserSection(autostart_daemon=False))
     spawns: list[int] = []
 
     async def fake_probe() -> bool:

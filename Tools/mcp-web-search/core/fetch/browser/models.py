@@ -2,10 +2,9 @@
 
 """Shared data shapes for the warm-browser layer.
 
-BrowserFetch is the single outcome type every caller depends on, regardless of
-whether the fetch was served by the warm cloakbrowser daemon or the legacy
-Camoufox subprocess. Mirrors the daemon's wire payload (scripts/browser_daemon.py
-ScrapeResult) so the HTTP client can build one from a JSON body verbatim.
+BrowserFetch is the single outcome type every caller depends on. Mirrors the
+daemon's wire payload (scripts/browser_daemon.py ScrapeResult) so the HTTP client
+can build one from a JSON body verbatim.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # Terminal fetch statuses. Mirrors the daemon contract; "unavailable" is added for
-# the client side (daemon unreachable / warm browser disabled) so callers can tell a
+# the client side (daemon unreachable / browser disabled) so callers can tell a
 # real block apart from "we never asked the browser".
 STATUS_OK = "ok"
 STATUS_BLOCKED = "blocked"
@@ -22,7 +21,7 @@ STATUS_ERROR = "error"
 STATUS_UNAVAILABLE = "unavailable"
 
 
-# Outcome of one page fetch through a browser backend (warm daemon or legacy subprocess).
+# Outcome of one page fetch through the warm browser daemon.
 @dataclass(slots=True)
 class BrowserFetch:
     url: str
@@ -30,8 +29,8 @@ class BrowserFetch:
     html: str = ""
     text: str = ""
     title: str = ""
-    engine: str = ""          # chromium (warm) | camoufox (legacy)
-    backend: str = ""         # warm | legacy
+    engine: str = ""          # chromium (warm daemon)
+    backend: str = "warm"
     ms: float = 0.0
     error: str = ""
 

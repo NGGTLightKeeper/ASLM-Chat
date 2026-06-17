@@ -153,11 +153,11 @@ class DnsShopHandler:
     def matches(self, url: str) -> bool:
         return _host(url) == "dns-shop.ru"
 
-    # Drive the generic pipeline with DNS variants and a camoufox-first strategy.
+    # Drive the generic pipeline with DNS variants and a browser-first strategy.
     async def read(self, url: str, ctx: FetchContext) -> PageResult:
         variants = dns_variant_urls(url) or [rewrite_read_page_url(url)]
         return await ctx.generic_read(
-            GenericRequest(url=url, camoufox_first=True, url_variants=variants)
+            GenericRequest(url=url, browser_first=True, url_variants=variants)
         )
 
 
