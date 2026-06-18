@@ -446,6 +446,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} أدوات)",
     "cancel": "إلغاء",
-    "save": "حفظ"
+    "save": "حفظ",
+    "noServers": "لا توجد خوادم MCP"
   }
 }

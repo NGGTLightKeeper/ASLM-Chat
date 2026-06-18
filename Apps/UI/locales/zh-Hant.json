@@ -446,6 +446,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name}（{count} 個工具）",
     "cancel": "取消",
-    "save": "儲存"
+    "save": "儲存",
+    "noServers": "沒有 MCP 伺服器"
   }
 }

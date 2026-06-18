@@ -446,6 +446,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} araç)",
     "cancel": "İptal",
-    "save": "Kaydet"
+    "save": "Kaydet",
+    "noServers": "MCP sunucusu yok"
   }
 }

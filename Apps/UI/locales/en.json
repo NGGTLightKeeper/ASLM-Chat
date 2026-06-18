@@ -158,7 +158,8 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} tools)",
     "cancel": "Cancel",
-    "save": "Save"
+    "save": "Save",
+    "noServers": "No MCP servers"
   },
   "skills": {
     "title": "Skills",

@@ -142,51 +142,85 @@ export function createParametersUi(context) {
     renderMcpControls();
   }
 
-  // Render the user MCP settings section and server list.
+  // Render the MCP flyout entry (server list + JSON editor action) into the composer "Other" menu.
+  // Mirrors the skills entry so MCP appears as a row with a flyout, not a standalone section.
   function renderMcpControls() {
     const show = Boolean(state.toolState.supported);
-    dom.$groupMcp.toggle(show);
-    dom.$dividerMcp.toggle(show);
-    dom.$mcpSettingsContent.empty();
+    dom.$composerMcpHosts.empty();
     if (!show) {
       return;
     }
 
-    const $btn = $('<button type="button" class="preset-action-btn mcp-json-open-btn">').text(t('mcp.editConfig'));
-    $btn.on('click', function onOpenMcp() {
-      openMcpJsonEditor();
-    });
-    dom.$mcpSettingsContent.append($btn);
-
     const userList = Array.isArray(state.userMcpToolServers) ? state.userMcpToolServers : [];
-    if (userList.length > 0) {
-      const $list = $('<div class="mcp-user-tool-server-list">');
-      userList.forEach(function renderUserMcpServer(server) {
-        const serverId = normalizeToolServerId(server.id);
-        const toolCount = Number(server.tool_count || (server.tools || []).length || 0);
-        const displayName = server.name || serverId;
-        const label = toolCount > 0
-          ? t('mcp.serverTools', { name: displayName, count: toolCount })
-          : displayName;
-        const checked = state.selectedToolServerIds.has(serverId);
+    const chevron = '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
 
-        const $row = $('<label class="tool-server-row mcp-user-tool-server-row">');
-        const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
-        const $name = $('<span class="tool-server-name">').text(label);
+    dom.$composerMcpHosts.each(function renderMcpHost() {
+      const $host = $(this);
 
-        $checkbox.on('change', function onChange() {
-          if (this.checked) {
-            state.selectedToolServerIds.add(serverId);
-          } else {
-            state.selectedToolServerIds.delete(serverId);
-          }
+      const $entry = $('<div class="composer-skills-entry">');
+      const $trigger = $('<button type="button" class="composer-tool-row composer-skills-trigger" aria-haspopup="menu">');
+      const $icon = $('<span class="composer-tool-icon is-mcp" aria-hidden="true">');
+      const $name = $('<span class="tool-server-name">').text(t('settings.mcp'));
+      const $chev = $('<span class="composer-skills-chevron" aria-hidden="true">').html(chevron);
+      $trigger.append($icon).append($name).append($chev);
+
+      const $flyout = $('<div class="composer-skills-flyout" role="menu">').attr('aria-label', t('settings.mcp'));
+      const $list = $('<div class="composer-skills-flyout-list">');
+
+      if (!userList.length) {
+        $list.append($('<div class="composer-skills-empty">').text(t('mcp.noServers', null, 'No MCP servers')));
+      } else {
+        userList.forEach(function renderUserMcpServer(server) {
+          const serverId = normalizeToolServerId(server.id);
+          const toolCount = Number(server.tool_count || (server.tools || []).length || 0);
+          const displayName = server.name || serverId;
+          const label = toolCount > 0
+            ? t('mcp.serverTools', { name: displayName, count: toolCount })
+            : displayName;
+          const checked = state.selectedToolServerIds.has(serverId);
+
+          const $row = $('<label class="tool-server-row composer-tool-row mcp-user-tool-server-row">');
+          const $rowIcon = $('<span class="composer-tool-icon is-mcp" aria-hidden="true">');
+          const $rowName = $('<span class="tool-server-name">').text(label);
+          const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
+
+          $row.on('mousedown click', function onRowPointer(ev) {
+            ev.stopPropagation();
+          });
+          $checkbox.on('mousedown click', function onCheckboxPointer(ev) {
+            ev.stopPropagation();
+          });
+          $checkbox.on('change', function onChange() {
+            if (this.checked) {
+              state.selectedToolServerIds.add(serverId);
+            } else {
+              state.selectedToolServerIds.delete(serverId);
+            }
+          });
+
+          $row.append($rowIcon).append($rowName).append($checkbox);
+          $list.append($row);
         });
+      }
 
-        $row.append($checkbox).append($name);
-        $list.append($row);
+      const $manage = $('<button type="button" class="composer-menu-action composer-skills-manage" role="menuitem">')
+        .append($('<span class="composer-tool-icon is-mcp" aria-hidden="true">'))
+        .append($('<span>').text(t('mcp.editConfig')));
+      $manage.on('click', function onOpenMcp(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        openMcpJsonEditor();
       });
-      dom.$mcpSettingsContent.append($list);
-    }
+
+      const $divider = $('<div class="composer-skills-flyout-divider" aria-hidden="true">');
+
+      $flyout.on('click', function onFlyoutClick(ev) {
+        ev.stopPropagation();
+      });
+      $flyout.append($list).append($divider).append($manage);
+      $entry.append($trigger).append($flyout);
+      $host.append($entry);
+    });
   }
 
   // MCP JSON editor helpers.
@@ -345,13 +379,12 @@ export function createParametersUi(context) {
     $('.settings-section').filter(function filterPanels() {
       return this.id.startsWith('group-')
         && this.id !== 'group-connection'
-        && this.id !== 'group-skills'
         && this.id !== 'group-system'
         && this.id !== 'group-model'
         && this.id !== 'group-sandbox-default';
     }).hide().find('.settings-section-content').empty();
 
-    $('.settings-divider[id^="divider-"]').not('#divider-connection, #divider-skills, #divider-sandbox-default').hide();
+    $('.settings-divider[id^="divider-"]').not('#divider-connection, #divider-sandbox-default').hide();
   }
 
 

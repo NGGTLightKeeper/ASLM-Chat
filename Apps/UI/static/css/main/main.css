@@ -1459,9 +1459,13 @@
 
 .composer-skills-manage {
   flex: 0 0 auto;
-  margin-top: 4px;
-  padding-top: 7px;
-  border-top: 1px solid var(--c-border);
+}
+
+.composer-skills-flyout-divider {
+  flex: 0 0 auto;
+  height: 1px;
+  margin: 5px 0;
+  background: var(--c-border);
 }
 
 .composer-skill-row {
@@ -1601,6 +1605,11 @@
 .composer-tool-icon.is-skills-file {
   -webkit-mask: url("../../img/ui/skills/file.svg") center / contain no-repeat;
   mask: url("../../img/ui/skills/file.svg") center / contain no-repeat;
+}
+
+.composer-tool-icon.is-mcp {
+  -webkit-mask: url("../../img/ui/mcp.svg") center / contain no-repeat;
+  mask: url("../../img/ui/mcp.svg") center / contain no-repeat;
 }
 
 .attach-btn {

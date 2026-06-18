@@ -446,6 +446,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name}（{count} ツール）",
     "cancel": "キャンセル",
-    "save": "保存"
+    "save": "保存",
+    "noServers": "MCPサーバーがありません"
   }
 }

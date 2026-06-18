@@ -446,6 +446,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} narzędzi)",
     "cancel": "Anuluj",
-    "save": "Zapisz"
+    "save": "Zapisz",
+    "noServers": "Brak serwerów MCP"
   }
 }

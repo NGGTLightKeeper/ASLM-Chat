@@ -446,6 +446,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} alat)",
     "cancel": "Batal",
-    "save": "Simpan"
+    "save": "Simpan",
+    "noServers": "Tidak ada server MCP"
   }
 }

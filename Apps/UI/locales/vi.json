@@ -446,6 +446,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} công cụ)",
     "cancel": "Hủy",
-    "save": "Lưu"
+    "save": "Lưu",
+    "noServers": "Không có máy chủ MCP"
   }
 }

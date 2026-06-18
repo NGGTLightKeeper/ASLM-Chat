@@ -446,6 +446,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} инстр.)",
     "cancel": "Отмена",
-    "save": "Сохранить"
+    "save": "Сохранить",
+    "noServers": "Нет серверов MCP"
   }
 }

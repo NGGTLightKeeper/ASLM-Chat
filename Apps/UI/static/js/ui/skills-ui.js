@@ -910,10 +910,12 @@ export function createSkillsUi(context) {
         openManager();
       });
 
+      const $divider = $('<div class="composer-skills-flyout-divider" aria-hidden="true">');
+
       $flyout.on('click', function onFlyoutClick(ev) {
         ev.stopPropagation();
       });
-      $flyout.append($list).append($manage);
+      $flyout.append($list).append($divider).append($manage);
       $entry.append($trigger).append($flyout);
       $host.append($entry);
     });
