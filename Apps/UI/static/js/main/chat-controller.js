@@ -38,7 +38,7 @@ export function createChatController(context, dependencies) {
   }
 
   // Reset the page into a fresh chat state.
-  function startNewChat() {
+  function startNewChat(pushState) {
     dom.$chatTitle.text(t('chat.newChat', {}, 'New Chat'));
     document.title = t('meta.appTitle', {}, 'ASLM Chat');
     dom.$messagesInner.find('.msg').remove();
@@ -54,6 +54,11 @@ export function createChatController(context, dependencies) {
     attachmentUi.clearPendingAttachments();
     messagesUi.updateSendButtons();
     refreshContextUsageNow();
+
+    // Navigate to the new-chat page so the URL reflects it (mirrors loadChat's pushState).
+    if (pushState === true && window.location.pathname !== '/') {
+      history.pushState({ chatId: null }, '', '/');
+    }
   }
 
 

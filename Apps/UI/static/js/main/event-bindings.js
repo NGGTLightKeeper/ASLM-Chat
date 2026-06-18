@@ -43,7 +43,7 @@ export function bindEventHandlers(context, dependencies) {
   dom.$newChatBtn.on('click', function onNewChatClick(event) {
     if ($(this).attr('href') === '/') {
       event.preventDefault();
-      chatController.startNewChat();
+      chatController.startNewChat(true);
     }
   });
 
