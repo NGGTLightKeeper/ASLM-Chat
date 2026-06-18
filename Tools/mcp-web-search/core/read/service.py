@@ -656,7 +656,8 @@ async def run_read_page(
     effective_timeout = max(timeout, _REDDIT_READ_TIMEOUT_SEC) if host == "reddit.com" else timeout
     service = ReadPageService(
         options=ReadPageOptions(
-            timeout=effective_timeout, max_chars=max_chars, focus=focus, allow_browser=allow_browser
+            timeout=effective_timeout, max_chars=max_chars, focus=focus,
+            allow_browser=allow_browser,
         )
     )
     return await service.read(url)

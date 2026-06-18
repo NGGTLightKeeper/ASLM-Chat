@@ -345,8 +345,11 @@ class WebSearchService:
             self._read_page = run_read_page
         return self._read_page
 
-    # Parse one URL under its own hard timeout; never raises.
-    async def _parse_one(self, source: _Source, profile: EffortProfile) -> None:
+    # Parse one URL under its own hard timeout; never raises. The search query is passed
+    # as the compaction focus so chunk selection ranks against the actual query.
+    async def _parse_one(
+        self, source: _Source, profile: EffortProfile, *, query: str = ""
+    ) -> None:
         started = time.perf_counter()
         try:
             async with asyncio.timeout(profile.parse_timeout):
@@ -354,6 +357,7 @@ class WebSearchService:
                     source.url,
                     timeout=profile.parse_timeout,
                     max_chars=profile.parse_max_chars,
+                    focus=query,
                     # Search stays HTTP-only: the warm browser is exclusive to the
                     # read_page tool. Flip to profile.allow_browser to let high effort
                     # escalate to the warm daemon (it autostarts) within parse_timeout.
@@ -374,7 +378,7 @@ class WebSearchService:
     # Build the hosted supplement stream when API keys are configured; None otherwise
     # (no keys → pure scrape, baseline unchanged). Imports are deferred so the SERP-only
     # and key-less paths never pay for httpx provider code.
-    def _hosted_stream(self, query: str, *, region: str, timelimit: str | None, deadline: float):
+    def _hosted_stream(self, query: str, *, region: str, deadline: float):
         try:
             from core.search.hosted_providers import available_providers
             from core.search.hosted_stream import hosted_search_stream
@@ -384,8 +388,7 @@ class WebSearchService:
         if not available_providers():
             return None
         return hosted_search_stream(
-            query, region=region, timelimit=timelimit,
-            max_results=_HOSTED_MAX_RESULTS, deadline_seconds=deadline,
+            query, region=region, max_results=_HOSTED_MAX_RESULTS, deadline_seconds=deadline,
         )
 
     # Run one full search. Returns the aggregated, ranked payload.
@@ -455,7 +458,7 @@ class WebSearchService:
             async def run() -> None:
                 assert slots is not None
                 async with slots:
-                    await self._parse_one(source, profile)
+                    await self._parse_one(source, profile, query=query)
 
             parse_tasks[url] = asyncio.create_task(run(), name=f"parse:{source.host}")
 
@@ -467,9 +470,7 @@ class WebSearchService:
             deadline_seconds=profile.deadline * 0.8,
         )
         if profile.parse_budget:
-            hosted = self._hosted_stream(
-                query, region=region, timelimit=timelimit, deadline=profile.deadline * 0.8
-            )
+            hosted = self._hosted_stream(query, region=region, deadline=profile.deadline * 0.8)
             if hosted is not None:
                 event_stream = _merge_streams(event_stream, hosted)
 

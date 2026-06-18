@@ -3,7 +3,7 @@
 """Shared data shapes for the warm-browser layer.
 
 BrowserFetch is the single outcome type every caller depends on. Mirrors the
-daemon's wire payload (scripts/browser_daemon.py ScrapeResult) so the HTTP client
+daemon's wire payload (core/fetch/browser/daemon.py ScrapeResult) so the HTTP client
 can build one from a JSON body verbatim.
 """
 

@@ -6,7 +6,7 @@ Keeps one stealth Chromium warm in-process and serves page fetches over a small 
 API, so callers pay the cold-start cost once. Chromium-only by design — it is the sole
 browser backend in web search.
 
-Supervision (the part the prototype scripts/browser_daemon.py lacked):
+Supervision (the part the original throwaway prototype lacked):
   * one identity context seeded from the IdentityStore on launch (earned cookies /
     storageState carry across restarts);
   * idle checkpoints — every checkpoint_interval, if no fetch is in flight and the

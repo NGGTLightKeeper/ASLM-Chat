@@ -400,7 +400,26 @@ def compress_read_page_markdown(
         budget = compress_target if compress_target > 0 else max_chars
         budget = min(budget, max_chars)
         query = _resolve_read_page_compress_query(focus, url, text)
-        text = compress_to_budget(text, query, budget)
+        if focus.strip():
+            # Search preview: a real query is present — select the most relevant chunks
+            # and reject SEO-stuffed blocks (entity/BM25 + SEO penalty engine).
+            from core.extract.chunk_compaction import compress_chunks
+
+            compacted = compress_chunks(text, focus, char_budget=budget)
+            text = compacted or text
+        else:
+            # Standalone read_page (no query): gentle BM25 budget fill over a derived focus.
+            text = compress_to_budget(text, query, budget)
+
+    # Clause/sentence-level micro-prune: drops SEO-stuffed and off-query micro-chunks
+    # within otherwise-kept blocks. Only runs with a real search query (focus); a no-op
+    # for the standalone read_page tool, which has no query to prune against.
+    if enable_compress and focus.strip() and text.strip():
+        from core.extract.micro_chunk_worker import prune_micro_chunks
+
+        pruned, _micro = prune_micro_chunks(text, focus)
+        if pruned.strip():
+            text = pruned
 
     if len(text) > max_chars:
         text = text[:max_chars].rsplit("\n", 1)[0] + "\n\n[...truncated]"
@@ -434,50 +453,6 @@ _TAG_RE = re.compile(r"<[^>]+>")
 
 
 # Preview settings (defaults merged with SearchConfig and hardware profile).
-
-_DEFAULT_SETTINGS: dict[str, Any] = {
-    "output_chars": 1_400,
-    "min_clean_chars": 220,
-    "input_char_limit": 15_000,
-    "top_k": 3,
-    "fetch_timeout": 6.0,
-    "total_timeout": 12.0,
-    "concurrency": 4,
-    "rerank": "soft",
-    "mode": "bm25",
-    "semantic_min_score": 0.20,
-    "preview_limit": 10,
-    "profile": "balanced",
-}
-
-
-# Return current preview settings. Relevance is BM25-only (no GPU/embedding layers).
-def get_preview_settings() -> dict[str, Any]:
-    settings = dict(_DEFAULT_SETTINGS)
-    try:
-        from core.config import load_search_config
-        cfg = load_search_config()
-        settings["output_chars"] = cfg.search.preview_max_chars
-        settings["min_clean_chars"] = cfg.search.preview_min_chars
-        settings["preview_limit"] = cfg.search.preview_fetch_limit
-    except Exception as exc:
-        logger.debug("Preview settings config load failed, using built-ins: %s", exc)
-        pass
-    return settings
-
-
-@dataclass
-class PreviewPayload:
-    text: str = ""
-    semantic_score: float = 0.0
-    quality_score: float = 0.0
-    clean_chars: int = 0
-    strategy_used: str = ""
-    extraction_status: str = ""
-    policy_family: str = ""
-    chunks_selected: int = 0
-    seo_rejected: int = 0
-    nav_rejected: int = 0
 
 
 # HTML cleaning helpers (used by page_normalizer).
@@ -523,111 +498,6 @@ def _regex_html_to_text(raw_html: str) -> str:
                    flags=re.IGNORECASE | re.DOTALL)
     no_js = re.sub(r'\s+on\w+="[^"]*"', "", no_js)
     return _normalize_text(_TAG_RE.sub(" ", no_js))
-
-
-_SERP_REF_ATTR = "data-aslm-serp-ref"
-_MIN_SERP_SNIPPET_CHARS = 20
-_MIN_SERP_TITLE_CHARS = 12
-_MIN_PAGE_TITLE_CHARS = 8
-_MIN_META_DESC_CHARS = 24
-
-
-# Best-effort page title / description when SERP snippet is absent.
-def _extract_page_title_reference(raw_html: str) -> str:
-    if not raw_html:
-        return ""
-    try:
-        from bs4 import BeautifulSoup
-
-        soup = BeautifulSoup(raw_html, _BS_PARSER)
-        if soup.title and soup.title.string:
-            title = _normalize_text(str(soup.title.string))
-            if len(title) >= _MIN_PAGE_TITLE_CHARS:
-                return title
-        for attrs in ({"property": "og:title"}, {"name": "twitter:title"}):
-            node = soup.find("meta", attrs=attrs)
-            if node and node.get("content"):
-                title = _normalize_text(str(node["content"]))
-                if len(title) >= _MIN_PAGE_TITLE_CHARS:
-                    return title
-        desc = soup.find("meta", attrs={"name": "description"})
-        if desc and desc.get("content"):
-            text = _normalize_text(str(desc["content"]))
-            if len(text) >= _MIN_META_DESC_CHARS:
-                return text
-    except Exception as exc:
-        logger.debug("page title reference extraction failed: %s", exc)
-
-    m = re.search(r"<title[^>]*>(.*?)</title>", raw_html, flags=re.IGNORECASE | re.DOTALL)
-    if m:
-        title = _normalize_text(html_lib.unescape(m.group(1)))
-        if len(title) >= _MIN_PAGE_TITLE_CHARS:
-            return title
-    return ""
-
-
-# Resolve SEO/SERP reference text and its source label.
-def _resolve_serp_reference(
-    settings: dict[str, Any],
-    raw_html: str,
-) -> tuple[str, str]:
-    snippet = _normalize_text(str(settings.get("serp_snippet") or ""))
-    if len(snippet) >= _MIN_SERP_SNIPPET_CHARS:
-        return snippet, "serp_snippet"
-
-    serp_title = _normalize_text(str(settings.get("serp_title") or ""))
-    if len(serp_title) >= _MIN_SERP_TITLE_CHARS:
-        return serp_title, "serp_title"
-
-    page_title = _extract_page_title_reference(raw_html)
-    if page_title:
-        return page_title, "page_title"
-    return "", ""
-
-
-# Prepend SERP snippet into HTML so extractors can align against it.
-def _inject_serp_reference_into_html(raw_html: str, reference: str) -> str:
-    reference = _normalize_text(reference)
-    if not raw_html or not reference:
-        return raw_html
-    try:
-        from bs4 import BeautifulSoup
-
-        soup = BeautifulSoup(raw_html, _BS_PARSER)
-        body = soup.body
-        if body is None:
-            body = soup.new_tag("body")
-            if soup.html:
-                soup.html.append(body)
-            else:
-                soup.append(body)
-        marker = soup.new_tag("p")
-        marker[_SERP_REF_ATTR] = "1"
-        marker.string = reference
-        body.insert(0, marker)
-        return str(soup)
-    except Exception as exc:
-        logger.debug("serp reference inject failed, using string prepend: %s", exc)
-        escaped = html_lib.escape(reference)
-        return f'<p {_SERP_REF_ATTR}="1">{escaped}</p>{raw_html}'
-
-
-# Remove injected or duplicated SERP reference blocks from extracted text.
-def _strip_serp_reference_blocks(text: str, reference: str) -> str:
-    ref_norm = _normalize_text(reference)
-    if not text or not ref_norm:
-        return text
-    kept: list[str] = []
-    for block in _split_blocks(text):
-        block_norm = _normalize_text(block)
-        if not block_norm:
-            continue
-        if block_norm == ref_norm:
-            continue
-        if len(ref_norm) >= 40 and ref_norm in block_norm and len(block_norm) <= len(ref_norm) + 40:
-            continue
-        kept.append(block)
-    return "\n\n".join(kept).strip() if kept else text.strip()
 
 
 # Remove noise tags and noise-marker nodes from HTML.
@@ -896,187 +766,3 @@ def _estimate_quality(text: str, block_count: int) -> float:
     return max(0.0, min(round(score, 4), 1.0))
 
 
-# Semantic extraction (optional).
-
-
-# Optional embedding-based chunk selection when mode is semantic.
-def _semantic_extract(text: str, query: str, settings: dict[str, Any]) -> tuple[str, float]:
-    if settings.get("mode") != "semantic" or not query.strip():
-        return text, 0.0
-    try:
-        from core.extract.semantic import ensure_embedder_ready, extract_relevant_content
-    except ImportError:
-        return text, 0.0
-
-    semantic_input = text[: max(0, int(settings.get("input_char_limit", 15_000)))]
-    if not semantic_input:
-        return text, 0.0
-    try:
-        ensure_embedder_ready(require_cuda=bool(settings.get("semantic_require_cuda", False)))
-        preview_text, scored_chunks = extract_relevant_content(
-            text=semantic_input,
-            query=query,
-            max_chars=max(200, int(settings.get("output_chars", 1_400)) * 2),
-            top_k=max(1, int(settings.get("top_k", 3))),
-            min_score=float(settings.get("semantic_min_score", 0.20)),
-        )
-    except Exception as exc:
-        logger.debug("Semantic extract failed, using lexical text only: %s", exc)
-        return text, 0.0
-
-    scores = [float(score) for _, score in (scored_chunks or []) if isinstance(score, (int, float))]
-    semantic_score = max(scores) if scores else 0.0
-    return preview_text or text, max(0.0, min(round(semantic_score, 4), 1.0))
-
-
-# Pre-warm embedding models if semantic mode is active.
-def warm_preview_models(settings: Optional[dict[str, Any]] = None) -> None:
-    active = dict(settings or get_preview_settings())
-    if active.get("mode") == "semantic":
-        try:
-            from core.extract.semantic import ensure_embedder_ready
-            ensure_embedder_ready(require_cuda=bool(active.get("semantic_require_cuda")))
-        except Exception as exc:
-            logger.debug("Preview model warmup failed: %s", exc)
-            pass
-
-
-# Extract a relevance-scored, query-focused preview from raw HTML.
-def build_preview_payload(
-    url: str,
-    raw_html: str,
-    query: str = "",
-    domain_info: Optional[Any] = None,
-    settings: Optional[dict[str, Any]] = None,
-) -> PreviewPayload:
-    from core.extract.profile_chunk_selector import (
-        compress_chunks_profiled,
-        policy_family,
-        resolve_chunk_policy,
-    )
-
-    active_settings = dict(settings or get_preview_settings())
-    query_type = str(active_settings.get("query_type") or "general")
-    fam = policy_family(query_type)
-    policy = resolve_chunk_policy(
-        query_type,
-        char_budget=int(active_settings.get("output_chars", 1_400)),
-    )
-    active_settings["output_chars"] = policy.char_budget
-
-    seo_reference, seo_reference_source = _resolve_serp_reference(active_settings, raw_html)
-    if seo_reference:
-        active_settings["seo_reference"] = seo_reference
-        active_settings["seo_reference_source"] = seo_reference_source
-
-    working_html = raw_html
-    strategy_parts: list[str] = []
-    if seo_reference_source == "serp_snippet" and seo_reference:
-        working_html = _inject_serp_reference_into_html(raw_html, seo_reference)
-        strategy_parts.append("serp_inject")
-    elif seo_reference_source == "page_title":
-        strategy_parts.append("title_ref")
-
-    cleaned_html = _preclean_html(working_html)
-    nav_rejected = 0
-    extraction_status = "ok"
-    chunks_selected = 0
-    seo_rejected = 0
-
-    min_clean = int(active_settings.get("min_clean_chars", 220))
-    extracted, extract_method, dom_stats = _choose_extraction(
-        cleaned_html, url=url, min_clean_chars=min_clean,
-    )
-    if extract_method:
-        strategy_parts.append(extract_method)
-    nav_rejected = int(dom_stats.get("nav_rejected", 0))
-    extraction_status = str(dom_stats.get("extraction_status", "ok"))
-    if extraction_status == "nav_heavy" and not extracted.strip():
-        strategy_parts.append("nav_gate")
-
-    dom_had_cleanup = nav_rejected >= 3 and extract_method == "dom_blocks"
-    if len(_normalize_text(extracted)) < min_clean and not dom_had_cleanup:
-        bs4_text = _extract_text_with_bs4(cleaned_html)
-        if len(_normalize_text(bs4_text)) > len(_normalize_text(extracted)):
-            extracted = bs4_text
-            strategy_parts.append("bs4_last_resort")
-
-    if len(_normalize_text(extracted)) < min_clean and not dom_had_cleanup:
-        regex_text = _regex_html_to_text(cleaned_html or raw_html)
-        if len(regex_text) > len(_normalize_text(extracted)):
-            extracted = regex_text
-            strategy_parts.append("regex")
-
-    cleaned_text, block_count = _clean_extracted_text(extracted)
-    if seo_reference:
-        cleaned_text = _strip_serp_reference_blocks(cleaned_text, seo_reference)
-        if (
-            query.strip()
-            and cleaned_text.strip()
-            and seo_reference_source in {"serp_snippet", "serp_title"}
-        ):
-            from core.extract.micro_chunk_worker import prune_micro_chunks
-
-            cleaned_text, micro_dbg = prune_micro_chunks(
-                cleaned_text,
-                query,
-                reference_text=seo_reference,
-            )
-            if micro_dbg.clauses_dropped or micro_dbg.sentences_dropped:
-                strategy_parts.append("micro_prune")
-
-    quality_score = _estimate_quality(cleaned_text, block_count)
-    if extraction_status == "nav_heavy":
-        quality_score = min(quality_score, 0.15)
-
-    output_chars = max(120, int(active_settings.get("output_chars", policy.char_budget)))
-
-    compress_debug: dict[str, object] = {}
-    if query.strip() and cleaned_text:
-        compressed, compress_debug = compress_chunks_profiled(
-            cleaned_text,
-            query,
-            query_type=query_type,
-            char_budget=output_chars,
-        )
-        if compressed.strip():
-            strategy_parts.append("profiled")
-            cleaned_text = compressed
-            chunks_selected = int(compress_debug.get("chunks_selected", 0))
-            seo_rejected = int(compress_debug.get("rejected_seo", 0))
-
-    preview_text, semantic_score = _semantic_extract(cleaned_text, query, active_settings)
-    if preview_text != cleaned_text and preview_text.strip():
-        strategy_parts.append("semantic")
-
-    if not preview_text.strip():
-        preview_text = cleaned_text
-
-    compact_preview = preview_text.strip()
-    if "\n\n" not in compact_preview and " | " in compact_preview:
-        compact_preview = compact_preview.replace(" | ", "\n\n")
-    compact_preview = _truncate_at_sentence(compact_preview, output_chars)
-
-    if _has_latex(compact_preview):
-        compact_preview = _render_latex_for_llm(compact_preview)
-        strategy_parts.append("latex")
-
-    if not compact_preview.strip() and extraction_status == "nav_heavy":
-        extraction_status = "nav_heavy_empty"
-
-    if not compact_preview.strip() and seo_reference:
-        compact_preview = _truncate_at_sentence(seo_reference, output_chars)
-        strategy_parts.append("ref_fallback")
-
-    return PreviewPayload(
-        text=compact_preview,
-        semantic_score=max(0.0, min(float(semantic_score or 0.0), 1.0)),
-        quality_score=max(0.0, min(float(quality_score or 0.0), 1.0)),
-        clean_chars=len(_normalize_text(cleaned_text)),
-        strategy_used="+".join(strategy_parts) if strategy_parts else "empty",
-        extraction_status=extraction_status,
-        policy_family=fam,
-        chunks_selected=chunks_selected,
-        seo_rejected=seo_rejected,
-        nav_rejected=nav_rejected,
-    )

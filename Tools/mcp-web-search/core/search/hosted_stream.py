@@ -98,7 +98,6 @@ async def hosted_search_stream(
     query: str,
     *,
     region: str = "us-en",
-    timelimit: str | None = None,
     max_results: int = 5,
     deadline_seconds: float = 8.0,
     providers: list[HostedProvider] | None = None,
@@ -116,9 +115,7 @@ async def hosted_search_stream(
         family = provider.provider_family
         started = time.perf_counter()
         try:
-            results = await provider.search(
-                client, sanitized, max_results=max_results, timelimit=timelimit
-            )
+            results = await provider.search(client, sanitized, max_results=max_results)
         except Exception as exc:  # noqa: BLE001 — provider error never sinks the stream
             logger.warning("hosted provider %s failed: %s", provider.name, exc)
             results = []

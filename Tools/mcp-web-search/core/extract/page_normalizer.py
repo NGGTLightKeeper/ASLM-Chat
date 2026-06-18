@@ -129,16 +129,42 @@ def _extract_with_trafilatura_formatted(cleaned_html: str, url: str = "") -> str
     return text or ""
 
 
+# DOM block extraction with structural nav/UI rejection. Returns (joined_text, stats);
+# ("", {}) on any failure so the caller falls back to trafilatura/bs4/regex.
+def _extract_with_dom_blocks(cleaned_html: str, url: str) -> tuple[str, dict]:
+    try:
+        from core.extract.dom_block_extractor import extract_dom_blocks
+
+        blocks, stats = extract_dom_blocks(cleaned_html, url=url)
+        return "\n\n".join(blocks), dict(stats)
+    except Exception:  # noqa: BLE001 — extraction refinement must never sink a read
+        return "", {}
+
+
 # Extract and return the main textual content from HTML or fallback.
 def _extract_content(raw_html: Optional[str], fallback_text: Optional[str], url: str) -> str:
     if raw_html:
         cleaned_html = _preclean_html(raw_html)
         min_chars = 200
 
+        # Structural nav/UI rejection (menus, control clusters, link farms) — catches
+        # boilerplate that survives trafilatura's main-content heuristic.
+        dom_text, dom_stats = _extract_with_dom_blocks(cleaned_html, url)
+        dom_ok = len(_normalize_text(dom_text)) >= min_chars
+
         if _HAS_TRAFILATURA:
             text = _extract_with_trafilatura_formatted(cleaned_html, url)
             if len(_normalize_text(text)) >= min_chars:
+                # When the DOM pass rejected several nav/UI blocks, the page carries real
+                # boilerplate that trafilatura's main-content heuristic tends to swallow —
+                # prefer the structurally-filtered blocks. Clean pages (few/no rejects)
+                # keep trafilatura's richer formatting (headings/lists/tables).
+                if dom_ok and int(dom_stats.get("nav_rejected", 0)) >= 3:
+                    return dom_text
                 return text
+
+        if dom_ok:
+            return dom_text
 
         if _HAS_BS4:
             text = _extract_text_with_bs4(cleaned_html)

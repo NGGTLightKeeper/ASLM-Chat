@@ -268,7 +268,8 @@ class _FakeSerpApi:
 
 
 async def _fake_reader(
-    url: str, *, timeout: float = 0, max_chars: int = 0, focus: str = "", allow_browser: bool = True
+    url: str, *, timeout: float = 0, max_chars: int = 0, focus: str = "",
+    allow_browser: bool = True,
 ) -> str:
     await asyncio.sleep(0)
     return f"# parsed {url}"
@@ -330,6 +331,37 @@ def test_web_search_medium_parses_winners_and_ranks(monkeypatch):
     assert top["consensus_families"] == ["google", "yandex"]
     assert top["parsed_ok"] and top["markdown"].startswith("# parsed")
     assert result["health"]["google"]["state"] == "closed"
+
+
+def test_web_search_passes_query_as_focus_to_reader(monkeypatch):
+    import core.search.web_search as ws
+
+    _FakeSerpApi.events = [
+        {
+            "type": "source", "engine": "google", "provider_family": "google", "rank": 1,
+            "url": {"url": "https://good.com/p", "host": "good.com"},
+            "serp": {"title": "T", "snippet": "a detailed snippet about the topic at hand",
+                     "fetch_ms": 1, "parse_ms": 1},
+        },
+        {
+            "type": "engine", "engine": "google",
+            "payload": {"engine": "google", "provider_family": "google", "status": "success",
+                        "fetch_ms": 1.0, "sources": [{"url": "https://good.com/p"}]},
+        },
+    ]
+    monkeypatch.setattr(ws, "SerpApi", _FakeSerpApi)
+    monkeypatch.setattr(ws, "_get_transport", lambda *_: None)
+
+    captured: dict = {}
+
+    async def capturing_reader(url, *, timeout=0, max_chars=0, focus="", allow_browser=True):
+        captured["focus"] = focus
+        return f"# parsed {url}"
+
+    service = ws.WebSearchService(tracker=EngineHealthTracker(clock=_Clock()), read_page=capturing_reader)
+    asyncio.run(service.search("attention mechanism", effort="medium"))
+
+    assert captured["focus"] == "attention mechanism"  # query is the compaction focus
 
 
 def test_web_search_hosted_consensus_merges_not_overwrites(monkeypatch):

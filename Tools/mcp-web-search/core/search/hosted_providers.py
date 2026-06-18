@@ -61,7 +61,7 @@ class HostedProvider(Protocol):
     def key(self, keys: HostedSearchApiKeysSection) -> str | None: ...
 
     async def search(
-        self, client: httpx.AsyncClient, query: str, *, max_results: int, timelimit: str | None
+        self, client: httpx.AsyncClient, query: str, *, max_results: int
     ) -> list[HostedResult]: ...
 
 
@@ -71,12 +71,11 @@ class TavilyClient:
     provider_family = "tavily"
     returns_content = True
     BASE_URL = "https://api.tavily.com/search"
-    _DAYS = {"d": 1, "w": 7, "m": 30, "y": 365}
 
     def key(self, keys: HostedSearchApiKeysSection) -> str | None:
         return keys.tavily_api_key
 
-    async def search(self, client, query, *, max_results, timelimit):
+    async def search(self, client, query, *, max_results):
         api_key = load_api_keys().search.hosted_api.tavily_api_key
         if not api_key:
             return []
@@ -88,8 +87,6 @@ class TavilyClient:
             "include_answer": False,
             "include_raw_content": True,
         }
-        if timelimit in self._DAYS:
-            payload["days"] = self._DAYS[timelimit]
         data = await _post_json(client, self.BASE_URL, json=payload, provider=self.name)
         out: list[HostedResult] = []
         for item in (data or {}).get("results", []):
@@ -115,12 +112,11 @@ class FirecrawlClient:
     provider_family = "firecrawl"
     returns_content = True
     BASE_URL = "https://api.firecrawl.dev/v1/search"
-    _TBS = {"d": "qdr:d", "w": "qdr:w", "m": "qdr:m", "y": "qdr:y"}
 
     def key(self, keys: HostedSearchApiKeysSection) -> str | None:
         return keys.firecrawl_api_key
 
-    async def search(self, client, query, *, max_results, timelimit):
+    async def search(self, client, query, *, max_results):
         api_key = load_api_keys().search.hosted_api.firecrawl_api_key
         if not api_key:
             return []
@@ -129,8 +125,6 @@ class FirecrawlClient:
             "limit": max_results,
             "scrapeOptions": {"formats": ["markdown"]},
         }
-        if timelimit in self._TBS:
-            payload["tbs"] = self._TBS[timelimit]
         data = await _post_json(
             client, self.BASE_URL, json=payload, provider=self.name,
             headers={"Authorization": f"Bearer {api_key}"},
@@ -159,18 +153,15 @@ class BraveClient:
     provider_family = "brave"
     returns_content = False
     BASE_URL = "https://api.search.brave.com/res/v1/web/search"
-    _FRESHNESS = {"d": "pd", "w": "pw", "m": "pm", "y": "py"}
 
     def key(self, keys: HostedSearchApiKeysSection) -> str | None:
         return keys.brave_api_key
 
-    async def search(self, client, query, *, max_results, timelimit):
+    async def search(self, client, query, *, max_results):
         api_key = load_api_keys().search.hosted_api.brave_api_key
         if not api_key:
             return []
         params: dict[str, Any] = {"q": query, "count": min(max_results, 20)}
-        if timelimit in self._FRESHNESS:
-            params["freshness"] = self._FRESHNESS[timelimit]
         data = await _get_json(
             client, self.BASE_URL, params=params, provider=self.name,
             headers={"Accept": "application/json", "Accept-Encoding": "gzip",
@@ -198,12 +189,11 @@ class SerpApiClient:
     provider_family = "google"
     returns_content = False
     BASE_URL = "https://serpapi.com/search.json"
-    _TBS = {"d": "qdr:d", "w": "qdr:w", "m": "qdr:m", "y": "qdr:y"}
 
     def key(self, keys: HostedSearchApiKeysSection) -> str | None:
         return keys.serpapi_api_key
 
-    async def search(self, client, query, *, max_results, timelimit):
+    async def search(self, client, query, *, max_results):
         api_key = load_api_keys().search.hosted_api.serpapi_api_key
         if not api_key:
             return []
@@ -211,8 +201,6 @@ class SerpApiClient:
             "q": query, "num": min(max_results, 100), "engine": "google",
             "api_key": api_key, "output": "json",
         }
-        if timelimit in self._TBS:
-            params["tbs"] = self._TBS[timelimit]
         data = await _get_json(client, self.BASE_URL, params=params, provider=self.name)
         out: list[HostedResult] = []
         for item in (data or {}).get("organic_results", []):

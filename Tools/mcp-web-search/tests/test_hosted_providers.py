@@ -42,7 +42,7 @@ def test_tavily_returns_content(monkeypatch):
 
     async def go():
         async with _client(handler) as c:
-            return await TavilyClient().search(c, "q", max_results=5, timelimit=None)
+            return await TavilyClient().search(c, "q", max_results=5)
 
     out = asyncio.run(go())
     assert len(out) == 1
@@ -63,7 +63,7 @@ def test_firecrawl_returns_markdown_content(monkeypatch):
 
     async def go():
         async with _client(handler) as c:
-            return await FirecrawlClient().search(c, "q", max_results=5, timelimit=None)
+            return await FirecrawlClient().search(c, "q", max_results=5)
 
     out = asyncio.run(go())
     assert out[0].content == "# Heading\n\nbody text"
@@ -80,7 +80,7 @@ def test_serpapi_family_is_google_and_no_content(monkeypatch):
 
     async def go():
         async with _client(handler) as c:
-            return await SerpApiClient().search(c, "q", max_results=5, timelimit=None)
+            return await SerpApiClient().search(c, "q", max_results=5)
 
     out = asyncio.run(go())
     assert out[0].provider_family == "google"  # votes with the Google scrape parser
@@ -92,7 +92,7 @@ def test_provider_soft_fails_on_http_error(monkeypatch):
 
     async def go():
         async with _client(lambda req: httpx.Response(429, json={})) as c:
-            return await BraveClient().search(c, "q", max_results=5, timelimit=None)
+            return await BraveClient().search(c, "q", max_results=5)
 
     assert asyncio.run(go()) == []
 
@@ -119,7 +119,7 @@ class _FakeProvider:
     def key(self, keys):
         return "k"
 
-    async def search(self, client, query, *, max_results, timelimit):
+    async def search(self, client, query, *, max_results):
         return list(self._results)
 
 
