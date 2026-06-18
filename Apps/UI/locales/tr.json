@@ -4,6 +4,7 @@
     "appDescription": "ASLM - Gelişmiş Sistem Dil Modelleri"
   },
   "sidebar": {
+    "recent": "Son",
     "chats": "Sohbetler",
     "newChat": "Yeni Sohbet",
     "noPreviousChats": "Önceki sohbet yok",

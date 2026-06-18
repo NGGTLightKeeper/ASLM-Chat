@@ -39,6 +39,74 @@ export function bindEventHandlers(context, dependencies) {
     setRightSidebarCollapsed(false, false);
   }
 
+  // Settings section collapse state, persisted per section id in the browser.
+  const sectionsStorageKey = 'aslm.settingsSectionsCollapsed';
+
+  // Read the persisted {sectionId: collapsed} map.
+  function readSectionCollapseMap() {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(sectionsStorageKey) || '{}');
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_error) {
+      return {};
+    }
+  }
+
+  // Persist one section's collapsed state, keyed by its element id.
+  function persistSectionCollapsed(sectionId, collapsed) {
+    if (!sectionId) {
+      return;
+    }
+    const map = readSectionCollapseMap();
+    map[sectionId] = !!collapsed;
+    try {
+      window.localStorage.setItem(sectionsStorageKey, JSON.stringify(map));
+    } catch (_error) {
+      // Ignore storage failures in privacy-restricted contexts.
+    }
+  }
+
+  // Re-apply the saved collapse state to every settings section on load.
+  // Sections render hidden until a model loads, but the class survives show/hide.
+  function restoreSectionCollapseState() {
+    const map = readSectionCollapseMap();
+    Object.keys(map).forEach(function applyState(sectionId) {
+      const section = document.getElementById(sectionId);
+      if (section && section.classList.contains('settings-section')) {
+        section.classList.toggle('collapsed', !!map[sectionId]);
+      }
+    });
+  }
+
+  restoreSectionCollapseState();
+
+  // Recent-chats list collapse state, persisted per browser. Expanded by default.
+  const historyStorageKey = 'aslm.historyCollapsed';
+
+  // Collapse or expand the recent-chats list and optionally persist the state.
+  function setHistoryCollapsed(collapsed, persist) {
+    $('#historyToggle')
+      .toggleClass('collapsed', !!collapsed)
+      .attr('aria-expanded', collapsed ? 'false' : 'true');
+    if (persist !== false) {
+      try {
+        window.localStorage.setItem(historyStorageKey, collapsed ? '1' : '0');
+      } catch (_error) {
+        // Ignore storage failures in privacy-restricted contexts.
+      }
+    }
+  }
+
+  try {
+    setHistoryCollapsed(window.localStorage.getItem(historyStorageKey) === '1', false);
+  } catch (_error) {
+    setHistoryCollapsed(false, false);
+  }
+
+  $(document).on('click', '#historyToggle', function onHistoryToggleClick() {
+    setHistoryCollapsed(!$(this).hasClass('collapsed'), true);
+  });
+
   // Chat shell events.
   dom.$newChatBtn.on('click', function onNewChatClick(event) {
     if ($(this).attr('href') === '/') {
@@ -413,7 +481,34 @@ export function bindEventHandlers(context, dependencies) {
 
   // Settings panel events.
   $(document).on('click', '.settings-section-header', function onSectionHeaderClick() {
-    $(this).parent('.settings-section').toggleClass('collapsed');
+    const $section = $(this).parent('.settings-section');
+    $section.toggleClass('collapsed');
+    persistSectionCollapsed($section.attr('id'), $section.hasClass('collapsed'));
+  });
+
+  // Position a setting's help popover next to its (?) icon. It is fixed so it can
+  // escape the scrolling settings panel's clip; opens left of the icon by default.
+  function positionSettingHelpPopover(helpEl) {
+    const popover = helpEl.querySelector('.setting-help-popover');
+    if (!popover) {
+      return;
+    }
+    const iconRect = helpEl.getBoundingClientRect();
+    const popRect = popover.getBoundingClientRect();
+    const margin = 8;
+    let left = iconRect.left - popRect.width - margin;
+    if (left < margin) {
+      left = iconRect.right + margin;
+    }
+    left = Math.max(margin, Math.min(left, window.innerWidth - popRect.width - margin));
+    let top = iconRect.top + (iconRect.height - popRect.height) / 2;
+    top = Math.max(margin, Math.min(top, window.innerHeight - popRect.height - margin));
+    popover.style.left = `${Math.round(left)}px`;
+    popover.style.top = `${Math.round(top)}px`;
+  }
+
+  $(document).on('mouseenter focusin', '.setting-help', function onSettingHelpEnter() {
+    positionSettingHelpPopover(this);
   });
 
   $(document).on('click', '.think-toggle-btn', function onThinkToggleClick() {

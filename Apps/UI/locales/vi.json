@@ -4,6 +4,7 @@
     "appDescription": "ASLM - Mô hình ngôn ngữ hệ thống nâng cao"
   },
   "sidebar": {
+    "recent": "Gần đây",
     "chats": "Cuộc trò chuyện",
     "newChat": "Cuộc trò chuyện mới",
     "noPreviousChats": "Chưa có cuộc trò chuyện nào",

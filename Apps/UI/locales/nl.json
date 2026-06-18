@@ -4,6 +4,7 @@
     "appDescription": "ASLM - Geavanceerde systeemtaalmodellen"
   },
   "sidebar": {
+    "recent": "Recent",
     "chats": "Gesprekken",
     "newChat": "Nieuwe chat",
     "noPreviousChats": "Geen eerdere chats",

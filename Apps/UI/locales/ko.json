@@ -4,6 +4,7 @@
     "appDescription": "ASLM - 고급 시스템 언어 모델"
   },
   "sidebar": {
+    "recent": "최근",
     "chats": "채팅",
     "newChat": "새 채팅",
     "noPreviousChats": "이전 채팅 없음",

@@ -4,6 +4,7 @@
     "appDescription": "ASLM - Model Bahasa Sistem Lanjutan"
   },
   "sidebar": {
+    "recent": "Terbaru",
     "chats": "Obrolan",
     "newChat": "Obrolan Baru",
     "noPreviousChats": "Tidak ada obrolan sebelumnya",

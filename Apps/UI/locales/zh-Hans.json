@@ -4,6 +4,7 @@
     "appDescription": "ASLM - 高级系统语言模型"
   },
   "sidebar": {
+    "recent": "最近",
     "chats": "对话",
     "newChat": "新对话",
     "noPreviousChats": "暂无历史对话",

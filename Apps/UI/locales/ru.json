@@ -4,6 +4,7 @@
     "appDescription": "ASLM — продвинутые системные языковые модели"
   },
   "sidebar": {
+    "recent": "Недавние",
     "chats": "Чаты",
     "newChat": "Новый чат",
     "noPreviousChats": "Нет предыдущих чатов",

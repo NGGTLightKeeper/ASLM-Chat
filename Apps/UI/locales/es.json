@@ -4,6 +4,7 @@
     "appDescription": "ASLM - Modelos de lenguaje de sistema avanzados"
   },
   "sidebar": {
+    "recent": "Recientes",
     "chats": "Conversaciones",
     "newChat": "Nuevo chat",
     "noPreviousChats": "No hay chats anteriores",

@@ -2197,6 +2197,18 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
     }
 
 
+# Decide whether an Ollama model runs in the cloud (no local layers to manage).
+def _ollama_model_is_cloud(model_name: str, model_layers: int) -> bool:
+    name = str(model_name or "").strip().lower()
+    if name.endswith("-cloud") or name.endswith(":cloud") or "-cloud:" in name:
+        return True
+    # Local models report a positive block_count; cloud models expose none.
+    try:
+        return int(model_layers) <= 0
+    except (TypeError, ValueError):
+        return False
+
+
 # Extract generic model info
 def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
     if not isinstance(settings_data, dict):
@@ -2301,6 +2313,10 @@ def _build_model_info_payload(
         preset_payload = get_ollama_preset_payload(model_name)
         payload["defaults"] = {**payload.get("defaults", {}), **preset_payload["active_config"]}
         payload["ollama_presets"] = preset_payload
+        # Report whether the model runs in the cloud. The frontend derives which
+        # parameters to hide (local execution knobs) from this flag, so no list
+        # of option names is hardcoded here.
+        payload["is_cloud"] = _ollama_model_is_cloud(model_name, payload.get("model_layers", 0))
     elif engine == "lms":
         payload = _extract_generic_model_info(settings_data)
         preset_payload = get_lms_preset_payload(model_name)

@@ -4,6 +4,7 @@
     "appDescription": "ASLM - 高度なシステム言語モデル"
   },
   "sidebar": {
+    "recent": "最近",
     "chats": "チャット",
     "newChat": "新しいチャット",
     "noPreviousChats": "過去のチャットはありません",

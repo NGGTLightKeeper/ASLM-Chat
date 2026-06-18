@@ -4,6 +4,7 @@
     "appDescription": "ASLM - نماذج لغوية نظامية متقدمة"
   },
   "sidebar": {
+    "recent": "الأخيرة",
     "chats": "المحادثات",
     "newChat": "محادثة جديدة",
     "noPreviousChats": "لا توجد محادثات سابقة",

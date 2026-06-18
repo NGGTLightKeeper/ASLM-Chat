@@ -4,6 +4,7 @@
     "appDescription": "ASLM — розширені системні мовні моделі"
   },
   "sidebar": {
+    "recent": "Нещодавні",
     "chats": "Чати",
     "newChat": "Новий чат",
     "noPreviousChats": "Немає попередніх чатів",

@@ -4,6 +4,7 @@
     "appDescription": "ASLM - उन्नत सिस्टम भाषा मॉडल"
   },
   "sidebar": {
+    "recent": "हाल ही के",
     "chats": "चैट",
     "newChat": "नई चैट",
     "noPreviousChats": "कोई पिछली चैट नहीं",

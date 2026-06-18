@@ -4,6 +4,7 @@
     "appDescription": "ASLM — Zaawansowane Systemowe Modele Językowe"
   },
   "sidebar": {
+    "recent": "Ostatnie",
     "chats": "Czaty",
     "newChat": "Nowy czat",
     "noPreviousChats": "Brak wcześniejszych czatów",
