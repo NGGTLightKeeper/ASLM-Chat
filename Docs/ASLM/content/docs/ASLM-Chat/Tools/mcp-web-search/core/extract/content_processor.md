@@ -15,14 +15,6 @@ Part of `Tools\mcp-web-search\core\extract`. See **Related** for package index a
 
 ---
 
-## Classes
-
-### `class PreviewPayload`
-
-**Purpose:** Type `PreviewPayload` defined in `content_processor.py`.
-
----
-
 ## Public functions
 
 #### `def compress_to_budget(text, query, max_chars) -> str`
@@ -50,36 +42,6 @@ Part of `Tools\mcp-web-search\core\extract`. See **Related** for package index a
 **Steps:**
 
 1. Return the computed result to the caller.
-
-#### `def get_preview_settings(*, apply_hardware_profile=…) -> dict[str, Any]`
-
-**Purpose:** Return current preview settings merged with hardware profile defaults.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
-
-#### `def warm_preview_models(settings) -> None`
-
-**Purpose:** Pre-warm embedding models if semantic mode is active.
-
-**Steps:**
-
-1. Handle errors and map them to a safe response.
-
-#### `def build_preview_payload(url, raw_html, query, domain_info, settings) -> PreviewPayload`
-
-**Purpose:** Extract a relevance-scored, query-focused preview from raw HTML.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
-
----
-
-## Private functions
 
 #### `def _unknown_macros(text) -> list[str]`
 
@@ -207,42 +169,6 @@ Part of `Tools\mcp-web-search\core\extract`. See **Related** for package index a
 
 1. Return the computed result to the caller.
 
-#### `def _extract_page_title_reference(raw_html) -> str`
-
-**Purpose:** Best-effort page title / description when SERP snippet is absent.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
-3. Iterate and transform or accumulate state.
-
-#### `def _resolve_serp_reference(settings, raw_html) -> tuple[str, str]`
-
-**Purpose:** Resolve SEO/SERP reference text and its source label.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
-#### `def _inject_serp_reference_into_html(raw_html, reference) -> str`
-
-**Purpose:** Prepend SERP snippet into HTML so extractors can align against it.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
-
-#### `def _strip_serp_reference_blocks(text, reference) -> str`
-
-**Purpose:** Remove injected or duplicated SERP reference blocks from extracted text.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Iterate and transform or accumulate state.
-
 #### `def _preclean_html(raw_html) -> str`
 
 **Purpose:** Remove noise tags and noise-marker nodes from HTML.
@@ -345,16 +271,6 @@ Part of `Tools\mcp-web-search\core\extract`. See **Related** for package index a
 
 1. Return the computed result to the caller.
 2. Iterate and transform or accumulate state.
-
-#### `def _semantic_extract(text, query, settings) -> tuple[str, float]`
-
-**Purpose:** Optional embedding-based chunk selection when mode is semantic.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
-3. Iterate and transform or accumulate state.
 
 ---
 

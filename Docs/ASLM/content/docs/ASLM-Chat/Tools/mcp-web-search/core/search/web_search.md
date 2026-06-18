@@ -5,7 +5,7 @@ draft: false
 
 ## Module `web_search`
 
-`Tools/mcp-web-search/services/web_search.py` — ASLM Chat Python module.
+`Tools/mcp-web-search/core/search/web_search.py` — ASLM Chat Python module.
 
 ---
 

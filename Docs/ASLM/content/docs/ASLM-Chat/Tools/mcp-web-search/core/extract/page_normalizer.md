@@ -60,6 +60,15 @@ draft: false
 1. Return the computed result to the caller.
 2. Handle errors and map them to a safe response.
 
+#### `def _extract_with_dom_blocks(cleaned_html, url) -> tuple[str, dict]`
+
+**Purpose:** DOM block extraction with structural nav/UI rejection.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+
 #### `def _extract_content(raw_html, fallback_text, url) -> str`
 
 **Purpose:** Extract and return the main textual content from HTML or fallback.

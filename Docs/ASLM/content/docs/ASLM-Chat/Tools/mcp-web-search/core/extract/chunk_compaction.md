@@ -1,43 +1,27 @@
 ---
-title: "profile_chunk_selector"
+title: "chunk_compaction"
 draft: false
 ---
 
-## Module `profile_chunk_selector`
+## Module `chunk_compaction`
 
-`Tools/mcp-web-search/core/extract/profile_chunk_selector.py` — ASLM Chat Python module.
+`Tools/mcp-web-search/core/extract/chunk_compaction.py` — ASLM Chat Python module.
 
 ---
 
 ## Classes
 
-### `class ChunkCompressPolicy`
+### `class _Policy`
 
-**Purpose:** Type `ChunkCompressPolicy` defined in `profile_chunk_selector.py`.
+**Purpose:** Type `_Policy` defined in `chunk_compaction.py`.
 
 ---
 
 ## Public functions
 
-#### `def policy_family(query_type) -> str`
+#### `def compress_chunks(text, query, *, char_budget=…) -> str`
 
-**Purpose:** Map query class to breadth / general / depth chunk family.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
-#### `def resolve_chunk_policy(query_type, *, char_budget=…) -> ChunkCompressPolicy`
-
-**Purpose:** Map primary query class to chunk selection policy (optional char budget override).
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
-#### `def compress_chunks_profiled(text, query, *, query_type=…, char_budget=…) -> tuple[str, dict[str, object]]`
-
-**Purpose:** Select paragraphs by relevance + entity heuristics; penalize SEO stuffing.
+**Purpose:** Select the paragraphs most relevant to the query, dropping SEO-stuffed blocks, and pack them into the (optionally rescaled) character budget. Returns the joined text.
 
 **Steps:**
 
@@ -48,9 +32,13 @@ draft: false
 
 ## Private functions
 
-#### `def _tokenize(text) -> list[str]`
+#### `def _policy_for(char_budget) -> _Policy`
 
-**Purpose:** Tokenize text via BM25 helper.
+**Purpose:** The single compaction policy, optionally rescaled to a caller's char budget.
+
+**Steps:**
+
+1. Return the computed result to the caller.
 
 #### `def _sentence_like_ratio(text) -> float`
 
@@ -90,6 +78,10 @@ draft: false
 #### `def _chunk_limit(policy, strong_count) -> int`
 
 **Purpose:** Cap on paragraph count; expands when many strong chunks exist.
+
+**Steps:**
+
+1. Return the computed result to the caller.
 
 ---
 

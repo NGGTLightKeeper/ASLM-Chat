@@ -1,11 +1,11 @@
 ---
-title: "read_page"
+title: "service"
 draft: false
 ---
 
-## Module `read_page`
+## Module `service`
 
-`Tools/mcp-web-search/services/read_page.py` — see source for implementation details.
+`Tools/mcp-web-search/core/read/service.py` — see source for implementation details.
 
 ---
 

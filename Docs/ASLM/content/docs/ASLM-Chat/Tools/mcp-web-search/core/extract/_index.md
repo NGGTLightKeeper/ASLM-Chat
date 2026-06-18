@@ -17,7 +17,7 @@ draft: false
 | [page_normalizer](page_normalizer/) | `page_normalizer.py` | Trafilatura page → markdown |
 | [dom_block_extractor](dom_block_extractor/) | `dom_block_extractor.py` | DOM block scoring |
 | [gliner_wrapper](gliner_wrapper/) | `gliner_wrapper.py` | GLiNER entity-density path |
-| [profile_chunk_selector](profile_chunk_selector/) | `profile_chunk_selector.py` | Query-type chunk budgets |
+| [chunk_compaction](chunk_compaction/) | `chunk_compaction.py` | Query-relevant chunk compaction |
 | [micro_chunk_worker](micro_chunk_worker/) | `micro_chunk_worker.py` | Sentence-level pruning |
 | [nextjs_rsc](nextjs_rsc/) | `nextjs_rsc.py` | Next.js RSC payload text |
 | [pdf_extractor](pdf_extractor/) | `pdf_extractor.py` | PDF → markdown |
