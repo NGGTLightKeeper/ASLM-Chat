@@ -31,9 +31,7 @@ draft: false
 
 **Purpose:** Type `EffortSection` defined in `settings.py`.
 
-### `class ModelsSection`
 
-**Purpose:** Type `ModelsSection` defined in `settings.py`.
 
 ### `class SearchConfig`
 
