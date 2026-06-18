@@ -3,8 +3,7 @@
 """Model-free SERP quality signals.
 
 Everything here is deterministic, allocation-light, and budgeted for sub-millisecond
-per-source evaluation so triage can run inline with the live result stream. Model
-scoring (decoder relevance) lives a layer above and only in high effort.
+per-source evaluation so triage can run inline with the live result stream.
 """
 
 from __future__ import annotations

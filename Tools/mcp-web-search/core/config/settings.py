@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from core.config.pipeline_modes import normalize_pipeline_mode
 
 logger = logging.getLogger("config.search")
 
@@ -102,21 +101,11 @@ class BrowserSection:
 
 
 @dataclass
-class ModelsSection:
-    pipeline: str = "aslm_embedding"
-    enable_decoder: bool = True       # decoder content-stage re-ranker (high effort only, CPU)
-    decoder_model_dir: str = ""       # export dir; empty → <root>/models/aslm_embedding_decoder
-    decoder_weight: float = 0.45      # blend: final = (1-w)*rules_score + w*decoder_score
-    keep_loaded: bool = False
-
-
-@dataclass
 class SearchConfig:
     search: SearchSection = field(default_factory=SearchSection)
     extraction: ExtractionSection = field(default_factory=ExtractionSection)
     cache: CacheSection = field(default_factory=CacheSection)
     query: QuerySection = field(default_factory=QuerySection)
-    models: ModelsSection = field(default_factory=ModelsSection)
     browser: BrowserSection = field(default_factory=BrowserSection)
 
 
@@ -168,7 +157,6 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
     e = raw.get("extraction", {})
     c = raw.get("cache", {})
     q = raw.get("query", {})
-    models = raw.get("models", {})
     b = raw.get("browser", {})
 
     config = SearchConfig(
@@ -224,13 +212,6 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             year_hint_prev=_optional_string(q.get("year_hint_prev", _MISSING), "y"),
             year_hint_older=_optional_string(q.get("year_hint_older", _MISSING), None),
             auto_type_timelimit_enabled=bool(q.get("auto_type_timelimit_enabled", True)),
-        ),
-        models=ModelsSection(
-            pipeline=normalize_pipeline_mode(models.get("pipeline", "rules")),
-            enable_decoder=bool(models.get("enable_decoder", False)),
-            decoder_model_dir=str(models.get("decoder_model_dir", "")),
-            decoder_weight=float(models.get("decoder_weight", 0.45)),
-            keep_loaded=bool(models.get("keep_loaded", False)),
         ),
         browser=BrowserSection(
             browser_fallback=_one_of(

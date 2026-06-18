@@ -26,11 +26,6 @@
     "seen_source_window_seconds": 30,
     "prefetch_max_urls": 4
   },
-  "models": {
-    "pipeline": "aslm_embedding",
-    "enable_decoder": true,
-    "keep_loaded": false
-  },
   "query": {
     "year_hint_mode": "timelimit",
     "year_hint_current": "m",

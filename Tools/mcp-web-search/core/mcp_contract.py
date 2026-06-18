@@ -35,11 +35,11 @@ EFFORT:
                    discovery, names, URLs, and rough orientation.
   effort="medium"  Default. Ranks results and parses a few top pages into previews. Use
                    first for ordinary cited answers, comparisons, reviews, and how-tos.
-  effort="high"    Exceptional escalation: larger source pool, deeper parsing, and an
-                   extra relevance re-rank. Use only for exhaustive or high-stakes work,
-                   or after medium left an important claim unresolved — never first for
-                   ordinary lookups. Do not retry the same intent at a lower effort after
-                   high; answer from the evidence collected.
+  effort="high"    Exceptional escalation: larger source pool and deeper parsing. Use
+                   only for exhaustive or high-stakes work, or after medium left an
+                   important claim unresolved — never first for ordinary lookups. Do not
+                   retry the same intent at a lower effort after high; answer from the
+                   evidence collected.
 
 SHOPPING:
   shopping=false   Default. Never runs shopping providers.
@@ -107,8 +107,8 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
             "description": (
                 "Search effort. low is fast and SERP-only; medium (default) ranks and "
                 "parses a few top pages for ordinary answers, comparisons, and reviews; "
-                "high is an exceptional escalation for exhaustive or high-stakes work "
-                "after medium is insufficient."
+                "high is an exceptional escalation with a larger source pool and deeper "
+                "parsing for exhaustive or high-stakes work after medium is insufficient."
             ),
         },
         "shopping": {

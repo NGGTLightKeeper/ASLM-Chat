@@ -25,7 +25,7 @@ from .quality import (
     year_match_score,
 )
 
-# Engine classes drive how much a SERP position is worth (TODO.md §6/§7):
+# Engine classes drive how much a SERP position is worth:
 # premier indexes earn a strong positional prior, recall helpers a weak one.
 _ENGINE_POSITION_WEIGHT = {
     "google": 1.00,

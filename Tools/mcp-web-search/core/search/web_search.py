@@ -55,6 +55,40 @@ _SOURCE_LIMIT = 20
 # avoid bar — a wide search cannot afford a multi-second page on the hot path.
 _INLINE_PARSE_SKIP_MS = 6_000.0
 
+# Per-provider cap for the hosted supplement layer. Low by design — hosted credits cost
+# money and diversity beats depth; the scrape engines carry recall.
+_HOSTED_MAX_RESULTS = 5
+
+# Sentinel marking one merged sub-stream as drained.
+_STREAM_DONE = object()
+
+
+# Interleave several event streams into one, yielding items as any sub-stream produces
+# them and finishing only when all are drained. Cancels stragglers on exit.
+async def _merge_streams(*streams):
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def drain(stream) -> None:
+        try:
+            async for item in stream:
+                await queue.put(item)
+        finally:
+            await queue.put(_STREAM_DONE)
+
+    tasks = [asyncio.create_task(drain(s)) for s in streams]
+    remaining = len(tasks)
+    try:
+        while remaining:
+            item = await queue.get()
+            if item is _STREAM_DONE:
+                remaining -= 1
+                continue
+            yield item
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
 
 # Whether a source may be parsed inline during a search, or should stay snippet-only.
 # Two reasons to skip: a read_page-only custom-domain handler (reddit/x/ebay/youtube —
@@ -97,9 +131,8 @@ def _infer_pdf_url(url: str) -> str:
 #   low    — SERP-only. Pure HTTP, NO page parse, no browser, no model. Sub-2s.
 #   medium — HTTP page parsing only (no browser, no model). Hard-bounded to ~6-8s total:
 #            tight per-page parse cap and a short overall deadline.
-#   high   — deeper HTTP parse + limited warm-browser escalation + a CPU decoder
-#            re-ranker. The browser/decoder allowances are declared here; their wiring
-#            (read/service warm-browser, decoder content-stage) lands separately.
+#   high   — deeper HTTP parse + limited warm-browser escalation. The browser allowance
+#            is declared here; its wiring (read/service warm-browser) lands separately.
 #
 # parse_budget=0 means SERP-only. parse_timeout is the hard per-page cap (6s ceiling —
 # a wide search cannot afford a slow page; slow domains are left snippet-only anyway).
@@ -114,13 +147,12 @@ class EffortProfile:
     deadline: float  # hard cap for the whole search
     max_results: int  # sources returned after ranking
     allow_browser: bool  # high only: limited warm-browser escalation (HTTP-only until wired)
-    allow_decoder: bool  # high only: CPU decoder content-stage re-ranker (pending integration)
 
 
 EFFORT_PROFILES: dict[str, EffortProfile] = {
-    "low": EffortProfile("low", 0, 0, 0, 0.0, 0, 8.0, 8, False, False),
-    "medium": EffortProfile("medium", 3, 3, 1, 6.0, 8_000, 8.0, 10, False, False),
-    "high": EffortProfile("high", 8, 4, 1, 8.0, 20_000, 22.0, 16, True, True),
+    "low": EffortProfile("low", 0, 0, 0, 0.0, 0, 8.0, 8, False),
+    "medium": EffortProfile("medium", 3, 3, 1, 6.0, 8_000, 8.0, 10, False),
+    "high": EffortProfile("high", 8, 4, 1, 8.0, 20_000, 22.0, 16, True),
 }
 
 
@@ -289,7 +321,6 @@ class _Source:
     parsed_markdown: str = ""
     parsed_ok: bool = False
     parse_ms: float = 0.0
-    decoder_score: float = -1.0  # >=0 once the high-effort decoder re-ranker has scored it
 
 
 # Orchestrates one search: stream → triage → bounded eager parsing → ranking.
@@ -340,33 +371,22 @@ class WebSearchService:
         finally:
             source.parse_ms = (time.perf_counter() - started) * 1000
 
-    # Score sources with the CPU decoder and stash decoder_score on each; returns the
-    # blend weight actually used (0 when the decoder is disabled, absent, or failed).
-    def _decoder_rerank(self, query: str, sources: dict[str, "_Source"]) -> float:
-        if not sources:
-            return 0.0
-        from core.config import load_search_config
-
-        models_cfg = load_search_config().models
-        if not models_cfg.enable_decoder:
-            return 0.0
-        from core.search.decoder_ranker import get_decoder_ranker
-
-        ranker = get_decoder_ranker()
-        if not ranker.available():
-            return 0.0
-        items = list(sources.values())
-        candidates = [
-            {"title": s.title, "url": s.url, "snippet": s.snippet, "preview": s.parsed_markdown[:2000]}
-            for s in items
-        ]
-        scores = ranker.score(query, candidates)
-        if len(scores) != len(items):
-            return 0.0
-        for source, score in zip(items, scores):
-            source.decoder_score = max(0.0, min(1.0, score))
-        logger.info("decoder.rerank scored=%d query=%r", len(items), query[:120])
-        return max(0.0, min(1.0, float(models_cfg.decoder_weight)))
+    # Build the hosted supplement stream when API keys are configured; None otherwise
+    # (no keys → pure scrape, baseline unchanged). Imports are deferred so the SERP-only
+    # and key-less paths never pay for httpx provider code.
+    def _hosted_stream(self, query: str, *, region: str, timelimit: str | None, deadline: float):
+        try:
+            from core.search.hosted_providers import available_providers
+            from core.search.hosted_stream import hosted_search_stream
+        except Exception as exc:  # noqa: BLE001 — hosted layer is optional
+            logger.debug("hosted layer unavailable: %s", exc)
+            return None
+        if not available_providers():
+            return None
+        return hosted_search_stream(
+            query, region=region, timelimit=timelimit,
+            max_results=_HOSTED_MAX_RESULTS, deadline_seconds=deadline,
+        )
 
     # Run one full search. Returns the aggregated, ranked payload.
     async def search(
@@ -439,18 +459,48 @@ class WebSearchService:
 
             parse_tasks[url] = asyncio.create_task(run(), name=f"parse:{source.host}")
 
+        # Baseline scrape stream; hosted providers (content + SERP) join the same triage
+        # as a supplement when keys exist. Hosted is gated to effort tiers that parse
+        # (low stays SERP-only and pays no hosted credits).
+        event_stream = api.search_stream(
+            query, region=region, safesearch=safesearch, timelimit=timelimit,
+            deadline_seconds=profile.deadline * 0.8,
+        )
+        if profile.parse_budget:
+            hosted = self._hosted_stream(
+                query, region=region, timelimit=timelimit, deadline=profile.deadline * 0.8
+            )
+            if hosted is not None:
+                event_stream = _merge_streams(event_stream, hosted)
+
+        # Apply a consensus vote from another provider family to an already-seen source.
+        def apply_vote(url: str, family: str) -> None:
+            decision = triage.ingest_vote(provider_family=family, url=url)
+            source = sources.get(url)
+            if source is not None and family not in source.families:
+                source.families.append(family)
+            if source is not None:
+                source.score = triage.score_of(url)
+            if (
+                decision is not None
+                and decision.upgraded
+                and parse_started_count < budget_during_stream
+            ):
+                with contextlib.suppress(ValueError):
+                    queue.remove(url)
+                spawn_parse(url)
+
         try:
             async with asyncio.timeout(profile.deadline):
-                async for event in api.search_stream(
-                    query,
-                    region=region,
-                    safesearch=safesearch,
-                    timelimit=timelimit,
-                    deadline_seconds=profile.deadline * 0.8,
-                ):
+                async for event in event_stream:
                     kind = event["type"]
                     if kind == "source":
                         url = event["url"]["url"]
+                        # The same URL arriving from another stream/provider is a
+                        # consensus vote, not a fresh source — never overwrite.
+                        if url in sources:
+                            apply_vote(url, event["provider_family"])
+                            continue
                         decision = triage.ingest_source(
                             engine=event["engine"],
                             provider_family=event["provider_family"],
@@ -481,23 +531,7 @@ class WebSearchService:
                         else:
                             queue.append(url)
                     elif kind == "vote":
-                        url = event["url"]["url"]
-                        decision = triage.ingest_vote(
-                            provider_family=event["provider_family"], url=url
-                        )
-                        source = sources.get(url)
-                        if source is not None:
-                            if event["provider_family"] not in source.families:
-                                source.families.append(event["provider_family"])
-                            source.score = triage.score_of(url)
-                        if (
-                            decision is not None
-                            and decision.upgraded
-                            and parse_started_count < budget_during_stream
-                        ):
-                            with contextlib.suppress(ValueError):
-                                queue.remove(url)
-                            spawn_parse(url)
+                        apply_vote(event["url"]["url"], event["provider_family"])
                     elif kind == "engine":
                         payload = event["payload"]
                         engine_payloads[payload["engine"]] = payload
@@ -529,17 +563,7 @@ class WebSearchService:
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
 
-        # High-effort content-stage re-rank: blend the rules score with a CPU decoder
-        # relevance score over (query, title, url, snippet, parsed preview). No-op when
-        # the decoder is off/absent — the rules ranking stays in charge.
-        decoder_weight = self._decoder_rerank(query, sources) if profile.allow_decoder else 0.0
-
-        def _final_score(s: _Source) -> float:
-            if s.decoder_score < 0 or decoder_weight <= 0:
-                return s.score
-            return (1.0 - decoder_weight) * s.score + decoder_weight * s.decoder_score
-
-        ranked = sorted(sources.values(), key=_final_score, reverse=True)
+        ranked = sorted(sources.values(), key=lambda s: s.score, reverse=True)
         top = ranked[: profile.max_results]
         parsed_ok = sum(1 for s in top if s.parsed_ok)
         logger.info(
@@ -567,7 +591,6 @@ class WebSearchService:
                 "rank": rank,
                 "score": round(s.score, 4),
                 "consensus_families": s.families,
-                **({"decoder_score": round(s.decoder_score, 4)} if s.decoder_score >= 0 else {}),
                 **({"pdf_url": pdf} if (pdf := _infer_pdf_url(s.url)) else {}),
                 **(
                     {

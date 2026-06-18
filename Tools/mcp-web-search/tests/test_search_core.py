@@ -252,39 +252,6 @@ def test_inline_parse_allows_unknown_domain():
     assert _inline_parse_allowed("https://brand-new-domain-xyz.com/a")
 
 
-# --- decoder re-ranker (high-effort content stage) -------------------------------
-
-def test_decoder_ranker_unavailable_without_model(tmp_path):
-    from core.search.decoder_ranker import DecoderRanker
-
-    ranker = DecoderRanker(str(tmp_path / "no_model"))
-    assert ranker.available() is False
-    assert ranker.score("q", [{"title": "t", "url": "u"}]) == []
-
-
-def test_decoder_rerank_stashes_scores_and_weight(monkeypatch):
-    import core.search.decoder_ranker as dr
-    from core.search.web_search import WebSearchService, _Source
-
-    class _FakeRanker:
-        def available(self):
-            return True
-
-        def score(self, query, candidates):
-            return [0.1, 0.9][: len(candidates)]
-
-    monkeypatch.setattr(dr, "get_decoder_ranker", lambda: _FakeRanker())
-    svc = WebSearchService(tracker=EngineHealthTracker(clock=_Clock()))
-    sources = {
-        "a": _Source(url="a", host="a.com", title="A", snippet="", engine="g", rank=1, score=0.8, families=["g"]),
-        "b": _Source(url="b", host="b.com", title="B", snippet="", engine="g", rank=2, score=0.4, families=["g"]),
-    }
-    weight = svc._decoder_rerank("query", sources)
-    assert weight == 0.45  # config default blend weight
-    assert sources["a"].decoder_score == 0.1
-    assert sources["b"].decoder_score == 0.9
-
-
 # --- orchestrator (synthetic stream, fake reader) --------------------------------
 
 class _FakeSerpApi:
@@ -363,6 +330,48 @@ def test_web_search_medium_parses_winners_and_ranks(monkeypatch):
     assert top["consensus_families"] == ["google", "yandex"]
     assert top["parsed_ok"] and top["markdown"].startswith("# parsed")
     assert result["health"]["google"]["state"] == "closed"
+
+
+def test_web_search_hosted_consensus_merges_not_overwrites(monkeypatch):
+    import core.search.web_search as ws
+
+    _FakeSerpApi.events = [
+        {
+            "type": "source", "engine": "google", "provider_family": "google", "rank": 1,
+            "url": {"url": "https://good.com/x", "host": "good.com"},
+            "serp": {"title": "T", "snippet": "a detailed snippet about the topic at hand",
+                     "fetch_ms": 1, "parse_ms": 1},
+        },
+        {
+            "type": "engine", "engine": "google",
+            "payload": {"engine": "google", "provider_family": "google", "status": "success",
+                        "fetch_ms": 1.0, "sources": [{"url": "https://good.com/x"}]},
+        },
+    ]
+    monkeypatch.setattr(ws, "SerpApi", _FakeSerpApi)
+    monkeypatch.setattr(ws, "_get_transport", lambda *_: None)
+
+    # Hosted provider surfaces the SAME url under a different family — must merge as a
+    # consensus vote, not overwrite the original source or duplicate the row.
+    async def fake_hosted():
+        yield {
+            "type": "source", "engine": "hosted:tavily", "provider_family": "tavily", "rank": 1,
+            "url": {"url": "https://good.com/x", "host": "good.com"},
+            "serp": {"title": "T", "snippet": "hosted snippet", "fetch_ms": 1, "parse_ms": 0},
+        }
+        yield {
+            "type": "engine", "engine": "hosted:tavily",
+            "payload": {"engine": "hosted:tavily", "provider_family": "tavily",
+                        "status": "success", "fetch_ms": 1.0, "sources": [{"url": "https://good.com/x"}]},
+        }
+
+    service = ws.WebSearchService(tracker=EngineHealthTracker(clock=_Clock()), read_page=_fake_reader)
+    monkeypatch.setattr(service, "_hosted_stream", lambda *a, **k: fake_hosted())
+    result = asyncio.run(service.search("topic query example", effort="medium"))
+
+    same = [s for s in result["sources"] if s["url"] == "https://good.com/x"]
+    assert len(same) == 1  # merged, not duplicated
+    assert set(same[0]["consensus_families"]) == {"google", "tavily"}
 
 
 def test_web_search_low_is_serp_only(monkeypatch):
