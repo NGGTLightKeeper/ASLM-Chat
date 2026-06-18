@@ -1438,6 +1438,13 @@
   display: flex;
 }
 
+/* MCP flyout grows to fit server names, from the base width up to 2x, capped to the viewport. */
+.composer-mcp-flyout {
+  width: max-content;
+  min-width: min(260px, calc(100vw - 48px));
+  max-width: min(520px, calc(100vw - 48px));
+}
+
 .composer-skills-flyout-list {
   display: flex;
   flex-direction: column;

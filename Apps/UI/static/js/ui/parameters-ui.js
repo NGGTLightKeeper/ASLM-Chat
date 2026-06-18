@@ -164,7 +164,7 @@ export function createParametersUi(context) {
       const $chev = $('<span class="composer-skills-chevron" aria-hidden="true">').html(chevron);
       $trigger.append($icon).append($name).append($chev);
 
-      const $flyout = $('<div class="composer-skills-flyout" role="menu">').attr('aria-label', t('settings.mcp'));
+      const $flyout = $('<div class="composer-skills-flyout composer-mcp-flyout" role="menu">').attr('aria-label', t('settings.mcp'));
       const $list = $('<div class="composer-skills-flyout-list">');
 
       if (!userList.length) {
@@ -180,7 +180,6 @@ export function createParametersUi(context) {
           const checked = state.selectedToolServerIds.has(serverId);
 
           const $row = $('<label class="tool-server-row composer-tool-row mcp-user-tool-server-row">');
-          const $rowIcon = $('<span class="composer-tool-icon is-mcp" aria-hidden="true">');
           const $rowName = $('<span class="tool-server-name">').text(label);
           const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
 
@@ -198,7 +197,7 @@ export function createParametersUi(context) {
             }
           });
 
-          $row.append($rowIcon).append($rowName).append($checkbox);
+          $row.append($rowName).append($checkbox);
           $list.append($row);
         });
       }
