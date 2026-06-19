@@ -1221,6 +1221,15 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 2. Handle errors and map them to a safe response.
 3. Iterate and transform or accumulate state.
 
+#### `def _ollama_model_is_cloud(model_name, model_layers) -> bool`
+
+**Purpose:** Decide whether an Ollama model runs in the cloud (no local layers to manage).
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+
 #### `def _extract_generic_model_info(settings_data) -> dict[str, Any]`
 
 **Purpose:** Extract generic model info
