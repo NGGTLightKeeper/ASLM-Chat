@@ -1360,25 +1360,7 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 3. Handle errors and map them to a safe response.
 4. Parse or serialize JSON payloads.
 
-#### `def _build_tool_source_map(tool_sources, selected_tool_servers) -> dict[str, dict[str, str]]`
-
-**Purpose:** Build a tool source map to resolve external tools.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Iterate and transform or accumulate state.
-
-#### `def _parse_tool_sources(data) -> list[dict[str, Any]]`
-
-**Purpose:** Parse external tool source declarations from one request payload.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Iterate and transform or accumulate state.
-
-#### `def _resolve_tool_servers(engine, model_name, tool_server_ids, *, tool_sources=…) -> list[dict[str, Any]]`
+#### `def _resolve_tool_servers(engine, model_name, tool_server_ids, *, tool_sources=None) -> list[dict[str, Any]]`
 
 **Purpose:** Resolve selected tool servers
 
@@ -1570,7 +1552,7 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 
 **Purpose:** Insert a one-off system notice after the main system prompt, without persisting a message.
 
-#### `def _build_generate_kwargs(engine, model_name, llm_messages, think_value, think_level_value, clean_options, chat, selected_tool_servers, think_param_name, think_level_param_name, sync_operation_defaults, *, tool_sources=…, external_tool_context=…) -> dict[str, Any]`
+#### `def _build_generate_kwargs(engine, model_name, llm_messages, think_value, think_level_value, clean_options, chat, selected_tool_servers, think_param_name, think_level_param_name, sync_operation_defaults, tool_sources=None, external_tool_context=None) -> dict[str, Any]`
 
 **Purpose:** Build generation kwargs
 
@@ -1749,6 +1731,49 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 1. Return the computed result to the caller.
 
 ---
+
+
+
+#### `def _build_tool_source_map(tool_sources, selected_tool_servers) -> dict[str, dict[str, str]]`
+
+**Purpose:** Build a map of tool sources.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
+#### `def _parse_tool_sources(data) -> list[dict[str, Any]]`
+
+**Purpose:** Parse external tool source declarations from one request payload.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
+#### `def _build_stateless_compression_event(*, engine, model_name, model_info_payload, force, used_history_chars, history_budget_chars, overflow_entries, summary_source_entries, recent_user_messages, direct_user_directives, summarize_with_model_enabled=True, debug_force_4k=False, trigger_ratio=..., compression_mode='manual') -> dict[str, Any] | None`
+
+**Purpose:** Build one compression timeline event from stateless overflow data (for external modules).
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
+#### `def context_compression_decide_api(request)`
+
+**Purpose:** Return whether history compression should run for one stateless usage snapshot.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
+#### `def context_compression_build_event_api(request)`
+
+**Purpose:** Build one compression event from stateless overflow data for external module consumers.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
 
 ## Related
 
