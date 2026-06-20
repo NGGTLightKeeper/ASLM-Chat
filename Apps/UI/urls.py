@@ -73,6 +73,22 @@ urlpatterns = [
     path("api/lms_presets/rename/", views.rename_lms_preset_api, name="rename_lms_preset_api"),
     path("api/lms_presets/delete/", views.delete_lms_preset_api, name="delete_lms_preset_api"),
 
+    # OpenAI preset APIs.
+    path("api/openai_presets/", views.get_openai_presets_api, name="openai_presets_api"),
+    path("api/openai_presets/sync/", views.sync_openai_preset_api, name="sync_openai_preset_api"),
+    path("api/openai_presets/select/", views.select_openai_preset_api, name="select_openai_preset_api"),
+    path("api/openai_presets/create/", views.create_openai_preset_api, name="create_openai_preset_api"),
+    path("api/openai_presets/rename/", views.rename_openai_preset_api, name="rename_openai_preset_api"),
+    path("api/openai_presets/delete/", views.delete_openai_preset_api, name="delete_openai_preset_api"),
+
+    # Google GenAI preset APIs.
+    path("api/google_genai_presets/", views.get_google_genai_presets_api, name="google_genai_presets_api"),
+    path("api/google_genai_presets/sync/", views.sync_google_genai_preset_api, name="sync_google_genai_preset_api"),
+    path("api/google_genai_presets/select/", views.select_google_genai_preset_api, name="select_google_genai_preset_api"),
+    path("api/google_genai_presets/create/", views.create_google_genai_preset_api, name="create_google_genai_preset_api"),
+    path("api/google_genai_presets/rename/", views.rename_google_genai_preset_api, name="rename_google_genai_preset_api"),
+    path("api/google_genai_presets/delete/", views.delete_google_genai_preset_api, name="delete_google_genai_preset_api"),
+
     # Runtime configuration API.
     path("api/runtime_settings/", views.runtime_settings_api, name="runtime_settings_api"),
 ]

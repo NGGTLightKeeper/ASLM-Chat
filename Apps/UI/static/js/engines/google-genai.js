@@ -11,6 +11,11 @@ export const googleGenAiAdapter = {
   // Gemini always needs an API key, so show the key field without an on/off toggle.
   apiKeyRequired: true,
   addressHint: 'Gemini uses generativelanguage.googleapis.com.',
-  supportsPresets: false,
-  presetApiBase: ''
+  supportsPresets: true,
+  presetApiBase: '/api/google_genai_presets',
+
+  // Keep preset payloads in the same flat shape as the runtime options.
+  buildPresetConfig(options) {
+    return { ...(options || {}) };
+  }
 };

@@ -663,7 +663,13 @@ export function createEngineManager(context, dependencies) {
       state.currentModelInfo = data;
       rememberLastModel(requestedEngine, model);
       parametersUi.resetDynamicPanels();
-      applyPresetState(data.ollama_presets || data.lms_presets || null);
+      applyPresetState(
+        data.ollama_presets
+        || data.lms_presets
+        || data.openai_presets
+        || data.google_genai_presets
+        || null
+      );
 
       state.toolState.supported = !!data.supports_tool_calling;
       parametersUi.updateAvailableToolServers(data.available_tool_servers || state.defaultAvailableToolServers);
