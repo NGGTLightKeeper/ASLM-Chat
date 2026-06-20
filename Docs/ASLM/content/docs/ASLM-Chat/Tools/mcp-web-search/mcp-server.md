@@ -17,7 +17,31 @@ draft: false
 
 #### `async def call_tool(tool_id, arguments, context) -> dict[str, Any]`
 
-**Purpose:** Dispatch an ASLM tool call to the SERP search implementation.
+**Purpose:** Dispatch an ASLM tool call to the matching search implementation.
+
+**Steps:**
+
+1. Raise on invalid input or failure conditions.
+2. Return the computed result to the caller.
+3. Await async I/O or subprocess work.
+
+---
+
+## Private functions
+
+#### `async def _call_web_search(args) -> dict[str, Any]`
+
+**Purpose:** Run the ranked web_search pipeline (the model-facing default tool).
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Await async I/O or subprocess work.
+3. Handle errors and map them to a safe response.
+
+#### `async def _call_serp_search(args) -> dict[str, Any]`
+
+**Purpose:** Run the low-level raw SERP retrieval (unprocessed per-engine output).
 
 **Steps:**
 

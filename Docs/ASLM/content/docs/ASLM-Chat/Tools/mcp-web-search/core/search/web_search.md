@@ -9,49 +9,48 @@ draft: false
 
 ---
 
-## Classes
+## Public classes
 
 ### `class EffortProfile`
 
-**Purpose:** Type `EffortProfile` defined in `web_search.py`.
-
-### `class _Source`
-
-**Purpose:** Type `_Source` defined in `web_search.py`.
+**Purpose:** Configuration for a specific search effort level.
 
 ### `class WebSearchService`
 
-**Purpose:** Type `WebSearchService` defined in `web_search.py`.
+**Purpose:** Main service for running web searches and coordinating fetch, deduplication, triage, and parsing.
 
 **Methods:**
 
-- `__init__`
-- `_reader`
-- `_parse_one`
-- `search`
+- `async def search(query, effort, region, safesearch, timelimit) -> dict[str, Any]`
+- `async def _parse_one(source, profile) -> None`
 
 ---
 
 ## Public functions
 
-#### `def select_engines(effort, tracker)`
+#### `def select_engines(effort, tracker) -> list[type]`
 
-**Purpose:** Implements select_engines
+**Purpose:** Select active engines based on effort profile.
 
-**Steps:**
+#### `async def run_web_search(query, effort, region, safesearch, timelimit) -> dict[str, Any]`
 
-1. Return the computed result to the caller.
-
-#### `async def run_web_search(query)`
-
-**Purpose:** Implements run_web_search
+**Purpose:** Convenience entry point mirroring run_serp_search to execute a full web search.
 
 **Steps:**
 
 1. Return the computed result to the caller.
+2. Await async I/O or subprocess work.
+
+---
+
+## Private classes
+
+### `class _Source`
+
+**Purpose:** Internal representation of a search source being tracked during the stream.
 
 ---
 
 ## Related
 
-- [search/_index](../../../../_index/)
+- [search/_index](../../_index/)
