@@ -23,6 +23,18 @@ Integration tests for the shopping web search functionality, focusing on effort 
 
 ## Public functions
 
+#### `def test_shopping_core_requires_explicit_option() -> None`
+
+**Purpose:** Implements `test_shopping_core_requires_explicit_option` in `test_shopping_web_integration.py`.
+
+#### `def test_technical_delivery_query_does_not_auto_start_shopping() -> None`
+
+**Purpose:** Implements `test_technical_delivery_query_does_not_auto_start_shopping` in `test_shopping_web_integration.py`.
+
+#### `def test_explicit_shopping_option_starts_shopping_worker() -> None`
+
+**Purpose:** Implements `test_explicit_shopping_option_starts_shopping_worker` in `test_shopping_web_integration.py`.
+
 #### `def test_shopping_effort_limits_are_smaller_on_low_effort() -> None`
 
 **Purpose:** Implements `test_shopping_effort_limits_are_smaller_on_low_effort` in `test_shopping_web_integration.py`.

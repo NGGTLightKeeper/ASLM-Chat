@@ -14,9 +14,6 @@ export function createChatHistoryUi(context) {
 
     return `
       <a${activeAttr} href="/chat/${chatId}/" data-chat-id="${escapeAttributeValue(chatId)}">
-        <div class="chat-item-icon">
-          ${icons.CHAT_ITEM_ICON}
-        </div>
         <div class="chat-item-body">
           <span class="chat-item-title">${escHtml(title)}</span>
           <span class="chat-item-date">${escHtml(dateStr)}</span>

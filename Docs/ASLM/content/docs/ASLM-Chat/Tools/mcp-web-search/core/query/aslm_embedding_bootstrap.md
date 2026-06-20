@@ -31,6 +31,11 @@ draft: false
 
 **Purpose:** Ensure encoder and decoder exports exist under Tools/mcp-web-search/models/.
 
+**Steps:**
+
+1. Handle errors and map them to a safe response.
+2. Iterate and transform or accumulate state.
+
 ---
 
 ## Private functions

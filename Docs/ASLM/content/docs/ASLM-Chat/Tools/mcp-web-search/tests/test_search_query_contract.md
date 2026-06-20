@@ -23,6 +23,10 @@ draft: false
 
 **Purpose:** Implements `test_coerce_search_effort` in `test_search_query_contract.py`.
 
+#### `def test_coerce_search_shopping(raw, expected) -> None`
+
+**Purpose:** Implements `test_coerce_search_shopping` in `test_search_query_contract.py`.
+
 #### `def test_sanitize_legacy_query_caps_length_and_collapses_whitespace() -> None`
 
 **Purpose:** Implements `test_sanitize_legacy_query_caps_length_and_collapses_whitespace` in `test_search_query_contract.py`.

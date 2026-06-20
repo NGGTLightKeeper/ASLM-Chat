@@ -4,6 +4,7 @@
     "appDescription": "ASLM - Modelos de lenguaje de sistema avanzados"
   },
   "sidebar": {
+    "recent": "Recientes",
     "chats": "Conversaciones",
     "newChat": "Nuevo chat",
     "noPreviousChats": "No hay chats anteriores",
@@ -16,7 +17,9 @@
     "newChat": "Nuevo chat",
     "attachmentChat": "Chat con adjuntos",
     "howCanIHelp": "¿En qué puedo ayudarte?",
-    "welcomeTitle": "¿En qué puedo ayudarte?"
+    "welcomeTitle": "¿En qué puedo ayudarte?",
+    "renameTitle": "Renombrar chat",
+    "renameLabel": "Nombre del chat"
   },
   "composer": {
     "placeholder": "Mensaje para ASLM...",
@@ -25,7 +28,7 @@
     "tools": "Herramientas",
     "other": "Otro",
     "reasoningEffort": "Esfuerzo de razonamiento",
-    "intelligence": "Profundidad de razonamiento",
+    "intelligence": "Pensamiento",
     "off": "Desactivado",
     "sendMessage": "Enviar mensaje",
     "queueMessage": "Encolar mensaje",
@@ -72,7 +75,10 @@
     "settings": "Configuración",
     "sampling": "Muestreo",
     "advanced": "Avanzado",
-    "custom": "Personalizado"
+    "custom": "Personalizado",
+    "presetNameLabel": "Nombre del preajuste",
+    "presetNewTitle": "Nuevo preajuste",
+    "presetRenameTitle": "Renombrar preajuste"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +177,6 @@
     "renameFolderAria": "Renombrar carpeta",
     "renameFileAria": "Renombrar archivo",
     "deleteFileAria": "Eliminar archivo",
-    "dialogOk": "Aceptar",
-    "dialogCancel": "Cancelar",
-    "dialogConfirm": "Confirmar",
-    "dialogInput": "Entrada",
-    "valueRequired": "El valor es obligatorio.",
     "createSkill": "Crear habilidad",
     "skillNamePlaceholder": "nombre-habilidad",
     "create": "Crear",
@@ -219,6 +220,13 @@
     "importNoSupported": "No se encontraron archivos de texto compatibles (.md, .txt, .py, …).",
     "importNoSupportedFor": "No se encontraron archivos compatibles para «{name}»."
   },
+  "dialog": {
+    "ok": "Aceptar",
+    "cancel": "Cancelar",
+    "confirm": "Confirmar",
+    "input": "Entrada",
+    "valueRequired": "El valor es obligatorio."
+  },
   "errors": {
     "generic": "Algo salió mal",
     "network": "Error de red"
@@ -227,7 +235,9 @@
     "deleteChat": "¿Eliminar este chat?",
     "deleteChatNamed": "¿Eliminar «{title}»?",
     "deletePreset": "¿Eliminar el preajuste «{name}»?",
-    "unsaved": "Tienes cambios sin guardar."
+    "unsaved": "Tienes cambios sin guardar.",
+    "deleteChatTitle": "Eliminar chat",
+    "deletePresetTitle": "Eliminar preajuste"
   },
   "toolInspector": {
     "title": "Inspector de herramientas",
@@ -437,6 +447,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} herramientas)",
     "cancel": "Cancelar",
-    "save": "Guardar"
+    "save": "Guardar",
+    "noServers": "Sin servidores MCP"
   }
 }

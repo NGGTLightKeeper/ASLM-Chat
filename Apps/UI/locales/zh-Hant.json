@@ -4,6 +4,7 @@
     "appDescription": "ASLM - 進階系統語言模型"
   },
   "sidebar": {
+    "recent": "最近",
     "chats": "對話",
     "newChat": "新對話",
     "noPreviousChats": "尚無先前的對話",
@@ -16,7 +17,9 @@
     "newChat": "新對話",
     "attachmentChat": "附件對話",
     "howCanIHelp": "有什麼可以幫您？",
-    "welcomeTitle": "有什麼可以幫您？"
+    "welcomeTitle": "有什麼可以幫您？",
+    "renameTitle": "重新命名對話",
+    "renameLabel": "對話名稱"
   },
   "composer": {
     "placeholder": "傳訊息給 ASLM...",
@@ -25,7 +28,7 @@
     "tools": "工具",
     "other": "其他",
     "reasoningEffort": "推理強度",
-    "intelligence": "智慧程度",
+    "intelligence": "思考",
     "off": "關閉",
     "sendMessage": "傳送訊息",
     "queueMessage": "排入佇列",
@@ -72,7 +75,10 @@
     "settings": "設定",
     "sampling": "取樣",
     "advanced": "進階",
-    "custom": "自訂"
+    "custom": "自訂",
+    "presetNameLabel": "預設組名稱",
+    "presetNewTitle": "新增預設組",
+    "presetRenameTitle": "重新命名預設組"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +177,6 @@
     "renameFolderAria": "重新命名資料夾",
     "renameFileAria": "重新命名檔案",
     "deleteFileAria": "刪除檔案",
-    "dialogOk": "確定",
-    "dialogCancel": "取消",
-    "dialogConfirm": "確認",
-    "dialogInput": "輸入",
-    "valueRequired": "必須填寫值。",
     "createSkill": "建立技能",
     "skillNamePlaceholder": "skill-name",
     "create": "建立",
@@ -219,6 +220,13 @@
     "importNoSupported": "找不到支援的文字檔（.md、.txt、.py 等）。",
     "importNoSupportedFor": "找不到「{name}」的支援檔案。"
   },
+  "dialog": {
+    "ok": "確定",
+    "cancel": "取消",
+    "confirm": "確認",
+    "input": "輸入",
+    "valueRequired": "必須填寫值。"
+  },
   "errors": {
     "generic": "發生錯誤",
     "network": "網路錯誤"
@@ -227,7 +235,9 @@
     "deleteChat": "要刪除此對話嗎？",
     "deleteChatNamed": "要刪除「{title}」嗎？",
     "deletePreset": "要刪除預設組「{name}」嗎？",
-    "unsaved": "您有尚未儲存的變更。"
+    "unsaved": "您有尚未儲存的變更。",
+    "deleteChatTitle": "刪除對話",
+    "deletePresetTitle": "刪除預設組"
   },
   "toolInspector": {
     "title": "工具檢視器",
@@ -437,6 +447,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name}（{count} 個工具）",
     "cancel": "取消",
-    "save": "儲存"
+    "save": "儲存",
+    "noServers": "沒有 MCP 伺服器"
   }
 }

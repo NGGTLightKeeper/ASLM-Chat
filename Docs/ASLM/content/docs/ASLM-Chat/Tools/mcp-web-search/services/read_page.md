@@ -67,6 +67,14 @@ draft: false
 
 ## Private functions
 
+#### `def _read_page_deadline(url, opts) -> float`
+
+**Purpose:** Global asyncio deadline for one read; Reddit needs room for curl + Camoufox JSON.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
 #### `def _is_redirect_status(status_code) -> bool`
 
 **Purpose:** True for HTTP redirect status codes.

@@ -17,7 +17,7 @@ Part of `Tools/mcp-web-search/core/fetch/shopping`. Manages the asynchronous exe
 
 ## Public functions
 
-#### `async def async_shopping_search_worker(query: str, *, effort: str = "medium", limit: int = 8, worker_timeout: float | None = None) -> dict[str, Any]`
+#### `async def async_shopping_search_worker(query: str, *, effort: str = "medium", limit: int = 8, language: str = "en", worker_timeout: float | None = None) -> dict[str, Any]`
 
 **Purpose:** Spawns and manages the `_shopping_worker.py` child process. Captures JSON responses via stdout and gracefully recovers partial results or timeouts if the process runs too long.
 

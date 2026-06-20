@@ -18,13 +18,13 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 
 ## Classes
 
+### `class PreparedGenerationRequest`
+
+**Purpose:** Type `PreparedGenerationRequest` defined in `views.py`.
+
 ### `class MainView`
 
 **Purpose:** Type `MainView` defined in `views.py`.
-
-### `class ProfileView`
-
-**Purpose:** Type `ProfileView` defined in `views.py`.
 
 ### `class ChatView`
 
@@ -49,6 +49,17 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 3. Iterate and transform or accumulate state.
 4. Parse or serialize JSON payloads.
 5. Build an HTTP response for the client.
+
+#### `def generate_api(request)`
+
+**Purpose:** Handle a stateless generation request for external modules.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Parse or serialize JSON payloads.
+4. Build an HTTP response for the client.
 
 #### `def chat_api(request)`
 
@@ -326,6 +337,24 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 3. Read or write Django ORM records.
 4. Build an HTTP response for the client.
 
+#### `def context_compression_decide_api(request)`
+
+**Purpose:** Return whether history compression should run for one stateless usage snapshot.
+
+**Steps:**
+
+1. Handle errors and map them to a safe response.
+2. Parse or serialize JSON payloads.
+
+#### `def context_compression_build_event_api(request)`
+
+**Purpose:** Build one compression event from stateless overflow data for external module consumers.
+
+**Steps:**
+
+1. Handle errors and map them to a safe response.
+2. Parse or serialize JSON payloads.
+
 #### `def context_compress_api(request)`
 
 **Purpose:** Force or opportunistically run context compression and persist a timeline marker.
@@ -448,6 +477,134 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 2. Handle errors and map them to a safe response.
 3. Build an HTTP response for the client.
 
+#### `def _get_openai_preset_endpoint() -> str`
+
+**Purpose:** Resolve the endpoint URL that scopes OpenAI presets.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
+#### `def get_openai_presets_api(request)`
+
+**Purpose:** Return preset metadata for the selected OpenAI model and endpoint.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def sync_openai_preset_api(request)`
+
+**Purpose:** Persist UI changes to the active OpenAI preset.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def select_openai_preset_api(request)`
+
+**Purpose:** Set the active preset for an OpenAI model.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def create_openai_preset_api(request)`
+
+**Purpose:** Create a new OpenAI preset for the selected model.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def rename_openai_preset_api(request)`
+
+**Purpose:** Rename an existing custom OpenAI preset.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def delete_openai_preset_api(request)`
+
+**Purpose:** Delete an existing custom OpenAI preset and fall back to the default one.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def get_google_genai_presets_api(request)`
+
+**Purpose:** Return preset metadata for the selected Google GenAI model.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def sync_google_genai_preset_api(request)`
+
+**Purpose:** Persist UI changes to the active Google GenAI preset.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def select_google_genai_preset_api(request)`
+
+**Purpose:** Set the active preset for a Google GenAI model.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def create_google_genai_preset_api(request)`
+
+**Purpose:** Create a new Google GenAI preset for the selected model.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def rename_google_genai_preset_api(request)`
+
+**Purpose:** Rename an existing custom Google GenAI preset.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def delete_google_genai_preset_api(request)`
+
+**Purpose:** Delete an existing custom Google GenAI preset and fall back to the default one.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
 #### `def runtime_settings_api(request)`
 
 **Purpose:** Read or update runtime settings.
@@ -478,10 +635,6 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 2. Handle errors and map them to a safe response.
 3. Parse or serialize JSON payloads.
 4. Build an HTTP response for the client.
-
-#### `def ProfileView.get_context_data(**kwargs) -> dict[str, Any]`
-
-**Purpose:** Build the profile page context.
 
 #### `def ChatView.get_context_data(**kwargs) -> dict[str, Any]`
 
@@ -647,6 +800,10 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 #### `def _clear_tool_server_cache() -> None`
 
 **Purpose:** Drop cached tool server lists only (e.g. after ``mcp.json`` changes).
+
+#### `def _clear_cached_model_list(engine) -> None`
+
+**Purpose:** Drop the cached model list for one engine's current scope (force re-probe).
 
 #### `def _remember_active_model(engine, model_name) -> None`
 
@@ -1006,7 +1163,15 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 
 #### `def _get_active_engine(requested_engine) -> str`
 
-**Purpose:** Resolve active engine
+**Purpose:** Resolve the default active engine without request context.
+
+#### `def _resolve_request_engine(request, data) -> str`
+
+**Purpose:** Resolve one engine from an HTTP request body and/or query string.
+
+#### `def _resolve_request_engine_or_response(request, data)`
+
+**Purpose:** Resolve one request engine or return a JSON error response.
 
 #### `def _extract_model_name(model_entry) -> str`
 
@@ -1098,6 +1263,33 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 #### `def _build_context_compression_source_entries(history_records, *, sandbox_enabled=…) -> list[dict[str, Any]]`
 
 **Purpose:** Build chronological non-compression entries represented by a new boundary.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
+#### `def _llm_entries_from_assistant_transcript(transcript_entries, *, content_fallback=…) -> list[dict[str, Any]]`
+
+**Purpose:** Convert one assistant transcript into LLM history entries.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
+#### `def _normalize_attachments_from_mapping(data) -> list[dict[str, Any]]`
+
+**Purpose:** Normalize inline attachments from one request mapping.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Iterate and transform or accumulate state.
+
+#### `def _build_llm_entries_from_request_message(message, *, sandbox_enabled=…) -> list[dict[str, Any]]`
+
+**Purpose:** Build LLM history entries from one request-side history message.
 
 **Steps:**
 
@@ -1221,6 +1413,15 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 2. Handle errors and map them to a safe response.
 3. Iterate and transform or accumulate state.
 
+#### `def _ollama_model_is_cloud(model_name, model_layers) -> bool`
+
+**Purpose:** Decide whether an Ollama model runs in the cloud (no local layers to manage).
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+
 #### `def _extract_generic_model_info(settings_data) -> dict[str, Any]`
 
 **Purpose:** Extract generic model info
@@ -1300,7 +1501,7 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 3. Handle errors and map them to a safe response.
 4. Parse or serialize JSON payloads.
 
-#### `def _resolve_tool_servers(engine, model_name, tool_server_ids) -> list[dict[str, Any]]`
+#### `def _resolve_tool_servers(engine, model_name, tool_server_ids, *, tool_sources=None) -> list[dict[str, Any]]`
 
 **Purpose:** Resolve selected tool servers
 
@@ -1437,6 +1638,16 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 2. Handle errors and map them to a safe response.
 3. Iterate and transform or accumulate state.
 
+#### `def _build_stateless_compression_event(*, engine, model_name, model_info_payload, force, used_history_chars, history_budget_chars, overflow_entries, summary_source_entries, recent_user_messages, direct_user_directives, summarize_with_model_enabled=…, debug_force_4k=…, trigger_ratio=…, compression_mode=…) -> dict[str, Any] | None`
+
+**Purpose:** Build one compression timeline event from stateless overflow data (for external modules).
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Iterate and transform or accumulate state.
+
 #### `def _collect_recent_user_messages(chat, exclude_message_id) -> list[str]`
 
 **Purpose:** Collect recent user messages.
@@ -1482,7 +1693,7 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 
 **Purpose:** Insert a one-off system notice after the main system prompt, without persisting a message.
 
-#### `def _build_generate_kwargs(engine, model_name, llm_messages, think_value, think_level_value, clean_options, chat, selected_tool_servers, think_param_name, think_level_param_name, sync_operation_defaults) -> dict[str, Any]`
+#### `def _build_generate_kwargs(engine, model_name, llm_messages, think_value, think_level_value, clean_options, chat, selected_tool_servers, think_param_name, think_level_param_name, sync_operation_defaults, tool_sources=None, external_tool_context=None) -> dict[str, Any]`
 
 **Purpose:** Build generation kwargs
 
@@ -1491,7 +1702,7 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 1. Return the computed result to the caller.
 2. Iterate and transform or accumulate state.
 
-#### `def _stream_chat_response(chat, engine, generate_kwargs, assistant_message_record, generation_id, compression_event, model_info_payload, system_prompt, current_user_message_id)`
+#### `def _stream_chat_response(engine, generate_kwargs, generation_id, *, chat=…, assistant_message_record=…, session_id=…, compression_event=…, model_info_payload=…, system_prompt=…, current_user_message_id=…, persist_messages=…)`
 
 **Purpose:** Stream and save assistant response
 
@@ -1661,6 +1872,49 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 1. Return the computed result to the caller.
 
 ---
+
+
+
+#### `def _build_tool_source_map(tool_sources, selected_tool_servers) -> dict[str, dict[str, str]]`
+
+**Purpose:** Build a map of tool sources.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
+#### `def _parse_tool_sources(data) -> list[dict[str, Any]]`
+
+**Purpose:** Parse external tool source declarations from one request payload.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
+#### `def _build_stateless_compression_event(*, engine, model_name, model_info_payload, force, used_history_chars, history_budget_chars, overflow_entries, summary_source_entries, recent_user_messages, direct_user_directives, summarize_with_model_enabled=True, debug_force_4k=False, trigger_ratio=..., compression_mode='manual') -> dict[str, Any] | None`
+
+**Purpose:** Build one compression timeline event from stateless overflow data (for external modules).
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
+#### `def context_compression_decide_api(request)`
+
+**Purpose:** Return whether history compression should run for one stateless usage snapshot.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
+#### `def context_compression_build_event_api(request)`
+
+**Purpose:** Build one compression event from stateless overflow data for external module consumers.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
 
 ## Related
 

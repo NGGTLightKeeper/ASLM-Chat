@@ -87,9 +87,21 @@ Facade over engine adapters (`ollama`, `lms`, `openai`, `google_genai`). Resolve
 
 1. Iterate and transform or accumulate state.
 
+#### `def prepare_enabled_runtimes() -> None`
+
+**Purpose:** Start or warm up each engine that is enabled in settings.
+
+#### `def cleanup_disabled_runtimes() -> None`
+
+**Purpose:** Stop managed runtimes for engines that were disabled in settings.
+
+#### `def sync_enabled_engine_runtimes() -> None`
+
+**Purpose:** Prepare all enabled engines and release resources for disabled ones.
+
 #### `def handle_engine_transition(previous_engine, next_engine) -> None`
 
-**Purpose:** Switch runtime resources when the active engine changes.
+**Purpose:** Keep enabled engine runtimes in sync when settings change.
 
 **Steps:**
 

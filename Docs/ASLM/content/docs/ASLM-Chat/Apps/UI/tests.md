@@ -125,6 +125,10 @@ Part of `Apps\UI`. See **Related** for package index and callers.
 
 **Purpose:** Type `ChatApiTests` defined in `tests.py`.
 
+### `class GenerateApiTests`
+
+**Purpose:** Exercise stateless generate API without persisting chat rows.
+
 ### `class RuntimeSettingsApiTests`
 
 **Purpose:** Type `RuntimeSettingsApiTests` defined in `tests.py`.
@@ -968,6 +972,34 @@ Part of `Apps\UI`. See **Related** for package index and callers.
 
 1. Read or write Django ORM records.
 
+#### `def GenerateApiTests.setUp()`
+
+**Purpose:** Set up the test fixture.
+
+#### `def GenerateApiTests.test_generate_api_streams_without_db_writes(_mock_engine, mock_generate, _mock_prepare_runtime)`
+
+**Purpose:** Verify generate api streams without db writes.
+
+#### `def GenerateApiTests.test_generate_api_passes_messages_to_generate(_mock_engine, mock_generate, _mock_prepare_runtime)`
+
+**Purpose:** Verify generate api passes messages to generate.
+
+#### `def GenerateApiTests.test_generate_api_rejects_missing_model()`
+
+**Purpose:** Verify generate api rejects missing model.
+
+#### `def GenerateApiTests.test_generate_api_supports_inline_attachments(_mock_engine, mock_generate, _mock_prepare_runtime)`
+
+**Purpose:** Verify generate api supports inline attachments.
+
+#### `def GenerateApiTests.test_generate_api_passes_tool_servers_to_generate(_mock_engine, mock_generate, _mock_prepare_runtime, _mock_model_settings)`
+
+**Purpose:** Verify generate api passes tool servers to generate.
+
+#### `def GenerateApiTests.test_generate_api_replays_llm_transcript_in_history(_mock_engine, mock_generate, _mock_prepare_runtime)`
+
+**Purpose:** Verify generate api replays llm transcript in history.
+
 #### `def RuntimeSettingsApiTests.isolated_settings_payload(payload)`
 
 **Purpose:** Isolated settings payload.
@@ -1011,6 +1043,10 @@ Part of `Apps\UI`. See **Related** for package index and callers.
 #### `def RuntimeSettingsApiTests.test_runtime_settings_payload_does_not_expose_api_key(_mock_runtime_settings, _mock_engines)`
 
 **Purpose:** Verify runtime settings payload does not expose api key.
+
+#### `def ToolApiTests.setUp()`
+
+#### `def ToolApiTests.tearDown()`
 
 #### `def ToolApiTests.test_tools_api_returns_discovered_servers()`
 
@@ -1104,6 +1140,10 @@ Part of `Apps\UI`. See **Related** for package index and callers.
 
 1. Read or write Django ORM records.
 
+#### `def OllamaPresetApiTests.setUp()`
+
+#### `def OllamaPresetApiTests.tearDown()`
+
 #### `def OllamaPresetApiTests.test_model_info_includes_active_ollama_preset_defaults_and_servers(mock_get_model_settings)`
 
 **Purpose:** Verify model info includes active ollama preset defaults and servers.
@@ -1148,6 +1188,10 @@ Part of `Apps\UI`. See **Related** for package index and callers.
 **Steps:**
 
 1. Read or write Django ORM records.
+
+#### `def LmsPresetApiTests.setUp()`
+
+#### `def LmsPresetApiTests.tearDown()`
 
 #### `def LmsPresetApiTests.test_model_info_includes_active_lms_preset_defaults(mock_preset_settings, mock_model_settings)`
 

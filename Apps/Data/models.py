@@ -177,3 +177,62 @@ class LmsPreset(models.Model):
         """Return a readable preset name with its model."""
 
         return f"{self.model_name} :: {self.name}"
+
+
+# Store OpenAI-compatible model presets, scoped by endpoint to avoid collisions.
+class OpenAiPreset(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # The endpoint URL is part of the identity so the same model name served by
+    # different providers keeps independent presets.
+    endpoint_url = models.CharField(max_length=500, blank=True, default="", db_index=True)
+    model_name = models.CharField(max_length=255, db_index=True)
+    name = models.CharField(max_length=120)
+    config = models.JSONField(default=dict)
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # Configure ordering and uniqueness for OpenAI presets.
+    class Meta:
+        ordering = ["endpoint_url", "model_name", "-is_active", "-is_default", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["endpoint_url", "model_name", "name"],
+                name="unique_openai_preset_name_per_endpoint_model",
+            ),
+        ]
+
+    # Return a readable preset label.
+    def __str__(self) -> str:
+        """Return a readable preset name with its endpoint and model."""
+
+        return f"{self.endpoint_url} :: {self.model_name} :: {self.name}"
+
+
+# Store Google GenAI (Gemini) model presets.
+class GoogleGenAiPreset(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    model_name = models.CharField(max_length=255, db_index=True)
+    name = models.CharField(max_length=120)
+    config = models.JSONField(default=dict)
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # Configure ordering and uniqueness for Google GenAI presets.
+    class Meta:
+        ordering = ["model_name", "-is_active", "-is_default", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["model_name", "name"],
+                name="unique_google_genai_preset_name_per_model",
+            ),
+        ]
+
+    # Return a readable preset label.
+    def __str__(self) -> str:
+        """Return a readable preset name with its model."""
+
+        return f"{self.model_name} :: {self.name}"

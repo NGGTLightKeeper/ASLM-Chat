@@ -15,6 +15,10 @@ draft: false
 
 **Purpose:** Type `UiConfig` defined in `apps.py`.
 
+#### `def UiConfig.ready() -> None`
+
+**Purpose:** Prepare enabled engine runtimes without blocking Django startup.
+
 ---
 
 ## Related

@@ -25,7 +25,7 @@ Part of `Apps\UI\static\js\main`. See **Related** for package index and callers.
 
 **Purpose:** Client function `buildChatTitle` used by the chat shell.
 
-#### `function startNewChat()`
+#### `function startNewChat(pushState)`
 
 **Purpose:** Client function `startNewChat` used by the chat shell.
 

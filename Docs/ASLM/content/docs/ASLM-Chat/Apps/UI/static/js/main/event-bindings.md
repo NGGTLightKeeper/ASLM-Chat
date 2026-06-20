@@ -15,6 +15,31 @@ Part of `Apps\UI\static\js\main`. See **Related** for package index and callers.
 
 ---
 
+
+## Private functions
+
+#### `function readSectionCollapseMap()`
+
+**Purpose:** Read the persisted {sectionId: collapsed} map.
+
+#### `function persistSectionCollapsed(sectionId, collapsed)`
+
+**Purpose:** Persist one section's collapsed state, keyed by its element id.
+
+#### `function restoreSectionCollapseState()`
+
+**Purpose:** Re-apply the saved collapse state to every settings section on load.
+
+#### `function setHistoryCollapsed(collapsed, persist)`
+
+**Purpose:** Collapse or expand the recent-chats list and optionally persist the state.
+
+#### `function positionSettingHelpPopover(helpEl)`
+
+**Purpose:** Position a setting's help popover next to its (?) icon.
+
+---
+
 ## Public functions
 
 #### `function bindEventHandlers(context, dependencies)`

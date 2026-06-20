@@ -4,6 +4,7 @@
     "appDescription": "ASLM — продвинутые системные языковые модели"
   },
   "sidebar": {
+    "recent": "Недавние",
     "chats": "Чаты",
     "newChat": "Новый чат",
     "noPreviousChats": "Нет предыдущих чатов",
@@ -16,7 +17,9 @@
     "newChat": "Новый чат",
     "attachmentChat": "Чат с вложениями",
     "howCanIHelp": "Чем могу помочь?",
-    "welcomeTitle": "Чем могу помочь?"
+    "welcomeTitle": "Чем могу помочь?",
+    "renameTitle": "Переименовать чат",
+    "renameLabel": "Название чата"
   },
   "composer": {
     "placeholder": "Сообщение для ASLM...",
@@ -25,7 +28,7 @@
     "tools": "Инструменты",
     "other": "Прочее",
     "reasoningEffort": "Уровень рассуждений",
-    "intelligence": "Глубина мышления",
+    "intelligence": "Размышление",
     "off": "Выкл.",
     "sendMessage": "Отправить сообщение",
     "queueMessage": "Поставить в очередь",
@@ -72,7 +75,10 @@
     "settings": "Настройки",
     "sampling": "Сэмплирование",
     "advanced": "Дополнительно",
-    "custom": "Своё"
+    "custom": "Своё",
+    "presetNameLabel": "Название шаблона",
+    "presetNewTitle": "Новый шаблон",
+    "presetRenameTitle": "Переименовать шаблон"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +177,6 @@
     "renameFolderAria": "Переименовать папку",
     "renameFileAria": "Переименовать файл",
     "deleteFileAria": "Удалить файл",
-    "dialogOk": "ОК",
-    "dialogCancel": "Отмена",
-    "dialogConfirm": "Подтверждение",
-    "dialogInput": "Ввод",
-    "valueRequired": "Укажите значение.",
     "createSkill": "Создать навык",
     "skillNamePlaceholder": "имя-навыка",
     "create": "Создать",
@@ -219,6 +220,13 @@
     "importNoSupported": "Поддерживаемые текстовые файлы не найдены (.md, .txt, .py, …).",
     "importNoSupportedFor": "Для «{name}» не найдено поддерживаемых текстовых файлов."
   },
+  "dialog": {
+    "ok": "ОК",
+    "cancel": "Отмена",
+    "confirm": "Подтверждение",
+    "input": "Ввод",
+    "valueRequired": "Укажите значение."
+  },
   "errors": {
     "generic": "Что-то пошло не так",
     "network": "Сетевая ошибка"
@@ -227,7 +235,9 @@
     "deleteChat": "Удалить этот чат?",
     "deleteChatNamed": "Удалить «{title}»?",
     "deletePreset": "Удалить шаблон «{name}»?",
-    "unsaved": "Есть несохранённые изменения."
+    "unsaved": "Есть несохранённые изменения.",
+    "deleteChatTitle": "Удалить чат",
+    "deletePresetTitle": "Удалить шаблон"
   },
   "toolInspector": {
     "title": "Инспектор инструментов",
@@ -437,6 +447,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} инстр.)",
     "cancel": "Отмена",
-    "save": "Сохранить"
+    "save": "Сохранить",
+    "noServers": "Нет серверов MCP"
   }
 }

@@ -4,6 +4,7 @@
     "appDescription": "ASLM - उन्नत सिस्टम भाषा मॉडल"
   },
   "sidebar": {
+    "recent": "हाल ही के",
     "chats": "चैट",
     "newChat": "नई चैट",
     "noPreviousChats": "कोई पिछली चैट नहीं",
@@ -16,7 +17,9 @@
     "newChat": "नई चैट",
     "attachmentChat": "अटैचमेंट चैट",
     "howCanIHelp": "मैं कैसे मदद कर सकता हूँ?",
-    "welcomeTitle": "मैं कैसे मदद कर सकता हूँ?"
+    "welcomeTitle": "मैं कैसे मदद कर सकता हूँ?",
+    "renameTitle": "चैट का नाम बदलें",
+    "renameLabel": "चैट का नाम"
   },
   "composer": {
     "placeholder": "ASLM को संदेश भेजें...",
@@ -25,7 +28,7 @@
     "tools": "उपकरण",
     "other": "अन्य",
     "reasoningEffort": "तर्क प्रयास",
-    "intelligence": "बुद्धिमत्ता",
+    "intelligence": "सोच",
     "off": "बंद",
     "sendMessage": "संदेश भेजें",
     "queueMessage": "संदेश कतार में डालें",
@@ -72,7 +75,10 @@
     "settings": "सेटिंग्स",
     "sampling": "सैंपलिंग",
     "advanced": "उन्नत",
-    "custom": "कस्टम"
+    "custom": "कस्टम",
+    "presetNameLabel": "प्रीसेट का नाम",
+    "presetNewTitle": "नया प्रीसेट",
+    "presetRenameTitle": "प्रीसेट का नाम बदलें"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -171,11 +177,6 @@
     "renameFolderAria": "फ़ोल्डर का नाम बदलें",
     "renameFileAria": "फ़ाइल का नाम बदलें",
     "deleteFileAria": "फ़ाइल हटाएँ",
-    "dialogOk": "ठीक",
-    "dialogCancel": "रद्द करें",
-    "dialogConfirm": "पुष्टि",
-    "dialogInput": "इनपुट",
-    "valueRequired": "मान आवश्यक है।",
     "createSkill": "कौशल बनाएँ",
     "skillNamePlaceholder": "कौशल-नाम",
     "create": "बनाएँ",
@@ -219,6 +220,13 @@
     "importNoSupported": "कोई समर्थित पाठ फ़ाइल नहीं (.md, .txt, .py, …)।",
     "importNoSupportedFor": "\"{name}\" के लिए कोई समर्थित फ़ाइल नहीं।"
   },
+  "dialog": {
+    "ok": "ठीक",
+    "cancel": "रद्द करें",
+    "confirm": "पुष्टि",
+    "input": "इनपुट",
+    "valueRequired": "मान आवश्यक है।"
+  },
   "errors": {
     "generic": "कुछ गलत हो गया",
     "network": "नेटवर्क त्रुटि"
@@ -227,7 +235,9 @@
     "deleteChat": "यह चैट हटाएँ?",
     "deleteChatNamed": "\"{title}\" हटाएँ?",
     "deletePreset": "प्रीसेट \"{name}\" हटाएँ?",
-    "unsaved": "आपके पास असहेजे परिवर्तन हैं।"
+    "unsaved": "आपके पास असहेजे परिवर्तन हैं।",
+    "deleteChatTitle": "चैट हटाएँ",
+    "deletePresetTitle": "प्रीसेट हटाएँ"
   },
   "toolInspector": {
     "title": "उपकरण निरीक्षक",
@@ -437,6 +447,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} उपकरण)",
     "cancel": "रद्द करें",
-    "save": "सहेजें"
+    "save": "सहेजें",
+    "noServers": "कोई MCP सर्वर नहीं"
   }
 }

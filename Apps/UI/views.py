@@ -56,14 +56,33 @@ from Apps.Data.lms_presets import (
     rename_lms_preset,
     sync_active_lms_preset,
 )
+from Apps.Data.openai_presets import (
+    activate_openai_preset,
+    create_openai_preset,
+    delete_openai_preset,
+    get_openai_preset_payload,
+    normalize_openai_endpoint_url,
+    rename_openai_preset,
+    sync_active_openai_preset,
+)
+from Apps.Data.google_genai_presets import (
+    activate_google_genai_preset,
+    create_google_genai_preset,
+    delete_google_genai_preset,
+    get_google_genai_preset_payload,
+    rename_google_genai_preset,
+    sync_active_google_genai_preset,
+)
 from Apps.Data.models import (
     Chat,
+    GoogleGenAiPreset,
     LmsPreset,
     Message,
     MessageAttachment,
     MessageAttachmentKind,
     MessageImage,
     OllamaPreset,
+    OpenAiPreset,
 )
 from Apps.UI import STATIC_CACHE_VERSION
 from Apps.UI.host_theme_bridge import build_host_theme_template_context
@@ -692,6 +711,14 @@ def _clear_model_metadata_caches() -> None:
 def _clear_tool_server_cache() -> None:
     with _metadata_cache_lock:
         _tool_server_cache.clear()
+
+
+# Drop the cached model list for one engine's current scope (force re-probe).
+def _clear_cached_model_list(engine: str) -> None:
+    endpoint, api_key_hash = _engine_metadata_scope(engine)
+    cache_key = (engine, endpoint, api_key_hash)
+    with _metadata_cache_lock:
+        _model_list_cache.pop(cache_key, None)
 
 
 # Remember the latest selected model for one engine.
@@ -2197,6 +2224,18 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
     }
 
 
+# Decide whether an Ollama model runs in the cloud (no local layers to manage).
+def _ollama_model_is_cloud(model_name: str, model_layers: int) -> bool:
+    name = str(model_name or "").strip().lower()
+    if name.endswith("-cloud") or name.endswith(":cloud") or "-cloud:" in name:
+        return True
+    # Local models report a positive block_count; cloud models expose none.
+    try:
+        return int(model_layers) <= 0
+    except (TypeError, ValueError):
+        return False
+
+
 # Extract generic model info
 def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
     if not isinstance(settings_data, dict):
@@ -2301,6 +2340,10 @@ def _build_model_info_payload(
         preset_payload = get_ollama_preset_payload(model_name)
         payload["defaults"] = {**payload.get("defaults", {}), **preset_payload["active_config"]}
         payload["ollama_presets"] = preset_payload
+        # Report whether the model runs in the cloud. The frontend derives which
+        # parameters to hide (local execution knobs) from this flag, so no list
+        # of option names is hardcoded here.
+        payload["is_cloud"] = _ollama_model_is_cloud(model_name, payload.get("model_layers", 0))
     elif engine == "lms":
         payload = _extract_generic_model_info(settings_data)
         preset_payload = get_lms_preset_payload(model_name)
@@ -2311,6 +2354,22 @@ def _build_model_info_payload(
                 **(active_config.get("operation", {}) if isinstance(active_config.get("operation", {}), dict) else {}),
             }
         payload["lms_presets"] = preset_payload
+    elif engine == "openai":
+        payload = _extract_generic_model_info(settings_data)
+        # Scope presets by endpoint URL so the same model name from different
+        # providers keeps independent presets.
+        preset_payload = get_openai_preset_payload(settings.get_engine_url("openai"), model_name)
+        active_config = preset_payload.get("active_config", {}) if isinstance(preset_payload, dict) else {}
+        if isinstance(active_config, dict):
+            payload["defaults"] = {**payload.get("defaults", {}), **active_config}
+        payload["openai_presets"] = preset_payload
+    elif engine == "google-genai":
+        payload = _extract_generic_model_info(settings_data)
+        preset_payload = get_google_genai_preset_payload(model_name)
+        active_config = preset_payload.get("active_config", {}) if isinstance(preset_payload, dict) else {}
+        if isinstance(active_config, dict):
+            payload["defaults"] = {**payload.get("defaults", {}), **active_config}
+        payload["google_genai_presets"] = preset_payload
     else:
         payload = _extract_generic_model_info(settings_data)
 
@@ -5511,6 +5570,12 @@ def get_models_api(request):
     engine, engine_error = _resolve_request_engine_or_response(request)
     if engine_error is not None:
         return engine_error
+
+    # Polling requests force a fresh probe so newly loaded/downloaded models and
+    # recovered connections surface without waiting for the cache TTL to expire.
+    if str(request.GET.get("refresh", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        _clear_cached_model_list(engine)
+
     started_at = time.perf_counter()
     models = _load_models_for_engine(engine)
     _print_runtime_event(
@@ -6245,6 +6310,272 @@ def delete_lms_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=404)
     except Exception as exc:
         logger.exception("Error deleting LM Studio preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Resolve the endpoint URL that scopes OpenAI presets.
+def _get_openai_preset_endpoint() -> str:
+    return normalize_openai_endpoint_url(settings.get_engine_url("openai"))
+
+
+# Return preset metadata for the selected OpenAI model and endpoint.
+def get_openai_presets_api(request):
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    model_name = str(request.GET.get("model", "") or "").strip()
+    if not model_name:
+        return JsonResponse({"error": "Model parameter is required"}, status=400)
+
+    try:
+        return JsonResponse(get_openai_preset_payload(_get_openai_preset_endpoint(), model_name))
+    except Exception as exc:
+        logger.exception("Error getting OpenAI presets for %s", model_name)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Persist UI changes to the active OpenAI preset.
+def sync_openai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return _preset_mutation_response(
+            sync_active_openai_preset(_get_openai_preset_endpoint(), model_name, config)
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error syncing OpenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Set the active preset for an OpenAI model.
+def select_openai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return _preset_mutation_response(
+            activate_openai_preset(_get_openai_preset_endpoint(), model_name, preset_id)
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except OpenAiPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error selecting OpenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Create a new OpenAI preset for the selected model.
+def create_openai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return _preset_mutation_response(
+            create_openai_preset(
+                _get_openai_preset_endpoint(),
+                model_name,
+                name=preset_name or None,
+                config=config if isinstance(config, dict) else {},
+                activate=True,
+            )
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error creating OpenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Rename an existing custom OpenAI preset.
+def rename_openai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        if not model_name or not preset_id or not preset_name:
+            return JsonResponse({"error": "Model, preset_id and name are required"}, status=400)
+        return _preset_mutation_response(
+            rename_openai_preset(_get_openai_preset_endpoint(), model_name, preset_id, preset_name)
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except OpenAiPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error renaming OpenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Delete an existing custom OpenAI preset and fall back to the default one.
+def delete_openai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return _preset_mutation_response(
+            delete_openai_preset(_get_openai_preset_endpoint(), model_name, preset_id)
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except OpenAiPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error deleting OpenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Return preset metadata for the selected Google GenAI model.
+def get_google_genai_presets_api(request):
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    model_name = str(request.GET.get("model", "") or "").strip()
+    if not model_name:
+        return JsonResponse({"error": "Model parameter is required"}, status=400)
+
+    try:
+        return JsonResponse(get_google_genai_preset_payload(model_name))
+    except Exception as exc:
+        logger.exception("Error getting Google GenAI presets for %s", model_name)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Persist UI changes to the active Google GenAI preset.
+def sync_google_genai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return _preset_mutation_response(sync_active_google_genai_preset(model_name, config))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error syncing Google GenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Set the active preset for a Google GenAI model.
+def select_google_genai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return _preset_mutation_response(activate_google_genai_preset(model_name, preset_id))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except GoogleGenAiPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error selecting Google GenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Create a new Google GenAI preset for the selected model.
+def create_google_genai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return _preset_mutation_response(
+            create_google_genai_preset(
+                model_name,
+                name=preset_name or None,
+                config=config if isinstance(config, dict) else {},
+                activate=True,
+            )
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error creating Google GenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Rename an existing custom Google GenAI preset.
+def rename_google_genai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        if not model_name or not preset_id or not preset_name:
+            return JsonResponse({"error": "Model, preset_id and name are required"}, status=400)
+        return _preset_mutation_response(rename_google_genai_preset(model_name, preset_id, preset_name))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except GoogleGenAiPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error renaming Google GenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Delete an existing custom Google GenAI preset and fall back to the default one.
+def delete_google_genai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return _preset_mutation_response(delete_google_genai_preset(model_name, preset_id))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except GoogleGenAiPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error deleting Google GenAI preset")
         return JsonResponse({"error": str(exc)}, status=500)
 
 

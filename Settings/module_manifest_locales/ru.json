@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "Модуль ASLM Chat",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "Первоначальная настройка",
+                "description": "Создаёт settings.json и применяет миграции базы данных"
+            }
+        ],
+        "run": [
+            {
+                "name": "UI-сервер",
+                "description": "Запускает сервер разработки Django"
+            },
+            {
+                "name": "Среда выполнения Ollama",
+                "description": "Запускает управляемую службу Ollama в отдельной консольной сессии"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "Порт UI-сервера",
+            "description": "Порт, на котором слушает UI-сервер"
+        },
+        "api-port": {
+            "name": "Порт API-сервера",
+            "description": "Порт, на котором слушает API-сервер"
+        },
+        "aslm-host-theme": {
+            "name": "Тема хоста ASLM",
+            "description": "Снимок темы из приложения ASLM; применяется при каждом запуске модуля. Управляется только ASLM."
+        },
+        "aslm-host-locale": {
+            "name": "Локаль хоста ASLM",
+            "description": "Снимок языка из приложения ASLM; применяется при каждом запуске модуля. Управляется только ASLM."
+        },
+        "console_log_level": {
+            "name": "Уровень журналирования консоли",
+            "description": "Объём сведений о работе, которые ASLM-Chat выводит в консоль ASLM."
+        },
+        "llm-engine": {
+            "name": "Активный LLM-движок",
+            "description": "Движок, используемый для генерации в интерфейсе чата"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "Установлена ли служба вывода Ollama"
+        },
+        "ollama-service_path": {
+            "name": "Путь к Ollama",
+            "description": "Путь к исполняемому файлу Ollama"
+        },
+        "ollama-service_data": {
+            "name": "Данные Ollama",
+            "description": "Путь к каталогу данных Ollama"
+        },
+        "ollama-service_models": {
+            "name": "Модели Ollama",
+            "description": "Путь к каталогу моделей Ollama"
+        },
+        "ollama-service_port": {
+            "name": "Порт Ollama",
+            "description": "Порт, на котором слушает локальная служба Ollama"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "Доступна ли интеграция с LM Studio"
+        },
+        "lms_url": {
+            "name": "Адрес LM Studio",
+            "description": "Базовый адрес API сервера LM Studio"
+        },
+        "openai": {
+            "name": "API, совместимый с OpenAI",
+            "description": "Доступна ли конечная точка API, совместимая с OpenAI"
+        },
+        "openai_url": {
+            "name": "Адрес OpenAI-совместимого API",
+            "description": "Базовый URL конечной точки API, совместимой с OpenAI"
+        },
+        "openai_api_key": {
+            "name": "API-ключ OpenAI-совместимого API",
+            "description": "Необязательный API-ключ для защищённых конечных точек"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "Доступна ли интеграция с Google GenAI"
+        },
+        "google_genai_url": {
+            "name": "Адрес Google GenAI",
+            "description": "Базовый URL конечной точки API Google GenAI Gemini"
+        },
+        "google_genai_api_key": {
+            "name": "API-ключ Google GenAI",
+            "description": "API-ключ для запросов к API Google GenAI Gemini"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Модели Ollama",
+                "description": "Модели из официальной библиотеки Ollama."
+            }
+        ]
+    }
+}

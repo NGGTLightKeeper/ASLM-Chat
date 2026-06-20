@@ -3,7 +3,7 @@
 /* Markdown content */
 .markdown-body {
   font-size: var(--font-size-body-2);
-  line-height: 1.6;
+  line-height: var(--leading-reading);
   word-wrap: break-word;
 }
 
@@ -220,7 +220,7 @@
   height: 100%;
   color: var(--c-text);
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  font-size: 15px;
+  font-size: var(--font-size-body-2);
   font-weight: 600;
   line-height: 1.25;
   text-align: center;

@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "Modulo ASLM Chat",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "Configurazione iniziale",
+                "description": "Genera settings.json e applica le migrazioni del database"
+            }
+        ],
+        "run": [
+            {
+                "name": "Server interfaccia",
+                "description": "Avvia il server di sviluppo Django"
+            },
+            {
+                "name": "Runtime Ollama",
+                "description": "Avvia il servizio Ollama gestito in una sessione console dedicata"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "Porta server interfaccia",
+            "description": "Porta su cui è in ascolto il server interfaccia"
+        },
+        "api-port": {
+            "name": "Porta server API",
+            "description": "Porta su cui è in ascolto il server API"
+        },
+        "aslm-host-theme": {
+            "name": "Tema host ASLM",
+            "description": "Istantanea del tema dall'app ASLM; applicata a ogni avvio del modulo. Gestita solo da ASLM."
+        },
+        "aslm-host-locale": {
+            "name": "Lingua host ASLM",
+            "description": "Istantanea della lingua dall'app ASLM; applicata a ogni avvio del modulo. Gestita solo da ASLM."
+        },
+        "console_log_level": {
+            "name": "Livello log console",
+            "description": "Quanto dettaglio di runtime ASLM-Chat stampa nella console ASLM."
+        },
+        "llm-engine": {
+            "name": "Motore LLM attivo",
+            "description": "Motore usato per la generazione nell'interfaccia chat"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "Se il servizio di inferenza Ollama è installato"
+        },
+        "ollama-service_path": {
+            "name": "Percorso Ollama",
+            "description": "Percorso dell'eseguibile Ollama"
+        },
+        "ollama-service_data": {
+            "name": "Dati Ollama",
+            "description": "Percorso della directory dati Ollama"
+        },
+        "ollama-service_models": {
+            "name": "Modelli Ollama",
+            "description": "Percorso della directory modelli Ollama"
+        },
+        "ollama-service_port": {
+            "name": "Porta Ollama",
+            "description": "Porta su cui è in ascolto il servizio Ollama locale"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "Se l'integrazione LM Studio è disponibile"
+        },
+        "lms_url": {
+            "name": "Indirizzo LM Studio",
+            "description": "Indirizzo base dell'API del server LM Studio"
+        },
+        "openai": {
+            "name": "API compatibile OpenAI",
+            "description": "Se è disponibile un endpoint API compatibile con OpenAI"
+        },
+        "openai_url": {
+            "name": "Indirizzo compatibile OpenAI",
+            "description": "URL base dell'endpoint API compatibile con OpenAI"
+        },
+        "openai_api_key": {
+            "name": "Chiave API compatibile OpenAI",
+            "description": "Chiave API facoltativa per endpoint protetti"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "Se l'integrazione Google GenAI è disponibile"
+        },
+        "google_genai_url": {
+            "name": "Indirizzo Google GenAI",
+            "description": "URL base dell'endpoint API Google GenAI Gemini"
+        },
+        "google_genai_api_key": {
+            "name": "Chiave API Google GenAI",
+            "description": "Chiave API per le richieste all'API Google GenAI Gemini"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Modelli Ollama",
+                "description": "Modelli pubblicati nella libreria ufficiale Ollama."
+            }
+        ]
+    }
+}

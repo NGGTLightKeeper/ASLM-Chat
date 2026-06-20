@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "ASLM Chat 모듈",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "초기 설정",
+                "description": "settings.json을 생성하고 데이터베이스 마이그레이션을 적용합니다"
+            }
+        ],
+        "run": [
+            {
+                "name": "UI 서버",
+                "description": "Django 개발 서버를 시작합니다"
+            },
+            {
+                "name": "Ollama 런타임",
+                "description": "전용 콘솔 세션에서 관리형 Ollama 서비스를 시작합니다"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "UI 서버 포트",
+            "description": "UI 서버가 수신 대기하는 포트"
+        },
+        "api-port": {
+            "name": "API 서버 포트",
+            "description": "API 서버가 수신 대기하는 포트"
+        },
+        "aslm-host-theme": {
+            "name": "ASLM 호스트 테마",
+            "description": "ASLM 앱의 테마 스냅샷. 모듈 시작 시마다 적용됩니다. ASLM에서만 관리합니다."
+        },
+        "aslm-host-locale": {
+            "name": "ASLM 호스트 언어",
+            "description": "ASLM 앱의 언어 스냅샷. 모듈 시작 시마다 적용됩니다. ASLM에서만 관리합니다."
+        },
+        "console_log_level": {
+            "name": "콘솔 로그 수준",
+            "description": "ASLM-Chat이 ASLM 콘솔에 출력하는 런타임 세부 정보의 양"
+        },
+        "llm-engine": {
+            "name": "활성 LLM 엔진",
+            "description": "채팅 UI에서 생성에 사용되는 엔진"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "Ollama 추론 서비스가 설치되어 있는지 여부"
+        },
+        "ollama-service_path": {
+            "name": "Ollama 경로",
+            "description": "Ollama 실행 파일 경로"
+        },
+        "ollama-service_data": {
+            "name": "Ollama 데이터",
+            "description": "Ollama 데이터 디렉터리 경로"
+        },
+        "ollama-service_models": {
+            "name": "Ollama 모델",
+            "description": "Ollama 모델 디렉터리 경로"
+        },
+        "ollama-service_port": {
+            "name": "Ollama 포트",
+            "description": "로컬 Ollama 서비스가 수신 대기하는 포트"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "LM Studio 통합 사용 가능 여부"
+        },
+        "lms_url": {
+            "name": "LM Studio 주소",
+            "description": "LM Studio 서버 API 기본 주소"
+        },
+        "openai": {
+            "name": "OpenAI 호환 API",
+            "description": "OpenAI 호환 API 엔드포인트 사용 가능 여부"
+        },
+        "openai_url": {
+            "name": "OpenAI 호환 주소",
+            "description": "OpenAI 호환 API 엔드포인트 기본 URL"
+        },
+        "openai_api_key": {
+            "name": "OpenAI 호환 API 키",
+            "description": "보안 엔드포인트용 선택적 API 키"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "Google GenAI 통합 사용 가능 여부"
+        },
+        "google_genai_url": {
+            "name": "Google GenAI 주소",
+            "description": "Google GenAI Gemini API 엔드포인트 기본 URL"
+        },
+        "google_genai_api_key": {
+            "name": "Google GenAI API 키",
+            "description": "Google GenAI Gemini API 요청용 API 키"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Ollama 모델",
+                "description": "공식 Ollama 라이브러리에 게시된 모델."
+            }
+        ]
+    }
+}

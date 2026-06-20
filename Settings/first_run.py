@@ -7,6 +7,7 @@ import re
 import secrets
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -200,15 +201,30 @@ def _run_tool_bootstrap(log: bool) -> None:
     # Provision browser binaries per what each venv's manifest declares, so this stays
     # correct as tools add/drop browser backends (e.g. web search retiring Camoufox for
     # the warm cloakbrowser) without editing a hardcoded tool list here.
+    bootstrap_tasks: list[tuple[Any, str]] = []
     for cfg in venv_manager.iter_venv_configs():
         venv_id = str(cfg.get("id") or "")
         if not venv_id:
             continue
         packages = list(cfg.get("packages", [])) + list(cfg.get("packages_no_deps", []))
         if _venv_declares(packages, "playwright"):
-            _ensure_playwright_browsers(venv_id, log)
+            bootstrap_tasks.append((_ensure_playwright_browsers, venv_id))
         if _venv_declares(packages, "camoufox"):
-            _ensure_camoufox_binary(venv_id, log)
+            bootstrap_tasks.append((_ensure_camoufox_binary, venv_id))
+
+    # Run the per-venv browser fetches in parallel; each task isolates its own failures,
+    # and as_completed surfaces any stray exception as a warning without aborting setup.
+    if bootstrap_tasks:
+        with ThreadPoolExecutor(max_workers=len(bootstrap_tasks)) as executor:
+            futures = [
+                executor.submit(task, venv_id, log)
+                for task, venv_id in bootstrap_tasks
+            ]
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as exc:
+                    _print_warning(f"Browser bootstrap task failed: {exc}")
 
     # nltk/spacy bootstrap dropped: those deps (and the embedder/GLiNER stack) were
     # removed — web search is BM25 + an optional CPU decoder re-ranker now.

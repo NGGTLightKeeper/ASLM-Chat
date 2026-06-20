@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "Modul ASLM Chat",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "Penyiapan pertama",
+                "description": "Membuat settings.json dan menerapkan migrasi basis data"
+            }
+        ],
+        "run": [
+            {
+                "name": "Server UI",
+                "description": "Menjalankan server pengembangan Django"
+            },
+            {
+                "name": "Runtime Ollama",
+                "description": "Menjalankan layanan Ollama terkelola dalam sesi konsol khusus"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "Port server UI",
+            "description": "Port tempat server UI mendengarkan"
+        },
+        "api-port": {
+            "name": "Port server API",
+            "description": "Port tempat server API mendengarkan"
+        },
+        "aslm-host-theme": {
+            "name": "Tema host ASLM",
+            "description": "Cuplikan tema dari aplikasi ASLM; diterapkan pada setiap mulai modul. Hanya dikelola oleh ASLM."
+        },
+        "aslm-host-locale": {
+            "name": "Bahasa host ASLM",
+            "description": "Cuplikan bahasa dari aplikasi ASLM; diterapkan pada setiap mulai modul. Hanya dikelola oleh ASLM."
+        },
+        "console_log_level": {
+            "name": "Tingkat log konsol",
+            "description": "Seberapa banyak detail runtime yang ASLM-Chat cetak ke konsol ASLM"
+        },
+        "llm-engine": {
+            "name": "Mesin LLM aktif",
+            "description": "Mesin yang digunakan untuk generasi di antarmuka chat"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "Apakah layanan inferensi Ollama terinstal"
+        },
+        "ollama-service_path": {
+            "name": "Jalur Ollama",
+            "description": "Jalur ke file eksekusi Ollama"
+        },
+        "ollama-service_data": {
+            "name": "Data Ollama",
+            "description": "Jalur ke direktori data Ollama"
+        },
+        "ollama-service_models": {
+            "name": "Model Ollama",
+            "description": "Jalur ke direktori model Ollama"
+        },
+        "ollama-service_port": {
+            "name": "Port Ollama",
+            "description": "Port tempat layanan Ollama lokal mendengarkan"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "Apakah integrasi LM Studio tersedia"
+        },
+        "lms_url": {
+            "name": "Alamat LM Studio",
+            "description": "Alamat dasar API server LM Studio"
+        },
+        "openai": {
+            "name": "API kompatibel OpenAI",
+            "description": "Apakah titik akhir API kompatibel OpenAI tersedia"
+        },
+        "openai_url": {
+            "name": "Alamat kompatibel OpenAI",
+            "description": "URL dasar titik akhir API kompatibel OpenAI"
+        },
+        "openai_api_key": {
+            "name": "Kunci API kompatibel OpenAI",
+            "description": "Kunci API opsional untuk titik akhir yang diamankan"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "Apakah integrasi Google GenAI tersedia"
+        },
+        "google_genai_url": {
+            "name": "Alamat Google GenAI",
+            "description": "URL dasar titik akhir API Google GenAI Gemini"
+        },
+        "google_genai_api_key": {
+            "name": "Kunci API Google GenAI",
+            "description": "Kunci API untuk permintaan API Google GenAI Gemini"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Model Ollama",
+                "description": "Model yang dipublikasikan di perpustakaan resmi Ollama."
+            }
+        ]
+    }
+}
