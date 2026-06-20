@@ -1,6 +1,0 @@
-{
-  "_comment": "Monolith frozen. All trust data lives in trust_registry_profiles/. This stub exists only for backward compatibility with loaders that probe for this file.",
-  "tiers": {},
-  "blacklist": {},
-  "domains": []
-}

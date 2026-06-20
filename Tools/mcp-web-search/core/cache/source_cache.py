@@ -152,6 +152,10 @@ class SourceCache:
                 conn = sqlite3.connect(self._db_path, check_same_thread=False, timeout=10)
                 conn.row_factory = sqlite3.Row
                 conn.execute("PRAGMA journal_mode=WAL")
+                # Cap the -wal sidecar: after each checkpoint SQLite truncates it back to this
+                # size instead of leaving it at its high-water mark (default -1 = unbounded,
+                # which let _cache/*.db-wal grow without ever shrinking).
+                conn.execute("PRAGMA journal_size_limit=33554432")  # 32 MiB
                 conn.execute("PRAGMA busy_timeout=5000")
                 self._local.conn = conn
             except sqlite3.DatabaseError:

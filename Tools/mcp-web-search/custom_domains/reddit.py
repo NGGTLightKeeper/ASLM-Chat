@@ -23,23 +23,24 @@ def is_reddit(url: str) -> bool:
     return bool(_REDDIT_PATTERN.search(url))
 
 
-# Build the thread .json endpoint (limit/depth query for comments).
-def reddit_json_url(url: str) -> str:
+# Build the thread .json endpoint (limit/depth query for comments). host overrides the
+# netloc so the same thread can be retried on old.reddit.com as a fallback.
+def reddit_json_url(url: str, host: str | None = None) -> str:
     parsed = urlparse(url)
     path = parsed.path.rstrip("/")
     if path.endswith(".json"):
         path = path[: -len(".json")]
     path += ".json"
-    return urlunparse((parsed.scheme, parsed.netloc, path, "", "limit=50&depth=3", ""))
+    return urlunparse((parsed.scheme, host or parsed.netloc, path, "", "limit=50&depth=3", ""))
 
 
-# Thread page URL without the .json suffix (used as Referer).
-def reddit_thread_url(url: str) -> str:
+# Thread page URL without the .json suffix (used as Referer / page-render fallback).
+def reddit_thread_url(url: str, host: str | None = None) -> str:
     parsed = urlparse(url)
     path = parsed.path.rstrip("/")
     if path.endswith(".json"):
         path = path[: -len(".json")]
-    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+    return urlunparse((parsed.scheme, host or parsed.netloc, path, "", "", ""))
 
 
 # Parse Reddit listing JSON from raw text or minimal HTML wrapper.
@@ -116,50 +117,119 @@ def _fetch_reddit_json_curl(json_url: str, thread_url: str, timeout: float) -> l
     return data if isinstance(data, list) else None
 
 
-# Open thread HTML in Camoufox, then fetch .json in-page when curl_cffi is blocked.
-async def _fetch_reddit_json_camoufox(thread_url: str, timeout: float) -> list[Any] | None:
-    from core.fetch.camoufox_fetcher import fetch_page_json_with_camoufox, is_camoufox_available
+# Nav-cruft prefix pattern: lines before the real post body.
+_NAV_END_RE = re.compile(
+    r"(?:^|\n)(?:Go to \w|r/\w+)\n",
+    re.MULTILINE,
+)
 
-    if not is_camoufox_available():
+
+# Strip Reddit's SPA header (Sign Up / Log In / Expand user menu / …) from inner_text.
+def _strip_reddit_nav(text: str) -> str:
+    m = _NAV_END_RE.search(text)
+    return text[m.start() :].strip() if m else text.strip()
+
+
+# Fetch the thread .json through the warm cloakbrowser and parse the listing payload.
+# Chrome renders the JSON inside a <pre>, so the same parser used for curl handles it.
+async def _fetch_reddit_json_browser(json_url: str, timeout: float) -> list[Any] | None:
+    from core.fetch.browser.client import browser_fetch
+
+    result = await browser_fetch(json_url, nav_timeout=max(float(timeout), 30.0), wait_sec=3.0)
+    if not result.ok:
+        logger.debug("reddit browser .json fetch failed for %s: %s", json_url, result.error or result.status)
+        return None
+    return parse_reddit_json_payload(result.html or "") or parse_reddit_json_payload(result.text or "")
+
+
+# Fetch the rendered thread page via the warm cloakbrowser; return cleaned inner_text markdown.
+async def _fetch_reddit_browser_page(thread_url: str, timeout: float) -> str | None:
+    from core.fetch.browser.client import browser_fetch
+
+    result = await browser_fetch(thread_url, nav_timeout=max(float(timeout), 30.0), wait_sec=5.0)
+    if not result.ok or not result.text:
+        logger.debug(
+            "reddit browser page fetch failed for %s: %s", thread_url, result.error or result.status
+        )
         return None
 
-    budget = max(float(timeout), 25.0)
-    result = await fetch_page_json_with_camoufox(
-        thread_url,
-        json_query="limit=50&depth=3",
-        wait_sec=3.0,
-        timeout_sec=min(budget - 10.0, 40.0),
-        process_timeout=max(25.0, budget - 5.0),
-        warmup_count=0,
-    )
-    if not result.success:
-        logger.debug("reddit camoufox in-page json failed for %s: %s", thread_url, result.error)
+    text = _strip_reddit_nav(result.text)
+    if len(text.strip()) < 200:
+        logger.debug("reddit browser inner_text too short (%d chars) for %s", len(text), thread_url)
         return None
+    return text
 
-    return parse_reddit_json_payload(result.html or result.inner_text)
 
-
-# Fetch thread via .json suffix: curl_cffi first, then Camoufox on the same URL.
+# Fetch a thread through a tiered fallback that degrades on antibot blocks:
+#   1. curl_cffi .json (www)         — fast, no browser; Reddit increasingly 403s this
+#   2. warm-browser .json (www)      — JSON behind the browser identity (clean structured md)
+#   3. warm-browser .json (old)      — same on old.reddit.com (lighter, less guarded host)
+#   4. warm-browser page (old)       — last resort: render old.reddit and strip nav cruft
 async def fetch_reddit_json(url: str, timeout: float = 15.0) -> str:
-    thread_url = reddit_thread_url(url)
-    json_url = reddit_json_url(url)
+    www_thread = reddit_thread_url(url)
+    www_json = reddit_json_url(url)
     loop = asyncio.get_running_loop()
 
+    # 1. curl_cffi .json — cheapest path when Reddit lets it through.
     try:
         data = await loop.run_in_executor(
             _io_pool,
-            lambda: _fetch_reddit_json_curl(json_url, thread_url, timeout),
+            lambda: _fetch_reddit_json_curl(www_json, www_thread, timeout),
         )
         if data is not None:
             return reddit_data_to_markdown(data, url)
     except Exception as exc:
-        logger.info("reddit curl_cffi json blocked for %s: %s — trying camoufox", json_url, exc)
+        logger.info("reddit curl_cffi json blocked for %s: %s — falling back to browser", www_json, exc)
 
+    # 2. + 3. warm-browser .json, www then old.reddit (the antibot fallback).
+    old_json = reddit_json_url(url, host="old.reddit.com")
+    for json_url in (www_json, old_json):
+        try:
+            data = await _fetch_reddit_json_browser(json_url, timeout)
+            if data is not None:
+                return reddit_data_to_markdown(data, url)
+        except Exception as exc:
+            logger.info("reddit browser .json failed for %s: %s", json_url, exc)
+
+    # 4. Last resort: render the old.reddit thread page and strip its nav header.
     try:
-        data = await _fetch_reddit_json_camoufox(thread_url, timeout)
-        if data is not None:
-            return reddit_data_to_markdown(data, url)
+        text = await _fetch_reddit_browser_page(reddit_thread_url(url, host="old.reddit.com"), timeout)
+        if text:
+            return text
     except Exception as exc:
-        logger.warning("reddit camoufox json fetch failed for %s: %s", json_url, exc)
+        logger.warning("reddit old.reddit page fetch failed for %s: %s", url, exc)
 
     return f"Error: Reddit fetch failed for {url}"
+
+
+from custom_domains.base import FetchContext, PageResult
+
+# Reddit needs room for curl_cffi + a warm-browser render of the thread page.
+_REDDIT_READ_TIMEOUT_SEC = 60.0
+
+
+# Unified handler: fetch a Reddit thread as JSON (curl_cffi → warm-browser in-page).
+class RedditHandler:
+    name = "reddit"
+    fallback_to_generic = False
+    scope = "read_page"  # browser/JSON path too slow for web_search inline parsing
+
+    # True for Reddit thread comment URLs.
+    def matches(self, url: str) -> bool:
+        return is_reddit(url)
+
+    # Fetch and format the thread; Reddit gets its own generous timeout floor.
+    async def read(self, url: str, ctx: FetchContext) -> PageResult:
+        timeout = max(float(ctx.timeout), _REDDIT_READ_TIMEOUT_SEC)
+        markdown = await fetch_reddit_json(url, timeout=timeout)
+        ok = bool(markdown) and not markdown.startswith("Error:")
+        return PageResult(
+            markdown=markdown or f"Error: Reddit fetch failed for {url}",
+            ok=ok,
+            method="reddit_json",
+            apply_budget=ok,
+            error="" if ok else (markdown or "reddit fetch failed"),
+        )
+
+
+HANDLER = RedditHandler()

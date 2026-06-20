@@ -1,4 +1,0 @@
-{
-  "_comment": "Monolith frozen. All domain data lives in domain_profiles/. This stub exists only for backward compatibility with loaders that probe for this file.",
-  "domains": []
-}

@@ -1,0 +1,90 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+"""Content-cleaning on a real HTML fixture that imitates nav/UI/SEO junk.
+
+Exercises the two cleaners now wired into the live read path:
+  * dom_block_extractor — structural nav/UI/link-farm rejection (via normalize_page);
+  * micro_chunk_worker  — query-aware clause pruning (via compress_read_page_markdown).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from core.extract.content_processor import compress_read_page_markdown
+from core.extract.dom_block_extractor import extract_dom_blocks
+from core.extract.page_normalizer import normalize_page
+
+_FIXTURE = Path(__file__).parent / "fixtures" / "nav_seo_junk.html"
+
+
+def _html() -> str:
+    return _FIXTURE.read_text(encoding="utf-8")
+
+
+# Distinctive real-content phrases vs. junk labels that must be filtered out.
+_CONTENT_MARKERS = ("4.2 volts", "constant-current", "18650")
+_JUNK_MARKERS = ("Shopping Cart", "Wishlist", "Accept All Cookies", "RSS Feed", "Buy Now Discount")
+
+
+def test_dom_block_extractor_rejects_nav_clusters():
+    from core.extract.content_processor import _preclean_html
+
+    blocks, stats = extract_dom_blocks(_preclean_html(_html()), url="https://example.com/guide")
+    joined = "\n\n".join(blocks)
+
+    assert int(stats["nav_rejected"]) >= 3                  # link clusters rejected
+    assert "4.2 volts" in joined                            # real content survives
+    assert "Shopping Cart" not in joined                    # nav cluster gone
+    assert "RSS Feed" not in joined                         # footer link farm gone
+
+
+def test_normalize_page_drops_junk_keeps_content():
+    md = normalize_page("https://example.com/guide", raw_html=_html())
+
+    for marker in _CONTENT_MARKERS:
+        assert marker in md, f"content dropped: {marker!r}"
+    for junk in _JUNK_MARKERS:
+        assert junk not in md, f"junk survived: {junk!r}"
+
+
+def test_micro_prune_drops_keyword_stuffed_clause():
+    # One sentence: a factual clause (kept) + a query-keyword-stuffed, fact-poor clause
+    # (an "SEO tumor" — what micro_chunk_worker targets).
+    text = (
+        "Lithium-ion cells should be charged to 4.2 volts per cell, "
+        "buy lithium battery charging lithium battery voltage lithium battery "
+        "best lithium battery deals online."
+    )
+    out = compress_read_page_markdown(
+        text,
+        focus="lithium battery charging voltage",
+        max_chars=5_000,
+        compress_threshold=10**9,   # skip budget compaction; isolate the micro-prune
+        compress_target=0,
+        enable_compress=True,
+    )
+    assert "4.2 volts" in out                       # factual clause kept
+    assert "best lithium battery deals" not in out  # keyword-stuffed clause dropped
+
+
+def test_micro_prune_debug_reports_drop():
+    from core.extract.micro_chunk_worker import prune_micro_chunks
+
+    text = (
+        "Lithium-ion cells should be charged to 4.2 volts per cell, "
+        "buy lithium battery charging lithium battery voltage lithium battery "
+        "best lithium battery deals online."
+    )
+    pruned, dbg = prune_micro_chunks(text, "lithium battery charging voltage")
+    assert dbg.clauses_dropped >= 1
+    assert "4.2 volts" in pruned
+
+
+def test_micro_prune_noop_without_query():
+    # Standalone read_page (no focus) must not prune anything.
+    text = "Click here to subscribe to our newsletter for exclusive deals and discounts today."
+    out = compress_read_page_markdown(
+        text, focus="", max_chars=5_000, compress_threshold=10**9, compress_target=0,
+    )
+    assert out == text

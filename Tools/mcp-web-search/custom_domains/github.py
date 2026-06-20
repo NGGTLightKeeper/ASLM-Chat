@@ -235,3 +235,31 @@ async def fetch_github_page(url: str, timeout: float = 20.0) -> str:
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(_io_pool, _sync)
+
+
+from custom_domains.base import FetchContext, PageResult
+
+
+# Unified handler: fetch a GitHub page via the REST API and return budgeted markdown.
+class GitHubHandler:
+    name = "github"
+    fallback_to_generic = False
+
+    # True when the URL targets github.com.
+    def matches(self, url: str) -> bool:
+        return is_github_url(url)
+
+    # Fetch via GitHub API; mark for read_page's budget pass like the legacy path did.
+    async def read(self, url: str, ctx: FetchContext) -> PageResult:
+        markdown = await fetch_github_page(url, timeout=ctx.timeout)
+        ok = not markdown.lstrip().lower().startswith("error:")
+        return PageResult(
+            markdown=markdown,
+            ok=ok,
+            method="github_api",
+            apply_budget=True,
+            error="" if ok else markdown,
+        )
+
+
+HANDLER = GitHubHandler()

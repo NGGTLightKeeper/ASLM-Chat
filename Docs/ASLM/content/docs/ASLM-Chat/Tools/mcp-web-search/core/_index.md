@@ -13,6 +13,7 @@ draft: false
 
 | Doc | Source | Role |
 | --- | --- | --- |
+| [search](search/) | `search/` | Web search core, caching, prefetch, recent tracker |
 | [models](models/) | `models/` | SERP/UI dataclasses |
 | [config](config/) | `config/` | `search_config.json`, API keys, hardware, pipeline modes |
 | [query](query/) | `query/` | Classification, constraints, routing, ASLM embeddings |
@@ -20,7 +21,10 @@ draft: false
 | [extract](extract/) | `extract/` | HTML→text, previews, GLiNER, chunking |
 | [cache](cache/) | `cache/` | SQLite source + hosted SERP caches |
 | [registry](registry/) | `registry/` | Domain/trust profiles, reputation, endpoints |
+| [read](read/) | `read/` | Implementations for `read_page` |
+| [search](search/) | `search/` | Core search functionality, including prefetching |
 | [debug](debug/) | `debug/` | Developer CLIs (not production MCP) |
+| [profiles](profiles/) | `profiles/` | Runtime profiles |
 
 ---
 

@@ -11,6 +11,14 @@ from .fact_signals import fact_signal_score, is_fact_like_text
 if TYPE_CHECKING:
     from bs4 import Tag
 
+# Fastest available BeautifulSoup backend (lxml C parser when installed, else stdlib).
+try:
+    import lxml  # noqa: F401
+
+    _BS_PARSER = "lxml"
+except ImportError:  # pragma: no cover — lxml is normally installed
+    _BS_PARSER = "html.parser"
+
 # Blocks with ui_score >= this are hard-rejected (unless protected).
 NAV_HARD_REJECT: float = 0.52
 
@@ -310,7 +318,12 @@ def structure_ui_score(
         - 0.08 * text_s
     )
     structural_hint = max(attr_s, ancestor_s, cluster_s, mono_s)
-    if structural_hint >= 0.45:
+    # A structural menu-shape hint (uniform siblings, list shape) must not override clear
+    # prose: a real nav/menu cluster carries links or controls. Sentence-like text with no
+    # link/click/control density is content, however uniform its siblings look — otherwise
+    # article paragraph runs get mis-scored as menus and dropped.
+    is_clear_prose = sentence_s >= 0.60 and link_s < 0.20 and click_s < 0.20 and control_s < 0.20
+    if structural_hint >= 0.45 and not is_clear_prose:
         ui = max(ui, structural_hint * 0.82)
     if debug_lexicon:
         ui += 0.02 * _nav_word_density_debug(text)
@@ -417,7 +430,7 @@ def extract_dom_blocks(
 
     resolved_domain = (domain or _domain_from_url(url)).lower()
 
-    soup = BeautifulSoup(cleaned_html, "html.parser")
+    soup = BeautifulSoup(cleaned_html, _BS_PARSER)
     candidates = _collect_leaf_blocks(soup)
     total = len(candidates)
     rejected = 0

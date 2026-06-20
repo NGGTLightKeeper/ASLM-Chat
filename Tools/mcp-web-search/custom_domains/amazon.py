@@ -66,3 +66,45 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+from urllib.parse import urlparse
+
+from custom_domains.base import FetchContext, PageResult
+
+_AMAZON_HOSTS = frozenset({
+    "amazon.com", "amazon.co.uk", "amazon.de",
+    "amazon.fr", "amazon.it", "amazon.es", "amazon.co.jp",
+})
+
+
+# Unified handler: fetch an Amazon product snapshot; defer to generic when blocked/empty.
+class AmazonHandler:
+    name = "amazon"
+    fallback_to_generic = True
+
+    # True for known Amazon storefront hosts.
+    def matches(self, url: str) -> bool:
+        host = urlparse(url).netloc.lower().removeprefix("www.").removeprefix("m.")
+        return host in _AMAZON_HOSTS
+
+    # Fetch a snapshot; reject blocked pages and the "continue shopping" banner so
+    # read_page can fall through to its generic pipeline.
+    async def read(self, url: str, ctx: FetchContext) -> PageResult:
+        try:
+            snapshot = await fetch_amazon_snapshot(url, timeout=ctx.timeout)
+        except Exception:
+            return PageResult(ok=False, method="amazon_custom", error="amazon snapshot failed")
+        markdown = str(snapshot.get("markdown") or "").strip()
+        blocked = bool(snapshot.get("blocked_like"))
+        useless_banner = "continue shopping" in markdown.lower()
+        ok = bool(markdown) and not blocked and not useless_banner
+        return PageResult(
+            markdown=markdown,
+            ok=ok,
+            method=str(snapshot.get("engine") or "amazon_custom"),
+            blocked=blocked,
+        )
+
+
+HANDLER = AmazonHandler()

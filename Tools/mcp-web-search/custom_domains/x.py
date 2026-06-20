@@ -153,3 +153,31 @@ async def fetch_x_post(url: str, timeout: float) -> str:
 
     result = await loop.run_in_executor(_io_pool, _sync)
     return result or f"Error: Could not fetch X/Twitter post content from: {url}"
+
+
+from custom_domains.base import FetchContext, PageResult
+
+
+# Unified handler: fetch an X/Twitter post via syndication/oEmbed APIs.
+class XHandler:
+    name = "x"
+    fallback_to_generic = False
+    scope = "read_page"  # requires a browser; not for web_search inline parsing
+
+    # True for x.com/twitter.com status permalinks.
+    def matches(self, url: str) -> bool:
+        return is_x_post(url)
+
+    # Fetch and format the post as markdown.
+    async def read(self, url: str, ctx: FetchContext) -> PageResult:
+        markdown = await fetch_x_post(url, ctx.timeout)
+        ok = bool(markdown) and not markdown.startswith("Error:")
+        return PageResult(
+            markdown=markdown or f"Error: Could not fetch X/Twitter post content from: {url}",
+            ok=ok,
+            method="x_syndication",
+            error="" if ok else (markdown or "x fetch failed"),
+        )
+
+
+HANDLER = XHandler()

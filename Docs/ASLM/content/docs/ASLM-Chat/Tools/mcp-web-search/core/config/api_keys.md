@@ -45,34 +45,6 @@ Part of `Tools\mcp-web-search\core\config`. See **Related** for package index an
 
 **Purpose:** Implements `SearchApiKeysSection.serpapi_api_key` in `api_keys.py`.
 
-#### `def SearchApiKeysSection.serper_api_key() -> str | None`
-
-**Purpose:** Implements `SearchApiKeysSection.serper_api_key` in `api_keys.py`.
-
-#### `def SearchApiKeysSection.exa_api_key() -> str | None`
-
-**Purpose:** Implements `SearchApiKeysSection.exa_api_key` in `api_keys.py`.
-
-#### `def SearchApiKeysSection.kagi_api_key() -> str | None`
-
-**Purpose:** Implements `SearchApiKeysSection.kagi_api_key` in `api_keys.py`.
-
-#### `def SearchApiKeysSection.bing_api_key() -> str | None`
-
-**Purpose:** Implements `SearchApiKeysSection.bing_api_key` in `api_keys.py`.
-
-#### `def SearchApiKeysSection.google_custom_search_api_key() -> str | None`
-
-**Purpose:** Implements `SearchApiKeysSection.google_custom_search_api_key` in `api_keys.py`.
-
-#### `def SearchApiKeysSection.google_custom_search_cx() -> str | None`
-
-**Purpose:** Implements `SearchApiKeysSection.google_custom_search_cx` in `api_keys.py`.
-
-#### `def SearchApiKeysSection.yandex_api_key() -> str | None`
-
-**Purpose:** Implements `SearchApiKeysSection.yandex_api_key` in `api_keys.py`.
-
 #### `def load_api_keys(path) -> ApiKeysConfig`
 
 **Purpose:** Load api_keys.json and cache an ApiKeysConfig singleton (custom path for tests only).
@@ -82,6 +54,14 @@ Part of `Tools\mcp-web-search\core\config`. See **Related** for package index an
 1. Return the computed result to the caller.
 2. Handle errors and map them to a safe response.
 3. Parse or serialize JSON payloads.
+
+#### `def reset_api_keys_cache() -> None`
+
+**Purpose:** Drop the cached config (tests that rewrite api_keys.json).
+
+**Steps:**
+
+1. Return the computed result to the caller.
 
 ---
 

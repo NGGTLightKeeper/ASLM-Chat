@@ -1,5 +1,14 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
+"""Hosted search-API keys (optional supplement layer).
+
+Ported from the legacy `core/config/api_keys.py`, trimmed to the providers the new
+pipeline actually wires (Tavily, Firecrawl, Brave, SerpApi) plus a few forward-compat
+key slots. Keys live in `api_keys.json` next to this file; absent file or blank keys
+mean the hosted layer is a no-op and search stays pure scrape. The example template is
+copied in on first load so the shape is discoverable.
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,65 +16,27 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-logger = logging.getLogger("config.api_keys")
+logger = logging.getLogger("services.web_search")
 
 _API_KEYS_PATH = Path(__file__).parent / "api_keys.json"
 _API_KEYS_EXAMPLE_PATH = Path(__file__).parent / "api_keys.json.example"
 
 
+# One nullable key slot per wired hosted provider. Content-bearing providers (Tavily,
+# Firecrawl) return full page text; Brave/SerpApi return SERP rows. Deliberately no
+# Serper/Kagi/Google-CSE/Yandex slots — they are redundant SERP backends and pure
+# maintenance weight; the scrape engines already cover that.
 @dataclass
 class HostedSearchApiKeysSection:
     tavily_api_key: str | None = None
+    firecrawl_api_key: str | None = None
     brave_api_key: str | None = None
     serpapi_api_key: str | None = None
-    serper_api_key: str | None = None
-    exa_api_key: str | None = None
-    kagi_api_key: str | None = None
-    google_custom_search_api_key: str | None = None
-    google_custom_search_cx: str | None = None
-    yandex_api_key: str | None = None
 
 
 @dataclass
 class SearchApiKeysSection:
     hosted_api: HostedSearchApiKeysSection = field(default_factory=HostedSearchApiKeysSection)
-
-    # Backward-compatible shortcuts for the previous flat field layout.
-    @property
-    def tavily_api_key(self) -> str | None:
-        return self.hosted_api.tavily_api_key
-
-    @property
-    def brave_api_key(self) -> str | None:
-        return self.hosted_api.brave_api_key
-
-    @property
-    def serpapi_api_key(self) -> str | None:
-        return self.hosted_api.serpapi_api_key
-
-    @property
-    def serper_api_key(self) -> str | None:
-        return self.hosted_api.serper_api_key
-
-    @property
-    def exa_api_key(self) -> str | None:
-        return self.hosted_api.exa_api_key
-
-    @property
-    def kagi_api_key(self) -> str | None:
-        return self.hosted_api.kagi_api_key
-
-    @property
-    def google_custom_search_api_key(self) -> str | None:
-        return self.hosted_api.google_custom_search_api_key
-
-    @property
-    def google_custom_search_cx(self) -> str | None:
-        return self.hosted_api.google_custom_search_cx
-
-    @property
-    def yandex_api_key(self) -> str | None:
-        return self.hosted_api.yandex_api_key
 
 
 @dataclass
@@ -85,19 +56,15 @@ def _read_nullable_str(raw: dict, key: str) -> str | None:
     return text or None
 
 
-# Create api_keys.json from the example template when missing.
+# Create api_keys.json from the example template when missing (best-effort).
 def _bootstrap_api_keys_file(target: Path) -> None:
-    if target.exists():
+    if target.exists() or not _API_KEYS_EXAMPLE_PATH.is_file():
         return
-    if not _API_KEYS_EXAMPLE_PATH.is_file():
-        return
-
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(_API_KEYS_EXAMPLE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
         logger.info("Created api_keys.json from template at %s", target)
     except OSError as exc:
-        logger.warning("Failed to create api_keys.json from template at %s: %s", target, exc)
+        logger.warning("Failed to create api_keys.json at %s: %s", target, exc)
 
 
 # Load api_keys.json and cache an ApiKeysConfig singleton (custom path for tests only).
@@ -111,37 +78,30 @@ def load_api_keys(path: Path | None = None) -> ApiKeysConfig:
     try:
         raw = json.loads(target.read_text(encoding="utf-8-sig"))
     except FileNotFoundError:
-        logger.info("api_keys.json not found at %s - using empty key set", target)
         config = ApiKeysConfig()
-        if path is None:
-            _cached_api_keys = config
-        return config
-    except json.JSONDecodeError as exc:
-        logger.error("Invalid JSON in %s: %s - using empty key set", target, exc)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.error("Invalid/unreadable %s: %s — using empty key set", target, exc)
         config = ApiKeysConfig()
-        if path is None:
-            _cached_api_keys = config
-        return config
-
-    search = raw.get("search", {})
-    hosted_api = search.get("hosted_api", search)
-
-    config = ApiKeysConfig(
-        search=SearchApiKeysSection(
-            hosted_api=HostedSearchApiKeysSection(
-                tavily_api_key=_read_nullable_str(hosted_api, "tavily_api_key"),
-                brave_api_key=_read_nullable_str(hosted_api, "brave_api_key"),
-                serpapi_api_key=_read_nullable_str(hosted_api, "serpapi_api_key"),
-                serper_api_key=_read_nullable_str(hosted_api, "serper_api_key"),
-                exa_api_key=_read_nullable_str(hosted_api, "exa_api_key"),
-                kagi_api_key=_read_nullable_str(hosted_api, "kagi_api_key"),
-                google_custom_search_api_key=_read_nullable_str(hosted_api, "google_custom_search_api_key"),
-                google_custom_search_cx=_read_nullable_str(hosted_api, "google_custom_search_cx"),
-                yandex_api_key=_read_nullable_str(hosted_api, "yandex_api_key"),
-            ),
+    else:
+        search = raw.get("search", {})
+        hosted = search.get("hosted_api", search) if isinstance(search, dict) else {}
+        config = ApiKeysConfig(
+            search=SearchApiKeysSection(
+                hosted_api=HostedSearchApiKeysSection(
+                    tavily_api_key=_read_nullable_str(hosted, "tavily_api_key"),
+                    firecrawl_api_key=_read_nullable_str(hosted, "firecrawl_api_key"),
+                    brave_api_key=_read_nullable_str(hosted, "brave_api_key"),
+                    serpapi_api_key=_read_nullable_str(hosted, "serpapi_api_key"),
+                ),
+            )
         )
-    )
 
     if path is None:
         _cached_api_keys = config
     return config
+
+
+# Drop the cached config (tests that rewrite api_keys.json).
+def reset_api_keys_cache() -> None:
+    global _cached_api_keys
+    _cached_api_keys = None

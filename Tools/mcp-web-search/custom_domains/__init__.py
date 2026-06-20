@@ -1,28 +1,71 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-from .amazon import fetch_amazon_snapshot
-from .dns_shop import dns_variant_urls, rewrite_read_page_url
-from .ebay import fetch_ebay_snapshot
-from .github import fetch_github_page, is_github_url
-from .reddit import fetch_reddit_json, is_reddit
-from .retail import extract_retail_metadata, normalize_availability, prepend_retail_metadata
-from .stackexchange import fetch_stackexchange_question, is_stackexchange_question_url
-from .x import fetch_x_post, is_x_post
+# Pass-through custom-domain layer with a single API (see base.py). read_page asks
+# match(url) for a handler and calls handler.read(url, ctx). Order matters only in that
+# the first matching handler wins; the host tests below do not overlap.
+#
+# Domains needing only a forced fetch method (twitch/flashscore/sofascore → browser,
+# cursor → nextjs_rsc, citilink → browser) are NOT handlers — read_page's generic
+# pipeline picks that up from core.profiles.known_domains. Only domains with bespoke
+# fetching (terminal APIs) or URL-variant logic (dns-shop) get a handler here.
+
+from custom_domains.base import (
+    SCOPE_BOTH,
+    SCOPE_READ_PAGE,
+    DomainHandler,
+    FetchContext,
+    GenericRequest,
+    PageAttempt,
+    PageResult,
+)
+from custom_domains.amazon import HANDLER as _amazon
+from custom_domains.dns_shop import HANDLER as _dns_shop
+from custom_domains.ebay import HANDLER as _ebay
+from custom_domains.github import HANDLER as _github
+from custom_domains.reddit import HANDLER as _reddit
+from custom_domains.stackexchange import HANDLER as _stackexchange
+from custom_domains.x import HANDLER as _x
+from custom_domains.youtube import HANDLER as _youtube
+
+HANDLERS: list[DomainHandler] = [
+    _github,
+    _reddit,
+    _x,
+    _stackexchange,
+    _youtube,
+    _amazon,
+    _ebay,
+    _dns_shop,
+]
+
+
+# Return the first custom-domain handler matching the URL, or None for generic handling.
+def match(url: str) -> DomainHandler | None:
+    for handler in HANDLERS:
+        try:
+            if handler.matches(url):
+                return handler
+        except Exception:
+            continue
+    return None
+
+
+# True when the URL's handler is read_page-only, so web_search must keep it snippet-only
+# rather than parse it inline. Domains without a handler (or scope=both) are not affected.
+def is_read_page_only(url: str) -> bool:
+    handler = match(url)
+    return handler is not None and getattr(handler, "scope", SCOPE_BOTH) == SCOPE_READ_PAGE
+
 
 __all__ = [
-    "fetch_amazon_snapshot",
-    "dns_variant_urls",
-    "extract_retail_metadata",
-    "fetch_ebay_snapshot",
-    "fetch_github_page",
-    "fetch_reddit_json",
-    "fetch_stackexchange_question",
-    "fetch_x_post",
-    "is_reddit",
-    "is_github_url",
-    "is_stackexchange_question_url",
-    "is_x_post",
-    "normalize_availability",
-    "prepend_retail_metadata",
-    "rewrite_read_page_url",
+    "SCOPE_BOTH",
+    "SCOPE_READ_PAGE",
+    "DomainHandler",
+    "FetchContext",
+    "GenericRequest",
+    "HANDLERS",
+    "PageAttempt",
+    "PageResult",
+    "is_read_page_only",
+    "match",
 ]
