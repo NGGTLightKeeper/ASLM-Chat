@@ -15,3 +15,4 @@ draft: false
 | [citations-ui](citations-ui/) | Citation chips |
 | [citation-preview-ui](citation-preview-ui/) | Citation hover cards |
 | [tool-inspector](tool-inspector/) | Tool modal |
+| [dialogs](dialogs/) | Shared in-app dialogs |
