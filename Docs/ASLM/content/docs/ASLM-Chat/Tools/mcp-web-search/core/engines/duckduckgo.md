@@ -13,27 +13,25 @@ draft: false
 
 ### `class DuckDuckGoParser`
 
-**Purpose:** DuckDuckGo HTML SERP parser.
+**Purpose:** Parser for the DuckDuckGo search engine.
 
-**Methods:**
+#### Public Methods
 
-- `build_request`
-- `parse`
+- `def build_request(query, *, region, safesearch, timelimit, page) -> EngineRequest`
+  - **Purpose:** Constructs an EngineRequest specific to the search engine, including parameters and headers.
+- `def parse(document) -> EngineParseResult`
+  - **Purpose:** Parses the HTML document to extract SearchResult objects.
 
 ---
 
 ## Private functions
 
-#### `def _unwrap_url(value)`
+#### `def _unwrap_url(value) -> str`
 
-**Purpose:** Implements _unwrap_url
-
-**Steps:**
-
-1. Return the computed result to the caller.
+**Purpose:** Execute _unwrap_url logic.
 
 ---
 
 ## Related
 
-- [engines/_index](../../../../_index/)
+- [_index](../_index/)

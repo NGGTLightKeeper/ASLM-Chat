@@ -11,9 +11,14 @@ draft: false
 
 ## Classes
 
-### `BrowserProfile`
+### `class BrowserProfile`
 
 **Purpose:** A complete browser identity used to build convincing request metadata.
+
+#### Public Methods
+
+- `def is_chromium() -> bool`
+  - **Purpose:** Returns whether the browser profile is part of the Chromium family.
 
 ---
 
@@ -21,22 +26,22 @@ draft: false
 
 #### `def pick() -> BrowserProfile`
 
-**Purpose:** Pick a random browser profile from the pool.
+**Purpose:** Picks a random browser profile from the pool (legacy/benchmark baseline).
 
-**Steps:**
+#### `def for_engine(key, *, generation) -> BrowserProfile`
 
-1. Return the computed result to the caller.
+**Purpose:** Deterministically maps an engine key to a fixed browser profile identity.
 
-#### `def build_nav_headers(profile, referer, sec_fetch_site, extra) -> dict[str, str]`
+#### `def accept_language_for(language, country) -> str`
 
-**Purpose:** Build the full header set for a navigation request using the given profile.
+**Purpose:** Builds an Accept-Language header coherent with the query's inferred language.
 
-**Steps:**
+#### `def build_nav_headers(profile, *, referer, sec_fetch_site, extra) -> dict[str, str]`
 
-1. Return the computed result to the caller.
+**Purpose:** Builds the full header set for a navigation request using the given profile.
 
 ---
 
 ## Related
 
-- [fetch/_index](../_index/)
+- [_index](../_index/)

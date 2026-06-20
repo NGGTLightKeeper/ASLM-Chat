@@ -13,15 +13,17 @@ draft: false
 
 ### `class QwantParser`
 
-**Purpose:** Qwant API SERP parser.
+**Purpose:** Parser for the Qwant search engine.
 
-**Methods:**
+#### Public Methods
 
-- `build_request`
-- `parse`
+- `def build_request(query, *, region, safesearch, timelimit, page) -> EngineRequest`
+  - **Purpose:** Constructs an EngineRequest specific to the search engine, including parameters and headers.
+- `def parse(document) -> EngineParseResult`
+  - **Purpose:** Parses the HTML document to extract SearchResult objects.
 
 ---
 
 ## Related
 
-- [engines/_index](../../../../_index/)
+- [_index](../_index/)

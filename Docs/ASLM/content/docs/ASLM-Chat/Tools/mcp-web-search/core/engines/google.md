@@ -13,35 +13,29 @@ draft: false
 
 ### `class GoogleParser`
 
-**Purpose:** Google SERP parser with structural fallbacks and degradation reporting.
+**Purpose:** Parser for the Google search engine.
 
-**Methods:**
+#### Public Methods
 
-- `build_request`
-- `parse`
+- `def build_request(query, *, region, safesearch, timelimit, page) -> EngineRequest`
+  - **Purpose:** Constructs an EngineRequest specific to the search engine, including parameters and headers.
+- `def parse(document) -> EngineParseResult`
+  - **Purpose:** Parses the HTML document to extract SearchResult objects.
 
 ---
 
 ## Private functions
 
-#### `def _unwrap_url(value)`
+#### `def _unwrap_url(value) -> str`
 
-**Purpose:** Implements _unwrap_url
+**Purpose:** Execute _unwrap_url logic.
 
-**Steps:**
+#### `def _is_internal(value) -> bool`
 
-1. Return the computed result to the caller.
-
-#### `def _is_internal(value)`
-
-**Purpose:** Implements _is_internal
-
-**Steps:**
-
-1. Return the computed result to the caller.
+**Purpose:** Execute _is_internal logic.
 
 ---
 
 ## Related
 
-- [engines/_index](../../../../_index/)
+- [_index](../_index/)

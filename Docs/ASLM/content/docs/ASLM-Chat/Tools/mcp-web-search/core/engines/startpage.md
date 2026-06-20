@@ -13,59 +13,46 @@ draft: false
 
 ### `class _Transport`
 
-**Purpose:** Startpage HTML SERP parser.
+**Purpose:** Type `_Transport` defined in `startpage.py`.
 
-**Methods:**
+#### Public Methods
 
-- `fetch`
+- `def fetch(request) -> Any`
+  - **Purpose:** Execute fetch logic.
 
 ### `class StartpageParser`
 
-**Purpose:** Startpage HTML SERP parser.
+**Purpose:** Parser for the Startpage search engine.
 
-**Methods:**
+#### Public Methods
 
-- `build_request_async`
-- `parse`
+- `def build_request_async(transport, query, *, region, safesearch, timelimit, page) -> EngineRequest`
+  - **Purpose:** Execute build_request_async logic.
+- `def parse(document) -> EngineParseResult`
+  - **Purpose:** Parses the HTML document to extract SearchResult objects.
 
 ---
 
 ## Private functions
 
-#### `def _to_text(value)`
+#### `def _to_text(value) -> str`
 
-**Purpose:** Implements _to_text
+**Purpose:** Execute _to_text logic.
 
-**Steps:**
+#### `def _between(text, start, end) -> str`
 
-1. Return the computed result to the caller.
+**Purpose:** Execute _between logic.
 
-#### `def _between(text, start, end)`
+#### `def _fetch_sc_code(transport) -> str`
 
-**Purpose:** Implements _between
+**Purpose:** Execute _fetch_sc_code logic.
 
-**Steps:**
+#### `def _get_sc_code(transport) -> str`
 
-1. Return the computed result to the caller.
-
-#### `async def _fetch_sc_code(transport)`
-
-**Purpose:** Implements _fetch_sc_code
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
-#### `async def _get_sc_code(transport)`
-
-**Purpose:** Implements _get_sc_code
-
-**Steps:**
-
-1. Return the computed result to the caller.
+**Purpose:** Execute _get_sc_code logic.
 
 ---
 
 ## Related
 
-- [engines/_index](../../../../_index/)
+- [_index](../_index/)
