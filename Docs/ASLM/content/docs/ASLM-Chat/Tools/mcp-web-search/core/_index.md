@@ -21,6 +21,7 @@ draft: false
 | [cache](cache/) | `cache/` | SQLite source + hosted SERP caches |
 | [registry](registry/) | `registry/` | Domain/trust profiles, reputation, endpoints |
 | [debug](debug/) | `debug/` | Developer CLIs (not production MCP) |
+| [engines](engines/) | `engines/` | Search engines |
 
 ---
 

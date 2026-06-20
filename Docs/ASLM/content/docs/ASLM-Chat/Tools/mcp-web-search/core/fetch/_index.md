@@ -28,6 +28,10 @@ draft: false
 | [constants](constants/) | `constants.py` | `DEFAULT_UA` |
 | [_ddgs_worker](_ddgs_worker/) | `_ddgs_worker.py` | Isolated DDGS subprocess |
 | [_camoufox_worker](_camoufox_worker/) | `_camoufox_worker.py` | Isolated Camoufox subprocess |
+| [_base](_base/) | `_base.py` | Base fetch types |
+| [httpx_transport](httpx_transport/) | `httpx_transport.py` | Httpx transport |
+| [transport](transport/) | `transport.py` | Base transport interface |
+| [academic](academic/) | `academic/` | Academic package |
 
 ---
 
