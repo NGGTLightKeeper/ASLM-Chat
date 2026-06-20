@@ -28,6 +28,7 @@ draft: false
 | [constants](constants/) | `constants.py` | `DEFAULT_UA` |
 | [_ddgs_worker](_ddgs_worker/) | `_ddgs_worker.py` | Isolated DDGS subprocess |
 | [_camoufox_worker](_camoufox_worker/) | `_camoufox_worker.py` | Isolated Camoufox subprocess |
+| [browser](browser/) | `browser/` | Warm browser logic |
 
 ---
 
