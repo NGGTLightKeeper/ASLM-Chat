@@ -249,7 +249,7 @@ Tools/mcp-web-search/scripts
 Tools/mcp-web-search/tmp/
 Tools/mcp-web-search/todo.md
 Tools/mcp-web-search/logs
-
+Tools/mcp-web-search/_cache
 # Hugo documentation (Docs/ASLM)
 Docs/ASLM/assets/jsconfig.json
 Docs/ASLM/public/
