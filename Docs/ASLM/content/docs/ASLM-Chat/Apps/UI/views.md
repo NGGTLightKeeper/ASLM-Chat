@@ -648,6 +648,10 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 
 **Purpose:** Drop cached tool server lists only (e.g. after ``mcp.json`` changes).
 
+#### `def _clear_cached_model_list(engine) -> None`
+
+**Purpose:** Drop the cached model list for one engine's current scope (force re-probe).
+
 #### `def _remember_active_model(engine, model_name) -> None`
 
 **Purpose:** Remember the latest selected model for one engine.
