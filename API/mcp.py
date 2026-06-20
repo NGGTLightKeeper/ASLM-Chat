@@ -147,7 +147,7 @@ def _venv_subprocess_env(python_path: Path) -> dict[str, str]:
     # reads it). Lets ASLM place the daemon in its chosen port range; the tool defaults to
     # the same value if the var is absent.
     try:
-        env["ASLM_BROWSER_DAEMON_PORT"] = str(runtime_settings.get("browser-daemon-port", 20004))
+        env["ASLM_BROWSER_DAEMON_PORT"] = str(runtime_settings.get("browser-daemon-port", 20010))
     except Exception:  # noqa: BLE001 — never let settings access block a tool launch
         pass
     return env

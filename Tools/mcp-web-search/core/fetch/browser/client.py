@@ -103,7 +103,7 @@ class BrowserClient:
     # CREATE_NO_WINDOW, so the long-lived daemon never pops a console window; its own
     # process group keeps a parent-console Ctrl-C from reaching it.
     def _spawn_process(self) -> None:
-        port = urlparse(self._cfg.daemon_url).port or 20004
+        port = urlparse(self._cfg.daemon_url).port or 20010
         root = Path(__file__).resolve().parents[3]
         executable = sys.executable
         kwargs: dict[str, Any] = {

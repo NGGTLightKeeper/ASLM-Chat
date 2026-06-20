@@ -58,7 +58,7 @@ DEFAULTS: dict[str, Any] = {
     "allowed_hosts": ["127.0.0.1", "localhost"],
     "llm-engine": "ollama-service",
     "ollama-service_port": 20003,
-    "browser-daemon-port": 20004,
+    "browser-daemon-port": 20010,
     "ollama-service": False,
     "ollama-service_path": None,
     "ollama-service_data": None,

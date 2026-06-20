@@ -15,8 +15,9 @@ logger = logging.getLogger("config.search")
 _CONFIG_PATH = Path(__file__).parent / "search_config.json"
 
 # Warm-browser daemon default port. ASLM assigns one in its port range and passes it via
-# ASLM_BROWSER_DAEMON_PORT; standalone runs fall back to 20004 (the module's declared default).
-_DEFAULT_DAEMON_PORT = 20004
+# ASLM_BROWSER_DAEMON_PORT; standalone runs fall back to 20010 (the module's declared default).
+# NB: 20004 is occupied by ASLM's Ollama in this deployment — keep the daemon clear of it.
+_DEFAULT_DAEMON_PORT = 20010
 
 
 def _default_daemon_url() -> str:
