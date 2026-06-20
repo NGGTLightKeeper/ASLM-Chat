@@ -56,7 +56,7 @@ Part of `API`. See **Related** for package index and callers.
 
 #### `def get_models() -> list[Any]`
 
-**Purpose:** Return models that are already loaded in the configured LM Studio server.
+**Purpose:** Return models available in the configured LM Studio server.
 
 **Steps:**
 
@@ -92,6 +92,10 @@ Part of `API`. See **Related** for package index and callers.
 ---
 
 ## Private functions
+
+#### `def _ensure_model_loaded(client, model_name) -> None`
+
+**Purpose:** Get-or-load the requested model so generation can run on downloaded models.
 
 #### `def _extract_api_host(raw_address) -> str`
 

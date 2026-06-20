@@ -109,21 +109,25 @@ Part of `Apps\UI\static\js\main`. See **Related** for package index and callers.
 
 **Purpose:** Client function `getAvailableModelsForEngine` used by the chat shell.
 
-#### `function clearLmsModelsRefreshTimer()`
+#### `function clearModelsRefreshTimer()`
 
-**Purpose:** Client function `clearLmsModelsRefreshTimer` used by the chat shell.
+**Purpose:** Client function `clearModelsRefreshTimer` used by the chat shell.
 
-#### `function getLmsModelsRefreshInterval()`
+#### `function getLmsSteadyRefreshInterval()`
 
-**Purpose:** Client function `getLmsModelsRefreshInterval` used by the chat shell.
+**Purpose:** Client function `getLmsSteadyRefreshInterval` used by the chat shell.
 
-#### `function scheduleLmsModelsRefresh(delayMs)`
+#### `function getModelsRefreshInterval(engine)`
 
-**Purpose:** Client function `scheduleLmsModelsRefresh` used by the chat shell.
+**Purpose:** Client function `getModelsRefreshInterval` used by the chat shell.
 
-#### `function syncLmsModelsRefresh()`
+#### `function scheduleModelsRefresh(delayMs)`
 
-**Purpose:** Client function `syncLmsModelsRefresh` used by the chat shell.
+**Purpose:** Client function `scheduleModelsRefresh` used by the chat shell.
+
+#### `function syncModelsRefresh()`
+
+**Purpose:** Client function `syncModelsRefresh` used by the chat shell.
 
 #### `function renderModelOptions(models, preferredModel)`
 
@@ -153,9 +157,9 @@ Part of `Apps\UI\static\js\main`. See **Related** for package index and callers.
 
 **Purpose:** Client function `applyEngineSelection` used by the chat shell.
 
-#### `function refreshLmsModels()`
+#### `function refreshActiveEngineModelList()`
 
-**Purpose:** Client function `refreshLmsModels` used by the chat shell.
+**Purpose:** Client function `refreshActiveEngineModelList` used by the chat shell.
 
 #### `function buildActivePresetConfigPayload()`
 
