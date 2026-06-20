@@ -52,7 +52,7 @@ draft: false
 
 #### `async def fetch_reddit_json(url, timeout=…) -> str`
 
-**Purpose:** Fetch thread via .json suffix: curl_cffi first, then Camoufox on the same URL.
+**Purpose:** Fetch thread: curl_cffi JSON first, then warm-browser render as fallback.
 
 **Steps:**
 
@@ -64,27 +64,9 @@ draft: false
 
 ## Private functions
 
-#### `def _fetch_reddit_json_curl(json_url, thread_url, timeout) -> list[Any] | None`
+#### `async def _fetch_reddit_browser_page(thread_url, timeout) -> str | None`
 
-**Purpose:** Fetch thread JSON via curl_cffi TLS impersonation.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
-3. Parse or serialize JSON payloads.
-
-#### `async def _fetch_reddit_json_camoufox(thread_url, timeout) -> list[Any] | None`
-
-**Purpose:** Open thread HTML in Camoufox, then fetch .json in-page when curl_cffi is blocked.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Await async I/O or subprocess work.
-3. Handle errors and map them to a safe response.
-
----
+**Purpose:** Fetch the rendered thread page via the warm cloakbrowser; return cleaned inner_text markdown.
 
 ## Related
 
