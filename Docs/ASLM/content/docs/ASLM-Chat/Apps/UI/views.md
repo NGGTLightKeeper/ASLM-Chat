@@ -477,6 +477,134 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 2. Handle errors and map them to a safe response.
 3. Build an HTTP response for the client.
 
+#### `def _get_openai_preset_endpoint() -> str`
+
+**Purpose:** Resolve the endpoint URL that scopes OpenAI presets.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
+#### `def get_openai_presets_api(request)`
+
+**Purpose:** Return preset metadata for the selected OpenAI model and endpoint.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def sync_openai_preset_api(request)`
+
+**Purpose:** Persist UI changes to the active OpenAI preset.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def select_openai_preset_api(request)`
+
+**Purpose:** Set the active preset for an OpenAI model.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def create_openai_preset_api(request)`
+
+**Purpose:** Create a new OpenAI preset for the selected model.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def rename_openai_preset_api(request)`
+
+**Purpose:** Rename an existing custom OpenAI preset.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def delete_openai_preset_api(request)`
+
+**Purpose:** Delete an existing custom OpenAI preset and fall back to the default one.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def get_google_genai_presets_api(request)`
+
+**Purpose:** Return preset metadata for the selected Google GenAI model.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def sync_google_genai_preset_api(request)`
+
+**Purpose:** Persist UI changes to the active Google GenAI preset.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def select_google_genai_preset_api(request)`
+
+**Purpose:** Set the active preset for a Google GenAI model.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def create_google_genai_preset_api(request)`
+
+**Purpose:** Create a new Google GenAI preset for the selected model.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def rename_google_genai_preset_api(request)`
+
+**Purpose:** Rename an existing custom Google GenAI preset.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
+#### `def delete_google_genai_preset_api(request)`
+
+**Purpose:** Delete an existing custom Google GenAI preset and fall back to the default one.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Build an HTTP response for the client.
+
 #### `def runtime_settings_api(request)`
 
 **Purpose:** Read or update runtime settings.

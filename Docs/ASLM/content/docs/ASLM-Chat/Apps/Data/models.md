@@ -43,6 +43,14 @@ draft: false
 
 **Purpose:** Type `LmsPreset` defined in `models.py`.
 
+### `class OpenAiPreset`
+
+**Purpose:** Type `OpenAiPreset` defined in `models.py`.
+
+### `class GoogleGenAiPreset`
+
+**Purpose:** Type `GoogleGenAiPreset` defined in `models.py`.
+
 ---
 
 ## Public functions
@@ -85,6 +93,14 @@ draft: false
 **Purpose:** Return a readable preset name with its model.
 
 #### `def LmsPreset.__str__() -> str`
+
+**Purpose:** Return a readable preset name with its model.
+
+#### `def OpenAiPreset.__str__() -> str`
+
+**Purpose:** Return a readable preset name with its endpoint and model.
+
+#### `def GoogleGenAiPreset.__str__() -> str`
 
 **Purpose:** Return a readable preset name with its model.
 
