@@ -19,15 +19,11 @@ draft: false
 
 ## Public functions
 
-#### `def query_ttl(query_type) -> int`
-
-**Purpose:** Return cache TTL in seconds for the given query classification.
-
-#### `def HostedSearchCache.__init__(db_path) -> None`
+#### `def HostedSearchCache.__init__(db_path, \*, default_ttl=…, negative_ttl=…) -> None`
 
 **Purpose:** Implements `HostedSearchCache.__init__` in `hosted_cache.py`.
 
-#### `def HostedSearchCache.make_key(provider, query, timelimit) -> str`
+#### `def HostedSearchCache.make_key(query, \*, region=…, safesearch=…, timelimit=…, effort=…) -> str`
 
 **Purpose:** Implements `HostedSearchCache.make_key` in `hosted_cache.py`.
 
@@ -35,9 +31,9 @@ draft: false
 
 1. Return the computed result to the caller.
 
-#### `def HostedSearchCache.get(provider, query, timelimit) -> Optional[list[SearchResult]]`
+#### `def HostedSearchCache.get(query, \*, region=…, safesearch=…, timelimit=…, effort=…) -> Optional[dict[str, Any]]`
 
-**Purpose:** Return cached results or None if missing or expired.
+**Purpose:** Return a cached payload, or None when missing/expired.
 
 **Steps:**
 
@@ -46,9 +42,9 @@ draft: false
 3. Iterate and transform or accumulate state.
 4. Parse or serialize JSON payloads.
 
-#### `def HostedSearchCache.set(provider, query, results, *, timelimit=…, ttl=…) -> None`
+#### `def HostedSearchCache.set(query, payload, \*, region=…, safesearch=…, timelimit=…, effort=…, is_empty=…) -> None`
 
-**Purpose:** Store results; empty list uses NEGATIVE_TTL.
+**Purpose:** Store a payload. An empty result set gets the short negative TTL.
 
 **Steps:**
 
@@ -65,14 +61,6 @@ draft: false
 1. Return the computed result to the caller.
 2. Handle errors and map them to a safe response.
 
-#### `def HostedSearchCache.stats(provider) -> dict`
-
-**Purpose:** Return basic cache statistics, optionally filtered by provider.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
 #### `def get_hosted_cache() -> HostedSearchCache`
 
 **Purpose:** Return the lazily initialised global HostedSearchCache.
@@ -84,22 +72,6 @@ draft: false
 ---
 
 ## Private functions
-
-#### `def _result_to_dict(r) -> dict`
-
-**Purpose:** Serialize a SearchResult for SQLite JSON storage.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
-#### `def _dict_to_result(d) -> SearchResult`
-
-**Purpose:** Deserialize a dict from hosted_cache back into SearchResult.
-
-**Steps:**
-
-1. Return the computed result to the caller.
 
 #### `def HostedSearchCache._get_conn() -> sqlite3.Connection`
 

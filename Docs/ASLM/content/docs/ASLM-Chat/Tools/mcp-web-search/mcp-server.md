@@ -27,6 +27,10 @@ draft: false
 
 ---
 
+#### `async def shutdown() -> None`
+
+**Purpose:** Cancel outstanding background work (prefetch) at server shutdown.
+
 ## Private functions
 
 #### `async def _call_web_search(args) -> dict[str, Any]`
