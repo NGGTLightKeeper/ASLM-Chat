@@ -5,7 +5,7 @@ draft: false
 
 ## Module `service`
 
-`Tools/mcp-web-search/core/read/service.py` — ASLM Chat Python module.
+`Tools/mcp-web-search/core/read/service.py` — see source for implementation details.
 
 ---
 
@@ -13,123 +13,136 @@ draft: false
 
 ### `class RawFetch`
 
-**Purpose:** Type `RawFetch` defined in `service.py`.
-
-#### Public Methods
-
-- `def attempt(*, parse_ms, quality, success) -> FetchAttempt`
-  - **Purpose:** Execute attempt logic.
+**Purpose:** Outcome of one low-level HTTP fetch with the metadata needed for runtime profiling.
 
 ### `class ReadPageOptions`
 
-**Purpose:** Options configuration for the read page service.
+**Purpose:** Data or behavior type.
 
 ### `class ReadPageService`
 
-**Purpose:** Service responsible for orchestrating page reads and handling fallback logic.
-
-#### Public Methods
-
-- `def read(url) -> str`
-  - **Purpose:** Execute read logic.
-
-#### Private Methods
-
-- `def _browser_ok() -> bool`
-  - **Purpose:** Execute _browser_ok logic.
-- `def _apply_budget(markdown, url) -> str`
-  - **Purpose:** Execute _apply_budget logic.
-- `def _context() -> FetchContext`
-  - **Purpose:** Execute _context logic.
-- `def _resolve_strategy(url, req) -> tuple[bool, str | None, bool]`
-  - **Purpose:** Execute _resolve_strategy logic.
-- `def _fetch_candidate(url, *, camoufox_first, http_method) -> tuple[RawFetch, FetchResult | None]`
-  - **Purpose:** Execute _fetch_candidate logic.
-- `def _generic_read(req) -> PageResult`
-  - **Purpose:** Execute _generic_read logic.
-- `def _spa_recover(url, cres, prev_md, min_len) -> tuple[str, bool, str]`
-  - **Purpose:** Execute _spa_recover logic.
-- `def _read_pdf(url) -> PageResult`
-  - **Purpose:** Execute _read_pdf logic.
-- `def _read(url) -> str`
-  - **Purpose:** Execute _read logic.
-- `def _finalize(url, result) -> str`
-  - **Purpose:** Execute _finalize logic.
+**Purpose:** Fetch a single URL and return clean markdown text via the custom-domain dispatch layer and a profile-driven generic pipeline. Caches extracted clean markdown instead of raw HTML for instant reuse.
 
 ---
 
 ## Public functions
 
-#### `def run_read_page(url, timeout, max_chars, focus, allow_browser) -> str`
+#### `def RawFetch.attempt(parse_ms, quality, success) -> FetchAttempt`
 
-**Purpose:** Executes reading a page utilizing Camoufox or HTTPX as determined by allow_browser.
+**Purpose:** Build a FetchAttempt for the runtime profile store, folding in parse-time stats.
+
+#### `def ReadPageService.__init__(options) -> None`
+
+**Purpose:** Data or behavior type.
+
+#### `async def ReadPageService.read(url) -> str`
+
+**Purpose:** Public entry: fetch URL as markdown with a global deadline.
+
+#### `async def run_read_page(url, timeout, max_chars, focus, allow_browser) -> str`
+
+**Purpose:** Convenience entry point for the central API and debug CLI.
 
 ---
 
 ## Private functions
 
+#### `async def ReadPageService._browser_ok() -> bool`
+
+**Purpose:** Whether the warm browser path may run. Disabled by web_search so the browser stays exclusive to the read_page tool; otherwise gated on backend availability.
+
+#### `def ReadPageService._apply_budget(markdown, url) -> str`
+
+**Purpose:** Apply the read_page BM25 compression budget from config.
+
+#### `def ReadPageService._context() -> FetchContext`
+
+**Purpose:** Build the FetchContext handed to custom-domain handlers.
+
+#### `def ReadPageService._resolve_strategy(url, req) -> tuple[bool, str | None, bool]`
+
+**Purpose:** Pick the fetch strategy for a domain from hard overrides then runtime profiles.
+
+#### `async def ReadPageService._fetch_candidate(url, browser_first, http_method) -> tuple[RawFetch, BrowserFetch | None]`
+
+**Purpose:** Fetch one candidate URL with the chosen method (warm browser / single http / race).
+
+#### `async def ReadPageService._generic_read(req) -> PageResult`
+
+**Purpose:** Generic fetch+normalise pipeline shared by the default path and strategy handlers. Records every attempt into the runtime profile store so later reads skip dead ends.
+
+#### `def ReadPageService._spa_recover(url, cres, prev_md, min_len) -> tuple[str, bool, str]`
+
+**Purpose:** Recover the best markdown from a warm-browser SPA render: normalize → innerText → RSC.
+
+#### `async def ReadPageService._read_pdf(url) -> PageResult`
+
+**Purpose:** Download a PDF and return extracted markdown.
+
+#### `async def ReadPageService._read(url) -> str`
+
+**Purpose:** Core read pipeline: SSRF, custom-domain dispatch, then the generic pipeline.
+
+#### `def ReadPageService._finalize(url, result) -> str`
+
+**Purpose:** Apply the compression budget when the result asks for it, then return markdown.
+
 #### `def _host(url) -> str`
 
-**Purpose:** Execute _host logic.
+**Purpose:** Extract normalized host from URL (no www/m prefix).
 
 #### `def _is_redirect_status(status_code) -> bool`
 
-**Purpose:** Execute _is_redirect_status logic.
+**Purpose:** True for HTTP redirect status codes.
 
 #### `def _is_skippable(url) -> bool`
 
-**Purpose:** Execute _is_skippable logic.
+**Purpose:** True when read_page should not fetch HTML (non-text hosts/extensions).
 
-#### `def _cache_key_for_read(url, *, variant) -> str`
+#### `def _cache_key_for_read(url, variant) -> str`
 
-**Purpose:** Execute _cache_key_for_read logic.
+**Purpose:** Cache key including strategy tag and variant label.
 
 #### `def _variant_label(url) -> str`
 
-**Purpose:** Execute _variant_label logic.
+**Purpose:** Label DNS-shop variant URLs for cache/trace.
 
-#### `def _is_weak_extraction(markdown, *, min_length) -> bool`
+#### `def _is_weak_extraction(markdown, min_length) -> bool`
 
-**Purpose:** Execute _is_weak_extraction logic.
+**Purpose:** True when extracted markdown is too short or mostly boilerplate.
 
 #### `def _fallback_text_to_markdown(url, text) -> str`
 
-**Purpose:** Execute _fallback_text_to_markdown logic.
+**Purpose:** Wrap already-extracted fallback text in minimal markdown headers.
 
 #### `def _inner_text_to_markdown(url, inner_text) -> str`
 
-**Purpose:** Execute _inner_text_to_markdown logic.
+**Purpose:** Convert raw DOM innerText to minimal markdown (SPA last resort).
 
 #### `def _nextjs_rsc_to_markdown(url, raw_html) -> str`
 
-**Purpose:** Execute _nextjs_rsc_to_markdown logic.
+**Purpose:** Extract Next.js RSC text and wrap as minimal markdown.
 
-#### `def _fetch_httpx(url, timeout, tls_verify) -> RawFetch`
+#### `async def _fetch_httpx(url, timeout, tls_verify) -> RawFetch`
 
-**Purpose:** Execute _fetch_httpx logic.
+**Purpose:** Fetch HTML via httpx with per-redirect SSRF checks; returns an instrumented RawFetch.
 
-#### `def _fetch_curl_cffi(url, timeout) -> RawFetch`
+#### `async def _fetch_curl_cffi(url, timeout) -> RawFetch`
 
-**Purpose:** Execute _fetch_curl_cffi logic.
+**Purpose:** curl_cffi HTML fetch with the same redirect-by-redirect SSRF checks.
 
-#### `def _fetch_race(url, timeout, tls_verify) -> RawFetch`
+#### `async def _fetch_race(url, timeout, tls_verify) -> RawFetch`
 
-**Purpose:** Execute _fetch_race logic.
+**Purpose:** Race httpx vs curl_cffi; first non-antibot response wins, loser is cancelled.
 
-#### `def _fetch_camoufox(url, timeout) -> tuple[RawFetch, FetchResult | None]`
+#### `async def _fetch_browser(url, timeout) -> tuple[RawFetch, BrowserFetch | None]`
 
-**Purpose:** Execute _fetch_camoufox logic.
+**Purpose:** Run the warm browser within read_page's deadline and adapt the result into a RawFetch.
 
-#### `def _fetch_pdf_bytes(url, timeout, tls_verify) -> bytes`
+#### `async def _fetch_pdf_bytes(url, timeout, tls_verify) -> bytes`
 
-**Purpose:** Execute _fetch_pdf_bytes logic.
+**Purpose:** Fetch PDF bytes with SSRF checks and the MAX_PDF_BYTES ceiling (httpx, then curl_cffi).
 
 #### `def _read_page_deadline(url, opts) -> float`
 
-**Purpose:** Execute _read_page_deadline logic.
-
----
-
-## Related
-
-- [_index](../_index/)
+**Purpose:** Global asyncio deadline for one read; Reddit needs room for curl + browser render.

@@ -5,21 +5,48 @@ draft: false
 
 ## Module `prefetch`
 
-`Tools/mcp-web-search/core/search/prefetch.py` — ASLM Chat Python module.
+`Tools/mcp-web-search/core/search/prefetch.py` — see source for implementation details.
 
 ---
 
 ## Classes
 
-#### `class PrefetchManager`
+### `class PrefetchManager`
 
-**Purpose:** Manages background prefetching of search result URLs. Process discipline this is NOT fire-and-forget. Every warm-up is one tracked asyncio.Task held in a registry, bounded by a hard timeout and a concurrency semaphore, self-removing on completion, and cancellable via shutdown(). The legacy prefetch was fire-and-forget; this is the disciplined replacement.
-
-**Methods:**
-- `schedule(self, urls: list[str]) -> asyncio.Task | None:` Schedule a tracked warm-up task for the given URLs. Returns the task (or None).
+**Purpose:** Manages tracked background warm-up tasks for result URLs.
 
 ---
 
-## Related
+## Public functions
 
-- [search/_index](../_index/)
+#### `def PrefetchManager.__init__(max_concurrency, per_url_timeout, task_timeout) -> None`
+
+**Purpose:** Data or behavior type.
+
+#### `def PrefetchManager.schedule(urls) -> asyncio.Task | None`
+
+**Purpose:** Schedule a tracked warm-up task for the given URLs. Returns the task (or None).
+
+#### `async def PrefetchManager.shutdown() -> None`
+
+**Purpose:** Cancel and await all outstanding warm-up tasks (call at server shutdown).
+
+#### `def get_prefetch_manager() -> PrefetchManager`
+
+**Purpose:** Return the lazily-initialised global PrefetchManager, configured from search_config.
+
+#### `async def shutdown_prefetch() -> None`
+
+**Purpose:** Cancel all outstanding prefetch tasks (exposed for the MCP server's shutdown hook).
+
+---
+
+## Private functions
+
+#### `async def PrefetchManager._warm_one(url) -> bool`
+
+**Purpose:** Warm one URL's extracted markdown into the page cache under read_page's cache key, not raw HTML, making it FTS-searchable and ready for direct reuse.
+
+#### `async def PrefetchManager._warm_batch(urls) -> None`
+
+**Purpose:** Warm a batch of URLs under one hard-timeout-bounded task.
