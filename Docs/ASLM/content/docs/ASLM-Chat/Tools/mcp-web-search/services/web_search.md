@@ -886,7 +886,7 @@ End-to-end `web_search` MCP tool: validate query → classify → parallel retri
 
 #### `async def WebSearchService._run_search_pipeline(query, lang, query_types, query_type, out_profile, opts, req_id, class_mix, source_budget, model_session) -> tuple[list[SearchResult], list]`
 
-**Purpose:** DDGS + hosted + academic fetch, merge, dedup, triage.
+**Purpose:** DDGS + hosted + academic + regional language shopping fetch, merge, dedup, triage.
 
 **Steps:**
 
