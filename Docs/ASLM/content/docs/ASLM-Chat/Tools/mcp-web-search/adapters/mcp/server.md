@@ -43,7 +43,7 @@ draft: false
 
 ## Public functions
 
-#### `async def web_search(query, effort, context) -> CallToolResult`
+#### `async def web_search(query, effort, shopping, context) -> CallToolResult`
 
 **Purpose:** FastMCP tool handler for ranked web search with structured UI output.
 

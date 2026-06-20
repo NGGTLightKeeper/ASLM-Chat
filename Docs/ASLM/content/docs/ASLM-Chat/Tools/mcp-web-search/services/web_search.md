@@ -132,7 +132,7 @@ End-to-end `web_search` MCP tool: validate query → classify → parallel retri
 2. Await async I/O or subprocess work.
 3. Handle errors and map them to a safe response.
 
-#### `async def run_web_search_rich(query, max_results, timelimit, hard_timeout, time_range, effort) -> dict[str, object]`
+#### `async def run_web_search_rich(query, max_results, timelimit, hard_timeout, time_range, effort, shopping) -> dict[str, object]`
 
 **Purpose:** Rich search payload for MCP structuredContent / UI.
 
@@ -146,23 +146,6 @@ End-to-end `web_search` MCP tool: validate query → classify → parallel retri
 ---
 
 ## Private functions
-
-#### `def _shopping_intent_weight(class_mix, query_types) -> float`
-
-**Purpose:** Calculate combined confidence for the "shopping" intent from class weights.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Iterate and transform or accumulate state.
-
-#### `def _should_run_shopping_core(class_mix, query_types) -> bool`
-
-**Purpose:** Determine if shopping intent strength exceeds routing threshold.
-
-**Steps:**
-
-1. Return the computed result to the caller.
 
 #### `def _shopping_limit_for_effort(effort, max_results) -> int`
 
@@ -957,7 +940,7 @@ End-to-end `web_search` MCP tool: validate query → classify → parallel retri
 
 1. Return the computed result to the caller.
 
-#### `def _build_effort_options(cfg, *, effort, max_results, fetch_previews, timelimit) -> WebSearchOptions`
+#### `def _build_effort_options(cfg, *, effort, max_results, fetch_previews, timelimit, shopping) -> WebSearchOptions`
 
 **Purpose:** WebSearchOptions tuned for low/medium/high effort from config.
 
