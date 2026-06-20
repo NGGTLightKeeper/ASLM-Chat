@@ -104,6 +104,7 @@ ASLM host CLI: re-exec into server venv, Django management commands, Ollama serv
 
 1. Handle errors and map them to a safe response.
 2. Parse or serialize JSON payloads.
+3. Execute localized settings or string updates.
 
 #### `def maybe_start_local_engine_service(log) -> None`
 
