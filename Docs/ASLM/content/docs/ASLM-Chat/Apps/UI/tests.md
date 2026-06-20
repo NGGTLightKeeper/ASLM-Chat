@@ -125,6 +125,10 @@ Part of `Apps\UI`. See **Related** for package index and callers.
 
 **Purpose:** Type `ChatApiTests` defined in `tests.py`.
 
+### `class GenerateApiTests`
+
+**Purpose:** Exercise stateless generate API without persisting chat rows.
+
 ### `class RuntimeSettingsApiTests`
 
 **Purpose:** Type `RuntimeSettingsApiTests` defined in `tests.py`.
@@ -968,31 +972,33 @@ Part of `Apps\UI`. See **Related** for package index and callers.
 
 1. Read or write Django ORM records.
 
-#### `def LlmApiRuntimeSyncTests.test_sync_prepares_enabled_and_cleans_up_disabled(_mock_enabled, mock_prepare, mock_cleanup)`
+#### `def GenerateApiTests.setUp()`
 
-#### `def LlmApiRuntimeSyncTests.test_handle_engine_transition_calls_sync(mock_sync)`
+**Purpose:** Set up the test fixture.
 
-#### `def OllamaDesiredStateTests.test_desired_state_runs_when_enabled_even_if_active_engine_differs(_mock_get, _mock_active)`
+#### `def GenerateApiTests.test_generate_api_streams_without_db_writes(_mock_engine, mock_generate, _mock_prepare_runtime)`
 
-#### `def RequestEngineResolutionTests._build_request(query)`
+**Purpose:** Verify generate api streams without db writes.
 
-#### `def RequestEngineResolutionTests.test_resolve_defaults_to_active_engine(_mock_active)`
+#### `def GenerateApiTests.test_generate_api_passes_messages_to_generate(_mock_engine, mock_generate, _mock_prepare_runtime)`
 
-#### `def RequestEngineResolutionTests.test_resolve_query_engine_when_enabled(_mock_enabled)`
+**Purpose:** Verify generate api passes messages to generate.
 
-#### `def RequestEngineResolutionTests.test_resolve_rejects_disabled_engine(_mock_enabled)`
+#### `def GenerateApiTests.test_generate_api_rejects_missing_model()`
 
-#### `def RequestEngineResolutionTests.test_body_engine_takes_priority_over_query(_mock_enabled)`
+**Purpose:** Verify generate api rejects missing model.
 
-#### `def DisabledEngineApiTests.isolated_settings_payload(payload)`
+#### `def GenerateApiTests.test_generate_api_supports_inline_attachments(_mock_engine, mock_generate, _mock_prepare_runtime)`
 
-#### `def DisabledEngineApiTests.test_models_api_rejects_disabled_engine()`
+**Purpose:** Verify generate api supports inline attachments.
 
-#### `def DisabledEngineApiTests.test_chat_api_accepts_engine_query_param(mock_generate, _mock_prepare_runtime)`
+#### `def GenerateApiTests.test_generate_api_passes_tool_servers_to_generate(_mock_engine, mock_generate, _mock_prepare_runtime, _mock_model_settings)`
 
-#### `def RuntimeSettingsApiTests.setUp()`
+**Purpose:** Verify generate api passes tool servers to generate.
 
-#### `def RuntimeSettingsApiTests.tearDown()`
+#### `def GenerateApiTests.test_generate_api_replays_llm_transcript_in_history(_mock_engine, mock_generate, _mock_prepare_runtime)`
+
+**Purpose:** Verify generate api replays llm transcript in history.
 
 #### `def RuntimeSettingsApiTests.isolated_settings_payload(payload)`
 
