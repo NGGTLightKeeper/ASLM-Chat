@@ -33,7 +33,11 @@ draft: false
 
 ## Private functions
 
-#### `async def _call_web_search(args) -> dict[str, Any]`
+#### `def _evict_caches_once() -> None`
+
+**Purpose:** Reclaim disk from expired cache entries once per process, on first tool call.
+
+#### `def _maybe_parse_list(val) -> Any`
 
 **Purpose:** Run the ranked web_search pipeline (the model-facing default tool).
 
