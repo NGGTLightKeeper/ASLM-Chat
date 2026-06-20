@@ -107,7 +107,7 @@ ASLM host CLI: re-exec into server venv, Django management commands, Ollama serv
 
 #### `def maybe_start_local_engine_service(log) -> None`
 
-**Purpose:** Start the active local engine service when the current adapter needs it.
+**Purpose:** Prepare every enabled engine runtime before the UI server handles requests.
 
 **Steps:**
 

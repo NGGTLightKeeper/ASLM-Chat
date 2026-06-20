@@ -18,6 +18,10 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 
 ## Classes
 
+### `class RequestEngineResolutionError`
+
+**Purpose:** The requested engine is not enabled in settings.
+
 ### `class MainView`
 
 **Purpose:** Type `MainView` defined in `views.py`.
@@ -1006,7 +1010,15 @@ Django views and `/api/*` JSON handlers for the chat UI: streaming `chat_api`, u
 
 #### `def _get_active_engine(requested_engine) -> str`
 
-**Purpose:** Resolve active engine
+**Purpose:** Resolve the default active engine without request context.
+
+#### `def _resolve_request_engine(request, data) -> str`
+
+**Purpose:** Resolve one engine from an HTTP request body and/or query string.
+
+#### `def _resolve_request_engine_or_response(request, data)`
+
+**Purpose:** Resolve one request engine or return a JSON error response.
 
 #### `def _extract_model_name(model_entry) -> str`
 
