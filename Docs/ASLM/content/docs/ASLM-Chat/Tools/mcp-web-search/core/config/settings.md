@@ -27,6 +27,10 @@ draft: false
 
 **Purpose:** Type `QuerySection` defined in `settings.py`.
 
+### `class BrowserSection`
+
+**Purpose:** Type `BrowserSection` defined in `settings.py`.
+
 ### `class EffortSection`
 
 **Purpose:** Type `EffortSection` defined in `settings.py`.
@@ -59,14 +63,13 @@ draft: false
 
 ## Private functions
 
-#### `def _one_of(value, allowed, default) -> str`
+#### `def _default_daemon_url() -> str`
 
-**Purpose:** Coerce a value to one of an allowed set (case-insensitive), falling back on default.
+**Purpose:** Return the default internal URL for the warm-browser daemon.
 
 **Steps:**
 
 1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
 
 #### `def _optional_string(value, default) -> Optional[str]`
 

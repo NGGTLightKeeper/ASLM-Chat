@@ -17,36 +17,26 @@ draft: false
 
 ---
 
-## Public functions
+## Private functions
 
-#### `def get_browser_client() -> BrowserClient`
+#### `def _spawn_process(self) -> None`
 
-**Purpose:** Lazily-initialised process-wide BrowserClient singleton.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
-#### `def browser_available() -> bool`
-
-**Purpose:** True when the configured browser backend may be used right now.
+**Purpose:** Internal method to spawn the persistent browser daemon process.
 
 **Steps:**
 
 1. Return the computed result to the caller.
 
-#### `def browser_fetch(url, *, wait_sec, nav_timeout, family) -> BrowserFetch`
+#### `def _client(self) -> httpx.AsyncClient`
 
-**Purpose:** Fetch one URL through the configured browser backend (never raises).
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
-#### `def shutdown_browser() -> None`
-
-**Purpose:** Release the client's HTTP resources (wire into the MCP server shutdown hook).
+**Purpose:** Return the long-lived httpx AsyncClient for communicating with the daemon.
 
 **Steps:**
 
 1. Return the computed result to the caller.
+
+---
+
+## Related
+
+- [browser/_index](../_index/)

@@ -29,39 +29,54 @@ draft: false
 
 ---
 
+## Public functions
+
+#### `async def start(self) -> None`
+
+**Purpose:** Start the warm browser daemon and bind it to the server.
+
+#### `async def stop(self) -> None`
+
+**Purpose:** Stop the warm browser daemon and close connections.
+
+#### `async def handle_fetch(self, request) -> aiohttp.web.Response`
+
+**Purpose:** Process a fetch request via the running chromium context.
+
+#### `async def handle_health(self, request) -> aiohttp.web.Response`
+
+**Purpose:** Return the current daemon health status.
+
+#### `async def handle_shutdown(self, request) -> aiohttp.web.Response`
+
+**Purpose:** Trigger the daemon to gracefully shut down.
+
+#### `def make_app(self) -> aiohttp.web.Application`
+
+**Purpose:** Create and return the aiohttp application for the daemon.
+
+---
+
 ## Private functions
 
-#### `def _parse_proxy(proxy_url) -> Optional[str]`
+#### `def _parse_proxy() -> Any`
 
-**Purpose:** Parse a proxy URL into the cloakbrowser shape.
+**Purpose:** Parse proxy configuration for the chromium context.
 
-**Steps:**
+#### `def _process_tree_rss_mb() -> Any`
 
-1. Return the computed result to the caller.
-
-#### `def _process_tree_rss_mb() -> float`
-
-**Purpose:** Resident memory of this process plus its children (the chromium tree), in MB.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
-
-#### `def _serve(args) -> None`
-
-**Purpose:** _serve defined in daemon.py
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
-3. Parse or serialize JSON payloads.
+**Purpose:** Measure memory consumption of the browser process tree.
 
 #### `def _parse_args() -> argparse.Namespace`
 
-**Purpose:** _parse_args defined in daemon.py
+**Purpose:** Parse arguments and config overrides.
 
-**Steps:**
+#### `async def _idle_monitor(self) -> None`
 
-1. Return the computed result to the caller.
+**Purpose:** Monitor idle state and recycle if needed.
+
+---
+
+## Related
+
+- [browser/_index](../_index/)
