@@ -24,7 +24,7 @@ draft: false
 | [read](read/) | `read/` | Implementations for `read_page` |
 | [search](search/) | `search/` | Core search functionality, including prefetching |
 | [debug](debug/) | `debug/` | Developer CLIs (not production MCP) |
-| [engines](engines/) | `engines/` | Search engines |
+| [profiles](profiles/) | `profiles/` | Runtime profiles |
 
 ---
 

@@ -9,11 +9,17 @@ draft: false
 
 ---
 
+## Overview
+
+Persistent, supervised warm-browser daemon (chromium / cloakbrowser only).
+
+---
+
 ## Classes
 
 ### `class RecycleReason`
 
-**Purpose:** Type `RecycleReason` defined in `daemon.py`.
+**Purpose:** Why the warm browser was torn down — drives whether identity is restored or rotated.
 
 ### `class ScrapeResult`
 
@@ -21,7 +27,7 @@ draft: false
 
 ### `class WarmChromium`
 
-**Purpose:** Type `WarmChromium` defined in `daemon.py`.
+**Purpose:** One warm Chromium with its identity context, recycle policy and checkpoint discipline.
 
 ### `class BrowserDaemon`
 
@@ -31,49 +37,53 @@ draft: false
 
 ## Public functions
 
-#### `async def start(self) -> None`
+#### `def WarmChromium.__init__(self) -> None`
 
-**Purpose:** Start the warm browser daemon and bind it to the server.
+**Purpose:** Implements `WarmChromium.__init__` in `daemon.py`.
 
-#### `async def stop(self) -> None`
+#### `async def WarmChromium.fetch(self, url) -> ScrapeResult`
 
-**Purpose:** Stop the warm browser daemon and close connections.
+**Purpose:** Fetch one URL through the warm browser, recycling first if a threshold was crossed.
 
-#### `async def handle_fetch(self, request) -> aiohttp.web.Response`
+#### `async def WarmChromium.start(self) -> None`
 
-**Purpose:** Process a fetch request via the running chromium context.
+**Purpose:** Eagerly warm the browser and start the idle-checkpoint loop.
 
-#### `async def handle_health(self, request) -> aiohttp.web.Response`
+#### `async def WarmChromium.stop(self) -> None`
 
-**Purpose:** Return the current daemon health status.
+**Purpose:** Final checkpoint, stop the loop, tear the browser down.
 
-#### `async def handle_shutdown(self, request) -> aiohttp.web.Response`
+#### `def WarmChromium.health(self) -> dict[str, Any]`
 
-**Purpose:** Trigger the daemon to gracefully shut down.
+**Purpose:** Runtime snapshot for /health.
 
-#### `def make_app(self) -> aiohttp.web.Application`
+#### `def BrowserDaemon.__init__(self, args) -> None`
 
-**Purpose:** Create and return the aiohttp application for the daemon.
+**Purpose:** Implements `BrowserDaemon.__init__` in `daemon.py`.
 
----
+#### `async def BrowserDaemon.start(self) -> None`
 
-## Private functions
+**Purpose:** Implements `BrowserDaemon.start` in `daemon.py`.
 
-#### `def _parse_proxy() -> Any`
+#### `async def BrowserDaemon.stop(self) -> None`
 
-**Purpose:** Parse proxy configuration for the chromium context.
+**Purpose:** Implements `BrowserDaemon.stop` in `daemon.py`.
 
-#### `def _process_tree_rss_mb() -> Any`
+#### `async def BrowserDaemon.handle_fetch(self, request) -> web.Response`
 
-**Purpose:** Measure memory consumption of the browser process tree.
+**Purpose:** POST /fetch {url, wait_ms?, timeout_ms?, html?} -> ScrapeResult json.
 
-#### `def _parse_args() -> argparse.Namespace`
+#### `async def BrowserDaemon.handle_health(self, _request) -> web.Response`
 
-**Purpose:** Parse arguments and config overrides.
+**Purpose:** Implements `BrowserDaemon.handle_health` in `daemon.py`.
 
-#### `async def _idle_monitor(self) -> None`
+#### `async def BrowserDaemon.handle_shutdown(self, _request) -> web.Response`
 
-**Purpose:** Monitor idle state and recycle if needed.
+**Purpose:** Implements `BrowserDaemon.handle_shutdown` in `daemon.py`.
+
+#### `def BrowserDaemon.make_app(self) -> web.Application`
+
+**Purpose:** Implements `BrowserDaemon.make_app` in `daemon.py`.
 
 ---
 
