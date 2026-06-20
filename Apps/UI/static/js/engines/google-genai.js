@@ -4,9 +4,13 @@
 export const googleGenAiAdapter = {
   id: 'google-genai',
   aliases: ['google-genai', 'google_genai', 'google', 'gemini'],
-  addressKey: 'google_genai_url',
+  // Endpoint is fixed to generativelanguage.googleapis.com, so the address is
+  // not user-editable (addressKey null hides the address control).
+  addressKey: null,
   apiKeyKey: 'google_genai_api_key',
-  addressHint: 'Example: https://generativelanguage.googleapis.com',
+  // Gemini always needs an API key, so show the key field without an on/off toggle.
+  apiKeyRequired: true,
+  addressHint: 'Gemini uses generativelanguage.googleapis.com.',
   supportsPresets: false,
   presetApiBase: ''
 };

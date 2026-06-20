@@ -189,7 +189,7 @@
                             {% t "settings.apiKey" %}
                             <span class="setting-value" id="engineApiKeyStatus">{% t "settings.off" %}</span>
                         </label>
-                        <label class="setting-switch-row" for="engineApiKeyEnabled">
+                        <label class="setting-switch-row" id="engineApiKeyToggleRow" for="engineApiKeyEnabled">
                             <span class="setting-switch-text">{% t "settings.useSavedKey" %}</span>
                             <span class="setting-switch-control">
                                 <input class="setting-switch-input" id="engineApiKeyEnabled" type="checkbox" {% if runtime_settings.active_has_api_key %}checked{% endif %}>

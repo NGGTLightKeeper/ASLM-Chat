@@ -280,6 +280,25 @@ def _assert_model_is_loaded(client: Any, model_name: str) -> None:
     )
 
 
+# Load one model through LM Studio just-in-time loading.
+def _ensure_model_loaded(client: Any, model_name: str) -> None:
+    """Get-or-load the requested model so generation can run on downloaded models.
+
+    LM Studio serves any downloaded model through JIT loading, so request a
+    handle (which loads the model when needed) instead of failing when it is
+    merely downloaded but not yet loaded.
+    """
+
+    try:
+        client.llm.model(model_name)
+    except Exception as exc:
+        raise RuntimeError(
+            f"LM Studio could not load model: {model_name}. "
+            "Confirm it is downloaded and the LM Studio server is running. "
+            f"({exc})"
+        ) from exc
+
+
 # Serialize one model info payload.
 def _serialize_model_info(info: Any) -> dict[str, Any]:
     """Convert SDK model info into a JSON-compatible dictionary."""
@@ -1584,15 +1603,38 @@ def _conversation_uses_tools(messages: list[dict[str, Any]]) -> bool:
 
 # List available models.
 def get_models() -> list[Any]:
-    """Return models that are already loaded in the configured LM Studio server."""
+    """Return models available in the configured LM Studio server.
+
+    LM Studio can serve any downloaded model through just-in-time loading, so
+    list every downloaded LLM rather than only the currently loaded ones (a
+    running server with no model loaded would otherwise report an empty list).
+    Fall back to the loaded list when the downloaded query is unavailable.
+    """
 
     try:
-        loaded_models = _list_models_with_client("list_loaded_models")
+        _lms, client = _get_client()
     except Exception as exc:
-        logger.error("[LM Studio API] Error listing loaded models: %s", exc)
+        logger.error("[LM Studio API] Error connecting to LM Studio: %s", exc)
         return []
 
-    return _collect_unique_model_names(loaded_models)
+    try:
+        downloaded_models: list[Any] = []
+        try:
+            downloaded_models = list(client.llm.list_downloaded())
+        except Exception as exc:
+            logger.warning("[LM Studio API] Error listing downloaded models: %s", exc)
+
+        loaded_models: list[Any] = []
+        try:
+            loaded_models = list(client.list_loaded_models())
+        except Exception as exc:
+            logger.warning("[LM Studio API] Error listing loaded models: %s", exc)
+    finally:
+        _close_client(client)
+
+    # Prefer the downloaded list (canonical model keys); only fall back to the
+    # loaded list when the downloaded query yielded nothing.
+    return _collect_unique_model_names(downloaded_models or loaded_models)
 
 
 # Release runtime resources when needed.
@@ -1634,11 +1676,11 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
     _abort_event.clear()
     _sync_operation_defaults_to_disk(model_name, sync_operation_defaults)
 
-    # Validate early so both native and OpenAI-compatible paths fail fast when
-    # the requested model is not loaded in LM Studio.
+    # Load the model up front (JIT) so both the native and OpenAI-compatible
+    # paths can serve any downloaded model, not just pre-loaded ones.
     _lms, preload_client = _get_client()
     try:
-        _assert_model_is_loaded(preload_client, model_name)
+        _ensure_model_loaded(preload_client, model_name)
     finally:
         _close_client(preload_client)
 
@@ -1667,7 +1709,7 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
 
     _lms, client = _get_client()
     try:
-        _assert_model_is_loaded(client, model_name)
+        # The model was already JIT-loaded above; _get_model_handle re-uses it.
         model = _get_model_handle(client, model_name)
         chat = _build_native_chat_history(client, messages)
         options = _prepare_native_prediction_options(
@@ -1691,7 +1733,9 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
 
     _lms, client = _get_client()
     try:
-        _assert_model_is_loaded(client, model_name)
+        # Do not require the model to be loaded: capability metadata is read
+        # best-effort from the API and the local LM Studio model index, so a
+        # downloaded model can be inspected before it is JIT-loaded for chat.
         raw_info = _get_raw_model_info(client, model_name)
         info, fallback_info = _get_model_info(client, model_name)
     finally:

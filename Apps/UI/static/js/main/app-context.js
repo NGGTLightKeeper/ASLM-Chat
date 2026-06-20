@@ -43,6 +43,7 @@ export function createAppContext() {
     $engineAddressStatus: $('#engineAddressStatus'),
     $engineAddressHint: $('#engineAddressHint'),
     $engineApiKeyGroup: $('#engineApiKeyGroup'),
+    $engineApiKeyToggleRow: $('#engineApiKeyToggleRow'),
     $engineApiKeyEnabled: $('#engineApiKeyEnabled'),
     $engineApiKeyInput: $('#engineApiKeyInput'),
     $engineApiKeyStatus: $('#engineApiKeyStatus'),
@@ -160,8 +161,8 @@ export function createAppContext() {
       modelInfoRequestVersion: 0,
       activeEngine: normalizeEngineValue(runtimeSettings['llm-engine'] || dom.$body.data('llm-engine') || 'ollama-service'),
       modelsCache: {},
-      lmsModelsRefreshTimer: null,
-      lmsModelsRefreshInFlight: false,
+      modelsRefreshTimer: null,
+      modelsRefreshInFlight: false,
       presetState: {
         engine: '',
         model: '',

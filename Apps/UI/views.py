@@ -694,6 +694,14 @@ def _clear_tool_server_cache() -> None:
         _tool_server_cache.clear()
 
 
+# Drop the cached model list for one engine's current scope (force re-probe).
+def _clear_cached_model_list(engine: str) -> None:
+    endpoint, api_key_hash = _engine_metadata_scope(engine)
+    cache_key = (engine, endpoint, api_key_hash)
+    with _metadata_cache_lock:
+        _model_list_cache.pop(cache_key, None)
+
+
 # Remember the latest selected model for one engine.
 def _remember_active_model(engine: str, model_name: str) -> None:
     normalized_engine = settings.normalize_engine_name(engine)
@@ -5527,6 +5535,12 @@ def get_models_api(request):
     engine, engine_error = _resolve_request_engine_or_response(request)
     if engine_error is not None:
         return engine_error
+
+    # Polling requests force a fresh probe so newly loaded/downloaded models and
+    # recovered connections surface without waiting for the cache TTL to expire.
+    if str(request.GET.get("refresh", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        _clear_cached_model_list(engine)
+
     started_at = time.perf_counter()
     models = _load_models_for_engine(engine)
     _print_runtime_event(
