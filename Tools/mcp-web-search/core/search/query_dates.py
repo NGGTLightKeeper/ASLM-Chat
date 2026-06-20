@@ -11,8 +11,8 @@ token so it does not skew the lexical match, governed by the `query` config sect
                  = strip      → strip the year token, derive no timelimit
                  = none       → leave the query untouched
 
-The query-type → auto timelimit path (legacy `auto_type_timelimit_enabled`) is not
-ported here: it depends on the query-type classifier and is off by default.
+The legacy query-type → auto timelimit path is not ported (it depended on the retired
+query-type classifier); its `auto_type_timelimit_enabled` config flag was removed 2026-06-20.
 """
 
 from __future__ import annotations
@@ -94,7 +94,13 @@ def _strip_trailing_year(query: str) -> str:
         return cleaned or query
     lower = query.lower()
     if any(hint in lower for hint in _TRAILING_YEAR_FRESHNESS_HINTS):
-        cleaned = " ".join(_YEAR_ANYWHERE_RE.sub("", query).split())
+        # Strip only a year acting as a recency tag (this/last year). An older year next to
+        # a freshness word is far more likely a topic anchor — a product/standard version
+        # ("Windows Server 2022 latest CU", "ISO 27001 2022 current") — and must survive into
+        # the engine query, or the search loses what it's actually about.
+        cutoff = _dt.date.today().year - 1
+        drop_recent = lambda m: "" if int(m.group(0)[:4]) >= cutoff else m.group(0)
+        cleaned = " ".join(_YEAR_ANYWHERE_RE.sub(drop_recent, query).split())
         return cleaned if cleaned.strip() else query
     return query
 

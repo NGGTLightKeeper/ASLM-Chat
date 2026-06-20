@@ -38,6 +38,7 @@ from ..engines import (
     YandexParser,
     YepParser,
 )
+from core.cache.source_cache import canonicalize_url
 from .health import EngineHealthTracker, get_health_tracker
 from .quality import infer_query_language
 from .serp_api import SerpApi, _get_transport
@@ -536,7 +537,11 @@ class WebSearchService:
                 async for event in event_stream:
                     kind = event["type"]
                     if kind == "source":
-                        url = event["url"]["url"]
+                        raw_url = event["url"]["url"]
+                        # Dedup/consensus key is the canonical URL, so the same page from
+                        # another family (http/https, www, trailing slash, tracking params)
+                        # merges into one source and casts a vote instead of a duplicate.
+                        url = canonicalize_url(raw_url)
                         # The same URL arriving from another stream/provider is a
                         # consensus vote, not a fresh source — never overwrite.
                         if url in sources:
@@ -553,7 +558,7 @@ class WebSearchService:
                         if decision.action == TriageAction.SKIP:
                             continue
                         sources[url] = _Source(
-                            url=url,
+                            url=raw_url,
                             host=event["url"]["host"],
                             title=event["serp"]["title"],
                             snippet=event["serp"]["snippet"],
@@ -572,7 +577,7 @@ class WebSearchService:
                         else:
                             queue.append(url)
                     elif kind == "vote":
-                        apply_vote(event["url"]["url"], event["provider_family"])
+                        apply_vote(canonicalize_url(event["url"]["url"]), event["provider_family"])
                     elif kind == "engine":
                         payload = event["payload"]
                         engine_payloads[payload["engine"]] = payload
@@ -734,6 +739,15 @@ class WebSearchService:
         return dicts
 
 
+# True when at least one engine produced a real verdict (success/partial/genuine empty),
+# vs every engine failing (error/blocked/timeout/changed). Distinguishes a genuine empty
+# SERP — which is worth negative-caching — from a transient outage, which is not.
+def _had_productive_engine(payload: dict[str, Any]) -> bool:
+    productive = {"success", "partial", "empty"}
+    engines = payload.get("engines") or {}
+    return any((p or {}).get("status") in productive for p in engines.values())
+
+
 # Build the payload returned when an identical query is hard-blocked as a repeat.
 def _repeat_block_payload(query: str, effort: str, age: float) -> dict[str, Any]:
     note = (
@@ -799,7 +813,14 @@ async def run_web_search(
             timelimit=timelimit, shopping=shopping, academic=academic,
         )
         payload["cached"] = False
-        cache.set(query, payload, is_empty=not payload.get("sources"), **key_args)
+        empty = not payload.get("sources")
+        # A negative cache must reflect a genuine empty SERP, not a transient outage. If the
+        # result is empty only because every engine errored/blocked/timed out, don't cache it
+        # at all — caching would freeze a momentary failure into "nothing exists" for the TTL.
+        if empty and not _had_productive_engine(payload):
+            logger.info("web_search.skip_cache transient empty (no productive engine) query=%r", query[:160])
+        else:
+            cache.set(query, payload, is_empty=empty, **key_args)
 
     # 3. Drop sources the model was already shown within the suppression window.
     sources = list(payload.get("sources") or [])

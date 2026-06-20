@@ -1,13 +1,8 @@
 {
   "search": {
-    "timeout_seconds": 40.0,
     "max_results": 10,
-    "result_buffer_size": 3,
     "total_context_budget": 40000,
-    "early_return_threshold": 3,
     "prefetch_fetch_timeout": 8.0,
-    "preview_fetch_limit": 10,
-    "preview_min_chars": 600,
     "preview_max_chars": 4000
   },
   "extraction": {
@@ -30,7 +25,6 @@
     "year_hint_mode": "timelimit",
     "year_hint_current": "m",
     "year_hint_prev": "y",
-    "year_hint_older": null,
-    "auto_type_timelimit_enabled": false
+    "year_hint_older": null
   }
 }

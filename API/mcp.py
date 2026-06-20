@@ -143,6 +143,13 @@ def _venv_subprocess_env(python_path: Path) -> dict[str, str]:
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     env.pop("PYTHONHOME", None)
+    # Hand the ASLM-assigned warm-browser daemon port to the tool venv (only web-search
+    # reads it). Lets ASLM place the daemon in its chosen port range; the tool defaults to
+    # the same value if the var is absent.
+    try:
+        env["ASLM_BROWSER_DAEMON_PORT"] = str(runtime_settings.get("browser-daemon-port", 20004))
+    except Exception:  # noqa: BLE001 — never let settings access block a tool launch
+        pass
     return env
 
 

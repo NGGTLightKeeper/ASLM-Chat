@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -13,36 +14,35 @@ logger = logging.getLogger("config.search")
 
 _CONFIG_PATH = Path(__file__).parent / "search_config.json"
 
+# Warm-browser daemon default port. ASLM assigns one in its port range and passes it via
+# ASLM_BROWSER_DAEMON_PORT; standalone runs fall back to 20004 (the module's declared default).
+_DEFAULT_DAEMON_PORT = 20004
+
+
+def _default_daemon_url() -> str:
+    raw = (os.environ.get("ASLM_BROWSER_DAEMON_PORT") or "").strip()
+    try:
+        port = int(raw) if raw else _DEFAULT_DAEMON_PORT
+    except ValueError:
+        port = _DEFAULT_DAEMON_PORT
+    if not (0 < port <= 65535):
+        port = _DEFAULT_DAEMON_PORT
+    return f"http://127.0.0.1:{port}"
+
 
 # Typed config dataclasses (loaded from search_config.json).
 @dataclass
 class SearchSection:
-    timeout_seconds: float = 40.0
-    ddgs_engine_timeout: int = 8   # per-HTTP-request timeout for each search engine call
+    # NOTE: the new streaming pipeline hardcodes per-effort budgets in EFFORT_PROFILES;
+    # only the fields below are still read. The legacy DDGS/preview/quality-worker knobs
+    # (ddgs_*, preview_fetch_*, quality_ddgs_*, routing_profile, auto_scrape_preview, …)
+    # were removed 2026-06-20 — they had zero readers after the rewrite.
     tls_verify: bool = True        # set False only behind corporate MITM proxies
     max_results: int = 10
-    result_buffer_size: int = 0   # extra results fetched; final output stays max_results
-    batch_query_limit: int = 10
-    candidate_pool_multiplier: int = 2
-    routing_profile: str = "stability"
-    stability_ddgs_attempts: int = 2
-    quality_ddgs_attempts: int = 4
-    quality_ddgs_worker_timeout: float = 26.0
-    quality_hard_timeout: float = 40.0
-    auto_scrape_preview: bool = True
-    preview_fetch_limit: int = 10
-    preview_fetch_timeout: float = 4.0   # per-URL fetch timeout (seconds)
-    preview_total_timeout: float = 10.0  # per-URL race total timeout (seconds)
-    preview_model_warm_timeout: float = 10.0
-    preview_curl_timeout: float = 12.0
-    pdf_preview_fetch_timeout: float = 20.0
-    pdf_preview_extract_timeout: float = 15.0
+    batch_query_limit: int = 10    # read_page multi-URL batch cap (mcp-server)
     prefetch_fetch_timeout: float = 8.0
-    max_snippet_chars: int = 2_000
-    preview_min_chars: int = 600
-    preview_max_chars: int = 4_000
+    preview_max_chars: int = 4_000     # per-source chars in model_context
     total_context_budget: int = 40_000  # max chars in total search output (0 = no limit)
-    early_return_threshold: int = 0     # cancel remaining fetches after N good previews (0 = disabled)
 
 
 @dataclass
@@ -72,7 +72,6 @@ class QuerySection:
     year_hint_current: Optional[str] = "m"  # year == this year  → last month
     year_hint_prev: Optional[str] = "y"     # year == last year  → last year
     year_hint_older: Optional[str] = None  # year < last year  → no restriction
-    auto_type_timelimit_enabled: bool = True  # infer timelimit from query type
 
 
 # Warm-browser layer (cloakbrowser daemon). browser_fallback controls where the
@@ -80,7 +79,7 @@ class QuerySection:
 @dataclass
 class BrowserSection:
     browser_fallback: str = "page"      # off | page (read_page only) | full (+ blocked SERP engines)
-    daemon_url: str = "http://127.0.0.1:8765"
+    daemon_url: str = field(default_factory=_default_daemon_url)
     engine: str = "chromium"            # warm backend is chromium-only by design
     autostart_daemon: bool = True       # spawn the daemon lazily on the first tool call
     # Daemon self-shuts-down after this many idle seconds (no fetch); 0 = eternal (run
@@ -161,32 +160,12 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
 
     config = SearchConfig(
         search=SearchSection(
-            timeout_seconds=float(s.get("timeout_seconds", 40.0)),
-            ddgs_engine_timeout=int(s.get("ddgs_engine_timeout", 8)),
             tls_verify=bool(s.get("tls_verify", True)),
             max_results=int(s.get("max_results", 10)),
-            result_buffer_size=int(s.get("result_buffer_size", 0)),
             batch_query_limit=int(s.get("batch_query_limit", 10)),
-            total_context_budget=int(s.get("total_context_budget", 40_000)),
-            early_return_threshold=int(s.get("early_return_threshold", 0)),
-            candidate_pool_multiplier=int(s.get("candidate_pool_multiplier", 2)),
-            routing_profile=str(s.get("routing_profile", "stability")),
-            stability_ddgs_attempts=int(s.get("stability_ddgs_attempts", 2)),
-            quality_ddgs_attempts=int(s.get("quality_ddgs_attempts", 4)),
-            quality_ddgs_worker_timeout=float(s.get("quality_ddgs_worker_timeout", 26.0)),
-            quality_hard_timeout=float(s.get("quality_hard_timeout", 40.0)),
-            auto_scrape_preview=bool(s.get("auto_scrape_preview", True)),
-            preview_fetch_limit=int(s.get("preview_fetch_limit", 10)),
-            preview_fetch_timeout=float(s.get("preview_fetch_timeout", 4.0)),
-            preview_total_timeout=float(s.get("preview_total_timeout", 10.0)),
-            preview_model_warm_timeout=float(s.get("preview_model_warm_timeout", 10.0)),
-            preview_curl_timeout=float(s.get("preview_curl_timeout", 12.0)),
-            pdf_preview_fetch_timeout=float(s.get("pdf_preview_fetch_timeout", 20.0)),
-            pdf_preview_extract_timeout=float(s.get("pdf_preview_extract_timeout", 15.0)),
             prefetch_fetch_timeout=float(s.get("prefetch_fetch_timeout", 8.0)),
-            max_snippet_chars=int(s.get("max_snippet_chars", raw.get("max_snippet_chars", 2_000))),
-            preview_min_chars=int(s.get("preview_min_chars", 600)),
             preview_max_chars=int(s.get("preview_max_chars", 4_000)),
+            total_context_budget=int(s.get("total_context_budget", 40_000)),
         ),
         extraction=ExtractionSection(
             timeout_seconds=float(e.get("timeout_seconds", 25.0)),
@@ -211,13 +190,12 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             year_hint_current=_optional_string(q.get("year_hint_current", _MISSING), "m"),
             year_hint_prev=_optional_string(q.get("year_hint_prev", _MISSING), "y"),
             year_hint_older=_optional_string(q.get("year_hint_older", _MISSING), None),
-            auto_type_timelimit_enabled=bool(q.get("auto_type_timelimit_enabled", True)),
         ),
         browser=BrowserSection(
             browser_fallback=_one_of(
                 b.get("browser_fallback", "page"), {"off", "page", "full"}, "page"
             ),
-            daemon_url=str(b.get("daemon_url", "http://127.0.0.1:8765")),
+            daemon_url=str(b.get("daemon_url") or _default_daemon_url()),
             engine=str(b.get("engine", "chromium")),
             autostart_daemon=bool(b.get("autostart_daemon", True)),
             daemon_idle_shutdown_sec=float(b.get("daemon_idle_shutdown_sec", 1800.0)),

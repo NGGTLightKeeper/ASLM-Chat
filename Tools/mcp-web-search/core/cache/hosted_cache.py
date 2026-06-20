@@ -19,7 +19,11 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from core.cache.query_normalizer import normalize_query_key
+from core.cache.query_normalizer import (
+    has_search_operators,
+    normalize_exact_query_key,
+    normalize_query_key,
+)
 
 logger = logging.getLogger("core.cache.hosted_cache")
 
@@ -78,7 +82,14 @@ class HostedSearchCache:
         shopping: bool = False,
         academic: bool = False,
     ) -> str:
-        normalized = normalize_query_key(query)
+        # Operator queries (site:/-site:/"…"/OR/-term) keep the strict order-preserving key
+        # so they don't collide with a differently-meaning refinement; plain queries use the
+        # token-sort key so paraphrases share one entry.
+        normalized = (
+            normalize_exact_query_key(query)
+            if has_search_operators(query)
+            else normalize_query_key(query)
+        )
         raw = (
             f"{normalized}|{region}|{safesearch}|{timelimit or ''}|{effort}"
             f"|{int(bool(shopping))}|{int(bool(academic))}"

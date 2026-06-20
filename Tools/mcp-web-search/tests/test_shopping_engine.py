@@ -13,6 +13,18 @@ from core.fetch.shopping.models import ShoppingProviderAttempt
 from core.fetch.shopping.providers import PROVIDERS, providers_for_lane
 
 
+# Shopping now uses a process-wide ProviderState; reset it before each test so a cooldown
+# tripped in one test cannot leak into another's provider selection.
+@pytest.fixture(autouse=True)
+def _reset_shopping_state():
+    from core.fetch.shopping.engine import _GLOBAL_PROVIDER_STATE
+
+    _GLOBAL_PROVIDER_STATE.failures.clear()
+    _GLOBAL_PROVIDER_STATE.cooldown_until.clear()
+    _GLOBAL_PROVIDER_STATE.last_status.clear()
+    yield
+
+
 def _html(provider: str, count: int, *, currency: str = "$") -> str:
     cards = []
     for idx in range(count):
@@ -230,7 +242,9 @@ def test_shopping_engine_partial_primary_buffer_is_not_cut_to_primary_quota(monk
 
 @pytest.mark.unit
 def test_shopping_engine_skips_provider_already_in_cooldown(monkeypatch) -> None:
-    engine = ShoppingSearchEngine(asset_cache=ShoppingAssetCache())
+    from core.fetch.shopping.engine import ProviderState
+
+    engine = ShoppingSearchEngine(asset_cache=ShoppingAssetCache(), state=ProviderState())
     engine.state.cooldown_until["bing_shopping"] = time.time() + 60
 
     async def fake_fetch(url, provider, method):

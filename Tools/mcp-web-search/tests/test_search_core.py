@@ -38,6 +38,18 @@ def test_lexical_word_boundary_no_substring_false_positive():
     assert lexical_score("rust ownership", "Rust ownership explained", "", "https://x.com/a") > 0.5
 
 
+def test_lexical_ignores_search_operators():
+    # Operators (site:/-site:/OR/-term) are directives, not content terms — they must not
+    # dilute the score of a result that perfectly matches the real terms (#6).
+    title = "Rust ownership explained"
+    plain = lexical_score("rust ownership", title, "", "https://x.com/a")
+    with_ops = lexical_score(
+        "rust ownership site:github.com -site:reddit.com OR -unsafe", title, "",
+        "https://x.com/a",
+    )
+    assert with_ops == plain  # operator tokens dropped, score unchanged
+
+
 def test_hub_penalty_flags_category_pages():
     assert hub_penalty("https://site.com/category/news/", "All news", "") >= 0.5
     assert hub_penalty("https://site.com/blog/deep-dive-asyncio", "Deep dive", "long snippet here") == 0.0
@@ -452,3 +464,18 @@ def test_web_search_low_is_serp_only(monkeypatch):
     service = ws.WebSearchService(tracker=EngineHealthTracker(clock=_Clock()), read_page=explode)
     result = asyncio.run(service.search("python asyncio tutorial", effort="low"))
     assert result["sources"] and "markdown" not in result["sources"][0]
+
+
+# --- #4: transient-failure negative cache guard ----------------------------------
+
+def test_had_productive_engine_distinguishes_empty_from_outage():
+    from core.search.web_search import _had_productive_engine
+
+    # Genuine empty SERP: an engine worked and returned nothing → productive (cacheable).
+    assert _had_productive_engine({"engines": {"yandex": {"status": "empty"}}}) is True
+    assert _had_productive_engine({"engines": {"google": {"status": "success"}}}) is True
+    # Total outage: every engine failed → not productive (must not negative-cache).
+    assert _had_productive_engine(
+        {"engines": {"yandex": {"status": "timeout"}, "brave": {"status": "blocked"}}}
+    ) is False
+    assert _had_productive_engine({"engines": {}}) is False

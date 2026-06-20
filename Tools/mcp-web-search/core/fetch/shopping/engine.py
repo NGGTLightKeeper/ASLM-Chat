@@ -83,10 +83,22 @@ class ProviderState:
         }
 
 
+# Process-wide provider state so a 403/429 cooldown survives across shopping calls — a new
+# engine per call previously reset it, letting a dead provider keep wasting attempts.
+_GLOBAL_PROVIDER_STATE = ProviderState()
+
+
 class ShoppingSearchEngine:
-    def __init__(self, *, asset_cache: ShoppingAssetCache | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        asset_cache: ShoppingAssetCache | None = None,
+        state: ProviderState | None = None,
+    ) -> None:
         self.assets = asset_cache or ShoppingAssetCache()
-        self.state = ProviderState()
+        # Default to the process-wide state so cooldowns persist across calls; tests inject
+        # a fresh ProviderState for isolation.
+        self.state = state if state is not None else _GLOBAL_PROVIDER_STATE
 
     async def search(
         self,

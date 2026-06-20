@@ -67,3 +67,19 @@ def test_stricter_timelimit_helper():
     assert stricter_timelimit(None, "w") == "w"
     assert stricter_timelimit("m", None) == "m"
     assert stricter_timelimit(None, None) is None
+
+
+def test_old_entity_year_survives_freshness_word():
+    # "2022" is a product version, not a recency tag — it must NOT be stripped just because
+    # "latest" is present, or the engine query loses what it's actually about (#1).
+    clean, tl = resolve_query_dates("Windows Server 2022 latest CU", _cfg())
+    assert "2022" in clean
+    assert "latest CU" in clean
+    # An old year next to a freshness word is a historical anchor → no freshness timelimit.
+    assert tl is None
+
+
+def test_recent_year_still_stripped_under_freshness_word():
+    clean, tl = resolve_query_dates(f"AI agents news {_THIS_YEAR}", _cfg())
+    assert str(_THIS_YEAR) not in clean        # current year is a recency tag → stripped
+    assert tl == "m"

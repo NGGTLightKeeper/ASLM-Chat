@@ -15,7 +15,7 @@ Supervision (the part the original throwaway prototype lacked):
     a forced checkpoint; a burn (blocked streak) rotates identity instead of restoring.
 
 Run:
-  python -m core.fetch.browser.daemon --port 8765
+  python -m core.fetch.browser.daemon --port 20004
 """
 
 from __future__ import annotations
@@ -463,7 +463,7 @@ def _parse_args() -> argparse.Namespace:
     cfg = load_search_config().browser
     p = argparse.ArgumentParser(description="Persistent warm stealth-browser daemon (chromium).")
     p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=urlparse(cfg.daemon_url).port or 8765)
+    p.add_argument("--port", type=int, default=urlparse(cfg.daemon_url).port or 20004)
     p.add_argument("--no-headless", action="store_false", dest="headless")
     p.add_argument("--humanize", action="store_true", default=cfg.humanize)
     p.add_argument("--proxy", default=cfg.proxy or None)

@@ -58,6 +58,7 @@ DEFAULTS: dict[str, Any] = {
     "allowed_hosts": ["127.0.0.1", "localhost"],
     "llm-engine": "ollama-service",
     "ollama-service_port": 20003,
+    "browser-daemon-port": 20004,
     "ollama-service": False,
     "ollama-service_path": None,
     "ollama-service_data": None,
@@ -257,7 +258,7 @@ def _apply_environment_overrides(data: dict[str, Any]) -> dict[str, Any]:
     return updated
 
 
-_PORT_SETTING_KEYS = ("ui-port", "api-port", "ollama-service_port")
+_PORT_SETTING_KEYS = ("ui-port", "api-port", "ollama-service_port", "browser-daemon-port")
 
 
 # Log a warning when two services share the same TCP port.

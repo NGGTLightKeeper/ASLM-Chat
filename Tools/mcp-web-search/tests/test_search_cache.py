@@ -100,3 +100,18 @@ def test_infer_pdf_url():
     assert _infer_pdf_url("https://example.com/paper.pdf") == "https://example.com/paper.pdf"
     assert _infer_pdf_url("https://example.com/page") == ""
     assert _infer_pdf_url("") == ""
+
+
+# ── #2: operator queries must not share a cache entry ───────────────────────────
+
+def test_operator_queries_get_distinct_cache_keys(tmp_path):
+    cache = HostedSearchCache(str(tmp_path / "ops.db"), default_ttl=100, negative_ttl=5)
+    cache.set("python site:github.com", {"sources": [{"url": "https://a"}]}, effort="low")
+    # A differently-meaning operator query must NOT hit the first one's entry.
+    assert cache.get("python -site:github.com", effort="low") is None
+    assert cache.get('python "exact"', effort="low") is None
+    # The exact same operator query still hits.
+    assert cache.get("python site:github.com", effort="low") is not None
+    # Plain paraphrases still share an entry (token-sort key).
+    cache.set("python asyncio guide", {"sources": [{"url": "https://b"}]}, effort="low")
+    assert cache.get("guide asyncio python", effort="low") is not None
