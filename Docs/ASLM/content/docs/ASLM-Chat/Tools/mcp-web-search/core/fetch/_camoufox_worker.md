@@ -24,7 +24,7 @@ draft: false
 
 ## Private functions
 
-#### `def _ok(html, url, title, inner_text) -> None`
+#### `def _ok(html, url, title, inner_text, *, payload_kind=…) -> None`
 
 **Purpose:** Write success JSON (html, url, title, inner_text) to stdout.
 
