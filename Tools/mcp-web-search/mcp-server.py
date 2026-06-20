@@ -2,44 +2,66 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import secrets
 import sys
+import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 SERVER_ROOT = Path(__file__).resolve().parent
 if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
-ASLM_ROOT = Path(__file__).resolve().parents[2]
-if str(ASLM_ROOT) not in sys.path:
-    sys.path.insert(0, str(ASLM_ROOT))
+# Force UTF-8 on the process stdout/stderr. The ASLM tool worker re-execs this module
+# in-process on every call, then prints the JSON result envelope with ensure_ascii=False.
+# Search results routinely contain emoji/CJK from page content; if the worker's stdout
+# codec is not UTF-8 (Windows default is cp125x), that print raises UnicodeEncodeError
+# AFTER the tool already finished — the "finishes then crashes" failure. Reconfiguring
+# here guarantees the envelope encodes regardless of the parent's environment.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    except Exception:  # noqa: BLE001 — older/odd streams without reconfigure: best-effort
+        pass
 
-from adapters.mcp.tool_descriptions import (
+from core.logging_setup import setup_logging
+from core.mcp_contract import (
     MCP_SERVER_DESCRIPTION,
     READ_PAGE_TOOL_DESCRIPTION,
-    WEB_SEARCH_TOOL_DESCRIPTION,
-)
-from adapters.mcp.search_io_logger import write_search_io_event
-from adapters.mcp.search_query_contract import (
     SEARCH_QUERY_SCHEMA,
+    WEB_SEARCH_TOOL_DESCRIPTION,
+    coerce_search_academic,
     coerce_search_effort,
     coerce_search_query,
     coerce_search_shopping,
 )
-from adapters.mcp.logging_setup import setup_logging
-from core.config import load_search_config as _load_cfg
-from core.fetch.thread_pool import io_pool as _io_pool  # noqa: F401 — initialise shared pool
+from core.read import run_read_page
+from core.search.web_search import run_web_search
+from core.search_io_logger import write_search_io_event
+from urllib.parse import urlparse
 
+# Wire rotating file logs (web_search.log / read_page.log / core.log / mcp_trace.log)
+# and the model IO log before anything runs, exactly like the legacy adapter.
 setup_logging()
+logger = logging.getLogger("mcp.server")
 
-_CFG = _load_cfg()
-_MAX_RESULTS = max(1, int(_CFG.search.max_results))
-_BATCH_LIMIT = max(1, int(_CFG.search.batch_query_limit))
-logger = logging.getLogger("mcp_server_bridge")
+_evicted = False
+
+
+# Reclaim disk from expired cache entries once per process, on first tool call.
+def _evict_caches_once() -> None:
+    global _evicted
+    if _evicted:
+        return
+    _evicted = True
+    try:
+        from core.cache import get_page_cache
+        from core.cache.hosted_cache import get_hosted_cache
+
+        get_hosted_cache().evict_expired()
+        get_page_cache().evict_stale()
+    except Exception as exc:  # noqa: BLE001 — housekeeping must never block a search
+        logger.debug("cache eviction skipped: %s", exc)
 
 MCP_SERVER = {
     "id": "web_search",
@@ -75,27 +97,73 @@ TOOLS = [
 ]
 
 
-# Report whether this bridge supports the given engine/model pair.
+# Return whether this server supports the given engine or model.
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
-    return engine in ("ollama-service", "lms", "openai", "google-genai")
+    return engine in (None, "ollama-service", "lms", "openai", "google-genai")
 
 
-# Parse JSON-encoded list strings passed as tool arguments.
+# Run the ranked web_search pipeline (the model-facing default tool).
+#
+# The model controls only query/effort/shopping. Recency (timelimit) is parsed from the
+# query, region is routed by language, and safe-search stays moderate — none are model-
+# facing knobs. Arguments are coerced (a model may stringify or wrap them).
+async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
+    query = coerce_search_query(args.get("query", ""))
+    effort = coerce_search_effort(args)
+    shopping = coerce_search_shopping(args)
+    academic = coerce_search_academic(args)
+
+    write_search_io_event(
+        {
+            "layer": "mcp_adapter",
+            "phase": "web_search.request",
+            "tool_id": "web_search",
+            "query": query,
+            "effort": effort,
+            "shopping": shopping,
+            "academic": academic,
+        }
+    )
+    logger.info("mcp.web_search.start effort=%s shopping=%s academic=%s query_preview=%r",
+                effort, shopping, academic, query[:160])
+    started = time.perf_counter()
+    try:
+        result = await run_web_search(query, effort=effort, shopping=shopping, academic=academic)
+    except Exception:
+        logger.exception("mcp.web_search.failed query_preview=%r", query[:160])
+        raise
+    elapsed = time.perf_counter() - started
+    logger.info(
+        "mcp.web_search.done effort=%s sources=%d elapsed=%.3fs",
+        effort, len(result.get("sources", [])), elapsed,
+    )
+    write_search_io_event(
+        {
+            "layer": "mcp_adapter",
+            "phase": "web_search.result",
+            "tool_id": "web_search",
+            "query": query,
+            "result": result,
+            "elapsed_seconds": elapsed,
+        }
+    )
+    return result
+
+
+# Parse a JSON-encoded list passed as a string tool argument (some callers stringify).
 def _maybe_parse_list(val: Any) -> Any:
-    if isinstance(val, str):
-        stripped = val.strip()
-        if stripped.startswith("["):
-            import json
-            try:
-                parsed = json.loads(stripped)
-                if isinstance(parsed, list):
-                    return parsed
-            except Exception:
-                logger.debug("Failed to parse list-like tool argument: %r", val[:200])
+    if isinstance(val, str) and val.strip().startswith("["):
+        import json
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:  # noqa: BLE001
+            logger.debug("failed to parse list-like tool argument: %r", val[:200])
     return val
 
 
-# Normalize a URL host into a bare registrable domain label.
+# Bare registrable host for a URL (no scheme/userinfo/port/www.).
 def _source_domain(url: str) -> str:
     host = urlparse(url or "").netloc.lower()
     if "@" in host:
@@ -105,9 +173,9 @@ def _source_domain(url: str) -> str:
     return host.removeprefix("www.")
 
 
-# Build a short human-readable label from a domain name.
+# Short human label from a domain (example.com -> "Example").
 def _display_domain(domain: str) -> str:
-    parts = [part for part in (domain or "").split(".") if part]
+    parts = [p for p in (domain or "").split(".") if p]
     if len(parts) >= 2:
         label = parts[-2]
     elif parts:
@@ -117,13 +185,13 @@ def _display_domain(domain: str) -> str:
     return label.replace("-", " ").title()
 
 
-# DuckDuckGo favicon URL for a source domain chip.
+# DuckDuckGo favicon URL for a source chip.
 def _favicon_url(domain: str) -> str:
     return f"https://icons.duckduckgo.com/ip3/{domain}.ico" if domain else ""
 
 
-# Build one read_page source metadata record for UI chips.
-def _read_page_source(url: str, rank: int, result_text: str = "") -> dict[str, object]:
+# One read_page source record (UI chip metadata + ok flag from the result text).
+def _read_page_source(url: str, rank: int, result_text: str = "") -> dict[str, Any]:
     domain = _source_domain(url)
     ok = not str(result_text or "").lstrip().lower().startswith("error:")
     return {
@@ -136,175 +204,84 @@ def _read_page_source(url: str, rank: int, result_text: str = "") -> dict[str, o
     }
 
 
-# Assemble the structured read_page payload for one or many URLs.
-def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, object]:
+# Assemble the structured read_page payload for one or many URLs (legacy bridge shape).
+def _read_page_payload(urls: list[str], results: list[str]) -> dict[str, Any]:
     sources = [
-        _read_page_source(url, index, results[index - 1] if index - 1 < len(results) else "")
-        for index, url in enumerate(urls, 1)
+        _read_page_source(url, i, results[i - 1] if i - 1 < len(results) else "")
+        for i, url in enumerate(urls, 1)
     ]
-    ok_count = sum(1 for source in sources if bool(source.get("ok")))
+    ok_count = sum(1 for s in sources if s.get("ok"))
+    status = "done" if ok_count == len(sources) else ("partial" if ok_count else "error")
     return {
         "query": ", ".join(urls),
         "sources": sources,
-        "model_context": "\n\n".join(str(result or "") for result in results).strip(),
+        "model_context": "\n\n".join(str(r or "") for r in results).strip(),
         "ui": {
             "kind": "read_page",
-            "status": "done" if ok_count == len(sources) else ("partial" if ok_count else "error"),
+            "status": status,
             "result_count": len(sources),
             "sources": sources,
         },
     }
 
 
-# Dispatch MCP tool calls to web_search or read_page services.
+# Fetch one or many URLs as markdown and wrap them in the structured payload.
+async def _call_read_page(args: dict[str, Any]) -> dict[str, Any]:
+    import asyncio
+
+    from core.config import load_search_config
+
+    batch_limit = max(1, int(load_search_config().search.batch_query_limit))
+    url = _maybe_parse_list(args.get("url", ""))
+    write_search_io_event(
+        {"layer": "mcp_adapter", "phase": "read_page.request", "tool_id": "read_page", "url": url}
+    )
+
+    if isinstance(url, list):
+        urls = [u.strip() for u in url if isinstance(u, str) and u.strip()][:batch_limit]
+        logger.info("mcp.read_page.start batch=True urls=%d", len(urls))
+        results = await asyncio.gather(*[run_read_page(u) for u in urls], return_exceptions=True)
+        texts = [r if isinstance(r, str) else f"Error: {r}" for r in results]
+        payload = _read_page_payload(urls, texts)
+    else:
+        url_text = str(url).strip()
+        logger.info("mcp.read_page.start batch=False url=%r", url_text[:220])
+        text = await run_read_page(url_text)
+        payload = _read_page_payload([url_text], [text])
+
+    write_search_io_event(
+        {"layer": "mcp_adapter", "phase": "read_page.result", "tool_id": "read_page",
+         "result": payload}
+    )
+    logger.info("mcp.read_page.done status=%s count=%d",
+                payload["ui"]["status"], payload["ui"]["result_count"])
+    return payload
+
+
+# Cancel outstanding background work (prefetch) and release the warm browser at
+# server shutdown — a daemon this process autostarted is asked to stop so it does not
+# outlive us waiting on its idle timeout.
+async def shutdown() -> None:
+    from core.fetch.browser.client import shutdown_browser
+    from core.search import serp_api
+    from core.search.prefetch import shutdown_prefetch
+
+    await shutdown_prefetch()
+    await shutdown_browser()
+    if serp_api._shared_transport is not None:
+        await serp_api._shared_transport.close()
+
+
+# Dispatch an ASLM tool call to the matching search implementation.
 async def call_tool(
     tool_id: str,
     arguments: dict[str, Any] | None,
     context: dict[str, Any] | None = None,
-) -> Any:
-    started_at = asyncio.get_running_loop().time()
+) -> dict[str, Any]:
     args = dict(arguments or {})
-    for key in ("query", "url"):
-        if key in args:
-            args[key] = _maybe_parse_list(args[key])
-
+    _evict_caches_once()
     if tool_id == "web_search":
-        from services import run_web_search_rich, validate_search_query
-
-        query_text = coerce_search_query(args.get("query", ""))
-        search_effort = coerce_search_effort(args)
-        shopping = coerce_search_shopping(args)
-        write_search_io_event(
-            {
-                "layer": "mcp_worker_bridge",
-                "phase": "web_search.coerced",
-                "tool_id": "web_search",
-                "raw_arguments": args,
-                "raw_query": args.get("query", ""),
-                "coerced_query": query_text,
-                "effort": search_effort,
-                "shopping": shopping,
-                "context": context or {},
-            }
-        )
-
-        # ── Query quality gate ────────────────────────────────────────────────
-        rejection = validate_search_query(query_text)
-        if rejection:
-            logger.warning(
-                "bridge.web_search.rejected query_preview=%r reason=%r",
-                query_text[:160], rejection[:120],
-            )
-            write_search_io_event(
-                {
-                    "layer": "mcp_worker_bridge",
-                    "phase": "web_search.rejected",
-                    "tool_id": "web_search",
-                    "coerced_query": query_text,
-                    "rejection": rejection,
-                }
-            )
-            return {
-                "query": query_text,
-                "search_id": f"rejected_{secrets.token_hex(4)}",
-                "sources": [],
-                "model_context": rejection,
-                "ui": {
-                    "status": "rejected",
-                    "result_count": 0,
-                    "compact": {
-                        "label": f"Query rejected: {query_text}",
-                        "source_chips": [],
-                        "more_count": 0,
-                    },
-                },
-            }
-        # ─────────────────────────────────────────────────────────────────────
-
-        logger.info("bridge.web_search.start query_preview=%r", query_text[:160])
-        result = await run_web_search_rich(
-            query_text,
-            max_results=_MAX_RESULTS,
-            effort=search_effort,
-            shopping=shopping,
-        )
-        write_search_io_event(
-            {
-                "layer": "mcp_worker_bridge",
-                "phase": "web_search.result",
-                "tool_id": "web_search",
-                "coerced_query": query_text,
-                "result": result,
-                "elapsed_seconds": asyncio.get_running_loop().time() - started_at,
-            }
-        )
-        source_count = len(result.get("sources", [])) if isinstance(result, dict) else 0
-        logger.info(
-            "bridge.web_search.done query_preview=%r sources=%d took=%.2fs",
-            query_text[:160],
-            source_count,
-            asyncio.get_running_loop().time() - started_at,
-        )
-        return result
-
+        return await _call_web_search(args)
     if tool_id == "read_page":
-        from services import run_read_page
-        url = args.get("url", "")
-        write_search_io_event(
-            {
-                "layer": "mcp_worker_bridge",
-                "phase": "read_page.request",
-                "tool_id": "read_page",
-                "raw_arguments": args,
-                "url": url,
-                "context": context or {},
-            }
-        )
-        if isinstance(url, list):
-            urls = [u.strip() for u in url if isinstance(u, str) and u.strip()]
-            logger.info("bridge.read_page.start batch=True urls=%d", len(urls[:_BATCH_LIMIT]))
-            results = await asyncio.gather(
-                *[run_read_page(u) for u in urls[:_BATCH_LIMIT]],
-                return_exceptions=True,
-            )
-            texts = [r if isinstance(r, str) else f"Error: {r}" for r in results]
-            payload = _read_page_payload(urls[:_BATCH_LIMIT], texts)
-            write_search_io_event(
-                {
-                    "layer": "mcp_worker_bridge",
-                    "phase": "read_page.result",
-                    "tool_id": "read_page",
-                    "urls": urls[:_BATCH_LIMIT],
-                    "result": payload,
-                    "elapsed_seconds": asyncio.get_running_loop().time() - started_at,
-                }
-            )
-            logger.info(
-                "bridge.read_page.done batch=True urls=%d status=%s took=%.2fs",
-                len(urls[:_BATCH_LIMIT]),
-                payload.get("ui", {}).get("status") if isinstance(payload.get("ui"), dict) else "",
-                asyncio.get_running_loop().time() - started_at,
-            )
-            return payload
-        url_text = url.strip()
-        logger.info("bridge.read_page.start batch=False url=%r", url_text[:220])
-        result = await run_read_page(url_text)
-        payload = _read_page_payload([url_text], [result])
-        write_search_io_event(
-            {
-                "layer": "mcp_worker_bridge",
-                "phase": "read_page.result",
-                "tool_id": "read_page",
-                "urls": [url_text],
-                "result": payload,
-                "elapsed_seconds": asyncio.get_running_loop().time() - started_at,
-            }
-        )
-        logger.info(
-            "bridge.read_page.done batch=False status=%s took=%.2fs",
-            payload.get("ui", {}).get("status") if isinstance(payload.get("ui"), dict) else "",
-            asyncio.get_running_loop().time() - started_at,
-        )
-        return payload
-
+        return await _call_read_page(args)
     raise ValueError(f"Unknown tool: {tool_id}")

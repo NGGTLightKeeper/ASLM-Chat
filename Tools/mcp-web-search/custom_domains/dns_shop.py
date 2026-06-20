@@ -84,9 +84,6 @@ def extract_dns_metadata(raw_html: str) -> dict[str, str]:
         r"В наличии[^<]{0,120}",
         r"Под заказ[^<]{0,120}",
         r"Нет в наличии[^<]{0,120}",
-        r"Р’ РЅР°Р»РёС‡РёРё[^<]{0,120}",
-        r"РџРѕРґ Р·Р°РєР°Р·[^<]{0,120}",
-        r"РќРµС‚ РІ РЅР°Р»РёС‡РёРё[^<]{0,120}",
     )
     for pattern in availability_patterns:
         match = re.search(pattern, raw_html, re.IGNORECASE)
@@ -102,9 +99,6 @@ def extract_dns_metadata(raw_html: str) -> dict[str, str]:
             r"доступно\s*в\s*\d+\s*магазин",
             r"забрать\s*сегодня",
             r"доставка\s*завтра",
-            r"РґРѕСЃС‚СѓРїРЅРѕ\s*РІ\s*\d+\s*РјР°РіР°Р·РёРЅ",
-            r"Р·Р°Р±СЂР°С‚СЊ\s*СЃРµРіРѕРґРЅСЏ",
-            r"РґРѕСЃС‚Р°РІРєР°\s*Р·Р°РІС‚СЂР°",
         )
         for pattern in fallback_patterns:
             match = re.search(pattern, raw_html, re.IGNORECASE)
@@ -137,3 +131,34 @@ def extract_dns_metadata(raw_html: str) -> dict[str, str]:
         meta["key_specs"] = ", ".join(dict.fromkeys(specs))[:300]
 
     return meta
+
+
+from custom_domains.base import FetchContext, GenericRequest, PageResult
+
+
+# Normalize URL host (strip www./m. prefixes).
+def _host(url: str) -> str:
+    return urlparse(url).netloc.lower().removeprefix("www.").removeprefix("m.")
+
+
+# Strategy handler: DNS-shop is a hardened retail SPA. It reuses read_page's generic
+# pipeline but forces a browser fetch and tries product-page URL variants (.xaml /
+# characteristics / original) until one yields non-weak content. Retail metadata is
+# prepended by the generic pipeline itself (host-gated).
+class DnsShopHandler:
+    name = "dns_shop"
+    fallback_to_generic = False
+
+    # True for dns-shop.ru product pages.
+    def matches(self, url: str) -> bool:
+        return _host(url) == "dns-shop.ru"
+
+    # Drive the generic pipeline with DNS variants and a browser-first strategy.
+    async def read(self, url: str, ctx: FetchContext) -> PageResult:
+        variants = dns_variant_urls(url) or [rewrite_read_page_url(url)]
+        return await ctx.generic_read(
+            GenericRequest(url=url, browser_first=True, url_variants=variants)
+        )
+
+
+HANDLER = DnsShopHandler()

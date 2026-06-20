@@ -188,6 +188,16 @@
             "setExec": "main.py set_setting --key ollama-service_port --value {value}"
         },
         {
+            "key": "browser-daemon-port",
+            "name": "Browser Daemon Port",
+            "description": "Port for the web-search warm browser daemon (127.0.0.1)",
+            "type": "port",
+            "default": 20010,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key browser-daemon-port",
+            "setExec": "main.py set_setting --key browser-daemon-port --value {value}"
+        },
+        {
             "key": "lms",
             "name": "LM Studio",
             "description": "Whether LM Studio integration is available",

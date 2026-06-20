@@ -27,13 +27,19 @@ draft: false
 
 **Purpose:** Type `QuerySection` defined in `settings.py`.
 
+### `class BrowserSection`
+
+**Purpose:** Type `BrowserSection` defined in `settings.py`.
+
 ### `class EffortSection`
 
 **Purpose:** Type `EffortSection` defined in `settings.py`.
 
-### `class ModelsSection`
 
-**Purpose:** Type `ModelsSection` defined in `settings.py`.
+
+### `class BrowserSection`
+
+**Purpose:** Warm-browser layer. Two independent axes: where the browser is allowed as a fallback (browser_fallback) and which backend serves it (browser_backend).
 
 ### `class SearchConfig`
 
@@ -56,6 +62,14 @@ draft: false
 ---
 
 ## Private functions
+
+#### `def _default_daemon_url() -> str`
+
+**Purpose:** Return the default internal URL for the warm-browser daemon.
+
+**Steps:**
+
+1. Return the computed result to the caller.
 
 #### `def _optional_string(value, default) -> Optional[str]`
 

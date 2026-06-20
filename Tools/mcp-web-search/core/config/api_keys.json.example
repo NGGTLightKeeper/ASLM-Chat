@@ -2,14 +2,9 @@
   "search": {
     "hosted_api": {
       "tavily_api_key": null,
+      "firecrawl_api_key": null,
       "brave_api_key": null,
-      "serpapi_api_key": null,
-      "serper_api_key": null,
-      "exa_api_key": null,
-      "kagi_api_key": null,
-      "google_custom_search_api_key": null,
-      "google_custom_search_cx": null,
-      "yandex_api_key": null
+      "serpapi_api_key": null
     }
   }
 }

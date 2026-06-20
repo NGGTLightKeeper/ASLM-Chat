@@ -232,19 +232,24 @@ Tools/mcp-sandbox/sandbox.env
 
 # Tools/mcp-web-search
 Tools/mcp-web-search/core/config/api_keys.json
-Tools/mcp-web-search/majestic_million.csv
-Tools/mcp-web-search/core/registry/majestic_million.csv
-Tools/mcp-web-search/_cache/
+Tools/mcp-web-search-legacy/core/config/api_keys.json
+Tools/mcp-web-search-legacy/majestic_million.csv
+Tools/mcp-web-search-legacy/core/registry/majestic_million.csv
+Tools/mcp-web-search-legacy/_cache/
+Tools/mcp-web-search-legacy/tmp/
+Tools/mcp-web-search-legacy/todo.md
+Tools/mcp-web-search-legacy/logs/
+Tools/mcp-web-search-legacy/archive/
+Tools/mcp-web-search-legacy/scripts/
+Tools/mcp-web-search-legacy/models/
+Tools/mcp-web-search-legacy/ASLM-Embending/
+Tools/mcp-web-search-legacy/**/*.bat
+Tools/mcp-web-search-legacy/core/debug
+Tools/mcp-web-search/scripts
 Tools/mcp-web-search/tmp/
 Tools/mcp-web-search/todo.md
-Tools/mcp-web-search/logs/
-Tools/mcp-web-search/archive/
-Tools/mcp-web-search/scripts/
-Tools/mcp-web-search/models/
-Tools/mcp-web-search/ASLM-Embending/
-Tools/mcp-web-search/**/*.bat
-Tools/mcp-web-search/core/debug
-
+Tools/mcp-web-search/logs
+Tools/mcp-web-search/_cache
 # Hugo documentation (Docs/ASLM)
 Docs/ASLM/assets/jsconfig.json
 Docs/ASLM/public/

@@ -1,25 +1,10 @@
-"""Search-core orchestration primitives."""
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-from .triage import (
-    TIER_TRUST_SCORES,
-    TriageResult,
-    TriageSession,
-    apply_candidate_scores,
-    apply_registry_routing,
-    resolve_result_trust_tier,
-    triage_one_result,
-    triage_results,
-    triage_soft_score,
-)
+from .serp_api import SerpApi, SerpTransport, encode_json, run_serp_search
 
 __all__ = [
-    "TIER_TRUST_SCORES",
-    "TriageResult",
-    "TriageSession",
-    "apply_candidate_scores",
-    "apply_registry_routing",
-    "resolve_result_trust_tier",
-    "triage_one_result",
-    "triage_results",
-    "triage_soft_score",
+    "SerpApi",
+    "SerpTransport",
+    "encode_json",
+    "run_serp_search",
 ]

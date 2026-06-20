@@ -56,6 +56,18 @@ COMPOSITE_TOKENS: dict[str, str] = {
 }
 
 
+# Search operators that change a query's meaning and must NOT be collapsed by the
+# token-sort cache key: site:/-site: restrictions, "exact phrases", OR alternation, and
+# -term exclusions. When present, the cache uses the strict order-preserving key so a
+# refined directive query can't collide with a differently-meaning one.
+_OPERATOR_RE = re.compile(r'(?:^|\s)(?:-?site:|")|(?:^|\s)OR(?:\s|$)|(?:^|\s)-\w')
+
+
+# True when the query carries a meaning-changing search operator.
+def has_search_operators(query: str) -> bool:
+    return bool(_OPERATOR_RE.search(query or ""))
+
+
 # Canonical cache key: lowercase, stopwords removed, terms sorted (order discarded).
 def normalize_query_key(query: str) -> str:
     if not query or not query.strip():
