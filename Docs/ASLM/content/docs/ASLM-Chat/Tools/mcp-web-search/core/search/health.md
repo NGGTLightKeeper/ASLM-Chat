@@ -11,41 +11,16 @@ draft: false
 
 ## Classes
 
-### `class BreakerState`
+#### `class EngineHealthTracker`
 
-**Purpose:** Type `BreakerState` defined in `health.py`.
-
-### `class EngineHealth`
-
-**Purpose:** Type `EngineHealth` defined in `health.py`.
-
-### `class EngineHealthTracker`
-
-**Purpose:** Type `EngineHealthTracker` defined in `health.py`.
+**Purpose:** In-memory health registry + circuit breaker for SERP engines.
 
 **Methods:**
-
-- `__init__`
-- `_health`
-- `allow`
-- `record`
-- `_trip`
-- `snapshot`
-
----
-
-## Public functions
-
-#### `def get_health_tracker()`
-
-**Purpose:** Implements get_health_tracker
-
-**Steps:**
-
-1. Return the computed result to the caller.
+- `allow(self, engine: str) -> bool:` Checks if an engine should be allowed.
+- `record(self, engine: str, status: str, fetch_ms: float, results: int) -> None:` Record the outcome of one engine call (its serp_api payload fields).
 
 ---
 
 ## Related
 
-- [search/_index](../../../../_index/)
+- [search/_index](../_index/)
