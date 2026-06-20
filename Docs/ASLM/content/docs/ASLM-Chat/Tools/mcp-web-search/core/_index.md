@@ -21,7 +21,7 @@ draft: false
 | [extract](extract/) | `extract/` | HTML→text, previews, GLiNER, chunking |
 | [cache](cache/) | `cache/` | SQLite source + hosted SERP caches |
 | [registry](registry/) | `registry/` | Domain/trust profiles, reputation, endpoints |
-| [search](search/) | `search/` | Search package |
+| [search](search/) | `search/` | Web search core logic |
 | [debug](debug/) | `debug/` | Developer CLIs (not production MCP) |
 
 ---

@@ -9,63 +9,44 @@ draft: false
 
 ---
 
+## Overview
+
+Model-free SERP quality signals.
+
+Everything here is deterministic, allocation-light, and budgeted for sub-millisecond
+per-source evaluation so triage can run inline with the live result stream.
+
+---
+
 ## Public functions
 
-#### `def lexical_score(query, title, snippet, url)`
+#### `def lexical_score(query, title, snippet, url) -> float`
 
-**Purpose:** Implements lexical_score
+**Purpose:** Implements `lexical_score` in `quality.py`.
 
-**Steps:**
+#### `def hub_penalty(url, title, snippet) -> float`
 
-1. Return the computed result to the caller.
+**Purpose:** Implements `hub_penalty` in `quality.py`.
 
-#### `def hub_penalty(url, title, snippet)`
+#### `def is_skip_title(title) -> bool`
 
-**Purpose:** Implements hub_penalty
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
-#### `def is_skip_title(title)`
-
-**Purpose:** Implements is_skip_title
-
-**Steps:**
-
-1. Return the computed result to the caller.
+**Purpose:** Implements `is_skip_title` in `quality.py`.
 
 #### `def query_years(query)`
 
-**Purpose:** Implements query_years
+**Purpose:** Implements `query_years` in `quality.py`.
 
-**Steps:**
+#### `def year_match_score(text, years) -> float`
 
-1. Return the computed result to the caller.
+**Purpose:** Implements `year_match_score` in `quality.py`.
 
-#### `def year_match_score(text, years)`
+#### `def has_date_signal(snippet) -> bool`
 
-**Purpose:** Implements year_match_score
+**Purpose:** Implements `has_date_signal` in `quality.py`.
 
-**Steps:**
+#### `def infer_query_language(query) -> str`
 
-1. Return the computed result to the caller.
-
-#### `def has_date_signal(snippet)`
-
-**Purpose:** Implements has_date_signal
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
-#### `def infer_query_language(query)`
-
-**Purpose:** Implements infer_query_language
-
-**Steps:**
-
-1. Return the computed result to the caller.
+**Purpose:** Implements `infer_query_language` in `quality.py`.
 
 ---
 
@@ -73,14 +54,10 @@ draft: false
 
 #### `def _term_pattern(term)`
 
-**Purpose:** Implements _term_pattern
-
-**Steps:**
-
-1. Return the computed result to the caller.
+**Purpose:** Implements `_term_pattern` in `quality.py`.
 
 ---
 
 ## Related
 
-- [search/_index](../../../../_index/)
+- [core](../../_index/)

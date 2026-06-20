@@ -9,6 +9,20 @@ draft: false
 
 ---
 
+## Overview
+
+Incremental, model-free SERP triage.
+
+Sources are scored the moment they arrive from search_stream. The session decides
+per source: parse now, hold in queue, or skip. Consensus votes (the same URL
+surfacing from another provider family) re-score an already-seen source and may
+upgrade it from the queue into a parse slot.
+
+No registries, no models, no I/O — pure functions over SERP fields, so a decision
+costs well under a millisecond.
+
+---
+
 ## Classes
 
 ### `class TriageAction`
@@ -27,18 +41,24 @@ draft: false
 
 **Purpose:** Type `TriageSession` defined in `triage.py`.
 
-**Methods:**
+#### `def TriageSession.__init__(query)`
 
-- `__init__`
-- `_soft_score`
-- `_action_for`
-- `_total`
-- `ingest_source`
-- `ingest_vote`
-- `score_of`
+**Purpose:** Implements `TriageSession.__init__` in `triage.py`.
+
+#### `def TriageSession.ingest_source() -> TriageDecision`
+
+**Purpose:** Implements `TriageSession.ingest_source` in `triage.py`.
+
+#### `def TriageSession.ingest_vote()`
+
+**Purpose:** Implements `TriageSession.ingest_vote` in `triage.py`.
+
+#### `def TriageSession.score_of(url) -> float`
+
+**Purpose:** Implements `TriageSession.score_of` in `triage.py`.
 
 ---
 
 ## Related
 
-- [search/_index](../../../../_index/)
+- [core](../../_index/)

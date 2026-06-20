@@ -27,9 +27,11 @@ draft: false
 
 **Purpose:** Type `QuerySection` defined in `settings.py`.
 
-### `class ModelsSection`
+### `class EffortSection`
 
-**Purpose:** Type `ModelsSection` defined in `settings.py`.
+**Purpose:** Type `EffortSection` defined in `settings.py`.
+
+
 
 ### `class BrowserSection`
 
