@@ -55,7 +55,18 @@ class PrefetchManager:
             html = resp.text
             if not html or is_antibot(html):
                 return False
-            cache.cache_page(cache_key, "", clean_text="", raw_html=html)
+            # Extract now (off the event loop) and warm the clean markdown, not raw HTML:
+            # far smaller, FTS-searchable, and reused directly by a later read_page. A page
+            # that doesn't extract to usable text is not worth warming (and not hoarded).
+            from core.extract.page_normalizer import normalize_page
+
+            md = await asyncio.get_running_loop().run_in_executor(
+                None, normalize_page, safe_url, html
+            )
+            if not md or len(md.strip()) < 200:
+                return False
+            title = md.splitlines()[0].lstrip("# ").strip()[:200] if md.strip() else ""
+            cache.cache_page(cache_key, title, clean_text=md, raw_html="")
             return True
         except UnsafeFetchUrl as exc:
             trace_logger.info("prefetch.blocked url=%r reason=%s", url, exc)

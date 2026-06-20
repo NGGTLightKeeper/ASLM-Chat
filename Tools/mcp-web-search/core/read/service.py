@@ -443,10 +443,25 @@ class ReadPageService:
             variant_label = _variant_label(cand)
             cache_key = _cache_key_for_read(cand, variant=variant_label)
             cached = self._cache.get_cached(cache_key)
+            cache_fresh = cached is not None and self._cache.is_fresh(cache_key)
+
+            # Reuse previously extracted markdown directly — no network, no re-extraction.
+            # The cache stores clean text (not raw HTML), so a repeat read is instant and the
+            # entry stays FTS-searchable. raw_html-only entries (legacy/warm) fall through.
+            if cache_fresh and cached.clean_text:
+                md_cached = cached.clean_text
+                if not _is_weak_extraction(md_cached, min_length=min_len) or idx == len(variants) - 1:
+                    raw_html, markdown, winning_method = "cache", md_cached, "cache"
+                    trace_logger.info(
+                        "read_page.variant url=%r variant=%s method=cache markdown_len=%d (clean_text reuse)",
+                        cand, variant_label, len(md_cached),
+                    )
+                    break
+                continue
 
             raw: RawFetch | None = None
             cam: BrowserFetch | None = None
-            if cached and self._cache.is_fresh(cache_key) and cached.raw_html:
+            if cache_fresh and cached.raw_html:
                 html: str | None = cached.raw_html
                 method = "cache"
             else:
@@ -505,9 +520,6 @@ class ReadPageService:
                     cand, raw.attempt(parse_ms=parse_ms, quality=len(md), success=not weak)
                 )
 
-            if method != "cache" and not weak and not is_antibot(html):
-                self._cache.cache_page(cache_key, "", clean_text="", raw_html=html)
-
             # Weak HTML extraction — retry through the warm browser (normalize → innerText → RSC).
             if weak and method not in (METHOD_BROWSER, "cache") and await self._browser_ok():
                 logger.info("weak extraction for %s — retrying via warm browser SPA fallback", cand)
@@ -521,6 +533,13 @@ class ReadPageService:
                     self._profiles.record(cand, craw.attempt(quality=len(md), success=not weak))
                 else:
                     self._profiles.record(cand, craw.attempt(success=False))
+
+            # Cache the EXTRACTED markdown (not raw HTML): far smaller, FTS-searchable, and
+            # reused verbatim by the next read with no re-fetch or re-extraction. Only a
+            # genuine, non-weak, non-antibot success is stored (after any SPA retry above).
+            if method != "cache" and not weak and html and not is_antibot(html):
+                title = md.splitlines()[0].lstrip("# ").strip()[:200] if md.strip() else ""
+                self._cache.cache_page(cache_key, title, clean_text=md, raw_html="")
 
             raw_html, markdown, winning_method = html, md, method
 
