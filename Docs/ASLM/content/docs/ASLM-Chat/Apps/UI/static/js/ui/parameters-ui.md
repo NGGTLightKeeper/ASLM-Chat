@@ -15,6 +15,23 @@ Part of `Apps\UI\static\js\ui`. See **Related** for package index and callers.
 
 ---
 
+
+## Private functions
+
+#### `function buildParamHelpHtml(key, config)`
+
+**Purpose:** Build the help icon plus its hover/focus popover for one parameter.
+
+#### `function buildLabelLead(key, config)`
+
+**Purpose:** Build the label lead (parameter name + help affordance) shared by all controls.
+
+#### `function buildSettingNumberStyle(config)`
+
+**Purpose:** Inline width for the numeric value field.
+
+---
+
 ## Public functions
 
 #### `function createParametersUi(context)`
