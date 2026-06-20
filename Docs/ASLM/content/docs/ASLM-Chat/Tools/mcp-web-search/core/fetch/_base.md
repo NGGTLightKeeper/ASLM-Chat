@@ -9,22 +9,24 @@ draft: false
 
 ---
 
+## Overview
+
+Part of `Tools/mcp-web-search/core/fetch`.
+
+---
+
 ## Classes
 
-### `TransportResponse`
+### `class TransportResponse`
 
-**Purpose:** Immutable container for a raw HTTP response from any transport backend.
+**Purpose:** Implements `TransportResponse`.
 
-#### `def text(self) -> str`
+#### `def TransportResponse.text(self) -> str`
 
-**Purpose:** Decode the response body as UTF-8 text with replacement for bad bytes.
-
-**Steps:**
-
-1. Return the computed result to the caller.
+**Purpose:** Implements `text`.
 
 ---
 
 ## Related
 
-- [fetch/_index](../_index/)
+- [fetch/_index](../../_index/)

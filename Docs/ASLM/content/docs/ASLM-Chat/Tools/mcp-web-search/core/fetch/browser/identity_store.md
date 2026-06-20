@@ -9,11 +9,73 @@ draft: false
 
 ---
 
+## Overview
+
+Part of `Tools/mcp-web-search/core/fetch/browser`.
+
+---
+
 ## Classes
 
 ### `class IdentityStore`
 
-**Purpose:** Type `IdentityStore` defined in `identity_store.py`.
+**Purpose:** Implements `IdentityStore`.
+
+#### `def IdentityStore.__init__(self, db_path, max_generations) -> None`
+
+**Purpose:** Implements `__init__`.
+
+#### `def IdentityStore._get_conn(self) -> ...`
+
+**Purpose:** Implements `_get_conn`.
+
+#### `def IdentityStore._init_db(self) -> None`
+
+**Purpose:** Implements `_init_db`.
+
+#### `def IdentityStore.checkpoint(self, family, state, good) -> int`
+
+**Purpose:** Implements `checkpoint`.
+
+#### `def IdentityStore._prune(self, conn, family) -> None`
+
+**Purpose:** Implements `_prune`.
+
+#### `def IdentityStore._fetch_state(self, family, good_only) -> Optional[...]`
+
+**Purpose:** Implements `_fetch_state`.
+
+#### `def IdentityStore.latest_good(self, family) -> Optional[...]`
+
+**Purpose:** Implements `latest_good`.
+
+#### `def IdentityStore.latest(self, family) -> Optional[...]`
+
+**Purpose:** Implements `latest`.
+
+#### `def IdentityStore.rotate(self, family) -> Optional[...]`
+
+**Purpose:** Implements `rotate`.
+
+#### `def IdentityStore.cookies_for(self, family, host) -> list[...]`
+
+**Purpose:** Implements `cookies_for`.
+
+#### `def IdentityStore.cookie_header_for(self, family, host) -> str`
+
+**Purpose:** Implements `cookie_header_for`.
+
+#### `def IdentityStore.merge_set_cookie(self, owner, host, set_cookie_headers) -> None`
+
+**Purpose:** Implements `merge_set_cookie`.
+
+#### `def IdentityStore.http_cookies_map(self, owner, host) -> dict[...]`
+
+**Purpose:** Implements `http_cookies_map`.
+
+#### `def IdentityStore.http_cookie_header(self, owner, host) -> str`
+
+**Purpose:** Implements `http_cookie_header`.
 
 ---
 
@@ -21,11 +83,7 @@ draft: false
 
 #### `def get_identity_store() -> IdentityStore`
 
-**Purpose:** Lazily-initialised process-wide IdentityStore singleton.
-
-**Steps:**
-
-1. Return the computed result to the caller.
+**Purpose:** Implements `get_identity_store`.
 
 ---
 
@@ -33,8 +91,10 @@ draft: false
 
 #### `def _domain_matches(cookie_domain, host) -> bool`
 
-**Purpose:** True when a stored cookie domain applies to the given host (lenient suffix match).
+**Purpose:** Implements `_domain_matches`.
 
-**Steps:**
+---
 
-1. Return the computed result to the caller.
+## Related
+
+- [browser/_index](../../_index/)

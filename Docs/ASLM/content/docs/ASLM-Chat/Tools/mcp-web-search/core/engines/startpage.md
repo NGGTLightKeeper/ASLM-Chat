@@ -5,25 +5,60 @@ draft: false
 
 ## Module `startpage`
 
-`Tools/mcp-web-search/core/engines/startpage.py` — ASLM Chat Python module for parsing and interacting with Startpage search engine.
+`Tools/mcp-web-search/core/engines/startpage.py` — ASLM Chat Python module.
 
 ---
 
-## Constants and Cache
+## Overview
 
-- `_SC_TTL`: Time-to-live for the cached search token.
-- `_SC_RETRY_COOLDOWN`: Cooldown duration after a failed scrape attempt (cold or blocked homepage) before retrying, preventing serialization of fresh homepage fetches under the global lock when blocked.
-- `_SC_LOCK`: Global async lock to prevent stampedes when refreshing the cache.
+Part of `Tools/mcp-web-search/core/engines`.
 
 ---
 
-## Core Flow
+## Classes
 
-1. **`_fetch_sc_code`**: Scrapes the initial Startpage homepage to extract the required anti-bot `sc` token stamp from the form.
-2. **`_get_sc_code`**: Returns a cached `sc` token, refreshing it through the transport when stale. Applies an exponential backoff / retry cooldown (`_SC_RETRY_COOLDOWN` via `_sc_failed_at`) to reuse stale/empty tokens during temporary scraping blocks instead of hammering the homepage on every search attempt.
+### `class _Transport`
+
+**Purpose:** Implements `_Transport`.
+
+#### `async def _Transport.fetch(self, request)`
+
+**Purpose:** Implements `fetch`.
+
+### `class StartpageParser`
+
+**Purpose:** Implements `StartpageParser`.
+
+#### `async def StartpageParser.build_request_async(transport, query, region, safesearch, timelimit, page) -> EngineRequest`
+
+**Purpose:** Implements `build_request_async`.
+
+#### `def StartpageParser.parse(self, document) -> EngineParseResult`
+
+**Purpose:** Implements `parse`.
+
+---
+
+## Private functions
+
+#### `def _to_text(value) -> str`
+
+**Purpose:** Implements `_to_text`.
+
+#### `def _between(text, start, end) -> str`
+
+**Purpose:** Implements `_between`.
+
+#### `async def _fetch_sc_code(transport) -> str`
+
+**Purpose:** Implements `_fetch_sc_code`.
+
+#### `async def _get_sc_code(transport) -> str`
+
+**Purpose:** Implements `_get_sc_code`.
 
 ---
 
 ## Related
 
-- [engines/_index](../../../_index/)
+- [engines/_index](../../_index/)

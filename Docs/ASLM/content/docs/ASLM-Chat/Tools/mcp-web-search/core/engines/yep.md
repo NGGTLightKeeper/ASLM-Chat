@@ -9,21 +9,28 @@ draft: false
 
 ---
 
+## Overview
+
+Part of `Tools/mcp-web-search/core/engines`.
+
+---
+
 ## Classes
 
 ### `class YepParser`
 
-**Purpose:** Parser for the Yep search engine.
+**Purpose:** Implements `YepParser`.
 
-#### Public Methods
+#### `def YepParser.build_request(query, region, safesearch, timelimit, page) -> EngineRequest`
 
-- `def build_request(query, *, region, safesearch, timelimit, page) -> EngineRequest`
-  - **Purpose:** Constructs an EngineRequest specific to the search engine, including parameters and headers.
-- `def parse(document) -> EngineParseResult`
-  - **Purpose:** Parses the HTML document to extract SearchResult objects.
+**Purpose:** Implements `build_request`.
+
+#### `def YepParser.parse(self, document) -> EngineParseResult`
+
+**Purpose:** Implements `parse`.
 
 ---
 
 ## Related
 
-- [_index](../_index/)
+- [engines/_index](../../_index/)

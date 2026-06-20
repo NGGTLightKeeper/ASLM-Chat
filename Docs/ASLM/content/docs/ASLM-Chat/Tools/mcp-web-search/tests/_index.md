@@ -47,8 +47,9 @@ pytest tests/
 | [test_hosted_providers](test_hosted_providers/) | `test_hosted_providers.py` | Hosted API unit tests |
 | [test_search_core](test_search_core/) | `test_search_core.py` | Search core unit tests |
 | [test_shopping_web_integration](test_shopping_web_integration/) | `test_shopping_web_integration.py` Shopping integration tests |
-| [test_browser_layer](test_browser_layer/) | `test_browser_layer.py` | Offline coverage for warm-browser layer |
-| [test_search_core](test_search_core/) | `test_search_core.py` | Search orchestrator logic |
+| [test_academic](test_academic/) | `test_academic.py` | Academic fetcher tests |
+| [test_identity_cookies](test_identity_cookies/) | `test_identity_cookies.py` | Identity cookies tests |
+| [test_search_core](test_search_core/) | `test_search_core.py` | Search core tests |
 
 ---
 

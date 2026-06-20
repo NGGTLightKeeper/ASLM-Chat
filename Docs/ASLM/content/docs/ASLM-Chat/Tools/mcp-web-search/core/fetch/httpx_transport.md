@@ -9,27 +9,29 @@ draft: false
 
 ---
 
+## Overview
+
+Part of `Tools/mcp-web-search/core/fetch`.
+
+---
+
 ## Classes
 
-### `HttpxTransport`
+### `class HttpxTransport`
 
-**Purpose:** Async httpx transport with per-request TLS fingerprint randomisation.
+**Purpose:** Implements `HttpxTransport`.
 
-#### `def __init__(self, timeout_seconds) -> None`
+#### `def HttpxTransport.__init__(self, timeout_seconds) -> None`
 
-**Purpose:** Build the transport.
+**Purpose:** Implements `__init__`.
 
-#### `async def fetch(self, request) -> TransportResponse`
+#### `async def HttpxTransport.fetch(self, request) -> TransportResponse`
 
-**Purpose:** Send the request as a legacy GSA mobile client.
+**Purpose:** Implements `fetch`.
 
-**Steps:**
+#### `async def HttpxTransport.close(self) -> None`
 
-1. Return the computed result to the caller.
-
-#### `async def close(self) -> None`
-
-**Purpose:** No persistent client to close.
+**Purpose:** Implements `close`.
 
 ---
 
@@ -37,23 +39,14 @@ draft: false
 
 #### `def _gsa_user_agent() -> str`
 
-**Purpose:** Build a randomised GSA-style User-Agent with a legacy Chrome 39 engine.
+**Purpose:** Implements `_gsa_user_agent`.
 
-**Steps:**
+#### `def _make_ssl_context() -> ...`
 
-1. Return the computed result to the caller.
-
-#### `def _make_ssl_context() -> ssl.SSLContext`
-
-**Purpose:** Build an SSL context whose cipher list is randomised per-instance.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Iterate and transform or accumulate state.
+**Purpose:** Implements `_make_ssl_context`.
 
 ---
 
 ## Related
 
-- [fetch/_index](../_index/)
+- [fetch/_index](../../_index/)

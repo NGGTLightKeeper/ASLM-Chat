@@ -9,18 +9,25 @@ draft: false
 
 ---
 
+## Overview
+
+Part of `Tools/mcp-web-search/core/engines`.
+
+---
+
 ## Classes
 
 ### `class DuckDuckGoParser`
 
-**Purpose:** Parser for the DuckDuckGo search engine.
+**Purpose:** Implements `DuckDuckGoParser`.
 
-#### Public Methods
+#### `def DuckDuckGoParser.build_request(query, region, safesearch, timelimit, page) -> EngineRequest`
 
-- `def build_request(query, *, region, safesearch, timelimit, page) -> EngineRequest`
-  - **Purpose:** Constructs an EngineRequest specific to the search engine, including parameters and headers.
-- `def parse(document) -> EngineParseResult`
-  - **Purpose:** Parses the HTML document to extract SearchResult objects.
+**Purpose:** Implements `build_request`.
+
+#### `def DuckDuckGoParser.parse(self, document) -> EngineParseResult`
+
+**Purpose:** Implements `parse`.
 
 ---
 
@@ -28,10 +35,10 @@ draft: false
 
 #### `def _unwrap_url(value) -> str`
 
-**Purpose:** Execute _unwrap_url logic.
+**Purpose:** Implements `_unwrap_url`.
 
 ---
 
 ## Related
 
-- [_index](../_index/)
+- [engines/_index](../../_index/)

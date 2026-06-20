@@ -58,6 +58,13 @@ draft: false
 
 ---
 
+#### `async def _call_web_search(args) -> dict[str, Any]`
+
+**Purpose:** Implementation of `_call_web_search`.
+
+
+---
+
 ## Related
 
 - [mcp-web-search/_index](../../_index/)

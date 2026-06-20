@@ -11,22 +11,7 @@ draft: false
 
 ## Overview
 
-Web-search orchestrator: stream → triage → bounded eager parse scheduler.
-
-Wires the live SERP stream to incremental triage and an eager parse scheduler:
-
-    search_stream → source event → triage.ingest (~0.1 ms)
-        ├─ PARSE  → fetch/parse starts immediately (bounded slots)
-        ├─ QUEUE  → held; consensus votes may upgrade it mid-stream
-        └─ SKIP   → dropped
-
-Engine selection is tier-based (low/medium/high) and gated by the per-engine
-circuit breaker. Parsing of early winners overlaps the tail of slow engines, so
-parse latency hides inside SERP latency.
-
-Process discipline (non-negotiable): every parse task is tracked and cancelled
-at the deadline. No fire-and-forget tasks. The persistent warm browser lives in
-its own daemon, so a cancelled search never leaves a browser process behind.
+Part of `Tools/mcp-web-search/core/search`.
 
 ---
 
@@ -34,78 +19,102 @@ its own daemon, so a cancelled search never leaves a browser process behind.
 
 ### `class EffortProfile`
 
-**Purpose:** Type `EffortProfile` defined in `web_search.py`.
+**Purpose:** Implements `EffortProfile`.
 
 ### `class _Source`
 
-**Purpose:** Type `_Source` defined in `web_search.py`.
+**Purpose:** Implements `_Source`.
 
 ### `class WebSearchService`
 
-**Purpose:** Type `WebSearchService` defined in `web_search.py`.
+**Purpose:** Implements `WebSearchService`.
 
-#### `def WebSearchService.__init__()`
+#### `def WebSearchService.__init__(self, tracker, read_page) -> None`
 
-**Purpose:** Implements `WebSearchService.__init__` in `web_search.py`.
+**Purpose:** Implements `__init__`.
 
-#### `def WebSearchService.search(query)`
+#### `def WebSearchService._reader(self)`
 
-**Purpose:** Implements `WebSearchService.search` in `web_search.py`.
+**Purpose:** Implements `_reader`.
+
+#### `async def WebSearchService._parse_one(self, source, profile, query) -> None`
+
+**Purpose:** Implements `_parse_one`.
+
+#### `def WebSearchService._hosted_stream(self, query, region, deadline)`
+
+**Purpose:** Implements `_hosted_stream`.
+
+#### `async def WebSearchService.search(self, query, effort, region, safesearch, timelimit, shopping, academic) -> dict[...]`
+
+**Purpose:** Implements `search`.
+
+#### `async def WebSearchService._shopping_sources(self, query, profile, language, search_id, start_rank) -> list[...]`
+
+**Purpose:** Implements `_shopping_sources`.
+
+#### `async def WebSearchService._academic_sources(self, query, profile, search_id, start_rank) -> list[...]`
+
+**Purpose:** Implements `_academic_sources`.
 
 ---
 
 ## Public functions
 
-#### `def select_engines(effort, tracker)`
+#### `def select_engines(effort, tracker) -> list[...]`
 
-**Purpose:** Implements `select_engines` in `web_search.py`.
+**Purpose:** Implements `select_engines`.
 
-#### `def run_web_search(query)`
+#### `async def run_web_search(query, effort, region, safesearch, timelimit, shopping, academic) -> dict[...]`
 
-**Purpose:** Implements `run_web_search` in `web_search.py`.
+**Purpose:** Implements `run_web_search`.
 
 ---
 
 ## Private functions
 
-#### `def _merge_streams()`
+#### `async def _merge_streams(*streams)`
 
-**Purpose:** Implements `_merge_streams` in `web_search.py`.
+**Purpose:** Implements `_merge_streams`.
 
 #### `def _inline_parse_allowed(url) -> bool`
 
-**Purpose:** Implements `_inline_parse_allowed` in `web_search.py`.
+**Purpose:** Implements `_inline_parse_allowed`.
 
 #### `def _infer_pdf_url(url) -> str`
 
-**Purpose:** Implements `_infer_pdf_url` in `web_search.py`.
+**Purpose:** Implements `_infer_pdf_url`.
 
 #### `def _make_search_id() -> str`
 
-**Purpose:** Implements `_make_search_id` in `web_search.py`.
+**Purpose:** Implements `_make_search_id`.
 
 #### `def _citation_id(search_id, rank) -> str`
 
-**Purpose:** Implements `_citation_id` in `web_search.py`.
+**Purpose:** Implements `_citation_id`.
 
-#### `def _build_model_context(query, sources) -> str`
+#### `def _build_model_context(query, sources, total_budget, per_source_chars) -> str`
 
-**Purpose:** Implements `_build_model_context` in `web_search.py`.
+**Purpose:** Implements `_build_model_context`.
 
-#### `def _shopping_product_dict(product)`
+#### `def _shopping_product_dict(product, citation_id, rank) -> dict[...]`
 
-**Purpose:** Implements `_shopping_product_dict` in `web_search.py`.
+**Purpose:** Implements `_shopping_product_dict`.
 
-#### `def _build_ui(sources)`
+#### `def _academic_paper_dict(paper, citation_id, rank) -> dict[...]`
 
-**Purpose:** Implements `_build_ui` in `web_search.py`.
+**Purpose:** Implements `_academic_paper_dict`.
 
-#### `def _repeat_block_payload(query, effort, age)`
+#### `def _build_ui(sources) -> dict[...]`
 
-**Purpose:** Implements `_repeat_block_payload` in `web_search.py`.
+**Purpose:** Implements `_build_ui`.
+
+#### `def _repeat_block_payload(query, effort, age) -> dict[...]`
+
+**Purpose:** Implements `_repeat_block_payload`.
 
 ---
 
 ## Related
 
-- [core](../../_index/)
+- [search/_index](../../_index/)

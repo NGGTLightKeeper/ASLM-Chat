@@ -9,34 +9,36 @@ draft: false
 
 ---
 
+## Overview
+
+Part of `Tools/mcp-web-search/core/engines`.
+
+---
+
 ## Classes
 
-### `ParseStatus(StrEnum)`
+### `class ParseStatus`
 
-**Purpose:** Possible outcomes of one engine parse attempt.
+**Purpose:** Implements `ParseStatus`.
 
-### `SearchResult`
+### `class SearchResult`
 
-**Purpose:** Immutable representation of a single search result.
+**Purpose:** Implements `SearchResult`.
 
-### `EngineRequest`
+### `class EngineRequest`
 
-**Purpose:** Immutable HTTP request descriptor passed to transport backends.
+**Purpose:** Implements `EngineRequest`.
 
-### `EngineParseResult`
+### `class EngineParseResult`
 
-**Purpose:** Mutable result container produced by each engine parser.
+**Purpose:** Implements `EngineParseResult`.
 
-#### `def coverage(self) -> float`
+#### `def EngineParseResult.coverage(self) -> float`
 
-**Purpose:** Return the fraction of seen cards that produced usable results.
-
-**Steps:**
-
-1. Return the computed result to the caller.
+**Purpose:** Implements `coverage`.
 
 ---
 
 ## Related
 
-- [engines/_index](../_index/)
+- [engines/_index](../../_index/)

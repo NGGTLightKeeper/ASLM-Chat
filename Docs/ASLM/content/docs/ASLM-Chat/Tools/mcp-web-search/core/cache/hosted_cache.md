@@ -23,7 +23,7 @@ draft: false
 
 **Purpose:** Implements `HostedSearchCache.__init__` in `hosted_cache.py`.
 
-#### `def HostedSearchCache.make_key(query, \*, region=…, safesearch=…, timelimit=…, effort=…) -> str`
+#### `def HostedSearchCache.make_key(query, *, region, safesearch, timelimit, effort, shopping, academic) -> str`
 
 **Purpose:** Implements `HostedSearchCache.make_key` in `hosted_cache.py`.
 
@@ -31,7 +31,7 @@ draft: false
 
 1. Return the computed result to the caller.
 
-#### `def HostedSearchCache.get(query, \*, region=…, safesearch=…, timelimit=…, effort=…) -> Optional[dict[str, Any]]`
+#### `def HostedSearchCache.get(query, *, region, safesearch, timelimit, effort, shopping, academic) -> Optional[dict[str, Any]]`
 
 **Purpose:** Return a cached payload, or None when missing/expired.
 
@@ -42,7 +42,7 @@ draft: false
 3. Iterate and transform or accumulate state.
 4. Parse or serialize JSON payloads.
 
-#### `def HostedSearchCache.set(query, payload, \*, region=…, safesearch=…, timelimit=…, effort=…, is_empty=…) -> None`
+#### `def HostedSearchCache.set(query, payload, *, region, safesearch, timelimit, effort, shopping, academic, is_empty) -> None`
 
 **Purpose:** Store a payload. An empty result set gets the short negative TTL.
 

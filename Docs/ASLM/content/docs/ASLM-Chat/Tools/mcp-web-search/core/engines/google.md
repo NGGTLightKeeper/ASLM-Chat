@@ -9,33 +9,44 @@ draft: false
 
 ---
 
+## Overview
+
+Part of `Tools/mcp-web-search/core/engines`.
+
+---
+
 ## Classes
 
 ### `class GoogleParser`
 
-**Purpose:** Parser for the Google search engine.
+**Purpose:** Implements `GoogleParser`.
 
-#### Public Methods
+#### `def GoogleParser.build_request(query, region, safesearch, timelimit, page) -> EngineRequest`
 
-- `def build_request(query, *, region, safesearch, timelimit, page) -> EngineRequest`
-  - **Purpose:** Constructs an EngineRequest specific to the search engine, including parameters and headers.
-- `def parse(document) -> EngineParseResult`
-  - **Purpose:** Parses the HTML document to extract SearchResult objects.
+**Purpose:** Implements `build_request`.
+
+#### `def GoogleParser.parse(self, document) -> EngineParseResult`
+
+**Purpose:** Implements `parse`.
 
 ---
 
 ## Private functions
 
+#### `def _gsa_user_agent() -> str`
+
+**Purpose:** Implements `_gsa_user_agent`.
+
 #### `def _unwrap_url(value) -> str`
 
-**Purpose:** Execute _unwrap_url logic.
+**Purpose:** Implements `_unwrap_url`.
 
 #### `def _is_internal(value) -> bool`
 
-**Purpose:** Execute _is_internal logic.
+**Purpose:** Implements `_is_internal`.
 
 ---
 
 ## Related
 
-- [_index](../_index/)
+- [engines/_index](../../_index/)

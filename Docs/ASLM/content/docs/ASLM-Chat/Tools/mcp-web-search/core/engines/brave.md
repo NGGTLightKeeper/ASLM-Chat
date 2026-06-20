@@ -9,21 +9,28 @@ draft: false
 
 ---
 
+## Overview
+
+Part of `Tools/mcp-web-search/core/engines`.
+
+---
+
 ## Classes
 
 ### `class BraveParser`
 
-**Purpose:** Parser for the Brave search engine.
+**Purpose:** Implements `BraveParser`.
 
-#### Public Methods
+#### `def BraveParser.build_request(query, region, safesearch, timelimit, page) -> EngineRequest`
 
-- `def build_request(query, *, region, safesearch, timelimit, page) -> EngineRequest`
-  - **Purpose:** Constructs an EngineRequest specific to the search engine, including parameters and headers.
-- `def parse(document) -> EngineParseResult`
-  - **Purpose:** Parses the HTML document to extract SearchResult objects.
+**Purpose:** Implements `build_request`.
+
+#### `def BraveParser.parse(self, document) -> EngineParseResult`
+
+**Purpose:** Implements `parse`.
 
 ---
 
 ## Related
 
-- [_index](../_index/)
+- [engines/_index](../../_index/)
