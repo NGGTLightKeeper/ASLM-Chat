@@ -11,29 +11,17 @@ draft: false
 
 ## Classes
 
-### `BraveParser`
+### `class BraveParser`
 
 **Purpose:** Brave Search SERP parser.
 
-#### `def build_request(query, region, safesearch, timelimit, page) -> EngineRequest`
+**Methods:**
 
-**Purpose:** Build the HTTP request for a Brave search query using a random browser profile.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
-#### `def parse(self, document) -> EngineParseResult`
-
-**Purpose:** Parse a raw Brave SERP HTML document into an EngineParseResult.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Iterate and transform or accumulate state.
+- `build_request`
+- `parse`
 
 ---
 
 ## Related
 
-- [engines/_index](../_index/)
+- [engines/_index](../../../../_index/)

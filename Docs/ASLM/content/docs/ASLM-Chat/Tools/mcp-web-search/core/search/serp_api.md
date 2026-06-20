@@ -11,137 +11,88 @@ draft: false
 
 ## Classes
 
-### `SerpTransport(Protocol)`
+### `class SerpTransport`
 
-**Purpose:** Protocol for transport backends accepted by SerpApi.
+**Purpose:** Type `SerpTransport` defined in `serp_api.py`.
 
-#### `async def fetch(self, request) -> TransportResponse`
+**Methods:**
 
-**Steps:**
+- `fetch`
+- `close`
 
-1. Await async I/O or subprocess work.
+### `class SerpApi`
 
-#### `async def close(self) -> None`
+**Purpose:** Type `SerpApi` defined in `serp_api.py`.
 
-**Steps:**
+**Methods:**
 
-1. Await async I/O or subprocess work.
-
-### `SerpApi`
-
-**Purpose:** Run general-purpose engines concurrently through one pooled transport.
-
-#### `def __init__(self, transport, timeout_seconds, source_limit) -> None`
-
-**Purpose:** Initialize the API with an optional pre-built transport and search limits.
-
-#### `async def close(self) -> None`
-
-**Purpose:** Close the owned transport if this instance created it.
-
-**Steps:**
-
-1. Await async I/O or subprocess work.
-
-#### `async def __aenter__(self) -> "SerpApi"`
-
-**Purpose:** Support async context manager entry.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Await async I/O or subprocess work.
-
-#### `async def __aexit__(self, *_args) -> None`
-
-**Purpose:** Close resources on async context manager exit.
-
-**Steps:**
-
-1. Await async I/O or subprocess work.
-
-#### `async def search_stream(self, query, region, safesearch, timelimit, deadline_seconds) -> AsyncIterator[dict[str, Any]]`
-
-**Purpose:** Stream sources and per-engine status events through a short-lived in-process buffer as each engine completes, yielding them in real time.
-
-**Steps:**
-
-1. Initialize or construct object instances.
-2. Delegate work to an inner closure or thread.
-
-#### `async def search(self, query, region, safesearch, timelimit) -> dict[str, Any]`
-
-**Purpose:** Run all engines and return the combined result dict by draining the stream.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Await async I/O or subprocess work.
-3. Iterate and transform or accumulate state.
+- `__init__`
+- `close`
+- `__aenter__`
+- `__aexit__`
+- `_run_engine`
+- `search_stream`
+- `search`
 
 ---
 
 ## Public functions
 
-#### `def encode_json(payload) -> bytes`
+#### `def encode_json(payload)`
 
-**Purpose:** Serialize a payload to indented JSON bytes using orjson.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
-#### `async def run_serp_search(query, region, safesearch, timelimit, timeout_seconds, source_limit) -> dict[str, Any]`
-
-**Purpose:** Convenience wrapper that reuses the shared transport for a single search.
+**Purpose:** Implements encode_json
 
 **Steps:**
 
 1. Return the computed result to the caller.
-2. Await async I/O or subprocess work.
-3. Initialize or construct object instances.
+
+#### `async def run_serp_search(query)`
+
+**Purpose:** Implements run_serp_search
+
+**Steps:**
+
+1. Return the computed result to the caller.
 
 ---
 
 ## Private functions
 
-#### `def _host_of(url) -> str`
+#### `async def _build_engine_request(parser, transport, query)`
 
-**Purpose:** Return the lowercased host of a URL, or an empty string.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
-
-#### `def _error_parse_result(engine, message) -> EngineParseResult`
-
-**Purpose:** Build an error EngineParseResult with a single diagnostic message.
+**Purpose:** Implements _build_engine_request
 
 **Steps:**
 
 1. Return the computed result to the caller.
 
-#### `def _parse_result_payload(result, limit, http_status, fetch_ms, parse_ms, response_bytes, transport) -> dict[str, Any]`
+#### `def _host_of(url)`
 
-**Purpose:** Serialize one engine parse result into the final payload dict.
+**Purpose:** Implements _host_of
+
+**Steps:**
+
+1. Return the computed result to the caller.
+
+#### `def _error_parse_result(engine, message)`
+
+**Purpose:** Implements _error_parse_result
 
 **Steps:**
 
 1. Return the computed result to the caller.
 
-#### `async def _run_engine(self, parser_type, query, region, safesearch, timelimit) -> dict[str, Any]`
+#### `def _parse_result_payload(result)`
 
-**Purpose:** Fetch one engine, parse its response, and return the serialized result dict.
+**Purpose:** Implements _parse_result_payload
 
 **Steps:**
 
 1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
-3. Await async I/O or subprocess work.
-4. Initialize or construct object instances.
 
-#### `def _get_transport(timeout_seconds) -> AdaptiveTransport`
+#### `def _get_transport(timeout_seconds)`
+
+**Purpose:** Implements _get_transport
 
 **Steps:**
 
@@ -151,4 +102,4 @@ draft: false
 
 ## Related
 
-- [search/_index](../_index/)
+- [search/_index](../../../../_index/)
