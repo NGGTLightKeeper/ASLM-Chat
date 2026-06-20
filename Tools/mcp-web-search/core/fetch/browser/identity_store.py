@@ -24,6 +24,7 @@ import logging
 import sqlite3
 import threading
 import time
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, Optional
 
@@ -32,6 +33,12 @@ logger = logging.getLogger("core.fetch.browser.identity")
 # How many generations to retain per family. Older ones are pruned, but the most
 # recent good generation is always preserved as a rotation fallback.
 _MAX_GENERATIONS = 5
+
+# Sliding TTL for session cookies (those with no Max-Age/Expires). A real browser keeps
+# them only for the session; we keep them across searches for continuity but let them age
+# out if not refreshed, so a stale session token isn't replayed forever. The clock is each
+# cookie's `updated` time, so any re-capture refreshes it.
+_SESSION_COOKIE_TTL = 6 * 3600.0  # 6 hours
 
 _SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
@@ -46,6 +53,18 @@ CREATE TABLE IF NOT EXISTS identity_generations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ident_family ON identity_generations(family);
+
+CREATE TABLE IF NOT EXISTS http_cookies (
+    owner    TEXT    NOT NULL,
+    domain   TEXT    NOT NULL,
+    name     TEXT    NOT NULL,
+    value    TEXT    NOT NULL,
+    expires  REAL    NOT NULL DEFAULT 0,
+    updated  REAL    NOT NULL,
+    PRIMARY KEY (owner, domain, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_http_cookies_owner ON http_cookies(owner);
 """
 
 
@@ -205,6 +224,94 @@ class IdentityStore:
             if c.get("name")
         ]
         return "; ".join(pairs)
+
+    # ── HTTP-side cookie accumulation (Stage B transport half) ────────────────────────
+    # Separate from the browser storageState generations above: these are cookies an HTTP
+    # SERP engine earns itself (consent/region/session), keyed by the engine that owns the
+    # identity (e.g. "startpage"). The transport replays them on later requests and writes
+    # back captured Set-Cookie, so a logical engine accumulates one coherent cookie history
+    # across searches and restarts — the same continuity the warm browser gives, over HTTP.
+
+    # Merge captured Set-Cookie header lines for a host into the owner's cookie history.
+    # A cookie with Max-Age<=0 (a deletion) removes the stored entry instead of adding it.
+    def merge_set_cookie(self, owner: str, host: str, set_cookie_headers: list[str]) -> None:
+        owner = (owner or "").strip()
+        if not owner or not set_cookie_headers:
+            return
+        now = time.time()
+        upserts: list[tuple[str, str, str, str, float, float]] = []
+        deletes: list[tuple[str, str, str]] = []
+        for raw in set_cookie_headers:
+            try:
+                jar: SimpleCookie = SimpleCookie()
+                jar.load(raw)
+            except Exception:  # noqa: BLE001 — a malformed Set-Cookie must not break capture
+                continue
+            for name, morsel in jar.items():
+                domain = (morsel["domain"] or host).lstrip(".").lower() or host.lower()
+                max_age = str(morsel["max-age"] or "").strip()
+                if max_age:
+                    try:
+                        age = float(max_age)
+                    except ValueError:
+                        age = None
+                    if age is not None and age <= 0:
+                        deletes.append((owner, domain, name))
+                        continue
+                    expires = now + age if age is not None else 0.0
+                else:
+                    expires = 0.0
+                upserts.append((owner, domain, name, morsel.value, expires, now))
+        if not upserts and not deletes:
+            return
+        with self._write_lock:
+            conn = self._get_conn()
+            try:
+                with conn:
+                    if deletes:
+                        conn.executemany(
+                            "DELETE FROM http_cookies WHERE owner = ? AND domain = ? AND name = ?",
+                            deletes,
+                        )
+                    if upserts:
+                        conn.executemany(
+                            "INSERT OR REPLACE INTO http_cookies "
+                            "(owner, domain, name, value, expires, updated) VALUES (?, ?, ?, ?, ?, ?)",
+                            upserts,
+                        )
+            except sqlite3.DatabaseError as exc:
+                logger.warning("identity_store: cookie merge failed for %r: %s", owner, exc)
+
+    # The owner's non-expired cookies for a host as {name: value} (newest write wins).
+    def http_cookies_map(self, owner: str, host: str) -> dict[str, str]:
+        owner = (owner or "").strip()
+        if not owner or not host:
+            return {}
+        now = time.time()
+        try:
+            rows = self._get_conn().execute(
+                "SELECT domain, name, value, expires, updated FROM http_cookies WHERE owner = ? "
+                "ORDER BY updated ASC",
+                (owner,),
+            ).fetchall()
+        except sqlite3.DatabaseError as exc:
+            logger.warning("identity_store: cookie read failed for %r: %s", owner, exc)
+            return {}
+        out: dict[str, str] = {}
+        for row in rows:
+            expires = row["expires"]
+            if expires:
+                if expires < now:  # explicit expiry passed
+                    continue
+            elif (now - float(row["updated"])) > _SESSION_COOKIE_TTL:  # stale session cookie
+                continue
+            if _domain_matches(str(row["domain"]), host):
+                out[str(row["name"])] = str(row["value"])
+        return out
+
+    # A ready "k=v; ..." Cookie header for a host from the owner's HTTP cookie history.
+    def http_cookie_header(self, owner: str, host: str) -> str:
+        return "; ".join(f"{n}={v}" for n, v in self.http_cookies_map(owner, host).items())
 
 
 _store: Optional[IdentityStore] = None

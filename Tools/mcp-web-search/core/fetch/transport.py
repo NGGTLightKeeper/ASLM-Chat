@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 
 import aiohttp
 import primp
@@ -11,6 +13,52 @@ import primp
 from ..engines.models import EngineRequest
 from ._base import TransportResponse
 from .httpx_transport import HttpxTransport
+
+logger = logging.getLogger("core.fetch.transport")
+
+# Chromium families whose HTTP engines also read the warm browser daemon's earned cookies
+# (stored under the "chromium" identity) — the browser-feeds-HTTP half of Stage B.
+_CHROMIUM_FAMILIES = frozenset({"chrome", "edge"})
+_WARM_FAMILY = "chromium"
+
+
+# Merge an engine's persistent cookies into the outgoing request (read half of Stage B).
+# Layered: stored HTTP-earned cookies, plus the warm browser's cookies for chromium engines,
+# then the engine's own per-request seed cookies on top (fresh intent wins on a name clash).
+def _replay_identity_cookies(request: EngineRequest, host: str) -> EngineRequest:
+    owner = request.identity_key
+    if not owner:
+        return request
+    try:
+        from core.fetch.browser.identity_store import get_identity_store
+
+        store = get_identity_store()
+        stored = store.http_cookies_map(owner, host)
+        if request.primp_target in _CHROMIUM_FAMILIES:
+            for cookie in store.cookies_for(_WARM_FAMILY, host=host):
+                name = cookie.get("name")
+                if name:
+                    stored[str(name)] = str(cookie.get("value", ""))
+    except Exception as exc:  # noqa: BLE001 — cookie replay must never break a fetch
+        logger.debug("identity cookie replay skipped for %s: %s", owner, exc)
+        return request
+    if not stored:
+        return request
+    return replace(request, cookies={**stored, **request.cookies})
+
+
+# Persist any Set-Cookie the response carried back into the engine's cookie history
+# (write half of Stage B). Best-effort: a store failure never affects the returned response.
+def _capture_identity_cookies(request: EngineRequest, host: str, response: TransportResponse) -> None:
+    owner = request.identity_key
+    if not owner or not response.set_cookie:
+        return
+    try:
+        from core.fetch.browser.identity_store import get_identity_store
+
+        get_identity_store().merge_set_cookie(owner, host, response.set_cookie)
+    except Exception as exc:  # noqa: BLE001 — capture is opportunistic
+        logger.debug("identity cookie capture skipped for %s: %s", owner, exc)
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -78,7 +126,21 @@ class AiohttpTransport:
             headers=headers or None,
             allow_redirects=True,
         ) as response:
-            return TransportResponse(status=response.status, body=await response.read(), transport="aiohttp")
+            set_cookie = list(response.headers.getall("Set-Cookie", []))
+            return TransportResponse(
+                status=response.status, body=await response.read(),
+                transport="aiohttp", set_cookie=set_cookie,
+            )
+
+
+# Best-effort Set-Cookie extraction from a primp response. primp exposes parsed cookies as
+# a {name: value} dict (attributes already consumed), so we synthesise host-scoped
+# "name=value" lines; the identity store defaults their domain to the request host.
+def _primp_set_cookie(response: object) -> list[str]:
+    cookies = getattr(response, "cookies", None)
+    if isinstance(cookies, dict) and cookies:
+        return [f"{name}={value}" for name, value in cookies.items() if name]
+    return []
 
 
 # Bounded browser-impersonating transport for engines that reject generic TLS clients.
@@ -120,7 +182,10 @@ class PrimpTransport:
             data=request.data or None,
             headers=headers or None,
         )
-        return TransportResponse(status=response.status_code, body=response.content, transport="primp")
+        return TransportResponse(
+            status=response.status_code, body=response.content,
+            transport="primp", set_cookie=_primp_set_cookie(response),
+        )
 
     # Run the blocking primp fetch on the thread-pool executor.
     async def fetch(self, request: EngineRequest) -> TransportResponse:
@@ -161,13 +226,20 @@ class AdaptiveTransport:
     )
 
     # Forward the request to the appropriate transport based on the target host.
+    # Around the dispatch, the persistent identity cookies (Stage B) are replayed into the
+    # request and any Set-Cookie the response carried is written back, so an engine builds
+    # one coherent cookie history (consent/region/session) across searches and restarts.
     async def fetch(self, request: EngineRequest) -> TransportResponse:
         host = request.url.split("/", 3)[2]
+        request = _replay_identity_cookies(request, host)
         if host == "www.google.com":
-            return await self._httpx.fetch(request)
-        if host in self._IMPERSONATED_HOSTS:
-            return await self._impersonated.fetch(request)
-        return await self._fast.fetch(request)
+            response = await self._httpx.fetch(request)
+        elif host in self._IMPERSONATED_HOSTS:
+            response = await self._impersonated.fetch(request)
+        else:
+            response = await self._fast.fetch(request)
+        _capture_identity_cookies(request, host, response)
+        return response
 
     # Close all underlying transports.
     async def close(self) -> None:

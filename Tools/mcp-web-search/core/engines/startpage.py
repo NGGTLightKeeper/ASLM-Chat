@@ -73,6 +73,7 @@ async def _fetch_sc_code(transport: _Transport) -> str:
         headers=headers,
         primp_target=profile.primp_target,
         primp_os=profile.primp_os,
+        identity_key="startpage",
     )
     response = await transport.fetch(request)
     if response.status >= 400:
@@ -190,6 +191,7 @@ class StartpageParser:
             cookies={"preferences": preferences},
             primp_target=profile.primp_target,
             primp_os=profile.primp_os,
+            identity_key="startpage",
         )
 
     # Parse Startpage's HTML, reading the embedded JSON the React app renders.

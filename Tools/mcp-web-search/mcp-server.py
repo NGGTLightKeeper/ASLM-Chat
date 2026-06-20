@@ -30,6 +30,7 @@ from core.mcp_contract import (
     READ_PAGE_TOOL_DESCRIPTION,
     SEARCH_QUERY_SCHEMA,
     WEB_SEARCH_TOOL_DESCRIPTION,
+    coerce_search_academic,
     coerce_search_effort,
     coerce_search_query,
     coerce_search_shopping,
@@ -110,6 +111,7 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
     query = coerce_search_query(args.get("query", ""))
     effort = coerce_search_effort(args)
     shopping = coerce_search_shopping(args)
+    academic = coerce_search_academic(args)
 
     write_search_io_event(
         {
@@ -119,13 +121,14 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
             "query": query,
             "effort": effort,
             "shopping": shopping,
+            "academic": academic,
         }
     )
-    logger.info("mcp.web_search.start effort=%s shopping=%s query_preview=%r",
-                effort, shopping, query[:160])
+    logger.info("mcp.web_search.start effort=%s shopping=%s academic=%s query_preview=%r",
+                effort, shopping, academic, query[:160])
     started = time.perf_counter()
     try:
-        result = await run_web_search(query, effort=effort, shopping=shopping)
+        result = await run_web_search(query, effort=effort, shopping=shopping, academic=academic)
     except Exception:
         logger.exception("mcp.web_search.failed query_preview=%r", query[:160])
         raise

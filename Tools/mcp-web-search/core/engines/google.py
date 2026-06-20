@@ -121,6 +121,7 @@ class GoogleParser:
             cookies=_GOOGLE_COOKIES,
             primp_target=profile.primp_target,
             primp_os=profile.primp_os,
+            identity_key="google",
         )
 
     # Parse a raw Google SERP HTML document into an EngineParseResult.

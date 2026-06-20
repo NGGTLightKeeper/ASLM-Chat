@@ -76,9 +76,13 @@ class HostedSearchCache:
         timelimit: str | None = None,
         effort: str = "low",
         shopping: bool = False,
+        academic: bool = False,
     ) -> str:
         normalized = normalize_query_key(query)
-        raw = f"{normalized}|{region}|{safesearch}|{timelimit or ''}|{effort}|{int(bool(shopping))}"
+        raw = (
+            f"{normalized}|{region}|{safesearch}|{timelimit or ''}|{effort}"
+            f"|{int(bool(shopping))}|{int(bool(academic))}"
+        )
         return hashlib.sha256(raw.encode()).hexdigest()
 
     # Return a cached payload, or None when missing/expired.
@@ -91,10 +95,11 @@ class HostedSearchCache:
         timelimit: str | None = None,
         effort: str = "low",
         shopping: bool = False,
+        academic: bool = False,
     ) -> Optional[dict[str, Any]]:
         key = self.make_key(
             query, region=region, safesearch=safesearch, timelimit=timelimit,
-            effort=effort, shopping=shopping,
+            effort=effort, shopping=shopping, academic=academic,
         )
         try:
             row = self._get_conn().execute(
@@ -122,12 +127,13 @@ class HostedSearchCache:
         timelimit: str | None = None,
         effort: str = "low",
         shopping: bool = False,
+        academic: bool = False,
         is_empty: bool = False,
     ) -> None:
         ttl = self._negative_ttl if is_empty else self._default_ttl
         key = self.make_key(
             query, region=region, safesearch=safesearch, timelimit=timelimit,
-            effort=effort, shopping=shopping,
+            effort=effort, shopping=shopping, academic=academic,
         )
         try:
             data = json.dumps(payload, ensure_ascii=False, default=str)

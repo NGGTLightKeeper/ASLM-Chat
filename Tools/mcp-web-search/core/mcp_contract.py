@@ -48,6 +48,14 @@ SHOPPING:
                    (model, spec, SKU, or product phrase) — no questions, no filler. Keep
                    false for technical meanings such as payload delivery or supply chain.
 
+ACADEMIC:
+  academic=false   Default. Never runs scholarly providers.
+  academic=true    Use when the user needs peer-reviewed papers, preprints, citations, or
+                   primary scientific literature — not popular articles or how-tos. Adds
+                   structured results (title, authors, year, DOI, abstract, PDF) from open
+                   scholarly indexes (OpenAlex, Crossref, Europe PMC, DOAJ, arXiv). The
+                   query should be the topic/title/author/DOI, not a question.
+
 OPERATORS (ASCII only — never translate):
   site:domain.com        restrict to a domain and its subdomains
   -site:domain.com       exclude a domain
@@ -121,6 +129,17 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
                 "spec, SKU, product phrase). Leave false for all other searches."
             ),
         },
+        "academic": {
+            "type": "boolean",
+            "default": False,
+            "description": (
+                "Enable scholarly providers and structured paper results (title, authors, "
+                "year, DOI, abstract, PDF) from open indexes (OpenAlex, Crossref, Europe "
+                "PMC, DOAJ, arXiv). Set true only when the user needs peer-reviewed papers, "
+                "preprints, citations, or primary scientific literature; the query should "
+                "be the topic, title, author, or DOI. Leave false for all other searches."
+            ),
+        },
     },
     "required": ["query"],
 }
@@ -177,16 +196,26 @@ def coerce_search_effort(value: Any = None) -> str:
     return effort if effort in _EFFORT_VALUES else "medium"
 
 
-# Normalize the explicit shopping opt-in argument to a bool.
-def coerce_search_shopping(value: Any = None) -> bool:
+# Normalize an explicit boolean opt-in argument (shopping / academic) to a bool.
+def _coerce_bool_opt(value: Any, key: str) -> bool:
     if isinstance(value, dict):
-        value = value.get("shopping", False)
+        value = value.get(key, False)
     elif isinstance(value, str):
         parsed = _try_parse_json(value)
         if isinstance(parsed, dict):
-            value = parsed.get("shopping", False)
+            value = parsed.get(key, False)
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value) if isinstance(value, (int, float)) else False
+
+
+# Normalize the explicit shopping opt-in argument to a bool.
+def coerce_search_shopping(value: Any = None) -> bool:
+    return _coerce_bool_opt(value, "shopping")
+
+
+# Normalize the explicit academic opt-in argument to a bool.
+def coerce_search_academic(value: Any = None) -> bool:
+    return _coerce_bool_opt(value, "academic")

@@ -98,7 +98,10 @@ class HttpxTransport:
                 headers=headers,
                 cookies=request.cookies or None,
             )
-        return TransportResponse(status=response.status_code, body=response.content, transport="httpx")
+        return TransportResponse(
+            status=response.status_code, body=response.content,
+            transport="httpx", set_cookie=list(response.headers.get_list("set-cookie")),
+        )
 
     # No persistent client to close.
     async def close(self) -> None:

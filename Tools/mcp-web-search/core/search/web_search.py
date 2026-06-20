@@ -245,6 +245,45 @@ def _shopping_product_dict(product: Any, *, citation_id: str, rank: int) -> dict
     }
 
 
+# Adapt one academic paper into a citable source dict. Authors/year/venue/DOI go into the
+# snippet (model_context-visible) and the abstract feeds the markdown body so the model can
+# cite without a page fetch; structured fields are kept for richer UI.
+def _academic_paper_dict(paper: Any, *, citation_id: str, rank: int) -> dict[str, Any]:
+    authors = list(getattr(paper, "authors", []) or [])
+    author_str = ", ".join(authors[:3]) + (" et al." if len(authors) > 3 else "")
+    year = getattr(paper, "year", None)
+    venue = str(getattr(paper, "venue", "") or "")
+    doi = str(getattr(paper, "doi", "") or "")
+    cites = getattr(paper, "citations", None)
+    head = " · ".join(b for b in (
+        author_str, str(year) if year else "", venue,
+        f"{cites} citations" if cites else "",
+    ) if b)
+    abstract = str(getattr(paper, "abstract", "") or "")
+    source = str(getattr(paper, "source", "") or "academic")
+    return {
+        "id": citation_id,
+        "rank": rank,
+        "kind": "academic",
+        "url": str(getattr(paper, "url", "") or ""),
+        "host": str(getattr(paper, "source_domain", "") or source),
+        "title": str(getattr(paper, "title", "") or ""),
+        "snippet": (f"{head}\n{abstract}" if head else abstract)[:600],
+        "engine": f"academic:{source}",
+        "score": float(getattr(paper, "confidence", 0.0) or 0.0),
+        "consensus_families": [],
+        "authors": authors,
+        "year": year,
+        "venue": venue,
+        "doi": doi,
+        "citations": cites,
+        "open_access": bool(getattr(paper, "open_access", False)),
+        "abstract": abstract,
+        "source": source,
+        **({"pdf_url": pdf} if (pdf := str(getattr(paper, "pdf_url", "") or "")) else {}),
+    }
+
+
 # UI metadata block (source chips) the chat bridge surfaces alongside model_context.
 def _build_ui(sources: list[dict[str, Any]]) -> dict[str, Any]:
     chips = [
@@ -401,6 +440,7 @@ class WebSearchService:
         safesearch: str = "moderate",
         timelimit: str | None = None,
         shopping: bool = False,
+        academic: bool = False,
     ) -> dict[str, Any]:
         profile = EFFORT_PROFILES.get(effort, EFFORT_PROFILES["low"])
         started = time.perf_counter()
@@ -616,6 +656,15 @@ class WebSearchService:
                 )
             )
 
+        # Academic opt-in: merge structured scholarly results (paper/authors/DOI/abstract)
+        # in as additional citable sources. Off by default; failure is soft.
+        if academic:
+            source_dicts.extend(
+                await self._academic_sources(
+                    query, profile, search_id, start_rank=len(source_dicts) + 1
+                )
+            )
+
         model_context = _build_model_context(
             query, source_dicts,
             total_budget=int(search_cfg.total_context_budget or 0),
@@ -626,6 +675,7 @@ class WebSearchService:
             "search_id": search_id,
             "effort": profile.name,
             "shopping": shopping,
+            "academic": academic,
             "language": language,
             "region": region,
             "engines_used": [engine.name for engine in engines],
@@ -658,6 +708,29 @@ class WebSearchService:
         ]
         if dicts:
             logger.info("shopping.merged products=%d query=%r", len(dicts), query[:120])
+        return dicts
+
+    # Run the academic engine and adapt papers into citable source dicts (continuing the
+    # citation-handle sequence). Soft-fails to [] so a scholarly error never sinks a search.
+    async def _academic_sources(
+        self, query: str, profile: EffortProfile, search_id: str, *, start_rank: int
+    ) -> list[dict[str, Any]]:
+        try:
+            from core.fetch.academic import search_academic
+
+            result = await search_academic(
+                query, effort=profile.name, limit=profile.max_results
+            )
+        except Exception:  # noqa: BLE001 — academic is supplemental; never fail the search
+            logger.warning("academic search failed for %r", query[:160], exc_info=True)
+            return []
+        dicts = [
+            _academic_paper_dict(p, citation_id=_citation_id(search_id, start_rank + i),
+                                 rank=start_rank + i)
+            for i, p in enumerate(result.papers)
+        ]
+        if dicts:
+            logger.info("academic.merged papers=%d query=%r", len(dicts), query[:120])
         return dicts
 
 
@@ -694,6 +767,7 @@ async def run_web_search(
     safesearch: str = "moderate",
     timelimit: str | None = None,
     shopping: bool = False,
+    academic: bool = False,
 ) -> dict[str, Any]:
     from core.cache.hosted_cache import get_hosted_cache
     from core.config import load_search_config
@@ -704,9 +778,9 @@ async def run_web_search(
     cache_cfg = load_search_config().cache
     tracker = get_recent_tracker()
     cache = get_hosted_cache()
-    # shopping is part of the cache/repeat key: shopping and non-shopping runs differ.
+    # shopping/academic are part of the cache/repeat key: vertical and plain runs differ.
     key_args = dict(region=region, safesearch=safesearch, timelimit=timelimit,
-                    effort=effort, shopping=shopping)
+                    effort=effort, shopping=shopping, academic=academic)
     qkey = tracker.query_key(query, **key_args)
 
     # 1. Identical query just served → hard block, no engines.
@@ -722,7 +796,7 @@ async def run_web_search(
     else:
         payload = await WebSearchService().search(
             query, effort=effort, region=region, safesearch=safesearch,
-            timelimit=timelimit, shopping=shopping,
+            timelimit=timelimit, shopping=shopping, academic=academic,
         )
         payload["cached"] = False
         cache.set(query, payload, is_empty=not payload.get("sources"), **key_args)

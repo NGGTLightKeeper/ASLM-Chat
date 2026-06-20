@@ -37,6 +37,9 @@ class EngineRequest:
     cookies: dict[str, str] = field(default_factory=dict)
     primp_target: str = "chrome_131"
     primp_os: str = "windows"
+    # The engine that owns this request's identity (e.g. "startpage"). Keys the persistent
+    # HTTP cookie history (Stage B) so each engine replays and accumulates its own cookies.
+    identity_key: str = ""
 
 
 # Mutable result container produced by each engine parser.

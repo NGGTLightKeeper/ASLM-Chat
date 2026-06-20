@@ -66,6 +66,7 @@ class YepParser:
             headers=headers,
             primp_target=profile.primp_target,
             primp_os=profile.primp_os,
+            identity_key="yep",
         )
 
     # Parse Yep's JSON response and strip highlight markup from snippets.

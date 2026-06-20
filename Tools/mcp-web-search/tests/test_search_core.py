@@ -148,6 +148,7 @@ def test_breaker_degradation_short_cooldown_and_recovery():
     clock.now = DEGRADATION_COOLDOWN + 1
     assert tracker.allow("yandex")
     tracker.record("yandex", status="success", fetch_ms=520, results=10)
+    clock.now += 5  # past the jittered Stage C pace gate set by the probe fire
     assert tracker.allow("yandex")  # closed again
 
 
@@ -175,6 +176,24 @@ def test_breaker_abandoned_probe_is_expired_not_wedged():
     # Outcome never arrives; once the probe ages past the timeout it is reclaimed.
     clock.now += PROBE_TIMEOUT + 1
     assert tracker.allow("qwant")
+
+
+# --- Stage C pacing --------------------------------------------------------------
+
+def test_pacing_holds_engine_within_min_interval():
+    clock = _Clock()
+    tracker = EngineHealthTracker(clock=clock)
+    assert tracker.allow("brave")        # first fire admitted (and paced)
+    assert not tracker.allow("brave")    # within the ~6s min-interval → held back
+    clock.now += 8.0                      # past the jittered interval (max 6*1.25=7.5s)
+    assert tracker.allow("brave")        # interval elapsed → allowed again
+
+
+def test_pacing_skipped_for_tolerant_engines():
+    clock = _Clock()
+    tracker = EngineHealthTracker(clock=clock)
+    assert tracker.allow("yep")          # yep min-interval is 0
+    assert tracker.allow("yep")          # so an immediate re-fire is allowed
 
 
 # --- engine selection ------------------------------------------------------------

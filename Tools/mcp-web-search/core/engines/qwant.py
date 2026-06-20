@@ -68,6 +68,7 @@ class QwantParser:
             headers=headers,
             primp_target=profile.primp_target,
             primp_os=profile.primp_os,
+            identity_key="qwant",
         )
 
     # Parse Qwant's JSON response, excluding ads and non-web modules.

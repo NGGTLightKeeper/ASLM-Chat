@@ -76,6 +76,7 @@ class BraveParser:
             cookies=cookies,
             primp_target=profile.primp_target,
             primp_os=profile.primp_os,
+            identity_key="brave",
         )
 
     # Parse a raw Brave SERP HTML document into an EngineParseResult.
