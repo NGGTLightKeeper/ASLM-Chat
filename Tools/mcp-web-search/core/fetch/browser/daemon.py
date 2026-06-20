@@ -42,6 +42,7 @@ from aiohttp import web
 
 from core.fetch.antibot import is_antibot
 from core.fetch.browser.identity_store import IdentityStore, get_identity_store
+from core.fetch.browser.tempjanitor import sweep_stale_browser_temp
 from core.logging_setup import setup_logging
 
 logger = logging.getLogger("core.fetch.browser.daemon")
@@ -436,6 +437,12 @@ class BrowserDaemon:
 
 async def _serve(args: argparse.Namespace) -> None:
     setup_logging()  # the daemon is windowless when autostarted — logs must go to a file
+    # Reap browser temp profiles orphaned by earlier killed/crashed daemons before launching
+    # our own (off the event loop — rmtree over many dirs can stall).
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, sweep_stale_browser_temp)
+    except Exception as exc:  # noqa: BLE001 — janitor must never block startup
+        logger.debug("temp janitor at startup failed: %s", exc)
     daemon = BrowserDaemon(args)
     idle = f"idle-shutdown={args.idle_shutdown_sec:.0f}s" if args.idle_shutdown_sec > 0 else "eternal"
     logger.info("warm browser daemon: chromium headless=%s proxy=%s %s",

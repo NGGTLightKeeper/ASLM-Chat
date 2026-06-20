@@ -95,6 +95,7 @@ class IdentityStore:
             conn = sqlite3.connect(self._db_path, check_same_thread=False, timeout=10)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA journal_size_limit=8388608")  # 8 MiB — truncate -wal after checkpoint
             conn.execute("PRAGMA busy_timeout=5000")
             self._local.conn = conn
         return conn
