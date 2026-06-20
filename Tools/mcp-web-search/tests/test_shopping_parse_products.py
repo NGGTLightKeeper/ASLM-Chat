@@ -106,3 +106,39 @@ def test_parse_products_keeps_card_with_price() -> None:
     assert products[0].price_value == pytest.approx(123.45)
     assert products[0].currency == "GBP"
     assert not hasattr(products[0], "image_url")
+
+
+@pytest.mark.unit
+def test_parse_products_drops_price_filter_facets() -> None:
+    html = (
+        '<div class="filters">'
+        '<a href="https://bing.example/filter/under-10">Unter 10 €</a>'
+        '<a href="https://bing.example/filter/10-20">10 € - 20 €</a>'
+        '<a href="https://bing.example/filter/over-30">Über 30 €</a>'
+        '</div>'
+    )
+
+    products = parse_products(
+        html,
+        provider="bing_shopping",
+        lane="secondary",
+        method="curl_cffi",
+        base_url="https://www.bing.com/shop?q=test",
+        default_currency="EUR",
+    )
+
+    assert products == []
+
+
+@pytest.mark.unit
+def test_parse_products_drops_short_anchor_when_price_is_only_nearby_context() -> None:
+    html = (
+        '<div class="card">'
+        '<a href="https://example.com/category/accessories">Accessories</a>'
+        '<span>Samsung Galaxy S26 Ultra glass £8.60</span>'
+        '</div>'
+    )
+
+    products = _parse(html)
+
+    assert products == []

@@ -164,7 +164,6 @@ def _result_hash(results: list[SearchResult]) -> int:
 _ENGINE_KEY_ATTR: dict[str, str] = {
     "tavily":  "tavily_api_key",
     "brave":   "brave_api_key",
-    "bing":    "bing_api_key",
     "serpapi": "serpapi_api_key",
 }
 
@@ -354,82 +353,6 @@ class BraveClient:
         return results
 
 
-# Bing Web Search API v7.
-class BingClient:
-
-    BASE_URL = "https://api.bing.microsoft.com/v7.0/search"
-    TIMEOUT = 10.0
-
-    _FRESHNESS_MAP = {"d": "Day", "w": "Week", "m": "Month"}
-
-    # GET web search results and retain the full provider payload.
-    def search_with_content(
-        self,
-        query: str,
-        max_results: int = 10,
-        *,
-        timelimit: Optional[str] = None,
-    ) -> tuple[list[SearchResult], dict[str, str]]:
-        import requests
-
-        api_key = load_api_keys().search.bing_api_key
-        if not api_key:
-            return [], {}
-
-        params: dict = {"q": query, "count": min(max_results, 50), "responseFilter": "Webpages"}
-        if timelimit and timelimit in self._FRESHNESS_MAP:
-            params["freshness"] = self._FRESHNESS_MAP[timelimit]
-
-        try:
-            resp = requests.get(
-                self.BASE_URL,
-                params=params,
-                headers={"Ocp-Apim-Subscription-Key": api_key},
-                timeout=self.TIMEOUT,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as exc:
-            logger.warning("[bing] request failed: %s", exc)
-            return [], {}
-
-        out: list[SearchResult] = []
-        content_map: dict[str, str] = {}
-        for item in data.get("webPages", {}).get("value", []):
-            url = item.get("url") or ""
-            title = item.get("name") or ""
-            snippet = item.get("snippet") or ""
-            if not url:
-                continue
-            full_text = _hosted_item_content(
-                item,
-                first_fields=("name", "snippet", "datePublished", "dateLastCrawled"),
-            )
-            if full_text:
-                content_map[url] = full_text
-            out.append(SearchResult(
-                url=url,
-                title=title,
-                snippet=snippet[:2000],
-                engine="hosted:bing",
-                published_date=str(item.get("datePublished") or item.get("dateLastCrawled") or ""),
-                provider_content=full_text,
-            ))
-        return out, content_map
-
-    def search(
-        self,
-        query: str,
-        max_results: int = 10,
-        *,
-        timelimit: Optional[str] = None,
-    ) -> list[SearchResult]:
-        results, _ = self.search_with_content(
-            query, max_results, timelimit=timelimit,
-        )
-        return results
-
-
 # SerpAPI Google engine (GET /search.json).
 class SerpApiClient:
 
@@ -525,7 +448,6 @@ def _sanitize_query_for_api(query: str) -> str:
 _CLIENTS: dict[str, object] = {
     "tavily":  TavilyClient(),
     "brave":   BraveClient(),
-    "bing":    BingClient(),
     "serpapi": SerpApiClient(),
 }
 

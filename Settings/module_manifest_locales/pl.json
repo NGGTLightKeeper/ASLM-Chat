@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "Moduł ASLM Chat",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "Konfiguracja początkowa",
+                "description": "Tworzy plik settings.json i stosuje migracje bazy danych"
+            }
+        ],
+        "run": [
+            {
+                "name": "Serwer interfejsu",
+                "description": "Uruchamia serwer deweloperski Django"
+            },
+            {
+                "name": "Środowisko uruchomieniowe Ollama",
+                "description": "Uruchamia zarządzaną usługę Ollama w osobnej sesji konsoli"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "Port serwera interfejsu",
+            "description": "Port, na którym nasłuchuje serwer interfejsu"
+        },
+        "api-port": {
+            "name": "Port serwera API",
+            "description": "Port, na którym nasłuchuje serwer API"
+        },
+        "aslm-host-theme": {
+            "name": "Motyw hosta ASLM",
+            "description": "Migawka motywu z aplikacji ASLM; stosowana przy każdym uruchomieniu modułu. Zarządzana wyłącznie przez ASLM."
+        },
+        "aslm-host-locale": {
+            "name": "Lokalizacja hosta ASLM",
+            "description": "Migawka języka z aplikacji ASLM; stosowana przy każdym uruchomieniu modułu. Zarządzana wyłącznie przez ASLM."
+        },
+        "console_log_level": {
+            "name": "Poziom logowania konsoli",
+            "description": "Ile szczegółów działania ASLM-Chat wypisuje w konsoli ASLM."
+        },
+        "llm-engine": {
+            "name": "Aktywny silnik LLM",
+            "description": "Silnik używany do generowania w interfejsie czatu"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "Czy usługa wnioskowania Ollama jest zainstalowana"
+        },
+        "ollama-service_path": {
+            "name": "Ścieżka Ollama",
+            "description": "Ścieżka do pliku wykonywalnego Ollama"
+        },
+        "ollama-service_data": {
+            "name": "Dane Ollama",
+            "description": "Ścieżka do katalogu danych Ollama"
+        },
+        "ollama-service_models": {
+            "name": "Modele Ollama",
+            "description": "Ścieżka do katalogu modeli Ollama"
+        },
+        "ollama-service_port": {
+            "name": "Port Ollama",
+            "description": "Port, na którym nasłuchuje lokalna usługa Ollama"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "Czy integracja z LM Studio jest dostępna"
+        },
+        "lms_url": {
+            "name": "Adres LM Studio",
+            "description": "Bazowy adres API serwera LM Studio"
+        },
+        "openai": {
+            "name": "API zgodne z OpenAI",
+            "description": "Czy dostępny jest punkt końcowy API zgodny z OpenAI"
+        },
+        "openai_url": {
+            "name": "Adres API zgodnego z OpenAI",
+            "description": "Bazowy adres URL punktu końcowego API zgodnego z OpenAI"
+        },
+        "openai_api_key": {
+            "name": "Klucz API zgodnego z OpenAI",
+            "description": "Opcjonalny klucz API dla zabezpieczonych punktów końcowych"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "Czy integracja z Google GenAI jest dostępna"
+        },
+        "google_genai_url": {
+            "name": "Adres Google GenAI",
+            "description": "Bazowy adres URL punktu końcowego API Google GenAI Gemini"
+        },
+        "google_genai_api_key": {
+            "name": "Klucz API Google GenAI",
+            "description": "Klucz API do żądań API Google GenAI Gemini"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Modele Ollama",
+                "description": "Modele opublikowane w oficjalnej bibliotece Ollama."
+            }
+        ]
+    }
+}

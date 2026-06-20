@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from core.query.aslm_embedding_models import (
@@ -61,8 +62,15 @@ def ensure_embedding_export(repo_id: str, local_dir: Path) -> None:
 # Ensure encoder and decoder exports exist under Tools/mcp-web-search/models/.
 def ensure_aslm_embedding_models() -> None:
     maybe_migrate_legacy_dirs()
-    ensure_embedding_export(ENCODER_REPO_ID, encoder_export_path())
-    ensure_embedding_export(DECODER_REPO_ID, decoder_export_path())
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        encoder_future = executor.submit(
+            ensure_embedding_export, ENCODER_REPO_ID, encoder_export_path()
+        )
+        decoder_future = executor.submit(
+            ensure_embedding_export, DECODER_REPO_ID, decoder_export_path()
+        )
+        encoder_future.result()
+        decoder_future.result()
 
 
 if __name__ == "__main__":

@@ -22,7 +22,14 @@ _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
 # Write success JSON (html, url, title, inner_text) to stdout.
-def _ok(html: str, url: str, title: str, inner_text: str = "") -> None:
+def _ok(
+    html: str,
+    url: str,
+    title: str,
+    inner_text: str = "",
+    *,
+    payload_kind: str = "html",
+) -> None:
     sys.stdout.write(
         json.dumps(
             {
@@ -32,6 +39,7 @@ def _ok(html: str, url: str, title: str, inner_text: str = "") -> None:
                 "title": title,
                 "method": "camoufox",
                 "inner_text": inner_text,
+                "payload_kind": payload_kind,
             },
             ensure_ascii=False,
         )
@@ -167,6 +175,8 @@ async def _fetch(payload: dict) -> None:
     warmup_urls: list = list(payload.get("warmup_urls") or ["https://www.wikipedia.org/"])
     warmup_count: int = int(payload.get("warmup_count", 1))
     timeout_sec: float = float(payload.get("timeout_sec", 45.0))
+    fetch_json_from_page: bool = bool(payload.get("fetch_json_from_page"))
+    json_query: str = str(payload.get("json_query") or "")
 
     try:
         from camoufox.async_api import AsyncCamoufox
@@ -193,8 +203,46 @@ async def _fetch(payload: dict) -> None:
             await page.goto(
                 url,
                 timeout=int(timeout_sec * 1000),
-                wait_until="load",
+                wait_until="domcontentloaded" if fetch_json_from_page else "load",
             )
+            if fetch_json_from_page:
+                try:
+                    await page.wait_for_function(
+                        "document.body && document.body.innerText.trim().length > 80",
+                        timeout=int(wait_sec * 1000),
+                    )
+                except Exception:
+                    await asyncio.sleep(min(wait_sec, 2.0))
+
+                body_text = ""
+                try:
+                    body_text = await page.evaluate("document.body.innerText") or ""
+                except Exception:
+                    pass
+                if "blocked by network security" in body_text.lower():
+                    _fail(f"antibot wall on thread page {url}")
+                    return
+
+                json_text = await page.evaluate(
+                    """async (query) => {
+                        const path = window.location.pathname.replace(/\\/$/, '') + '.json';
+                        const target = query ? `${path}?${query}` : path;
+                        const resp = await fetch(target, {
+                            credentials: 'include',
+                            headers: { 'Accept': 'application/json' },
+                        });
+                        if (!resp.ok) return '';
+                        return await resp.text();
+                    }""",
+                    json_query,
+                )
+                json_text = (json_text or "").strip()
+                if not json_text or not json_text.startswith("["):
+                    _fail(f"empty or invalid reddit json from in-page fetch for {url}")
+                    return
+                _ok(json_text, url=url, title="", inner_text=json_text, payload_kind="json")
+                return
+
             try:
                 await page.wait_for_function(
                     "document.body.innerText.trim().length > 500",

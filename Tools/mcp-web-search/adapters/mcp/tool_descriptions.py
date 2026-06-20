@@ -21,27 +21,37 @@ EFFORT:
                    per-request partial source buffer that was already found.
   effort="medium"  default mode, typically ~10-20s. It keeps the current search
                    behavior: ranking, triage, normal scraping, and parsed
-                   previews. Best for ordinary cited answers.
+                   previews. Use this first for ordinary cited answers,
+                   shopping, recommendations, reviews, and comparisons.
   effort="high"    expanded mode, typically ~15-60s. It gives the current
                    search/scoring/scraping budget about 3x more room and uses
-                   a larger source pool. Best when source coverage matters more
-                   than latency.
+                   a larger source pool. This is an exceptional escalation:
+                   use it only for explicitly exhaustive or high-stakes work,
+                   or after medium leaves an important claim unresolved. Do not
+                   use it first for ordinary shopping or recommendations.
+
+SHOPPING:
+  shopping=false    default. Never runs shopping providers.
+  shopping=true     use when the user needs a specific product, its price,
+                    where to buy it, or availability. The query must contain
+                    only the thing being searched — model, spec, SKU, or product
+                    phrase.
+                    Keep false for technical meanings such as payload delivery,
+                    deployment, or supply-chain analysis.
 
 QUALITY GATE (enforced automatically):
   The engine validates every query before sending it to the network.
   Only extreme violations return a BAD_QUERY error you must resolve:
-  - Explicit SEO-style superlatives and clickbait phrases that surface marketing
-    pages instead of evidence (e.g. "best", "top", "#1", "ultimate",
-    "complete guide", and close equivalents in other languages). Ordinary
-    research intents such as review, comparison, ranking, how to, or what is are
-    valid when paired with specific nouns and identifiers.
+  - Piles of multiple SEO-style superlatives and clickbait phrases that surface
+    marketing pages instead of evidence. A single natural intent word such as
+    "best" or its equivalent is allowed when paired with specific nouns and
+    identifiers.
   - More than 18 content words - operators (site:, -site:, OR, "phrases")
     are free and do not count toward the limit, but they also do not reduce
     the existing content-word count: adding operators cannot make an
     overlong query valid. Plain filler words do.
-  If high effort is exhausted:
-  - retry the good query with effort="medium"; if needed, use effort="low" for
-    additional discovery and read_page for shortlisted URLs.
+  High already expands the lower-effort search budget. Do not retry the same
+  intent with medium or low after high; answer from the collected evidence.
     
 OPERATORS (ASCII only - never translate):
   site:domain.com           restrict to domain and subdomains
@@ -55,11 +65,11 @@ OPERATORS (ASCII only - never translate):
     Use site:reddit.com, site:github.com, site:arxiv.org instead.
   - Always quote exact error messages: "ModuleNotFoundError: No module named 'x'"
 
-LAYERED QUERIES - one narrow query beats one broad one:
+LAYERED QUERIES - use only when the first result leaves a distinct claim unresolved:
   1. Discover the exact name / version:  pytorch 2.3 release
   2. Drill into it:  "torch.compile" Python 3.12 site:github.com
   3. Cross-check a claim:  torch.compile site:pytorch.org
-  Issue steps as separate calls; never bundle them.
+  Stop as soon as the request is answerable. Do not run all layers by default.
 
 WHAT IT CAN READ:
   PDF       - any domain (.pdf URL or PDF bytes detected automatically)

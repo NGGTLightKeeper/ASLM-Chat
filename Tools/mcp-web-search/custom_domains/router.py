@@ -64,7 +64,7 @@ async def _amazon_fetch(url: str, timeout: float) -> str | None:
 
 # Reddit JSON thread → markdown; drop error strings.
 async def _reddit_fetch(url: str, timeout: float) -> str | None:
-    text = await fetch_reddit_json(url)
+    text = await fetch_reddit_json(url, timeout=timeout)
     if text and not text.startswith("Error:"):
         return text
     return None

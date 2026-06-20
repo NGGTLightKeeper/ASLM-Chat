@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "ASLM Chat मॉड्यूल",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "प्रारंभिक सेटअप",
+                "description": "settings.json बनाता है और डेटाबेस माइग्रेशन लागू करता है"
+            }
+        ],
+        "run": [
+            {
+                "name": "UI सर्वर",
+                "description": "Django डेवलपमेंट सर्वर चालू करता है"
+            },
+            {
+                "name": "Ollama रनटाइम",
+                "description": "समर्पित कंसोल सत्र में प्रबंधित Ollama सेवा चालू करता है"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "UI सर्वर पोर्ट",
+            "description": "पोर्ट जिस पर UI सर्वर सुनता है"
+        },
+        "api-port": {
+            "name": "API सर्वर पोर्ट",
+            "description": "पोर्ट जिस पर API सर्वर सुनता है"
+        },
+        "aslm-host-theme": {
+            "name": "ASLM होस्ट थीम",
+            "description": "ASLM ऐप से थीम का स्नैपशॉट; प्रत्येक मॉड्यूल शुरू होने पर लागू होता है। केवल ASLM द्वारा प्रबंधित।"
+        },
+        "aslm-host-locale": {
+            "name": "ASLM होस्ट भाषा",
+            "description": "ASLM ऐप से भाषा का स्नैपशॉट; प्रत्येक मॉड्यूल शुरू होने पर लागू होता है। केवल ASLM द्वारा प्रबंधित।"
+        },
+        "console_log_level": {
+            "name": "कंसोल लॉग स्तर",
+            "description": "ASLM-Chat ASLM कंसोल में कितना रनटाइम विवरण प्रिंट करता है"
+        },
+        "llm-engine": {
+            "name": "सक्रिय LLM इंजन",
+            "description": "चैट UI में जनरेशन के लिए उपयोग किया जाने वाला इंजन"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "क्या Ollama इन्फरेंस सेवा स्थापित है"
+        },
+        "ollama-service_path": {
+            "name": "Ollama पथ",
+            "description": "Ollama निष्पादन योग्य फ़ाइल का पथ"
+        },
+        "ollama-service_data": {
+            "name": "Ollama डेटा",
+            "description": "Ollama डेटा निर्देशिका का पथ"
+        },
+        "ollama-service_models": {
+            "name": "Ollama मॉडल",
+            "description": "Ollama मॉडल निर्देशिका का पथ"
+        },
+        "ollama-service_port": {
+            "name": "Ollama पोर्ट",
+            "description": "पोर्ट जिस पर स्थानीय Ollama सेवा सुनती है"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "क्या LM Studio एकीकरण उपलब्ध है"
+        },
+        "lms_url": {
+            "name": "LM Studio पता",
+            "description": "LM Studio सर्वर API का आधार पता"
+        },
+        "openai": {
+            "name": "OpenAI-संगत API",
+            "description": "क्या OpenAI-संगत API एंडपॉइंट उपलब्ध है"
+        },
+        "openai_url": {
+            "name": "OpenAI-संगत पता",
+            "description": "OpenAI-संगत API एंडपॉइंट का आधार URL"
+        },
+        "openai_api_key": {
+            "name": "OpenAI-संगत API कुंजी",
+            "description": "सुरक्षित एंडपॉइंट के लिए वैकल्पिक API कुंजी"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "क्या Google GenAI एकीकरण उपलब्ध है"
+        },
+        "google_genai_url": {
+            "name": "Google GenAI पता",
+            "description": "Google GenAI Gemini API एंडपॉइंट का आधार URL"
+        },
+        "google_genai_api_key": {
+            "name": "Google GenAI API कुंजी",
+            "description": "Google GenAI Gemini API अनुरोधों के लिए API कुंजी"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Ollama मॉडल",
+                "description": "आधिकारिक Ollama लाइब्रेरी में प्रकाशित मॉडल।"
+            }
+        ]
+    }
+}

@@ -1,24 +1,25 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - 高级系统语言模型",
-    "profileTitle": "个人资料 - ASLM Chat"
+    "appDescription": "ASLM - 高级系统语言模型"
   },
   "sidebar": {
+    "recent": "最近",
     "chats": "对话",
     "newChat": "新对话",
     "noPreviousChats": "暂无历史对话",
     "chatOptions": "对话选项",
     "rename": "重命名",
     "delete": "删除",
-    "account": "账户",
     "ago": "{time}前"
   },
   "chat": {
     "newChat": "新对话",
     "attachmentChat": "附件对话",
     "howCanIHelp": "有什么可以帮您的？",
-    "welcomeTitle": "有什么可以帮您的？"
+    "welcomeTitle": "有什么可以帮您的？",
+    "renameTitle": "重命名对话",
+    "renameLabel": "对话名称"
   },
   "composer": {
     "placeholder": "向 ASLM 发送消息...",
@@ -27,7 +28,7 @@
     "tools": "工具",
     "other": "其他",
     "reasoningEffort": "推理强度",
-    "intelligence": "智能程度",
+    "intelligence": "思考",
     "off": "关闭",
     "sendMessage": "发送消息",
     "queueMessage": "排队发送",
@@ -74,19 +75,10 @@
     "settings": "设置",
     "sampling": "采样",
     "advanced": "高级",
-    "custom": "自定义"
-  },
-  "profile": {
-    "backToChat": "返回对话",
-    "account": "账户",
-    "user": "用户",
-    "localAccount": "本地账户",
-    "general": "常规",
-    "username": "用户名",
-    "email": "电子邮箱",
-    "memberSince": "注册时间",
-    "dangerZone": "危险操作",
-    "signOut": "退出登录"
+    "custom": "自定义",
+    "presetNameLabel": "预设名称",
+    "presetNewTitle": "新建预设",
+    "presetRenameTitle": "重命名预设"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -185,11 +177,6 @@
     "renameFolderAria": "重命名文件夹",
     "renameFileAria": "重命名文件",
     "deleteFileAria": "删除文件",
-    "dialogOk": "确定",
-    "dialogCancel": "取消",
-    "dialogConfirm": "确认",
-    "dialogInput": "输入",
-    "valueRequired": "必须填写值。",
     "createSkill": "创建技能",
     "skillNamePlaceholder": "skill-name",
     "create": "创建",
@@ -233,6 +220,13 @@
     "importNoSupported": "未找到支持的文本文件（.md、.txt、.py 等）。",
     "importNoSupportedFor": "未找到「{name}」的支持文件。"
   },
+  "dialog": {
+    "ok": "确定",
+    "cancel": "取消",
+    "confirm": "确认",
+    "input": "输入",
+    "valueRequired": "必须填写值。"
+  },
   "errors": {
     "generic": "出了点问题",
     "network": "网络错误"
@@ -241,7 +235,9 @@
     "deleteChat": "删除此对话？",
     "deleteChatNamed": "删除「{title}」？",
     "deletePreset": "删除预设「{name}」？",
-    "unsaved": "您有未保存的更改。"
+    "unsaved": "您有未保存的更改。",
+    "deleteChatTitle": "删除对话",
+    "deletePresetTitle": "删除预设"
   },
   "toolInspector": {
     "title": "工具检查器",
@@ -451,6 +447,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name}（{count} 个工具）",
     "cancel": "取消",
-    "save": "保存"
+    "save": "保存",
+    "noServers": "没有 MCP 服务器"
   }
 }

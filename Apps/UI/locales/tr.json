@@ -1,24 +1,25 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - Gelişmiş Sistem Dil Modelleri",
-    "profileTitle": "Profil - ASLM Chat"
+    "appDescription": "ASLM - Gelişmiş Sistem Dil Modelleri"
   },
   "sidebar": {
+    "recent": "Son",
     "chats": "Sohbetler",
     "newChat": "Yeni Sohbet",
     "noPreviousChats": "Önceki sohbet yok",
     "chatOptions": "Sohbet seçenekleri",
     "rename": "Yeniden adlandır",
     "delete": "Sil",
-    "account": "Hesap",
     "ago": "{time} önce"
   },
   "chat": {
     "newChat": "Yeni Sohbet",
     "attachmentChat": "Ek dosyalı sohbet",
     "howCanIHelp": "Size nasıl yardımcı olabilirim?",
-    "welcomeTitle": "Size nasıl yardımcı olabilirim?"
+    "welcomeTitle": "Size nasıl yardımcı olabilirim?",
+    "renameTitle": "Sohbeti yeniden adlandır",
+    "renameLabel": "Sohbet adı"
   },
   "composer": {
     "placeholder": "ASLM'e mesaj yazın...",
@@ -27,7 +28,7 @@
     "tools": "Araçlar",
     "other": "Diğer",
     "reasoningEffort": "Akıl yürütme düzeyi",
-    "intelligence": "Zeka",
+    "intelligence": "Düşünme",
     "off": "Kapalı",
     "sendMessage": "Mesaj Gönder",
     "queueMessage": "Mesajı kuyruğa al",
@@ -74,19 +75,10 @@
     "settings": "Ayarlar",
     "sampling": "Örnekleme",
     "advanced": "Gelişmiş",
-    "custom": "Özel"
-  },
-  "profile": {
-    "backToChat": "Sohbete dön",
-    "account": "Hesap",
-    "user": "Kullanıcı",
-    "localAccount": "Yerel hesap",
-    "general": "Genel",
-    "username": "Kullanıcı adı",
-    "email": "E-posta",
-    "memberSince": "Üyelik tarihi",
-    "dangerZone": "Tehlikeli Bölge",
-    "signOut": "Oturumu kapat"
+    "custom": "Özel",
+    "presetNameLabel": "Ön ayar adı",
+    "presetNewTitle": "Yeni ön ayar",
+    "presetRenameTitle": "Ön ayarı yeniden adlandır"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -185,11 +177,6 @@
     "renameFolderAria": "Klasörü yeniden adlandır",
     "renameFileAria": "Dosyayı yeniden adlandır",
     "deleteFileAria": "Dosyayı sil",
-    "dialogOk": "Tamam",
-    "dialogCancel": "İptal",
-    "dialogConfirm": "Onayla",
-    "dialogInput": "Giriş",
-    "valueRequired": "Değer gerekli.",
     "createSkill": "Beceri oluştur",
     "skillNamePlaceholder": "beceri-adi",
     "create": "Oluştur",
@@ -233,6 +220,13 @@
     "importNoSupported": "Desteklenen metin dosyası yok (.md, .txt, .py, …).",
     "importNoSupportedFor": "\"{name}\" için desteklenen dosya yok."
   },
+  "dialog": {
+    "ok": "Tamam",
+    "cancel": "İptal",
+    "confirm": "Onayla",
+    "input": "Giriş",
+    "valueRequired": "Değer gerekli."
+  },
   "errors": {
     "generic": "Bir şeyler ters gitti",
     "network": "Ağ hatası"
@@ -241,7 +235,9 @@
     "deleteChat": "Bu sohbet silinsin mi?",
     "deleteChatNamed": "\"{title}\" silinsin mi?",
     "deletePreset": "\"{name}\" ön ayarı silinsin mi?",
-    "unsaved": "Kaydedilmemiş değişiklikleriniz var."
+    "unsaved": "Kaydedilmemiş değişiklikleriniz var.",
+    "deleteChatTitle": "Sohbeti sil",
+    "deletePresetTitle": "Ön ayarı sil"
   },
   "toolInspector": {
     "title": "Araç Denetleyicisi",
@@ -451,6 +447,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} araç)",
     "cancel": "İptal",
-    "save": "Kaydet"
+    "save": "Kaydet",
+    "noServers": "MCP sunucusu yok"
   }
 }

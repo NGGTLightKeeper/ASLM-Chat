@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import sys
 from pathlib import Path
 
 # Force UTF-8 stdout so JSON with non-ASCII is transmitted cleanly.
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
+# Keep stdout JSON-only; detailed engine timing diagnostics go to captured stderr.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    stream=sys.stderr,
+)
 
 # Make core/ importable when run as a script from any working directory.
 _ROOT = Path(__file__).resolve().parents[2]
@@ -40,9 +48,11 @@ def main() -> None:
     max_results: int        = int(payload.get("max_results", 10))
     query_type: str         = str(payload.get("query_type", "general"))
     query_types             = payload.get("query_types")  # list[str] | None
+    class_weights           = payload.get("class_weights")  # dict[str, float] | None
     lang: str               = str(payload.get("lang", "en"))
     timelimit               = payload.get("timelimit")    # str | None
     hedge_count: int        = int(payload.get("hedge_count", 2))
+    routing_profile: str     = str(payload.get("routing_profile", "stability"))
 
     # DDGSClient construction params.
     proxies: list[str]        = list(payload.get("proxies") or [])
@@ -77,9 +87,11 @@ def main() -> None:
             max_results=max_results,
             query_type=query_type,
             query_types=query_types,
+            class_weights=class_weights,
             lang=lang,
             timelimit=timelimit,
             hedge_count=hedge_count,
+            routing_profile=routing_profile,
             partial_buffer_path=partial_buffer_path,
         )
     except Exception as exc:
@@ -96,6 +108,8 @@ def main() -> None:
             "score": float(r.score or 0.0),
             "method_hint": r.method_hint,
             "published_date": r.published_date,
+            "consensus_votes": int(r.consensus_votes or 1),
+            "consensus_engines": list(r.consensus_engines or []),
         }
         for r in results
     ]

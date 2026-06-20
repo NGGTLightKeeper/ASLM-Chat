@@ -15,6 +15,7 @@ import {
 } from '../main/utils.js';
 import { getJson, patchJson } from '../main/api.js';
 import { t } from '../main/i18n.js';
+import { messageDialog } from './dialogs.js';
 
 // Parameters UI.
 // Create helpers for model controls, tool selection, and option payloads.
@@ -141,51 +142,84 @@ export function createParametersUi(context) {
     renderMcpControls();
   }
 
-  // Render the user MCP settings section and server list.
+  // Render the MCP flyout entry (server list + JSON editor action) into the composer "Other" menu.
+  // Mirrors the skills entry so MCP appears as a row with a flyout, not a standalone section.
   function renderMcpControls() {
     const show = Boolean(state.toolState.supported);
-    dom.$groupMcp.toggle(show);
-    dom.$dividerMcp.toggle(show);
-    dom.$mcpSettingsContent.empty();
+    dom.$composerMcpHosts.empty();
     if (!show) {
       return;
     }
 
-    const $btn = $('<button type="button" class="preset-action-btn mcp-json-open-btn">').text(t('mcp.editConfig'));
-    $btn.on('click', function onOpenMcp() {
-      openMcpJsonEditor();
-    });
-    dom.$mcpSettingsContent.append($btn);
-
     const userList = Array.isArray(state.userMcpToolServers) ? state.userMcpToolServers : [];
-    if (userList.length > 0) {
-      const $list = $('<div class="mcp-user-tool-server-list">');
-      userList.forEach(function renderUserMcpServer(server) {
-        const serverId = normalizeToolServerId(server.id);
-        const toolCount = Number(server.tool_count || (server.tools || []).length || 0);
-        const displayName = server.name || serverId;
-        const label = toolCount > 0
-          ? t('mcp.serverTools', { name: displayName, count: toolCount })
-          : displayName;
-        const checked = state.selectedToolServerIds.has(serverId);
+    const chevron = '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
 
-        const $row = $('<label class="tool-server-row mcp-user-tool-server-row">');
-        const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
-        const $name = $('<span class="tool-server-name">').text(label);
+    dom.$composerMcpHosts.each(function renderMcpHost() {
+      const $host = $(this);
 
-        $checkbox.on('change', function onChange() {
-          if (this.checked) {
-            state.selectedToolServerIds.add(serverId);
-          } else {
-            state.selectedToolServerIds.delete(serverId);
-          }
+      const $entry = $('<div class="composer-skills-entry">');
+      const $trigger = $('<button type="button" class="composer-tool-row composer-skills-trigger" aria-haspopup="menu">');
+      const $icon = $('<span class="composer-tool-icon is-mcp" aria-hidden="true">');
+      const $name = $('<span class="tool-server-name">').text(t('settings.mcp'));
+      const $chev = $('<span class="composer-skills-chevron" aria-hidden="true">').html(chevron);
+      $trigger.append($icon).append($name).append($chev);
+
+      const $flyout = $('<div class="composer-skills-flyout composer-mcp-flyout" role="menu">').attr('aria-label', t('settings.mcp'));
+      const $list = $('<div class="composer-skills-flyout-list">');
+
+      if (!userList.length) {
+        $list.append($('<div class="composer-skills-empty">').text(t('mcp.noServers', null, 'No MCP servers')));
+      } else {
+        userList.forEach(function renderUserMcpServer(server) {
+          const serverId = normalizeToolServerId(server.id);
+          const toolCount = Number(server.tool_count || (server.tools || []).length || 0);
+          const displayName = server.name || serverId;
+          const label = toolCount > 0
+            ? t('mcp.serverTools', { name: displayName, count: toolCount })
+            : displayName;
+          const checked = state.selectedToolServerIds.has(serverId);
+
+          const $row = $('<label class="tool-server-row composer-tool-row mcp-user-tool-server-row">');
+          const $rowName = $('<span class="tool-server-name">').text(label);
+          const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
+
+          $row.on('mousedown click', function onRowPointer(ev) {
+            ev.stopPropagation();
+          });
+          $checkbox.on('mousedown click', function onCheckboxPointer(ev) {
+            ev.stopPropagation();
+          });
+          $checkbox.on('change', function onChange() {
+            if (this.checked) {
+              state.selectedToolServerIds.add(serverId);
+            } else {
+              state.selectedToolServerIds.delete(serverId);
+            }
+          });
+
+          $row.append($rowName).append($checkbox);
+          $list.append($row);
         });
+      }
 
-        $row.append($checkbox).append($name);
-        $list.append($row);
+      const $manage = $('<button type="button" class="composer-menu-action composer-skills-manage" role="menuitem">')
+        .append($('<span class="composer-tool-icon is-mcp" aria-hidden="true">'))
+        .append($('<span>').text(t('mcp.editConfig')));
+      $manage.on('click', function onOpenMcp(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        openMcpJsonEditor();
       });
-      dom.$mcpSettingsContent.append($list);
-    }
+
+      const $divider = $('<div class="composer-skills-flyout-divider" aria-hidden="true">');
+
+      $flyout.on('click', function onFlyoutClick(ev) {
+        ev.stopPropagation();
+      });
+      $flyout.append($list).append($divider).append($manage);
+      $entry.append($trigger).append($flyout);
+      $host.append($entry);
+    });
   }
 
   // MCP JSON editor helpers.
@@ -234,7 +268,7 @@ export function createParametersUi(context) {
     try {
       data = await getJson('/api/mcp_config/');
     } catch (err) {
-      window.alert(err && err.message ? err.message : String(err));
+      await messageDialog(t('errors.generic', null, 'Something went wrong'), err && err.message ? err.message : String(err));
       return;
     }
 
@@ -344,13 +378,12 @@ export function createParametersUi(context) {
     $('.settings-section').filter(function filterPanels() {
       return this.id.startsWith('group-')
         && this.id !== 'group-connection'
-        && this.id !== 'group-skills'
         && this.id !== 'group-system'
         && this.id !== 'group-model'
         && this.id !== 'group-sandbox-default';
     }).hide().find('.settings-section-content').empty();
 
-    $('.settings-divider[id^="divider-"]').not('#divider-connection, #divider-skills, #divider-sandbox-default').hide();
+    $('.settings-divider[id^="divider-"]').not('#divider-connection, #divider-sandbox-default').hide();
   }
 
 
@@ -597,6 +630,44 @@ export function createParametersUi(context) {
 
   // Parameter rendering.
   // Render one supported parameter control into its target group.
+  // Build the help icon plus its hover/focus popover (description and allowed
+  // values) for one parameter. Returns '' when there is nothing to show.
+  function buildParamHelpHtml(key, config) {
+    const note = localizedParamNote(key, config);
+    const metrics = getParameterMeta(config);
+    if (!note && !metrics.length) {
+      return '';
+    }
+    const descHtml = note ? `<p class="setting-help-desc">${note}</p>` : '';
+    const metricsHtml = metrics.length
+      ? `<div class="setting-help-metrics">${metrics.map(function metricRow(item) {
+          return `<div class="setting-help-metric"><span class="setting-help-metric-key">${item.label}</span><span class="setting-help-metric-val">${escapeAttributeValue(item.value)}</span></div>`;
+        }).join('')}</div>`
+      : '';
+    const aria = escapeAttributeValue(t('settings.paramInfo', null, 'Parameter details'));
+    return `<span class="setting-help" tabindex="0" role="button" aria-label="${aria}">`
+      + '<span class="setting-help-icon" aria-hidden="true"></span>'
+      + `<span class="setting-help-popover" role="tooltip">${descHtml}${metricsHtml}</span>`
+      + '</span>';
+  }
+
+  // Build the label lead (parameter name + help affordance) shared by all controls.
+  function buildLabelLead(key, config) {
+    return `<span class="setting-label-lead"><span class="setting-label-text">${localizedParamLabel(key, config)}</span>${buildParamHelpHtml(key, config)}</span>`;
+  }
+
+  // Inline width for the numeric value field. The minimum is fixed (in CSS) while
+  // the width grows with the widest value the field can show, so long integers
+  // (e.g. a six-digit context length) no longer overflow the box.
+  function buildSettingNumberStyle(config) {
+    const max = Number(config.max);
+    const intDigits = Number.isFinite(max) ? String(Math.floor(Math.abs(max))).length : 4;
+    const decimals = Number(config.decimals) || 0;
+    const chars = intDigits + (decimals > 0 ? decimals + 1 : 0) + (Number(config.min) < 0 ? 1 : 0);
+    return `width: calc(${chars}ch + 16px);`;
+  }
+
+  // Render one supported parameter control into its target group.
   function renderKnownParameter(key, config, value, renderOptions) {
     const options = renderOptions || {};
     const groupId = options.groupId || getParameterGroup(key);
@@ -605,10 +676,9 @@ export function createParametersUi(context) {
     const paramClass = options.paramClass || 'dyn-param';
     const paramPath = options.paramPath || key;
     const compactClass = options.compact ? ' setting-control-compact' : '';
-    const switchRowClass = options.compact ? ' setting-switch-row-compact' : '';
     const noteText = localizedParamNote(key, config);
-    const noteHtml = noteText ? `<p class="setting-note">${noteText}</p>` : '';
-    const metaHtml = renderParameterMeta(config);
+    const labelLead = buildLabelLead(key, config);
+    const numberStyle = buildSettingNumberStyle(config);
     let html = '';
 
     if (config.type === 'select') {
@@ -617,7 +687,7 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${localizedParamLabel(key, config)}
+            ${labelLead}
           </label>
           <select
             class="model-selector setting-select${compactClass} ${paramClass}"
@@ -630,20 +700,14 @@ export function createParametersUi(context) {
               const optionLabel = typeof option === 'object' ? option.label : formatExperimentalParameterLabel(String(option));
               return `<option value="${escapeAttributeValue(String(optionValue))}"${String(optionValue) === String(normalizedValue) ? ' selected' : ''}>${optionLabel}</option>`;
             }).join('')}
-          </select>
-          ${noteHtml}
-          ${metaHtml}
-        </div>
+          </select>        </div>
       `;
     } else if (config.type === 'boolean') {
       const normalizedValue = value === undefined || value === null ? !!config.fallback : !!value;
       html = `
         <div class="setting-group">
-          <label class="setting-label" for="dyn_${key}">
-            ${localizedParamLabel(key, config)}
-          </label>
-          <label class="setting-switch-row${switchRowClass}" for="dyn_${key}">
-            <span class="setting-switch-text">Enabled</span>
+          <label class="setting-label setting-label-switch" for="dyn_${key}">
+            ${labelLead}
             <span class="setting-switch-control">
               <input
                 class="setting-switch-input ${paramClass}"
@@ -655,10 +719,7 @@ export function createParametersUi(context) {
                 ${normalizedValue ? 'checked' : ''}>
               <span class="setting-switch-slider" aria-hidden="true"></span>
             </span>
-          </label>
-          ${noteHtml}
-          ${metaHtml}
-        </div>
+          </label>        </div>
       `;
     } else if (config.type === 'optional-number') {
       const isEnabled = value !== undefined && value !== null && value !== '';
@@ -666,11 +727,8 @@ export function createParametersUi(context) {
       const optionalValueType = config.decimals === 0 ? 'optional-integer' : 'optional-number';
       html = `
         <div class="setting-group">
-          <label class="setting-label" for="dyn_${key}">
-            ${localizedParamLabel(key, config)}
-          </label>
-          <label class="setting-switch-row${switchRowClass}" for="toggle_${key}">
-            <span class="setting-switch-text">Specify value</span>
+          <label class="setting-label setting-label-switch" for="toggle_${key}">
+            ${labelLead}
             <span class="setting-switch-control">
               <input
                 class="setting-switch-input optional-param-toggle"
@@ -697,17 +755,14 @@ export function createParametersUi(context) {
               title="${escapeAttributeValue(noteText || '')}"
               value="${isEnabled ? escapeAttributeValue(String(normalizedValue)) : ''}"
               ${isEnabled ? '' : 'disabled'}>
-          </div>
-          ${noteHtml}
-          ${metaHtml}
-        </div>
+          </div>        </div>
       `;
     } else if (config.type === 'json') {
       const normalizedValue = value === undefined || value === null ? config.fallback : value;
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${localizedParamLabel(key, config)}
+            ${labelLead}
           </label>
           <textarea
             class="setting-textarea${compactClass} ${paramClass}"
@@ -716,17 +771,14 @@ export function createParametersUi(context) {
             data-param-path="${paramPath}"
             data-value-type="json"
             placeholder="${escapeAttributeValue(getInputPlaceholder(config))}"
-            rows="4">${normalizedValue === null ? '' : escapeTextareaValue(JSON.stringify(normalizedValue, null, 2))}</textarea>
-          ${noteHtml}
-          ${metaHtml}
-        </div>
+            rows="4">${normalizedValue === null ? '' : escapeTextareaValue(JSON.stringify(normalizedValue, null, 2))}</textarea>        </div>
       `;
     } else if (config.type === 'string') {
       const normalizedValue = value === undefined || value === null ? config.fallback : value;
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${localizedParamLabel(key, config)}
+            ${labelLead}
           </label>
           <input
             type="text"
@@ -737,10 +789,7 @@ export function createParametersUi(context) {
             data-value-type="string"
             placeholder="${escapeAttributeValue(getInputPlaceholder(config))}"
             title="${escapeAttributeValue(noteText || '')}"
-            value="${escapeAttributeValue(String(normalizedValue || ''))}">
-          ${noteHtml}
-          ${metaHtml}
-        </div>
+            value="${escapeAttributeValue(String(normalizedValue || ''))}">        </div>
       `;
     } else if (config.type === 'token-range') {
       const allowedValues = buildTokenStepValues(config.min, config.max);
@@ -752,10 +801,11 @@ export function createParametersUi(context) {
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${localizedParamLabel(key, config)}
+            ${labelLead}
             <input
               type="number"
               class="setting-number"
+              style="${numberStyle}"
               id="val_${key}"
               data-param="${key}"
               data-decimals="${config.decimals}"
@@ -778,20 +828,18 @@ export function createParametersUi(context) {
             min="0"
             max="${Math.max(allowedValues.length - 1, 0)}"
             step="1"
-            value="${sliderIndex}">
-          ${noteHtml}
-          ${metaHtml}
-        </div>
+            value="${sliderIndex}">        </div>
       `;
     } else {
       const numericValue = Number(value === undefined || value === null ? config.fallback : value);
       html = `
         <div class="setting-group">
           <label class="setting-label" for="dyn_${key}">
-            ${localizedParamLabel(key, config)}
+            ${labelLead}
             <input
               type="number"
               class="setting-number"
+              style="${numberStyle}"
               id="val_${key}"
               data-param="${key}"
               data-decimals="${config.decimals}"
@@ -811,10 +859,7 @@ export function createParametersUi(context) {
             min="${config.min}"
             max="${config.max}"
             step="${config.step}"
-            value="${numericValue}">
-          ${noteHtml}
-          ${metaHtml}
-        </div>
+            value="${numericValue}">        </div>
       `;
     }
 
@@ -987,7 +1032,7 @@ export function createParametersUi(context) {
       if (!$menu.length) {
         $menu = $('<div class="think-level-menu" role="menu" aria-label="Reasoning effort" style="display:none;">');
       }
-      $menu.empty().append($('<div class="think-level-menu-title">').text('Intelligence'));
+      $menu.empty().append($('<div class="think-level-menu-title">').text(t('composer.intelligence')));
 
       normalizedOptions.forEach(function appendOption(optionValue) {
         const normalizedValue = String(optionValue || '').trim().toLowerCase();
@@ -1075,7 +1120,19 @@ export function createParametersUi(context) {
     // Repeating that reset here would also hide already-rendered non-dynamic
     // sections such as Tools.
 
+    // Cloud-hosted models run on the engine's servers, so local execution
+    // controls (the "load" group: GPU layers, main GPU, CPU threads, memory)
+    // have no effect. The engine reports whether the model is cloud-hosted; we
+    // derive which parameters to drop from each definition's own group instead
+    // of a hardcoded list of option names.
+    const hideLocalRuntimeParams = Boolean(data.is_cloud);
+
     getSupportedParameterDefinitions(engine).forEach(function renderDefinition([key, config]) {
+      if (hideLocalRuntimeParams && config.group === 'load') {
+        delete remainingDefaults[key];
+        return;
+      }
+
       const renderedConfig = { ...config };
       const runtimeLimits = data.runtime_limits || {};
 

@@ -4,7 +4,7 @@ name: PR - Sync Docs
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, closed]
+    types: [opened, edited, synchronize]
 
 concurrency:
   group: pr-sync-docs-${{ github.event.pull_request.number }}
@@ -20,7 +20,6 @@ jobs:
   scan:
     if: |
       github.actor != 'github-actions[bot]' &&
-      github.event.action != 'closed' &&
       !startsWith(github.event.pull_request.head.ref, 'jules-docs-dev-') &&
       !startsWith(github.event.pull_request.head.ref, 'jules-patchnotes-dev-')
     runs-on: ubuntu-latest
@@ -285,108 +284,4 @@ jobs:
                   core.warning(`Could not delete ${branch}: ${e.message}`);
                 }
               }
-            }
-
-  # Integrate: cleanup + reverse PR on merge
-  integrate:
-    if: |
-      github.event.action == 'closed' &&
-      github.event.pull_request.merged == true &&
-      !startsWith(github.event.pull_request.head.ref, 'jules-docs-dev-') &&
-      !startsWith(github.event.pull_request.head.ref, 'jules-patchnotes-dev-')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - name: Delete Jules branches tracked in this PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const owner = context.repo.owner;
-            const repo  = context.repo.repo;
-            const pr    = context.payload.pull_request;
-
-            const comments = await github.paginate(
-              github.rest.issues.listComments,
-              { owner, repo, issue_number: pr.number }
-            );
-
-            const toDelete = new Set();
-            const MARKER_RE = /<!--\s*pr-sync-docs:tracked\s*-->([\s\S]*?)<!--\s*\/pr-sync-docs:tracked\s*-->/g;
-            for (const c of comments) {
-              if (c.user.login !== 'github-actions[bot]') continue;
-              let m;
-              while ((m = MARKER_RE.exec(c.body)) !== null) {
-                m[1].trim().split('\n').forEach(l => { const b = l.trim(); if (b) toDelete.add(b); });
-              }
-            }
-
-            if (toDelete.size === 0) {
-              core.info('No Jules branches to delete.');
-              return;
-            }
-
-            for (const branch of toDelete) {
-              try {
-                await github.rest.git.deleteRef({ owner, repo, ref: `heads/${branch}` });
-                core.info(`Deleted branch: ${branch}`);
-              } catch (e) {
-                if (e.status === 404 || e.status === 422) {
-                  core.info(`Branch already gone: ${branch}`);
-                } else {
-                  core.warning(`Could not delete ${branch}: ${e.message}`);
-                }
-              }
-            }
-
-      - name: Create and auto-merge reverse PR (dev -> main sync)
-        if: |
-          github.event.pull_request.base.ref == 'main' &&
-          github.event.pull_request.head.ref == 'dev'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const owner = context.repo.owner;
-            const repo  = context.repo.repo;
-
-            // Check for existing open PR main→dev
-            const existing = await github.rest.pulls.list({
-              owner, repo,
-              base: 'dev',
-              head: `${owner}:main`,
-              state: 'open'
-            });
-            if (existing.data.length > 0) {
-              core.info(`Reverse PR already exists: #${existing.data[0].number}`);
-              return;
-            }
-
-            // Create reverse PR
-            const newPR = await github.rest.pulls.create({
-              owner, repo,
-              base: 'dev',
-              head: 'main',
-              title: 'chore: sync docs from main to dev [skip ci]',
-              body: [
-                'Automatically created after merging `dev` → `main`.',
-                'Syncs documentation updates back to `dev`.',
-                '',
-                '<!-- pr-sync-docs:reverse -->'
-              ].join('\n')
-            });
-            core.info(`Created reverse PR: #${newPR.data.number}`);
-
-            // Merge immediately
-            try {
-              await github.rest.pulls.merge({
-                owner, repo,
-                pull_number: newPR.data.number,
-                merge_method: 'merge',
-                commit_title: 'chore: sync docs from main to dev [skip ci]',
-                commit_message: 'Automated sync of documentation from main to dev.'
-              });
-              core.info(`Merged reverse PR #${newPR.data.number}`);
-            } catch (e) {
-              core.warning(`Could not auto-merge reverse PR #${newPR.data.number}: ${e.message}`);
-              core.warning('Merge may require manual action if branch protection rules are active.');
             }

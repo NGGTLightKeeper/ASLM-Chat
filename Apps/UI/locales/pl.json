@@ -1,24 +1,25 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM — Zaawansowane Systemowe Modele Językowe",
-    "profileTitle": "Profil — ASLM Chat"
+    "appDescription": "ASLM — Zaawansowane Systemowe Modele Językowe"
   },
   "sidebar": {
+    "recent": "Ostatnie",
     "chats": "Czaty",
     "newChat": "Nowy czat",
     "noPreviousChats": "Brak wcześniejszych czatów",
     "chatOptions": "Opcje czatu",
     "rename": "Zmień nazwę",
     "delete": "Usuń",
-    "account": "Konto",
     "ago": "{time} temu"
   },
   "chat": {
     "newChat": "Nowy czat",
     "attachmentChat": "Czat z załącznikami",
     "howCanIHelp": "W czym mogę pomóc?",
-    "welcomeTitle": "W czym mogę pomóc?"
+    "welcomeTitle": "W czym mogę pomóc?",
+    "renameTitle": "Zmień nazwę czatu",
+    "renameLabel": "Nazwa czatu"
   },
   "composer": {
     "placeholder": "Wiadomość do ASLM...",
@@ -27,7 +28,7 @@
     "tools": "Narzędzia",
     "other": "Inne",
     "reasoningEffort": "Nakład rozumowania",
-    "intelligence": "Głębokość rozumowania",
+    "intelligence": "Myślenie",
     "off": "Wył.",
     "sendMessage": "Wyślij wiadomość",
     "queueMessage": "Dodaj do kolejki",
@@ -74,19 +75,10 @@
     "settings": "Ustawienia",
     "sampling": "Próbkowanie",
     "advanced": "Zaawansowane",
-    "custom": "Niestandardowe"
-  },
-  "profile": {
-    "backToChat": "Wróć do czatu",
-    "account": "Konto",
-    "user": "Użytkownik",
-    "localAccount": "Konto lokalne",
-    "general": "Ogólne",
-    "username": "Nazwa użytkownika",
-    "email": "E-mail",
-    "memberSince": "Członek od",
-    "dangerZone": "Strefa niebezpieczna",
-    "signOut": "Wyloguj się"
+    "custom": "Niestandardowe",
+    "presetNameLabel": "Nazwa ustawienia wstępnego",
+    "presetNewTitle": "Nowe ustawienie wstępne",
+    "presetRenameTitle": "Zmień nazwę ustawienia wstępnego"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -185,11 +177,6 @@
     "renameFolderAria": "Zmień nazwę folderu",
     "renameFileAria": "Zmień nazwę pliku",
     "deleteFileAria": "Usuń plik",
-    "dialogOk": "OK",
-    "dialogCancel": "Anuluj",
-    "dialogConfirm": "Potwierdź",
-    "dialogInput": "Wprowadzanie",
-    "valueRequired": "Wartość jest wymagana.",
     "createSkill": "Utwórz umiejętność",
     "skillNamePlaceholder": "nazwa-umiejetnosci",
     "create": "Utwórz",
@@ -233,6 +220,13 @@
     "importNoSupported": "Brak obsługiwanych plików tekstowych (.md, .txt, .py, …).",
     "importNoSupportedFor": "Brak obsługiwanych plików dla „{name}”."
   },
+  "dialog": {
+    "ok": "OK",
+    "cancel": "Anuluj",
+    "confirm": "Potwierdź",
+    "input": "Wprowadzanie",
+    "valueRequired": "Wartość jest wymagana."
+  },
   "errors": {
     "generic": "Coś poszło nie tak",
     "network": "Błąd sieci"
@@ -241,7 +235,9 @@
     "deleteChat": "Usunąć ten czat?",
     "deleteChatNamed": "Usunąć „{title}”?",
     "deletePreset": "Usunąć ustawienie wstępne „{name}”?",
-    "unsaved": "Masz niezapisane zmiany."
+    "unsaved": "Masz niezapisane zmiany.",
+    "deleteChatTitle": "Usuń czat",
+    "deletePresetTitle": "Usuń ustawienie wstępne"
   },
   "toolInspector": {
     "title": "Inspektor narzędzi",
@@ -451,6 +447,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} narzędzi)",
     "cancel": "Anuluj",
-    "save": "Zapisz"
+    "save": "Zapisz",
+    "noServers": "Brak serwerów MCP"
   }
 }

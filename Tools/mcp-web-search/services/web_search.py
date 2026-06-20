@@ -37,7 +37,6 @@ from core.query.aslm_embedding_runtime import SearchModelSession
 from core.query.routing_score import (
     QueryClassWeight,
     allocate_source_budget,
-    compute_routing_score,
     ensure_general_fallback,
     normalize_class_mix,
 )
@@ -48,6 +47,15 @@ from core.extract.page_normalizer import normalize_page
 from core.registry.trust_registry import get_trust_registry
 from core.registry.domain_reputation import get_reputation_store, domain_from_url
 from core.registry.domain_registry import get_registry
+from core.search.triage import (
+    TIER_TRUST_SCORES as _TIER_TRUST_SCORES,
+    apply_candidate_scores,
+    apply_registry_routing as _core_apply_registry_routing,
+    resolve_result_trust_tier as _core_resolve_result_trust_tier,
+    triage_one_result as _core_triage_one_result,
+    triage_results as _core_triage_results,
+    triage_soft_score as _core_triage_soft_score,
+)
 from core.fetch.antibot import is_antibot
 from core.fetch.stackexchange_fetcher import fetch_stackexchange_question, is_stackexchange_question_url
 from custom_domains.github import fetch_github_page, is_github_url
@@ -703,6 +711,14 @@ class TriageResult:
 
 
 @dataclass
+class PreviewFetchPlan:
+    results: list[SearchResult]
+    indices: list[int]
+    policies: list[str]
+    scores: list[float]
+
+
+@dataclass
 class SearchCycleContext:
     raw_query: str
     analysis_query: str
@@ -1107,28 +1123,7 @@ def _triage_soft_score(
     index: int,
     total: int,
 ) -> float:
-    title = (result.title or "").strip()
-    snippet = (result.snippet or "").strip()
-    pos_score = 1.0 - (index / max(total - 1, 1))
-    snip_score = min(1.0, len(snippet) / 300)
-    lex = _lexical_score(query, title, snippet, result.url)
-    tier_trust = _TIER_TRUST_SCORES.get(result.trust_tier or "unknown", 0.5)
-    date_boost = 0.08 if _DATE_SIGNAL_RE.search(snippet) else 0.0
-    hub_pen = _hub_penalty(result.url, title, snippet)
-    routing = max(0.45, min(1.65, float(getattr(result, "routing_score", 1.0) or 1.0)))
-    snippet_rel = max(0.0, min(1.0, float(getattr(result, "snippet_relevance_score", 0.0) or 0.0)))
-
-    score = (
-        0.25 * pos_score
-        + 0.10 * snip_score
-        + 0.40 * lex
-        + 0.15 * tier_trust
-        + 0.10 * snippet_rel
-        + 0.08 * ((routing - 1.0) / 0.65)
-        + date_boost
-        - 0.20 * hub_pen
-    )
-    return max(0.0, min(1.0, score))
+    return _core_triage_soft_score(result, query, index=index, total=total)
 
 
 # Run cheap triage for one SERP result (skip/fetch_policy/score).
@@ -1141,71 +1136,40 @@ def _triage_one_result(
     trust_reg=None,
     rep_store=None,
 ) -> TriageResult:
-    url = result.url
-    title = (result.title or "").strip()
-    snippet = (result.snippet or "").strip()
-    title_lower = title.lower()
-
-    _resolve_result_trust_tier(result, url, trust_reg=trust_reg, rep_store=rep_store)
-
-    if len(snippet) < 30 or (len(snippet) < 60 and len(title) < 20):
-        return TriageResult(skip=True, fetch_policy="cheap", score=0.0)
-
-    if any(p in title_lower for p in _SKIP_TITLE_PATTERNS):
-        return TriageResult(skip=True, fetch_policy="cheap", score=0.0)
-
-    if trust_reg is not None:
-        try:
-            if trust_reg.is_blacklisted(url):
-                return TriageResult(skip=True, fetch_policy="cheap", score=0.0)
-        except Exception as _e:
-            logger.debug("trust_reg.is_blacklisted failed for %s: %s", url, _e)
-
-    if rep_store is not None:
-        try:
-            if rep_store.is_auto_blacklisted(domain_from_url(url)):
-                return TriageResult(skip=True, fetch_policy="cheap", score=0.0)
-        except Exception as _e:
-            logger.debug("rep_store.is_auto_blacklisted failed for %s: %s", url, _e)
-
-    score = _triage_soft_score(result, query, index=index, total=total)
-    if score < 0.10:
-        return TriageResult(skip=True, fetch_policy="cheap", score=score)
-    if score >= 0.50:
-        return TriageResult(skip=False, fetch_policy="race", score=score)
-    return TriageResult(skip=False, fetch_policy="cheap", score=score)
+    return _core_triage_one_result(
+        result,
+        query,
+        index=index,
+        total=total,
+        trust_reg=trust_reg,
+        rep_store=rep_store,
+    )
 
 
 # Cheap per-result triage; populates result.trust_tier when missing.
 def _triage_results(results: list[SearchResult], query: str) -> list[TriageResult]:
-    try:
-        trust_reg = get_trust_registry()
-    except Exception as _e:
-        logger.debug("trust_registry unavailable: %s", _e)
-        trust_reg = None
+    return _core_triage_results(results, query)
 
-    try:
-        rep_store = get_reputation_store()
-    except Exception as _e:
-        logger.debug("reputation_store unavailable: %s", _e)
-        rep_store = None
 
-    total = len(results)
-    out: list[TriageResult] = []
-
-    for idx, result in enumerate(results):
-        out.append(
-            _triage_one_result(
-                result,
-                query,
-                index=idx,
-                total=total,
-                trust_reg=trust_reg,
-                rep_store=rep_store,
-            )
-        )
-
-    return out
+# Rank preview candidates by triage score so the strongest sources parse first.
+def _build_preview_fetch_plan(
+    results: list[SearchResult],
+    triage: list[TriageResult],
+    limit: int,
+) -> PreviewFetchPlan:
+    candidates = [
+        (tr.score, idx, result, tr.fetch_policy)
+        for idx, (result, tr) in enumerate(zip(results, triage))
+        if not tr.skip
+    ]
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    selected = candidates[:max(0, limit)]
+    return PreviewFetchPlan(
+        results=[item[2] for item in selected],
+        indices=[item[1] for item in selected],
+        policies=[item[3] for item in selected],
+        scores=[item[0] for item in selected],
+    )
 
 
 # How many results from a single domain are allowed in the candidate pool
@@ -1235,15 +1199,7 @@ def _apply_domain_cap(results: list[SearchResult]) -> list[SearchResult]:
 
 # Attach domain-registry routing_score and debug to each result.
 def _apply_registry_routing(results: list[SearchResult], class_mix: list[QueryClassWeight]) -> None:
-    for result in results:
-        try:
-            routing = compute_routing_score(result.url, class_mix)
-            result.routing_score = routing.multiplier
-            result.routing_debug = routing.debug
-        except Exception as exc:
-            logger.debug("routing_score failed url=%s: %s", result.url, exc)
-            result.routing_score = 1.0
-            result.routing_debug = {}
+    _core_apply_registry_routing(results, class_mix)
 
 
 # Score SERP snippets with ASLM decoder when enabled.
@@ -1280,14 +1236,14 @@ def _apply_snippet_decoder(
         _trace(req_id, "neural.decoder.snippet", used=False, reason="inference_failed", error=str(exc))
         logger.error("req=%s snippet decoder inference failed: %s", req_id, exc, exc_info=True)
         return
-    scores: list[float] = []
+    scores = apply_candidate_scores(
+        results,
+        (prediction.score for prediction in predictions),
+        debug_key="snippet_decoder_top",
+        debug_values=(prediction.top(5) for prediction in predictions),
+    )
     sample: list[dict[str, Any]] = []
-    for result, prediction in zip(results, predictions, strict=False):
-        score = max(0.0, min(1.0, float(prediction.score or 0.0)))
-        scores.append(score)
-        result.snippet_relevance_score = score
-        result.routing_debug = dict(result.routing_debug or {})
-        result.routing_debug["snippet_decoder_top"] = prediction.top(5)
+    for result, prediction, score in zip(results, predictions, scores, strict=False):
         if len(sample) < 5:
             sample.append({
                 "url": (result.url or "")[:100],
@@ -1353,17 +1309,18 @@ def _apply_parsed_decoder(
         _trace(req_id, "neural.decoder.parsed", used=False, reason="inference_failed", error=str(exc))
         logger.error("req=%s parsed decoder inference failed: %s", req_id, exc, exc_info=True)
         return
-    scores: list[float] = []
+    scores = apply_candidate_scores(
+        results,
+        (prediction.score for prediction in predictions),
+        field="parsed_relevance_score",
+        debug_key="parsed_decoder_top",
+        debug_values=(prediction.top(5) for prediction in predictions),
+    )
     sample: list[dict[str, Any]] = []
     with_preview = 0
-    for result, prediction, payload in zip(results, predictions, payloads, strict=False):
-        score = max(0.0, min(1.0, float(prediction.score or 0.0)))
-        scores.append(score)
+    for result, prediction, payload, score in zip(results, predictions, payloads, scores, strict=False):
         if (payload.text or "").strip():
             with_preview += 1
-        result.parsed_relevance_score = score
-        result.routing_debug = dict(result.routing_debug or {})
-        result.routing_debug["parsed_decoder_top"] = prediction.top(5)
         if len(sample) < 5:
             sample.append({
                 "url": (result.url or "")[:100],
@@ -1392,7 +1349,24 @@ def _apply_parsed_decoder(
     )
 
 
-# Dedup by normalized URL, domain+title, and snippet signature.
+# Normalize titles for conservative same-domain document-family deduplication.
+def _document_family_title(title: str) -> str:
+    normalized = (title or "").lower()
+    has_version_marker = bool(
+        re.search(r"\b(?:enterprise\s+server|server\s+version|version)\b", normalized)
+    )
+    normalized = re.sub(
+        r"\b(?:enterprise\s+server|server\s+version|version)\b",
+        " ",
+        normalized,
+    )
+    if has_version_marker:
+        normalized = re.sub(r"\bv?\d+(?:\.\d+){0,3}\b", " ", normalized)
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return " ".join(normalized.split())
+
+
+# Dedup by normalized URL, domain+title, document family, and snippet signature.
 def _dedup_results(results: list[SearchResult]) -> list[SearchResult]:
     seen_urls: set[str] = set()
     seen_keys: set[str] = set()
@@ -1404,27 +1378,23 @@ def _dedup_results(results: list[SearchResult]) -> list[SearchResult]:
         seen_urls.add(nu)
         domain = urlparse(r.url).netloc.lower()
         title_key = f"{domain}||{r.title.strip().lower()[:60]}"
+        family_title = _document_family_title(r.title)
+        family_key = f"{domain}||family||{family_title[:100]}" if len(family_title) >= 16 else ""
         snip_key = " ".join((r.snippet or "").lower().split()[:20])
-        if title_key in seen_keys or (snip_key and snip_key in seen_keys):
+        if (
+            title_key in seen_keys
+            or (family_key and family_key in seen_keys)
+            or (snip_key and snip_key in seen_keys)
+        ):
             continue
         seen_keys.add(title_key)
+        if family_key:
+            seen_keys.add(family_key)
         if snip_key:
             seen_keys.add(snip_key)
         out.append(r)
     return out
 
-
-_TIER_TRUST_SCORES = {
-    "A": 1.0,
-    "B": 0.75,
-    "C": 0.45,
-    "friendly": 1.0,
-    "moderate": 0.75,
-    "hardened": 0.35,
-    "fortress": 0.05,
-    "?": 0.50,
-    "unknown": 0.50,
-}
 
 _TRUST_BLEND_WEIGHTS: dict[str, tuple[float, float]] = {
     "academic": (0.80, 0.20),
@@ -1597,6 +1567,32 @@ def _content_quality_signal(payload: PreviewPayload, result: SearchResult, query
     return min(1.0, 0.30 * quality + 0.40 * relevance + 0.30 * lex_component)
 
 
+_MAX_RERANK_SHIFT = 3
+
+
+# Reorder by measured score while keeping every result near its provider rank.
+def _bounded_rerank(
+    scored: list[tuple[float, int, SearchResult, PreviewPayload]],
+    *,
+    max_shift: int = _MAX_RERANK_SHIFT,
+) -> list[tuple[float, int, SearchResult, PreviewPayload]]:
+    if len(scored) <= 1 or max_shift <= 0:
+        return sorted(scored, key=lambda item: item[1])
+
+    remaining = list(scored)
+    ordered: list[tuple[float, int, SearchResult, PreviewPayload]] = []
+    for position in range(len(scored)):
+        eligible = [item for item in remaining if item[1] - max_shift <= position]
+        overdue = [item for item in eligible if item[1] + max_shift <= position]
+        if overdue:
+            chosen = min(overdue, key=lambda item: (item[1] + max_shift, -item[0], item[1]))
+        else:
+            chosen = min(eligible, key=lambda item: (-item[0], item[1]))
+        ordered.append(chosen)
+        remaining.remove(chosen)
+    return ordered
+
+
 # Fill trust_tier from static registry, then dynamic auto-promote.
 def _resolve_result_trust_tier(
     result: SearchResult,
@@ -1605,20 +1601,7 @@ def _resolve_result_trust_tier(
     trust_reg,
     rep_store,
 ) -> None:
-    if (result.trust_tier or "?") != "?":
-        return
-    if trust_reg is not None:
-        tier = trust_reg.get_tier(url)
-        if tier:
-            result.trust_tier = tier
-            return
-    if rep_store is not None:
-        try:
-            promoted = rep_store.get_promoted_tier(domain_from_url(url))
-            if promoted in {"B", "C"}:
-                result.trust_tier = promoted
-        except Exception as _e:
-            logger.debug("rep_store.get_promoted_tier failed for %s: %s", url, _e)
+    _core_resolve_result_trust_tier(result, url, trust_reg=trust_reg, rep_store=rep_store)
 
 
 from core.fetch.constants import DEFAULT_UA as _UA
@@ -2008,6 +1991,7 @@ async def _fetch_previews(
     preview_settings: dict,
     loop,
     policies: list[str] | None = None,
+    priorities: list[float] | None = None,
     early_return_threshold: int = 0,
     req_id: str = "-",
     deadline: float | None = None,
@@ -2020,6 +2004,8 @@ async def _fetch_previews(
 
     if policies is None:
         policies = ["cheap"] * len(results)
+    if priorities is None:
+        priorities = [0.0] * len(results)
 
     sem = asyncio.Semaphore(concurrency)
     timeout = aiohttp.ClientTimeout(total=fetch_timeout)
@@ -2037,6 +2023,7 @@ async def _fetch_previews(
         fetch_timeout=fetch_timeout,
         total_timeout=total_timeout,
         early_return_threshold=early_return_threshold,
+        eager_high_score=sum(1 for score in priorities if score >= 0.50),
     )
 
     try:
@@ -2055,13 +2042,20 @@ async def _fetch_previews(
             timeout=timeout, connector=connector, connector_owner=True,
             headers={"User-Agent": _UA}
         ) as session:
-            tasks = [
-                asyncio.create_task(
-                    _fetch_preview_one(session, r, query, preview_settings, sem, loop, policy=p,
-                                       fetch_timeout=fetch_timeout, req_id=req_id)
+            def _start_task(idx: int) -> asyncio.Task:
+                return asyncio.create_task(
+                    _fetch_preview_one(
+                        session,
+                        results[idx],
+                        query,
+                        preview_settings,
+                        sem,
+                        loop,
+                        policy=policies[idx],
+                        fetch_timeout=fetch_timeout,
+                        req_id=req_id,
+                    )
                 )
-                for r, p in zip(results, policies)
-            ]
             effective_timeout = max(
                 total_timeout,
                 (fetch_timeout * _math.ceil(len(results) / max(concurrency, 1))) + 2.0,
@@ -2073,22 +2067,39 @@ async def _fetch_previews(
             _trace(req_id, "preview_batch.effective_timeout", effective_timeout=effective_timeout)
 
             # Map task → original index so we can reconstruct ordering
-            task_to_idx = {t: i for i, t in enumerate(tasks)}
             payloads: list[PreviewPayload] = [PreviewPayload()] * len(results)
-            pending: set = set(tasks)
+            high_count = sum(1 for score in priorities if score >= 0.50)
+            initial_width = min(max(1, high_count or concurrency), concurrency, len(results))
+            pending: dict[asyncio.Task, int] = {}
+            next_idx = 0
+
+            def _fill_slots(*, allow_reserve: bool) -> None:
+                nonlocal next_idx
+                while next_idx < len(results) and len(pending) < concurrency:
+                    if not allow_reserve and priorities[next_idx] < 0.50:
+                        break
+                    task = _start_task(next_idx)
+                    pending[task] = next_idx
+                    next_idx += 1
+
+            while next_idx < initial_width:
+                task = _start_task(next_idx)
+                pending[task] = next_idx
+                next_idx += 1
+
             good_count = 0
-            deadline = loop.time() + effective_timeout
+            batch_deadline = loop.time() + effective_timeout
 
             while pending:
-                remaining = max(0.01, deadline - loop.time())
-                done_batch, pending = await asyncio.wait(
-                    pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+                remaining = max(0.01, batch_deadline - loop.time())
+                done_batch, _ = await asyncio.wait(
+                    set(pending), timeout=remaining, return_when=asyncio.FIRST_COMPLETED
                 )
                 if not done_batch:
                     # Deadline reached
                     break
                 for task in done_batch:
-                    idx = task_to_idx[task]
+                    idx = pending.pop(task)
                     try:
                         payload = task.result()
                     except Exception as _e:
@@ -2101,23 +2112,28 @@ async def _fetch_previews(
                 if early_return_threshold and good_count >= early_return_threshold:
                     for t in pending:
                         t.cancel()
+                    cancelled = len(pending) + (len(results) - next_idx)
                     logger.debug(
                         "early_return: %d good preview(s) collected, cancelled %d remaining",
-                        good_count, len(pending),
+                        good_count, cancelled,
                     )
                     _trace(
                         req_id,
                         "preview_batch.early_return",
                         good_count=good_count,
-                        cancelled=len(pending),
+                        cancelled=cancelled,
                     )
                     break
+
+                high_pending = any(priorities[idx] >= 0.50 for idx in pending.values())
+                high_queued = next_idx < len(results) and priorities[next_idx] >= 0.50
+                _fill_slots(allow_reserve=not high_pending and not high_queued)
 
             # Cancel any tasks still pending (deadline exceeded without early-return)
             for t in pending:
                 t.cancel()
             if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
+                await asyncio.gather(*pending.keys(), return_exceptions=True)
 
     except Exception as exc:
         logger.debug("preview batch failed: %s", exc, exc_info=True)
@@ -2413,14 +2429,12 @@ def _badge_engine(engine: str) -> str:
         return provider.split(".", 1)[0].replace("-", "").capitalize()
     if "yandex" in e:
         return "Yandex"
-    # hosted:tavily / hosted:brave / hosted:bing / hosted:serpapi
+    # hosted:tavily / hosted:brave / hosted:serpapi
     if e.startswith("hosted:"):
         provider = e[len("hosted:"):]
         return provider.capitalize()
     if "brave" in e:
         return "Brave"
-    if "bing" in e:
-        return "Bing"
     return "DDGS"
 
 
@@ -2604,20 +2618,9 @@ _SHOPPING_EFFORT_LIMITS = {
 }
 _SHOPPING_WORKER_TIMEOUTS = {
     "low": 3.5,
-    "medium": 6.5,
-    "high": 10.5,
+    "medium": 8.5,
+    "high": 11.5,
 }
-
-
-def _shopping_intent_weight(class_mix: list[QueryClassWeight], query_types: list[str]) -> float:
-    weights = {item.name: float(item.weight or 0.0) for item in class_mix}
-    if query_types and query_types[0] == "shopping":
-        return max(1.0, weights.get("shopping", 0.0))
-    return weights.get("shopping", 0.0)
-
-
-def _should_run_shopping_core(class_mix: list[QueryClassWeight], query_types: list[str]) -> bool:
-    return _shopping_intent_weight(class_mix, query_types) >= 0.28
 
 
 def _shopping_limit_for_effort(effort: str, max_results: int) -> int:
@@ -2860,33 +2863,12 @@ def _format_results(
                     except Exception as _e:
                         logger.debug("rep_store.record failed domain=%s qt=%s: %s", domain, qt, _e)
 
-    scored.sort(key=lambda x: (-x[0], x[1]))
+    # Keep score-based improvements local to the provider's original order.
+    scored = _bounded_rerank(scored)
 
-    # -- Result selection: depth-first vs breadth-first ----------------------
-    #
-    # depth-first (unparsed_bonus > 0):
-    #   Take up to max_results parsed results first. Only when parsed results
-    #   are insufficient, append unparsed results that still score above the
-    #   threshold. The bonus is a backfill allowance, not a reserved quota.
-    #
-    # breadth-first (unparsed_bonus == 0):
-    #   Just take top max_results by score — volume beats depth for news/forum.
-    #
-    if output_profile.unparsed_bonus > 0:
-        parsed   = [(s, i, r, p) for s, i, r, p in scored if p.text]
-        unparsed = [(s, i, r, p) for s, i, r, p in scored if not p.text]
-        selected = parsed[:max_results]
-        backfill_limit = min(output_profile.unparsed_bonus, max(0, max_results - len(selected)))
-        for item in unparsed:
-            if backfill_limit <= 0:
-                break
-            if item[0] >= output_profile.min_score_unparsed:
-                selected.append(item)
-                backfill_limit -= 1
-        selected.sort(key=lambda x: (-x[0], x[1]))
-        final = selected[:max_results]
-    else:
-        final = scored[:max_results]
+    # Parsed content, lexical match, and quality affect score, but no separate
+    # parsed-first pass is allowed to bypass the provider-rank movement cap.
+    final = scored[:max_results]
 
     header = f"Search: {query}\n"
     lines: list[str] = [header]
@@ -2936,7 +2918,7 @@ def _format_results(
     return "\n".join(lines).strip()
 
 
-# Select rich sources parsed-first while preserving requested volume.
+# Select rich sources using measured score with bounded provider-rank movement.
 def _select_output_sources(
     results: list[SearchResult],
     payloads: list[PreviewPayload],
@@ -2983,30 +2965,7 @@ def _select_output_sources(
             logger.debug("source class cache write failed url=%s: %s", result.url, _e)
         scored.append((score, idx, result, payload))
 
-    scored.sort(key=lambda x: (-x[0], x[1]))
-    if output_profile.unparsed_bonus > 0:
-        parsed = [(s, i, r, p) for s, i, r, p in scored if p.text]
-        unparsed = [(s, i, r, p) for s, i, r, p in scored if not p.text]
-        selected = parsed[:max_results]
-        backfill_limit = min(output_profile.unparsed_bonus, max(0, max_results - len(selected)))
-        for item in unparsed:
-            if backfill_limit <= 0:
-                break
-            if item[0] >= output_profile.min_score_unparsed:
-                selected.append(item)
-                backfill_limit -= 1
-        if len(selected) < max_results:
-            selected_indexes = {item[1] for item in selected}
-            for item in unparsed:
-                if len(selected) >= max_results:
-                    break
-                if item[1] not in selected_indexes:
-                    selected.append(item)
-                    selected_indexes.add(item[1])
-        selected.sort(key=lambda x: (-x[0], x[1]))
-        final = selected[:max_results]
-    else:
-        final = scored[:max_results]
+    final = _bounded_rerank(scored)[:max_results]
 
     return [(result, payload) for _, _, result, payload in final]
 
@@ -3029,6 +2988,8 @@ class WebSearchOptions:
     timelimit: Optional[str] = None   # DDGS time filter: "d", "w", "m", "y"
     effort: str = "medium"
     effort_multiplier: int = 1
+    routing_profile: Optional[str] = None
+    shopping: bool = False
 
 
 # Orchestrate fast web search across DDGS and hosted search APIs.
@@ -3071,20 +3032,51 @@ class WebSearchService:
         use_fast_academic = opts.use_fast_academic and bool({"academic", "medical"} & set(query_types))
         n_hosted = len(hosted_engines)
         ddgs_multiplier = max(1, pool_multiplier - n_hosted)
+        routing_profile = str(
+            opts.routing_profile or getattr(self._cfg.search, "routing_profile", "stability")
+        ).lower()
+        if routing_profile not in {"stability", "quality"}:
+            routing_profile = "stability"
+        default_ddgs_attempts = (
+            int(getattr(self._cfg.search, "quality_ddgs_attempts", 4))
+            if routing_profile == "quality"
+            else int(getattr(self._cfg.search, "stability_ddgs_attempts", 2))
+        )
+        if routing_profile == "quality" and {
+            "technical", "troubleshooting", "forum", "documentation"
+        } & set(query_types):
+            default_ddgs_attempts = max(default_ddgs_attempts, 5)
         ddgs_hedge = max(
             1,
             int(opts.ddgs_hedge_count)
             if opts.ddgs_hedge_count is not None
-            else max(1, 2 - n_hosted),
+            else max(1, default_ddgs_attempts - n_hosted),
         )
+        ddgs_worker_timeout = opts.ddgs_worker_timeout
+        if routing_profile == "quality":
+            ddgs_worker_timeout = max(
+                float(ddgs_worker_timeout or 0.0),
+                float(getattr(self._cfg.search, "quality_ddgs_worker_timeout", 26.0)),
+            )
         hosted_max = fetch_max
         academic_budget = sum((source_budget or {}).get(name, 0) for name in ("academic", "medical"))
         academic_max = min(fetch_max, max(3, academic_budget or 8))
+        effective_mix = class_mix or _build_legacy_class_mix(query)
+        engine_class_weights = {
+            item.name: float(item.weight)
+            for item in effective_mix
+            if float(item.weight) > 0.0
+        }
 
         _trace(req_id, "providers.config",
                n_hosted=n_hosted, ddgs_multiplier=ddgs_multiplier,
                ddgs_hedge=ddgs_hedge, hosted_engines=hosted_engines,
-               fast_academic=use_fast_academic)
+               fast_academic=use_fast_academic, routing_profile=routing_profile,
+               ddgs_worker_timeout=ddgs_worker_timeout)
+        logger.info(
+            "search routing profile=%s ddgs_attempts=%d query_types=%s",
+            routing_profile, ddgs_hedge, query_types,
+        )
 
         ddgs_task = asyncio.create_task(
             async_ddgs_search(
@@ -3092,12 +3084,14 @@ class WebSearchService:
                 max_results=fetch_max * ddgs_multiplier,
                 query_type=query_type,
                 query_types=query_types,
+                class_weights=engine_class_weights,
                 lang=lang,
                 timelimit=opts.timelimit,
                 hedge_count=ddgs_hedge,
-                worker_timeout=opts.ddgs_worker_timeout,
+                worker_timeout=ddgs_worker_timeout,
                 engine_timeout=opts.ddgs_engine_timeout,
                 max_retries=opts.ddgs_max_retries,
+                routing_profile=routing_profile,
             )
         )
         hosted_tasks: dict[str, asyncio.Task] = {
@@ -3152,7 +3146,6 @@ class WebSearchService:
         merged = merged[: fetch_max * pool_multiplier * 2]
         merged = _enrich_pdf_urls(merged)
         deduped = _apply_domain_cap(_dedup_results(merged))
-        effective_mix = class_mix or _build_legacy_class_mix(query)
         _apply_registry_routing(deduped, effective_mix)
         _apply_snippet_decoder(
             deduped, query, model_session, effort=opts.effort, req_id=req_id,
@@ -3162,6 +3155,21 @@ class WebSearchService:
                merged=len(merged), deduped=len(deduped))
 
         triage = _triage_results(deduped, query) if deduped else []
+        if routing_profile == "quality" and triage:
+            ranked = sorted(
+                zip(deduped, triage),
+                key=lambda item: item[1].score,
+                reverse=True,
+            )
+            deduped = [item[0] for item in ranked]
+            triage = [item[1] for item in ranked]
+            _trace(
+                req_id,
+                "quality.meta_rank",
+                candidates=len(deduped),
+                engines=list(dict.fromkeys(result.engine for result in deduped[:12])),
+                top_scores=[round(item.score, 3) for item in triage[:8]],
+            )
         return deduped, triage
 
     # Build progressively simpler query variants for zero-result fallback.
@@ -3416,20 +3424,16 @@ class WebSearchService:
             logger.debug("triage: skipped=%d race=%d cheap=%d (total=%d)",
                          skipped_count, race_count, len(triage) - skipped_count - race_count, len(triage))
 
-        # Build ordered fetch candidate list: non-skipped, up to preview_fetch_limit
-        to_fetch: list[SearchResult] = []
-        to_fetch_indices: list[int] = []
-        to_fetch_policies: list[str] = []
-        for i, (result, tr) in enumerate(zip(deduped, triage)):
-            if not tr.skip and len(to_fetch) < preview_fetch_limit:
-                to_fetch.append(result)
-                to_fetch_indices.append(i)
-                to_fetch_policies.append(tr.fetch_policy)
+        fetch_plan = _build_preview_fetch_plan(deduped, triage, preview_fetch_limit)
+        to_fetch = fetch_plan.results
+        to_fetch_indices = fetch_plan.indices
+        to_fetch_policies = fetch_plan.policies
         _trace(
             req_id,
             "fetch_plan.done",
             to_fetch=len(to_fetch),
             policies=to_fetch_policies[:],
+            scores=[round(score, 3) for score in fetch_plan.scores],
         )
 
         # -- Preview fetching --
@@ -3450,6 +3454,7 @@ class WebSearchService:
                 preview_settings=preview_settings,
                 loop=loop,
                 policies=to_fetch_policies,
+                priorities=fetch_plan.scores,
                 early_return_threshold=(
                     0
                     if _normalize_search_effort(opts.effort) == "high"
@@ -3591,21 +3596,27 @@ class WebSearchService:
                 chosen_top_k=out_profile.max_results,
             )
 
-        ranked: list[SearchResult] = []
-        skipped: list[SearchResult] = []
-        for result, tr in zip(deduped, triage):
+        scored_structured: list[tuple[float, int, SearchResult, PreviewPayload]] = []
+        skipped_count = 0
+        for index, (result, tr) in enumerate(zip(deduped, triage)):
             result.score = tr.score
             result.method_hint = tr.fetch_policy
             if tr.skip:
-                skipped.append(result)
-            else:
-                ranked.append(result)
+                skipped_count += 1
+            scored_structured.append((tr.score, index, result, PreviewPayload()))
 
-        ranked.sort(key=lambda r: (float(r.score or 0.0), len(r.snippet or "")), reverse=True)
-        skipped.sort(key=lambda r: (float(r.score or 0.0), len(r.snippet or "")), reverse=True)
-        combined = ranked + skipped
+        combined = [
+            result
+            for _, _, result, _ in _bounded_rerank(scored_structured)
+        ]
         top_k = _effective_output_limit(out_profile, opts)
-        _trace(req_id, "structured.done", chosen_top_k=top_k, skipped=len(skipped), ranked=len(ranked))
+        _trace(
+            req_id,
+            "structured.done",
+            chosen_top_k=top_k,
+            skipped=skipped_count,
+            ranked=len(combined) - skipped_count,
+        )
         return combined[:top_k]
 
     # Structured payload for MCP structuredContent / UI clients.
@@ -3641,17 +3652,18 @@ class WebSearchService:
             model_session=model_session,
             class_debug=class_debug,
         )
-        if _should_run_shopping_core(class_mix, query_types):
+        if opts.shopping:
             shopping_limit = _shopping_limit_for_effort(effort, opts.max_results)
             shopping_task = asyncio.create_task(
                 async_shopping_search_worker(
                     provider_query,
                     effort=effort,
                     limit=shopping_limit,
+                    language=lang,
                     worker_timeout=_shopping_worker_timeout_for_effort(effort),
                 )
             )
-            _trace(req_id, "shopping.worker.started", limit=shopping_limit, effort=effort)
+            _trace(req_id, "shopping.worker.started", limit=shopping_limit, effort=effort, language=lang)
 
         # --- 2. Provider fetch → merge → dedup → triage ---
         deduped, triage, effective_query = await self._run_with_zero_result_fallback(
@@ -3736,16 +3748,17 @@ class WebSearchService:
                cheap=len(triage) - skipped_count - race_count, total=len(triage))
 
         # --- 4. Triage-aware fetch candidate list ---
-        # Only fetch pages where triage said skip=False, up to preview_fetch_limit.
-        to_fetch: list[SearchResult] = []
-        to_fetch_indices: list[int] = []
-        to_fetch_policies: list[str] = []
-        for i, (result, tr) in enumerate(zip(deduped, triage)):
-            if not tr.skip and len(to_fetch) < preview_fetch_limit:
-                to_fetch.append(result)
-                to_fetch_indices.append(i)
-                to_fetch_policies.append(tr.fetch_policy)
-        _trace(req_id, "rich.fetch_plan.done", to_fetch=len(to_fetch), policies=to_fetch_policies[:])
+        fetch_plan = _build_preview_fetch_plan(deduped, triage, preview_fetch_limit)
+        to_fetch = fetch_plan.results
+        to_fetch_indices = fetch_plan.indices
+        to_fetch_policies = fetch_plan.policies
+        _trace(
+            req_id,
+            "rich.fetch_plan.done",
+            to_fetch=len(to_fetch),
+            policies=to_fetch_policies[:],
+            scores=[round(score, 3) for score in fetch_plan.scores],
+        )
 
         # --- 5. Preview fetching ---
         loop = asyncio.get_running_loop()
@@ -3765,6 +3778,7 @@ class WebSearchService:
                 preview_settings=preview_settings,
                 loop=loop,
                 policies=to_fetch_policies,
+                priorities=fetch_plan.scores,
                 early_return_threshold=(
                     0
                     if _normalize_search_effort(opts.effort) == "high"
@@ -3990,7 +4004,8 @@ def _effort_hard_timeout(effort: str, hard_timeout: float | None) -> float:
         return float(effort_cfg.low_hard_timeout)
     if effort == "high":
         return float(effort_cfg.high_hard_timeout)
-    return float(effort_cfg.medium_hard_timeout)
+    base = float(effort_cfg.medium_hard_timeout)
+    return base
 
 
 # WebSearchOptions tuned for low/medium/high effort from config.
@@ -4001,6 +4016,7 @@ def _build_effort_options(
     max_results: int,
     fetch_previews: bool,
     timelimit: Optional[str],
+    shopping: bool = False,
 ) -> WebSearchOptions:
     resolved_effort = _normalize_search_effort(effort)
     effort_cfg = cfg.effort
@@ -4020,6 +4036,8 @@ def _build_effort_options(
             total_timeout=float(effort_cfg.low_preview_total_timeout),
             timelimit=timelimit,
             effort=resolved_effort,
+            routing_profile="stability",
+            shopping=shopping,
         )
     if resolved_effort == "high":
         multiplier = max(1, int(effort_cfg.high_multiplier))
@@ -4039,6 +4057,8 @@ def _build_effort_options(
             timelimit=timelimit,
             effort=resolved_effort,
             effort_multiplier=multiplier,
+            routing_profile="quality",
+            shopping=shopping,
         )
     return WebSearchOptions(
         max_results=max_results,
@@ -4048,6 +4068,8 @@ def _build_effort_options(
         total_timeout=float(effort_cfg.medium_preview_total_timeout),
         timelimit=timelimit,
         effort=resolved_effort,
+        routing_profile="stability",
+        shopping=shopping,
     )
 
 
@@ -4192,6 +4214,7 @@ async def run_web_search_rich(
     hard_timeout: float | None = None,
     time_range: Optional[str] = None,
     effort: str = "medium",
+    shopping: bool = False,
 ) -> dict[str, object]:
     cfg = load_search_config()
     constraints = parse_domain_constraints(query)
@@ -4216,6 +4239,7 @@ async def run_web_search_rich(
         max_results=max_results,
         fetch_previews=True,
         timelimit=resolved_timelimit,
+        shopping=shopping,
     )
     service = WebSearchService(options=opts)
     loop = asyncio.get_event_loop()

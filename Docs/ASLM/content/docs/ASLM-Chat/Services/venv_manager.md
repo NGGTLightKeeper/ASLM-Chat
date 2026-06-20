@@ -79,7 +79,7 @@ Part of `Services`. See **Related** for package index and callers.
 
 1. Return the computed result to the caller.
 
-#### `def ensure_venv(venv_id, *, log=…) -> bool`
+#### `def ensure_venv(venv_id, *, log=…, log_prefix=…) -> bool`
 
 **Purpose:** Create or update one configured ASLM-Chat venv when packages changed.
 
@@ -112,7 +112,15 @@ Part of `Services`. See **Related** for package index and callers.
 
 ## Private functions
 
-#### `def _run(command, *, log, cwd=…) -> bool`
+#### `def _log_message(message, *, log_prefix=…) -> str`
+
+**Purpose:** Format a log line for a specific venv/process.
+
+#### `def _print_log(message, *, log_prefix=…) -> None`
+
+**Purpose:** Print one log line for a specific venv/process.
+
+#### `def _run(command, *, log, cwd=…, log_prefix=…) -> bool`
 
 **Purpose:** Run one subprocess command and optionally stream output to the console.
 
@@ -149,7 +157,7 @@ Part of `Services`. See **Related** for package index and callers.
 
 1. Parse or serialize JSON payloads.
 
-#### `def _create_venv(venv_id, log) -> bool`
+#### `def _create_venv(venv_id, log, log_prefix=…) -> bool`
 
 **Purpose:** Create a Python virtual environment for one configured venv id.
 
@@ -157,7 +165,7 @@ Part of `Services`. See **Related** for package index and callers.
 
 1. Return the computed result to the caller.
 
-#### `def _pip_install(python_path, packages, *, no_deps, log, label) -> bool`
+#### `def _pip_install(python_path, packages, *, no_deps, log, label, log_prefix=…) -> bool`
 
 **Purpose:** Install one package list into a venv via pip.
 
@@ -165,7 +173,7 @@ Part of `Services`. See **Related** for package index and callers.
 
 1. Return the computed result to the caller.
 
-#### `def _install_packages(venv_id, packages, packages_no_deps, log) -> bool`
+#### `def _install_packages(venv_id, packages, packages_no_deps, log, log_prefix=…) -> bool`
 
 **Purpose:** Install regular and no-deps package lists for one venv id.
 

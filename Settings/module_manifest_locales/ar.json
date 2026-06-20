@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "وحدة ASLM Chat",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "الإعداد الأولي",
+                "description": "ينشئ settings.json ويطبّق ترحيلات قاعدة البيانات"
+            }
+        ],
+        "run": [
+            {
+                "name": "خادم الواجهة",
+                "description": "يشغّل خادم تطوير Django"
+            },
+            {
+                "name": "بيئة تشغيل Ollama",
+                "description": "يشغّل خدمة Ollama المُدارة في جلسة وحدة تحكم مخصصة"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "منفذ خادم الواجهة",
+            "description": "المنفذ الذي يستمع عليه خادم الواجهة"
+        },
+        "api-port": {
+            "name": "منفذ خادم API",
+            "description": "المنفذ الذي يستمع عليه خادم API"
+        },
+        "aslm-host-theme": {
+            "name": "سمة مضيف ASLM",
+            "description": "لقطة السمة من تطبيق ASLM؛ تُطبَّق عند كل بدء للوحدة. تُدار بواسطة ASLM فقط."
+        },
+        "aslm-host-locale": {
+            "name": "لغة مضيف ASLM",
+            "description": "لقطة اللغة من تطبيق ASLM؛ تُطبَّق عند كل بدء للوحدة. تُدار بواسطة ASLM فقط."
+        },
+        "console_log_level": {
+            "name": "مستوى سجل وحدة التحكم",
+            "description": "مقدار تفاصيل وقت التشغيل التي يطبعها ASLM-Chat في وحدة تحكم ASLM"
+        },
+        "llm-engine": {
+            "name": "محرك LLM النشط",
+            "description": "المحرك المستخدم للتوليد في واجهة الدردشة"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "ما إذا كانت خدمة استدلال Ollama مثبتة"
+        },
+        "ollama-service_path": {
+            "name": "مسار Ollama",
+            "description": "المسار إلى الملف التنفيذي لـ Ollama"
+        },
+        "ollama-service_data": {
+            "name": "بيانات Ollama",
+            "description": "المسار إلى دليل بيانات Ollama"
+        },
+        "ollama-service_models": {
+            "name": "نماذج Ollama",
+            "description": "المسار إلى دليل نماذج Ollama"
+        },
+        "ollama-service_port": {
+            "name": "منفذ Ollama",
+            "description": "المنفذ الذي تستمع عليه خدمة Ollama المحلية"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "ما إذا كان تكامل LM Studio متاحًا"
+        },
+        "lms_url": {
+            "name": "عنوان LM Studio",
+            "description": "العنوان الأساسي لواجهة برمجة تطبيقات خادم LM Studio"
+        },
+        "openai": {
+            "name": "واجهة API متوافقة مع OpenAI",
+            "description": "ما إذا كان نقطة نهاية API متوافقة مع OpenAI متاحة"
+        },
+        "openai_url": {
+            "name": "عنوان متوافق مع OpenAI",
+            "description": "عنوان URL الأساسي لنقطة نهاية API المتوافقة مع OpenAI"
+        },
+        "openai_api_key": {
+            "name": "مفتاح API متوافق مع OpenAI",
+            "description": "مفتاح API اختياري لنقاط النهاية المحمية"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "ما إذا كان تكامل Google GenAI متاحًا"
+        },
+        "google_genai_url": {
+            "name": "عنوان Google GenAI",
+            "description": "عنوان URL الأساسي لنقطة نهاية API لـ Google GenAI Gemini"
+        },
+        "google_genai_api_key": {
+            "name": "مفتاح API لـ Google GenAI",
+            "description": "مفتاح API لطلبات API لـ Google GenAI Gemini"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "نماذج Ollama",
+                "description": "النماذج المنشورة في مكتبة Ollama الرسمية."
+            }
+        ]
+    }
+}

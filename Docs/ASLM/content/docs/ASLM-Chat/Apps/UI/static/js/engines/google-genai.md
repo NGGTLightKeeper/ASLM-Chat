@@ -15,6 +15,10 @@ draft: false
 
 **Purpose:** Exported configuration object `googleGenAiAdapter` from `google-genai.js`.
 
+#### `function buildPresetConfig(options)`
+
+**Purpose:** Keep preset payloads in the same flat shape as the runtime options.
+
 ---
 
 ## Related

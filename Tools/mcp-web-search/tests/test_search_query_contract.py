@@ -8,6 +8,7 @@ from adapters.mcp.search_query_contract import (
     SEARCH_QUERY_SCHEMA,
     coerce_search_effort,
     coerce_search_query,
+    coerce_search_shopping,
     sanitize_legacy_query,
 )
 
@@ -20,6 +21,7 @@ def test_search_query_schema_requires_query_and_allows_effort() -> None:
     assert SEARCH_QUERY_SCHEMA["required"] == ["query"]
     assert props["effort"]["enum"] == ["low", "medium", "high"]
     assert props["effort"]["default"] == "medium"
+    assert props["shopping"]["default"] is False
 
 
 # coerce_search_query — normalize strings, dicts, and JSON payloads.
@@ -55,6 +57,25 @@ def test_coerce_search_query(raw: object, expected: str) -> None:
 )
 def test_coerce_search_effort(raw: object, expected: str) -> None:
     assert coerce_search_effort(raw) == expected
+
+
+# coerce_search_shopping — require explicit opt-in.
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, False),
+        (False, False),
+        (True, True),
+        ({"shopping": True}, True),
+        ({"shopping": False}, False),
+        ('{"shopping": true}', True),
+        ("false", False),
+    ],
+)
+def test_coerce_search_shopping(raw: object, expected: bool) -> None:
+    assert coerce_search_shopping(raw) is expected
 
 
 # sanitize_legacy_query — cap length and collapse whitespace.

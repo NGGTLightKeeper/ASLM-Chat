@@ -171,19 +171,29 @@ class EngineStats:
         }
 
 
-# DDGS backends confirmed working via stress-bench (region=wt-wt).
-ALL_ENGINES = [
+# DDGS primary backends. Backups are only used after a primary miss/failure.
+PRIMARY_ENGINES = [
     "duckduckgo",
     "google",
     "yahoo",
-    "wikipedia",
 ]
+
+BACKUP_ENGINES = [
+    "startpage",
+    "mojeek",
+    "brave",
+    "yandex",
+    "qwant",
+    "yep",
+    "stackoverflow",
+]
+
+ALL_ENGINES = [*PRIMARY_ENGINES, *BACKUP_ENGINES]
 
 # API-key hosted providers; only engines with keys in api_keys.json are registered.
 HOSTED_ENGINES = [
     "tavily",
     "brave",
-    "bing",
     "serpapi",
 ]
 

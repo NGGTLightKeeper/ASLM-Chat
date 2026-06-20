@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "Module ASLM Chat",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "Configuration initiale",
+                "description": "Génère settings.json et applique les migrations de base de données"
+            }
+        ],
+        "run": [
+            {
+                "name": "Serveur d'interface",
+                "description": "Lance le serveur de développement Django"
+            },
+            {
+                "name": "Runtime Ollama",
+                "description": "Lance le service Ollama géré dans une session console dédiée"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "Port du serveur d'interface",
+            "description": "Port sur lequel le serveur d'interface écoute"
+        },
+        "api-port": {
+            "name": "Port du serveur API",
+            "description": "Port sur lequel le serveur API écoute"
+        },
+        "aslm-host-theme": {
+            "name": "Thème hôte ASLM",
+            "description": "Instantané du thème depuis l'application ASLM ; appliqué à chaque démarrage du module. Géré uniquement par ASLM."
+        },
+        "aslm-host-locale": {
+            "name": "Langue hôte ASLM",
+            "description": "Instantané de la langue depuis l'application ASLM ; appliqué à chaque démarrage du module. Géré uniquement par ASLM."
+        },
+        "console_log_level": {
+            "name": "Niveau de journalisation console",
+            "description": "Volume de détails d'exécution qu'ASLM-Chat affiche dans la console ASLM."
+        },
+        "llm-engine": {
+            "name": "Moteur LLM actif",
+            "description": "Moteur utilisé pour la génération dans l'interface de chat"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "Indique si le service d'inférence Ollama est installé"
+        },
+        "ollama-service_path": {
+            "name": "Chemin Ollama",
+            "description": "Chemin vers l'exécutable Ollama"
+        },
+        "ollama-service_data": {
+            "name": "Données Ollama",
+            "description": "Chemin vers le répertoire de données Ollama"
+        },
+        "ollama-service_models": {
+            "name": "Modèles Ollama",
+            "description": "Chemin vers le répertoire des modèles Ollama"
+        },
+        "ollama-service_port": {
+            "name": "Port Ollama",
+            "description": "Port sur lequel le service Ollama local écoute"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "Indique si l'intégration LM Studio est disponible"
+        },
+        "lms_url": {
+            "name": "Adresse LM Studio",
+            "description": "Adresse de base de l'API du serveur LM Studio"
+        },
+        "openai": {
+            "name": "API compatible OpenAI",
+            "description": "Indique si un point de terminaison API compatible OpenAI est disponible"
+        },
+        "openai_url": {
+            "name": "Adresse compatible OpenAI",
+            "description": "URL de base du point de terminaison API compatible OpenAI"
+        },
+        "openai_api_key": {
+            "name": "Clé API compatible OpenAI",
+            "description": "Clé API facultative pour les points de terminaison sécurisés"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "Indique si l'intégration Google GenAI est disponible"
+        },
+        "google_genai_url": {
+            "name": "Adresse Google GenAI",
+            "description": "URL de base du point de terminaison API Google GenAI Gemini"
+        },
+        "google_genai_api_key": {
+            "name": "Clé API Google GenAI",
+            "description": "Clé API pour les requêtes vers l'API Google GenAI Gemini"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Modèles Ollama",
+                "description": "Modèles publiés dans la bibliothèque officielle Ollama."
+            }
+        ]
+    }
+}

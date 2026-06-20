@@ -23,9 +23,9 @@ draft: false
 
 **Purpose:** Implements `test_web_search_rejects_spam_before_service` in `test_mcp_bridge_contract.py`.
 
-#### `def test_web_search_passes_coerced_query_and_effort_to_service(bridge_module) -> None`
+#### `def test_web_search_passes_coerced_query_effort_and_shopping_to_service(bridge_module) -> None`
 
-**Purpose:** Implements `test_web_search_passes_coerced_query_and_effort_to_service` in `test_mcp_bridge_contract.py`.
+**Purpose:** Implements `test_web_search_passes_coerced_query_effort_and_shopping_to_service` in `test_mcp_bridge_contract.py`.
 
 ---
 

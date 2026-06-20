@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "ASLM-Chat-Modul",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "Ersteinrichtung",
+                "description": "Erstellt settings.json und wendet Datenbankmigrationen an"
+            }
+        ],
+        "run": [
+            {
+                "name": "UI-Server",
+                "description": "Startet den Django-Entwicklungsserver"
+            },
+            {
+                "name": "Ollama-Laufzeit",
+                "description": "Startet den verwalteten Ollama-Dienst in einer eigenen Konsolensitzung"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "UI-Server-Port",
+            "description": "Port, auf dem der UI-Server lauscht"
+        },
+        "api-port": {
+            "name": "API-Server-Port",
+            "description": "Port, auf dem der API-Server lauscht"
+        },
+        "aslm-host-theme": {
+            "name": "ASLM-Host-Design",
+            "description": "Design-Schnappschuss aus der ASLM-App; wird bei jedem Modulstart angewendet. Wird nur von ASLM verwaltet."
+        },
+        "aslm-host-locale": {
+            "name": "ASLM-Host-Sprache",
+            "description": "Sprach-Schnappschuss aus der ASLM-App; wird bei jedem Modulstart angewendet. Wird nur von ASLM verwaltet."
+        },
+        "console_log_level": {
+            "name": "Konsolen-Protokollstufe",
+            "description": "Wie viele Laufzeitdetails ASLM-Chat in die ASLM-Konsole schreibt."
+        },
+        "llm-engine": {
+            "name": "Aktive LLM-Engine",
+            "description": "Engine für die Textgenerierung in der Chat-Oberfläche"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "Ob der Ollama-Inferenzdienst installiert ist"
+        },
+        "ollama-service_path": {
+            "name": "Ollama-Pfad",
+            "description": "Pfad zur Ollama-Ausführungsdatei"
+        },
+        "ollama-service_data": {
+            "name": "Ollama-Daten",
+            "description": "Pfad zum Ollama-Datenverzeichnis"
+        },
+        "ollama-service_models": {
+            "name": "Ollama-Modelle",
+            "description": "Pfad zum Ollama-Modellverzeichnis"
+        },
+        "ollama-service_port": {
+            "name": "Ollama-Port",
+            "description": "Port, auf dem der lokale Ollama-Dienst lauscht"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "Ob die LM-Studio-Integration verfügbar ist"
+        },
+        "lms_url": {
+            "name": "LM-Studio-Adresse",
+            "description": "Basisadresse der LM-Studio-Server-API"
+        },
+        "openai": {
+            "name": "OpenAI-kompatible API",
+            "description": "Ob ein OpenAI-kompatibler API-Endpunkt verfügbar ist"
+        },
+        "openai_url": {
+            "name": "OpenAI-kompatible Adresse",
+            "description": "Basis-URL des OpenAI-kompatiblen API-Endpunkts"
+        },
+        "openai_api_key": {
+            "name": "OpenAI-kompatibler API-Schlüssel",
+            "description": "Optionaler API-Schlüssel für gesicherte Endpunkte"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "Ob die Google-GenAI-Integration verfügbar ist"
+        },
+        "google_genai_url": {
+            "name": "Google-GenAI-Adresse",
+            "description": "Basis-URL des Google-GenAI-Gemini-API-Endpunkts"
+        },
+        "google_genai_api_key": {
+            "name": "Google-GenAI-API-Schlüssel",
+            "description": "API-Schlüssel für Google-GenAI-Gemini-API-Anfragen"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Ollama-Modelle",
+                "description": "In der offiziellen Ollama-Bibliothek veröffentlichte Modelle."
+            }
+        ]
+    }
+}

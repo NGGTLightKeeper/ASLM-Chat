@@ -6,6 +6,7 @@ import importlib.util
 import secrets
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -184,9 +185,20 @@ def _run_tool_bootstrap(log: bool) -> None:
             print(f"[ASLM-Chat] Tools directory not found, skipping tool bootstrap: {TOOLS_DIR}")
         return
 
-    for browser_venv_id in ("mcp-browser-agent", "mcp-web-search"):
-        _ensure_playwright_browsers(browser_venv_id, log)
-        _ensure_camoufox_binary(browser_venv_id, log)
+    browser_venv_ids = ("mcp-browser-agent", "mcp-web-search")
+    with ThreadPoolExecutor(max_workers=len(browser_venv_ids) * 2) as executor:
+        futures = [
+            executor.submit(_ensure_playwright_browsers, venv_id, log)
+            for venv_id in browser_venv_ids
+        ] + [
+            executor.submit(_ensure_camoufox_binary, venv_id, log)
+            for venv_id in browser_venv_ids
+        ]
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as exc:
+                _print_warning(f"Browser bootstrap task failed: {exc}")
 
     _ensure_nltk_data(log)
     _ensure_spacy_model(log)

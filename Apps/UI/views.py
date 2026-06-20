@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -55,14 +56,33 @@ from Apps.Data.lms_presets import (
     rename_lms_preset,
     sync_active_lms_preset,
 )
+from Apps.Data.openai_presets import (
+    activate_openai_preset,
+    create_openai_preset,
+    delete_openai_preset,
+    get_openai_preset_payload,
+    normalize_openai_endpoint_url,
+    rename_openai_preset,
+    sync_active_openai_preset,
+)
+from Apps.Data.google_genai_presets import (
+    activate_google_genai_preset,
+    create_google_genai_preset,
+    delete_google_genai_preset,
+    get_google_genai_preset_payload,
+    rename_google_genai_preset,
+    sync_active_google_genai_preset,
+)
 from Apps.Data.models import (
     Chat,
+    GoogleGenAiPreset,
     LmsPreset,
     Message,
     MessageAttachment,
     MessageAttachmentKind,
     MessageImage,
     OllamaPreset,
+    OpenAiPreset,
 )
 from Apps.UI import STATIC_CACHE_VERSION
 from Apps.UI.host_theme_bridge import build_host_theme_template_context
@@ -691,6 +711,14 @@ def _clear_model_metadata_caches() -> None:
 def _clear_tool_server_cache() -> None:
     with _metadata_cache_lock:
         _tool_server_cache.clear()
+
+
+# Drop the cached model list for one engine's current scope (force re-probe).
+def _clear_cached_model_list(engine: str) -> None:
+    endpoint, api_key_hash = _engine_metadata_scope(engine)
+    cache_key = (engine, endpoint, api_key_hash)
+    with _metadata_cache_lock:
+        _model_list_cache.pop(cache_key, None)
 
 
 # Remember the latest selected model for one engine.
@@ -1481,9 +1509,45 @@ def _get_local_gpu_devices() -> list[dict[str, Any]]:
     return devices
 
 
-# Resolve active engine
+# Raised when an explicit request targets a disabled engine.
+class RequestEngineResolutionError(ValueError):
+    """The requested engine is not enabled in settings."""
+
+
+# Resolve the default active engine without request context.
 def _get_active_engine(requested_engine: str | None = None) -> str:
     return settings.normalize_engine_name(requested_engine or settings.get_llm_engine())
+
+
+# Resolve one engine from an HTTP request body and/or query string.
+def _resolve_request_engine(request, data: dict[str, Any] | None = None) -> str:
+    explicit_engine = None
+    if isinstance(data, dict) and data.get("engine"):
+        explicit_engine = data.get("engine")
+    elif request.GET.get("engine"):
+        explicit_engine = request.GET.get("engine")
+
+    if explicit_engine:
+        canonical_engine = settings.normalize_engine_name(str(explicit_engine))
+        if canonical_engine not in settings.ENGINE_IDS:
+            raise RequestEngineResolutionError(
+                f"Unsupported engine '{canonical_engine}'."
+            )
+        if not settings.is_engine_enabled(canonical_engine):
+            raise RequestEngineResolutionError(
+                f"Engine '{canonical_engine}' is not enabled."
+            )
+        return canonical_engine
+
+    return settings.get_llm_engine()
+
+
+# Resolve one request engine or return a JSON error response.
+def _resolve_request_engine_or_response(request, data: dict[str, Any] | None = None):
+    try:
+        return _resolve_request_engine(request, data), None
+    except RequestEngineResolutionError as exc:
+        return None, JsonResponse({"error": str(exc)}, status=400)
 
 
 # Extract model name
@@ -1650,18 +1714,12 @@ def _normalize_transcript_entries(raw_entries: Any) -> list[dict[str, Any]]:
     return entries
 
 
-# Build LLM history entries
-def _build_llm_history_entries(message: Message, *, sandbox_enabled: bool = False) -> list[dict[str, Any]]:
-    if message.role != "assistant":
-        payload = {"role": message.role, "content": message.content}
-        payload = _apply_attachments_to_llm_entry(payload, _get_message_attachments(message))
-        payload = _apply_uploaded_file_manifests_to_llm_entry(
-            payload,
-            _load_message_upload_manifests(message, sandbox_enabled=sandbox_enabled),
-        )
-        return [payload]
-
-    transcript_entries = _normalize_transcript_entries(message.llm_transcript)
+# Convert one assistant transcript into LLM history entries.
+def _llm_entries_from_assistant_transcript(
+    transcript_entries: list[dict[str, Any]],
+    *,
+    content_fallback: str = "",
+) -> list[dict[str, Any]]:
     if transcript_entries:
         llm_entries: list[dict[str, Any]] = []
         for entry in transcript_entries:
@@ -1691,10 +1749,78 @@ def _build_llm_history_entries(message: Message, *, sandbox_enabled: bool = Fals
             llm_entries.append(payload)
         return llm_entries
 
-    stripped_content = _strip_llm_markup(message.content)
+    stripped_content = _strip_llm_markup(content_fallback)
     if not stripped_content:
         return []
     return [{"role": "assistant", "content": stripped_content}]
+
+
+# Normalize inline attachments from one request mapping.
+def _normalize_attachments_from_mapping(data: dict[str, Any]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for raw_attachment in list(data.get("attachments") or []) + list(data.get("images") or []):
+        attachment = _normalize_attachment_payload(raw_attachment, len(normalized))
+        if attachment is not None:
+            normalized.append(attachment)
+    return normalized
+
+
+# Build LLM history entries from one request-side history message.
+def _build_llm_entries_from_request_message(
+    message: dict[str, Any],
+    *,
+    sandbox_enabled: bool = False,
+) -> list[dict[str, Any]]:
+    role = str(message.get("role") or "").strip().lower()
+    if role == "assistant":
+        transcript_entries = _normalize_transcript_entries(message.get("llm_transcript"))
+        return _llm_entries_from_assistant_transcript(
+            transcript_entries,
+            content_fallback=str(message.get("content") or ""),
+        )
+
+    if role not in {"user", "system", "tool"}:
+        return []
+
+    if role in {"user", "system"}:
+        payload = {"role": role, "content": str(message.get("content") or "")}
+        attachments = _normalize_attachments_from_mapping(message)
+        payload = _apply_attachments_to_llm_entry(payload, attachments)
+        upload_manifests = _load_model_upload_manifests(
+            _normalize_uploaded_file_ids(message),
+            sandbox_enabled=sandbox_enabled,
+        )
+        payload = _apply_uploaded_file_manifests_to_llm_entry(payload, upload_manifests or [])
+        if not str(payload.get("content") or "").strip() and not attachments and not upload_manifests:
+            return []
+        return [payload]
+
+    tool_payload: dict[str, Any] = {
+        "role": "tool",
+        "content": str(message.get("content") or ""),
+    }
+    for key in ("tool_call_id", "name", "tool_name", "alias", "tool_id"):
+        if message.get(key):
+            tool_payload[key] = message[key]
+    return [tool_payload]
+
+
+# Build LLM history entries
+def _build_llm_history_entries(message: Message, *, sandbox_enabled: bool = False) -> list[dict[str, Any]]:
+    if message.role != "assistant":
+        payload = {"role": message.role, "content": message.content}
+        payload = _apply_attachments_to_llm_entry(payload, _get_message_attachments(message))
+        payload = _apply_uploaded_file_manifests_to_llm_entry(
+            payload,
+            _load_message_upload_manifests(message, sandbox_enabled=sandbox_enabled),
+        )
+        return [payload]
+
+    transcript_entries = _normalize_transcript_entries(message.llm_transcript)
+    return _llm_entries_from_assistant_transcript(
+        transcript_entries,
+        content_fallback=message.content,
+    )
 
 
 # Return whether one stored assistant message represents a compression marker.
@@ -2098,6 +2224,18 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
     }
 
 
+# Decide whether an Ollama model runs in the cloud (no local layers to manage).
+def _ollama_model_is_cloud(model_name: str, model_layers: int) -> bool:
+    name = str(model_name or "").strip().lower()
+    if name.endswith("-cloud") or name.endswith(":cloud") or "-cloud:" in name:
+        return True
+    # Local models report a positive block_count; cloud models expose none.
+    try:
+        return int(model_layers) <= 0
+    except (TypeError, ValueError):
+        return False
+
+
 # Extract generic model info
 def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
     if not isinstance(settings_data, dict):
@@ -2202,6 +2340,10 @@ def _build_model_info_payload(
         preset_payload = get_ollama_preset_payload(model_name)
         payload["defaults"] = {**payload.get("defaults", {}), **preset_payload["active_config"]}
         payload["ollama_presets"] = preset_payload
+        # Report whether the model runs in the cloud. The frontend derives which
+        # parameters to hide (local execution knobs) from this flag, so no list
+        # of option names is hardcoded here.
+        payload["is_cloud"] = _ollama_model_is_cloud(model_name, payload.get("model_layers", 0))
     elif engine == "lms":
         payload = _extract_generic_model_info(settings_data)
         preset_payload = get_lms_preset_payload(model_name)
@@ -2212,6 +2354,22 @@ def _build_model_info_payload(
                 **(active_config.get("operation", {}) if isinstance(active_config.get("operation", {}), dict) else {}),
             }
         payload["lms_presets"] = preset_payload
+    elif engine == "openai":
+        payload = _extract_generic_model_info(settings_data)
+        # Scope presets by endpoint URL so the same model name from different
+        # providers keeps independent presets.
+        preset_payload = get_openai_preset_payload(settings.get_engine_url("openai"), model_name)
+        active_config = preset_payload.get("active_config", {}) if isinstance(preset_payload, dict) else {}
+        if isinstance(active_config, dict):
+            payload["defaults"] = {**payload.get("defaults", {}), **active_config}
+        payload["openai_presets"] = preset_payload
+    elif engine == "google-genai":
+        payload = _extract_generic_model_info(settings_data)
+        preset_payload = get_google_genai_preset_payload(model_name)
+        active_config = preset_payload.get("active_config", {}) if isinstance(preset_payload, dict) else {}
+        if isinstance(active_config, dict):
+            payload["defaults"] = {**payload.get("defaults", {}), **active_config}
+        payload["google_genai_presets"] = preset_payload
     else:
         payload = _extract_generic_model_info(settings_data)
 
@@ -2470,16 +2628,114 @@ def _read_json_request_body(request) -> dict[str, Any]:
 
 
 # Resolve selected tool servers
-def _resolve_tool_servers(engine: str, model_name: str, tool_server_ids: list[str]) -> list[dict[str, Any]]:
-    resolved = []
+def _build_tool_source_map(
+    tool_sources: list[dict[str, Any]] | None,
+    selected_tool_servers: list[dict[str, Any]] | None = None,
+) -> dict[str, dict[str, str]]:
+    tool_source_map: dict[str, dict[str, str]] = {}
+
+    for source in tool_sources or []:
+        if not isinstance(source, dict):
+            continue
+        module_dir = str(source.get("module_dir") or "").strip()
+        if not module_dir:
+            continue
+        tools_dir = str(source.get("tools_dir") or (Path(module_dir) / "Tools"))
+        raw_ids = source.get("tool_server_ids") or source.get("tool_ids") or []
+        if isinstance(raw_ids, str):
+            raw_ids = [raw_ids] if raw_ids.strip() else []
+        for raw_id in raw_ids:
+            server_id = str(raw_id or "").strip()
+            if server_id:
+                tool_source_map[server_id] = {
+                    "module_dir": module_dir,
+                    "tools_dir": tools_dir,
+                }
+
+    for server in selected_tool_servers or []:
+        if not isinstance(server, dict):
+            continue
+        server_id = str(server.get("id") or "").strip()
+        if not server_id or server_id in tool_source_map:
+            continue
+        module_dir = str(server.get("source_module_dir") or "").strip()
+        if not module_dir:
+            continue
+        tools_dir = str(server.get("source_tools_dir") or (Path(module_dir) / "Tools"))
+        tool_source_map[server_id] = {
+            "module_dir": module_dir,
+            "tools_dir": tools_dir,
+        }
+
+    return tool_source_map
+
+
+# Parse external tool source declarations from one request payload.
+def _parse_tool_sources(data: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_sources = data.get("tool_sources")
+    if not isinstance(raw_sources, list):
+        return []
+
+    parsed: list[dict[str, Any]] = []
+    for entry in raw_sources:
+        if not isinstance(entry, dict):
+            continue
+        module_dir = str(entry.get("module_dir") or "").strip()
+        if not module_dir:
+            continue
+        raw_ids = entry.get("tool_server_ids") or entry.get("tool_ids") or []
+        if isinstance(raw_ids, str):
+            raw_ids = [raw_ids] if raw_ids.strip() else []
+        tool_server_ids = [str(item).strip() for item in raw_ids if str(item).strip()]
+        parsed.append(
+            {
+                "module_dir": module_dir,
+                "tools_dir": str(entry.get("tools_dir") or (Path(module_dir) / "Tools")),
+                "tool_server_ids": tool_server_ids,
+            }
+        )
+    return parsed
+
+
+# Resolve selected tool servers
+def _resolve_tool_servers(
+    engine: str,
+    model_name: str,
+    tool_server_ids: list[str],
+    *,
+    tool_sources: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    resolved: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for source in tool_sources or []:
+        module_dir = str(source.get("module_dir") or "").strip()
+        tools_dir = source.get("tools_dir") or (Path(module_dir) / "Tools")
+        for raw_id in source.get("tool_server_ids") or []:
+            normalized = str(raw_id or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            server = tool_registry.get_server(
+                normalized,
+                engine=engine,
+                model_name=model_name,
+                tools_dir=tools_dir,
+                module_dir=module_dir,
+            )
+            if server is None:
+                raise ValueError(f"Unknown or unsupported tool server: {normalized}")
+            resolved.append(server)
+            seen.add(normalized)
+
     for raw_id in tool_server_ids:
         normalized = str(raw_id or "").strip()
-        if not normalized:
+        if not normalized or normalized in seen:
             continue
         server = tool_registry.get_server(normalized, engine=engine, model_name=model_name)
         if server is None:
             raise ValueError(f"Unknown or unsupported tool server: {normalized}")
         resolved.append(server)
+        seen.add(normalized)
     return resolved
 
 
@@ -2974,6 +3230,124 @@ def _build_manual_compression_event(
     }
 
 
+# Build one compression timeline event from stateless overflow data (for external modules).
+def _build_stateless_compression_event(
+    *,
+    engine: str,
+    model_name: str,
+    model_info_payload: dict[str, Any] | None,
+    force: bool,
+    used_history_chars: int,
+    history_budget_chars: int,
+    overflow_entries: list[dict[str, Any]],
+    summary_source_entries: list[dict[str, Any]],
+    recent_user_messages: list[str],
+    direct_user_directives: list[str],
+    summarize_with_model_enabled: bool = True,
+    debug_force_4k: bool = False,
+    trigger_ratio: float = LLM_HISTORY_COMPRESSION_TRIGGER_RATIO,
+    compression_mode: str = "manual",
+) -> dict[str, Any] | None:
+    compression = decide_compression(
+        used_history_chars=used_history_chars,
+        history_budget_chars=history_budget_chars,
+        model_info_payload=model_info_payload,
+        runtime_metadata_path=MODEL_RUNTIME_METADATA_PATH,
+        active_engine=engine,
+        active_model=model_name,
+        debug_force_4k=debug_force_4k,
+        trigger_ratio=trigger_ratio,
+    )
+
+    entries_to_summarize = list(overflow_entries)
+    summary_entries = list(summary_source_entries)
+    normalized_mode = str(compression_mode or "manual").strip().lower()
+
+    if normalized_mode == "auto":
+        if entries_to_summarize and compression.enabled:
+            if not summary_entries:
+                entries_to_summarize = []
+            else:
+                entries_to_summarize = list(summary_entries)
+        if compression.enabled and not entries_to_summarize and summary_entries:
+            entries_to_summarize = list(summary_entries)
+        should_compress = bool(entries_to_summarize) and compression.enabled
+    else:
+        if compression.enabled and not entries_to_summarize and summary_entries:
+            entries_to_summarize = list(summary_entries)
+        if force and not entries_to_summarize:
+            entries_to_summarize = list(summary_entries)
+        if force and not summary_entries:
+            return None
+        should_compress = bool(entries_to_summarize) and (compression.enabled or force)
+
+    if not should_compress:
+        return None
+
+    summarize_entries = list(summary_entries) if normalized_mode != "auto" else list(entries_to_summarize)
+    if not summarize_entries:
+        return None
+
+    summarize_with_model_callback = None
+    if summarize_with_model_enabled:
+        summarize_with_model_callback = lambda prompt_messages: _generate_history_summary_with_model(
+            engine=engine,
+            model_name=model_name,
+            prompt_messages=prompt_messages,
+            model_info_payload=model_info_payload,
+        )
+
+    try:
+        summary_text, summary_payload = build_structured_history_summary(
+            overflow_entries=summarize_entries,
+            recent_user_messages=recent_user_messages,
+            direct_user_directives=direct_user_directives,
+            summarize_with_model=summarize_with_model_callback,
+            max_overflow_entries=LLM_HISTORY_COMPRESSION_MAX_ITEMS,
+        )
+    except Exception as exc:
+        logger.warning("History compression summary failed: %s", exc)
+        summary_text, summary_payload = build_structured_history_summary(
+            overflow_entries=summarize_entries,
+            recent_user_messages=recent_user_messages,
+            direct_user_directives=direct_user_directives,
+            summarize_with_model=None,
+            max_overflow_entries=LLM_HISTORY_COMPRESSION_MAX_ITEMS,
+        )
+
+    if not summary_text and normalized_mode == "auto":
+        return None
+
+    summary_text, summary_payload = fit_summary_text(summary_payload, LLM_HISTORY_COMPRESSION_MAX_CHARS)
+    return {
+        "role": "tool",
+        "alias": "context_compression_summary",
+        "name": "context_compression_summary",
+        "tool_name": "context_compression_summary",
+        "tool_id": "context_compression_summary",
+        "tool_display_name": "Context Compression",
+        "server_id": "system",
+        "server_name": "System",
+        "arguments": {
+            "reason": compression.reason,
+            "history_budget_chars": history_budget_chars,
+            "used_history_chars": used_history_chars,
+            "context_window_tokens": compression.context_window_tokens,
+            "force": bool(force),
+        },
+        "content": summary_text,
+        "tool_ui": {
+            "status": "done",
+            "label": "Context compressed",
+            "kind": "context_compression",
+        },
+        "structured_content": {
+            "kind": "context_compression",
+            "summary": summary_payload,
+        },
+    }
+
+
 # Collect recent user messages.
 def _collect_recent_user_messages(chat: Chat, exclude_message_id: int) -> list[str]:
     messages = (
@@ -3240,6 +3614,445 @@ def _split_generation_options(
     return think_value, think_level_value, clean_options
 
 
+@dataclass(frozen=True)
+class PreparedGenerationRequest:
+    engine: str
+    model_name: str
+    options: dict[str, Any]
+    selected_tool_servers: list[dict[str, Any]]
+    model_info_payload: dict[str, Any]
+    sandbox_enabled: bool
+    attachments: list[dict[str, Any]]
+    uploaded_file_ids: list[str]
+    upload_manifests: list[dict[str, Any]]
+    think_value: Any
+    think_level_value: Any
+    clean_options: dict[str, Any]
+    sync_operation_defaults: dict[str, Any] | None
+    tool_sources: list[dict[str, Any]]
+    external_tool_context: dict[str, Any]
+
+
+# Build LMS sync defaults for one generation request.
+def _build_lms_sync_operation_defaults(
+    engine: str,
+    model_info_payload: dict[str, Any],
+    think_value: Any,
+    think_level_value: Any,
+) -> dict[str, Any] | None:
+    if engine != "lms":
+        return None
+
+    payload: dict[str, Any] = {}
+    defaults = model_info_payload.get("defaults")
+    if isinstance(defaults, dict):
+        payload.update(defaults)
+
+    think_param = str(model_info_payload.get("think_param_name", "think") or "think")
+    think_level_param = str(model_info_payload.get("think_level_param_name", "think_level") or "think_level")
+    if think_value is not None and think_param.startswith("ext."):
+        payload[think_param] = think_value
+    if think_level_value is not None and think_level_param.startswith("ext."):
+        payload[think_level_param] = think_level_value
+    return payload or None
+
+
+# Validate and normalize one shared generation request payload.
+def _prepare_generation_request(
+    request,
+    data: dict[str, Any],
+    *,
+    route: str,
+    require_user_input: bool = True,
+    user_message: str = "",
+    attachments: list[dict[str, Any]] | None = None,
+    uploaded_file_ids: list[str] | None = None,
+) -> PreparedGenerationRequest | JsonResponse:
+    model_name = str(data.get("model", "") or "").strip()
+    options = data.get("options", {}) or {}
+    resolved_attachments = attachments if attachments is not None else _normalize_request_attachments(data)
+    resolved_upload_ids = uploaded_file_ids if uploaded_file_ids is not None else _normalize_uploaded_file_ids(data)
+
+    engine, engine_error = _resolve_request_engine_or_response(request, data)
+    if engine_error is not None:
+        return engine_error
+
+    raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
+    if isinstance(raw_tool_ids, str):
+        raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
+    tool_server_ids = [str(s).strip() for s in raw_tool_ids if str(s).strip()]
+    tool_sources = _parse_tool_sources(data)
+    external_tool_context = data.get("tool_context") if isinstance(data.get("tool_context"), dict) else {}
+
+    if not model_name:
+        return JsonResponse({"error": "Missing model parameter"}, status=400)
+    if require_user_input and not str(user_message or "").strip() and not resolved_attachments and not resolved_upload_ids:
+        return JsonResponse({"error": "Missing message or attachments"}, status=400)
+
+    _remember_active_model(engine, model_name)
+    selected_tool_servers = _resolve_tool_servers(
+        engine,
+        model_name,
+        tool_server_ids,
+        tool_sources=tool_sources,
+    )
+    model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
+    _sync_runtime_model_metadata(
+        engine,
+        model_name,
+        model_info_payload,
+        source="generation",
+        route=route,
+    )
+
+    has_image_attachments = any(
+        attachment.get("kind") == MessageAttachmentKind.IMAGE
+        for attachment in resolved_attachments
+        if isinstance(attachment, dict)
+    )
+    vision_supported = bool(model_info_payload.get("supports_vision", False))
+    vision_source = str(model_info_payload.get("supports_vision_source") or "").strip().lower()
+    if has_image_attachments and not vision_supported and vision_source == "explicit_false":
+        return JsonResponse(
+            {
+                "error": (
+                    f"Model '{model_name}' does not support image input on '{engine}'. "
+                    "Choose a vision-capable model."
+                )
+            },
+            status=400,
+        )
+    _validate_tool_server_support(
+        engine,
+        model_name,
+        [server["id"] for server in selected_tool_servers],
+        payload=model_info_payload,
+    )
+
+    sandbox_enabled = _selected_tools_include_sandbox(selected_tool_servers)
+    upload_manifests = _load_model_upload_manifests(resolved_upload_ids, sandbox_enabled=sandbox_enabled)
+    think_value, think_level_value, clean_options = _split_generation_options(
+        options,
+        think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
+        think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
+    )
+
+    return PreparedGenerationRequest(
+        engine=engine,
+        model_name=model_name,
+        options=options,
+        selected_tool_servers=selected_tool_servers,
+        model_info_payload=model_info_payload,
+        sandbox_enabled=sandbox_enabled,
+        attachments=resolved_attachments,
+        uploaded_file_ids=resolved_upload_ids,
+        upload_manifests=upload_manifests,
+        think_value=think_value,
+        think_level_value=think_level_value,
+        clean_options=clean_options,
+        sync_operation_defaults=_build_lms_sync_operation_defaults(
+            engine,
+            model_info_payload,
+            think_value,
+            think_level_value,
+        ),
+        tool_sources=tool_sources,
+        external_tool_context=external_tool_context,
+    )
+
+
+# Resolve whether the skills inventory should be injected into the system prompt.
+def _resolve_include_skills_baseline(data: dict[str, Any], history_messages: list[dict[str, Any]]) -> bool:
+    if "include_skills_baseline" in data:
+        return bool(data.get("include_skills_baseline"))
+    return len(history_messages) == 0
+
+
+# Normalize request-side conversation history.
+def _normalize_request_history_messages(raw_messages: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_messages, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for raw_message in raw_messages:
+        if not isinstance(raw_message, dict):
+            continue
+        role = str(raw_message.get("role") or "").strip().lower()
+        if role not in {"user", "assistant", "system", "tool"}:
+            continue
+        normalized.append(raw_message)
+    return normalized
+
+
+# Return whether one request history message stores a compression boundary.
+def _request_message_has_context_compression_summary(message: dict[str, Any]) -> bool:
+    if str(message.get("role") or "").strip().lower() != "assistant":
+        return False
+    for entry in _normalize_transcript_entries(message.get("llm_transcript")):
+        if entry.get("role") == "tool" and str(entry.get("alias") or "") == "context_compression_summary":
+            return bool(str(entry.get("content") or "").strip())
+    return False
+
+
+# Collect recent user messages from request-side history.
+def _collect_recent_user_messages_from_history(
+    history_messages: list[dict[str, Any]],
+    current_user_text: str,
+) -> list[str]:
+    result: list[str] = []
+    current_text = _strip_llm_control_tokens(str(current_user_text or "")).strip()
+    if current_text:
+        result.append(current_text[:1200])
+
+    for message in reversed(history_messages):
+        if str(message.get("role") or "").strip().lower() != "user":
+            continue
+        text = _strip_llm_control_tokens(str(message.get("content") or "")).strip()
+        if text:
+            result.append(text[:1200])
+        if len(result) >= LLM_HISTORY_COMPRESSION_RECENT_USER_MESSAGES:
+            break
+    return result
+
+
+# Build chronological compression source entries from request history.
+def _build_context_compression_source_entries_from_request(
+    history_records_newest_first: list[dict[str, Any]],
+    *,
+    sandbox_enabled: bool = False,
+) -> list[dict[str, Any]]:
+    boundary_records: list[dict[str, Any]] = []
+    for historical_message in history_records_newest_first:
+        if _request_message_has_context_compression_summary(historical_message):
+            break
+        boundary_records.append(historical_message)
+
+    entries: list[dict[str, Any]] = []
+    for historical_message in reversed(boundary_records):
+        entries.extend(
+            _build_llm_entries_from_request_message(historical_message, sandbox_enabled=sandbox_enabled)
+        )
+    return entries
+
+
+# Split request history and the current user turn.
+def _split_request_conversation(
+    data: dict[str, Any],
+    history_messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str, list[dict[str, Any]], list[str]]:
+    user_message = str(data.get("message", "") or "")
+    attachments = _normalize_request_attachments(data)
+    uploaded_file_ids = _normalize_uploaded_file_ids(data)
+
+    if user_message or attachments or uploaded_file_ids or not history_messages:
+        return history_messages, user_message, attachments, uploaded_file_ids
+
+    last_message = history_messages[-1]
+    if str(last_message.get("role") or "").strip().lower() != "user":
+        return history_messages, user_message, attachments, uploaded_file_ids
+
+    promoted_attachments = _normalize_attachments_from_mapping(last_message)
+    promoted_upload_ids = _normalize_uploaded_file_ids(last_message)
+    promoted_text = str(last_message.get("content") or "")
+    if not promoted_text and not promoted_attachments and not promoted_upload_ids:
+        return history_messages, user_message, attachments, uploaded_file_ids
+
+    merged_upload_ids = list(dict.fromkeys([*promoted_upload_ids, *uploaded_file_ids]))
+    return history_messages[:-1], promoted_text, promoted_attachments, merged_upload_ids
+
+
+# Build the current user LLM entry for stateless generation.
+def _build_current_user_llm_entry(
+    user_message: str,
+    attachments: list[dict[str, Any]],
+    upload_manifests: list[dict[str, Any]],
+) -> dict[str, Any]:
+    current_entry: dict[str, Any] = {"role": "user", "content": user_message}
+    current_entry = _apply_attachments_to_llm_entry(current_entry, attachments)
+    current_entry = _apply_uploaded_file_manifests_to_llm_entry(current_entry, upload_manifests or [])
+    return current_entry
+
+
+# Build LLM messages for stateless generation from request payload.
+def _build_generate_llm_messages(
+    history_messages: list[dict[str, Any]],
+    current_entry: dict[str, Any],
+    system_prompt: str,
+    engine: str,
+    model_name: str,
+    model_info_payload: dict[str, Any] | None,
+    *,
+    session_id: str,
+    sandbox_enabled: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    llm_messages: list[dict[str, Any]] = []
+    if system_prompt:
+        llm_messages.append({"role": "system", "content": system_prompt})
+
+    observed_chars_per_token: float | None = None
+    with _chat_usage_lock:
+        observed = dict(_chat_usage_by_chat_id.get(str(session_id), {}))
+    raw_observed_chars_per_token = observed.get("observed_chars_per_token")
+    if isinstance(raw_observed_chars_per_token, (int, float)) and raw_observed_chars_per_token > 0:
+        observed_chars_per_token = float(raw_observed_chars_per_token)
+
+    history_budget = _resolve_history_char_budget(
+        model_info_payload,
+        active_engine=engine,
+        active_model=model_name,
+        observed_chars_per_token=observed_chars_per_token,
+    )
+    debug_force_4k = str(os.getenv("ASLM_DEBUG_CONTEXT_COMPRESSION_4K", "")).strip().lower() in {"1", "true", "yes", "on"}
+    runtime_context_tokens = resolve_context_window_tokens(
+        model_info_payload,
+        runtime_metadata_path=MODEL_RUNTIME_METADATA_PATH,
+        active_engine=engine,
+        active_model=model_name,
+    )
+    if debug_force_4k:
+        runtime_context_tokens = 4096
+    if runtime_context_tokens > 0:
+        runtime_budget = _history_char_budget_from_context_window(
+            runtime_context_tokens,
+            model_info_payload=model_info_payload,
+            active_engine=engine,
+            active_model=model_name,
+            observed_chars_per_token=observed_chars_per_token,
+            minimum_chars=12000,
+            fallback_chars=history_budget,
+        )
+        history_budget = min(history_budget, runtime_budget)
+
+    used_history_chars = len(str(system_prompt or "")) + _estimate_llm_entry_chars(current_entry)
+    selected_history: list[list[dict[str, Any]]] = []
+    overflow_entries: list[dict[str, Any]] = []
+    history_records = list(history_messages[-LLM_HISTORY_MAX_MESSAGES:])
+    history_newest_first = list(reversed(history_records))
+
+    for index, historical_message in enumerate(history_newest_first):
+        entries = _build_llm_entries_from_request_message(historical_message, sandbox_enabled=sandbox_enabled)
+        if not entries:
+            continue
+
+        entry_cost = sum(_estimate_llm_entry_chars(entry) for entry in entries)
+        if (
+            selected_history
+            and len(selected_history) >= LLM_HISTORY_MIN_MESSAGES
+            and used_history_chars + entry_cost > history_budget
+        ):
+            overflow_entries.extend(entries)
+            for older_message in history_newest_first[index + 1:]:
+                if _request_message_has_context_compression_summary(older_message):
+                    overflow_entries.extend(
+                        _build_llm_entries_from_request_message(older_message, sandbox_enabled=sandbox_enabled)
+                    )
+                    break
+                overflow_entries.extend(
+                    _build_llm_entries_from_request_message(older_message, sandbox_enabled=sandbox_enabled)
+                )
+            break
+
+        selected_history.append(entries)
+        used_history_chars += entry_cost
+        if _request_message_has_context_compression_summary(historical_message):
+            break
+
+    compression = decide_compression(
+        used_history_chars=used_history_chars,
+        history_budget_chars=history_budget,
+        model_info_payload=model_info_payload,
+        runtime_metadata_path=MODEL_RUNTIME_METADATA_PATH,
+        active_engine=engine,
+        active_model=model_name,
+        debug_force_4k=debug_force_4k,
+        trigger_ratio=LLM_HISTORY_COMPRESSION_TRIGGER_RATIO,
+    )
+    compression_event: dict[str, Any] | None = None
+    summary_entries = _build_context_compression_source_entries_from_request(
+        history_newest_first,
+        sandbox_enabled=sandbox_enabled,
+    )
+    if overflow_entries and compression.enabled:
+        if not summary_entries:
+            overflow_entries = []
+        else:
+            overflow_entries = summary_entries
+    if compression.enabled and not overflow_entries and summary_entries:
+        overflow_entries = list(summary_entries)
+        selected_history = []
+    if overflow_entries and compression.enabled:
+        recent_user_messages = _collect_recent_user_messages_from_history(
+            history_messages,
+            str(current_entry.get("content") or ""),
+        )
+        direct_user_directives = _collect_direct_user_directives(None, 0)
+        try:
+            summary_text, summary_payload = build_structured_history_summary(
+                overflow_entries=overflow_entries,
+                recent_user_messages=recent_user_messages,
+                direct_user_directives=direct_user_directives,
+                summarize_with_model=lambda prompt_messages: _generate_history_summary_with_model(
+                    engine=engine,
+                    model_name=model_name,
+                    prompt_messages=prompt_messages,
+                    model_info_payload=model_info_payload,
+                ),
+                max_overflow_entries=LLM_HISTORY_COMPRESSION_MAX_ITEMS,
+            )
+        except Exception as exc:
+            logger.warning("History compression summary failed: %s", exc)
+            summary_text, summary_payload = build_structured_history_summary(
+                overflow_entries=overflow_entries,
+                recent_user_messages=recent_user_messages,
+                direct_user_directives=direct_user_directives,
+                summarize_with_model=None,
+                max_overflow_entries=LLM_HISTORY_COMPRESSION_MAX_ITEMS,
+            )
+
+        if summary_text:
+            summary_text, summary_payload = fit_summary_text(summary_payload, LLM_HISTORY_COMPRESSION_MAX_CHARS)
+            llm_messages.append({"role": "system", "content": summary_text})
+            compression_event = {
+                "role": "tool",
+                "alias": "context_compression_summary",
+                "name": "context_compression_summary",
+                "tool_name": "context_compression_summary",
+                "tool_id": "context_compression_summary",
+                "tool_display_name": "Context Compression",
+                "server_id": "system",
+                "server_name": "System",
+                "arguments": {
+                    "reason": compression.reason,
+                    "history_budget_chars": history_budget,
+                    "used_history_chars": used_history_chars,
+                    "context_window_tokens": compression.context_window_tokens,
+                },
+                "content": summary_text,
+                "tool_ui": {
+                    "status": "done",
+                    "label": "Context compressed",
+                    "kind": "context_compression",
+                },
+                "structured_content": {
+                    "kind": "context_compression",
+                    "summary": summary_payload,
+                },
+            }
+            logger.info(
+                "History compression applied: engine=%s model=%s %s debug_force_4k=%s",
+                engine,
+                model_name,
+                compression.reason,
+                debug_force_4k,
+            )
+
+    for entries in reversed(selected_history):
+        llm_messages.extend(entries)
+
+    llm_messages.append(current_entry)
+    return llm_messages, compression_event
+
+
 # Insert a one-off system notice after the main system prompt, without persisting a message.
 def _inject_ephemeral_system_notice(llm_messages: list[dict[str, Any]], notice: str) -> None:
     cleaned = str(notice or "").strip()
@@ -3260,11 +4073,13 @@ def _build_generate_kwargs(
     think_value: Any,
     think_level_value: Any,
     clean_options: dict[str, Any],
-    chat: Chat,
+    session_id: str,
     selected_tool_servers: list[dict[str, Any]],
     think_param_name: str = "think",
     think_level_param_name: str = "think_level",
     sync_operation_defaults: dict[str, Any] | None = None,
+    tool_sources: list[dict[str, Any]] | None = None,
+    external_tool_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     generate_kwargs: dict[str, Any] = {
         "engine": engine,
@@ -3288,29 +4103,39 @@ def _build_generate_kwargs(
 
     if selected_tool_servers:
         generate_kwargs["tool_server_ids"] = [s["id"] for s in selected_tool_servers]
-        generate_kwargs["tool_context"] = {
-            "chat_id": str(chat.id),
+        tool_source_map = _build_tool_source_map(tool_sources, selected_tool_servers)
+        tool_context = {
+            "chat_id": str(session_id),
             "engine": engine,
             "model_name": model_name,
             "module_dir": str(settings.BASE_DIR),
             "project_dir": str(settings.BASE_DIR),
             "selected_tool_server_ids": [s["id"] for s in selected_tool_servers],
             "sandbox_enabled": _selected_tools_include_sandbox(selected_tool_servers),
+            "tool_source_map": tool_source_map,
         }
+        if isinstance(external_tool_context, dict):
+            for key, value in external_tool_context.items():
+                if value not in {None, ""}:
+                    tool_context[key] = value
+        generate_kwargs["tool_context"] = tool_context
 
     return generate_kwargs
 
 # Stream and save assistant response
 def _stream_chat_response(
-    chat: Chat,
     engine: str,
     generate_kwargs: dict[str, Any],
-    assistant_message_record: Message,
     generation_id: str,
+    *,
+    chat: Chat | None = None,
+    assistant_message_record: Message | None = None,
+    session_id: str = "",
     compression_event: dict[str, Any] | None = None,
     model_info_payload: dict[str, Any] | None = None,
     system_prompt: str = "",
     current_user_message_id: int | str | None = None,
+    persist_messages: bool = True,
 ):
     visible_parts: list[str] = []
     thinking_parts: list[str] = []
@@ -3357,6 +4182,9 @@ def _stream_chat_response(
     def persist_stream_snapshot(*, force: bool = False) -> None:
         nonlocal last_snapshot_at, last_snapshot_chars
 
+        if not persist_messages or assistant_message_record is None or chat is None:
+            return
+
         visible_content = _strip_llm_control_tokens("".join(visible_parts)).strip()
         thinking_content = _strip_llm_control_tokens("".join(thinking_parts)).strip()
         transcript_snapshot = _build_streaming_assistant_transcript(
@@ -3395,7 +4223,7 @@ def _stream_chat_response(
     def maybe_apply_stream_context_compression(trigger: str, extra_context_text: str = "") -> str:
         nonlocal restart_after_stream_compression, stream_compression_applied
 
-        if stream_compression_applied:
+        if not persist_messages or stream_compression_applied:
             return ""
 
         draft_text = "\n".join(
@@ -3407,7 +4235,9 @@ def _stream_chat_response(
             if part
         )
 
-        excluded_message_ids: set[int | str] = {assistant_message_record.id}
+        excluded_message_ids: set[int | str] = set()
+        if assistant_message_record is not None:
+            excluded_message_ids.add(assistant_message_record.id)
         if current_user_message_id is not None:
             excluded_message_ids.add(current_user_message_id)
         event = _build_manual_compression_event(
@@ -3459,10 +4289,12 @@ def _stream_chat_response(
             f"options_payload={json.dumps(raw_options, ensure_ascii=False, sort_keys=True) if isinstance(raw_options, dict) else raw_options}"
         )
 
+    tracking_id = str(session_id or (chat.id if chat is not None else "") or "")
     try:
         with _generation_state_lock:
             _active_generation_id_by_engine[str(engine)] = str(generation_id or "")
-            _active_generation_id_by_chat_id[str(chat.id)] = str(generation_id or "")
+            if tracking_id:
+                _active_generation_id_by_chat_id[tracking_id] = str(generation_id or "")
         if isinstance(compression_event, dict):
             transcript_entries.append(compression_event)
             persist_stream_snapshot(force=True)
@@ -3637,9 +4469,10 @@ def _stream_chat_response(
             active_id = str(_active_generation_id_by_engine.get(str(engine)) or "")
             if active_id == str(generation_id or ""):
                 _active_generation_id_by_engine.pop(str(engine), None)
-            chat_active_id = str(_active_generation_id_by_chat_id.get(str(chat.id)) or "")
-            if chat_active_id == str(generation_id or ""):
-                _active_generation_id_by_chat_id.pop(str(chat.id), None)
+            if tracking_id:
+                chat_active_id = str(_active_generation_id_by_chat_id.get(tracking_id) or "")
+                if chat_active_id == str(generation_id or ""):
+                    _active_generation_id_by_chat_id.pop(tracking_id, None)
         if is_thinking:
             yield "\n</think>\n"
 
@@ -3677,24 +4510,25 @@ def _stream_chat_response(
         )
 
         should_persist_message = bool(visible_content or thinking_content or transcript_has_renderable_payload)
-        if should_persist_message:
-            assistant_message_record.content = visible_content
-            assistant_message_record.llm_transcript = transcript_entries
-            assistant_message_record.save(update_fields=["content", "llm_transcript"])
-            # Bump chat ordering so sidebar reflects the latest activity.
-            Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
-        else:
-            # Nothing was generated; drop the empty placeholder we pre-created.
-            assistant_message_record.delete()
+        if persist_messages and assistant_message_record is not None and chat is not None:
+            if should_persist_message:
+                assistant_message_record.content = visible_content
+                assistant_message_record.llm_transcript = transcript_entries
+                assistant_message_record.save(update_fields=["content", "llm_transcript"])
+                # Bump chat ordering so sidebar reflects the latest activity.
+                Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
+            else:
+                # Nothing was generated; drop the empty placeholder we pre-created.
+                assistant_message_record.delete()
 
         duration_seconds = time.perf_counter() - started_at
-        if usage_snapshot:
+        if usage_snapshot and tracking_id:
             prompt_tokens_observed = _coerce_positive_int(usage_snapshot.get("prompt_tokens"))
             if prompt_tokens_observed and prompt_chars_estimate > 0:
                 usage_snapshot["prompt_chars_estimate"] = int(prompt_chars_estimate)
                 usage_snapshot["observed_chars_per_token"] = float(prompt_chars_estimate / max(1, prompt_tokens_observed))
             with _chat_usage_lock:
-                _chat_usage_by_chat_id[str(chat.id)] = {
+                _chat_usage_by_chat_id[tracking_id] = {
                     **usage_snapshot,
                     "engine": engine,
                     "model": model_name,
@@ -3772,6 +4606,97 @@ def upload_files_api(request):
     return JsonResponse({"files": public_files})
 
 
+# Handle a stateless generation request for external modules.
+def generate_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        history_messages = _normalize_request_history_messages(data.get("messages") or [])
+        history_messages, user_message, attachments, uploaded_file_ids = _split_request_conversation(
+            data,
+            history_messages,
+        )
+
+        prepared = _prepare_generation_request(
+            request,
+            data,
+            route="/api/generate/",
+            user_message=user_message,
+            attachments=attachments,
+            uploaded_file_ids=uploaded_file_ids,
+        )
+        if isinstance(prepared, JsonResponse):
+            return prepared
+
+        session_id = str(data.get("session_id") or "").strip() or str(uuid.uuid4())
+        consume_skill_notifications = data.get("consume_skill_notifications", True)
+        if not isinstance(consume_skill_notifications, bool):
+            consume_skill_notifications = bool(consume_skill_notifications)
+        system_prompt = _compose_system_prompt(
+            data.get("system_prompt", ""),
+            consume_skill_notifications=consume_skill_notifications,
+            include_skills_baseline=_resolve_include_skills_baseline(data, history_messages),
+        )
+        current_entry = _build_current_user_llm_entry(
+            user_message,
+            prepared.attachments,
+            prepared.upload_manifests,
+        )
+        llm_messages, compression_event = _build_generate_llm_messages(
+            history_messages,
+            current_entry,
+            system_prompt,
+            prepared.engine,
+            prepared.model_name,
+            prepared.model_info_payload,
+            session_id=session_id,
+            sandbox_enabled=prepared.sandbox_enabled,
+        )
+        model_info_payload = prepared.model_info_payload
+        generate_kwargs = _build_generate_kwargs(
+            prepared.engine,
+            prepared.model_name,
+            llm_messages,
+            prepared.think_value,
+            prepared.think_level_value,
+            prepared.clean_options,
+            session_id,
+            prepared.selected_tool_servers,
+            think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
+            think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
+            sync_operation_defaults=prepared.sync_operation_defaults,
+            tool_sources=prepared.tool_sources,
+            external_tool_context=prepared.external_tool_context,
+        )
+
+        generation_id = uuid.uuid4().hex
+        response = StreamingHttpResponse(
+            _stream_chat_response(
+                prepared.engine,
+                generate_kwargs,
+                generation_id,
+                session_id=session_id,
+                compression_event=compression_event,
+                model_info_payload=prepared.model_info_payload,
+                system_prompt=system_prompt,
+                persist_messages=False,
+            ),
+            content_type="text/plain; charset=utf-8",
+        )
+        response["X-LLM-Engine"] = prepared.engine
+        response["X-Session-ID"] = session_id
+        response["X-Generation-ID"] = generation_id
+        return response
+
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Unhandled exception in generate_api")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
 # Handle a chat generation request.
 def chat_api(request):
     if request.method != "POST":
@@ -3787,7 +4712,9 @@ def chat_api(request):
         chat_id = data.get("chat_id", "")
         attachments = _normalize_request_attachments(data)
         uploaded_file_ids = _normalize_uploaded_file_ids(data)
-        engine = _get_active_engine(data.get("engine"))
+        engine, engine_error = _resolve_request_engine_or_response(request, data)
+        if engine_error is not None:
+            return engine_error
         raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
         if isinstance(raw_tool_ids, str):
             raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
@@ -3900,41 +4827,27 @@ def chat_api(request):
             think_value,
             think_level_value,
             clean_options,
-            chat,
+            str(chat.id),
             selected_tool_servers,
             think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
             think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
-            sync_operation_defaults=(
-                {
-                    **(
-                        model_info_payload.get("defaults", {})
-                        if isinstance(model_info_payload.get("defaults"), dict)
-                        else {}
-                    ),
-                    **(
-                        {str(model_info_payload.get("think_param_name")): think_value}
-                        if engine == "lms" and think_value is not None and str(model_info_payload.get("think_param_name", "")).startswith("ext.")
-                        else {}
-                    ),
-                    **(
-                        {str(model_info_payload.get("think_level_param_name")): think_level_value}
-                        if engine == "lms" and think_level_value is not None and str(model_info_payload.get("think_level_param_name", "")).startswith("ext.")
-                        else {}
-                    ),
-                }
-                if engine == "lms"
-                else {}
+            sync_operation_defaults=_build_lms_sync_operation_defaults(
+                engine,
+                model_info_payload,
+                think_value,
+                think_level_value,
             ),
         )
 
         generation_id = uuid.uuid4().hex
         response = StreamingHttpResponse(
             _stream_chat_response(
-                chat,
                 engine,
                 generate_kwargs,
-                assistant_message_record,
                 generation_id,
+                chat=chat,
+                assistant_message_record=assistant_message_record,
+                session_id=str(chat.id),
                 compression_event=compression_event,
                 model_info_payload=model_info_payload,
                 system_prompt=system_prompt,
@@ -4209,7 +5122,9 @@ def abort_generation_api(request):
 
     try:
         data = _read_json_request_body(request)
-        engine = _get_active_engine(data.get("engine"))
+        engine, engine_error = _resolve_request_engine_or_response(request, data)
+        if engine_error is not None:
+            return engine_error
         generation_id = str(data.get("generation_id") or "").strip()
         if generation_id:
             with _generation_state_lock:
@@ -4319,7 +5234,9 @@ def regenerate_chat_api(request, chat_id):
 
         model_name = data.get("model", "")
         options = data.get("options", {}) or {}
-        engine = _get_active_engine(data.get("engine"))
+        engine, engine_error = _resolve_request_engine_or_response(request, data)
+        if engine_error is not None:
+            return engine_error
         raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
         if isinstance(raw_tool_ids, str):
             raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
@@ -4409,30 +5326,15 @@ def regenerate_chat_api(request, chat_id):
             think_value,
             think_level_value,
             clean_options,
-            chat,
+            str(chat.id),
             selected_tool_servers,
             think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
             think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
-            sync_operation_defaults=(
-                {
-                    **(
-                        model_info_payload.get("defaults", {})
-                        if isinstance(model_info_payload.get("defaults"), dict)
-                        else {}
-                    ),
-                    **(
-                        {str(model_info_payload.get("think_param_name")): think_value}
-                        if engine == "lms" and think_value is not None and str(model_info_payload.get("think_param_name", "")).startswith("ext.")
-                        else {}
-                    ),
-                    **(
-                        {str(model_info_payload.get("think_level_param_name")): think_level_value}
-                        if engine == "lms" and think_level_value is not None and str(model_info_payload.get("think_level_param_name", "")).startswith("ext.")
-                        else {}
-                    ),
-                }
-                if engine == "lms"
-                else {}
+            sync_operation_defaults=_build_lms_sync_operation_defaults(
+                engine,
+                model_info_payload,
+                think_value,
+                think_level_value,
             ),
         )
 
@@ -4446,11 +5348,12 @@ def regenerate_chat_api(request, chat_id):
         generation_id = uuid.uuid4().hex
         response = StreamingHttpResponse(
             _stream_chat_response(
-                chat,
                 engine,
                 generate_kwargs,
-                assistant_message_record,
                 generation_id,
+                chat=chat,
+                assistant_message_record=assistant_message_record,
+                session_id=str(chat.id),
                 compression_event=compression_event,
                 model_info_payload=model_info_payload,
                 system_prompt=system_prompt,
@@ -4545,7 +5448,9 @@ def get_model_info_api(request):
     if not model_name:
         return JsonResponse({"error": "Model parameter is required"}, status=400)
 
-    engine = _get_active_engine(request.GET.get("engine"))
+    engine, engine_error = _resolve_request_engine_or_response(request)
+    if engine_error is not None:
+        return engine_error
     started_at = time.perf_counter()
 
     try:
@@ -4579,7 +5484,9 @@ def get_inference_info_api(request):
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
-    engine = _get_active_engine(request.GET.get("engine"))
+    engine, engine_error = _resolve_request_engine_or_response(request)
+    if engine_error is not None:
+        return engine_error
     model_name, model_source = _resolve_inference_model(engine, request.GET.get("model"))
     if not model_name:
         return JsonResponse(
@@ -4660,7 +5567,15 @@ def get_models_api(request):
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
-    engine = _get_active_engine(request.GET.get("engine"))
+    engine, engine_error = _resolve_request_engine_or_response(request)
+    if engine_error is not None:
+        return engine_error
+
+    # Polling requests force a fresh probe so newly loaded/downloaded models and
+    # recovered connections surface without waiting for the cache TTL to expire.
+    if str(request.GET.get("refresh", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        _clear_cached_model_list(engine)
+
     started_at = time.perf_counter()
     models = _load_models_for_engine(engine)
     _print_runtime_event(
@@ -4849,7 +5764,9 @@ def get_tools_api(request):
     if request.method != "GET":
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
-    engine = _get_active_engine(request.GET.get("engine"))
+    engine, engine_error = _resolve_request_engine_or_response(request)
+    if engine_error is not None:
+        return engine_error
     model_name = str(request.GET.get("model", "") or "").strip() or None
     servers = _list_tool_servers_cached(engine, model_name)
     return JsonResponse({"tool_servers": servers, "servers": servers, "tools": servers})
@@ -4924,7 +5841,9 @@ def get_context_usage_api(request):
         return JsonResponse({"error": "Invalid request method"}, status=405)
 
     try:
-        engine = _get_active_engine(request.GET.get("engine"))
+        engine, engine_error = _resolve_request_engine_or_response(request)
+        if engine_error is not None:
+            return engine_error
         model_name = str(request.GET.get("model") or _get_remembered_active_model(engine) or "").strip()
         chat_id = str(request.GET.get("chat_id") or "").strip()
         draft_text = str(request.GET.get("draft") or "")
@@ -4980,6 +5899,111 @@ def get_context_usage_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Return whether history compression should run for one stateless usage snapshot.
+def context_compression_decide_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        engine, engine_error = _resolve_request_engine_or_response(request, data)
+        if engine_error is not None:
+            return engine_error
+        model_name = str(data.get("model") or _get_remembered_active_model(engine) or "").strip()
+        debug_force_4k = str(os.getenv("ASLM_DEBUG_CONTEXT_COMPRESSION_4K", "")).strip().lower() in {"1", "true", "yes", "on"}
+        model_info_payload = data.get("model_info")
+        if not isinstance(model_info_payload, dict):
+            model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
+
+        trigger_ratio = data.get("trigger_ratio")
+        try:
+            parsed_trigger_ratio = float(trigger_ratio) if trigger_ratio is not None else LLM_HISTORY_COMPRESSION_TRIGGER_RATIO
+        except (TypeError, ValueError):
+            parsed_trigger_ratio = LLM_HISTORY_COMPRESSION_TRIGGER_RATIO
+
+        compression = decide_compression(
+            used_history_chars=int(data.get("used_history_chars") or 0),
+            history_budget_chars=int(data.get("history_budget_chars") or 0),
+            model_info_payload=model_info_payload,
+            runtime_metadata_path=MODEL_RUNTIME_METADATA_PATH,
+            active_engine=engine,
+            active_model=model_name,
+            debug_force_4k=debug_force_4k,
+            trigger_ratio=parsed_trigger_ratio,
+        )
+        return JsonResponse({
+            "ok": True,
+            "enabled": compression.enabled,
+            "context_window_tokens": compression.context_window_tokens,
+            "history_budget_chars": compression.history_budget_chars,
+            "reason": compression.reason,
+        })
+    except Exception as exc:
+        logger.exception("Failed to decide context compression")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Build one compression event from stateless overflow data for external module consumers.
+def context_compression_build_event_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        engine, engine_error = _resolve_request_engine_or_response(request, data)
+        if engine_error is not None:
+            return engine_error
+        model_name = str(data.get("model") or _get_remembered_active_model(engine) or "").strip()
+        force = bool(data.get("force"))
+        debug_force_4k = str(os.getenv("ASLM_DEBUG_CONTEXT_COMPRESSION_4K", "")).strip().lower() in {"1", "true", "yes", "on"}
+        model_info_payload = data.get("model_info")
+        if not isinstance(model_info_payload, dict):
+            model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
+
+        overflow_entries = data.get("overflow_entries") or []
+        summary_source_entries = data.get("summary_source_entries") or []
+        if not isinstance(overflow_entries, list):
+            overflow_entries = []
+        if not isinstance(summary_source_entries, list):
+            summary_source_entries = []
+
+        recent_user_messages = data.get("recent_user_messages") or []
+        direct_user_directives = data.get("direct_user_directives") or []
+        if not isinstance(recent_user_messages, list):
+            recent_user_messages = []
+        if not isinstance(direct_user_directives, list):
+            direct_user_directives = []
+
+        trigger_ratio = data.get("trigger_ratio")
+        try:
+            parsed_trigger_ratio = float(trigger_ratio) if trigger_ratio is not None else LLM_HISTORY_COMPRESSION_TRIGGER_RATIO
+        except (TypeError, ValueError):
+            parsed_trigger_ratio = LLM_HISTORY_COMPRESSION_TRIGGER_RATIO
+
+        event = _build_stateless_compression_event(
+            engine=engine,
+            model_name=model_name,
+            model_info_payload=model_info_payload,
+            force=force,
+            used_history_chars=int(data.get("used_history_chars") or 0),
+            history_budget_chars=int(data.get("history_budget_chars") or 0),
+            overflow_entries=overflow_entries,
+            summary_source_entries=summary_source_entries,
+            recent_user_messages=[str(value) for value in recent_user_messages],
+            direct_user_directives=[str(value) for value in direct_user_directives],
+            summarize_with_model_enabled=bool(data.get("summarize_with_model", True)),
+            debug_force_4k=debug_force_4k,
+            trigger_ratio=parsed_trigger_ratio,
+            compression_mode=str(data.get("compression_mode") or "manual"),
+        )
+        if not event:
+            return JsonResponse({"ok": True, "event": None, "reason": "below_threshold"})
+        return JsonResponse({"ok": True, "event": event})
+    except Exception as exc:
+        logger.exception("Failed to build stateless compression event")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
 # Force or opportunistically run context compression and persist a timeline marker.
 def context_compress_api(request):
     if request.method != "POST":
@@ -4987,7 +6011,9 @@ def context_compress_api(request):
 
     try:
         data = _read_json_request_body(request)
-        engine = _get_active_engine(data.get("engine"))
+        engine, engine_error = _resolve_request_engine_or_response(request, data)
+        if engine_error is not None:
+            return engine_error
         model_name = str(data.get("model") or _get_remembered_active_model(engine) or "").strip()
         chat_id = str(data.get("chat_id") or "").strip()
         if not chat_id:
@@ -5284,6 +6310,272 @@ def delete_lms_preset_api(request):
         return JsonResponse({"error": str(exc)}, status=404)
     except Exception as exc:
         logger.exception("Error deleting LM Studio preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Resolve the endpoint URL that scopes OpenAI presets.
+def _get_openai_preset_endpoint() -> str:
+    return normalize_openai_endpoint_url(settings.get_engine_url("openai"))
+
+
+# Return preset metadata for the selected OpenAI model and endpoint.
+def get_openai_presets_api(request):
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    model_name = str(request.GET.get("model", "") or "").strip()
+    if not model_name:
+        return JsonResponse({"error": "Model parameter is required"}, status=400)
+
+    try:
+        return JsonResponse(get_openai_preset_payload(_get_openai_preset_endpoint(), model_name))
+    except Exception as exc:
+        logger.exception("Error getting OpenAI presets for %s", model_name)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Persist UI changes to the active OpenAI preset.
+def sync_openai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return _preset_mutation_response(
+            sync_active_openai_preset(_get_openai_preset_endpoint(), model_name, config)
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error syncing OpenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Set the active preset for an OpenAI model.
+def select_openai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return _preset_mutation_response(
+            activate_openai_preset(_get_openai_preset_endpoint(), model_name, preset_id)
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except OpenAiPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error selecting OpenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Create a new OpenAI preset for the selected model.
+def create_openai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return _preset_mutation_response(
+            create_openai_preset(
+                _get_openai_preset_endpoint(),
+                model_name,
+                name=preset_name or None,
+                config=config if isinstance(config, dict) else {},
+                activate=True,
+            )
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error creating OpenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Rename an existing custom OpenAI preset.
+def rename_openai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        if not model_name or not preset_id or not preset_name:
+            return JsonResponse({"error": "Model, preset_id and name are required"}, status=400)
+        return _preset_mutation_response(
+            rename_openai_preset(_get_openai_preset_endpoint(), model_name, preset_id, preset_name)
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except OpenAiPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error renaming OpenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Delete an existing custom OpenAI preset and fall back to the default one.
+def delete_openai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return _preset_mutation_response(
+            delete_openai_preset(_get_openai_preset_endpoint(), model_name, preset_id)
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except OpenAiPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error deleting OpenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Return preset metadata for the selected Google GenAI model.
+def get_google_genai_presets_api(request):
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    model_name = str(request.GET.get("model", "") or "").strip()
+    if not model_name:
+        return JsonResponse({"error": "Model parameter is required"}, status=400)
+
+    try:
+        return JsonResponse(get_google_genai_preset_payload(model_name))
+    except Exception as exc:
+        logger.exception("Error getting Google GenAI presets for %s", model_name)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Persist UI changes to the active Google GenAI preset.
+def sync_google_genai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return _preset_mutation_response(sync_active_google_genai_preset(model_name, config))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error syncing Google GenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Set the active preset for a Google GenAI model.
+def select_google_genai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return _preset_mutation_response(activate_google_genai_preset(model_name, preset_id))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except GoogleGenAiPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error selecting Google GenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Create a new Google GenAI preset for the selected model.
+def create_google_genai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        config = data.get("config", {})
+        if not model_name:
+            return JsonResponse({"error": "Model parameter is required"}, status=400)
+        return _preset_mutation_response(
+            create_google_genai_preset(
+                model_name,
+                name=preset_name or None,
+                config=config if isinstance(config, dict) else {},
+                activate=True,
+            )
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Error creating Google GenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Rename an existing custom Google GenAI preset.
+def rename_google_genai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        preset_name = str(data.get("name", "") or "").strip()
+        if not model_name or not preset_id or not preset_name:
+            return JsonResponse({"error": "Model, preset_id and name are required"}, status=400)
+        return _preset_mutation_response(rename_google_genai_preset(model_name, preset_id, preset_name))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except GoogleGenAiPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error renaming Google GenAI preset")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Delete an existing custom Google GenAI preset and fall back to the default one.
+def delete_google_genai_preset_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        model_name = str(data.get("model", "") or "").strip()
+        preset_id = str(data.get("preset_id", "") or "").strip()
+        if not model_name or not preset_id:
+            return JsonResponse({"error": "Model and preset_id are required"}, status=400)
+        return _preset_mutation_response(delete_google_genai_preset(model_name, preset_id))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except GoogleGenAiPreset.DoesNotExist as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except Exception as exc:
+        logger.exception("Error deleting Google GenAI preset")
         return JsonResponse({"error": str(exc)}, status=500)
 
 
@@ -5619,19 +6911,6 @@ def browser_portal_event_api(request):
         response_session_id=payload.get("session_id"),
     )
     return JsonResponse(payload)
-
-
-# Additional page views.
-
-# Render the profile page.
-class ProfileView(TemplateView):
-    template_name = "main/profile.html"
-
-    # Build the profile page context.
-    def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
-        context = super().get_context_data(**kwargs)
-        context.update(_build_base_context())
-        return context
 
 
 # Render the preloaded chat page.

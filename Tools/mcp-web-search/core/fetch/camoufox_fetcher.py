@@ -89,6 +89,122 @@ def is_camoufox_available() -> bool:
     return bool(_available_cache)
 
 
+# Run the Camoufox worker subprocess with an arbitrary JSON payload.
+async def _run_camoufox_worker(
+    url: str,
+    payload: dict[str, object],
+    *,
+    process_timeout: float,
+) -> FetchResult:
+    t0 = time.perf_counter()
+    payload_bytes = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, str(_WORKER_SCRIPT),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        return FetchResult(url=url, error=f"failed to start worker: {exc}",
+                           duration_sec=time.perf_counter() - t0)
+
+    try:
+        stdout_bytes, _ = await asyncio.wait_for(
+            proc.communicate(input=payload_bytes),
+            timeout=process_timeout,
+        )
+    except asyncio.TimeoutError:
+        _kill_process_tree(proc.pid)
+        return FetchResult(
+            url=url,
+            error=f"worker timeout after {process_timeout:.0f}s",
+            duration_sec=time.perf_counter() - t0,
+        )
+    except Exception as exc:
+        _kill_process_tree(proc.pid)
+        return FetchResult(url=url, error=f"worker communicate error: {exc}",
+                           duration_sec=time.perf_counter() - t0)
+
+    duration = time.perf_counter() - t0
+    if not stdout_bytes:
+        return FetchResult(url=url, error="worker produced no output", duration_sec=duration)
+
+    try:
+        data = json.loads(stdout_bytes.decode("utf-8", errors="replace").strip())
+    except json.JSONDecodeError as exc:
+        return FetchResult(url=url, error=f"bad JSON from worker: {exc}", duration_sec=duration)
+
+    if not data.get("ok"):
+        return FetchResult(
+            url=url,
+            error=str(data.get("error", "unknown worker error")),
+            duration_sec=duration,
+        )
+
+    raw_html: str = data.get("html", "")
+    inner_text: str = data.get("inner_text", "")
+    title: str = data.get("title", "")
+    return FetchResult(
+        url=url,
+        success=True,
+        html=raw_html,
+        inner_text=inner_text,
+        title=title,
+        method="camoufox",
+        duration_sec=duration,
+    )
+
+
+# Open thread HTML in Camoufox, then fetch .json in-page with session cookies.
+async def fetch_page_json_with_camoufox(
+    page_url: str,
+    *,
+    json_query: str = "limit=50&depth=3",
+    wait_sec: float = 4.0,
+    headless: bool = True,
+    humanize: bool = True,
+    geoip: bool = False,
+    locale: str = "en-US",
+    proxy: Optional[dict] = None,
+    warmup_urls: Optional[list[str]] = None,
+    warmup_count: int = 0,
+    timeout_sec: float = 45.0,
+    process_timeout: float = 0.0,
+) -> FetchResult:
+    if not process_timeout:
+        process_timeout = timeout_sec + 15.0
+
+    payload: dict[str, object] = {
+        "url": page_url,
+        "wait_sec": wait_sec,
+        "headless": headless,
+        "humanize": humanize,
+        "geoip": geoip,
+        "locale": locale,
+        "proxy": proxy,
+        "warmup_urls": warmup_urls or ["https://www.wikipedia.org/"],
+        "warmup_count": warmup_count,
+        "timeout_sec": timeout_sec,
+        "fetch_json_from_page": True,
+        "json_query": json_query,
+    }
+    result = await _run_camoufox_worker(page_url, payload, process_timeout=process_timeout)
+    if not result.success:
+        return result
+
+    raw_json = (result.html or result.inner_text or "").strip()
+    if not raw_json.startswith("["):
+        return FetchResult(
+            url=page_url,
+            error="invalid json payload from in-page fetch",
+            duration_sec=result.duration_sec,
+        )
+    return result
+
+
 # Fetch url in an isolated Camoufox subprocess; returns FetchResult.
 async def fetch_with_camoufox(
     url: str,
@@ -122,57 +238,15 @@ async def fetch_with_camoufox(
         "warmup_count": warmup_count,
         "timeout_sec": timeout_sec,
     }
-    payload_bytes = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+    worker_result = await _run_camoufox_worker(url, payload, process_timeout=process_timeout)
+    if not worker_result.success:
+        worker_result.duration_sec = time.perf_counter() - t0
+        return worker_result
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable, str(_WORKER_SCRIPT),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-            start_new_session=True,  # isolates process group so killpg won't hit the MCP server
-        )
-    except Exception as exc:
-        return FetchResult(url=url, error=f"failed to start worker: {exc}",
-                           duration_sec=time.perf_counter() - t0)
-
-    try:
-        stdout_bytes, _ = await asyncio.wait_for(
-            proc.communicate(input=payload_bytes),
-            timeout=process_timeout,
-        )
-    except asyncio.TimeoutError:
-        _kill_process_tree(proc.pid)
-        return FetchResult(
-            url=url,
-            error=f"worker timeout after {process_timeout:.0f}s",
-            duration_sec=time.perf_counter() - t0,
-        )
-    except Exception as exc:
-        _kill_process_tree(proc.pid)
-        return FetchResult(url=url, error=f"worker communicate error: {exc}",
-                           duration_sec=time.perf_counter() - t0)
-
-    duration = time.perf_counter() - t0
-
-    if not stdout_bytes:
-        return FetchResult(url=url, error="worker produced no output", duration_sec=duration)
-
-    try:
-        data = json.loads(stdout_bytes.decode("utf-8", errors="replace").strip())
-    except json.JSONDecodeError as exc:
-        return FetchResult(url=url, error=f"bad JSON from worker: {exc}", duration_sec=duration)
-
-    if not data.get("ok"):
-        return FetchResult(
-            url=url,
-            error=str(data.get("error", "unknown worker error")),
-            duration_sec=duration,
-        )
-
-    raw_html: str = data.get("html", "")
-    inner_text: str = data.get("inner_text", "")
-    title: str = data.get("title", "")
+    duration = worker_result.duration_sec
+    raw_html = worker_result.html
+    inner_text = worker_result.inner_text
+    title = worker_result.title
 
     if not raw_html or len(raw_html) < 200:
         return FetchResult(url=url, error="insufficient HTML content", duration_sec=duration)

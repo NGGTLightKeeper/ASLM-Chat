@@ -1501,6 +1501,7 @@ def _build_google_tools(
         tool_server_ids,
         engine="google-genai",
         model_name=model_name,
+        tool_source_map=tool_context.get("tool_source_map") if isinstance(tool_context, dict) else None,
     )
     if not openai_tools:
         return [], tool_lookup

@@ -43,7 +43,7 @@ def test_web_search_rejects_spam_before_service(bridge_module) -> None:
 # web_search — pass coerced query and effort through to run_web_search_rich.
 
 @pytest.mark.unit
-def test_web_search_passes_coerced_query_and_effort_to_service(bridge_module) -> None:
+def test_web_search_passes_coerced_query_effort_and_shopping_to_service(bridge_module) -> None:
     rich = {
         "query": "pytorch cuda install",
         "search_id": "test",
@@ -56,7 +56,7 @@ def test_web_search_passes_coerced_query_and_effort_to_service(bridge_module) ->
             result = asyncio.run(
                 bridge_module.call_tool(
                     "web_search",
-                    {"query": "pytorch cuda install", "effort": "high"},
+                    {"query": "pytorch cuda install", "effort": "high", "shopping": True},
                 )
             )
 
@@ -65,3 +65,4 @@ def test_web_search_passes_coerced_query_and_effort_to_service(bridge_module) ->
     args, kwargs = mock_run.await_args
     assert args[0] == "pytorch cuda install"
     assert kwargs.get("effort") == "high"
+    assert kwargs.get("shopping") is True

@@ -10,7 +10,7 @@ import pytest
 from core.fetch.shopping.assets import ShoppingAssetCache
 from core.fetch.shopping.engine import ShoppingSearchEngine, result_to_jsonable
 from core.fetch.shopping.models import ShoppingProviderAttempt
-from core.fetch.shopping.providers import PROVIDERS
+from core.fetch.shopping.providers import PROVIDERS, providers_for_lane
 
 
 def _html(provider: str, count: int, *, currency: str = "$") -> str:
@@ -256,6 +256,98 @@ def test_shopping_engine_skips_provider_already_in_cooldown(monkeypatch) -> None
 
 
 @pytest.mark.unit
+def test_shopping_provider_router_prefers_russian_sources_for_ru() -> None:
+    primary = [provider.name for provider in providers_for_lane("primary", language="ru")]
+    secondary = [provider.name for provider in providers_for_lane("secondary", language="ru")]
+
+    assert primary[:2] == ["yandex_market", "ek_ua"]
+    assert secondary[:4] == ["ek_ua", "chinandex", "aliexpress", "kakaku"]
+
+
+@pytest.mark.unit
+def test_shopping_provider_router_prefers_chinese_aggregator_for_zh() -> None:
+    primary = [provider.name for provider in providers_for_lane("primary", language="zh")]
+    secondary = [provider.name for provider in providers_for_lane("secondary", language="zh")]
+
+    assert primary[:2] == ["chinandex", "aliexpress"]
+    assert secondary[:3] == ["aliexpress", "bing_shopping", "kakaku"]
+
+
+@pytest.mark.unit
+def test_shopping_provider_router_prefers_japanese_aggregator_for_ja() -> None:
+    primary = [provider.name for provider in providers_for_lane("primary", language="ja")]
+    secondary = [provider.name for provider in providers_for_lane("secondary", language="ja")]
+
+    assert primary[:2] == ["kakaku", "pricerunner"]
+    assert secondary[:2] == ["chinandex", "bing_shopping"]
+
+
+@pytest.mark.unit
+def test_shopping_engine_passes_language_to_routes(monkeypatch) -> None:
+    engine = ShoppingSearchEngine(asset_cache=ShoppingAssetCache())
+    attempted: list[str] = []
+
+    async def fake_fetch(url, provider, method):
+        attempted.append(provider.name)
+        html = "" if provider.name == "yandex_market" else _html(provider.name, 20)
+        return html, ShoppingProviderAttempt(
+            provider=provider.name,
+            lane=provider.lane,
+            method=method,
+            url=url,
+            ok=bool(html),
+            elapsed_ms=1,
+            status_code=200 if html else 204,
+            bytes=len(html),
+        )
+
+    monkeypatch.setattr(engine, "_fetch", fake_fetch)
+
+    products, _attempts = asyncio_run(engine._lane("купить iphone", "primary", limit=4, language="ru"))
+
+    assert products
+    assert "yandex_market" in attempted
+    assert attempted.index("yandex_market") < attempted.index("ek_ua")
+
+
+@pytest.mark.unit
+def test_shopping_engine_waits_for_regional_primary_before_secondary_early_return(monkeypatch) -> None:
+    engine = ShoppingSearchEngine(asset_cache=ShoppingAssetCache())
+
+    async def fake_fetch(url, provider, method):
+        if provider.name == "yandex_market":
+            await asyncio.sleep(0.05)
+            html = _html(provider.name, 20, currency="₽")
+        elif provider.lane == "secondary":
+            html = _html(provider.name, 20)
+        else:
+            html = ""
+        return html, ShoppingProviderAttempt(
+            provider=provider.name,
+            lane=provider.lane,
+            method=method,
+            url=url,
+            ok=bool(html),
+            elapsed_ms=1,
+            status_code=200 if html else 204,
+            bytes=len(html),
+        )
+
+    monkeypatch.setattr(engine, "_fetch", fake_fetch)
+
+    result = asyncio_run(engine.search("защитное стекло дешево", effort="medium", limit=6, language="ru"))
+
+    assert any(product.source == "yandex_market" for product in result.products)
+
+
+@pytest.mark.unit
+def test_shopping_engine_uses_longer_hard_timeout_for_regional_routes() -> None:
+    engine = ShoppingSearchEngine(asset_cache=ShoppingAssetCache())
+
+    assert engine._hard_timeout_for_effort("medium", "ru") > engine._hard_timeout_for_effort("medium", "en")
+
+
+@pytest.mark.unit
 def test_shopping_engine_sets_favicon_proxy_without_fetching_favicon(monkeypatch) -> None:
     engine = ShoppingSearchEngine(asset_cache=ShoppingAssetCache())
 
@@ -291,6 +383,10 @@ def test_shopping_providers_use_probe_selected_single_transport() -> None:
         "bing_shopping": ("curl_cffi",),
         "geizhals": ("curl_cffi",),
         "ek_ua": ("curl_cffi",),
+        "yandex_market": ("curl_cffi",),
+        "aliexpress": ("curl_cffi",),
+        "chinandex": ("curl_cffi",),
+        "kakaku": ("curl_cffi",),
     }
 
 

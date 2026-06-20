@@ -10,6 +10,14 @@
 
 {# Main chat layout. #}
 <div class="chat-shell">
+    {# Apply the saved sidebar state before paint so it opens correctly without a collapse animation. #}
+    <script>
+        try {
+            if (localStorage.getItem('aslm.settingsSidebarCollapsed') === '1') {
+                document.currentScript.parentElement.classList.add('settings-collapsed');
+            }
+        } catch (e) {}
+    </script>
     {% csrf_token %}
 
     {# Conversation area. #}
@@ -44,6 +52,7 @@
                                         </div>
                                         <div class="composer-menu-other" data-skills-menu>
                                             <div class="composer-menu-section-title">{% t "composer.other" %}</div>
+                                            <div class="composer-mcp-host"></div>
                                             <div class="composer-skills-host"></div>
                                         </div>
                                     </div>
@@ -95,6 +104,7 @@
                             </div>
                             <div class="composer-menu-other" data-skills-menu>
                                 <div class="composer-menu-section-title">{% t "composer.other" %}</div>
+                                <div class="composer-mcp-host"></div>
                                 <div class="composer-skills-host"></div>
                             </div>
                         </div>
@@ -149,9 +159,6 @@
     <aside class="sidebar sidebar-right" id="sidebarRight">
         <div class="sidebar-header">
             <span class="logo-name">{% t "settings.modelSettings" %}</span>
-            <button class="sidebar-collapse-btn" id="sidebarRightToggle" type="button" title="{% t "settings.collapse" %}" aria-label="{% t "settings.collapse" %}" aria-expanded="true">
-                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/arrow-left.svg' %}#icon"></use></svg>
-            </button>
         </div>
 
         <div class="settings-panel">
@@ -182,7 +189,7 @@
                             {% t "settings.apiKey" %}
                             <span class="setting-value" id="engineApiKeyStatus">{% t "settings.off" %}</span>
                         </label>
-                        <label class="setting-switch-row" for="engineApiKeyEnabled">
+                        <label class="setting-switch-row" id="engineApiKeyToggleRow" for="engineApiKeyEnabled">
                             <span class="setting-switch-text">{% t "settings.useSavedKey" %}</span>
                             <span class="setting-switch-control">
                                 <input class="setting-switch-input" id="engineApiKeyEnabled" type="checkbox" {% if runtime_settings.active_has_api_key %}checked{% endif %}>
@@ -242,28 +249,6 @@
             </div>
 
             <div class="settings-divider" id="divider-tools" style="display:none;"></div>
-
-            <div class="settings-section collapsed" id="group-mcp" style="display:none;">
-                <div class="settings-section-header">
-                    {% t "settings.mcp" %}
-                    <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/chevron-down-markup.svg' %}#icon"></use></svg>
-                </div>
-                <div class="settings-section-content" id="mcpSettingsContent">
-                </div>
-            </div>
-
-            <div class="settings-divider" id="divider-mcp" style="display:none;"></div>
-
-            <div class="settings-section collapsed" id="group-skills">
-                <div class="settings-section-header">
-                    {% t "settings.skills" %}
-                    <svg class="chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/chevron-down-markup.svg' %}#icon"></use></svg>
-                </div>
-                <div class="settings-section-content" id="skillsSettingsContent">
-                </div>
-            </div>
-
-            <div class="settings-divider" id="divider-skills"></div>
 
             <div class="settings-section" id="group-system">
                 <div class="settings-section-header">
@@ -328,6 +313,11 @@
             </div>
         </div>
     </aside>
+
+    {# Floating collapse/expand toggle for the settings sidebar (fixed top-right). #}
+    <button class="sidebar-collapse-btn" id="sidebarRightToggle" type="button" title="{% t "settings.collapse" %}" aria-label="{% t "settings.collapse" %}" aria-expanded="true">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/arrow-left.svg' %}#icon"></use></svg>
+    </button>
 
 </div>
 

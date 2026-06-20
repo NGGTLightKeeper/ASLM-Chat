@@ -151,8 +151,8 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --font-size-caption-2: 12px;
   --font-size-caption-1: 13px;
-  --font-size-body-2: 15px;
-  --font-size-body-1: 17px;
+  --font-size-body-2: 14px;
+  --font-size-body-1: 16px;
   --font-size-title-3: 20px;
   --font-size-title-2: 22px;
   --font-size-title-1: 28px;
@@ -163,10 +163,16 @@
   --text-xs: var(--font-size-caption-2);
   --text-sm: var(--font-size-caption-1);
   --text-md: var(--font-size-body-2);
-  --text-base: var(--font-size-body-1);
+  --text-base: var(--font-size-body-2);
   --text-lg: var(--font-size-title-3);
   --text-xl: var(--font-size-title-2);
   --text-2xl: var(--font-size-title-1);
+
+  /* Line-height scale. Keep these few values so identical font sizes render at
+     identical box heights everywhere (consistent when debugging the grid). */
+  --leading-none: 1;        /* icon-only / decorative, no text flow */
+  --leading-ui: 1.4;        /* default UI text: labels, names, controls, chips, notes */
+  --leading-reading: 1.6;   /* long-form reading: chat messages, markdown prose */
 
   --sidebar-w: 272px;
   --sidebar-right-w: 288px;
@@ -213,7 +219,7 @@ body {
   font-size: var(--text-base);
   background: var(--surface-primary);
   color: var(--c-text);
-  line-height: 1.6;
+  line-height: var(--leading-ui);
   -webkit-font-smoothing: antialiased;
 }
 

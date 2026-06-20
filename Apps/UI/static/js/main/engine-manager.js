@@ -2,6 +2,7 @@
 
 import { getJson, postJson } from './api.js';
 import { t } from './i18n.js';
+import { confirmDialog, textDialog } from '../ui/dialogs.js';
 import { LLM_PARAMETER_OPTION_SETS } from './constants.js';
 import { getEngineAdapter, normalizeEngineValue } from '../engines/engine-registry.js';
 import { isLocalHostname, normalizeAddressForParsing } from './utils.js';
@@ -203,6 +204,7 @@ export function createEngineManager(context, dependencies) {
     const hasEditableAddress = Boolean(addressKey);
     const apiKeyKey = getEngineApiKeyKey(adapter.id);
     const hasApiKeySupport = Boolean(apiKeyKey);
+    const apiKeyRequired = Boolean(adapter.apiKeyRequired);
     const hasStoredApiKey = hasApiKeySupport && hasStoredEngineApiKey(adapter.id);
 
     dom.$engineAddressGroup.toggle(hasEditableAddress);
@@ -217,15 +219,20 @@ export function createEngineManager(context, dependencies) {
     }
 
     if (!hasApiKeySupport) {
+      dom.$engineApiKeyToggleRow.show();
       dom.$engineApiKeyEnabled.prop('checked', false);
       dom.$engineApiKeyInput.val('').hide();
       setEngineApiKeyStatus('Off', null);
       return;
     }
 
-    dom.$engineApiKeyEnabled.prop('checked', hasStoredApiKey);
+    // Engines that always need a key (e.g. Gemini) skip the on/off toggle and
+    // keep the key field visible so it can always be entered or replaced.
+    dom.$engineApiKeyToggleRow.toggle(!apiKeyRequired);
+    const keyFieldActive = apiKeyRequired || hasStoredApiKey;
+    dom.$engineApiKeyEnabled.prop('checked', keyFieldActive);
     dom.$engineApiKeyInput.val('');
-    dom.$engineApiKeyInput.toggle(hasStoredApiKey);
+    dom.$engineApiKeyInput.toggle(keyFieldActive);
     dom.$engineApiKeyInput.attr(
       'placeholder',
       hasStoredApiKey ? 'Stored API key. Enter a new one to replace it' : 'Enter a new API key'
@@ -292,17 +299,17 @@ export function createEngineManager(context, dependencies) {
   }
 
 
-  // LM Studio refresh helpers.
-  // Clear the scheduled LM Studio model refresh timer.
-  function clearLmsModelsRefreshTimer() {
-    if (state.lmsModelsRefreshTimer !== null) {
-      window.clearTimeout(state.lmsModelsRefreshTimer);
-      state.lmsModelsRefreshTimer = null;
+  // Model list refresh helpers (all engines).
+  // Clear the scheduled model refresh timer.
+  function clearModelsRefreshTimer() {
+    if (state.modelsRefreshTimer !== null) {
+      window.clearTimeout(state.modelsRefreshTimer);
+      state.modelsRefreshTimer = null;
     }
   }
 
-  // Compute the next LM Studio model refresh interval.
-  function getLmsModelsRefreshInterval() {
+  // Compute the steady LM Studio model refresh interval.
+  function getLmsSteadyRefreshInterval() {
     const adapter = getEngineAdapter('lms');
     if (typeof adapter.getModelRefreshInterval === 'function') {
       return adapter.getModelRefreshInterval(isLocalLmsAddress());
@@ -310,30 +317,46 @@ export function createEngineManager(context, dependencies) {
     return isLocalLmsAddress() ? 3000 : 15000;
   }
 
-  // Schedule the next LM Studio model refresh.
-  function scheduleLmsModelsRefresh(delayMs) {
-    clearLmsModelsRefreshTimer();
+  // Resolve the next refresh interval for one engine, or 0 to stop polling.
+  function getModelsRefreshInterval(engine) {
+    const canonicalEngine = normalizeEngineValue(engine);
 
-    if (getActiveEngine() !== 'lms') {
+    // Recover fast for every engine while the model list is empty / not found.
+    if (getAvailableModelsForEngine(canonicalEngine).length === 0) {
+      return 2000;
+    }
+
+    // Keep a steady background refresh for the locally managed engines.
+    if (canonicalEngine === 'ollama-service') {
+      return 5000;
+    }
+    if (canonicalEngine === 'lms') {
+      return getLmsSteadyRefreshInterval();
+    }
+
+    // Cloud engines (OpenAI, Gemini) stop polling once a list is available.
+    return 0;
+  }
+
+  // Schedule the next model refresh for the active engine.
+  function scheduleModelsRefresh(delayMs) {
+    clearModelsRefreshTimer();
+
+    const intervalMs = typeof delayMs === 'number' ? delayMs : getModelsRefreshInterval(getActiveEngine());
+    if (!intervalMs || intervalMs <= 0) {
       return;
     }
 
-    const intervalMs = typeof delayMs === 'number' ? delayMs : getLmsModelsRefreshInterval();
-    state.lmsModelsRefreshTimer = window.setTimeout(function triggerRefresh() {
-      refreshLmsModels().catch(function onRefreshError(error) {
-        console.error('Failed to refresh LM Studio models:', error);
+    state.modelsRefreshTimer = window.setTimeout(function triggerRefresh() {
+      refreshActiveEngineModelList().catch(function onRefreshError(error) {
+        console.error('Failed to refresh models:', error);
       });
     }, intervalMs);
   }
 
-  // Start or stop LM Studio refresh polling based on the active engine.
-  function syncLmsModelsRefresh() {
-    if (getActiveEngine() !== 'lms') {
-      clearLmsModelsRefreshTimer();
-      return;
-    }
-
-    scheduleLmsModelsRefresh();
+  // Restart polling for the active engine.
+  function syncModelsRefresh() {
+    scheduleModelsRefresh();
   }
 
 
@@ -366,10 +389,13 @@ export function createEngineManager(context, dependencies) {
   }
 
   // Fetch the model list for one engine, including Ollama warm-up retry.
-  async function fetchModelsForEngine(engine) {
+  async function fetchModelsForEngine(engine, fetchOptions) {
+    const forceRefresh = Boolean(fetchOptions && fetchOptions.refresh);
+    const refreshSuffix = forceRefresh ? '&refresh=1' : '';
+
     // Perform one raw /api/models request.
     async function runFetch() {
-      const data = await getJson(`/api/models/?engine=${encodeURIComponent(engine)}`);
+      const data = await getJson(`/api/models/?engine=${encodeURIComponent(engine)}${refreshSuffix}`);
       return data.models || [];
     }
 
@@ -446,7 +472,7 @@ export function createEngineManager(context, dependencies) {
     const autoLoadModels = settingsOptions.autoLoadModels !== false;
 
     state.activeEngine = normalizedEngine;
-    clearLmsModelsRefreshTimer();
+    clearModelsRefreshTimer();
     dom.$body.data('llm-engine', normalizedEngine);
     dom.$engineSelector.val(normalizedEngine);
     updateEngineAddressUi();
@@ -466,7 +492,7 @@ export function createEngineManager(context, dependencies) {
           resetModelUiState('No models available');
         }
       }
-      syncLmsModelsRefresh();
+      syncModelsRefresh();
       return;
     }
 
@@ -494,7 +520,7 @@ export function createEngineManager(context, dependencies) {
         }
       }
 
-      syncLmsModelsRefresh();
+      syncModelsRefresh();
     } catch (error) {
       state.activeEngine = previousEngine;
       state.runtimeSettings['llm-engine'] = previousEngine;
@@ -502,39 +528,38 @@ export function createEngineManager(context, dependencies) {
       dom.$engineSelector.val(previousEngine);
       updateEngineAddressUi();
       resetModelUiState('Models load on demand');
-      syncLmsModelsRefresh();
+      syncModelsRefresh();
       throw error;
     }
   }
 
-  // Refresh the LM Studio model list when polling is active.
-  async function refreshLmsModels() {
-    clearLmsModelsRefreshTimer();
+  // Refresh the active engine model list while polling is active.
+  async function refreshActiveEngineModelList() {
+    clearModelsRefreshTimer();
 
-    if (getActiveEngine() !== 'lms') {
-      return;
-    }
+    const engine = getActiveEngine();
 
-    if (state.lmsModelsRefreshInFlight) {
-      scheduleLmsModelsRefresh();
+    if (state.modelsRefreshInFlight) {
+      scheduleModelsRefresh();
       return;
     }
 
     const refreshVersion = state.engineSelectionVersion;
-    const previousModels = normalizeModelNames(state.modelsCache.lms || getAvailableModelsForEngine('lms'));
+    const previousModels = normalizeModelNames(state.modelsCache[engine] || getAvailableModelsForEngine(engine));
     const previousSelectedModel = getSelectedModelName();
     const hadRenderedOptions = dom.$modelSelector.children().length > 0;
 
-    state.lmsModelsRefreshInFlight = true;
+    state.modelsRefreshInFlight = true;
 
     try {
-      const refreshedModels = normalizeModelNames(await fetchModelsForEngine('lms'));
+      // Bypass the backend list cache so the poll reflects the live engine state.
+      const refreshedModels = normalizeModelNames(await fetchModelsForEngine(engine, { refresh: true }));
 
-      if (refreshVersion !== state.engineSelectionVersion || getActiveEngine() !== 'lms') {
+      if (refreshVersion !== state.engineSelectionVersion || getActiveEngine() !== engine) {
         return;
       }
 
-      state.modelsCache.lms = refreshedModels;
+      state.modelsCache[engine] = refreshedModels;
 
       const shouldRerender = !hadRenderedOptions
         || !areModelListsEqual(previousModels, refreshedModels)
@@ -549,10 +574,10 @@ export function createEngineManager(context, dependencies) {
         await loadModelInfo(selectedModel);
       }
     } finally {
-      state.lmsModelsRefreshInFlight = false;
+      state.modelsRefreshInFlight = false;
 
-      if (refreshVersion === state.engineSelectionVersion && getActiveEngine() === 'lms') {
-        scheduleLmsModelsRefresh();
+      if (refreshVersion === state.engineSelectionVersion && getActiveEngine() === engine) {
+        scheduleModelsRefresh();
       }
     }
   }
@@ -638,7 +663,13 @@ export function createEngineManager(context, dependencies) {
       state.currentModelInfo = data;
       rememberLastModel(requestedEngine, model);
       parametersUi.resetDynamicPanels();
-      applyPresetState(data.ollama_presets || data.lms_presets || null);
+      applyPresetState(
+        data.ollama_presets
+        || data.lms_presets
+        || data.openai_presets
+        || data.google_genai_presets
+        || null
+      );
 
       state.toolState.supported = !!data.supports_tool_calling;
       parametersUi.updateAvailableToolServers(data.available_tool_servers || state.defaultAvailableToolServers);
@@ -751,7 +782,12 @@ export function createEngineManager(context, dependencies) {
       return;
     }
 
-    const requestedName = window.prompt('Preset name', '');
+    const requestedName = await textDialog({
+      title: t('settings.presetNewTitle', null, 'New preset'),
+      label: t('settings.presetNameLabel', null, 'Preset name'),
+      confirmText: t('settings.presetNew', null, 'New'),
+      required: false
+    });
     if (requestedName === null) {
       return;
     }
@@ -774,7 +810,12 @@ export function createEngineManager(context, dependencies) {
       return;
     }
 
-    const requestedName = window.prompt('Preset name', activePreset.name || '');
+    const requestedName = await textDialog({
+      title: t('settings.presetRenameTitle', null, 'Rename preset'),
+      label: t('settings.presetNameLabel', null, 'Preset name'),
+      value: activePreset.name || '',
+      confirmText: t('sidebar.rename', null, 'Rename')
+    });
     if (requestedName === null) {
       return;
     }
@@ -796,7 +837,13 @@ export function createEngineManager(context, dependencies) {
       return;
     }
 
-    if (!window.confirm(t('confirm.deletePreset', { name: activePreset.name }, `Delete preset "${activePreset.name}"?`))) {
+    const confirmed = await confirmDialog({
+      title: t('confirm.deletePresetTitle', null, 'Delete preset'),
+      message: t('confirm.deletePreset', { name: activePreset.name }, `Delete preset "${activePreset.name}"?`),
+      confirmText: t('settings.presetDelete', null, 'Delete'),
+      danger: true
+    });
+    if (!confirmed) {
       return;
     }
 
@@ -821,11 +868,11 @@ export function createEngineManager(context, dependencies) {
       return;
     }
 
-    clearLmsModelsRefreshTimer();
+    clearModelsRefreshTimer();
 
     if ((state.runtimeSettings[addressKey] || '') === addressValue) {
       setEngineAddressStatus('Saved', null);
-      syncLmsModelsRefresh();
+      syncModelsRefresh();
       return;
     }
 
@@ -837,12 +884,12 @@ export function createEngineManager(context, dependencies) {
         selectionVersion,
         preferredModel: ''
       });
-      syncLmsModelsRefresh();
+      syncModelsRefresh();
     } catch (error) {
       console.error('Failed to save engine address:', error);
       resetModelUiState('No models available');
       setEngineAddressStatus('Error', 'error');
-      syncLmsModelsRefresh();
+      syncModelsRefresh();
     }
   }
 
@@ -929,7 +976,7 @@ export function createEngineManager(context, dependencies) {
     schedulePresetSync,
     selectPreset,
     setEngineAddressStatus,
-    syncLmsModelsRefresh,
+    syncModelsRefresh,
     updateEngineAddressUi
   };
 }

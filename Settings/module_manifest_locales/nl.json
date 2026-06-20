@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "ASLM Chat-module",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "Eerste configuratie",
+                "description": "Maakt settings.json aan en past databasemigraties toe"
+            }
+        ],
+        "run": [
+            {
+                "name": "UI-server",
+                "description": "Start de Django-ontwikkelingsserver"
+            },
+            {
+                "name": "Ollama-runtime",
+                "description": "Start de beheerde Ollama-service in een aparte consolesessie"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "UI-serverpoort",
+            "description": "Poort waarop de UI-server luistert"
+        },
+        "api-port": {
+            "name": "API-serverpoort",
+            "description": "Poort waarop de API-server luistert"
+        },
+        "aslm-host-theme": {
+            "name": "ASLM-hostthema",
+            "description": "Themasnapshot uit de ASLM-app; wordt bij elke modulestart toegepast. Alleen beheerd door ASLM."
+        },
+        "aslm-host-locale": {
+            "name": "ASLM-hosttaal",
+            "description": "Taalsnapshot uit de ASLM-app; wordt bij elke modulestart toegepast. Alleen beheerd door ASLM."
+        },
+        "console_log_level": {
+            "name": "Consolelogniveau",
+            "description": "Hoeveel runtime-details ASLM-Chat naar de ASLM-console schrijft."
+        },
+        "llm-engine": {
+            "name": "Actieve LLM-engine",
+            "description": "Engine die wordt gebruikt voor generatie in de chatinterface"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "Of de Ollama-inferenceservice is geïnstalleerd"
+        },
+        "ollama-service_path": {
+            "name": "Ollama-pad",
+            "description": "Pad naar het Ollama-uitvoerbestand"
+        },
+        "ollama-service_data": {
+            "name": "Ollama-gegevens",
+            "description": "Pad naar de Ollama-gegevensmap"
+        },
+        "ollama-service_models": {
+            "name": "Ollama-modellen",
+            "description": "Pad naar de Ollama-modellenmap"
+        },
+        "ollama-service_port": {
+            "name": "Ollama-poort",
+            "description": "Poort waarop de lokale Ollama-service luistert"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "Of LM Studio-integratie beschikbaar is"
+        },
+        "lms_url": {
+            "name": "LM Studio-adres",
+            "description": "Basisadres van de LM Studio Server API"
+        },
+        "openai": {
+            "name": "OpenAI-compatibele API",
+            "description": "Of een OpenAI-compatibel API-eindpunt beschikbaar is"
+        },
+        "openai_url": {
+            "name": "OpenAI-compatibel adres",
+            "description": "Basis-URL van het OpenAI-compatibele API-eindpunt"
+        },
+        "openai_api_key": {
+            "name": "OpenAI-compatibele API-sleutel",
+            "description": "Optionele API-sleutel voor beveiligde eindpunten"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "Of Google GenAI-integratie beschikbaar is"
+        },
+        "google_genai_url": {
+            "name": "Google GenAI-adres",
+            "description": "Basis-URL van het Google GenAI Gemini API-eindpunt"
+        },
+        "google_genai_api_key": {
+            "name": "Google GenAI API-sleutel",
+            "description": "API-sleutel voor Google GenAI Gemini API-verzoeken"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Ollama-modellen",
+                "description": "Modellen gepubliceerd in de officiële Ollama-bibliotheek."
+            }
+        ]
+    }
+}

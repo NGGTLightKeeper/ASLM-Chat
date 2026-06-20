@@ -1,24 +1,25 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - Modelos de Linguagem de Sistema Avançados",
-    "profileTitle": "Perfil - ASLM Chat"
+    "appDescription": "ASLM - Modelos de Linguagem de Sistema Avançados"
   },
   "sidebar": {
+    "recent": "Recentes",
     "chats": "Conversas",
     "newChat": "Nova conversa",
     "noPreviousChats": "Nenhuma conversa anterior",
     "chatOptions": "Opções da conversa",
     "rename": "Renomear",
     "delete": "Excluir",
-    "account": "Conta",
     "ago": "há {time}"
   },
   "chat": {
     "newChat": "Nova conversa",
     "attachmentChat": "Conversa com anexos",
     "howCanIHelp": "Como posso ajudar?",
-    "welcomeTitle": "Como posso ajudar?"
+    "welcomeTitle": "Como posso ajudar?",
+    "renameTitle": "Renomear conversa",
+    "renameLabel": "Nome da conversa"
   },
   "composer": {
     "placeholder": "Mensagem para o ASLM...",
@@ -27,7 +28,7 @@
     "tools": "Ferramentas",
     "other": "Outros",
     "reasoningEffort": "Esforço de raciocínio",
-    "intelligence": "Inteligência",
+    "intelligence": "Pensamento",
     "off": "Desligado",
     "sendMessage": "Enviar mensagem",
     "queueMessage": "Enfileirar mensagem",
@@ -74,19 +75,10 @@
     "settings": "Configurações",
     "sampling": "Amostragem",
     "advanced": "Avançado",
-    "custom": "Personalizado"
-  },
-  "profile": {
-    "backToChat": "Voltar ao chat",
-    "account": "Conta",
-    "user": "Usuário",
-    "localAccount": "Conta local",
-    "general": "Geral",
-    "username": "Nome de usuário",
-    "email": "E-mail",
-    "memberSince": "Membro desde",
-    "dangerZone": "Zona de perigo",
-    "signOut": "Sair"
+    "custom": "Personalizado",
+    "presetNameLabel": "Nome da predefinição",
+    "presetNewTitle": "Nova predefinição",
+    "presetRenameTitle": "Renomear predefinição"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -185,11 +177,6 @@
     "renameFolderAria": "Renomear pasta",
     "renameFileAria": "Renomear arquivo",
     "deleteFileAria": "Excluir arquivo",
-    "dialogOk": "OK",
-    "dialogCancel": "Cancelar",
-    "dialogConfirm": "Confirmar",
-    "dialogInput": "Entrada",
-    "valueRequired": "O valor é obrigatório.",
     "createSkill": "Criar habilidade",
     "skillNamePlaceholder": "nome-habilidade",
     "create": "Criar",
@@ -233,6 +220,13 @@
     "importNoSupported": "Nenhum arquivo de texto suportado (.md, .txt, .py, …).",
     "importNoSupportedFor": "Nenhum arquivo suportado para \"{name}\"."
   },
+  "dialog": {
+    "ok": "OK",
+    "cancel": "Cancelar",
+    "confirm": "Confirmar",
+    "input": "Entrada",
+    "valueRequired": "O valor é obrigatório."
+  },
   "errors": {
     "generic": "Algo deu errado",
     "network": "Erro de rede"
@@ -241,7 +235,9 @@
     "deleteChat": "Excluir esta conversa?",
     "deleteChatNamed": "Excluir \"{title}\"?",
     "deletePreset": "Excluir a predefinição \"{name}\"?",
-    "unsaved": "Você tem alterações não salvas."
+    "unsaved": "Você tem alterações não salvas.",
+    "deleteChatTitle": "Excluir conversa",
+    "deletePresetTitle": "Excluir predefinição"
   },
   "toolInspector": {
     "title": "Inspetor de ferramentas",
@@ -451,6 +447,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} ferramentas)",
     "cancel": "Cancelar",
-    "save": "Salvar"
+    "save": "Salvar",
+    "noServers": "Nenhum servidor MCP"
   }
 }

@@ -1,0 +1,109 @@
+{
+    "name": "ASLM Chat",
+    "description": "ASLM Chat モジュール",
+    "commands": {
+        "firstRun": [
+            {
+                "name": "初回セットアップ",
+                "description": "settings.json を生成し、データベースのマイグレーションを適用します"
+            }
+        ],
+        "run": [
+            {
+                "name": "UI サーバー",
+                "description": "Django 開発サーバーを起動します"
+            },
+            {
+                "name": "Ollama ランタイム",
+                "description": "専用コンソールセッションで管理対象の Ollama サービスを起動します"
+            }
+        ]
+    },
+    "settings": {
+        "ui-port": {
+            "name": "UI サーバーポート",
+            "description": "UI サーバーが待ち受けるポート"
+        },
+        "api-port": {
+            "name": "API サーバーポート",
+            "description": "API サーバーが待ち受けるポート"
+        },
+        "aslm-host-theme": {
+            "name": "ASLM ホストテーマ",
+            "description": "ASLM アプリからのテーマのスナップショット。モジュール起動のたびに適用されます。ASLM のみが管理します。"
+        },
+        "aslm-host-locale": {
+            "name": "ASLM ホスト言語",
+            "description": "ASLM アプリからの言語のスナップショット。モジュール起動のたびに適用されます。ASLM のみが管理します。"
+        },
+        "console_log_level": {
+            "name": "コンソールログレベル",
+            "description": "ASLM-Chat が ASLM コンソールに出力する実行時の詳細レベル"
+        },
+        "llm-engine": {
+            "name": "アクティブな LLM エンジン",
+            "description": "チャット UI での生成に使用するエンジン"
+        },
+        "ollama-service": {
+            "name": "Ollama",
+            "description": "Ollama 推論サービスがインストールされているか"
+        },
+        "ollama-service_path": {
+            "name": "Ollama パス",
+            "description": "Ollama 実行ファイルへのパス"
+        },
+        "ollama-service_data": {
+            "name": "Ollama データ",
+            "description": "Ollama データディレクトリへのパス"
+        },
+        "ollama-service_models": {
+            "name": "Ollama モデル",
+            "description": "Ollama モデルディレクトリへのパス"
+        },
+        "ollama-service_port": {
+            "name": "Ollama ポート",
+            "description": "ローカル Ollama サービスが待ち受けるポート"
+        },
+        "lms": {
+            "name": "LM Studio",
+            "description": "LM Studio 連携が利用可能か"
+        },
+        "lms_url": {
+            "name": "LM Studio アドレス",
+            "description": "LM Studio サーバー API のベースアドレス"
+        },
+        "openai": {
+            "name": "OpenAI 互換 API",
+            "description": "OpenAI 互換 API エンドポイントが利用可能か"
+        },
+        "openai_url": {
+            "name": "OpenAI 互換アドレス",
+            "description": "OpenAI 互換 API エンドポイントのベース URL"
+        },
+        "openai_api_key": {
+            "name": "OpenAI 互換 API キー",
+            "description": "保護されたエンドポイント用の任意の API キー"
+        },
+        "google-genai": {
+            "name": "Google GenAI",
+            "description": "Google GenAI 連携が利用可能か"
+        },
+        "google_genai_url": {
+            "name": "Google GenAI アドレス",
+            "description": "Google GenAI Gemini API エンドポイントのベース URL"
+        },
+        "google_genai_api_key": {
+            "name": "Google GenAI API キー",
+            "description": "Google GenAI Gemini API リクエスト用の API キー"
+        }
+    },
+    "downloadsBridge": {
+        "categories": [
+            {
+                "id": "ollama-library",
+                "title": "Ollama モデル",
+                "description": "公式 Ollama ライブラリで公開されているモデル。"
+            }
+        ]
+    }
+}

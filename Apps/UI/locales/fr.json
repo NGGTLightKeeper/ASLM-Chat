@@ -1,24 +1,25 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - Modèles de langage système avancés",
-    "profileTitle": "Profil - ASLM Chat"
+    "appDescription": "ASLM - Modèles de langage système avancés"
   },
   "sidebar": {
+    "recent": "Récents",
     "chats": "Discussions",
     "newChat": "Nouvelle discussion",
     "noPreviousChats": "Aucune discussion précédente",
     "chatOptions": "Options de la discussion",
     "rename": "Renommer",
     "delete": "Supprimer",
-    "account": "Compte",
     "ago": "il y a {time}"
   },
   "chat": {
     "newChat": "Nouvelle discussion",
     "attachmentChat": "Discussion avec pièces jointes",
     "howCanIHelp": "Comment puis-je vous aider ?",
-    "welcomeTitle": "Comment puis-je vous aider ?"
+    "welcomeTitle": "Comment puis-je vous aider ?",
+    "renameTitle": "Renommer la discussion",
+    "renameLabel": "Nom de la discussion"
   },
   "composer": {
     "placeholder": "Message à ASLM...",
@@ -27,7 +28,7 @@
     "tools": "Outils",
     "other": "Autre",
     "reasoningEffort": "Effort de raisonnement",
-    "intelligence": "Profondeur de raisonnement",
+    "intelligence": "Réflexion",
     "off": "Désactivé",
     "sendMessage": "Envoyer le message",
     "queueMessage": "Mettre le message en file d'attente",
@@ -74,19 +75,10 @@
     "settings": "Paramètres",
     "sampling": "Échantillonnage",
     "advanced": "Avancé",
-    "custom": "Personnalisé"
-  },
-  "profile": {
-    "backToChat": "Retour à la discussion",
-    "account": "Compte",
-    "user": "Utilisateur",
-    "localAccount": "Compte local",
-    "general": "Général",
-    "username": "Nom d'utilisateur",
-    "email": "E-mail",
-    "memberSince": "Membre depuis",
-    "dangerZone": "Zone dangereuse",
-    "signOut": "Se déconnecter"
+    "custom": "Personnalisé",
+    "presetNameLabel": "Nom du préréglage",
+    "presetNewTitle": "Nouveau préréglage",
+    "presetRenameTitle": "Renommer le préréglage"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -185,11 +177,6 @@
     "renameFolderAria": "Renommer le dossier",
     "renameFileAria": "Renommer le fichier",
     "deleteFileAria": "Supprimer le fichier",
-    "dialogOk": "OK",
-    "dialogCancel": "Annuler",
-    "dialogConfirm": "Confirmer",
-    "dialogInput": "Saisie",
-    "valueRequired": "La valeur est obligatoire.",
     "createSkill": "Créer une compétence",
     "skillNamePlaceholder": "nom-competence",
     "create": "Créer",
@@ -233,6 +220,13 @@
     "importNoSupported": "Aucun fichier texte pris en charge (.md, .txt, .py, …).",
     "importNoSupportedFor": "Aucun fichier pris en charge pour « {name} »."
   },
+  "dialog": {
+    "ok": "OK",
+    "cancel": "Annuler",
+    "confirm": "Confirmer",
+    "input": "Saisie",
+    "valueRequired": "La valeur est obligatoire."
+  },
   "errors": {
     "generic": "Une erreur s'est produite",
     "network": "Erreur réseau"
@@ -241,7 +235,9 @@
     "deleteChat": "Supprimer cette discussion ?",
     "deleteChatNamed": "Supprimer « {title} » ?",
     "deletePreset": "Supprimer le préréglage « {name} » ?",
-    "unsaved": "Vous avez des modifications non enregistrées."
+    "unsaved": "Vous avez des modifications non enregistrées.",
+    "deleteChatTitle": "Supprimer la discussion",
+    "deletePresetTitle": "Supprimer le préréglage"
   },
   "toolInspector": {
     "title": "Inspecteur d'outils",
@@ -451,6 +447,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} outils)",
     "cancel": "Annuler",
-    "save": "Enregistrer"
+    "save": "Enregistrer",
+    "noServers": "Aucun serveur MCP"
   }
 }

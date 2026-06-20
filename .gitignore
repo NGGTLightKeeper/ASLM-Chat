@@ -243,6 +243,7 @@ Tools/mcp-web-search/scripts/
 Tools/mcp-web-search/models/
 Tools/mcp-web-search/ASLM-Embending/
 Tools/mcp-web-search/**/*.bat
+Tools/mcp-web-search/core/debug
 
 # Hugo documentation (Docs/ASLM)
 Docs/ASLM/assets/jsconfig.json

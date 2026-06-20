@@ -156,7 +156,7 @@ Discovers bundled `Tools/*/mcp-server.py` and user MCP servers, builds Ollama/Op
 
 1. Iterate and transform or accumulate state.
 
-#### `def list_servers(engine, model_name) -> list[dict[str, Any]]`
+#### `def list_servers(engine, model_name, *, tools_dir=None, module_dir=None) -> list[dict[str, Any]]`
 
 **Purpose:** Return discovered servers that support the current engine and model.
 
@@ -165,7 +165,7 @@ Discovers bundled `Tools/*/mcp-server.py` and user MCP servers, builds Ollama/Op
 1. Return the computed result to the caller.
 2. Iterate and transform or accumulate state.
 
-#### `def get_server(server_id, engine, model_name) -> dict[str, Any] | None`
+#### `def get_server(server_id, engine, model_name, *, tools_dir=None, module_dir=None, tool_source_map=None) -> dict[str, Any] | None`
 
 **Purpose:** Return one discovered server when it is available in the current context.
 
@@ -173,7 +173,7 @@ Discovers bundled `Tools/*/mcp-server.py` and user MCP servers, builds Ollama/Op
 
 1. Return the computed result to the caller.
 
-#### `def build_ollama_tools(server_ids, engine, model_name) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]`
+#### `def build_ollama_tools(server_ids, engine, model_name, *, tool_source_map=None) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]`
 
 **Purpose:** Return Ollama-compatible tool payloads for one or more selected servers.
 
@@ -401,6 +401,18 @@ Discovers bundled `Tools/*/mcp-server.py` and user MCP servers, builds Ollama/Op
 1. Return the computed result to the caller.
 2. Iterate and transform or accumulate state.
 
+#### `def _normalize_module_dir(module_dir) -> Path`
+
+**Purpose:** Normalize one optional module directory path.
+
+#### `def _registry_scope_key(tools_dir, module_dir) -> str`
+
+**Purpose:** Build a stable cache key for one tools/module directory pair.
+
+#### `def _resolve_tools_dir(tools_dir) -> Path`
+
+**Purpose:** Resolve the tools directory for one registry scope.
+
 #### `def _iter_server_source_files(server_dir)`
 
 **Purpose:** Yield relevant source files for one local MCP server.
@@ -408,6 +420,16 @@ Discovers bundled `Tools/*/mcp-server.py` and user MCP servers, builds Ollama/Op
 **Steps:**
 
 1. Iterate and transform or accumulate state.
+
+#### `def _server_signature_for(tools_dir, module_dir) -> tuple[tuple[str, int], ...]`
+
+**Purpose:** Build a stable signature for every local MCP server source file.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Iterate and transform or accumulate state.
 
 #### `def _server_signature() -> tuple[tuple[str, int], ...]`
 
@@ -418,6 +440,14 @@ Discovers bundled `Tools/*/mcp-server.py` and user MCP servers, builds Ollama/Op
 1. Return the computed result to the caller.
 2. Handle errors and map them to a safe response.
 3. Iterate and transform or accumulate state.
+
+#### `def _iter_server_files_for(tools_dir)`
+
+**Purpose:** Yield top-level MCP server entrypoints from one Tools directory.
+
+**Steps:**
+
+1. Iterate and transform or accumulate state.
 
 #### `def _iter_server_files()`
 
@@ -551,6 +581,16 @@ Discovers bundled `Tools/*/mcp-server.py` and user MCP servers, builds Ollama/Op
 2. Return the computed result to the caller.
 3. Iterate and transform or accumulate state.
 
+#### `def _ensure_registry_loaded_for(tools_dir, module_dir) -> dict[str, dict[str, Any]]`
+
+**Purpose:** Discover and cache valid local MCP-style server modules for one scope.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Handle errors and map them to a safe response.
+3. Iterate and transform or accumulate state.
+
 #### `def _ensure_registry_loaded() -> dict[str, dict[str, Any]]`
 
 **Purpose:** Discover and cache valid local MCP-style server modules.
@@ -666,6 +706,57 @@ Discovers bundled `Tools/*/mcp-server.py` and user MCP servers, builds Ollama/Op
 1. Return the computed result to the caller.
 
 ---
+
+
+
+#### `def _normalize_module_dir(module_dir) -> Path`
+
+**Purpose:** Normalize one optional module directory path.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
+#### `def _registry_scope_key(tools_dir, module_dir) -> str`
+
+**Purpose:** Build a stable cache key for one tools/module directory pair.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
+#### `def _resolve_tools_dir(tools_dir) -> Path`
+
+**Purpose:** Resolve the tools directory for one registry scope.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
+#### `def _server_signature_for(tools_dir, module_dir) -> tuple[tuple[str, int], ...]`
+
+**Purpose:** Build a stable signature for every local MCP server source file in a scope.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
+#### `def _iter_server_files_for(tools_dir)`
+
+**Purpose:** Yield top-level MCP server entrypoints from one Tools directory.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
+#### `def _ensure_registry_loaded_for(tools_dir, module_dir) -> dict[str, dict[str, Any]]`
+
+**Purpose:** Discover and cache valid local MCP-style server modules for one scope.
+
+**Steps:**
+
+1. Execute the implementation in the source module.
+
 
 ## Related
 

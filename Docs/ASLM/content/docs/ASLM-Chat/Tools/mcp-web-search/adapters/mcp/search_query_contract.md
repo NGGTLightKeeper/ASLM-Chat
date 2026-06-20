@@ -19,6 +19,15 @@ draft: false
 
 1. Return the computed result to the caller.
 
+#### `def coerce_search_shopping(value) -> bool`
+
+**Purpose:** Normalize the explicit shopping-provider opt-in argument.
+
+**Steps:**
+
+1. Return the computed result to the caller.
+2. Parse or serialize JSON payloads.
+
 #### `def coerce_search_query(value) -> str`
 
 **Purpose:** Convert the public query argument into one provider-ready search string.

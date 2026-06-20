@@ -1,24 +1,25 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - 高度なシステム言語モデル",
-    "profileTitle": "プロフィール - ASLM Chat"
+    "appDescription": "ASLM - 高度なシステム言語モデル"
   },
   "sidebar": {
+    "recent": "最近",
     "chats": "チャット",
     "newChat": "新しいチャット",
     "noPreviousChats": "過去のチャットはありません",
     "chatOptions": "チャットのオプション",
     "rename": "名前を変更",
     "delete": "削除",
-    "account": "アカウント",
     "ago": "{time}前"
   },
   "chat": {
     "newChat": "新しいチャット",
     "attachmentChat": "添付ファイル付きチャット",
     "howCanIHelp": "何をお手伝いしましょうか？",
-    "welcomeTitle": "何をお手伝いしましょうか？"
+    "welcomeTitle": "何をお手伝いしましょうか？",
+    "renameTitle": "チャットの名前を変更",
+    "renameLabel": "チャット名"
   },
   "composer": {
     "placeholder": "ASLM にメッセージ...",
@@ -27,7 +28,7 @@
     "tools": "ツール",
     "other": "その他",
     "reasoningEffort": "推論の深さ",
-    "intelligence": "思考の深さ",
+    "intelligence": "思考",
     "off": "オフ",
     "sendMessage": "メッセージを送信",
     "queueMessage": "メッセージをキューに追加",
@@ -74,19 +75,10 @@
     "settings": "設定",
     "sampling": "サンプリング",
     "advanced": "詳細",
-    "custom": "カスタム"
-  },
-  "profile": {
-    "backToChat": "チャットに戻る",
-    "account": "アカウント",
-    "user": "ユーザー",
-    "localAccount": "ローカルアカウント",
-    "general": "一般",
-    "username": "ユーザー名",
-    "email": "メール",
-    "memberSince": "登録日",
-    "dangerZone": "危険な操作",
-    "signOut": "サインアウト"
+    "custom": "カスタム",
+    "presetNameLabel": "プリセット名",
+    "presetNewTitle": "新しいプリセット",
+    "presetRenameTitle": "プリセットの名前を変更"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -185,11 +177,6 @@
     "renameFolderAria": "フォルダー名を変更",
     "renameFileAria": "ファイル名を変更",
     "deleteFileAria": "ファイルを削除",
-    "dialogOk": "OK",
-    "dialogCancel": "キャンセル",
-    "dialogConfirm": "確認",
-    "dialogInput": "入力",
-    "valueRequired": "値は必須です。",
     "createSkill": "スキルを作成",
     "skillNamePlaceholder": "skill-name",
     "create": "作成",
@@ -233,6 +220,13 @@
     "importNoSupported": "対応テキストファイルがありません（.md、.txt、.py など）。",
     "importNoSupportedFor": "「{name}」に対応ファイルがありません。"
   },
+  "dialog": {
+    "ok": "OK",
+    "cancel": "キャンセル",
+    "confirm": "確認",
+    "input": "入力",
+    "valueRequired": "値は必須です。"
+  },
   "errors": {
     "generic": "問題が発生しました",
     "network": "ネットワークエラー"
@@ -241,7 +235,9 @@
     "deleteChat": "このチャットを削除しますか？",
     "deleteChatNamed": "「{title}」を削除しますか？",
     "deletePreset": "プリセット「{name}」を削除しますか？",
-    "unsaved": "保存されていない変更があります。"
+    "unsaved": "保存されていない変更があります。",
+    "deleteChatTitle": "チャットを削除",
+    "deletePresetTitle": "プリセットを削除"
   },
   "toolInspector": {
     "title": "ツールインスペクター",
@@ -451,6 +447,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name}（{count} ツール）",
     "cancel": "キャンセル",
-    "save": "保存"
+    "save": "保存",
+    "noServers": "MCPサーバーがありません"
   }
 }

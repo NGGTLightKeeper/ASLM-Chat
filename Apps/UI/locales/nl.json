@@ -1,24 +1,25 @@
 {
   "meta": {
     "appTitle": "ASLM Chat",
-    "appDescription": "ASLM - Geavanceerde systeemtaalmodellen",
-    "profileTitle": "Profiel - ASLM Chat"
+    "appDescription": "ASLM - Geavanceerde systeemtaalmodellen"
   },
   "sidebar": {
+    "recent": "Recent",
     "chats": "Gesprekken",
     "newChat": "Nieuwe chat",
     "noPreviousChats": "Geen eerdere chats",
     "chatOptions": "Chatopties",
     "rename": "Hernoemen",
     "delete": "Verwijderen",
-    "account": "Profiel",
     "ago": "{time} geleden"
   },
   "chat": {
     "newChat": "Nieuwe chat",
     "attachmentChat": "Bijlagechat",
     "howCanIHelp": "Hoe kan ik helpen?",
-    "welcomeTitle": "Hoe kan ik helpen?"
+    "welcomeTitle": "Hoe kan ik helpen?",
+    "renameTitle": "Chat hernoemen",
+    "renameLabel": "Chatnaam"
   },
   "composer": {
     "placeholder": "Bericht aan ASLM...",
@@ -27,7 +28,7 @@
     "tools": "Hulpmiddelen",
     "other": "Overig",
     "reasoningEffort": "Redeneerinspanning",
-    "intelligence": "Redeneerdiepte",
+    "intelligence": "Denken",
     "off": "Uit",
     "sendMessage": "Bericht verzenden",
     "queueMessage": "Bericht in wachtrij",
@@ -74,19 +75,10 @@
     "settings": "Instellingen",
     "sampling": "Steekproef",
     "advanced": "Geavanceerd",
-    "custom": "Aangepast"
-  },
-  "profile": {
-    "backToChat": "Terug naar chat",
-    "account": "Profiel",
-    "user": "Gebruiker",
-    "localAccount": "Lokaal account",
-    "general": "Algemeen",
-    "username": "Gebruikersnaam",
-    "email": "E-mail",
-    "memberSince": "Lid sinds",
-    "dangerZone": "Gevarenzone",
-    "signOut": "Uitloggen"
+    "custom": "Aangepast",
+    "presetNameLabel": "Naam voorinstelling",
+    "presetNewTitle": "Nieuwe voorinstelling",
+    "presetRenameTitle": "Voorinstelling hernoemen"
   },
   "engines": {
     "ollama-service": "Ollama",
@@ -185,11 +177,6 @@
     "renameFolderAria": "Map hernoemen",
     "renameFileAria": "Bestand hernoemen",
     "deleteFileAria": "Bestand verwijderen",
-    "dialogOk": "OK",
-    "dialogCancel": "Annuleren",
-    "dialogConfirm": "Bevestigen",
-    "dialogInput": "Invoer",
-    "valueRequired": "Waarde is verplicht.",
     "createSkill": "Vaardigheid maken",
     "skillNamePlaceholder": "vaardigheid-naam",
     "create": "Maken",
@@ -233,6 +220,13 @@
     "importNoSupported": "Geen ondersteunde tekstbestanden (.md, .txt, .py, …).",
     "importNoSupportedFor": "Geen ondersteunde bestanden voor \"{name}\"."
   },
+  "dialog": {
+    "ok": "OK",
+    "cancel": "Annuleren",
+    "confirm": "Bevestigen",
+    "input": "Invoer",
+    "valueRequired": "Waarde is verplicht."
+  },
   "errors": {
     "generic": "Er is iets misgegaan",
     "network": "Netwerkfout"
@@ -241,7 +235,9 @@
     "deleteChat": "Deze chat verwijderen?",
     "deleteChatNamed": "\"{title}\" verwijderen?",
     "deletePreset": "Voorinstelling \"{name}\" verwijderen?",
-    "unsaved": "Je hebt niet-opgeslagen wijzigingen."
+    "unsaved": "Je hebt niet-opgeslagen wijzigingen.",
+    "deleteChatTitle": "Chat verwijderen",
+    "deletePresetTitle": "Voorinstelling verwijderen"
   },
   "toolInspector": {
     "title": "Toolinspecteur",
@@ -451,6 +447,7 @@
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} tools)",
     "cancel": "Annuleren",
-    "save": "Opslaan"
+    "save": "Opslaan",
+    "noServers": "Geen MCP-servers"
   }
 }
