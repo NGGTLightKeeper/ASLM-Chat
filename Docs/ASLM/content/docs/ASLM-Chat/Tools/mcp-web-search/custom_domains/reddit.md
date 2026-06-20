@@ -17,7 +17,7 @@ draft: false
 
 #### `async def fetch_reddit_json(url) -> str`
 
-**Purpose:** Fetch thread JSON API and format post title, body, and nested comments as markdown.
+**Purpose:** Fetch a thread through a tiered fallback that degrades on antibot blocks: 1. curl_cffi .json (www) — fast, no browser; Reddit increasingly 403s this 2. warm-browser .json (www) — JSON behind the browser identity (clean structured md) 3. warm-browser .json (old) — same on old.reddit.com (lighter, less guarded host) 4. warm-browser page (old) — last resort: render old.reddit and strip nav cruft
 
 **Steps:**
 
