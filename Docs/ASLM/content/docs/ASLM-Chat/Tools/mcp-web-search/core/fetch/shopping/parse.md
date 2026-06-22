@@ -59,6 +59,14 @@ Part of `Tools/mcp-web-search/core/fetch/shopping`. Parsing logic for shopping p
 
 ## Private functions
 
+#### `def _is_listing_or_facet_url(url: str) -> bool`
+
+**Purpose:** Implements `_is_listing_or_facet_url` in `parse.py`.
+
+#### `def _is_rating_anchor(title: str, url: str) -> bool`
+
+**Purpose:** Implements `_is_rating_anchor` in `parse.py`.
+
 #### `def _bare_integer_before_spaced_currency(raw: str) -> bool`
 
 **Purpose:** Implements `_bare_integer_before_spaced_currency` in `parse.py`.

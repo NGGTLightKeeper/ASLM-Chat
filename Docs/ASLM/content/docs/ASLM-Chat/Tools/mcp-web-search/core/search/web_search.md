@@ -73,6 +73,10 @@ Part of `Tools/mcp-web-search/core/search`.
 
 ## Private functions
 
+#### `def _dedupe_near_duplicates(ranked: list[_Source]) -> list[_Source]`
+
+**Purpose:** Implements `_dedupe_near_duplicates` in `web_search.py`.
+
 #### `async def _merge_streams(*streams)`
 
 **Purpose:** Implements `_merge_streams`.
