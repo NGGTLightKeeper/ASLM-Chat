@@ -112,6 +112,39 @@ def _inline_parse_allowed(url: str) -> bool:
     return not (hint and hint.expected_fetch_ms > _INLINE_PARSE_SKIP_MS)
 
 
+# Collapse same-host near-duplicates from a score-sorted list. Triage dedups exact
+# URLs, but engines also return slug/redirect/anchor variants of one page (e.g. two
+# programming-helper.com URLs for the same article, or a "Redirecting to…" stub). Keep
+# the highest-scored variant per host whose title is near-identical to an already-kept
+# one; distinct pages on the same host (e.g. two different kubernetes.io docs) survive.
+def _dedupe_near_duplicates(ranked: list[_Source]) -> list[_Source]:
+    import re as _re
+
+    def toks(t: str) -> frozenset[str]:
+        return frozenset(_re.findall(r"\w+", (t or "").lower()))
+
+    kept: list[_Source] = []
+    seen_by_host: dict[str, list[frozenset[str]]] = {}
+    for s in ranked:
+        t = toks(s.title)
+        prior = seen_by_host.get(s.host, [])
+        is_dup = False
+        for pt in prior:
+            if not t or not pt:
+                continue
+            # Containment: the shorter title's tokens almost fully inside the other →
+            # same article (handles "X" vs "X - Site Name" and redirect stubs).
+            overlap = len(t & pt) / max(1, min(len(t), len(pt)))
+            if overlap >= 0.85:
+                is_dup = True
+                break
+        if is_dup:
+            continue
+        kept.append(s)
+        seen_by_host.setdefault(s.host, []).append(t)
+    return kept
+
+
 # Resolve a direct PDF URL for a result (already a PDF, or an arXiv abs → pdf link).
 # Ported from the legacy _infer_pdf_url so the model still gets direct PDF links.
 def _infer_pdf_url(url: str) -> str:
@@ -609,7 +642,9 @@ class WebSearchService:
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
 
-        ranked = sorted(sources.values(), key=lambda s: s.score, reverse=True)
+        ranked = _dedupe_near_duplicates(
+            sorted(sources.values(), key=lambda s: s.score, reverse=True)
+        )
         top = ranked[: profile.max_results]
         parsed_ok = sum(1 for s in top if s.parsed_ok)
         logger.info(

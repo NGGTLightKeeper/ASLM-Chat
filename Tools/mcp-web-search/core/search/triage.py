@@ -22,6 +22,7 @@ from .quality import (
     is_skip_title,
     lexical_score,
     query_years,
+    seo_slug_penalty,
     year_match_score,
 )
 
@@ -115,6 +116,9 @@ class TriageSession:
         if len(snippet) < _SHORT_SNIPPET_CHARS:
             score -= _SHORT_SNIPPET_PENALTY
         score -= 0.25 * hub
+        # Identity-blind SEO trim: gently down-weight year-stuffed farm slugs by URL shape
+        # only. No domain favouritism — authority is earned via consensus, not declared.
+        score += seo_slug_penalty(url)
         return max(0.0, min(1.0, score))
 
     # Map a score to an action.
