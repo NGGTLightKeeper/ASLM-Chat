@@ -49,6 +49,16 @@ logger = logging.getLogger("core.fetch.browser.daemon")
 
 _MIN_TEXT_CHARS = 200
 _MIN_HTML_CHARS = 200
+
+# Hard ceilings for the scrape steps that carry NO native timeout. page.goto and
+# wait_for_function are already bounded by their own timeouts; content()/evaluate()/
+# title() and page.close() are not, and a pathological page (infinite script, beforeunload
+# dialog, wedged renderer) can otherwise hang them indefinitely while holding the fetch
+# lock — stalling the whole daemon. These caps guarantee the lock is released and the
+# browser recycled instead of sleeping forever on a dead crawl.
+_EXTRACT_TIMEOUT = 15.0   # content + evaluate + title combined
+_CLOSE_TIMEOUT = 5.0      # closing one page
+_TEARDOWN_TIMEOUT = 10.0  # closing the context/browser during recycle/shutdown
 # Consecutive blocked fetches that flip a recycle from "restore" to "rotate identity".
 _BURN_STREAK = 3
 
@@ -150,6 +160,7 @@ class WarmChromium:
         self._blocked_streak = 0
         self._dirty = False              # state changed since last checkpoint
         self._inflight = 0
+        self._wedged = False             # a page/close hung → force a clean respawn
         self._checkpoint_task: asyncio.Task | None = None
 
     # ── lifecycle ────────────────────────────────────────────────────────────────
@@ -172,10 +183,16 @@ class WarmChromium:
             context = await browser.new_context()
 
         async def _close() -> None:
+            # Bound both closes: a wedged browser must not make teardown hang forever (that
+            # would defeat the recycle path it is supposed to enable).
             try:
-                await context.close()
-            finally:
-                await browser.close()
+                await asyncio.wait_for(context.close(), timeout=_TEARDOWN_TIMEOUT)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                await asyncio.wait_for(browser.close(), timeout=_TEARDOWN_TIMEOUT)
+            except Exception:  # noqa: BLE001
+                pass
 
         self._browser, self._context, self._teardown = browser, context, _close
         self._started_at = time.monotonic()
@@ -252,14 +269,24 @@ class WarmChromium:
                     )
                 except Exception:  # noqa: BLE001
                     await asyncio.sleep(min(wait, 1.5))
-            html = await page.content()
-            text = await page.evaluate("document.body ? document.body.innerText : ''") or ""
-            title = await page.title()
+
+            # content()/evaluate()/title() have no native timeout — cap them so a wedged
+            # renderer can't hold the fetch lock indefinitely.
+            async def _extract() -> tuple[str, str, str]:
+                html = await page.content()
+                text = await page.evaluate("document.body ? document.body.innerText : ''") or ""
+                title = await page.title()
+                return html, text, title
+
+            html, text, title = await asyncio.wait_for(_extract(), timeout=_EXTRACT_TIMEOUT)
         finally:
+            # A wedged page (beforeunload/dialog/dead renderer) can hang close() forever;
+            # bound it and, on failure, abandon the page and flag a respawn so the daemon
+            # recovers instead of deadlocking on a dead crawl.
             try:
-                await page.close()
+                await asyncio.wait_for(page.close(), timeout=_CLOSE_TIMEOUT)
             except Exception:  # noqa: BLE001
-                pass
+                self._wedged = True
 
         if len(html) < _MIN_HTML_CHARS:
             return ScrapeResult(url=url, status="error", error="insufficient HTML")
@@ -290,6 +317,16 @@ class WarmChromium:
                 result = ScrapeResult(url=url, status="error", error=f"{type(exc).__name__}: {exc}")
             finally:
                 self._inflight -= 1
+                # A hung page/close left the browser in an unknown state — tear it down now
+                # (bounded) so the next fetch respawns clean instead of inheriting the wedge.
+                # A wedge is a page fault, NOT a poisoned identity: the cookies/storage are
+                # still valid, so checkpoint them best-effort (good=True) before teardown.
+                # _checkpoint bounds storage_state at 10s, so a fully-dead browser just times
+                # out and proceeds — we never trade the lock for an unbounded save, but we
+                # also never throw away a good identity we could still have grabbed.
+                if self._wedged:
+                    self._wedged = False
+                    await self._shutdown_browser(checkpoint=True, good=True)
             self._requests += 1
             self._total += 1
             self._last_used = time.monotonic()
