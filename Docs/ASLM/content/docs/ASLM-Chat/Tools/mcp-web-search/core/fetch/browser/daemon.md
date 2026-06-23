@@ -15,6 +15,14 @@ Persistent, supervised warm-browser daemon (chromium / cloakbrowser only).
 
 ---
 
+## Constants
+
+- `_EXTRACT_TIMEOUT` (float): Hard ceiling for combined content extraction logic preventing infinite dead crawls.
+- `_CLOSE_TIMEOUT` (float): Cap limit for closing browser pages bounds dead renderers properly.
+- `_TEARDOWN_TIMEOUT` (float): Maximum allowed shutdown bounds resolving infinite teardown issues properly.
+
+---
+
 ## Classes
 
 ### `class RecycleReason`
