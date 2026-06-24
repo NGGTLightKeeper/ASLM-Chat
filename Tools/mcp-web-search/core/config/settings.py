@@ -84,9 +84,11 @@ class BrowserSection:
     engine: str = "chromium"            # warm backend is chromium-only by design
     autostart_daemon: bool = True       # spawn the daemon lazily on the first tool call
     # Daemon self-shuts-down after this many idle seconds (no fetch); 0 = eternal (run
-    # until the task is killed). Default 30 min so a tool-call-spawned daemon does not
-    # linger forever once searches stop.
-    daemon_idle_shutdown_sec: float = 1800.0
+    # until the task is killed). The daemon now OUTLIVES the tool-call process that spawned
+    # it (the client no longer kills it on exit), so it stays warm across calls and this
+    # idle timer — not the caller — bounds its life. Default 15 min: warm enough to serve a
+    # follow-up search/read cheaply, short enough not to hold a browser's RAM for long.
+    daemon_idle_shutdown_sec: float = 900.0
     headless: bool = True
     humanize: bool = False
     proxy: str = ""
@@ -199,7 +201,7 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             daemon_url=str(b.get("daemon_url") or _default_daemon_url()),
             engine=str(b.get("engine", "chromium")),
             autostart_daemon=bool(b.get("autostart_daemon", True)),
-            daemon_idle_shutdown_sec=float(b.get("daemon_idle_shutdown_sec", 1800.0)),
+            daemon_idle_shutdown_sec=float(b.get("daemon_idle_shutdown_sec", 900.0)),
             headless=bool(b.get("headless", True)),
             humanize=bool(b.get("humanize", False)),
             proxy=str(b.get("proxy", "")),

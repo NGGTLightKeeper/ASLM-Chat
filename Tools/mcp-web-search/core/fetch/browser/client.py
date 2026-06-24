@@ -177,16 +177,12 @@ class BrowserClient:
                                 error=f"bad daemon response (HTTP {resp.status_code})")
         return BrowserFetch.from_daemon(body, backend="warm")
 
-    # Close the shared HTTP client. A daemon we autostarted is asked to shut down too,
-    # so it does not outlive the process that spawned it (otherwise it self-terminates
-    # on its idle timeout). A daemon started out-of-band is left alone.
+    # Close the shared HTTP client only. The daemon is deliberately LEFT RUNNING so it stays
+    # warm across tool calls — a per-call worker that killed it on exit would force a cold
+    # Chromium relaunch every single call, defeating the whole point of a warm daemon. The
+    # daemon bounds its own life via daemon_idle_shutdown_sec (self-terminates once idle), so
+    # an autostarted one lingers at most that long after the last fetch instead of forever.
     async def aclose(self) -> None:
-        if self._spawned and self._http is not None:
-            try:
-                await self._http.post(f"{self._cfg.daemon_url}/shutdown")
-            except Exception:  # noqa: BLE001
-                pass
-            self._spawned = False
         if self._http is not None:
             try:
                 await self._http.aclose()

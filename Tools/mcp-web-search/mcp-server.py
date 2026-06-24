@@ -258,9 +258,9 @@ async def _call_read_page(args: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-# Cancel outstanding background work (prefetch) and release the warm browser at
-# server shutdown — a daemon this process autostarted is asked to stop so it does not
-# outlive us waiting on its idle timeout.
+# Cancel outstanding background work (prefetch) and release this process's HTTP resources
+# at server shutdown. The warm browser daemon is intentionally left running so it stays warm
+# for the next tool call; it self-terminates on its own idle timeout (daemon_idle_shutdown_sec).
 async def shutdown() -> None:
     from core.fetch.browser.client import shutdown_browser
     from core.search import serp_api
