@@ -39,7 +39,7 @@ draft: false
 
 ### `class BrowserSection`
 
-**Purpose:** Warm-browser layer. Two independent axes: where the browser is allowed as a fallback (browser_fallback) and which backend serves it (browser_backend).
+**Purpose:** Warm-browser layer. Two independent axes: where the browser is allowed as a fallback (browser_fallback) and which backend serves it (browser_backend). The `daemon_idle_shutdown_sec` parameter defaults to 900.0 (15 minutes) to bound the life of the warm daemon.
 
 ### `class SearchConfig`
 
