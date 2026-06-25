@@ -1,0 +1,19 @@
+{
+  "_note": "Candidate TRUSTED clearnet domains for anchored auto-expansion. The harvester fetches each over https and admits ONLY those that self-publish an Onion-Location header — legitimacy is proven by the domain's own TLS cert, never by an onion index. Add a domain here = you vouch it is a legitimate, legal organisation. Domains that don't advertise an onion are simply skipped.",
+  "anchors": [
+    "https://www.propublica.org/",
+    "https://www.nytimes.com/",
+    "https://www.bbc.com/news",
+    "https://www.eff.org/",
+    "https://duckduckgo.com/",
+    "https://www.debian.org/",
+    "https://tails.net/",
+    "https://www.qubes-os.org/",
+    "https://calyxos.org/",
+    "https://mullvad.net/en",
+    "https://archive.ph/",
+    "https://www.theguardian.com/",
+    "https://www.rferl.org/",
+    "https://www.dw.com/en/"
+  ]
+}

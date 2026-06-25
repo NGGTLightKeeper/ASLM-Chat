@@ -47,6 +47,7 @@ trace_logger = logging.getLogger("trace.read_page")
 
 _READ_PAGE_STRATEGY_VERSION = "2026-06-core-v1"
 _REDDIT_READ_TIMEOUT_SEC = 60.0
+_ONION_READ_TIMEOUT_SEC = 90.0
 _SKIP_HOSTS = ("vimeo.com", "tiktok.com")
 
 
@@ -353,6 +354,8 @@ def _read_page_deadline(url: str, opts: ReadPageOptions) -> float:
     base = float(opts.timeout)
     if _host(url) == "reddit.com" or _host(url).endswith(".reddit.com"):
         return max(base, _REDDIT_READ_TIMEOUT_SEC)
+    if _host(url).endswith(".onion"):
+        return max(base, _ONION_READ_TIMEOUT_SEC)  # Tor circuits/descriptors are slow
     return max(base, 30.0)
 
 
@@ -608,11 +611,48 @@ class ReadPageService:
         self._cache.cache_page(url, markdown.splitlines()[0].lstrip("# ").strip()[:500], markdown, "")
         return PageResult(markdown=markdown, ok=True, method="pdf")
 
+    # Fetch a .onion page over Tor and extract it through the same normalizer as the generic
+    # path. Gated on tor.enabled; soft, clear errors when tor is off/unreachable or the page
+    # is walled. Uses the tor fetch_timeout (Tor is slow) rather than the short read timeout.
+    async def _read_onion(self, url: str) -> PageResult:
+        try:
+            from core.config import load_search_config
+            from core.fetch.onion import onion_fetch
+        except Exception:  # noqa: BLE001
+            return PageResult(markdown=f"Error: onion layer unavailable: {url}", ok=False)
+        if not load_search_config().tor.enabled:
+            return PageResult(
+                markdown=f"Error: this is an onion URL; enable the tor path in config to read it: {url}",
+                ok=False,
+            )
+        result = await onion_fetch(url)  # timeout=None → tor.fetch_timeout
+        if not result.ok or not result.text:
+            return PageResult(
+                markdown=f"Error: could not fetch onion page ({result.error or result.status}): {url}",
+                ok=False,
+            )
+        html = result.text
+        if is_antibot(html):
+            return PageResult(markdown=f"Error: onion page returned an antibot/challenge wall: {url}", ok=False)
+        md = await asyncio.get_running_loop().run_in_executor(
+            _io_pool, lambda: normalize_page(url, html)
+        )
+        if not md or _is_weak_extraction(md, min_length=self._cfg.extraction.min_content_length):
+            return PageResult(markdown=f"Error: no extractable content from onion page: {url}", ok=False)
+        self._cache.cache_page(url, md.splitlines()[0].lstrip("# ").strip()[:500], md, "")
+        return PageResult(markdown=md, ok=True, method="onion", apply_budget=True)
+
     # Core read pipeline: SSRF, custom-domain dispatch, then the generic pipeline.
     async def _read(self, url: str) -> str:
         from core.extract.pdf_extractor import looks_like_pdf_url
 
         logger.info("read_page url=%r", url)
+
+        # .onion is fetched through Tor (not a direct connect), and can't pass the public-host
+        # SSRF check — route it to the onion path before SSRF. Gated on tor.enabled inside.
+        if _host(url).endswith(".onion"):
+            return self._finalize(url, await self._read_onion(url))
+
         try:
             validate_public_fetch_url(url)
         except UnsafeFetchUrl as exc:

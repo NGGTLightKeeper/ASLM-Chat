@@ -171,6 +171,36 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
 }
 
 
+# The onion opt-in property — added to the schema ONLY when the tor path is enabled in
+# config, so the model never sees an argument it cannot use.
+_ONION_PROPERTY: dict[str, Any] = {
+    "type": "boolean",
+    "default": False,
+    "description": (
+        "Enable censorship-resistant onion sources over Tor (vetted allowlist: news "
+        "SecureDrop/onion mirrors, rights orgs, privacy services). Set true only when the "
+        "user explicitly needs Tor/onion access or is working around blocking; it is slow "
+        "(Tor latency) and off-topic for ordinary searches. Leave false otherwise."
+    ),
+}
+
+
+# Build the search tool's input schema for the current config. The onion opt-in is exposed
+# only while tor.enabled, so the advertised arguments track the actual capability.
+def build_search_schema() -> dict[str, Any]:
+    import copy
+
+    schema = copy.deepcopy(SEARCH_QUERY_SCHEMA)
+    try:
+        from core.config import load_search_config
+
+        if load_search_config().tor.enabled:
+            schema["properties"]["onion"] = dict(_ONION_PROPERTY)
+    except Exception:  # noqa: BLE001 — config trouble must never break tool registration
+        pass
+    return schema
+
+
 # Best-effort JSON parse for string tool arguments that look like objects.
 def _try_parse_json(value: str) -> Any:
     stripped = value.strip()
@@ -245,3 +275,17 @@ def coerce_search_shopping(value: Any = None) -> bool:
 # Normalize the explicit academic opt-in argument to a bool.
 def coerce_search_academic(value: Any = None) -> bool:
     return _coerce_bool_opt(value, "academic")
+
+
+# Normalize the onion opt-in, AND-gated on the tor capability: even if a caller passes
+# onion=true, it is honored only when tor.enabled — so the intent flag can never activate
+# the path while the capability is off (double-guards a stale/cached schema).
+def coerce_search_onion(value: Any = None) -> bool:
+    if not _coerce_bool_opt(value, "onion"):
+        return False
+    try:
+        from core.config import load_search_config
+
+        return bool(load_search_config().tor.enabled)
+    except Exception:  # noqa: BLE001
+        return False

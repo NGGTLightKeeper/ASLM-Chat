@@ -56,6 +56,11 @@ _SOURCE_LIMIT = 20
 # avoid bar — a wide search cannot afford a multi-second page on the hot path.
 _INLINE_PARSE_SKIP_MS = 6_000.0
 
+# Per-link timeout for onion fetches during a web_search — tighter than read_page's onion
+# path (which uses the full tor.fetch_timeout). A search must stay responsive even when a
+# Tor circuit is slow; a slow onion link is dropped rather than allowed to stall the batch.
+_ONION_WEB_SEARCH_LINK_TIMEOUT = 20.0
+
 # Per-provider cap for the hosted supplement layer. Low by design — hosted credits cost
 # money and diversity beats depth; the scrape engines carry recall.
 _HOSTED_MAX_RESULTS = 5
@@ -475,6 +480,7 @@ class WebSearchService:
         timelimit: str | None = None,
         shopping: bool = False,
         academic: bool = False,
+        onion: bool = False,
     ) -> dict[str, Any]:
         profile = EFFORT_PROFILES.get(effort, EFFORT_PROFILES["low"])
         started = time.perf_counter()
@@ -705,6 +711,13 @@ class WebSearchService:
                 )
             )
 
+        # Onion opt-in: surface vetted censorship-resistant onion sources over Tor as
+        # additional citable sources. Off by default; failure is soft (web results stand).
+        if onion:
+            source_dicts.extend(
+                await self._onion_sources(query, profile, search_id, start_rank=len(source_dicts) + 1)
+            )
+
         model_context = _build_model_context(
             query, source_dicts,
             total_budget=int(search_cfg.total_context_budget or 0),
@@ -716,6 +729,7 @@ class WebSearchService:
             "effort": profile.name,
             "shopping": shopping,
             "academic": academic,
+            "onion": onion,
             "language": language,
             "region": region,
             "engines_used": [engine.name for engine in engines],
@@ -773,6 +787,44 @@ class WebSearchService:
             logger.info("academic.merged papers=%d query=%r", len(dicts), query[:120])
         return dicts
 
+    # Deep onion search: per-site search over Tor → parallel scrape of top results → BM25-
+    # compressed content returned directly as citable sources (not bare snippets). Per-link
+    # timeout is kept tighter here than read_page's onion path — a web_search must stay snappy
+    # even when an onion circuit is slow. Soft-fails to [].
+    async def _onion_sources(
+        self, query: str, profile: EffortProfile, search_id: str, *, start_rank: int
+    ) -> list[dict[str, Any]]:
+        try:
+            from core.fetch.onion.search import onion_search
+
+            results = await onion_search(
+                query, limit=profile.max_results,
+                per_link_timeout=_ONION_WEB_SEARCH_LINK_TIMEOUT, max_chars=4000,
+            )
+        except Exception:  # noqa: BLE001 — onion is supplemental; never fail the search
+            logger.warning("onion search failed for %r", query[:160], exc_info=True)
+            return []
+        out: list[dict[str, Any]] = []
+        for i, r in enumerate(results):
+            rank = start_rank + i
+            out.append({
+                "id": _citation_id(search_id, rank),
+                "url": r.url,
+                "host": r.host,
+                "title": r.title,
+                "snippet": (r.content or "")[:300],
+                "engine": f"onion:{r.provider}",
+                "rank": rank,
+                "score": 0.6,
+                "consensus_families": [f"onion:{r.provider}"],
+                "parsed_ok": True,
+                "parse_ms": 0.0,
+                "markdown": r.content,
+            })
+        if out:
+            logger.info("onion.merged sources=%d query=%r", len(out), query[:120])
+        return out
+
 
 # True when at least one engine produced a real verdict (success/partial/genuine empty),
 # vs every engine failing (error/blocked/timeout/changed). Distinguishes a genuine empty
@@ -817,6 +869,7 @@ async def run_web_search(
     timelimit: str | None = None,
     shopping: bool = False,
     academic: bool = False,
+    onion: bool = False,
 ) -> dict[str, Any]:
     from core.cache.hosted_cache import get_hosted_cache
     from core.config import load_search_config
@@ -832,30 +885,40 @@ async def run_web_search(
                     effort=effort, shopping=shopping, academic=academic)
     qkey = tracker.query_key(query, **key_args)
 
-    # 1. Identical query just served → hard block, no engines.
-    age = tracker.repeat_age(qkey, cache_cfg.repeat_block_window_seconds)
-    if age is not None:
-        logger.info("web_search.repeat_block age=%.0fs query=%r", age, query[:160])
-        return _repeat_block_payload(query, effort, age)
-
-    # 2. Fresh cache hit, else run the live pipeline and cache it.
-    payload = cache.get(query, **key_args)
-    if payload is not None:
-        payload = {**payload, "cached": True}
-    else:
+    # An onion run is an explicit, rare, slow opt-in whose source set differs — bypass the
+    # hosted cache and the repeat-block entirely so it always runs fresh and never collides
+    # with (or pollutes) the plain cache/dedup keyed without onion.
+    if onion:
         payload = await WebSearchService().search(
             query, effort=effort, region=region, safesearch=safesearch,
-            timelimit=timelimit, shopping=shopping, academic=academic,
+            timelimit=timelimit, shopping=shopping, academic=academic, onion=True,
         )
         payload["cached"] = False
-        empty = not payload.get("sources")
-        # A negative cache must reflect a genuine empty SERP, not a transient outage. If the
-        # result is empty only because every engine errored/blocked/timed out, don't cache it
-        # at all — caching would freeze a momentary failure into "nothing exists" for the TTL.
-        if empty and not _had_productive_engine(payload):
-            logger.info("web_search.skip_cache transient empty (no productive engine) query=%r", query[:160])
+    else:
+        # 1. Identical query just served → hard block, no engines.
+        age = tracker.repeat_age(qkey, cache_cfg.repeat_block_window_seconds)
+        if age is not None:
+            logger.info("web_search.repeat_block age=%.0fs query=%r", age, query[:160])
+            return _repeat_block_payload(query, effort, age)
+
+        # 2. Fresh cache hit, else run the live pipeline and cache it.
+        payload = cache.get(query, **key_args)
+        if payload is not None:
+            payload = {**payload, "cached": True}
         else:
-            cache.set(query, payload, is_empty=empty, **key_args)
+            payload = await WebSearchService().search(
+                query, effort=effort, region=region, safesearch=safesearch,
+                timelimit=timelimit, shopping=shopping, academic=academic,
+            )
+            payload["cached"] = False
+            empty = not payload.get("sources")
+            # A negative cache must reflect a genuine empty SERP, not a transient outage. If the
+            # result is empty only because every engine errored/blocked/timed out, don't cache it
+            # at all — caching would freeze a momentary failure into "nothing exists" for the TTL.
+            if empty and not _had_productive_engine(payload):
+                logger.info("web_search.skip_cache transient empty (no productive engine) query=%r", query[:160])
+            else:
+                cache.set(query, payload, is_empty=empty, **key_args)
 
     # 3. Drop sources the model was already shown within the suppression window.
     sources = list(payload.get("sources") or [])

@@ -28,10 +28,11 @@ from core.logging_setup import setup_logging
 from core.mcp_contract import (
     MCP_SERVER_DESCRIPTION,
     READ_PAGE_TOOL_DESCRIPTION,
-    SEARCH_QUERY_SCHEMA,
     WEB_SEARCH_TOOL_DESCRIPTION,
+    build_search_schema,
     coerce_search_academic,
     coerce_search_effort,
+    coerce_search_onion,
     coerce_search_query,
     coerce_search_shopping,
 )
@@ -74,7 +75,8 @@ TOOLS = [
         "id": "web_search",
         "name": "Web Search",
         "description": WEB_SEARCH_TOOL_DESCRIPTION,
-        "parameters": SEARCH_QUERY_SCHEMA,
+        # Built from config so the onion opt-in is advertised only while tor.enabled.
+        "parameters": build_search_schema(),
     },
     {
         "id": "read_page",
@@ -112,6 +114,7 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
     effort = coerce_search_effort(args)
     shopping = coerce_search_shopping(args)
     academic = coerce_search_academic(args)
+    onion = coerce_search_onion(args)  # honored only when tor.enabled (AND-gated in coerce)
 
     write_search_io_event(
         {
@@ -122,13 +125,15 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
             "effort": effort,
             "shopping": shopping,
             "academic": academic,
+            "onion": onion,
         }
     )
-    logger.info("mcp.web_search.start effort=%s shopping=%s academic=%s query_preview=%r",
-                effort, shopping, academic, query[:160])
+    logger.info("mcp.web_search.start effort=%s shopping=%s academic=%s onion=%s query_preview=%r",
+                effort, shopping, academic, onion, query[:160])
     started = time.perf_counter()
     try:
-        result = await run_web_search(query, effort=effort, shopping=shopping, academic=academic)
+        result = await run_web_search(query, effort=effort, shopping=shopping,
+                                      academic=academic, onion=onion)
     except Exception:
         logger.exception("mcp.web_search.failed query_preview=%r", query[:160])
         raise
@@ -280,6 +285,14 @@ async def call_tool(
 ) -> dict[str, Any]:
     args = dict(arguments or {})
     _evict_caches_once()
+    # Optionally pre-warm tor in the background so the first onion fetch isn't cold. No-op
+    # unless tor.enabled + tor.prewarm; non-blocking and self-gated.
+    try:
+        from core.fetch.onion.tor_proxy import prewarm as _tor_prewarm
+
+        _tor_prewarm()
+    except Exception:  # noqa: BLE001 — prewarm must never affect the tool call
+        pass
     if tool_id == "web_search":
         return await _call_web_search(args)
     if tool_id == "read_page":
