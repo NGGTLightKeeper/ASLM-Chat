@@ -886,39 +886,42 @@ async def run_web_search(
     qkey = tracker.query_key(query, **key_args)
 
     # An onion run is an explicit, rare, slow opt-in whose source set differs — bypass the
-    # hosted cache and the repeat-block entirely so it always runs fresh and never collides
-    # with (or pollutes) the plain cache/dedup keyed without onion.
+    # hosted cache, the repeat-block, AND the shared recency tracker entirely. The tracker is
+    # keyed without the onion flag, so writing onion runs into it would (a) false-block the next
+    # PLAIN search of the same text as a "repeat" and (b) leak .onion URLs into the suppression
+    # map. Return immediately so an onion run always runs fresh and never pollutes plain state.
     if onion:
         payload = await WebSearchService().search(
             query, effort=effort, region=region, safesearch=safesearch,
             timelimit=timelimit, shopping=shopping, academic=academic, onion=True,
         )
         payload["cached"] = False
-    else:
-        # 1. Identical query just served → hard block, no engines.
-        age = tracker.repeat_age(qkey, cache_cfg.repeat_block_window_seconds)
-        if age is not None:
-            logger.info("web_search.repeat_block age=%.0fs query=%r", age, query[:160])
-            return _repeat_block_payload(query, effort, age)
+        return payload
 
-        # 2. Fresh cache hit, else run the live pipeline and cache it.
-        payload = cache.get(query, **key_args)
-        if payload is not None:
-            payload = {**payload, "cached": True}
+    # 1. Identical query just served → hard block, no engines.
+    age = tracker.repeat_age(qkey, cache_cfg.repeat_block_window_seconds)
+    if age is not None:
+        logger.info("web_search.repeat_block age=%.0fs query=%r", age, query[:160])
+        return _repeat_block_payload(query, effort, age)
+
+    # 2. Fresh cache hit, else run the live pipeline and cache it.
+    payload = cache.get(query, **key_args)
+    if payload is not None:
+        payload = {**payload, "cached": True}
+    else:
+        payload = await WebSearchService().search(
+            query, effort=effort, region=region, safesearch=safesearch,
+            timelimit=timelimit, shopping=shopping, academic=academic,
+        )
+        payload["cached"] = False
+        empty = not payload.get("sources")
+        # A negative cache must reflect a genuine empty SERP, not a transient outage. If the
+        # result is empty only because every engine errored/blocked/timed out, don't cache it
+        # at all — caching would freeze a momentary failure into "nothing exists" for the TTL.
+        if empty and not _had_productive_engine(payload):
+            logger.info("web_search.skip_cache transient empty (no productive engine) query=%r", query[:160])
         else:
-            payload = await WebSearchService().search(
-                query, effort=effort, region=region, safesearch=safesearch,
-                timelimit=timelimit, shopping=shopping, academic=academic,
-            )
-            payload["cached"] = False
-            empty = not payload.get("sources")
-            # A negative cache must reflect a genuine empty SERP, not a transient outage. If the
-            # result is empty only because every engine errored/blocked/timed out, don't cache it
-            # at all — caching would freeze a momentary failure into "nothing exists" for the TTL.
-            if empty and not _had_productive_engine(payload):
-                logger.info("web_search.skip_cache transient empty (no productive engine) query=%r", query[:160])
-            else:
-                cache.set(query, payload, is_empty=empty, **key_args)
+            cache.set(query, payload, is_empty=empty, **key_args)
 
     # 3. Drop sources the model was already shown within the suppression window.
     sources = list(payload.get("sources") or [])

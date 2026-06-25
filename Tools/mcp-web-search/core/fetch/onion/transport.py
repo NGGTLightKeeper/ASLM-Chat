@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from core.fetch.thread_pool import io_pool as _io_pool
 
-from .tor_proxy import mark_used, resolve_socks
+from .tor_proxy import resolve_socks
 
 logger = logging.getLogger("core.fetch.onion.transport")
 
@@ -54,9 +54,6 @@ async def onion_fetch(url: str, *, timeout: float | None = None,
     socks_url = resolve_socks()
     if socks_url is None:
         return OnionFetch(url=url, status="unavailable", error="tor unavailable/disabled")
-    mark_used()  # reset the spawned tor's idle timer
-
-
 
     if timeout is None:
         from core.config import load_search_config

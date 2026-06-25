@@ -2,21 +2,21 @@
 
 """Loader for the onion service allowlist (`profiles/seeds/onion_registry.json`).
 
-The seed is the source of truth for *which* onion services are vetted and *where* their
-TLS clearnet anchor lives. Mirrors the academic registry: pure load → frozen records, no
-I/O beyond reading the JSON. Address freshness is the resolver's job, not the registry's.
+The seed is the SOLE source of truth for *which* onion services are vetted and *where*
+their TLS clearnet anchor lives. The allowlist is static and hand-vetted — there is no
+runtime discovery or persistence (the old anchored auto-expansion + `_cache/onion_registry.db`
+store were removed: a growable DB on top of a registry whose link-search parser isn't even
+finished was more risk than value). Mirrors the academic registry: pure load → frozen
+records, no I/O beyond reading the JSON. Address freshness is the resolver's job.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 from functools import lru_cache
 from pathlib import Path
 
 from .models import OnionService
-
-logger = logging.getLogger("core.fetch.onion.registry")
 
 _SEED_PATH = Path(__file__).resolve().parents[2] / "profiles" / "seeds" / "onion_registry.json"
 
@@ -41,18 +41,10 @@ def load_seed_services() -> tuple[OnionService, ...]:
     return tuple(out)
 
 
-# All vetted services: the seed bootstrap plus anchored auto-harvested entries from the
-# store. NOT cached — the store grows at runtime. Seed wins on a name collision.
+# All vetted services. The allowlist is exactly the hand-vetted seed — kept as a distinct
+# function (not just an alias) so callers have a stable "all services" entry point.
 def load_services() -> tuple[OnionService, ...]:
-    services = {s.name: s for s in load_seed_services()}
-    try:
-        from .store import get_onion_store
-
-        for s in get_onion_store().list_all():
-            services.setdefault(s.name, s)  # seed precedence
-    except Exception as exc:  # noqa: BLE001 — store is optional; seed always stands
-        logger.debug("onion store unavailable, seed only: %s", exc)
-    return tuple(services.values())
+    return load_seed_services()
 
 
 # Look up one vetted service by name (exact, case-insensitive).

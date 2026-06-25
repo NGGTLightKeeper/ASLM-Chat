@@ -102,32 +102,18 @@ class BrowserSection:
     checkpoint_interval: float = 30.0   # idle storageState checkpoint cadence (seconds)
 
 
-# Tor/onion access — the most optional thing in the search. OFF by default and strictly
-# zero-install: the tool never bundles or installs tor. When enabled it (1) reuses any
-# already-running tor SOCKS (a system daemon on 9050, or an open Tor Browser on 9150),
-# and only (2) spawns its own from an ALREADY-INSTALLED tor binary it can discover. No tor
-# anywhere → the feature simply goes no-op, never an error.
+# Tor/onion access — the most optional thing in the search. OFF by default and zero-install:
+# the tool never bundles, installs, or spawns tor. When enabled it REUSES a tor that is already
+# running — a system daemon on 9050, an open Tor Browser on 9150, or an explicit socks_url. No
+# running tor → the feature simply goes no-op, never an error.
 @dataclass
 class TorSection:
     enabled: bool = False               # master switch; off → onion paths are no-op
     socks_url: str = ""                 # explicit override, e.g. socks5h://127.0.0.1:9050
-    spawn_own: bool = True              # if no running tor found, spawn from a discovered binary
-    tor_binary: str = ""                # explicit path to a tor executable (else auto-discover)
     fetch_timeout: float = 60.0         # per-request ceiling (Tor is slow; circuits add latency)
-    # Anchored auto-expansion: scan trusted clearnet domains for an Onion-Location header and
-    # admit only those that self-publish one (legitimacy proven by their own TLS cert). Off by
-    # default. Harvested entries persist in _cache/onion_registry.db; never sourced from onion
-    # indexes (no trust anchor there).
-    auto_expand: bool = False
-    expand_refresh_hours: float = 24.0  # rescan cadence for the clearnet anchor list
-    # A tor WE spawned self-terminates after this many idle seconds (no onion fetch),
-    # mirroring the warm-browser daemon. 0 = never. Only applies to our spawned tor; a
-    # reused system/Tor-Browser SOCKS is left alone.
-    idle_shutdown_sec: float = 900.0
-    # Pre-warm tor in the background on any tool call so the first onion fetch isn't cold
-    # (~spawn + first-circuit ≈ 20-35s). Off by default: turning it on means tor runs while
-    # you're actively using tools even if onion is never hit — opt in only for onion-heavy use.
-    prewarm: bool = False
+    # The onion allowlist is static and hand-vetted (the seed registry) — there is no runtime
+    # discovery or persistence. (The old anchored auto-expansion + onion_registry.db store were
+    # removed as more risk than value while the static link-search layer is still unfinished.)
 
 
 @dataclass
@@ -246,13 +232,7 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
         tor=TorSection(
             enabled=bool(t.get("enabled", False)),
             socks_url=str(t.get("socks_url", "")),
-            spawn_own=bool(t.get("spawn_own", True)),
-            tor_binary=str(t.get("tor_binary", "")),
             fetch_timeout=float(t.get("fetch_timeout", 60.0)),
-            auto_expand=bool(t.get("auto_expand", False)),
-            expand_refresh_hours=float(t.get("expand_refresh_hours", 24.0)),
-            idle_shutdown_sec=float(t.get("idle_shutdown_sec", 900.0)),
-            prewarm=bool(t.get("prewarm", False)),
         ),
     )
 

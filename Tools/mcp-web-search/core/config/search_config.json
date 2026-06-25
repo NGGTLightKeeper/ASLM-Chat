@@ -28,7 +28,6 @@
     "year_hint_older": null
   },
   "tor": {
-    "enabled": false,
-    "auto_expand": false
+    "enabled": false
   }
 }

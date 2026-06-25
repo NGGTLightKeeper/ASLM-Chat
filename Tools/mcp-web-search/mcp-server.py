@@ -285,14 +285,6 @@ async def call_tool(
 ) -> dict[str, Any]:
     args = dict(arguments or {})
     _evict_caches_once()
-    # Optionally pre-warm tor in the background so the first onion fetch isn't cold. No-op
-    # unless tor.enabled + tor.prewarm; non-blocking and self-gated.
-    try:
-        from core.fetch.onion.tor_proxy import prewarm as _tor_prewarm
-
-        _tor_prewarm()
-    except Exception:  # noqa: BLE001 — prewarm must never affect the tool call
-        pass
     if tool_id == "web_search":
         return await _call_web_search(args)
     if tool_id == "read_page":
