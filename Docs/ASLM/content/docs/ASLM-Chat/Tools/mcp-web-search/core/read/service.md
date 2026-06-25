@@ -79,6 +79,10 @@ draft: false
 
 **Purpose:** Download a PDF and return extracted markdown.
 
+#### `async def ReadPageService._read_onion(url) -> PageResult`
+
+**Purpose:** Fetch a .onion page over Tor and extract it through the same normalizer as the generic path.
+
 #### `async def ReadPageService._read(url) -> str`
 
 **Purpose:** Core read pipeline: SSRF, custom-domain dispatch, then the generic pipeline.

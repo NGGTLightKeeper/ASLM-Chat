@@ -57,6 +57,10 @@ Part of `Tools/mcp-web-search/core/search`.
 
 **Purpose:** Implements `_academic_sources`.
 
+#### `async def WebSearchService._onion_sources(self, query, profile, search_id, start_rank) -> list[...]`
+
+**Purpose:** Deep onion search: per-site search over Tor → parallel scrape of top results.
+
 ---
 
 ## Public functions

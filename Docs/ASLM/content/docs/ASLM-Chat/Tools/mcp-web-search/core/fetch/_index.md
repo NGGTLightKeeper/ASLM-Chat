@@ -19,6 +19,7 @@ draft: false
 | [engine_stats](engine_stats/) | `engine_stats.py` | Per-engine rolling metrics |
 | [page_fetcher](page_fetcher/) | `page_fetcher.py` | httpx + curl fetch → source cache |
 | [camoufox_fetcher](camoufox_fetcher/) | `camoufox_fetcher.py` | Headless browser fetch |
+| [onion](onion/) | `onion/` | Optional Tor/onion access layer |
 | [academic_fetcher](academic_fetcher/) | `academic_fetcher.py` | arXiv / Semantic Scholar fast path |
 | [stackexchange_fetcher](stackexchange_fetcher/) | `stackexchange_fetcher.py` | Stack Exchange API |
 | [url_utils](url_utils/) | `url_utils.py` | SSRF-safe URL validation |
