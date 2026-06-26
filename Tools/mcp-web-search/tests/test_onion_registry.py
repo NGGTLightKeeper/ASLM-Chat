@@ -10,6 +10,7 @@ when the anchor is unreachable — all without touching the network or Tor.
 from __future__ import annotations
 
 import curl_cffi
+import curl_cffi.requests  # noqa: F401  - bind the submodule so monkeypatch.setattr finds it
 
 from core.fetch.onion import registry, resolver
 from core.fetch.onion.models import OnionService
