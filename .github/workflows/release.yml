@@ -2,42 +2,27 @@
 
 name: Release
 
-# Release automation driven by the PR title.
-#
-# PR title format: `vG.S` (final) or `vG.S-rc` (release candidate), targeting `main`.
-#   G = global version, S = subversion (both come from the title).
-#
-# The full version/tag is generated as `vG.S.Z.W` (or `vG.S.Z.W-rcN`):
-#   Z (revision)     = number of existing non-rc revisions of vG.S (ordinal, 0-based).
-#   W (commit count) = commits since the previous *stable* (non-rc) tag — cumulative,
-#                      identical basis for finals and their release candidates.
-#   N (rc ordinal)   = newest existing rc of vG.S.Z + 1 (only for -rc titles).
-#
-# Changelog/description base:
-#   final release    -> previous *stable* (non-rc) tag.
-#   release candidate-> newest prior release of *any* kind (last rc of this revision,
-#                       or the previous stable when this is the first rc).
-#
-# On open/edit/sync  -> compute the version and write it (without -rc) into ASLM_Module.json.
-# On merge into main -> create the tag and a GitHub release (pre-release when -rc).
-
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened, closed]
+    types: [opened, edited, synchronize, reopened]
+    branches:
+      - main
+  push:
     branches:
       - main
 
 permissions:
   contents: write
+  pull-requests: read
 
 concurrency:
-  group: release-${{ github.event.pull_request.number }}
+  group: release-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
   stage-version:
     if: >
-      github.event.action != 'closed' &&
+      github.event_name == 'pull_request' &&
       github.actor != 'github-actions[bot]' &&
       startsWith(github.event.pull_request.title, 'v')
     runs-on: ubuntu-latest
@@ -148,14 +133,11 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add ASLM_Module.json
-          git commit -m "chore: set module version ${VERSION} for ${TAG} [skip ci]"
+          git commit -m "chore: set module version ${VERSION} for ${TAG}"
           git push origin "HEAD:${HEAD_REF}"
 
   release:
-    if: >
-      github.event.action == 'closed' &&
-      github.event.pull_request.merged == true &&
-      startsWith(github.event.pull_request.title, 'v')
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -166,11 +148,31 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve merged PR for this commit
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          PR_JSON=$(gh api -H "Accept: application/vnd.github+json" \
+            "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" 2>/dev/null || echo '[]')
+          PR=$(jq -c '[.[] | select(.merged_at != null and .base.ref == "main")] | .[0] // empty' <<<"$PR_JSON")
+          if [[ -z "$PR" ]]; then
+            echo "No merged PR targeting main for ${{ github.sha }}; skipping."
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "valid=true" >> "$GITHUB_OUTPUT"
+          echo "pr_title=$(jq -r '.title' <<<"$PR")" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$(jq -r '.number' <<<"$PR")" >> "$GITHUB_OUTPUT"
+          echo "Resolved PR #$(jq -r '.number' <<<"$PR"): $(jq -r '.title' <<<"$PR")"
+
       - name: Compute version
+        if: steps.pr.outputs.valid == 'true'
         id: ver
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ steps.pr.outputs.pr_title }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
         run: |
           set -uo pipefail
           git fetch --tags --force origin
@@ -259,7 +261,7 @@ jobs:
           IS_RC: ${{ steps.ver.outputs.is_rc }}
           CHANGELOG_BASE: ${{ steps.ver.outputs.changelog_base }}
           ENDPOINT: ${{ steps.ver.outputs.endpoint }}
-          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          MERGE_SHA: ${{ github.sha }}
           OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
         run: |
