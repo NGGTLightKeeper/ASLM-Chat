@@ -17,7 +17,7 @@ draft: false
 
 #### `async def call_tool(tool_id, arguments, context) -> dict[str, Any]`
 
-**Purpose:** Dispatch an ASLM tool call to the matching search implementation.
+**Purpose:** Dispatch an ASLM tool call to the matching search implementation. Triggers background Tor prewarm if enabled.
 
 **Steps:**
 
@@ -29,7 +29,7 @@ draft: false
 
 #### `async def shutdown() -> None`
 
-**Purpose:** Cancel outstanding background work (prefetch) at server shutdown.
+**Purpose:** Cancel outstanding background work (prefetch) and release this process's HTTP resources at server shutdown. The warm browser daemon is intentionally left running so it stays warm for the next tool call; it self-terminates on its own idle timeout.
 
 ## Private functions
 

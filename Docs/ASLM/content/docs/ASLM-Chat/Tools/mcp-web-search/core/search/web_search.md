@@ -45,7 +45,7 @@ Part of `Tools/mcp-web-search/core/search`.
 
 **Purpose:** Implements `_hosted_stream`.
 
-#### `async def WebSearchService.search(self, query, effort, region, safesearch, timelimit, shopping, academic) -> dict[...]`
+#### `async def WebSearchService.search(self, query, effort, region, safesearch, timelimit, shopping, academic, onion) -> dict[...]`
 
 **Purpose:** Implements `search`.
 
@@ -57,6 +57,10 @@ Part of `Tools/mcp-web-search/core/search`.
 
 **Purpose:** Implements `_academic_sources`.
 
+#### `async def WebSearchService._onion_sources(self, query, profile, search_id, start_rank) -> list[...]`
+
+**Purpose:** Deep onion search: per-site search over Tor → parallel scrape of top results.
+
 ---
 
 ## Public functions
@@ -65,13 +69,17 @@ Part of `Tools/mcp-web-search/core/search`.
 
 **Purpose:** Implements `select_engines`.
 
-#### `async def run_web_search(query, effort, region, safesearch, timelimit, shopping, academic) -> dict[...]`
+#### `async def run_web_search(query, effort, region, safesearch, timelimit, shopping, academic, onion) -> dict[...]`
 
 **Purpose:** Implements `run_web_search`.
 
 ---
 
 ## Private functions
+
+#### `def _dedupe_near_duplicates(ranked: list[_Source]) -> list[_Source]`
+
+**Purpose:** Implements `_dedupe_near_duplicates` in `web_search.py`.
 
 #### `async def _merge_streams(*streams)`
 

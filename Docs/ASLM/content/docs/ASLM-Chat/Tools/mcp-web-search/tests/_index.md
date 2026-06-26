@@ -48,6 +48,11 @@ pytest tests/
 | [test_search_core](test_search_core/) | `test_search_core.py` | Search core unit tests |
 | [test_shopping_web_integration](test_shopping_web_integration/) | `test_shopping_web_integration.py` Shopping integration tests |
 | [test_reddit](test_reddit/) | `test_reddit.py` | Reddit fallback testing |
+| [test_onion_contract](test_onion_contract/) | `test_onion_contract.py` | Onion capability schema/opt-in |
+| [test_onion_harvester](test_onion_harvester/) | `test_onion_harvester.py` | Onion anchored auto-expansion |
+| [test_onion_registry](test_onion_registry/) | `test_onion_registry.py` | Onion allowlist / resolver |
+| [test_onion_search](test_onion_search/) | `test_onion_search.py` | Deep onion search pipeline |
+| [test_onion_transport](test_onion_transport/) | `test_onion_transport.py` | Onion transport/tor spawn |
 
 ---
 

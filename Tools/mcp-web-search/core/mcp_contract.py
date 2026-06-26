@@ -30,16 +30,38 @@ The query is a search-engine directive, not a conversational request. Write it l
 librarian's search expression: concrete nouns, identifiers, versions, quoted error text,
 and at most one intent term — no prose, no questions, no explanation.
 
-EFFORT:
+EFFORT — pick the LOWEST tier that can answer; escalate on evidence, never by default:
   effort="low"     Fast discovery. SERP only — no page scraping. Use for quick source
                    discovery, names, URLs, and rough orientation.
-  effort="medium"  Default. Ranks results and parses a few top pages into previews. Use
-                   first for ordinary cited answers, comparisons, reviews, and how-tos.
-  effort="high"    Exceptional escalation: larger source pool and deeper parsing. Use
-                   only for exhaustive or high-stakes work, or after medium left an
-                   important claim unresolved — never first for ordinary lookups. Do not
-                   retry the same intent at a lower effort after high; answer from the
-                   evidence collected.
+  effort="medium"  Default and starting point for every new intent. Ranks results and
+                   parses a few top pages into previews. Use first for ordinary cited
+                   answers, comparisons, reviews, and how-tos. Open here unless you
+                   already hold a medium/low result for this exact intent that fell short.
+  effort="high"    GATED RESERVE TIER — not a quality dial. Larger source pool and deeper
+                   parsing, reserved for when normal search has already failed you. Before
+                   a high call is allowed, ALL THREE must hold:
+                     (a) you already ran medium (or low) on this SAME intent earlier in
+                         this response, AND
+                     (b) that result left a specific claim unresolved that you can name in
+                         one sentence, AND
+                     (c) the gap is high-stakes or the task is genuinely exhaustive.
+                   If you cannot name the prior call and the exact unresolved claim, you do
+                   not meet the bar → use medium. NEVER open an intent at high. NEVER make
+                   high your first search. After a high call, do not re-run the same intent
+                   at a lower effort — answer from the evidence collected.
+
+ESCALATION BUDGET — high is rationed:
+  You may issue at most 3 high calls per response. Any high call beyond that returns a
+  quota notice instead of results and burns the turn. Treat high as a red button, not a
+  routine. If a high call ever returns a quota / "unavailable" notice, IMMEDIATELY
+  downshift the remaining searches to medium or low — do not re-issue high. Before each
+  high call, confirm you still have budget AND a concrete, nameable reason; if either is
+  missing, run medium.
+
+SUFFICIENCY — before issuing ANY further search (any tier), check whether the evidence
+already in hand answers the request. If it does, stop searching and write the answer. Do
+not open an adjacent sub-topic at high just because it is related — escalate only on a gap
+you can name, and only after medium on that sub-topic has actually fallen short.
 
 SHOPPING:
   shopping=false   Default. Never runs shopping providers.
@@ -113,10 +135,14 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
             "enum": list(_EFFORT_VALUES),
             "default": "medium",
             "description": (
-                "Search effort. low is fast and SERP-only; medium (default) ranks and "
-                "parses a few top pages for ordinary answers, comparisons, and reviews; "
-                "high is an exceptional escalation with a larger source pool and deeper "
-                "parsing for exhaustive or high-stakes work after medium is insufficient."
+                "Search effort — pick the lowest tier that can answer. low: fast, "
+                "SERP-only discovery. medium (default): ranks and parses a few top pages; "
+                "the starting point for every new intent. high: rationed reserve tier "
+                "(max 3 per response — excess high calls return a quota notice, not "
+                "results). high is allowed ONLY after a medium/low call on the SAME intent "
+                "left a specific, nameable claim unresolved AND the gap is high-stakes; "
+                "never as the first search for an intent, never as a quality dial. On a "
+                "quota notice, downshift remaining searches to medium or low."
             ),
         },
         "shopping": {
@@ -143,6 +169,36 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
     },
     "required": ["query"],
 }
+
+
+# The onion opt-in property — added to the schema ONLY when the tor path is enabled in
+# config, so the model never sees an argument it cannot use.
+_ONION_PROPERTY: dict[str, Any] = {
+    "type": "boolean",
+    "default": False,
+    "description": (
+        "Enable censorship-resistant onion sources over Tor (vetted allowlist: news "
+        "SecureDrop/onion mirrors, rights orgs, privacy services). Set true only when the "
+        "user explicitly needs Tor/onion access or is working around blocking; it is slow "
+        "(Tor latency) and off-topic for ordinary searches. Leave false otherwise."
+    ),
+}
+
+
+# Build the search tool's input schema for the current config. The onion opt-in is exposed
+# only while tor.enabled, so the advertised arguments track the actual capability.
+def build_search_schema() -> dict[str, Any]:
+    import copy
+
+    schema = copy.deepcopy(SEARCH_QUERY_SCHEMA)
+    try:
+        from core.config import load_search_config
+
+        if load_search_config().tor.enabled:
+            schema["properties"]["onion"] = dict(_ONION_PROPERTY)
+    except Exception:  # noqa: BLE001 — config trouble must never break tool registration
+        pass
+    return schema
 
 
 # Best-effort JSON parse for string tool arguments that look like objects.
@@ -219,3 +275,17 @@ def coerce_search_shopping(value: Any = None) -> bool:
 # Normalize the explicit academic opt-in argument to a bool.
 def coerce_search_academic(value: Any = None) -> bool:
     return _coerce_bool_opt(value, "academic")
+
+
+# Normalize the onion opt-in, AND-gated on the tor capability: even if a caller passes
+# onion=true, it is honored only when tor.enabled — so the intent flag can never activate
+# the path while the capability is off (double-guards a stale/cached schema).
+def coerce_search_onion(value: Any = None) -> bool:
+    if not _coerce_bool_opt(value, "onion"):
+        return False
+    try:
+        from core.config import load_search_config
+
+        return bool(load_search_config().tor.enabled)
+    except Exception:  # noqa: BLE001
+        return False

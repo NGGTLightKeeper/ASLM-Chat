@@ -84,9 +84,11 @@ class BrowserSection:
     engine: str = "chromium"            # warm backend is chromium-only by design
     autostart_daemon: bool = True       # spawn the daemon lazily on the first tool call
     # Daemon self-shuts-down after this many idle seconds (no fetch); 0 = eternal (run
-    # until the task is killed). Default 30 min so a tool-call-spawned daemon does not
-    # linger forever once searches stop.
-    daemon_idle_shutdown_sec: float = 1800.0
+    # until the task is killed). The daemon now OUTLIVES the tool-call process that spawned
+    # it (the client no longer kills it on exit), so it stays warm across calls and this
+    # idle timer — not the caller — bounds its life. Default 15 min: warm enough to serve a
+    # follow-up search/read cheaply, short enough not to hold a browser's RAM for long.
+    daemon_idle_shutdown_sec: float = 900.0
     headless: bool = True
     humanize: bool = False
     proxy: str = ""
@@ -100,6 +102,20 @@ class BrowserSection:
     checkpoint_interval: float = 30.0   # idle storageState checkpoint cadence (seconds)
 
 
+# Tor/onion access — the most optional thing in the search. OFF by default and zero-install:
+# the tool never bundles, installs, or spawns tor. When enabled it REUSES a tor that is already
+# running — a system daemon on 9050, an open Tor Browser on 9150, or an explicit socks_url. No
+# running tor → the feature simply goes no-op, never an error.
+@dataclass
+class TorSection:
+    enabled: bool = False               # master switch; off → onion paths are no-op
+    socks_url: str = ""                 # explicit override, e.g. socks5h://127.0.0.1:9050
+    fetch_timeout: float = 60.0         # per-request ceiling (Tor is slow; circuits add latency)
+    # The onion allowlist is static and hand-vetted (the seed registry) — there is no runtime
+    # discovery or persistence. (The old anchored auto-expansion + onion_registry.db store were
+    # removed as more risk than value while the static link-search layer is still unfinished.)
+
+
 @dataclass
 class SearchConfig:
     search: SearchSection = field(default_factory=SearchSection)
@@ -107,6 +123,7 @@ class SearchConfig:
     cache: CacheSection = field(default_factory=CacheSection)
     query: QuerySection = field(default_factory=QuerySection)
     browser: BrowserSection = field(default_factory=BrowserSection)
+    tor: TorSection = field(default_factory=TorSection)
 
 
 _cached_config: SearchConfig | None = None
@@ -158,6 +175,7 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
     c = raw.get("cache", {})
     q = raw.get("query", {})
     b = raw.get("browser", {})
+    t = raw.get("tor", {})
 
     config = SearchConfig(
         search=SearchSection(
@@ -199,7 +217,7 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             daemon_url=str(b.get("daemon_url") or _default_daemon_url()),
             engine=str(b.get("engine", "chromium")),
             autostart_daemon=bool(b.get("autostart_daemon", True)),
-            daemon_idle_shutdown_sec=float(b.get("daemon_idle_shutdown_sec", 1800.0)),
+            daemon_idle_shutdown_sec=float(b.get("daemon_idle_shutdown_sec", 900.0)),
             headless=bool(b.get("headless", True)),
             humanize=bool(b.get("humanize", False)),
             proxy=str(b.get("proxy", "")),
@@ -210,6 +228,11 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             max_age_sec=float(b.get("max_age_sec", 900.0)),
             max_rss_mb=int(b.get("max_rss_mb", 2048)),
             checkpoint_interval=float(b.get("checkpoint_interval", 30.0)),
+        ),
+        tor=TorSection(
+            enabled=bool(t.get("enabled", False)),
+            socks_url=str(t.get("socks_url", "")),
+            fetch_timeout=float(t.get("fetch_timeout", 60.0)),
         ),
     )
 

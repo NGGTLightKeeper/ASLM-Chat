@@ -241,3 +241,108 @@ def test_stop_final_checkpoints_and_tears_down(tmp_path):
     assert ctx.closed is True
     assert wc._browser is None
     assert store.latest_good("chromium") is not None
+
+
+# ── hang watchdog: bounded extraction + close, recycle on wedge ─────────────────────
+
+class _HangPage:
+    def __init__(self, *, hang_content: bool = False, hang_close: bool = False) -> None:
+        self._hang_content = hang_content
+        self._hang_close = hang_close
+        self.closed = False
+
+    async def goto(self, url, **kw):
+        return None
+
+    async def wait_for_function(self, *a, **k):
+        return None
+
+    async def content(self):
+        if self._hang_content:
+            await asyncio.sleep(100)
+        return "x" * 500
+
+    async def evaluate(self, *a, **k):
+        return "y" * 500
+
+    async def title(self):
+        return "t"
+
+    async def close(self):
+        if self._hang_close:
+            await asyncio.sleep(100)
+        self.closed = True
+
+
+class _HangContext:
+    def __init__(self, page: _HangPage) -> None:
+        self._page = page
+        self.closed = False
+
+    async def new_page(self):
+        return self._page
+
+    async def storage_state(self) -> dict:
+        return {"cookies": [{"name": "SID", "value": "live", "domain": ".example.com"}], "origins": []}
+
+    async def close(self):
+        self.closed = True
+
+
+def _wire_hang(wc: WarmChromium, page: _HangPage) -> None:
+    async def fake_open(self) -> None:
+        self._browser = _FakeBrowser()
+        self._context = _HangContext(page)
+
+        async def _close() -> None:
+            await self._context.close()
+            await self._browser.close()
+
+        self._teardown = _close
+        import time as _t
+        self._started_at = _t.monotonic()
+        self._requests = 0
+        self._dirty = False
+
+    wc._open = types.MethodType(fake_open, wc)
+
+
+def test_extraction_hang_is_capped_not_indefinite(tmp_path, monkeypatch):
+    # content() hangs forever; the extraction cap must turn it into a bounded timeout
+    # result instead of holding the lock until the heat death of the universe.
+    monkeypatch.setattr(daemon_mod, "_EXTRACT_TIMEOUT", 0.2)
+    monkeypatch.setattr(daemon_mod, "_CLOSE_TIMEOUT", 0.2)
+    wc = WarmChromium(identity=_store(tmp_path), max_requests=99)
+    page = _HangPage(hang_content=True)
+    _wire_hang(wc, page)
+
+    async def go():
+        return await asyncio.wait_for(wc.fetch("https://hang.example"), timeout=3.0)
+
+    r = asyncio.run(go())
+    assert r.status == "timeout"
+    assert wc._inflight == 0  # lock released, counter unwound
+
+
+def test_close_hang_flags_wedge_and_recycles(tmp_path, monkeypatch):
+    # content() succeeds but close() wedges; the close cap fires, the browser is flagged
+    # wedged and torn down so the next fetch respawns clean.
+    monkeypatch.setattr(daemon_mod, "_EXTRACT_TIMEOUT", 1.0)
+    monkeypatch.setattr(daemon_mod, "_CLOSE_TIMEOUT", 0.2)
+    store = _store(tmp_path)
+    wc = WarmChromium(identity=store, max_requests=99)
+    page = _HangPage(hang_close=True)
+    _wire_hang(wc, page)
+
+    async def go():
+        return await asyncio.wait_for(wc.fetch("https://wedge.example"), timeout=3.0)
+
+    r = asyncio.run(go())
+    # extraction succeeded, so the result itself is ok…
+    assert r.ok and r.status == "ok"
+    # …but the wedged close forced a teardown: browser gone, flag reset.
+    assert wc._browser is None
+    assert wc._wedged is False
+    # …and the identity was checkpointed best-effort BEFORE the kill — a wedge is a page
+    # fault, not a poisoned identity, so we must not lose the live cookies/storage.
+    assert store.latest_good("chromium") is not None

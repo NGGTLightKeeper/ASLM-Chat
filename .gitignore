@@ -201,6 +201,8 @@ MCP/mcp.json
 Data/
 !Apps/Data/
 !Docs/ASLM/content/docs/ASLM-Chat/Apps/Data/
+# Hugo landing-page data (collides with the case-insensitive `Data/` rule above).
+!Docs/ASLM/data/
 
 # Tools (shared)
 pytest-cache-files-*/

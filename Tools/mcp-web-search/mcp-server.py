@@ -28,10 +28,11 @@ from core.logging_setup import setup_logging
 from core.mcp_contract import (
     MCP_SERVER_DESCRIPTION,
     READ_PAGE_TOOL_DESCRIPTION,
-    SEARCH_QUERY_SCHEMA,
     WEB_SEARCH_TOOL_DESCRIPTION,
+    build_search_schema,
     coerce_search_academic,
     coerce_search_effort,
+    coerce_search_onion,
     coerce_search_query,
     coerce_search_shopping,
 )
@@ -74,7 +75,8 @@ TOOLS = [
         "id": "web_search",
         "name": "Web Search",
         "description": WEB_SEARCH_TOOL_DESCRIPTION,
-        "parameters": SEARCH_QUERY_SCHEMA,
+        # Built from config so the onion opt-in is advertised only while tor.enabled.
+        "parameters": build_search_schema(),
     },
     {
         "id": "read_page",
@@ -112,6 +114,7 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
     effort = coerce_search_effort(args)
     shopping = coerce_search_shopping(args)
     academic = coerce_search_academic(args)
+    onion = coerce_search_onion(args)  # honored only when tor.enabled (AND-gated in coerce)
 
     write_search_io_event(
         {
@@ -122,13 +125,15 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
             "effort": effort,
             "shopping": shopping,
             "academic": academic,
+            "onion": onion,
         }
     )
-    logger.info("mcp.web_search.start effort=%s shopping=%s academic=%s query_preview=%r",
-                effort, shopping, academic, query[:160])
+    logger.info("mcp.web_search.start effort=%s shopping=%s academic=%s onion=%s query_preview=%r",
+                effort, shopping, academic, onion, query[:160])
     started = time.perf_counter()
     try:
-        result = await run_web_search(query, effort=effort, shopping=shopping, academic=academic)
+        result = await run_web_search(query, effort=effort, shopping=shopping,
+                                      academic=academic, onion=onion)
     except Exception:
         logger.exception("mcp.web_search.failed query_preview=%r", query[:160])
         raise
@@ -258,9 +263,9 @@ async def _call_read_page(args: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-# Cancel outstanding background work (prefetch) and release the warm browser at
-# server shutdown — a daemon this process autostarted is asked to stop so it does not
-# outlive us waiting on its idle timeout.
+# Cancel outstanding background work (prefetch) and release this process's HTTP resources
+# at server shutdown. The warm browser daemon is intentionally left running so it stays warm
+# for the next tool call; it self-terminates on its own idle timeout (daemon_idle_shutdown_sec).
 async def shutdown() -> None:
     from core.fetch.browser.client import shutdown_browser
     from core.search import serp_api

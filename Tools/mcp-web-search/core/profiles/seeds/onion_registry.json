@@ -1,0 +1,71 @@
+{
+  "_note": "Allowlist of vetted, legal onion services. Each `onion` is the LAST-KNOWN address (seed/fallback); the resolver refreshes it at runtime from the service's own TLS clearnet `clearnet_anchor` via its Onion-Location header, so an operator key rotation is picked up and phishing clones can't slip in. Adding an entry = vouching it is legal and that the anchor authoritatively publishes its onion.",
+  "services": [
+    {
+      "name": "torproject",
+      "category": "infosec",
+      "clearnet_anchor": "https://www.torproject.org/",
+      "onion": "http://2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion/index.html"
+    },
+    {
+      "name": "securedrop",
+      "category": "whistleblow",
+      "clearnet_anchor": "https://securedrop.org/",
+      "onion": "http://sdolvtfhatvsysc6l34d65ymdwxcujausv7k5jk4cy5ttzhjoi6fzvyd.onion/"
+    },
+    {
+      "name": "guardian",
+      "category": "media",
+      "clearnet_anchor": "https://www.theguardian.com/",
+      "onion": "https://www.guardian2zotagl6tmjucg3lrhxdk4dw3lhbqnkvvkywawy3oqfoprid.onion/"
+    },
+    {
+      "name": "amnesty",
+      "category": "rights",
+      "clearnet_anchor": "https://www.amnesty.org/en/",
+      "onion": "https://www.amnestyl337aduwuvpf57irfl54ggtnuera45ygcxzuftwxjvvmpuzqd.onion/"
+    },
+    {
+      "name": "proton",
+      "category": "privacy_mail",
+      "clearnet_anchor": "https://proton.me/",
+      "onion": "https://protonmailrmez3lotccipshtkleegetolb73fuirgj7r4o4vfu7ozyd.onion/"
+    },
+    {
+      "name": "riseup",
+      "category": "privacy_mail",
+      "clearnet_anchor": "https://riseup.net/",
+      "onion": "http://vww6ybal4bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion/"
+    },
+    {
+      "name": "archive_today",
+      "category": "archive",
+      "clearnet_anchor": "https://archive.ph/",
+      "onion": "http://archiveiya74codqgiixo33q62qlrqtkgmcitqx5u2oeqnmn5bpcbiyd.onion/"
+    },
+    {
+      "name": "rferl",
+      "category": "media",
+      "clearnet_anchor": "https://www.rferl.org/",
+      "onion": "https://www.rferlo2zxgv23tct66v45s5mecftol5vod3hf4rqbipfp46fqu2q56ad.onion/"
+    },
+    {
+      "name": "dw",
+      "category": "media",
+      "clearnet_anchor": "https://www.dw.com/en/",
+      "onion": "http://www.dwnewsgngmhlplxy6o2twtfgjnrnjxbegbwqx6wnotdhkzt562tszfid.onion/"
+    },
+    {
+      "name": "whonix",
+      "category": "infosec",
+      "clearnet_anchor": "https://www.whonix.org/",
+      "onion": "http://www.dds6qkxpwdeubwucdiaord2xgbbeyds25rbsgr73tbfpqpt4a6vjwsyd.onion/"
+    },
+    {
+      "name": "systemli",
+      "category": "privacy_mail",
+      "clearnet_anchor": "https://www.systemli.org/en/",
+      "onion": "http://7sk2kov2xwx6cbc32phynrifegg6pklmzs7luwcggtzrnlsolxxuyfyd.onion/en/"
+    }
+  ]
+}

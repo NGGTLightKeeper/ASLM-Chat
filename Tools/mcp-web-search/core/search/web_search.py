@@ -56,6 +56,11 @@ _SOURCE_LIMIT = 20
 # avoid bar — a wide search cannot afford a multi-second page on the hot path.
 _INLINE_PARSE_SKIP_MS = 6_000.0
 
+# Per-link timeout for onion fetches during a web_search — tighter than read_page's onion
+# path (which uses the full tor.fetch_timeout). A search must stay responsive even when a
+# Tor circuit is slow; a slow onion link is dropped rather than allowed to stall the batch.
+_ONION_WEB_SEARCH_LINK_TIMEOUT = 20.0
+
 # Per-provider cap for the hosted supplement layer. Low by design — hosted credits cost
 # money and diversity beats depth; the scrape engines carry recall.
 _HOSTED_MAX_RESULTS = 5
@@ -110,6 +115,39 @@ def _inline_parse_allowed(url: str) -> bool:
     except Exception:  # noqa: BLE001 — a profile lookup must never sink a search
         return True
     return not (hint and hint.expected_fetch_ms > _INLINE_PARSE_SKIP_MS)
+
+
+# Collapse same-host near-duplicates from a score-sorted list. Triage dedups exact
+# URLs, but engines also return slug/redirect/anchor variants of one page (e.g. two
+# programming-helper.com URLs for the same article, or a "Redirecting to…" stub). Keep
+# the highest-scored variant per host whose title is near-identical to an already-kept
+# one; distinct pages on the same host (e.g. two different kubernetes.io docs) survive.
+def _dedupe_near_duplicates(ranked: list[_Source]) -> list[_Source]:
+    import re as _re
+
+    def toks(t: str) -> frozenset[str]:
+        return frozenset(_re.findall(r"\w+", (t or "").lower()))
+
+    kept: list[_Source] = []
+    seen_by_host: dict[str, list[frozenset[str]]] = {}
+    for s in ranked:
+        t = toks(s.title)
+        prior = seen_by_host.get(s.host, [])
+        is_dup = False
+        for pt in prior:
+            if not t or not pt:
+                continue
+            # Containment: the shorter title's tokens almost fully inside the other →
+            # same article (handles "X" vs "X - Site Name" and redirect stubs).
+            overlap = len(t & pt) / max(1, min(len(t), len(pt)))
+            if overlap >= 0.85:
+                is_dup = True
+                break
+        if is_dup:
+            continue
+        kept.append(s)
+        seen_by_host.setdefault(s.host, []).append(t)
+    return kept
 
 
 # Resolve a direct PDF URL for a result (already a PDF, or an arXiv abs → pdf link).
@@ -442,6 +480,7 @@ class WebSearchService:
         timelimit: str | None = None,
         shopping: bool = False,
         academic: bool = False,
+        onion: bool = False,
     ) -> dict[str, Any]:
         profile = EFFORT_PROFILES.get(effort, EFFORT_PROFILES["low"])
         started = time.perf_counter()
@@ -609,7 +648,9 @@ class WebSearchService:
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
 
-        ranked = sorted(sources.values(), key=lambda s: s.score, reverse=True)
+        ranked = _dedupe_near_duplicates(
+            sorted(sources.values(), key=lambda s: s.score, reverse=True)
+        )
         top = ranked[: profile.max_results]
         parsed_ok = sum(1 for s in top if s.parsed_ok)
         logger.info(
@@ -670,6 +711,13 @@ class WebSearchService:
                 )
             )
 
+        # Onion opt-in: surface vetted censorship-resistant onion sources over Tor as
+        # additional citable sources. Off by default; failure is soft (web results stand).
+        if onion:
+            source_dicts.extend(
+                await self._onion_sources(query, profile, search_id, start_rank=len(source_dicts) + 1)
+            )
+
         model_context = _build_model_context(
             query, source_dicts,
             total_budget=int(search_cfg.total_context_budget or 0),
@@ -681,6 +729,7 @@ class WebSearchService:
             "effort": profile.name,
             "shopping": shopping,
             "academic": academic,
+            "onion": onion,
             "language": language,
             "region": region,
             "engines_used": [engine.name for engine in engines],
@@ -738,6 +787,44 @@ class WebSearchService:
             logger.info("academic.merged papers=%d query=%r", len(dicts), query[:120])
         return dicts
 
+    # Deep onion search: per-site search over Tor → parallel scrape of top results → BM25-
+    # compressed content returned directly as citable sources (not bare snippets). Per-link
+    # timeout is kept tighter here than read_page's onion path — a web_search must stay snappy
+    # even when an onion circuit is slow. Soft-fails to [].
+    async def _onion_sources(
+        self, query: str, profile: EffortProfile, search_id: str, *, start_rank: int
+    ) -> list[dict[str, Any]]:
+        try:
+            from core.fetch.onion.search import onion_search
+
+            results = await onion_search(
+                query, limit=profile.max_results,
+                per_link_timeout=_ONION_WEB_SEARCH_LINK_TIMEOUT, max_chars=4000,
+            )
+        except Exception:  # noqa: BLE001 — onion is supplemental; never fail the search
+            logger.warning("onion search failed for %r", query[:160], exc_info=True)
+            return []
+        out: list[dict[str, Any]] = []
+        for i, r in enumerate(results):
+            rank = start_rank + i
+            out.append({
+                "id": _citation_id(search_id, rank),
+                "url": r.url,
+                "host": r.host,
+                "title": r.title,
+                "snippet": (r.content or "")[:300],
+                "engine": f"onion:{r.provider}",
+                "rank": rank,
+                "score": 0.6,
+                "consensus_families": [f"onion:{r.provider}"],
+                "parsed_ok": True,
+                "parse_ms": 0.0,
+                "markdown": r.content,
+            })
+        if out:
+            logger.info("onion.merged sources=%d query=%r", len(out), query[:120])
+        return out
+
 
 # True when at least one engine produced a real verdict (success/partial/genuine empty),
 # vs every engine failing (error/blocked/timeout/changed). Distinguishes a genuine empty
@@ -782,6 +869,7 @@ async def run_web_search(
     timelimit: str | None = None,
     shopping: bool = False,
     academic: bool = False,
+    onion: bool = False,
 ) -> dict[str, Any]:
     from core.cache.hosted_cache import get_hosted_cache
     from core.config import load_search_config
@@ -796,6 +884,19 @@ async def run_web_search(
     key_args = dict(region=region, safesearch=safesearch, timelimit=timelimit,
                     effort=effort, shopping=shopping, academic=academic)
     qkey = tracker.query_key(query, **key_args)
+
+    # An onion run is an explicit, rare, slow opt-in whose source set differs — bypass the
+    # hosted cache, the repeat-block, AND the shared recency tracker entirely. The tracker is
+    # keyed without the onion flag, so writing onion runs into it would (a) false-block the next
+    # PLAIN search of the same text as a "repeat" and (b) leak .onion URLs into the suppression
+    # map. Return immediately so an onion run always runs fresh and never pollutes plain state.
+    if onion:
+        payload = await WebSearchService().search(
+            query, effort=effort, region=region, safesearch=safesearch,
+            timelimit=timelimit, shopping=shopping, academic=academic, onion=True,
+        )
+        payload["cached"] = False
+        return payload
 
     # 1. Identical query just served → hard block, no engines.
     age = tracker.repeat_age(qkey, cache_cfg.repeat_block_window_seconds)

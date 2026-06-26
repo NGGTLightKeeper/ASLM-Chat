@@ -90,6 +90,29 @@ def is_skip_title(title: str) -> bool:
     return any(pattern in title_l for pattern in _SKIP_TITLE_PATTERNS)
 
 
+# --- SEO-slug penalty (identity-blind) -----------------------------------------
+
+# No domain favouritism: the ranker must not carry a list of "good" hosts — that would
+# reintroduce the curated trust registry consensus was built to replace, and bias the
+# system toward whoever the author hand-picked. The only domain-shaped signal we allow
+# is a penalty on the *structure* of a URL, never on its identity: year-stuffed,
+# heavily hyphenated slugs are a reliable SEO-content-farm tell regardless of who owns
+# the domain. Authority itself comes from cross-engine consensus (see triage), which is
+# earned from the live result stream, not declared here.
+
+_SEO_SLUG_RE = re.compile(r"\b(19|20)\d{2}\b")
+
+
+# Non-positive penalty for SEO-farm-shaped slugs. Identity-blind: keys only off the URL
+# slug's shape (hyphen density + a year), so it generalises to any host and plays no
+# favourites. Deliberately gentle — it nudges, never filters.
+def seo_slug_penalty(url: str) -> float:
+    last = (urlparse(url).path or "").rstrip("/").rsplit("/", 1)[-1].lower()
+    if last.count("-") >= 6 and _SEO_SLUG_RE.search(last):
+        return -0.06
+    return 0.0
+
+
 # --- dates (policy: soft signal only, never a hard filter) ---------------------
 
 _YEAR_RE = re.compile(r"\b(19\d{2}|20\d{2})\b")

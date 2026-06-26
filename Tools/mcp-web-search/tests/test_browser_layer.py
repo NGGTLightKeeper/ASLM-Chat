@@ -81,7 +81,7 @@ def test_browser_section_defaults():
     assert sec.browser_fallback == "page"
     assert sec.max_rss_mb == 2048
     assert sec.autostart_daemon is True             # spawn on first tool call
-    assert sec.daemon_idle_shutdown_sec == 1800.0   # 30 min, 0 = eternal
+    assert sec.daemon_idle_shutdown_sec == 900.0    # 15 min warm, 0 = eternal
 
 
 def test_browser_config_validates_enums(tmp_path):

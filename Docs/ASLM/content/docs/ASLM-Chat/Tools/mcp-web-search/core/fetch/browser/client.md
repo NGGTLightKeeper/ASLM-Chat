@@ -17,6 +17,14 @@ draft: false
 
 ---
 
+## Public functions
+
+#### `async def aclose(self) -> None`
+
+**Purpose:** Close the shared HTTP client only. The daemon is deliberately LEFT RUNNING so it stays warm across tool calls.
+
+---
+
 ## Private functions
 
 #### `def _spawn_process(self) -> None`

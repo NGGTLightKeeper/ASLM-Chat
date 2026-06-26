@@ -26,5 +26,8 @@
     "year_hint_current": "m",
     "year_hint_prev": "y",
     "year_hint_older": null
+  },
+  "tor": {
+    "enabled": false
   }
 }

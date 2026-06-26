@@ -17,11 +17,11 @@ jobs:
   context_compression:
     name: context_compression
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -29,7 +29,7 @@ jobs:
           python-version: "3.12"
 
       - name: Cache server venv
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: Data/venvs/server
           key: aslm-chat-venv-server-${{ runner.os }}-${{ hashFiles('Settings/venv_requirements.json') }}
@@ -55,11 +55,11 @@ jobs:
   mcp-sandbox:
     name: mcp-sandbox
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -67,7 +67,7 @@ jobs:
           python-version: "3.12"
 
       - name: Cache tool venv
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: Data/venvs/tools/mcp-sandbox
           key: aslm-chat-venv-mcp-sandbox-${{ runner.os }}-${{ hashFiles('Settings/venv_requirements.json') }}
@@ -93,11 +93,11 @@ jobs:
   mcp-web-search:
     name: mcp-web-search
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -105,7 +105,7 @@ jobs:
           python-version: "3.12"
 
       - name: Cache tool venv
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: Data/venvs/tools/mcp-web-search
           key: aslm-chat-venv-mcp-web-search-${{ runner.os }}-${{ hashFiles('Settings/venv_requirements.json') }}
@@ -131,11 +131,11 @@ jobs:
   mcp-browser-agent:
     name: mcp-browser-agent
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -143,7 +143,7 @@ jobs:
           python-version: "3.12"
 
       - name: Cache tool venv
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: Data/venvs/tools/mcp-browser-agent
           key: aslm-chat-venv-mcp-browser-agent-${{ runner.os }}-${{ hashFiles('Settings/venv_requirements.json') }}

@@ -347,6 +347,10 @@ def _card_products(
         url = normalize_url(anchor.get("href", ""), base_url)
         if len(title) < 8 or not url.startswith("http"):
             continue
+        # Drop category/filter listings and rating sub-links — they masquerade as products
+        # but only re-list one facet/score at the page-context price (the duplicate source).
+        if _is_listing_or_facet_url(url) or _is_rating_anchor(title, url):
+            continue
         parent = anchor
         for _ in range(3):
             if parent.parent is None:
@@ -377,6 +381,43 @@ def _card_products(
     return out
 
 
+# Listing/search/facet endpoints are not products: comparison sites expose category and
+# filter links (…/results?q=…&af_CATEGORY=…) that share one page-context price, so each
+# facet becomes a near-duplicate "product" at the same bogus price. Product pages live on
+# detail paths (…/pl/…, …/product/…) instead. Identity-blind: keys off path/query shape.
+_LISTING_PATH_SEGMENTS = frozenset({
+    "results", "search", "browse", "catalog", "category", "categories",
+    "suche", "filter", "filters",
+})
+
+
+def _is_listing_or_facet_url(url: str) -> bool:
+    parsed = urlparse(url or "")
+    segments = {seg.lower() for seg in (parsed.path or "").split("/") if seg}
+    if segments & _LISTING_PATH_SEGMENTS:
+        return True
+    query = (parsed.query or "").lower()
+    # Facet params (af_category=, category=, filter=) mark a filtered listing, not an item.
+    return bool(re.search(r"(^|&)(af_[a-z]+|category|categories|filter|facet)=", query))
+
+
+# Rating/review sub-links of a product card (…#ratings, "Bewertung: 4.6 von 5 Sternen …")
+# parse into a separate row at the card's price — a duplicate of the real product. Match
+# only rating-dominated titles so normal titles carrying an inline score ("… 4.5 Wireless")
+# are untouched.
+_RATING_FRAGMENTS = frozenset({"ratings", "reviews", "rating", "review"})
+_RATING_TITLE_RE = re.compile(
+    r"^\s*(bewertung\b|\d+([.,]\d+)?\s*(von\s*5\s*sternen|out\s*of\s*5\s*stars?|stars?\b))",
+    re.IGNORECASE,
+)
+
+
+def _is_rating_anchor(title: str, url: str) -> bool:
+    if urlparse(url or "").fragment.lower() in _RATING_FRAGMENTS:
+        return True
+    return bool(_RATING_TITLE_RE.match(title or ""))
+
+
 def _looks_like_price_filter_title(title: str) -> bool:
     value = compact(title, limit=120).lower()
     if not value:
@@ -404,7 +445,9 @@ def _dedupe(products: list[ShoppingProduct]) -> list[ShoppingProduct]:
     seen_titles: set[str] = set()
     for product in sorted(products, key=lambda item: item.confidence, reverse=True):
         title_key = re.sub(r"\W+", " ", product.title.lower()).strip()[:90]
-        url_key = product.url.split("#", 1)[0]
+        # Strip fragment AND query so facet/tracking variants of one page
+        # (…/item?hloc=eu&nocookie=1#ratings) collapse to a single product.
+        url_key = product.url.split("#", 1)[0].split("?", 1)[0]
         if url_key in seen_urls or title_key in seen_titles:
             continue
         seen_urls.add(url_key)
