@@ -31,6 +31,10 @@ draft: false
 
 **Purpose:** Type `BrowserSection` defined in `settings.py`.
 
+### `class TorSection`
+
+**Purpose:** Type `TorSection` defined in `settings.py`.
+
 ### `class EffortSection`
 
 **Purpose:** Type `EffortSection` defined in `settings.py`.
@@ -40,6 +44,10 @@ draft: false
 ### `class BrowserSection`
 
 **Purpose:** Warm-browser layer. Two independent axes: where the browser is allowed as a fallback (browser_fallback) and which backend serves it (browser_backend). The `daemon_idle_shutdown_sec` parameter defaults to 900.0 (15 minutes) to bound the life of the warm daemon.
+
+### `class TorSection`
+
+**Purpose:** Tor/onion access — the most optional thing in the search. OFF by default and strictly zero-install.
 
 ### `class SearchConfig`
 

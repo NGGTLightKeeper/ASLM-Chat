@@ -17,7 +17,7 @@ draft: false
 
 #### `async def call_tool(tool_id, arguments, context) -> dict[str, Any]`
 
-**Purpose:** Dispatch an ASLM tool call to the matching search implementation.
+**Purpose:** Dispatch an ASLM tool call to the matching search implementation. Triggers background Tor prewarm if enabled.
 
 **Steps:**
 

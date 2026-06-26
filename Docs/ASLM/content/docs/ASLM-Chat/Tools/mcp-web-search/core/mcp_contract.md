@@ -37,6 +37,14 @@ Part of `Tools/mcp-web-search/core`.
 
 **Purpose:** Implements `coerce_search_academic`.
 
+#### `def build_search_schema() -> dict[str, Any]`
+
+**Purpose:** Build the search tool's input schema for the current config.
+
+#### `def coerce_search_onion(value) -> bool`
+
+**Purpose:** Normalize the onion opt-in, AND-gated on the tor capability.
+
 ---
 
 ## Private functions
