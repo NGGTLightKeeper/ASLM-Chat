@@ -28,7 +28,7 @@ jobs:
     steps:
       - name: Find new Jules branches to merge
         id: find-branches
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const owner = context.repo.owner;
@@ -207,7 +207,7 @@ jobs:
 
       - name: Checkout PR head branch
         if: steps.find-branches.outputs.new_branches != '[]'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
@@ -242,7 +242,7 @@ jobs:
 
       - name: Post tracking comment
         if: steps.find-branches.outputs.new_branches != '[]'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           BRANCHES_JSON: ${{ steps.find-branches.outputs.new_branches }}
         with:
@@ -263,7 +263,7 @@ jobs:
 
       - name: Delete merged Jules branches from remote
         if: steps.find-branches.outputs.new_branches != '[]'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           BRANCHES_JSON: ${{ steps.find-branches.outputs.new_branches }}
           DOCS_REFS_JSON: ${{ steps.find-branches.outputs.docs_refs_to_delete }}

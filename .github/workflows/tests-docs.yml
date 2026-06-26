@@ -14,7 +14,7 @@ jobs:
   hugo-build:
     name: Hugo build
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     defaults:
       run:
@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -31,7 +31,7 @@ jobs:
           cache-dependency-path: Docs/ASLM/go.sum
 
       - name: Cache Hugo modules
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/go/pkg/mod
