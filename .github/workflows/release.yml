@@ -1,0 +1,303 @@
+# Copyright NGGT.LightKeeper. All Rights Reserved.
+
+name: Release
+
+# Release automation driven by the PR title.
+#
+# PR title format: `vG.S` (final) or `vG.S-rc` (release candidate), targeting `main`.
+#   G = global version, S = subversion (both come from the title).
+#
+# The full version/tag is generated as `vG.S.Z.W` (or `vG.S.Z.W-rcN`):
+#   Z (revision)     = number of existing non-rc revisions of vG.S (ordinal, 0-based).
+#   W (commit count) = commits since the previous *stable* (non-rc) tag — cumulative,
+#                      identical basis for finals and their release candidates.
+#   N (rc ordinal)   = newest existing rc of vG.S.Z + 1 (only for -rc titles).
+#
+# Changelog/description base:
+#   final release    -> previous *stable* (non-rc) tag.
+#   release candidate-> newest prior release of *any* kind (last rc of this revision,
+#                       or the previous stable when this is the first rc).
+#
+# On open/edit/sync  -> compute the version and write it (without -rc) into ASLM_Module.json.
+# On merge into main -> create the tag and a GitHub release (pre-release when -rc).
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, closed]
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  stage-version:
+    if: >
+      github.event.action != 'closed' &&
+      github.actor != 'github-actions[bot]' &&
+      startsWith(github.event.pull_request.title, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out PR head branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute version
+        id: ver
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -uo pipefail
+          git fetch --tags --force origin
+          ENDPOINT=HEAD
+          # ── shared version computation (keep identical with the release job) ──
+          TITLE="$PR_TITLE"
+          if [[ ! "$TITLE" =~ ^v([0-9]+)\.([0-9]+)(-rc)?$ ]]; then
+            echo "Title '$TITLE' is not a release title (expected vG.S or vG.S-rc); skipping."
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          GLOBAL="${BASH_REMATCH[1]}"
+          SUB="${BASH_REMATCH[2]}"
+          IS_RC=false
+          [[ -n "${BASH_REMATCH[3]:-}" ]] && IS_RC=true
+
+          # Non-rc release tags: vX.Y.Z or vX.Y.Z.W (older tags omit W).
+          mapfile -t NONRC < <(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$')
+
+          # Z = number of existing non-rc revisions for vGLOBAL.SUB.*
+          declare -A seen_rev=()
+          for t in "${NONRC[@]}"; do
+            [[ "$t" =~ ^v${GLOBAL}\.${SUB}\.([0-9]+)(\.[0-9]+)?$ ]] && seen_rev["${BASH_REMATCH[1]}"]=1
+          done
+          Z="${#seen_rev[@]}"
+
+          # STABLE_BASE = highest non-rc tag with (g,s,r) < (GLOBAL,SUB,Z).
+          # Drives W (commit count) for both final and rc releases.
+          NEW_KEY=$(printf '%05d%05d%05d' "$GLOBAL" "$SUB" "$Z")
+          STABLE_BASE=""; BEST=""
+          for t in "${NONRC[@]}"; do
+            [[ "$t" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(\.[0-9]+)?$ ]] || continue
+            k=$(printf '%05d%05d%05d' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+            if [[ "$k" < "$NEW_KEY" ]] && { [[ -z "$BEST" ]] || [[ "$k" > "$BEST" ]]; }; then
+              BEST="$k"; STABLE_BASE="$t"
+            fi
+          done
+
+          # W = commits in STABLE_BASE..ENDPOINT (cumulative from the last stable).
+          if [[ -n "$STABLE_BASE" ]]; then
+            W=$(git rev-list --count "${STABLE_BASE}..${ENDPOINT}")
+          else
+            W=$(git rev-list --count "${ENDPOINT}")
+          fi
+
+          # N = next rc ordinal; LATEST_RC = newest existing rc of this revision (vG.S.Z).
+          N=0; LATEST_RC=""
+          if $IS_RC; then
+            MAX_RC=0
+            while read -r t; do
+              [[ "$t" =~ ^v${GLOBAL}\.${SUB}\.${Z}\.[0-9]+-rc([0-9]+)$ ]] || continue
+              if (( BASH_REMATCH[1] > MAX_RC )); then MAX_RC="${BASH_REMATCH[1]}"; LATEST_RC="$t"; fi
+            done < <(git tag --list "v${GLOBAL}.${SUB}.${Z}."'*-rc*')
+            N=$((MAX_RC + 1))
+          fi
+
+          # Changelog base: rc -> newest prior release of any kind; final -> last stable.
+          if $IS_RC && [[ -n "$LATEST_RC" ]]; then
+            CHANGELOG_BASE="$LATEST_RC"
+          else
+            CHANGELOG_BASE="$STABLE_BASE"
+          fi
+
+          VERSION="${GLOBAL}.${SUB}.${Z}.${W}"
+          if $IS_RC; then TAG="v${VERSION}-rc${N}"; else TAG="v${VERSION}"; fi
+          ENDPOINT_SHA=$(git rev-parse "${ENDPOINT}")
+          {
+            echo "valid=true"
+            echo "version=${VERSION}"
+            echo "tag=${TAG}"
+            echo "is_rc=${IS_RC}"
+            echo "changelog_base=${CHANGELOG_BASE}"
+            echo "endpoint=${ENDPOINT_SHA}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Computed TAG=${TAG} VERSION=${VERSION} STABLE_BASE=${STABLE_BASE:-<none>} CHANGELOG_BASE=${CHANGELOG_BASE:-<none>}"
+          # ── end shared version computation ──────────────────────────────────
+
+      - name: Update ASLM_Module.json
+        if: steps.ver.outputs.valid == 'true'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -uo pipefail
+          # Surgical replace of the top-level "version" value (preserves formatting).
+          sed -i -E 's/^([[:space:]]*"version"[[:space:]]*:[[:space:]]*")[^"]*(".*)$/\1'"${VERSION}"'\2/' ASLM_Module.json
+          if git diff --quiet -- ASLM_Module.json; then
+            echo "ASLM_Module.json already at version ${VERSION}; nothing to commit."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ASLM_Module.json
+          git commit -m "chore: set module version ${VERSION} for ${TAG} [skip ci]"
+          git push origin "HEAD:${HEAD_REF}"
+
+  release:
+    if: >
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.title, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute version
+        id: ver
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          git fetch --tags --force origin
+          # Use the PR head lineage as the endpoint so W/changelog match the
+          # value staged into ASLM_Module.json regardless of merge strategy.
+          git fetch origin "refs/pull/${PR_NUMBER}/head"
+          ENDPOINT=FETCH_HEAD
+          # ── shared version computation (keep identical with the stage job) ──
+          TITLE="$PR_TITLE"
+          if [[ ! "$TITLE" =~ ^v([0-9]+)\.([0-9]+)(-rc)?$ ]]; then
+            echo "Title '$TITLE' is not a release title (expected vG.S or vG.S-rc); skipping."
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          GLOBAL="${BASH_REMATCH[1]}"
+          SUB="${BASH_REMATCH[2]}"
+          IS_RC=false
+          [[ -n "${BASH_REMATCH[3]:-}" ]] && IS_RC=true
+
+          # Non-rc release tags: vX.Y.Z or vX.Y.Z.W (older tags omit W).
+          mapfile -t NONRC < <(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$')
+
+          # Z = number of existing non-rc revisions for vGLOBAL.SUB.*
+          declare -A seen_rev=()
+          for t in "${NONRC[@]}"; do
+            [[ "$t" =~ ^v${GLOBAL}\.${SUB}\.([0-9]+)(\.[0-9]+)?$ ]] && seen_rev["${BASH_REMATCH[1]}"]=1
+          done
+          Z="${#seen_rev[@]}"
+
+          # STABLE_BASE = highest non-rc tag with (g,s,r) < (GLOBAL,SUB,Z).
+          # Drives W (commit count) for both final and rc releases.
+          NEW_KEY=$(printf '%05d%05d%05d' "$GLOBAL" "$SUB" "$Z")
+          STABLE_BASE=""; BEST=""
+          for t in "${NONRC[@]}"; do
+            [[ "$t" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(\.[0-9]+)?$ ]] || continue
+            k=$(printf '%05d%05d%05d' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+            if [[ "$k" < "$NEW_KEY" ]] && { [[ -z "$BEST" ]] || [[ "$k" > "$BEST" ]]; }; then
+              BEST="$k"; STABLE_BASE="$t"
+            fi
+          done
+
+          # W = commits in STABLE_BASE..ENDPOINT (cumulative from the last stable).
+          if [[ -n "$STABLE_BASE" ]]; then
+            W=$(git rev-list --count "${STABLE_BASE}..${ENDPOINT}")
+          else
+            W=$(git rev-list --count "${ENDPOINT}")
+          fi
+
+          # N = next rc ordinal; LATEST_RC = newest existing rc of this revision (vG.S.Z).
+          N=0; LATEST_RC=""
+          if $IS_RC; then
+            MAX_RC=0
+            while read -r t; do
+              [[ "$t" =~ ^v${GLOBAL}\.${SUB}\.${Z}\.[0-9]+-rc([0-9]+)$ ]] || continue
+              if (( BASH_REMATCH[1] > MAX_RC )); then MAX_RC="${BASH_REMATCH[1]}"; LATEST_RC="$t"; fi
+            done < <(git tag --list "v${GLOBAL}.${SUB}.${Z}."'*-rc*')
+            N=$((MAX_RC + 1))
+          fi
+
+          # Changelog base: rc -> newest prior release of any kind; final -> last stable.
+          if $IS_RC && [[ -n "$LATEST_RC" ]]; then
+            CHANGELOG_BASE="$LATEST_RC"
+          else
+            CHANGELOG_BASE="$STABLE_BASE"
+          fi
+
+          VERSION="${GLOBAL}.${SUB}.${Z}.${W}"
+          if $IS_RC; then TAG="v${VERSION}-rc${N}"; else TAG="v${VERSION}"; fi
+          ENDPOINT_SHA=$(git rev-parse "${ENDPOINT}")
+          {
+            echo "valid=true"
+            echo "version=${VERSION}"
+            echo "tag=${TAG}"
+            echo "is_rc=${IS_RC}"
+            echo "changelog_base=${CHANGELOG_BASE}"
+            echo "endpoint=${ENDPOINT_SHA}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Computed TAG=${TAG} VERSION=${VERSION} STABLE_BASE=${STABLE_BASE:-<none>} CHANGELOG_BASE=${CHANGELOG_BASE:-<none>}"
+          # ── end shared version computation ──────────────────────────────────
+
+      - name: Create tag and release
+        if: steps.ver.outputs.valid == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          IS_RC: ${{ steps.ver.outputs.is_rc }}
+          CHANGELOG_BASE: ${{ steps.ver.outputs.changelog_base }}
+          ENDPOINT: ${{ steps.ver.outputs.endpoint }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          set -uo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists; nothing to do."
+            exit 0
+          fi
+
+          RANGE="$ENDPOINT"
+          [[ -n "$CHANGELOG_BASE" ]] && RANGE="${CHANGELOG_BASE}..${ENDPOINT}"
+
+          STRIP='s/^[a-zA-Z]+(\([^)]*\))?!?:[[:space:]]*//'
+          FEATS=$(git log $RANGE --no-merges --pretty=format:'%s' | grep -iE '^feat(\([^)]*\))?!?:' | sed -E "$STRIP" || true)
+          FIXES=$(git log $RANGE --no-merges --pretty=format:'%s' | grep -iE '^fix(\([^)]*\))?!?:'  | sed -E "$STRIP" || true)
+
+          {
+            echo "# ${REPO_NAME}"
+            echo
+            echo "### Features:"
+            if [[ -n "$FEATS" ]]; then printf '%s\n' "$FEATS" | sed 's/^/- /'; else echo "_None_"; fi
+            echo
+            echo "### Fixes:"
+            if [[ -n "$FIXES" ]]; then printf '%s\n' "$FIXES" | sed 's/^/- /'; else echo "_None_"; fi
+            if [[ -n "$CHANGELOG_BASE" ]]; then
+              echo
+              echo "**Full Changelog**: https://github.com/${OWNER}/${REPO_NAME}/compare/${CHANGELOG_BASE}...${TAG}"
+            fi
+          } > notes.md
+
+          echo "----- release notes (${TAG}) -----"
+          cat notes.md
+          echo "----------------------------------"
+
+          PRE=""
+          [[ "$IS_RC" == "true" ]] && PRE="--prerelease"
+          gh release create "$TAG" \
+            --target "$MERGE_SHA" \
+            --title "${REPO_NAME} ${TAG}" \
+            --notes-file notes.md \
+            $PRE
