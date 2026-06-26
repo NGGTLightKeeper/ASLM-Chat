@@ -224,9 +224,11 @@ jobs:
           for branch in $(echo "$BRANCHES_JSON" | jq -r '.[]'); do
             git fetch origin "$branch"
             if ! git merge --squash -X theirs "origin/$branch"; then
+              echo "::warning::Squash merge conflict for ${branch}; dropping this branch."
+              git merge --abort 2>/dev/null || true
               git reset --hard HEAD
-              echo "::error::Squash merge failed for ${branch}"
-              exit 1
+              git clean -fd
+              continue
             fi
             if ! git diff --cached --quiet; then
               git commit -m "chore: integrate Jules docs from ${branch} [skip ci]"
