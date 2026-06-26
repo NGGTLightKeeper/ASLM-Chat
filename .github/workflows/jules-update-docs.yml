@@ -28,22 +28,23 @@ jobs:
           COMMIT_MESSAGE=$(git log -1 --pretty=%s HEAD)
           CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
           COMMIT_DIFF=$(git diff HEAD~1 HEAD)
+          # Cap oversized inputs so the request stays within Jules API and shell limits.
+          CHANGED_FILES=$(printf '%s' "${CHANGED_FILES:0:16384}")
+          COMMIT_DIFF=$(printf '%s' "${COMMIT_DIFF:0:524288}" | iconv -f UTF-8 -t UTF-8 -c)
 
           PROMPT="The task is created automatically by the CI/CD pipeline system. You are working in the ASLM Chat repository. The project contains documentation in the 'Docs/ASLM/' directory based on the Hugo Framework (Lotus Docs theme). Reference pages are under Docs/ASLM/content/docs/ASLM-Chat/ and must mirror source paths — preserve directory structure, only change the extension (for example API/mcp.py -> Docs/ASLM/content/docs/ASLM-Chat/API/mcp.md; Apps/UI/static/js/main/chat-controller.js -> Docs/ASLM/content/docs/ASLM-Chat/Apps/UI/static/js/main/chat-controller.md). Your task is to analyze the commit '${COMMIT_MESSAGE}' and add or update documentation for changed .py and .js files. Never create __init__.md (ignore __init__.py). Study existing documentation before writing and match its style. Do not change any files outside Docs/. Do not touch Docs/ASLM/content/docs/PatchNotes/. If there are no relevant .py/.js changes, make a commit without file changes. Name the output branch jules-docs-dev-BRANCH_NAME where BRANCH_NAME is a short descriptive name; always keep the jules-docs-dev- prefix (example: jules-docs-dev-mcp-update). If there were no relevant changes, use jules-docs-dev-YYYYMMDDHHmm (UTC). This task was created automatically and may have errors; follow the instructions as closely as possible. Modified files: '${CHANGED_FILES}'. Commit diff: '${COMMIT_DIFF}'."
 
-          {
-            echo 'prompt<<EOF'
-            echo "$PROMPT"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
+          PROMPT_FILE="${RUNNER_TEMP}/jules_prompt.txt"
+          printf '%s' "$PROMPT" > "$PROMPT_FILE"
+          echo "prompt_file=$PROMPT_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Jules - Create Session
         id: create-session
         env:
-          JULES_PROMPT: ${{ steps.generate-prompt.outputs.prompt }}
+          PROMPT_FILE: ${{ steps.generate-prompt.outputs.prompt_file }}
         run: |
           JSON_PAYLOAD=$(jq -n \
-            --arg prompt "$JULES_PROMPT" \
+            --rawfile prompt "$PROMPT_FILE" \
             --arg source_repo "sources/github/${{ github.repository }}" \
             --arg branch "${{ github.ref_name }}" \
             --arg title "CI/CD: Update Docs for commit ${{ github.sha }}" \
