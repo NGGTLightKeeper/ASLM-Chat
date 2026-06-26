@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 
 import curl_cffi
+import curl_cffi.requests  # noqa: F401  - bind the submodule so monkeypatch.setattr finds it
 
 import core.config as cfgmod
 import core.fetch.onion.tor_proxy as tp
