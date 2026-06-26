@@ -9,6 +9,12 @@ draft: false
 
 ---
 
+## Overview
+
+Part of `Tools/mcp-web-search/core/fetch/onion`.
+
+---
+
 ## Classes
 
 ### `class OnionResult`
@@ -19,36 +25,44 @@ draft: false
 
 ## Public functions
 
-#### `async def onion_search(query, limit, per_link_timeout, max_chars, concurrency, providers) -> list[OnionResult]`
+#### `async def onion_search(query: str, *, limit: int, per_link_timeout: float, max_chars: int, concurrency: int, providers: tuple[str, ...] | None) -> list[OnionResult]`
 
-**Purpose:** Deep onion search: locate via per-site search, then scrape+compress the top results.
+**Purpose:** Deep onion search: discover article URLs via the clearnet SERP, then scrape+compress the top results over Tor — discovery and scraping each parallel and per-link bounded. Returns BM25-compressed content records.
 
 ---
 
 ## Private functions
 
-#### `def _is_article_path(path) -> bool`
+#### `def _anchor_host(url: str) -> str`
 
-**Purpose:** Implements `_is_article_path`.
+**Purpose:** Registrable host of a URL/anchor, www-stripped ("https://www.dw.com/en/" -> "dw.com").
 
-#### `def _extract_result_links(html, onion_base, clearnet_host, limit) -> list[str]`
+#### `def _is_article_path(path: str) -> bool`
 
-**Purpose:** Implements `_extract_result_links`.
+**Purpose:** Heuristic: does this path look like an article (vs nav/listing)? Generic across news sites: at least two segments, not a known listing root, and a date/id marker.
 
-#### `def _search_url(name, query) -> tuple[str, str, str] | None`
+#### `def _resolve_providers(providers: tuple[str, ...] | None)`
 
-**Purpose:** Implements `_search_url`.
+**Purpose:** Names of the providers to search: explicit list (resolved to services) or, by default, every vetted service in a searchable category.
 
-#### `async def _scrape_one(url, query, provider, timeout, max_chars)`
+#### `async def _discover_for_service(svc, query: str, *, limit: int, serp_timeout: float) -> list[tuple[str, str]]`
 
-**Purpose:** Implements `_scrape_one`.
+**Purpose:** Discover article URLs for one service via the clearnet SERP, rewritten to its onion mirror. Returns (provider_name, onion_url) pairs. Clearnet-only (no Tor); soft-fails to [].
 
-#### `def _round_robin(pairs) -> list[tuple[str, str]]`
+#### `async def _scrape_one(url: str, query: str, provider: str, *, timeout: float, max_chars: int)`
 
-**Purpose:** Implements `_round_robin`.
+**Purpose:** Fetch one result page over Tor and return its BM25-compressed content (None on any failure).
+
+#### `async def _warm_tor(budget: float) -> bool`
+
+**Purpose:** Resolve the tor SOCKS once before the parallel scrapes (probes a running tor; we never spawn). Returns True if tor is usable. Runs the blocking probe in the io pool, bounded so it can't hang.
+
+#### `def _round_robin(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]`
+
+**Purpose:** Round-robin interleave (name, url) pairs across providers for source diversity.
 
 ---
 
 ## Related
 
-- [onion/_index](../../_index/)
+- [onion/_index](../_index/)

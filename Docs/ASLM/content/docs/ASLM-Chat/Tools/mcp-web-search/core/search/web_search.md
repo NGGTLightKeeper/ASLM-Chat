@@ -45,7 +45,7 @@ Part of `Tools/mcp-web-search/core/search`.
 
 **Purpose:** Implements `_hosted_stream`.
 
-#### `async def WebSearchService.search(self, query, effort, region, safesearch, timelimit, shopping, academic) -> dict[...]`
+#### `async def WebSearchService.search(self, query, effort, region, safesearch, timelimit, shopping, academic, onion) -> dict[...]`
 
 **Purpose:** Implements `search`.
 
@@ -69,7 +69,7 @@ Part of `Tools/mcp-web-search/core/search`.
 
 **Purpose:** Implements `select_engines`.
 
-#### `async def run_web_search(query, effort, region, safesearch, timelimit, shopping, academic) -> dict[...]`
+#### `async def run_web_search(query, effort, region, safesearch, timelimit, shopping, academic, onion) -> dict[...]`
 
 **Purpose:** Implements `run_web_search`.
 

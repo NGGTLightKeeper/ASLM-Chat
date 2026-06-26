@@ -9,26 +9,32 @@ draft: false
 
 ---
 
+## Overview
+
+Part of `Tools/mcp-web-search/core/fetch/onion`.
+
+---
+
 ## Public functions
 
 #### `def load_seed_services() -> tuple[OnionService, ...]`
 
-**Purpose:** Implements `load_seed_services`.
+**Purpose:** The hand-vetted bootstrap from the JSON seed (immutable → cached).
 
 #### `def load_services() -> tuple[OnionService, ...]`
 
-**Purpose:** Implements `load_services`.
+**Purpose:** All vetted services. The allowlist is exactly the hand-vetted seed — kept as a distinct function (not just an alias) so callers have a stable "all services" entry point.
 
-#### `def service_for(name) -> OnionService | None`
+#### `def service_for(name: str) -> OnionService | None`
 
-**Purpose:** Implements `service_for`.
+**Purpose:** Look up one vetted service by name (exact, case-insensitive).
 
-#### `def services_in(category) -> tuple[OnionService, ...]`
+#### `def services_in(category: str) -> tuple[OnionService, ...]`
 
-**Purpose:** Implements `services_in`.
+**Purpose:** Services in a given category (e.g. all "media" onions for a news query).
 
 ---
 
 ## Related
 
-- [onion/_index](../../_index/)
+- [onion/_index](../_index/)

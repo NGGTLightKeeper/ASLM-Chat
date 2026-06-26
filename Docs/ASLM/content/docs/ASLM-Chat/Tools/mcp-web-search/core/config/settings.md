@@ -29,7 +29,7 @@ draft: false
 
 ### `class BrowserSection`
 
-**Purpose:** Type `BrowserSection` defined in `settings.py`.
+**Purpose:** Warm-browser layer. Two independent axes: where the browser is allowed as a fallback (browser_fallback) and which backend serves it (browser_backend).
 
 ### `class TorSection`
 
@@ -39,15 +39,9 @@ draft: false
 
 **Purpose:** Type `EffortSection` defined in `settings.py`.
 
-
-
-### `class BrowserSection`
-
-**Purpose:** Warm-browser layer. Two independent axes: where the browser is allowed as a fallback (browser_fallback) and which backend serves it (browser_backend). The `daemon_idle_shutdown_sec` parameter defaults to 900.0 (15 minutes) to bound the life of the warm daemon.
-
 ### `class TorSection`
 
-**Purpose:** Tor/onion access — the most optional thing in the search. OFF by default and strictly zero-install.
+**Purpose:** Tor/onion access — the most optional thing in the search. OFF by default and zero-install: the tool never bundles, installs, or spawns tor. When enabled it REUSES a tor that is already running — a system daemon on 9050, an open Tor Browser on 9150, or an explicit socks_url. No running tor → the feature simply goes no-op, never an error.
 
 ### `class SearchConfig`
 
