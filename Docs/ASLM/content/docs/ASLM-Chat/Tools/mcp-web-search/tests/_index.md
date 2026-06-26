@@ -48,6 +48,7 @@ pytest tests/
 | [test_search_core](test_search_core/) | `test_search_core.py` | Search core unit tests |
 | [test_shopping_web_integration](test_shopping_web_integration/) | `test_shopping_web_integration.py` Shopping integration tests |
 | [test_reddit](test_reddit/) | `test_reddit.py` | Reddit fallback testing |
+| [test_browser_daemon](test_browser_daemon/) | `test_browser_daemon.py` | Warm browser daemon lifecycle and hangs |
 
 ---
 
