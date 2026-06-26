@@ -20,6 +20,10 @@ per-source evaluation so triage can run inline with the live result stream.
 
 ## Public functions
 
+#### `def seo_slug_penalty(url: str) -> float`
+
+**Purpose:** Implements `seo_slug_penalty` in `quality.py`.
+
 #### `def lexical_score(query, title, snippet, url) -> float`
 
 **Purpose:** Implements `lexical_score` in `quality.py`.
