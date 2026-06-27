@@ -275,18 +275,14 @@ jobs:
           RANGE="$ENDPOINT"
           [[ -n "$CHANGELOG_BASE" ]] && RANGE="${CHANGELOG_BASE}..${ENDPOINT}"
 
-          STRIP='s/^[a-zA-Z]+(\([^)]*\))?!?:[[:space:]]*//'
-          FEATS=$(git log $RANGE --no-merges --pretty=format:'%s' | grep -iE '^feat(\([^)]*\))?!?:' | sed -E "$STRIP" || true)
-          FIXES=$(git log $RANGE --no-merges --pretty=format:'%s' | grep -iE '^fix(\([^)]*\))?!?:'  | sed -E "$STRIP" || true)
+          # All commits except github-actions[bot], as "<subject> by <author>".
+          CHANGES=$(git log $RANGE --no-merges --perl-regexp \
+            --author='^(?!github-actions\[bot\]).*$' \
+            --pretty=format:'%s by %an' || true)
 
           {
-            echo "# ${REPO_NAME}"
-            echo
-            echo "### Features:"
-            if [[ -n "$FEATS" ]]; then printf '%s\n' "$FEATS" | sed 's/^/- /'; else echo "_None_"; fi
-            echo
-            echo "### Fixes:"
-            if [[ -n "$FIXES" ]]; then printf '%s\n' "$FIXES" | sed 's/^/- /'; else echo "_None_"; fi
+            echo "### What's Changed:"
+            if [[ -n "$CHANGES" ]]; then printf '%s\n' "$CHANGES" | sed 's/^/- /'; else echo "_None_"; fi
             if [[ -n "$CHANGELOG_BASE" ]]; then
               echo
               echo "**Full Changelog**: https://github.com/${OWNER}/${REPO_NAME}/compare/${CHANGELOG_BASE}...${TAG}"
