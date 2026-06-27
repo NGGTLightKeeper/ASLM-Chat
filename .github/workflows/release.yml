@@ -83,6 +83,9 @@ jobs:
           else
             W=$(git rev-list --count "${ENDPOINT}")
           fi
+          # Stage (ENDPOINT=HEAD) writes before making its own stamp commit, so
+          # bump W by 1 to match the tag the release job counts from history.
+          [[ "$ENDPOINT" == HEAD ]] && W=$((W + 1))
 
           # N = next rc ordinal; LATEST_RC = newest existing rc of this revision (vG.S.Z).
           N=0; LATEST_RC=""
@@ -221,6 +224,9 @@ jobs:
           else
             W=$(git rev-list --count "${ENDPOINT}")
           fi
+          # Stage (ENDPOINT=HEAD) writes before making its own stamp commit, so
+          # bump W by 1 to match the tag the release job counts from history.
+          [[ "$ENDPOINT" == HEAD ]] && W=$((W + 1))
 
           # N = next rc ordinal; LATEST_RC = newest existing rc of this revision (vG.S.Z).
           N=0; LATEST_RC=""
