@@ -157,19 +157,46 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
-          LOOKUP=$(git rev-parse "${{ github.sha }}^2" 2>/dev/null || echo "${{ github.sha }}")
-          PR_JSON=$(gh api -H "Accept: application/vnd.github+json" \
-            "repos/${{ github.repository }}/commits/${LOOKUP}/pulls" 2>/dev/null || echo '[]')
-          PR=$(jq -c '[.[] | select(.merged_at != null and .base.ref == "main")] | sort_by(.merged_at) | last // empty' <<<"$PR_JSON")
-          if [[ -z "$PR" ]]; then
-            echo "No merged PR targeting main for ${{ github.sha }} (lookup ${LOOKUP}); skipping."
+          SHA="${{ github.sha }}"
+          # PR number from the merge-commit subject is available immediately;
+          # the commits/{sha}/pulls index lags for several seconds after a merge.
+          SUBJECT=$(git show -s --format=%s "$SHA")
+          PR_NUMBER=""
+          if [[ "$SUBJECT" =~ ^Merge\ pull\ request\ #([0-9]+) ]]; then
+            PR_NUMBER="${BASH_REMATCH[1]}"
+          elif [[ "$SUBJECT" =~ \(#([0-9]+)\)$ ]]; then
+            PR_NUMBER="${BASH_REMATCH[1]}"
+          fi
+          # Fallback for non-standard subjects: ask which PR introduced the merged
+          # commit, retrying because that association can lag right after merge.
+          if [[ -z "$PR_NUMBER" ]]; then
+            LOOKUP=$(git rev-parse "${SHA}^2" 2>/dev/null || echo "$SHA")
+            for attempt in 1 2 3 4 5; do
+              PR_JSON=$(gh api -H "Accept: application/vnd.github+json" \
+                "repos/${{ github.repository }}/commits/${LOOKUP}/pulls" 2>/dev/null || echo '[]')
+              PR_NUMBER=$(jq -r '[.[] | select(.base.ref == "main")] | last | .number // empty' <<<"$PR_JSON")
+              [[ -n "$PR_NUMBER" ]] && break
+              sleep 10
+            done
+          fi
+          if [[ -z "$PR_NUMBER" ]]; then
+            echo "No PR found for ${SHA}; skipping."
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          PR=$(gh api -H "Accept: application/vnd.github+json" \
+            "repos/${{ github.repository }}/pulls/${PR_NUMBER}" 2>/dev/null || echo '{}')
+          MERGED_AT=$(jq -r '.merged_at // empty' <<<"$PR")
+          BASE_REF=$(jq -r '.base.ref // empty' <<<"$PR")
+          if [[ -z "$MERGED_AT" || "$BASE_REF" != "main" ]]; then
+            echo "PR #${PR_NUMBER} not merged into main (base=${BASE_REF:-none}, merged_at=${MERGED_AT:-none}); skipping."
             echo "valid=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "valid=true" >> "$GITHUB_OUTPUT"
           echo "pr_title=$(jq -r '.title' <<<"$PR")" >> "$GITHUB_OUTPUT"
-          echo "pr_number=$(jq -r '.number' <<<"$PR")" >> "$GITHUB_OUTPUT"
-          echo "Resolved PR #$(jq -r '.number' <<<"$PR"): $(jq -r '.title' <<<"$PR")"
+          echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "Resolved PR #${PR_NUMBER}: $(jq -r '.title' <<<"$PR")"
 
       - name: Compute version
         if: steps.pr.outputs.valid == 'true'
