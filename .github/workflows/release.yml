@@ -136,7 +136,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add ASLM_Module.json
-          git commit -m "chore: set module version ${VERSION} for ${TAG}"
+          git commit -m "chore: set module version ${VERSION} for ${TAG} [skip ci]"
           git push origin "HEAD:${HEAD_REF}"
 
   release:
