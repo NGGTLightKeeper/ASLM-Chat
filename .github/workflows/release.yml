@@ -272,17 +272,44 @@ jobs:
             exit 0
           fi
 
-          RANGE="$ENDPOINT"
-          [[ -n "$CHANGELOG_BASE" ]] && RANGE="${CHANGELOG_BASE}..${ENDPOINT}"
-
-          # All commits except github-actions[bot], as "<subject> by <author>".
-          CHANGES=$(git log $RANGE --no-merges --perl-regexp \
-            --author='^(?!github-actions\[bot\]).*$' \
-            --pretty=format:'%s by %an' || true)
+          # All commits except github-actions[bot], as "<subject> by <authors>".
+          JQ='
+            def link($login; $name):
+              if ($login | type) == "string" and $login != ""
+              then "[\($login)](https://github.com/\($login))" else $name end;
+            def colog($email):
+              ($email // "")
+              | if test("^[0-9]+\\+[^@]+@users\\.noreply\\.github\\.com$"; "i")
+                then capture("^[0-9]+\\+(?<l>[^@]+)@"; "i").l
+                elif test("^[^@]+@users\\.noreply\\.github\\.com$"; "i")
+                then capture("^(?<l>[^@]+)@"; "i").l
+                else null end;
+            [ .[].commits[] ] | .[]
+            | select((.parents | length) < 2)
+            | select(.author.login != "github-actions[bot]")
+            | (.commit.message | split("\n")[0]) as $subject
+            | ( [ {login: (.author.login // null), name: .commit.author.name} ]
+                + ( .commit.message | split("\n")
+                    | map(capture("^co-authored-by:\\s*(?<name>[^<]+?)\\s*<(?<email>[^>]+)>\\s*$"; "i"))
+                    | map({login: colog(.email), name: .name}) ) )
+            | map(select(.login != "github-actions[bot]" and .name != "github-actions[bot]"))
+            | reduce .[] as $a ([]; if any(.[]; .login == $a.login and .name == $a.name) then . else . + [$a] end)
+            | map(link(.login; .name))
+            | "- " + $subject + " by " + join(", ")
+          '
+          if [[ -n "$CHANGELOG_BASE" ]]; then
+            CMP=$(gh api --paginate --slurp \
+              "repos/${OWNER}/${REPO_NAME}/compare/${CHANGELOG_BASE}...${ENDPOINT}" || echo '[]')
+            CHANGES=$(jq -r "$JQ" <<<"$CMP" || true)
+          else
+            CHANGES=$(git log "$ENDPOINT" --no-merges --perl-regexp \
+              --author='^(?!github-actions\[bot\]).*$' \
+              --pretty=format:'- %s by %an' || true)
+          fi
 
           {
             echo "### What's Changed:"
-            if [[ -n "$CHANGES" ]]; then printf '%s\n' "$CHANGES" | sed 's/^/- /'; else echo "_None_"; fi
+            if [[ -n "$CHANGES" ]]; then printf '%s\n' "$CHANGES"; else echo "_None_"; fi
             if [[ -n "$CHANGELOG_BASE" ]]; then
               echo
               echo "**Full Changelog**: https://github.com/${OWNER}/${REPO_NAME}/compare/${CHANGELOG_BASE}...${TAG}"
