@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 TOOLS = ROOT / "Tools"
@@ -27,24 +27,29 @@ def _configure_runtime() -> tuple[str, int]:
         snapshot["ollama-service_port"] = port
     elif engine == "lms":
         snapshot["lms_url"] = os.environ.get("COMPRESSION_LMS_URL", f"127.0.0.1:{port}")
+    elif engine in ("openai", "openai-api"):
+        # Any OpenAI-compatible local server (LM Studio serves this on its port).
+        snapshot["openai_url"] = os.environ.get("COMPRESSION_OPENAI_URL", f"127.0.0.1:{port}/v1")
     settings_module._store_settings_cache(snapshot, settings_module._get_settings_mtime_ns())
     return engine, port
 
 
 ENGINE, _RUNTIME_PORT = _configure_runtime()
 
-from context_compression.cache_chat_utils import collect_chat_entries, connect_cache_db, load_fattest_chat
 from context_compression.history_compressor import (
     _is_assistant_navigation,
     _looks_like_valid_path,
     build_structured_history_summary,
 )
+from context_compression.tests.cache_chat_utils import (
+    REPORTS_DIR,
+    collect_chat_entries,
+    connect_cache_db,
+    load_fattest_chat,
+    resolve_cache_db_path,
+)
 
 from API import llm_api
-
-TOOL_DB_PATH = Path(__file__).with_name("db.sqlite3")
-PROJECT_DB_PATH = ROOT / "db.sqlite3"
-DB_PATH = TOOL_DB_PATH if TOOL_DB_PATH.exists() else PROJECT_DB_PATH
 
 RAW_NOISE_MARKERS = (
     "citation rules",
@@ -206,14 +211,17 @@ def main() -> None:
     port = _RUNTIME_PORT
     engine = ENGINE
 
-    if not DB_PATH.exists():
-        raise SystemExit(f"Database not found: {DB_PATH}")
-    conn = connect_cache_db(DB_PATH)
+    db_path = resolve_cache_db_path()
+    if not db_path.exists():
+        raise SystemExit(f"Database not found: {db_path}")
+    conn = connect_cache_db(db_path)
     fat = load_fattest_chat(conn)
+    if fat is None:
+        raise SystemExit(f"No chats found in cache database: {db_path}")
     entries, recent = collect_chat_entries(conn, fat["id"])
 
     model_name = os.environ.get("COMPRESSION_MODEL", "").strip() or _pick_model(engine)
-    print("db:", DB_PATH)
+    print("db:", db_path)
     print("chat:", fat["id"], fat["title"], "chars=", fat["chars"], "entries=", len(entries))
     print("engine:", engine, "port:", port, "model:", model_name)
 
@@ -246,7 +254,7 @@ def main() -> None:
     print("sample_key_facts:", (payload.get("key_facts") or [])[:3])
     print("sample_source_memory:", (payload.get("source_memory") or [])[:3])
 
-    out_path = Path(__file__).with_name("test") / "live_fat_compression_report.json"
+    out_path = REPORTS_DIR / "live_fat_compression_report.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         json.dumps(

@@ -31,8 +31,8 @@ def _run_model_output(model_output: str) -> tuple[str, dict]:
         summarize_with_model=lambda _messages: model_output,
     )
     risk_flags = payload.get("risk_flags") if isinstance(payload.get("risk_flags"), list) else []
-    fallback_markers = ("could not be parsed", "No risks.")
-    status = "fallback" if any(str(flag) in fallback_markers or "could not be parsed" in str(flag) for flag in risk_flags) else "parsed"
+    fallback_markers = ("could not be parsed", "empty summary output")
+    status = "fallback" if any(marker in str(flag) for flag in risk_flags for marker in fallback_markers) else "parsed"
     return status, payload
 
 
@@ -175,7 +175,10 @@ class SummaryParserCasesTests(unittest.TestCase):
                 )
                 self.assertNotIn("//www.youtube.com", payload["artifacts"]["files"])
                 if name == "empty_output":
-                    self.assertEqual(payload["risk_flags"], ["No risks."])
+                    self.assertEqual(
+                        payload["risk_flags"],
+                        ["Model returned empty summary output; raw compressed context was preserved."],
+                    )
 
 
 if __name__ == "__main__":

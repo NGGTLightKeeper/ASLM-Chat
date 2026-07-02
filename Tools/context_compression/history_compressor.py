@@ -342,7 +342,9 @@ def _passes_semantic_threshold(text: str) -> bool:
     if len(text) < 15:
         return False
     bare = text.rstrip(":").strip()
-    if bare and bare == bare.title():
+    # Title-cased text with digits is usually a real fact ("Django 5.2 REST API"),
+    # not a heading fragment — only digit-free title case is treated as a heading.
+    if bare and bare == bare.title() and not any(ch.isdigit() for ch in bare):
         return False
     return True
 
@@ -1036,7 +1038,6 @@ def build_structured_history_summary(
                     "- Fill each field by semantics, not by keyword matching.\n"
                     "- Treat assistant reasoning/thinking as unreliable scratchpad; do not copy it into open_tasks, key_facts, or risk_flags unless the final visible answer or user explicitly confirms it.\n"
                     "- key_facts must contain task parameters and extracted domain facts only; never copy user messages verbatim into key_facts.\n"
-                    "- decisions_and_rationale must contain only actual decisions plus why they were made; leave it empty if no decision exists.\n"
                     "- open_tasks must contain model-generated next actions, not copied reasoning. If the latest user goal is not explicitly confirmed complete by the user, write at least one concrete verification or continuation task.\n"
                     "- Leave open_tasks empty only when the user explicitly confirmed the goal is complete or there is truly no actionable next step.\n"
                     "- Never put partial thought fragments in open_tasks (examples: \"We need...\", \"Now combine...\", \"Wait...\", \"Check balancing...\").\n"
@@ -1065,7 +1066,7 @@ def build_structured_history_summary(
             if _clean_memory_text(model_text):
                 warning = "Model summary output could not be parsed; raw compressed context was preserved."
             else:
-                warning = "No risks."
+                warning = "Model returned empty summary output; raw compressed context was preserved."
         summary_payload = _raw_context_payload(scoped_full, recent_user_messages, warning=warning, raw_model_output=model_text)
     else:
         summary_payload = _merge_model_summary_with_raw_context(summary_payload, raw_payload)

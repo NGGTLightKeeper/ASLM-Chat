@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 
-from context_compression.cache_chat_utils import collect_chat_entries, connect_cache_db, load_fattest_chat
 from context_compression.history_compressor import build_structured_history_summary
-
-
-PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-TOOL_DB_PATH = PACKAGE_ROOT / "db.sqlite3"
-PROJECT_DB_PATH = PACKAGE_ROOT.parent.parent / "db.sqlite3"
-DB_PATH = TOOL_DB_PATH if TOOL_DB_PATH.exists() else PROJECT_DB_PATH
+from context_compression.tests.cache_chat_utils import (
+    collect_chat_entries,
+    connect_cache_db,
+    load_fattest_chat,
+    resolve_cache_db_path,
+)
 
 RAW_NOISE_MARKERS = (
     "citation rules",
@@ -42,11 +40,14 @@ def _count_noise(values: list[str]) -> int:
 # Exercise the bundled fat-chat fixture: model path, fallback path, and noise metrics.
 
 def main() -> None:
-    if not DB_PATH.exists():
-        raise RuntimeError(f"Database not found: {DB_PATH}")
+    db_path = resolve_cache_db_path()
+    if not db_path.exists():
+        raise RuntimeError(f"Database not found: {db_path}")
 
-    conn = connect_cache_db(DB_PATH)
+    conn = connect_cache_db(db_path)
     fat = load_fattest_chat(conn)
+    if fat is None:
+        raise RuntimeError(f"No chats found in cache database: {db_path}")
     entries, recent = collect_chat_entries(conn, fat["id"])
 
     def valid_model_response(prompt_messages: list[dict[str, str]]) -> str:
@@ -88,6 +89,20 @@ def main() -> None:
     if not invalid_payload.get("source_memory"):
         raise AssertionError("Unparseable model output must preserve raw compressed context.")
 
+    # An empty model response must fall back to raw harvest and say so in risk_flags.
+    _empty_text, empty_payload = build_structured_history_summary(
+        overflow_entries=entries,
+        recent_user_messages=recent,
+        direct_user_directives=[],
+        summarize_with_model=lambda _messages: "",
+        max_overflow_entries=120,
+    )
+    empty_flags = " ".join(str(flag) for flag in empty_payload.get("risk_flags") or [])
+    if "empty summary output" not in empty_flags.lower():
+        raise AssertionError("Empty model output must be flagged in risk_flags.")
+    if not empty_payload.get("source_memory"):
+        raise AssertionError("Empty model output must preserve raw compressed context.")
+
     # Valid Markdown model output must produce a non-empty semantic summary.
     summary_text, payload = build_structured_history_summary(
         overflow_entries=entries,
@@ -100,7 +115,6 @@ def main() -> None:
         raise AssertionError("Model-backed compression produced an empty semantic summary.")
 
     key_facts = payload.get("key_facts") or []
-    decisions = payload.get("decisions_and_rationale") or []
     open_tasks = payload.get("open_tasks") or []
     risk_flags = payload.get("risk_flags") or []
     source_memory = payload.get("source_memory") or []
@@ -119,7 +133,6 @@ def main() -> None:
     print("unparseable_model_preserved_raw:", bool(invalid_payload.get("source_memory")))
     print("summary_chars:", len(summary_text))
     print("noise:key_facts=", _count_noise(key_facts))
-    print("noise:decisions=", _count_noise(decisions))
     print("noise:open_tasks=", _count_noise(open_tasks))
     print("noise:risk_flags=", _count_noise(risk_flags))
     print("noise:source_memory=", _count_noise(source_memory))
@@ -129,12 +142,15 @@ def main() -> None:
     print("sample:source_memory:", (source_memory[:2] if isinstance(source_memory, list) else []))
 
 
-# Pytest entry: skip when the bundled database is absent.
+# Pytest entry: skip when the bundled database is absent or has no chats.
 
 @pytest.mark.integration
 def test_fat_chat_summary_fixture() -> None:
-    if not DB_PATH.exists():
-        pytest.skip(f"Database not found: {DB_PATH}")
+    db_path = resolve_cache_db_path()
+    if not db_path.exists():
+        pytest.skip(f"Database not found: {db_path}")
+    if load_fattest_chat(connect_cache_db(db_path)) is None:
+        pytest.skip(f"No chats in cache database: {db_path}")
     main()
 
 

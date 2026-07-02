@@ -3,25 +3,35 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
-from context_compression.cache_chat_utils import collect_chat_entries, connect_cache_db, load_fattest_chat
+TOOLS_ROOT = Path(__file__).resolve().parents[2]
+if str(TOOLS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOLS_ROOT))
+
 from context_compression.history_compressor import build_structured_history_summary
+from context_compression.tests.cache_chat_utils import (
+    REPORTS_DIR,
+    collect_chat_entries,
+    connect_cache_db,
+    load_fattest_chat,
+    resolve_cache_db_path,
+)
 
-
-TOOL_DB_PATH = Path(__file__).with_name("db.sqlite3")
-PROJECT_DB_PATH = Path(__file__).resolve().parents[2] / "db.sqlite3"
-DB_PATH = TOOL_DB_PATH if TOOL_DB_PATH.exists() else PROJECT_DB_PATH
-OUT_PATH = Path(__file__).with_name("test") / "fat_chat_summary.json"
+OUT_PATH = REPORTS_DIR / "fat_chat_summary.json"
 
 
 # Build a raw-only structured summary for the largest cached chat and write JSON output.
 def main() -> None:
-    if not DB_PATH.exists():
-        raise RuntimeError(f"Database not found: {DB_PATH}")
+    db_path = resolve_cache_db_path()
+    if not db_path.exists():
+        raise SystemExit(f"Database not found: {db_path}")
 
-    conn = connect_cache_db(DB_PATH)
+    conn = connect_cache_db(db_path)
     fat = load_fattest_chat(conn)
+    if fat is None:
+        raise SystemExit(f"No chats found in cache database: {db_path}")
     entries, recent_user_messages = collect_chat_entries(conn, fat["id"])
 
     summary_text, payload = build_structured_history_summary(

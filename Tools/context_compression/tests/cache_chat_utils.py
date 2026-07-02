@@ -7,6 +7,19 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+# Tool root (context_compression/) and the ASLM-Chat project root.
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+# Where dev scripts write their JSON reports (gitignored).
+REPORTS_DIR = Path(__file__).resolve().parent / "out"
+
+
+# The chat cache database: the copy dropped into the tool root wins, else the live project DB.
+def resolve_cache_db_path() -> Path:
+    tool_db = PACKAGE_ROOT / "db.sqlite3"
+    return tool_db if tool_db.exists() else PROJECT_ROOT / "db.sqlite3"
+
 
 # Open the chat cache SQLite database with row dict access.
 def connect_cache_db(db_path: Path) -> sqlite3.Connection:
@@ -15,9 +28,9 @@ def connect_cache_db(db_path: Path) -> sqlite3.Connection:
     return connection
 
 
-# Return the chat row with the largest combined message content footprint.
-def load_fattest_chat(conn: sqlite3.Connection) -> sqlite3.Row:
-    row = conn.execute(
+# Return the chat row with the largest combined message content footprint, or None when empty.
+def load_fattest_chat(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    return conn.execute(
         """
         select c.id, c.title, count(m.id) as messages,
                sum(length(m.content) + length(coalesce(m.llm_transcript,''))) as chars
@@ -28,9 +41,6 @@ def load_fattest_chat(conn: sqlite3.Connection) -> sqlite3.Row:
         limit 1
         """
     ).fetchone()
-    if row is None:
-        raise RuntimeError("No chats found in cache database.")
-    return row
 
 
 # Load transcript entries and the latest user messages for compression input.
