@@ -15,12 +15,10 @@ Strictly opt-in and zero-install. Reuses a running tor SOCKS or spawns its own f
 
 | Doc | Source | Role |
 | --- | --- | --- |
-| [harvester](harvester/) | `harvester.py` | Anchored auto-expansion of the onion allowlist |
 | [models](models/) | `models.py` | Onion domain models |
 | [registry](registry/) | `registry.py` | Loader for the onion service allowlist |
 | [resolver](resolver/) | `resolver.py` | Resolve onion addresses from clearnet anchors |
 | [search](search/) | `search.py` | Deep onion search implementation |
-| [store](store/) | `store.py` | Persistent store for auto-harvested onion services |
 | [tor_proxy](tor_proxy/) | `tor_proxy.py` | Resolve a usable tor SOCKS proxy |
 | [transport](transport/) | `transport.py` | Fetch over Tor via curl_cffi + socks5h |
 

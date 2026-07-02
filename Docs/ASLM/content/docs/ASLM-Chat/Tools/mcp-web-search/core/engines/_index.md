@@ -17,6 +17,7 @@ Tools/mcp-web-search...
 | [duckduckgo](duckduckgo/) | `duckduckgo.py` | Duckduckgo search engine |
 | [google](google/) | `google.py` | Google search engine |
 | [models](models/) | `models.py` | Engine models |
+| [parsing](parsing/) | `parsing.py` | Shared SERP HTML parsing helpers |
 | [qwant](qwant/) | `qwant.py` | Qwant search engine |
 | [startpage](startpage/) | `startpage.py` | Startpage search engine |
 | [yandex](yandex/) | `yandex.py` | Yandex search engine |

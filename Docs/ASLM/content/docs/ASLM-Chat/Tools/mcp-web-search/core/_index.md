@@ -13,22 +13,21 @@ draft: false
 
 | Doc | Source | Role |
 | --- | --- | --- |
-| [search](search/) | `search/` | Web search core, caching, prefetch, recent tracker |
-| [models](models/) | `models/` | SERP/UI dataclasses |
-| [config](config/) | `config/` | `search_config.json`, API keys, hardware, pipeline modes |
-| [query](query/) | `query/` | Classification, constraints, routing, ASLM embeddings |
-| [fetch](fetch/) | `fetch/` | DDGS, hosted APIs, page fetch, Camoufox workers |
-| [extract](extract/) | `extract/` | HTML→text, previews, GLiNER, chunking |
+| [search](search/) | `search/` | Web search core: SERP orchestration, triage, hosted stream, prefetch, cache |
+| [engines](engines/) | `engines/` | Per-engine HTTP SERP clients and parsers |
+| [config](config/) | `config/` | `search_config.json`, API keys |
+| [fetch](fetch/) | `fetch/` | Page fetch transports, warm browser, academic/shopping/onion verticals |
+| [extract](extract/) | `extract/` | HTML/PDF→text, previews, chunking, compaction |
 | [cache](cache/) | `cache/` | SQLite source + hosted SERP caches |
-| [registry](registry/) | `registry/` | Domain/trust profiles, reputation, endpoints |
-| [read](read/) | `read/` | Implementations for `read_page` |
-| [search](search/) | `search/` | Core search functionality, including prefetching |
-| [debug](debug/) | `debug/` | Developer CLIs (not production MCP) |
-| [profiles](profiles/) | `profiles/` | Runtime profiles |
+| [profiles](profiles/) | `profiles/` | Runtime domain profiles (TTL/decay) and known-domain seeds |
+| [read](read/) | `read/` | Implementation of `read_page` |
+| [mcp_contract](mcp_contract/) | `mcp_contract.py` | Tool schemas and payload contract |
+| [runtime](runtime/) | `runtime.py` | Event-loop helpers (`run_fast`) |
+| [logging_setup](logging_setup/) | `logging_setup.py` | File logging for daemon/MCP processes |
+| [search_io_logger](search_io_logger/) | `search_io_logger.py` | NDJSON debug log of tool I/O |
 
 ---
 
 ## Related
 
 - [mcp-web-search](../_index/)
-- [services](../services/)

@@ -5,7 +5,7 @@ draft: false
 
 ## Package `fetch`
 
-`Tools/mcp-web-search/core/fetch/` — Search providers and HTTP fetch utilities.
+`Tools/mcp-web-search/core/fetch/` — Fetch transports, verticals, and HTTP utilities.
 
 ---
 
@@ -13,29 +13,24 @@ draft: false
 
 | Doc | Source | Role |
 | --- | --- | --- |
-| [ddgs_client](ddgs_client/) | `ddgs_client.py` | DuckDuckGo / multi-engine via `ddgs` |
-| [hosted_clients](hosted_clients/) | `hosted_clients.py` | Tavily, Brave, Bing, SerpAPI |
-| [engine_router](engine_router/) | `engine_router.py` | Quality-based engine ordering |
-| [engine_stats](engine_stats/) | `engine_stats.py` | Per-engine rolling metrics |
-| [page_fetcher](page_fetcher/) | `page_fetcher.py` | httpx + curl fetch → source cache |
-| [camoufox_fetcher](camoufox_fetcher/) | `camoufox_fetcher.py` | Headless browser fetch |
+| [transport](transport/) | `transport.py` | primp/curl HTTP transport with per-engine identity |
+| [httpx_transport](httpx_transport/) | `httpx_transport.py` | Plain httpx transport |
+| [browser](browser/) | `browser/` | Warm-browser daemon, client seam, identity store |
+| [academic](academic/) | `academic/` | Keyless scholarly REST APIs (OpenAlex, Crossref, EuropePMC, DOAJ, arXiv) |
+| [shopping](shopping/) | `shopping/` | Shopping vertical (providers, parse, assets) |
 | [onion](onion/) | `onion/` | Optional Tor/onion access layer |
-| [academic_fetcher](academic_fetcher/) | `academic_fetcher.py` | arXiv / Semantic Scholar fast path |
 | [stackexchange_fetcher](stackexchange_fetcher/) | `stackexchange_fetcher.py` | Stack Exchange API |
-| [url_utils](url_utils/) | `url_utils.py` | SSRF-safe URL validation |
-| [thread_pool](thread_pool/) | `thread_pool.py` | Shared `io_pool` executor |
+| [profiles](profiles/) | `profiles.py` | Per-engine fetch personalities |
 | [antibot](antibot/) | `antibot.py` | Challenge-page detection |
 | [download_types](download_types/) | `download_types.py` | Non-HTML download detection |
+| [url_utils](url_utils/) | `url_utils.py` | SSRF-safe URL validation |
+| [thread_pool](thread_pool/) | `thread_pool.py` | Shared `io_pool` executor |
 | [constants](constants/) | `constants.py` | `DEFAULT_UA` |
-| [_ddgs_worker](_ddgs_worker/) | `_ddgs_worker.py` | Isolated DDGS subprocess |
-| [_camoufox_worker](_camoufox_worker/) | `_camoufox_worker.py` | Isolated Camoufox subprocess |
-| [browser](browser/) | `browser/` | Warm-browser daemon and identity |
+| [_base](_base/) | `_base.py` | Shared fetch primitives |
 
 ---
 
 ## Related
 
 - [core](../_index/)
-- [services/web_search](../../services/web_search/)
----
 - [browser](browser/)

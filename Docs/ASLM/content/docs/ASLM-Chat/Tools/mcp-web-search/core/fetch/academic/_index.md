@@ -13,7 +13,6 @@ Tools/mcp-web-search...
 
 | Doc | Source | Role |
 | --- | --- | --- |
-| [__init__](__init__/) | `__init__.py` | Academic package init |
 | [engine](engine/) | `engine.py` | Academic engine |
 | [health](health/) | `health.py` | Academic health |
 | [models](models/) | `models.py` | Academic models |

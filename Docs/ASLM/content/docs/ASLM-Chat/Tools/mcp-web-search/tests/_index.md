@@ -5,7 +5,7 @@ draft: false
 
 ## Package `tests`
 
-`Tools/mcp-web-search/tests/` — Pytest suite for the MCP bridge, search pipeline, `read_page`, registries, and ASLM embedding exports.
+`Tools/mcp-web-search/tests/` — Pytest suite for the search core, engine parsers, caches, verticals, and `read_page` content pipeline.
 
 Run from the tool directory with the project venv active:
 
@@ -21,35 +21,23 @@ pytest tests/
 
 | Doc | Source | Role |
 | --- | --- | --- |
-| [conftest](conftest/) | `conftest.py` | Shared skips for missing ONNX exports |
-| [test_validate_search_query](test_validate_search_query/) | `test_validate_search_query.py` | Query spam gate |
-| [test_search_query_contract](test_search_query_contract/) | `test_search_query_contract.py` | MCP query/effort schema |
-| [test_mcp_bridge_contract](test_mcp_bridge_contract/) | `mcp-server.py` bridge contract |
-| [test_class_profiles](test_class_profiles/) | Rule-based query classification |
-| [test_domain_constraints](test_domain_constraints/) | `site:` / boolean rewriting |
-| [test_aslm_embedding_models](test_aslm_embedding_models/) | Export path constants |
-| [test_aslm_embedding_bootstrap](test_aslm_embedding_bootstrap/) | Model download / migration |
-| [test_neural_pipeline_components](test_neural_pipeline_components/) | Session, routing, pipeline modes |
-| [test_content_quality_signal](test_content_quality_signal/) | Reputation EMA + lexical boost |
-| [test_trust_registry_profiles](test_trust_registry_profiles/) | Trust profile merge/load |
-| [test_domain_registry_profiles](test_domain_registry_profiles/) | Domain profile merge/load |
-| [test_domain_registry_nextjs](test_domain_registry_nextjs/) | Next.js RSC registry flag |
-| [test_ddgs_partial_buffer](test_ddgs_partial_buffer/) | DDGS partial buffer + fallback |
-| [test_nextjs_rsc](test_nextjs_rsc/) | RSC payload parser |
-| [test_micro_chunk_worker](test_micro_chunk_worker/) | Clause-level pruning |
-| [test_read_page_compress](test_read_page_compress/) | Read-page focus + compress |
-| [test_read_page_nextjs_rsc](test_read_page_nextjs_rsc/) | RSC fast path |
-| [test_read_page_spa_fallback](test_read_page_spa_fallback/) | Camoufox SPA fallback |
-| [test_read_page_cache_and_fallback](test_read_page_cache_and_fallback/) | Source cache + fetch fallback |
-| [test_read_page_whatsnew_github](test_read_page_whatsnew_github/) | Long GitHub doc compression (integration) |
-| [test_github_urls](test_github_urls/) | GitHub URL parsing + live blob |
-| [test_web_search_neural_domain_eval](test_web_search_neural_domain_eval/) | Neural eval trace (optional) |
-| [test_hosted_providers](test_hosted_providers/) | `test_hosted_providers.py` | Hosted API unit tests |
 | [test_search_core](test_search_core/) | `test_search_core.py` | Search core unit tests |
-| [test_shopping_web_integration](test_shopping_web_integration/) | `test_shopping_web_integration.py` Shopping integration tests |
+| [test_search_cache](test_search_cache/) | `test_search_cache.py` | SERP cache + repeat block |
+| [test_new_engine_parsers](test_new_engine_parsers/) | `test_new_engine_parsers.py` | Engine HTML parsers (fixtures) |
+| [test_hosted_providers](test_hosted_providers/) | `test_hosted_providers.py` | Hosted API unit tests |
+| test_query_dates | `test_query_dates.py` | Date-intent parsing *(doc pending)* |
+| [test_academic](test_academic/) | `test_academic.py` | Academic vertical |
+| [test_browser_daemon](test_browser_daemon/) | `test_browser_daemon.py` | Warm-browser recycle/checkpoint supervision |
+| [test_browser_layer](test_browser_layer/) | `test_browser_layer.py` | Browser client seam |
+| [test_identity_cookies](test_identity_cookies/) | `test_identity_cookies.py` | Identity store generations + HTTP cookies |
+| test_chunk_compaction | `test_chunk_compaction.py` | BM25 chunk compaction *(doc pending)* |
+| test_content_cleaning | `test_content_cleaning.py` | Content cleaning *(doc pending)* |
 | [test_reddit](test_reddit/) | `test_reddit.py` | Reddit fallback testing |
+| [test_shopping_engine](test_shopping_engine/) | `test_shopping_engine.py` | Shopping engine |
+| [test_shopping_parse_products](test_shopping_parse_products/) | `test_shopping_parse_products.py` | Product parsing |
+| [test_shopping_price_parse](test_shopping_price_parse/) | `test_shopping_price_parse.py` | Price parsing |
+| test_shopping_assets | `test_shopping_assets.py` | Shopping assets *(doc pending)* |
 | [test_onion_contract](test_onion_contract/) | `test_onion_contract.py` | Onion capability schema/opt-in |
-| [test_onion_harvester](test_onion_harvester/) | `test_onion_harvester.py` | Onion anchored auto-expansion |
 | [test_onion_registry](test_onion_registry/) | `test_onion_registry.py` | Onion allowlist / resolver |
 | [test_onion_search](test_onion_search/) | `test_onion_search.py` | Deep onion search pipeline |
 | [test_onion_transport](test_onion_transport/) | `test_onion_transport.py` | Onion transport/tor spawn |

@@ -13,11 +13,10 @@ draft: false
 
 | Doc | Source | Role |
 | --- | --- | --- |
-| [content_processor](content_processor/) | `content_processor.py` | Preview pipeline, BM25/GLiNER compression |
+| [content_processor](content_processor/) | `content_processor.py` | Preview pipeline, BM25 compression |
 | [page_normalizer](page_normalizer/) | `page_normalizer.py` | Trafilatura page → markdown |
 | [dom_block_extractor](dom_block_extractor/) | `dom_block_extractor.py` | DOM block scoring |
-| [gliner_wrapper](gliner_wrapper/) | `gliner_wrapper.py` | GLiNER entity-density path |
-| [profile_chunk_selector](profile_chunk_selector/) | `profile_chunk_selector.py` | Query-type chunk budgets |
+| chunk_compaction | `chunk_compaction.py` | BM25 relevance-budget compaction for `read_page` *(doc pending)* |
 | [micro_chunk_worker](micro_chunk_worker/) | `micro_chunk_worker.py` | Sentence-level pruning |
 | [nextjs_rsc](nextjs_rsc/) | `nextjs_rsc.py` | Next.js RSC payload text |
 | [pdf_extractor](pdf_extractor/) | `pdf_extractor.py` | PDF → markdown |
@@ -30,4 +29,4 @@ draft: false
 ## Related
 
 - [core](../_index/)
-- [services/read_page](../../services/read_page/)
+- [core/read/service](../read/service/)

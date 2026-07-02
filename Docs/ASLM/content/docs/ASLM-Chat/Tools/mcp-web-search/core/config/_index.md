@@ -17,7 +17,6 @@ JSON files on disk: `search_config.json`, `api_keys.json`.
 | --- | --- | --- |
 | [settings](settings/) | `settings.py` | Load `search_config.json` |
 | [api_keys](api_keys/) | `api_keys.py` | Hosted provider API keys |
-| [hardware](hardware/) | `hardware.py` | CPU/GPU profiles for previews and GLiNER |
 
 ---
 

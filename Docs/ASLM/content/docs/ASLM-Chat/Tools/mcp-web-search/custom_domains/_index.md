@@ -13,10 +13,11 @@ draft: false
 
 | Doc | Source | Role |
 | --- | --- | --- |
-| [router](router/) | `router.py` | `CustomRoute` table and preview dispatch |
+| base | `base.py` | Route table and preview dispatch *(doc pending)* |
 | [github](github/) | `github.py` | GitHub REST → markdown |
 | [reddit](reddit/) | `reddit.py` | Reddit `.json` threads |
 | [x](x/) | `x.py` | X/Twitter syndication / oEmbed |
+| youtube | `youtube.py` | YouTube metadata / transcript *(doc pending)* |
 | [amazon](amazon/) | `amazon.py` | Amazon product snapshot |
 | [ebay](ebay/) | `ebay.py` | eBay listing snapshot (heavy) |
 | [common](common/) | `common.py` | Shared HTML pipeline helpers |
@@ -31,4 +32,4 @@ draft: false
 ## Related
 
 - [mcp-web-search](../_index/)
-- [services/read_page](../services/read_page/)
+- [core/read/service](../core/read/service/)

@@ -13,8 +13,10 @@ draft: false
 
 | Doc | Source | Role |
 | --- | --- | --- |
-| [daemon](daemon/) | `daemon.py` | Warm-browser daemon |
-| [identity_store](identity_store/) | `identity_store.py` | Browser identity storage |
+| [client](client/) | `client.py` | Client seam: `browser_fetch`, daemon autostart |
+| [daemon](daemon/) | `daemon.py` | Warm-browser daemon (supervised chromium) |
+| [identity_store](identity_store/) | `identity_store.py` | Browser identity storage (storageState generations, HTTP cookies) |
+| [models](models/) | `models.py` | `BrowserFetch` result model |
 | [tempjanitor](tempjanitor/) | `tempjanitor.py` | Temp profile reaper |
 
 ---
