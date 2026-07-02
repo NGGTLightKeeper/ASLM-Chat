@@ -15,6 +15,9 @@ draft: false
 
 | Doc | Source | Role |
 | --- | --- | --- |
+| [cache_chat_utils](cache_chat_utils/) | `cache_chat_utils.py` | SQLite helpers for offline fat-chat experiments |
+| [build_fat_chat_summary](build_fat_chat_summary/) | `build_fat_chat_summary.py` | Dev CLI: raw summary from largest cached chat |
+| [run_live_fat_compression](run_live_fat_compression/) | `run_live_fat_compression.py` | Dev CLI: raw vs live LLM summary + sanitization report |
 | [conftest](conftest/) | `conftest.py` | `sys.path` setup |
 | [test_compression_decision](test_compression_decision/) | `test_compression_decision.py` | `decide_compression`, context window |
 | [test_fit_summary_text](test_fit_summary_text/) | `test_fit_summary_text.py` | Budget fitting |

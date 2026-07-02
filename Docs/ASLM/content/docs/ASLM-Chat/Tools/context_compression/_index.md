@@ -16,9 +16,6 @@ Used in production by [`Apps.UI/views`](../../Apps/UI/views/) (`context_compress
 | Doc | Source | Role |
 | --- | --- | --- |
 | [history_compressor](history_compressor/) | `history_compressor.py` | Decision logic, sanitization, summary builders |
-| [cache_chat_utils](cache_chat_utils/) | `cache_chat_utils.py` | SQLite helpers for offline fat-chat experiments |
-| [build_fat_chat_summary](build_fat_chat_summary/) | `build_fat_chat_summary.py` | Dev CLI: raw summary from largest cached chat |
-| [run_live_fat_compression](run_live_fat_compression/) | `run_live_fat_compression.py` | Dev CLI: raw vs live LLM summary + sanitization report |
 | [tests](tests/) | `tests/` | Pytest regression suite |
 
 `__init__.py` is an empty package marker.

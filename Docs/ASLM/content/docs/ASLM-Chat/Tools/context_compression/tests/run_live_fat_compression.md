@@ -5,7 +5,7 @@ draft: false
 
 ## Module `run_live_fat_compression`
 
-`Tools/context_compression/run_live_fat_compression.py` — ASLM Chat Python module.
+`Tools/context_compression/tests/run_live_fat_compression.py` — ASLM Chat Python module.
 
 ---
 
@@ -101,4 +101,4 @@ draft: false
 
 ## Related
 
-- [context_compression/_index](../../_index/)
+- [tests/_index](../_index/)

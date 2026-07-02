@@ -5,7 +5,7 @@ draft: false
 
 ## Module `build_fat_chat_summary`
 
-`Tools/context_compression/build_fat_chat_summary.py` — ASLM Chat Python module.
+`Tools/context_compression/tests/build_fat_chat_summary.py` — ASLM Chat Python module.
 
 ---
 
@@ -24,4 +24,4 @@ draft: false
 
 ## Related
 
-- [context_compression/_index](../../_index/)
+- [tests/_index](../_index/)
