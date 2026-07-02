@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import shlex
-import shutil
 import subprocess
 import sys
 import threading
@@ -32,6 +31,7 @@ from sandbox.config import (
     MAX_FIND_RESULTS,
     MAX_FILE_MAP_SYMBOLS,
     MAX_GREP_RESULTS,
+    MAX_IMAGE_PREVIEW_BYTES,
     MAX_LS_ENTRIES,
     MAX_OUTPUT_BYTES,
     OUTPUT_HEAD_RATIO,
@@ -42,7 +42,6 @@ from sandbox.config import (
     NETWORK_LIMIT_MBIT,
     PIDS_LIMIT,
     SANDBOX_IMAGE,
-    SANDBOX_IMAGE_SOURCE,
     SNAPSHOT_IMAGE_PREFIX,
     STORAGE_LIMIT,
     SUPERVISOR_SRC,
@@ -220,13 +219,6 @@ def _container_exists() -> bool:
     return bool(result.stdout.strip())
 
 
-def _container_is_running() -> bool:
-    result = _run_command(
-        ["docker", "ps", "-q", "-f", f"name=^{CONTAINER_NAME}$"], timeout=10
-    )
-    return bool(result.stdout.strip())
-
-
 # Image preparation
 
 def _image_has_required_runtime(inspect_stdout: str) -> bool:
@@ -324,6 +316,7 @@ _CONFIG_TEMPLATE = """\
 
 # === Docker startup ===
 #SANDBOX_DOCKER_START_TIMEOUT_SECONDS=60
+#SANDBOX_AUTO_START_DOCKER=0
 """
 
 
@@ -391,6 +384,7 @@ def _build_run_command(
         "-e", f"SANDBOX_MAX_READ_BYTES={MAX_READ_BYTES}",
         "-e", f"SANDBOX_MAX_CAT_FILE_BYTES={MAX_CAT_FILE_BYTES}",
         "-e", f"SANDBOX_MAX_CAT_LINE_THRESHOLD={MAX_CAT_LINE_THRESHOLD}",
+        "-e", f"SANDBOX_MAX_IMAGE_PREVIEW_BYTES={MAX_IMAGE_PREVIEW_BYTES}",
         "-e", f"SANDBOX_MAX_LS_ENTRIES={MAX_LS_ENTRIES}",
         "-e", f"SANDBOX_MAX_FIND_RESULTS={MAX_FIND_RESULTS}",
         "-e", f"SANDBOX_MAX_GREP_RESULTS={MAX_GREP_RESULTS}",
@@ -637,18 +631,6 @@ def restart_container() -> tuple[bool, str]:
     return False, result.stderr.strip() or "Failed to restart container."
 
 
-def remove_container() -> tuple[bool, str]:
-    docker_ok, docker_message = _ensure_docker_running()
-    if not docker_ok:
-        return False, docker_message
-    if not _container_exists():
-        return True, "Container does not exist."
-    result = _run_command(["docker", "rm", "-f", CONTAINER_NAME], timeout=60)
-    if result.returncode == 0:
-        return True, f"Container '{CONTAINER_NAME}' removed."
-    return False, result.stderr.strip() or "Failed to remove container."
-
-
 def snapshot_image_name(name: str) -> str:
     safe_name = "".join(
         char if char.isalnum() or char in ("-", "_", ".") else "-" for char in name
@@ -819,63 +801,6 @@ def snapshot_container(name: str = "stable", *, preflight: bool = True) -> dict:
         "snapshot_image": image_name,
         "name": name,
         "preflight": preflight_result,
-    }
-
-
-def reset_container(preserve_workspace: bool = True) -> dict:
-    remove_ok, remove_message = remove_container()
-    if not remove_ok:
-        return {"ok": False, "error": remove_message}
-
-    wiped_entries: list[str] = []
-    if not preserve_workspace:
-        root = task_root()
-        if root.exists():
-            for item in root.iterdir():
-                try:
-                    if item.is_dir():
-                        shutil.rmtree(item)
-                    else:
-                        item.unlink()
-                    wiped_entries.append(item.name)
-                except OSError as exc:
-                    return {"ok": False, "error": f"Failed to wipe workspace entry '{item.name}': {exc}"}
-
-    ensure_ok, ensure_message = _ensure_container_running()
-    if not ensure_ok:
-        return {"ok": False, "error": ensure_message}
-
-    result: dict = {
-        "ok": True,
-        "message": "Container recreated from base image.",
-        "preserve_workspace": preserve_workspace,
-    }
-    if not preserve_workspace:
-        result["wiped_entries"] = wiped_entries
-    return result
-
-
-def restore_container(name: str = "stable", preserve_workspace: bool = True) -> dict:
-    docker_ok, docker_message = _ensure_docker_running()
-    if not docker_ok:
-        return {"ok": False, "error": docker_message}
-    image_name = snapshot_image_name(name)
-    inspect_result = _run_command(
-        ["docker", "image", "inspect", image_name], timeout=20
-    )
-    if inspect_result.returncode != 0:
-        return {"ok": False, "error": f"Snapshot image not found: {image_name}"}
-    remove_ok, remove_message = remove_container()
-    if not remove_ok:
-        return {"ok": False, "error": remove_message}
-    ensure_ok, ensure_message = _ensure_container_running(image_name=image_name)
-    if not ensure_ok:
-        return {"ok": False, "error": ensure_message}
-    return {
-        "ok": True,
-        "message": f"Container restored from snapshot '{name}'.",
-        "snapshot_image": image_name,
-        "preserve_workspace": preserve_workspace,
     }
 
 
@@ -1670,88 +1595,4 @@ def _exec_bash_docker(
         "elapsed_ms": int((time.time() - start_time) * 1000),
         "truncated": trunc_out or trunc_err,
         "cwd": normalize_model_relative_path(cwd),
-    }
-
-
-# ── Status reporting ─────────────────────────────────────────────────
-
-# Return Docker and container status without forcing startup.
-def get_status() -> dict:
-    docker_cli = _docker_cli_available()
-    docker_daemon_running = False
-    docker_info_message = "Docker CLI not found."
-    daemon_details = None
-
-    if docker_cli:
-        try:
-            info_result = _docker_info(timeout=5)
-            if info_result.returncode == 0:
-                docker_daemon_running = True
-                docker_info_message = "Docker daemon is running."
-                try:
-                    daemon_details = json.loads(info_result.stdout)
-                except json.JSONDecodeError:
-                    daemon_details = None
-            else:
-                docker_info_message = (
-                    info_result.stderr.strip() or "Docker daemon is not running."
-                )
-        except Exception as exc:
-            docker_info_message = str(exc)
-
-    container_status = "not found"
-    container_running = False
-    if docker_daemon_running:
-        ps_result = _run_command(
-            ["docker", "ps", "-a",
-             "--filter", f"name=^{CONTAINER_NAME}$",
-             "--format", "{{.Status}}"],
-            timeout=10,
-        )
-        if ps_result.stdout.strip():
-            container_status = ps_result.stdout.strip()
-            container_running = container_status.lower().startswith("up")
-
-    task_dir = task_root()
-    task_entries: list[str] = []
-    task_exists = task_dir.exists()
-    if task_exists:
-        try:
-            task_entries = sorted(item.name for item in task_dir.iterdir())
-        except OSError:
-            task_entries = []
-
-    from sandbox.config import (
-        CPU_LIMIT, MEMORY_LIMIT, MEMORY_SWAP_LIMIT,
-        NETWORK_LIMIT_MBIT, PIDS_LIMIT, STORAGE_LIMIT, THREAD_LIMIT,
-    )
-
-    return {
-        "ok": True,
-        "docker_cli_available": docker_cli,
-        "docker_daemon_running": docker_daemon_running,
-        "docker_message": docker_info_message,
-        "container_name": CONTAINER_NAME,
-        "container_status": container_status,
-        "container_running": container_running,
-        "image": SANDBOX_IMAGE,
-        "workspace_host": HOST_WORKSPACE,
-        "workspace_container": CONTAINER_WORKSPACE,
-        "model_workspace_host": str(task_root()),
-        "model_workspace_container": MODEL_WORKSPACE_CONTAINER,
-        "task_dir_exists": task_exists,
-        "task_entry_count": len(task_entries),
-        "task_entry_sample": task_entries[:20],
-        "bash_default_cwd": ".",
-        "limits": {
-            "cpus": CPU_LIMIT,
-            "threads": THREAD_LIMIT,
-            "memory": MEMORY_LIMIT,
-            "memory_swap": MEMORY_SWAP_LIMIT,
-            "pids_limit": PIDS_LIMIT,
-            "storage_limit": STORAGE_LIMIT,
-            "network_limit_mbit": NETWORK_LIMIT_MBIT,
-        },
-        "docker_server_version": (daemon_details or {}).get("ServerVersion"),
-        "docker_driver": (daemon_details or {}).get("Driver"),
     }

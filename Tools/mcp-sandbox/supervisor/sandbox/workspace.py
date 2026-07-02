@@ -16,6 +16,7 @@ from typing import Any
 
 from sandbox.config import (
     ALLOWED_IMPORT_ROOTS,
+    COMMAND_USER,
     CONTAINER_WORKSPACE,
     DEFAULT_TASK_DIR,
     HOST_WORKSPACE,
@@ -251,21 +252,26 @@ def resolve_model_path(path: str, cwd: str = ".") -> str:
     return posixpath.normpath(f"{normalized_cwd}/{raw}")
 
 
-# Convert an absolute workspace path to a POSIX relative path.
-def to_workspace_posix(path: Path) -> str:
-    rel_path = path.resolve().relative_to(workspace_root())
-    return rel_path.as_posix() or "."
+# The supervisor runs as root while bash commands are demoted to COMMAND_USER;
+# anything the supervisor creates must be handed to that user, or later bash
+# commands cannot modify or delete the model's own files. Best-effort, root-only.
+def _chown_to_command_user(*paths: Path) -> None:
+    if os.name != "posix" or not COMMAND_USER or COMMAND_USER == "root":
+        return
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is None or geteuid() != 0:
+        return
+    try:
+        import pwd
 
-
-# Resolve a path inside the workspace root.
-def get_secure_path(rel_path: str) -> Path:
-    normalized = normalize_relative_path(rel_path)
-    full_path = (workspace_root() / normalized).resolve()
-
-    if not full_path.is_relative_to(workspace_root()):
-        raise ValueError(f"Access denied: {rel_path} is outside workspace.")
-
-    return full_path
+        user_info = pwd.getpwnam(COMMAND_USER)
+    except Exception:
+        return
+    for path in paths:
+        try:
+            os.chown(path, user_info.pw_uid, user_info.pw_gid)
+        except OSError:
+            continue
 
 
 # Resolve a path to a sandbox-safe location (container vs host rules).
@@ -830,8 +836,24 @@ def write(path: str, content: str) -> dict[str, Any]:
     if target.exists() and target.is_dir():
         raise IsADirectoryError(f"Cannot overwrite directory: {normalize_model_relative_path(path)}")
 
+    # Directories this write is about to create, restricted to the task workspace.
+    # Absolute Linux paths deliberately bypass task_root (get_secure_task_path) so
+    # the model can create root-owned files outside the workspace — we must NOT
+    # chown those away from root. Inside task_root, bash runs as the command user
+    # and must be able to modify/delete files that write created, so those are
+    # handed to that user.
+    inside_workspace = is_within(target, task_root())
+    created_dirs: list[Path] = []
+    if inside_workspace:
+        probe = target.parent
+        while not probe.exists() and probe != probe.parent and is_within(probe, task_root()):
+            created_dirs.append(probe)
+            probe = probe.parent
+
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8", newline="")
+    if not existed and inside_workspace:
+        _chown_to_command_user(target, *created_dirs)
 
     return {
         "result": {
@@ -1485,53 +1507,7 @@ def delete(path: str, recursive: bool = False) -> dict[str, Any]:
     }
 
 
-# Host import and workspace reset
-
-
-# Copy a host file or directory into the task workspace.
-def copy_into_workspace(host_path: str, dest_path: str | None = None) -> dict[str, Any]:
-    source = Path(os.path.expanduser(host_path))
-    if not source.is_absolute():
-        source = (Path.cwd() / source).resolve()
-    else:
-        source = source.resolve()
-
-    if not source.exists():
-        raise FileNotFoundError(f"Host path not found: {source}")
-
-    if not is_allowed_host_import(source):
-        raise ValueError(
-            "Import denied. Path must be inside the workspace or one of the "
-            "allowed import roots."
-        )
-
-    destination_rel = dest_path or source.name
-    destination = get_secure_task_path(destination_rel, kind="dest_path")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-
-    if source.is_dir():
-        if destination.exists():
-            if destination.is_file():
-                destination.unlink()
-            else:
-                shutil.rmtree(destination)
-        shutil.copytree(source, destination)
-        copied_type = "directory"
-        size_bytes = sum(item.stat().st_size for item in destination.rglob("*") if item.is_file())
-    else:
-        if destination.exists() and destination.is_dir():
-            shutil.rmtree(destination)
-        shutil.copy2(source, destination)
-        copied_type = "file"
-        size_bytes = destination.stat().st_size
-
-    return {
-        "ok": True,
-        "source": str(source),
-        "path": destination.relative_to(task_root()).as_posix() or ".",
-        "type": copied_type,
-        "bytes_copied": size_bytes,
-    }
+# Workspace reset
 
 
 # Clear the dedicated sandbox workspace without deleting its root.

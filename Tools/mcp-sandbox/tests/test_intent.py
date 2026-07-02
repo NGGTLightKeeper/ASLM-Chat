@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 os.environ["SANDBOX_HOST_WORKSPACE"] = str(ROOT)
 
-from sandbox.intent import Intent, classify, NormalizedCommand
+from sandbox.intent import Intent, classify
 
 
 # All read-like commands classify as OPEN.
@@ -95,7 +95,7 @@ def test_compound_head_grep():
     assert nc is not None
     assert nc.intent == Intent.LOCATE, f"Expected LOCATE, got {nc.intent}"
     assert nc.was_compound is True
-    print(f"PASS: head -n 50 file | grep pattern → LOCATE")
+    print("PASS: head -n 50 file | grep pattern → LOCATE")
 
 
 # Execution commands return None (→ real bash).
@@ -142,8 +142,8 @@ def test_locate_case_sensitivity():
     nc = classify("grep -ri pattern src/")
     assert nc is not None
     assert nc.intent == Intent.LOCATE
-    assert nc.case_sensitive is False, f"Expected case_sensitive=False"
-    print(f"PASS: grep -ri → case_sensitive=False")
+    assert nc.case_sensitive is False, "Expected case_sensitive=False"
+    print("PASS: grep -ri → case_sensitive=False")
 
 
 # rg --type py → glob_pattern=*.py.
@@ -152,7 +152,7 @@ def test_locate_rg_type_flag():
     assert nc is not None
     assert nc.intent == Intent.LOCATE
     assert nc.glob_pattern == "*.py", f"Expected glob=*.py, got {nc.glob_pattern}"
-    print(f"PASS: rg --type py → glob_pattern=*.py")
+    print("PASS: rg --type py → glob_pattern=*.py")
 
 
 # find -name '*.py' -type f → NormalizedCommand with name_pattern/find_type.

@@ -12,7 +12,6 @@ os.environ["SANDBOX_HOST_WORKSPACE"] = str(ROOT)
 
 from sandbox import workspace
 from sandbox.api import handle_tool
-from sandbox.config import MAX_CAT_FILE_BYTES
 
 
 # Clear task_root except preserved fixture dirs before smoke tests.
@@ -114,7 +113,7 @@ def test_grep_falls_through_to_real_bash_with_many_files():
     for i in range(40):
         handle_tool("write", {
             "path": f"pkg/file_{i}.py",
-            "content": f"import foo\nfoo.bar()\nfoo.baz()\n",
+            "content": "import foo\nfoo.bar()\nfoo.baz()\n",
         })
     with patch(
         "sandbox.api.exec_bash",

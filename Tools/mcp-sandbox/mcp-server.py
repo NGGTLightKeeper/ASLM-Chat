@@ -11,7 +11,9 @@ for _p in (_ROOT / "supervisor", _ROOT / "src"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from sandbox.api import MCP_SERVER, TOOL_HANDLERS, TOOLS, handle_tool
+# MCP_SERVER / TOOL_HANDLERS / TOOLS are re-exported by name: ASLM's tool_worker
+# and API.mcp read them as module attributes from this entry module.
+from sandbox.api import MCP_SERVER, TOOL_HANDLERS, TOOLS, handle_tool  # noqa: F401
 from sandbox.config import IN_CONTAINER
 
 # When imported host-side (e.g. by ASLM's tool_worker), wire bash execution
