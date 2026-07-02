@@ -121,7 +121,6 @@ Part of `Tools\mcp-sandbox\supervisor\sandbox`. See **Related** for package inde
 **Steps:**
 
 1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
 
 #### `def _kill_process_group(process) -> None`
 

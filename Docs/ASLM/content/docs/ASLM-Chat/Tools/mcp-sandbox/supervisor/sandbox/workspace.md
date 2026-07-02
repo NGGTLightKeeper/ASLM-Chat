@@ -92,19 +92,6 @@ Part of `Tools\mcp-sandbox\supervisor\sandbox`. See **Related** for package inde
 2. Return the computed result to the caller.
 3. Iterate and transform or accumulate state.
 
-#### `def to_workspace_posix(path) -> str`
-
-**Purpose:** Convert an absolute workspace path to a POSIX relative path.
-
-#### `def get_secure_path(rel_path) -> Path`
-
-**Purpose:** Resolve a path inside the workspace root.
-
-**Steps:**
-
-1. Raise on invalid input or failure conditions.
-2. Return the computed result to the caller.
-
 #### `def get_secure_task_path(rel_path, kind) -> Path`
 
 **Purpose:** Resolve a path to a sandbox-safe location (container vs host rules).
@@ -264,16 +251,6 @@ Part of `Tools\mcp-sandbox\supervisor\sandbox`. See **Related** for package inde
 1. Raise on invalid input or failure conditions.
 2. Return the computed result to the caller.
 
-#### `def copy_into_workspace(host_path, dest_path) -> dict[str, Any]`
-
-**Purpose:** Copy a host file or directory into the task workspace.
-
-**Steps:**
-
-1. Raise on invalid input or failure conditions.
-2. Return the computed result to the caller.
-3. Iterate and transform or accumulate state.
-
 #### `def clear_workspace() -> dict[str, Any]`
 
 **Purpose:** Clear the dedicated sandbox workspace without deleting its root.
@@ -286,6 +263,17 @@ Part of `Tools\mcp-sandbox\supervisor\sandbox`. See **Related** for package inde
 ---
 
 ## Private functions
+
+#### `def _chown_to_command_user(*paths) -> None`
+
+**Purpose:** The supervisor runs as root while bash commands are demoted to COMMAND_USER;
+anything the supervisor creates must be handed to that user, or later bash
+commands cannot modify or delete the model's own files. Best-effort, root-only.
+
+**Steps:**
+
+1. Handle errors and map them to a safe response.
+2. Iterate and transform or accumulate state.
 
 #### `def _legacy_upload_relative_path(normalized_path) -> str | None`
 

@@ -25,14 +25,6 @@ Part of `Tools\mcp-sandbox\src\sandbox`. See **Related** for package index and c
 
 1. Return the computed result to the caller.
 
-#### `def remove_container() -> tuple[bool, str]`
-
-**Purpose:** Implements `remove_container` in `docker_host.py`.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
 #### `def snapshot_image_name(name) -> str`
 
 **Purpose:** Implements `snapshot_image_name` in `docker_host.py`.
@@ -50,24 +42,6 @@ Part of `Tools\mcp-sandbox\src\sandbox`. See **Related** for package index and c
 
 1. Return the computed result to the caller.
 2. Iterate and transform or accumulate state.
-
-#### `def reset_container(preserve_workspace) -> dict`
-
-**Purpose:** Implements `reset_container` in `docker_host.py`.
-
-**Steps:**
-
-1. Return the computed result to the caller.
-2. Handle errors and map them to a safe response.
-3. Iterate and transform or accumulate state.
-
-#### `def restore_container(name, preserve_workspace) -> dict`
-
-**Purpose:** Implements `restore_container` in `docker_host.py`.
-
-**Steps:**
-
-1. Return the computed result to the caller.
 
 #### `def start_container_supervisor() -> subprocess.Popen`
 
@@ -210,14 +184,6 @@ Part of `Tools\mcp-sandbox\src\sandbox`. See **Related** for package index and c
 #### `def _container_exists() -> bool`
 
 **Purpose:** Container existence checks
-
-**Steps:**
-
-1. Return the computed result to the caller.
-
-#### `def _container_is_running() -> bool`
-
-**Purpose:** Implements `_container_is_running` in `docker_host.py`.
 
 **Steps:**
 
