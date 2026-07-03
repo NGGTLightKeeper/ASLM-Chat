@@ -33,7 +33,8 @@ class PrefetchManager:
         from core.cache import get_page_cache
         from core.fetch.antibot import is_antibot
         from core.fetch.url_utils import UnsafeFetchUrl, validate_public_fetch_url
-        from core.read.service import _cache_key_for_read, _variant_label
+        from core.profiles import get_runtime_profiles
+        from core.read.service import _cache_key_for_read, _is_tls_error, _variant_label
 
         cache = get_page_cache()
         cache_key = _cache_key_for_read(url, variant=_variant_label(url))
@@ -64,14 +65,22 @@ class PrefetchManager:
                 None, normalize_page, safe_url, html
             )
             if not md or len(md.strip()) < 200:
+                get_runtime_profiles().record_reputation(safe_url, parse_empty=True)
                 return False
             title = md.splitlines()[0].lstrip("# ").strip()[:200] if md.strip() else ""
             cache.cache_page(cache_key, title, clean_text=md, raw_html="")
+            get_runtime_profiles().record_reputation(safe_url, parse_ok=True)
             return True
         except UnsafeFetchUrl as exc:
             trace_logger.info("prefetch.blocked url=%r reason=%s", url, exc)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("prefetch fetch failed for %s: %s", url, exc)
+            # Prefetch verifies TLS, so it observes broken hosts for free — record the
+            # verdict so the next search's triage already knows.
+            if _is_tls_error(exc):
+                get_runtime_profiles().record_reputation(url, tls_failed=True)
+                trace_logger.info("prefetch.tls_fail url=%r", url)
+            else:
+                logger.debug("prefetch fetch failed for %s: %s", url, exc)
         return False
 
     # Warm a batch of URLs under one hard-timeout-bounded task.

@@ -8,7 +8,9 @@ surfacing from another provider family) re-score an already-seen source and may
 upgrade it from the queue into a parse slot.
 
 No registries, no models, no I/O — pure functions over SERP fields, so a decision
-costs well under a millisecond.
+costs well under a millisecond. Learned domain trust enters as a point-in-time
+ReputationSnapshot the caller loads up front (one DB read per search); per-source
+scoring stays a dict lookup.
 """
 
 from __future__ import annotations
@@ -16,13 +18,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from core.profiles import ReputationSnapshot, domain_of
+
+from core.extract.scoring import query_terms
+
 from .quality import (
+    emd_penalty,
     has_date_signal,
     hub_penalty,
+    insecure_scheme_penalty,
+    is_established_tld,
     is_skip_title,
     lexical_score,
     query_years,
     seo_slug_penalty,
+    suspicious_url_penalty,
     year_match_score,
 )
 
@@ -51,6 +61,12 @@ _CONSENSUS_CAP = 0.36
 _SKIP_THRESHOLD = 0.10
 _PARSE_THRESHOLD = 0.50
 
+# E-E-A-T, reworked: trust is earned, not declared. A domain on an unproven TLD with no
+# positive runtime history and only ONE provider family behind it must clear a slightly
+# higher parse bar. A second family's vote or earned history removes the margin — the
+# unknown is never punished for being unknown, only asked for more at the boundary.
+_UNPROVEN_PARSE_MARGIN = 0.05
+
 # Snippet shorter than this gets a soft penalty (legacy hard-skipped — too harsh:
 # engines legitimately emit short snippets).
 _SHORT_SNIPPET_CHARS = 30
@@ -78,15 +94,21 @@ class _SourceState:
     base_score: float
     families: set[str] = field(default_factory=set)
     action: TriageAction = TriageAction.SKIP
+    # Unproven-TLD domain without earned history: stricter parse bar while it has
+    # only a single provider family behind it.
+    unproven: bool = False
 
 
 # Incremental triage over the live source stream.
 class TriageSession:
 
-    def __init__(self, query: str) -> None:
+    def __init__(self, query: str, reputation: ReputationSnapshot | None = None) -> None:
         self.query = query
         self._years = query_years(query)
+        self._terms = tuple(query_terms(query))  # once per session, for the EMD tell
         self._states: dict[str, _SourceState] = {}
+        self._penalties = reputation.penalties if reputation else {}
+        self._proven = reputation.proven if reputation else frozenset()
 
     # Score one source from its SERP fields alone (no consensus component).
     def _soft_score(
@@ -119,14 +141,30 @@ class TriageSession:
         # Identity-blind SEO trim: gently down-weight year-stuffed farm slugs by URL shape
         # only. No domain favouritism — authority is earned via consensus, not declared.
         score += seo_slug_penalty(url)
+        score += insecure_scheme_penalty(url)
+        # Bad-site tells: structural marks of phishing/farm URLs (IP hosts, embedded
+        # gTLD costumes, hyphen/year-stamped names, exact-match-domain squatting).
+        score += suspicious_url_penalty(url)
+        score += emd_penalty(url, self._terms)
+        # Earned negative reputation (TLS failures, systematic empty parses). Magnitude
+        # is capped at write-out; consensus votes can still outvote it — two independent
+        # families saying "this page answers the query" beat an old grudge.
+        score -= self._penalties.get(domain_of(url), 0.0)
         return max(0.0, min(1.0, score))
 
-    # Map a score to an action.
+    # Map a score to an action. strict raises the parse bar for unproven single-family
+    # domains; SKIP is never affected — reputation nudges, it does not execute.
     @staticmethod
-    def _action_for(score: float) -> TriageAction:
+    def _action_for(score: float, *, strict: bool = False) -> TriageAction:
         if score < _SKIP_THRESHOLD:
             return TriageAction.SKIP
-        return TriageAction.PARSE if score >= _PARSE_THRESHOLD else TriageAction.QUEUE
+        bar = _PARSE_THRESHOLD + (_UNPROVEN_PARSE_MARGIN if strict else 0.0)
+        return TriageAction.PARSE if score >= bar else TriageAction.QUEUE
+
+    # Whether the stricter parse bar applies to this source right now.
+    @staticmethod
+    def _strict_bar(state: _SourceState) -> bool:
+        return state.unproven and len(state.families) <= 1
 
     # Total score = base soft score + consensus bonus for extra families.
     @staticmethod
@@ -151,10 +189,14 @@ class TriageSession:
             return TriageDecision(action=TriageAction.SKIP, score=0.0, url=url)
 
         base = self._soft_score(engine=engine, rank=rank, title=title, snippet=snippet, url=url)
-        state = _SourceState(base_score=base)
+        domain = domain_of(url)
+        state = _SourceState(
+            base_score=base,
+            unproven=not is_established_tld(domain) and domain not in self._proven,
+        )
         state.families.add(provider_family)
         score = self._total(state)
-        state.action = self._action_for(score)
+        state.action = self._action_for(score, strict=self._strict_bar(state))
         self._states[url] = state
         return TriageDecision(action=state.action, score=score, url=url)
 
@@ -168,7 +210,7 @@ class TriageSession:
             return None  # same family re-listing the URL is not new evidence
         state.families.add(provider_family)
         score = self._total(state)
-        new_action = self._action_for(score)
+        new_action = self._action_for(score, strict=self._strict_bar(state))
         upgraded = new_action == TriageAction.PARSE and state.action == TriageAction.QUEUE
         state.action = new_action
         if upgraded:

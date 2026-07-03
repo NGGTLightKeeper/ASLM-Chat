@@ -8,6 +8,7 @@ from .models import (
     DomainOverride,
     FetchAttempt,
     ProfileHint,
+    ReputationSnapshot,
 )
 from .runtime_profiles import RuntimeDomainProfiles, get_runtime_profiles
 
@@ -19,6 +20,7 @@ __all__ = [
     "DomainOverride",
     "FetchAttempt",
     "ProfileHint",
+    "ReputationSnapshot",
     "RuntimeDomainProfiles",
     "domain_of",
     "get_override",

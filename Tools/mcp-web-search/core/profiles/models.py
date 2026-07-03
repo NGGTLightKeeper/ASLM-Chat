@@ -51,3 +51,13 @@ class DomainOverride:
     required_method: str = ""      # force this fetch method (e.g. METHOD_BROWSER)
     parsing_mode: str = ""         # e.g. "nextjs_rsc"
     note: str = ""
+
+
+# Point-in-time view of learned domain trust, loaded once per search so triage scoring
+# stays I/O-free. penalties holds POSITIVE magnitudes (triage subtracts them, already
+# capped at write-out); proven lists domains with enough recent successful parses to be
+# exempt from the unproven-TLD strict parse bar.
+@dataclass(frozen=True, slots=True)
+class ReputationSnapshot:
+    penalties: dict[str, float]
+    proven: frozenset[str]

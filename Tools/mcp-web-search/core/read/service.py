@@ -52,6 +52,9 @@ _SKIP_HOSTS = ("vimeo.com", "tiktok.com")
 
 
 # Outcome of one low-level HTTP fetch with the metadata needed for runtime profiling.
+# tls_failed marks a Firefox-grade transport verdict (bad certificate, plain HTTP on
+# 443, protocol failure): the host is dead for every honest client, so callers must not
+# burn fallback transports or browser slots on it.
 @dataclass(slots=True)
 class RawFetch:
     html: str | None
@@ -61,6 +64,7 @@ class RawFetch:
     fetch_ms: float = 0.0
     blocked: bool = False
     timed_out: bool = False
+    tls_failed: bool = False
 
     # Build a FetchAttempt for the runtime profile store, folding in parse-time stats.
     def attempt(self, *, parse_ms: float = 0.0, quality: int = 0, success: bool = False) -> FetchAttempt:
@@ -151,6 +155,24 @@ def _nextjs_rsc_to_markdown(url: str, raw_html: str) -> str:
     return _fallback_text_to_markdown(url, text) if text else ""
 
 
+# True when an exception chain bottoms out in a TLS failure. httpx wraps ssl.SSLError
+# inside ConnectError (walk __cause__/__context__); curl_cffi flattens curl codes
+# 35/51/58/60 into a message string, so a text probe is the only uniform test there.
+def _is_tls_error(exc: BaseException | None) -> bool:
+    import ssl
+
+    for _ in range(8):
+        if exc is None:
+            return False
+        if isinstance(exc, ssl.SSLError):
+            return True
+        text = str(exc)
+        if "SSL" in text or "certificate verify" in text.lower():
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
 # Fetch HTML via httpx with per-redirect SSRF checks; returns an instrumented RawFetch.
 async def _fetch_httpx(url: str, timeout: float, tls_verify: bool = True) -> RawFetch:
     t0 = time.perf_counter()
@@ -184,7 +206,12 @@ async def _fetch_httpx(url: str, timeout: float, tls_verify: bool = True) -> Raw
             return RawFetch(None, METHOD_HTTPX, _UA, r.status_code if r else 0, fetch_ms)
     except UnsafeFetchUrl as exc:
         logger.warning("blocked unsafe read_page fetch url=%r reason=%s", url, exc)
-    except Exception:
+    except Exception as exc:
+        if _is_tls_error(exc):
+            logger.info("TLS failure for %s: %s", url, exc)
+            return RawFetch(
+                None, METHOD_HTTPX, _UA, 0, (time.perf_counter() - t0) * 1000, tls_failed=True
+            )
         logger.debug("httpx fetch failed for %s", url, exc_info=True)
     return RawFetch(None, METHOD_HTTPX, _UA, 0, (time.perf_counter() - t0) * 1000)
 
@@ -223,7 +250,13 @@ async def _fetch_curl_cffi(url: str, timeout: int) -> RawFetch:
             return RawFetch(html, METHOD_CURL_CFFI, _UA, int(r.status_code), fetch_ms, blocked=blocked)
         except UnsafeFetchUrl as exc:
             logger.warning("blocked unsafe read_page curl url=%r reason=%s", url, exc)
-        except Exception:
+        except Exception as exc:
+            if _is_tls_error(exc):
+                logger.info("TLS failure for %s: %s", url, exc)
+                return RawFetch(
+                    None, METHOD_CURL_CFFI, _UA, 0, (time.perf_counter() - t0) * 1000,
+                    tls_failed=True,
+                )
             logger.debug("curl_cffi fetch failed for %s", url, exc_info=True)
         return RawFetch(None, METHOD_CURL_CFFI, _UA, 0, (time.perf_counter() - t0) * 1000)
 
@@ -236,6 +269,7 @@ async def _fetch_race(url: str, timeout: float, tls_verify: bool = True) -> RawF
     t_curl = asyncio.create_task(_fetch_curl_cffi(url, int(timeout) + 3))
     pending: set = {t_httpx, t_curl}
     last: RawFetch | None = None
+    tls_failed = False
     while pending:
         done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
@@ -245,10 +279,13 @@ async def _fetch_race(url: str, timeout: float, tls_verify: bool = True) -> RawF
                 logger.debug("Fetch race task failed for %s", url, exc_info=True)
                 continue
             last = candidate
+            tls_failed = tls_failed or candidate.tls_failed
             if candidate.html:
                 for p in pending:
                     p.cancel()
                 return candidate
+    if last is not None and tls_failed:
+        last.tls_failed = True
     return last or RawFetch(None, METHOD_HTTPX, _UA, 0, 0.0)
 
 
@@ -477,6 +514,11 @@ class ReadPageService:
             if not html:
                 if raw is not None:
                     self._profiles.record(cand, raw.attempt(success=False))
+                    # Firefox-grade verdict: the host does not speak valid TLS. Feed the
+                    # reputation store and move on — no transport (or browser) will do
+                    # better, they all validate the same chain.
+                    if raw.tls_failed:
+                        self._profiles.record_reputation(cand, tls_failed=True)
                 continue
 
             # Anti-bot wall — escalate to a real browser once if not already there.
@@ -536,6 +578,11 @@ class ReadPageService:
                     self._profiles.record(cand, craw.attempt(quality=len(md), success=not weak))
                 else:
                     self._profiles.record(cand, craw.attempt(success=False))
+
+            # Trust observation: what the page physically parsed into, after all retries.
+            # Cache reuse records nothing — no new evidence about the live host.
+            if method != "cache":
+                self._profiles.record_reputation(cand, parse_ok=not weak, parse_empty=weak)
 
             # Cache the EXTRACTED markdown (not raw HTML): far smaller, FTS-searchable, and
             # reused verbatim by the next read with no re-fetch or re-extraction. Only a

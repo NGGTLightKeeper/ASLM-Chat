@@ -511,7 +511,17 @@ class WebSearchService:
             engines=tuple(engines),
         )
 
-        triage = TriageSession(query)
+        # Learned domain trust: one snapshot per search (single DB read), so triage
+        # itself stays I/O-free. A missing/failed store degrades to a neutral session.
+        try:
+            from core.profiles import get_runtime_profiles
+
+            reputation = get_runtime_profiles().reputation_snapshot()
+        except Exception as exc:  # noqa: BLE001 — reputation must never sink a search
+            logger.debug("reputation snapshot unavailable: %s", exc)
+            reputation = None
+
+        triage = TriageSession(query, reputation=reputation)
         sources: dict[str, _Source] = {}
         queue: list[str] = []  # urls in QUEUE state
         engine_payloads: dict[str, dict[str, Any]] = {}
