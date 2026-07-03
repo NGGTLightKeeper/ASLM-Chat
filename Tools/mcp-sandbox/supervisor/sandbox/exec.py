@@ -24,7 +24,6 @@ from sandbox.jobs import BackgroundJob, JOB_REGISTRY
 from sandbox.workspace import (
     get_secure_task_path,
     normalize_model_relative_path,
-    task_root,
 )
 
 logger = __import__("logging").getLogger(__name__)

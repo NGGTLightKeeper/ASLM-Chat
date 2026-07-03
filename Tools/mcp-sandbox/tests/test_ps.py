@@ -1,7 +1,6 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
 import subprocess
-import json
 res = subprocess.run([
     'docker', 'inspect', '--format',
     '{\"running\":{{.State.Running}},\"status\":\"{{.State.Status}}\",\"mounts\":\"{{range .Mounts}}{{.Source}}{{end}}\"}',

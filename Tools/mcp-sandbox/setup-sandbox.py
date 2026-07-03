@@ -12,7 +12,6 @@ import argparse
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 # ── Resolve image name from sandbox.env if present ──────────────────
@@ -69,6 +68,7 @@ _CONFIG_TEMPLATE = """\
 
 # === Docker startup ===
 #SANDBOX_DOCKER_START_TIMEOUT_SECONDS=60
+#SANDBOX_AUTO_START_DOCKER=0
 """
 
 
@@ -248,7 +248,7 @@ def main() -> int:
     if source not in {"local", "registry", "auto"}:
         source = "auto"
 
-    print(f"\nmcp-sandbox image setup", flush=True)
+    print("\nmcp-sandbox image setup", flush=True)
     print(f"  image  : {SANDBOX_IMAGE}", flush=True)
     print(f"  source : {source}", flush=True)
     print(flush=True)

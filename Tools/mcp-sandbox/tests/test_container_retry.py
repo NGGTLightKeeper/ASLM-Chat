@@ -6,7 +6,7 @@ import sys
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -50,7 +50,7 @@ class TestInspectContainer(unittest.TestCase):
 
     def test_returns_running_true_when_up(self) -> None:
         import json
-        from sandbox.config import CONTAINER_NAME, HOST_WORKSPACE, DEFAULT_TASK_DIR
+        from sandbox.config import HOST_WORKSPACE, DEFAULT_TASK_DIR
         import os as os_mod
         mount = os_mod.path.normpath(os_mod.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR))
         payload = json.dumps([{"State": {"Running": True, "Status": "running"}, "Mounts": [{"Source": mount}]}])
@@ -244,7 +244,7 @@ class TestEnsureImage(unittest.TestCase):
                 return _ok(stale_payload)
             return _fail(f"unexpected command: {args}")
 
-        with patch.object(docker_host_mod, "_run_command", side_effect=fake_run) as run_mock, \
+        with patch.object(docker_host_mod, "_run_command", side_effect=fake_run), \
              patch.object(docker_host_mod.subprocess, "run", return_value=setup_result) as setup_mock:
             ok, message = container_mod._ensure_image()
 
@@ -281,8 +281,6 @@ class TestEnsureContainerRunning(unittest.TestCase):
         # First inspect: running but wrong volume
         bad_payload = json.dumps([{"State": {"Running": True, "Status": "running"}, "Mounts": [{"Source": "/wrong"}]}])
         # After rm, no container; after docker run, OK
-        no_container_fail = _fail("No such container", 1)
-
         call_count = {"n": 0}
         payloads = [_ok(bad_payload), _ok(), _fail("No such container", 1), _ok()]
 

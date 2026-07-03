@@ -9,7 +9,6 @@ import sys
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 TMP = ROOT / "tmp"
@@ -166,7 +165,6 @@ class TestPurgeStaleFilesystemCleanup(unittest.TestCase):
     # purge_stale with ttl=0 removes all done/killed jobs and their dirs.
     def test_purge_stale_removes_done_dirs(self):
         # Create a fake done job with a real dir
-        from sandbox.jobs import BackgroundJob
         job_dir = _jobs_root() / "bg_test001"
         job_dir.mkdir(parents=True, exist_ok=True)
         (job_dir / "stdout").write_text("out", encoding="utf-8")

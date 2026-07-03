@@ -78,13 +78,14 @@ HOST_WORKSPACE = os.getenv(
     "SANDBOX_HOST_WORKSPACE",
     CONTAINER_WORKSPACE if IN_CONTAINER else str(_PROJECT_ROOT),
 )
-# In production the supervisor source is baked into the image (COPY src /opt/sandbox-src).
-# Bind-mounting the host source tree on top is a dev-only convenience; it must be
-# explicitly opted-in via SANDBOX_DEV_BIND=1 so production containers run baked code.
+# In production the supervisor source is baked into the image
+# (COPY supervisor /opt/sandbox-src). Bind-mounting the host source tree on top is
+# a dev-only convenience; it must be explicitly opted-in via SANDBOX_DEV_BIND=1 so
+# production containers run baked code.
 DEV_BIND = os.getenv("SANDBOX_DEV_BIND", "").strip().lower() in {"1", "true", "yes"}
 SUPERVISOR_SRC_HOST = os.getenv(
     "SANDBOX_SUPERVISOR_SRC_HOST",
-    str(_PROJECT_ROOT / "src") if DEV_BIND else "",
+    str(_PROJECT_ROOT / "supervisor") if DEV_BIND else "",
 ).strip()
 
 

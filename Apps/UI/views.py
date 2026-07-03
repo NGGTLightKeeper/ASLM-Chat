@@ -3157,12 +3157,13 @@ def _build_manual_compression_event(
                 break
 
     summary_entries = _build_context_compression_source_entries(history_records)
-    if compression.enabled and not overflow_entries and summary_entries:
-        overflow_entries = list(summary_entries)
-    if force and not overflow_entries:
-        overflow_entries = list(summary_entries)
-    if force and not summary_entries:
+    # This event always compresses summary_entries (the span up to the previous
+    # summary boundary); without them there is nothing to compress and emitting
+    # an event would replace history with an empty summary.
+    if not summary_entries:
         return None
+    if not overflow_entries and (compression.enabled or force):
+        overflow_entries = list(summary_entries)
     should_compress = bool(overflow_entries) and (compression.enabled or force)
     if not should_compress:
         return None
@@ -3398,7 +3399,15 @@ def _generate_history_summary_with_model(
             parts.append(text_part)
         elif isinstance(chunk, str):
             parts.append(chunk)
-    return _strip_llm_control_tokens("".join(parts)).strip()
+    summary = _strip_llm_control_tokens("".join(parts)).strip()
+    if not summary:
+        logger.warning(
+            "History summary model returned empty output (engine=%s model=%s); "
+            "compression will fall back to raw context harvest",
+            engine,
+            model_name,
+        )
+    return summary
 
 
 # Build LLM message history

@@ -21,17 +21,13 @@ from sandbox.presenters import (
 )
 from sandbox.session_state import ExplorationState
 from sandbox.workspace import (
-    delete,
     describe,
     find,
     grep,
     ls,
-    mkdir,
-    move,
     normalize_model_relative_path,
     read,
     resolve_model_path,
-    write,
 )
 
 logger = logging.getLogger(__name__)
@@ -382,7 +378,7 @@ def dispatch(
         else:
             return None
 
-    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+    except (FileNotFoundError, NotADirectoryError, ValueError):
         # Path resolution / not-found errors → fall through so _try_supervise
         # can apply _is_path_resolution_error and fall back to real bash.
         raise

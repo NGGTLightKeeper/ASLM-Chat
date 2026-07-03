@@ -269,3 +269,6 @@ Docs/ASLM/go.work
 Docs/ASLM/go.work.sum
 !Docs/ASLM/go.mod
 !Docs/ASLM/go.sum
+
+# Context compression dev-script reports
+Tools/context_compression/tests/out/

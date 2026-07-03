@@ -12,7 +12,6 @@ from typing import Any, Callable
 
 from sandbox.cleanup import sandbox_tool_activity
 from sandbox.config import (
-    DEFAULT_TASK_DIR,
     DEFAULT_TIMEOUT,
     MAX_CAT_FILE_BYTES,
     MAX_CAT_LINE_THRESHOLD,
