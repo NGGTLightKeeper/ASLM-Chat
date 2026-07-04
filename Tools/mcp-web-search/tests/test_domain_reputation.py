@@ -147,15 +147,17 @@ def test_consensus_outvotes_reputation_penalty():
     snapshot = ReputationSnapshot(penalties={"ex.com": 0.25}, proven=frozenset())
     session = TriageSession("python asyncio tutorial", reputation=snapshot)
     assert _ingest(session, "https://ex.com/a").action == TriageAction.QUEUE
-    upgraded = session.ingest_vote(provider_family="yandex", url="https://ex.com/a")
+    # A premier-class family's vote outweighs the old grudge (a floored family like
+    # yandex deliberately would not — votes are worth their family's judgement).
+    upgraded = session.ingest_vote(provider_family="duckduckgo", url="https://ex.com/a")
     assert upgraded is not None and upgraded.action == TriageAction.PARSE
 
 
 def test_unproven_tld_single_family_needs_stricter_bar():
     # Same SERP evidence: the .com parses, the unknown .dev waits in the queue…
     session = TriageSession("python asyncio tutorial")
-    com = _ingest(session, "https://ex.com/a", rank=6)
-    dev = _ingest(session, "https://myengineeringpath.dev/a", rank=6)
+    com = _ingest(session, "https://ex.com/a", rank=3)
+    dev = _ingest(session, "https://myengineeringpath.dev/a", rank=3)
     assert com.action == TriageAction.PARSE
     assert _PARSE_THRESHOLD <= dev.score < _PARSE_THRESHOLD + _UNPROVEN_PARSE_MARGIN
     assert dev.action == TriageAction.QUEUE
@@ -165,8 +167,8 @@ def test_unproven_tld_single_family_needs_stricter_bar():
 
 
 def test_proven_history_exempts_unproven_tld():
-    # rank=6 lands between the normal and strict bars, so the exemption is what decides.
+    # rank=3 lands between the normal and strict bars, so the exemption is what decides.
     snapshot = ReputationSnapshot(penalties={}, proven=frozenset({"myengineeringpath.dev"}))
     session = TriageSession("python asyncio tutorial", reputation=snapshot)
-    decision = _ingest(session, "https://myengineeringpath.dev/a", rank=6)
+    decision = _ingest(session, "https://myengineeringpath.dev/a", rank=3)
     assert decision.action == TriageAction.PARSE

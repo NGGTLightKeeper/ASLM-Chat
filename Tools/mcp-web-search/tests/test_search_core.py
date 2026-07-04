@@ -14,12 +14,14 @@ from core.search.health import (
     EngineHealthTracker,
 )
 from core.search.quality import (
+    extract_date,
     hub_penalty,
     infer_query_language,
     is_skip_title,
     lexical_score,
+    markdown_meta_date,
+    page_date_score,
     query_years,
-    year_match_score,
 )
 from core.search.triage import TriageAction, TriageSession
 from core.search.web_search import (
@@ -62,11 +64,78 @@ def test_skip_title_patterns():
 
 
 def test_year_policy_soft_only():
+    # Year alignment now keys off a REAL extracted date, never a bare year token.
     years = query_years("best gpu 2024")
     assert years == ["2024"]
-    assert year_match_score("review of 2024 cards", years) == 1.0
-    assert year_match_score("review from 2021", years) == -0.3
-    assert year_match_score("no dates here", years) == 0.0  # no signal ≠ penalty
+    assert page_date_score(extract_date("Mar 12, 2024 — benchmark roundup"), years) == 1.0
+    assert page_date_score(extract_date("15.06.2021 — обзор видеокарт"), years) == -0.3
+    assert page_date_score(None, years) == 0.0  # no signal ≠ penalty
+
+
+def test_extract_date_requires_a_real_date_not_a_year_token():
+    # The SEO-farm move — a bare year in the title — must NOT read as a date.
+    assert extract_date("GPT 5 Mini API Pricing 2026 - Costs, Performance & Providers") is None
+    assert extract_date("Jul 3, 2026 — OpenAI updated its API pricing.") == (2026, 7, 3)
+    assert extract_date("3 июл. 2026 г. — обновлены тарифы API.") == (2026, 7, 3)
+    assert extract_date("03.07.2026 · новости") == (2026, 7, 3)
+    assert extract_date("2026-07-03 release notes") == (2026, 7, 3)
+    assert extract_date("July 2026 changelog") == (2026, 7, 1)
+    import datetime as dt
+    assert extract_date("2 days ago — thread", now=dt.date(2026, 7, 4)) == (2026, 7, 2)
+    assert extract_date("5 часов назад — новость", now=dt.date(2026, 7, 4)) == (2026, 7, 4)
+
+
+def test_extract_date_multilingual():
+    import datetime as dt
+    # Textual dates with localized month names (day required outside en/ru).
+    assert extract_date("3. Juli 2026 — Pressemitteilung") == (2026, 7, 3)
+    assert extract_date("3 de julio de 2026 — anuncio oficial") == (2026, 7, 3)
+    assert extract_date("5 października 2026 — aktualizacja") == (2026, 10, 5)
+    assert extract_date("3 липня 2026 — новини") == (2026, 7, 3)
+    assert extract_date("14 Şubat 2026 tarihinde yayınlandı") == (2026, 2, 14)
+    assert extract_date("3 ottobre 2026 — comunicato") == (2026, 10, 3)
+    # CJK numeric forms need no month names at all.
+    assert extract_date("2026年7月3日に公開") == (2026, 7, 3)
+    assert extract_date("2026년 7월 3일 발표") == (2026, 7, 3)
+    assert extract_date("03/07/2026 mise à jour") == (2026, 7, 3)
+    # Relative: prefix (de/fr/es) and CJK forms.
+    assert extract_date("vor 3 Tagen aktualisiert", now=dt.date(2026, 7, 4)) == (2026, 7, 1)
+    assert extract_date("il y a 2 jours — actu", now=dt.date(2026, 7, 4)) == (2026, 7, 2)
+    assert extract_date("hace 2 días — noticia", now=dt.date(2026, 7, 4)) == (2026, 7, 2)
+    assert extract_date("3天前更新", now=dt.date(2026, 7, 4)) == (2026, 7, 1)
+    assert extract_date("2일 전 게시", now=dt.date(2026, 7, 4)) == (2026, 7, 2)
+    # Anti-gaming: prefix+tail words and product names never read as dates.
+    assert extract_date("Marketing 2026 trends report") is None
+    assert extract_date("iPhone 17 Pro 2026 review roundup") is None
+    assert extract_date("Top 10 LED 2026 TVs compared") is None
+    # es "ago" (August) must not hijack English "years ago" next to a year.
+    d = extract_date("updated 3 years ago. 2026 predictions", now=dt.date(2026, 7, 4))
+    assert d is not None and d[0] == 2023
+    assert extract_date("лучшие инструменты 2026") is None
+
+
+def test_page_date_freshness_decays_without_query_years():
+    import datetime as dt
+    now = dt.date(2026, 7, 4)
+    fresh = page_date_score((2026, 7, 1), [], now=now)
+    old = page_date_score((2024, 7, 1), [], now=now)
+    assert fresh > 0.9
+    assert 0.0 < old < 0.2
+    assert page_date_score(None, [], now=now) == 0.0
+
+
+def test_markdown_meta_date_reads_normalized_head():
+    import datetime as dt
+    now = dt.date(2026, 7, 5)
+    md = "**Title:** Docs\n**Site:** openai.com\n**Date:** 2026-06-30\n\n---\n\nBody text."
+    assert markdown_meta_date(md, now=now) == (2026, 6, 30)
+    assert markdown_meta_date("no meta head here", now=now) is None
+    # Templates that render the CURRENT date (fossil, dashboards) must not read as
+    # eternally fresh; future dates are junk.
+    today = "**Title:** X\n**Site:** sqlite.org\n**Date:** 2026-07-05\n\n---\n\nBody."
+    future = "**Title:** X\n**Site:** ex.com\n**Date:** 2027-01-01\n\n---\n\nBody."
+    assert markdown_meta_date(today, now=now) is None
+    assert markdown_meta_date(future, now=now) is None
 
 
 def test_infer_query_language_scripts():
@@ -97,25 +166,38 @@ def test_triage_skip_title_is_skipped():
     assert decision.action == TriageAction.SKIP
 
 
-def test_triage_consensus_upgrades_queued_source():
+def test_triage_revisit_takes_best_positional_view_and_upgrades():
     session = TriageSession("python asyncio tutorial")
     # Weak engine, deep rank → lands in queue.
-    decision = _ingest(session, engine="yep", family="yep", rank=9,
-                       snippet="asyncio tutorial")
+    decision = _ingest(session, engine="yep", family="yep", rank=9)
     assert decision.action == TriageAction.QUEUE
-    # Same family again — not new evidence.
-    assert session.ingest_vote(provider_family="yep", url="https://ex.com/a") is None
-    # Two independent families vote → upgrade to PARSE.
-    first = session.ingest_vote(provider_family="yandex", url="https://ex.com/a")
-    second = session.ingest_vote(provider_family="google", url="https://ex.com/a")
-    upgraded = first or second
+    # The same page then surfaces at Google rank 1: the base must be re-priced to the
+    # strongest single-engine view (not stay at the yep-rank-9 view) and the second
+    # family's vote lands on top → PARSE upgrade.
+    upgraded = session.ingest_revisit(
+        engine="google", provider_family="google", rank=1,
+        url="https://ex.com/a", title="Python asyncio tutorial",
+        snippet="A long, detailed walkthrough of asyncio coroutines and tasks in Python.",
+    )
     assert upgraded is not None and upgraded.upgraded
     assert upgraded.action == TriageAction.PARSE
 
 
+def test_triage_vote_weight_follows_family_class():
+    def bump_from(family: str) -> float:
+        session = TriageSession("python asyncio tutorial")
+        _ingest(session, engine="yep", family="yep", rank=9)
+        before = session.score_of("https://ex.com/a")
+        session.ingest_vote(provider_family=family, url="https://ex.com/a")
+        return session.score_of("https://ex.com/a") - before
+
+    # A Google vote must be worth more than a Yandex vote (deliberately floored engine).
+    assert bump_from("google") > bump_from("yandex") > 0.0
+
+
 def test_triage_google_startpage_one_family_vote():
     session = TriageSession("python asyncio tutorial")
-    decision = _ingest(session, engine="yep", family="yep", rank=9, snippet="asyncio tutorial")
+    decision = _ingest(session, engine="yep", family="yep", rank=9)
     assert decision.action == TriageAction.QUEUE
     score_before = session.score_of("https://ex.com/a")
     session.ingest_vote(provider_family="google", url="https://ex.com/a")

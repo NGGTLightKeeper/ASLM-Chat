@@ -40,7 +40,7 @@ from ..engines import (
 )
 from core.cache.source_cache import canonicalize_url
 from .health import EngineHealthTracker, get_health_tracker
-from .quality import infer_query_language
+from .quality import infer_query_language, markdown_meta_date
 from .serp_api import SerpApi, _get_transport
 from .triage import TriageAction, TriageSession
 
@@ -564,9 +564,9 @@ class WebSearchService:
             if hosted is not None:
                 event_stream = _merge_streams(event_stream, hosted)
 
-        # Apply a consensus vote from another provider family to an already-seen source.
-        def apply_vote(url: str, family: str) -> None:
-            decision = triage.ingest_vote(provider_family=family, url=url)
+        # Fold a triage re-score of an already-seen source (a consensus vote, or a full
+        # revisit that may also improve the positional view) back into its live state.
+        def apply_rescore(url: str, family: str, decision) -> None:
             source = sources.get(url)
             if source is not None and family not in source.families:
                 source.families.append(family)
@@ -581,6 +581,9 @@ class WebSearchService:
                     queue.remove(url)
                 spawn_parse(url)
 
+        def apply_vote(url: str, family: str) -> None:
+            apply_rescore(url, family, triage.ingest_vote(provider_family=family, url=url))
+
         try:
             async with asyncio.timeout(profile.deadline):
                 async for event in event_stream:
@@ -592,9 +595,21 @@ class WebSearchService:
                         # merges into one source and casts a vote instead of a duplicate.
                         url = canonicalize_url(raw_url)
                         # The same URL arriving from another stream/provider is a
-                        # consensus vote, not a fresh source — never overwrite.
+                        # consensus vote plus a chance at a better positional view
+                        # (rank/snippet from this engine), never an overwrite.
                         if url in sources:
-                            apply_vote(url, event["provider_family"])
+                            apply_rescore(
+                                url,
+                                event["provider_family"],
+                                triage.ingest_revisit(
+                                    engine=event["engine"],
+                                    provider_family=event["provider_family"],
+                                    rank=event["rank"],
+                                    url=url,
+                                    title=event["serp"]["title"],
+                                    snippet=event["serp"]["snippet"],
+                                ),
+                            )
                             continue
                         decision = triage.ingest_source(
                             engine=event["engine"],
@@ -657,6 +672,15 @@ class WebSearchService:
                 task.cancel()
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
+
+        # A parsed page's declared date beats the snippet estimate: swap it into the
+        # triage score before the final sort, so freshness ranks on what the page
+        # actually says about itself, not on what the engine guessed.
+        for url, source in sources.items():
+            if source.parsed_ok and source.parsed_markdown:
+                if page_date := markdown_meta_date(source.parsed_markdown):
+                    triage.apply_page_date(url, page_date)
+                    source.score = triage.score_of(url)
 
         ranked = _dedupe_near_duplicates(
             sorted(sources.values(), key=lambda s: s.score, reverse=True)

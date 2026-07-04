@@ -24,28 +24,45 @@ from core.extract.scoring import query_terms
 
 from .quality import (
     emd_penalty,
-    has_date_signal,
+    extract_date,
     hub_penalty,
     insecure_scheme_penalty,
     is_established_tld,
     is_skip_title,
     lexical_score,
+    page_date_score,
     query_years,
     seo_slug_penalty,
     suspicious_url_penalty,
-    year_match_score,
 )
+
+# Signal weights. Position dominates BY POLICY: the engines already solved authority
+# ranking, and our job is triage + junk suppression, not re-ranking their SERPs. The
+# previous balance (lexical 0.45 vs position 0.30) let title-stuffed SEO farms — which
+# by construction max out term coverage — outscore rank-1 primary sources; lexical is
+# now a tie-breaker, never the driver. The date weight pays for a REAL extracted date
+# (see quality.extract_date), not year tokens in the title.
+# 0.15 for lexical is sweep-validated (2026-07, offline sweeps + live holdout A/B over
+# captured SERPs): 0.20 still left an SEO farm at top-1 on one case, 0.15 cleared all,
+# while 0.10 started demoting legitimately relevant non-official pages.
+_W_POSITION = 0.50
+_W_LEXICAL = 0.15
+_W_SNIPPET_LEN = 0.05
+_W_DATE = 0.10
 
 # Engine classes drive how much a SERP position is worth:
 # premier indexes earn a strong positional prior, recall helpers a weak one.
+# Yandex is deliberately floored: its organic ranking has proven unreliable across the
+# board, so its placement carries less prior than any recall helper — its finds must
+# earn their parse slot through other families' consensus or leftover budget.
 _ENGINE_POSITION_WEIGHT = {
     "google": 1.00,
     "startpage": 1.00,  # same family, same prior
-    "yandex": 0.85,
     "duckduckgo": 0.85,
     "brave": 0.70,
     "qwant": 0.60,
     "yep": 0.50,
+    "yandex": 0.35,
 }
 _DEFAULT_POSITION_WEIGHT = 0.60
 
@@ -53,9 +70,23 @@ _DEFAULT_POSITION_WEIGHT = 0.60
 _POSITION_DEPTH = 10
 
 # Consensus: votes from distinct provider families. Primary trust signal — it
-# replaces the legacy curated trust registry (deleted by design).
+# replaces the legacy curated trust registry (deleted by design). A vote is worth
+# what its family's judgement is worth (same rationale as the position prior — and
+# the same Yandex floor); the strongest family present is treated as the baseline
+# view and the REST vote, so the bonus does not depend on arrival order.
 _CONSENSUS_STEP = 0.18
 _CONSENSUS_CAP = 0.36
+_FAMILY_VOTE_WEIGHT = {
+    "google": 1.00,
+    "duckduckgo": 0.85,
+    "brave": 0.80,
+    "tavily": 0.80,
+    "firecrawl": 0.80,
+    "qwant": 0.60,
+    "yep": 0.50,
+    "yandex": 0.35,
+}
+_DEFAULT_VOTE_WEIGHT = 0.70
 
 # Decision thresholds on the [0,1] soft score.
 _SKIP_THRESHOLD = 0.10
@@ -97,6 +128,9 @@ class _SourceState:
     # Unproven-TLD domain without earned history: stricter parse bar while it has
     # only a single provider family behind it.
     unproven: bool = False
+    # The date component's value currently folded into base_score, kept so a better
+    # date source (the parsed page's own published_time) can swap it out later.
+    date_value: float = 0.0
 
 
 # Incremental triage over the live source stream.
@@ -111,6 +145,8 @@ class TriageSession:
         self._proven = reputation.proven if reputation else frozenset()
 
     # Score one source from its SERP fields alone (no consensus component).
+    # Returns (score, date_value) — the date component is tracked separately so the
+    # parsed page's own published_time can replace the snippet estimate post-parse.
     def _soft_score(
         self,
         *,
@@ -119,22 +155,22 @@ class TriageSession:
         title: str,
         snippet: str,
         url: str,
-    ) -> float:
+    ) -> tuple[float, float]:
         position = max(0.0, 1.0 - (max(1, rank) - 1) / _POSITION_DEPTH)
         position_weight = _ENGINE_POSITION_WEIGHT.get(engine, _DEFAULT_POSITION_WEIGHT)
         lex = lexical_score(self.query, title, snippet, url)
         hub = hub_penalty(url, title, snippet)
         snip_len = min(1.0, len(snippet) / 300)
+        # Only the snippet may carry the date: engines prefix real publication dates
+        # there, while a title year is a stuffing tell, not evidence.
+        date_value = page_date_score(extract_date(snippet), self._years)
 
         score = (
-            0.30 * position * position_weight
-            + 0.45 * lex
-            + 0.10 * snip_len
+            _W_POSITION * position * position_weight
+            + _W_LEXICAL * lex
+            + _W_SNIPPET_LEN * snip_len
+            + _W_DATE * date_value
         )
-        if has_date_signal(snippet):
-            score += 0.05
-        if self._years:
-            score += 0.10 * year_match_score(f"{title} {snippet}", self._years)
         if len(snippet) < _SHORT_SNIPPET_CHARS:
             score -= _SHORT_SNIPPET_PENALTY
         score -= 0.25 * hub
@@ -150,7 +186,7 @@ class TriageSession:
         # is capped at write-out; consensus votes can still outvote it — two independent
         # families saying "this page answers the query" beat an old grudge.
         score -= self._penalties.get(domain_of(url), 0.0)
-        return max(0.0, min(1.0, score))
+        return max(0.0, min(1.0, score)), date_value
 
     # Map a score to an action. strict raises the parse bar for unproven single-family
     # domains; SKIP is never affected — reputation nudges, it does not execute.
@@ -166,11 +202,18 @@ class TriageSession:
     def _strict_bar(state: _SourceState) -> bool:
         return state.unproven and len(state.families) <= 1
 
-    # Total score = base soft score + consensus bonus for extra families.
+    # Total score = base soft score + consensus bonus for extra families. The bonus is
+    # order-independent: the strongest family present is the baseline, the rest vote at
+    # their class weight.
     @staticmethod
     def _total(state: _SourceState) -> float:
-        extra_votes = max(0, len(state.families) - 1)
-        bonus = min(_CONSENSUS_CAP, extra_votes * _CONSENSUS_STEP)
+        if len(state.families) <= 1:
+            return min(1.0, state.base_score)
+        weights = sorted(
+            (_FAMILY_VOTE_WEIGHT.get(f, _DEFAULT_VOTE_WEIGHT) for f in state.families),
+            reverse=True,
+        )
+        bonus = min(_CONSENSUS_CAP, _CONSENSUS_STEP * sum(weights[1:]))
         return min(1.0, state.base_score + bonus)
 
     # Ingest a new source event; returns the decision for this URL.
@@ -188,11 +231,14 @@ class TriageSession:
             self._states[url] = _SourceState(base_score=0.0, action=TriageAction.SKIP)
             return TriageDecision(action=TriageAction.SKIP, score=0.0, url=url)
 
-        base = self._soft_score(engine=engine, rank=rank, title=title, snippet=snippet, url=url)
+        base, date_value = self._soft_score(
+            engine=engine, rank=rank, title=title, snippet=snippet, url=url
+        )
         domain = domain_of(url)
         state = _SourceState(
             base_score=base,
             unproven=not is_established_tld(domain) and domain not in self._proven,
+            date_value=date_value,
         )
         state.families.add(provider_family)
         score = self._total(state)
@@ -200,14 +246,41 @@ class TriageSession:
         self._states[url] = state
         return TriageDecision(action=state.action, score=score, url=url)
 
+    # Re-ingest an already-seen URL surfacing as a full SERP entry from another stream.
+    # Two effects: the base becomes the BEST single-engine view of the page (a rank-1
+    # Google listing must not stay priced at the yep-rank-9 view that arrived first —
+    # essential now that position dominates the score), and the new family votes.
+    def ingest_revisit(
+        self,
+        *,
+        engine: str,
+        provider_family: str,
+        rank: int,
+        url: str,
+        title: str,
+        snippet: str,
+    ) -> TriageDecision | None:
+        state = self._states.get(url)
+        if state is None or state.action == TriageAction.SKIP:
+            return None
+        base, date_value = self._soft_score(
+            engine=engine, rank=rank, title=title, snippet=snippet, url=url
+        )
+        if base > state.base_score:
+            state.base_score = base
+            state.date_value = date_value
+        return self._rescore(state, url, provider_family)
+
     # Ingest a consensus vote for an already-seen URL. Returns an upgraded decision
     # when the extra vote lifts the source over a threshold, else None.
     def ingest_vote(self, *, provider_family: str, url: str) -> TriageDecision | None:
         state = self._states.get(url)
         if state is None or state.action == TriageAction.SKIP:
             return None
-        if provider_family in state.families:
-            return None  # same family re-listing the URL is not new evidence
+        return self._rescore(state, url, provider_family)
+
+    # Add a family (when new), re-derive the action, and surface a queue→parse upgrade.
+    def _rescore(self, state: _SourceState, url: str, provider_family: str) -> TriageDecision | None:
         state.families.add(provider_family)
         score = self._total(state)
         new_action = self._action_for(score, strict=self._strict_bar(state))
@@ -216,6 +289,19 @@ class TriageSession:
         if upgraded:
             return TriageDecision(action=new_action, score=score, url=url, upgraded=True)
         return None
+
+    # Swap the snippet-estimated date component for the parsed page's own date (its
+    # declared published_time is strictly better evidence). Called after a successful
+    # parse, before the final ranking sort; a page with no declared date is left as-is.
+    def apply_page_date(self, url: str, date: tuple[int, int, int]) -> None:
+        state = self._states.get(url)
+        if state is None:
+            return
+        new_value = page_date_score(date, self._years)
+        state.base_score = max(
+            0.0, min(1.0, state.base_score + _W_DATE * (new_value - state.date_value))
+        )
+        state.date_value = new_value
 
     # Current score for a URL (queue ordering for leftover slots).
     def score_of(self, url: str) -> float:
