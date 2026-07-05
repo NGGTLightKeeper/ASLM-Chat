@@ -124,10 +124,11 @@ _TITLE = "Python asyncio tutorial"
 _SNIPPET = "A long, detailed walkthrough of asyncio coroutines and tasks in Python."
 
 
-def _ingest(session: TriageSession, url: str, *, engine="google", family="google", rank=1):
+def _ingest(session: TriageSession, url: str, *, engine="google", family="google", rank=1,
+            snippet=_SNIPPET):
     return session.ingest_source(
         engine=engine, provider_family=family, rank=rank, url=url,
-        title=_TITLE, snippet=_SNIPPET,
+        title=_TITLE, snippet=snippet,
     )
 
 
@@ -155,9 +156,11 @@ def test_consensus_outvotes_reputation_penalty():
 
 def test_unproven_tld_single_family_needs_stricter_bar():
     # Same SERP evidence: the .com parses, the unknown .dev waits in the queue…
+    # (rank=2 with a short snippet lands the score inside the [normal, strict) window)
+    short = "A detailed walkthrough of asyncio tasks."
     session = TriageSession("python asyncio tutorial")
-    com = _ingest(session, "https://ex.com/a", rank=3)
-    dev = _ingest(session, "https://myengineeringpath.dev/a", rank=3)
+    com = _ingest(session, "https://ex.com/a", rank=2, snippet=short)
+    dev = _ingest(session, "https://myengineeringpath.dev/a", rank=2, snippet=short)
     assert com.action == TriageAction.PARSE
     assert _PARSE_THRESHOLD <= dev.score < _PARSE_THRESHOLD + _UNPROVEN_PARSE_MARGIN
     assert dev.action == TriageAction.QUEUE
@@ -167,8 +170,10 @@ def test_unproven_tld_single_family_needs_stricter_bar():
 
 
 def test_proven_history_exempts_unproven_tld():
-    # rank=3 lands between the normal and strict bars, so the exemption is what decides.
+    # rank=2 + short snippet lands between the normal and strict bars, so the
+    # exemption is what decides.
     snapshot = ReputationSnapshot(penalties={}, proven=frozenset({"myengineeringpath.dev"}))
     session = TriageSession("python asyncio tutorial", reputation=snapshot)
-    decision = _ingest(session, "https://myengineeringpath.dev/a", rank=3)
+    decision = _ingest(session, "https://myengineeringpath.dev/a", rank=2,
+                       snippet="A detailed walkthrough of asyncio tasks.")
     assert decision.action == TriageAction.PARSE

@@ -726,30 +726,47 @@ class WebSearchService:
             for rank, s in enumerate(top, 1)
         ]
 
+        # Vertical merges run AFTER the SERP deadline block above, so without their own
+        # cap they were unbounded — a slow scholarly/shopping API stretched the search
+        # far past its declared budget with no timeout owning it (seen live: high with
+        # academic=true ran minutes while the deadline had long "fired"). Half the
+        # profile deadline is plenty for a supplement and bounds the worst-case total
+        # at ~1.5x the declared deadline. A timed-out vertical is dropped, not fatal —
+        # same soft-failure contract the verticals already had.
+        async def merge_vertical(name: str, coro) -> list[dict[str, Any]]:
+            try:
+                return await asyncio.wait_for(coro, timeout=profile.deadline * 0.5)
+            except (TimeoutError, asyncio.TimeoutError):
+                logger.warning("%s merge timed out after %.1fs for query=%r",
+                               name, profile.deadline * 0.5, query[:120])
+                return []
+
         # Shopping opt-in: merge structured product results (price/seller/rating) in as
         # additional citable sources, continuing the citation-handle sequence. Off by
         # default; failure is soft (web results still stand).
         if shopping:
             source_dicts.extend(
-                await self._shopping_sources(
+                await merge_vertical("shopping", self._shopping_sources(
                     query, profile, language, search_id, start_rank=len(source_dicts) + 1
-                )
+                ))
             )
 
         # Academic opt-in: merge structured scholarly results (paper/authors/DOI/abstract)
         # in as additional citable sources. Off by default; failure is soft.
         if academic:
             source_dicts.extend(
-                await self._academic_sources(
+                await merge_vertical("academic", self._academic_sources(
                     query, profile, search_id, start_rank=len(source_dicts) + 1
-                )
+                ))
             )
 
         # Onion opt-in: surface vetted censorship-resistant onion sources over Tor as
         # additional citable sources. Off by default; failure is soft (web results stand).
         if onion:
             source_dicts.extend(
-                await self._onion_sources(query, profile, search_id, start_rank=len(source_dicts) + 1)
+                await merge_vertical("onion", self._onion_sources(
+                    query, profile, search_id, start_rank=len(source_dicts) + 1
+                ))
             )
 
         model_context = _build_model_context(

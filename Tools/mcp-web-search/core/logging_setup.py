@@ -18,6 +18,11 @@ _SERVICE_LOGS: dict[str, str] = {
     "services.read_page": "read_page.log",
     "trace.read_page": "read_page_trace.log",
     "mcp.server": "mcp_trace.log",
+    # FastMCP stdio connector. Its own file + propagate=False keeps its lines off the
+    # root console handler — a stdio server that logs to stderr can WEDGE if the client
+    # stops draining the pipe mid-generation (the write is synchronous and blocks the
+    # event loop, so even asyncio.timeout can't fire). See adapters.mcp.server hardening.
+    "adapters.mcp.server": "mcp_adapter.log",
     # Warm-browser layer (daemon + client + identity store). The daemon runs as its own
     # windowless process, so file logging is the only way to see its activity.
     "core.fetch.browser": "browser_daemon.log",

@@ -12,41 +12,11 @@ import datetime as _dt
 import re
 from urllib.parse import urlparse
 
-from core.extract.scoring import query_terms
-
-# --- lexical -----------------------------------------------------------------
-
-_WORD_CACHE_MAX = 256
-_pattern_cache: dict[str, re.Pattern[str]] = {}
-
-
-# Compile a word-boundary pattern for a term ("rust" must not match "trust").
-# Terms with non-word edges (e.g. "c++") are already normalized away by
-# query_terms, so plain \b is sufficient here.
-def _term_pattern(term: str) -> re.Pattern[str]:
-    pattern = _pattern_cache.get(term)
-    if pattern is None:
-        if len(_pattern_cache) >= _WORD_CACHE_MAX:
-            _pattern_cache.clear()
-        pattern = re.compile(rf"\b{re.escape(term)}\b", re.IGNORECASE)
-        _pattern_cache[term] = pattern
-    return pattern
-
-
-# BM25-lite relevance in [0,1] over title/snippet/URL path with word-boundary
-# matching. Same shape as core.extract.scoring.lexical_score, minus its substring
-# false-positives ("java" in "javascript").
-def lexical_score(query: str, title: str, snippet: str, url: str) -> float:
-    terms = query_terms(query)
-    if not terms:
-        return 0.0
-    url_path = (urlparse(url).path or "").replace("-", " ").replace("_", " ").replace("/", " ")
-    n = len(terms)
-    title_hits = sum(1 for t in terms if _term_pattern(t).search(title))
-    snippet_hits = sum(1 for t in terms if _term_pattern(t).search(snippet))
-    path_hits = sum(1 for t in terms if _term_pattern(t).search(url_path))
-    return min(1.0, 0.6 * title_hits / n + 0.3 * snippet_hits / n + 0.1 * path_hits / n)
-
+# NOTE: there is deliberately NO lexical term-matching scorer here. The ranking is
+# consensus + position + earned signals only — flat term matching paid SEO titles for
+# filler words and was removed after a measured ablation (2026-07-05) showed removal
+# beat every weighting tried. Chunk selection still matches terms, but that lives in
+# core.extract.scoring and shapes model_context, never source order.
 
 # --- hub / garbage detection ---------------------------------------------------
 

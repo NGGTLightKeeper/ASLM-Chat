@@ -18,7 +18,6 @@ from core.search.quality import (
     hub_penalty,
     infer_query_language,
     is_skip_title,
-    lexical_score,
     markdown_meta_date,
     page_date_score,
     query_years,
@@ -33,24 +32,6 @@ from core.search.web_search import (
 
 
 # --- quality -----------------------------------------------------------------
-
-def test_lexical_word_boundary_no_substring_false_positive():
-    assert lexical_score("rust ownership", "Trust in systems", "", "https://x.com/a") == 0.0
-    assert lexical_score("java tutorial", "JavaScript guide", "", "https://x.com/a") == 0.0
-    assert lexical_score("rust ownership", "Rust ownership explained", "", "https://x.com/a") > 0.5
-
-
-def test_lexical_ignores_search_operators():
-    # Operators (site:/-site:/OR/-term) are directives, not content terms — they must not
-    # dilute the score of a result that perfectly matches the real terms (#6).
-    title = "Rust ownership explained"
-    plain = lexical_score("rust ownership", title, "", "https://x.com/a")
-    with_ops = lexical_score(
-        "rust ownership site:github.com -site:reddit.com OR -unsafe", title, "",
-        "https://x.com/a",
-    )
-    assert with_ops == plain  # operator tokens dropped, score unchanged
-
 
 def test_hub_penalty_flags_category_pages():
     assert hub_penalty("https://site.com/category/news/", "All news", "") >= 0.5
@@ -168,8 +149,8 @@ def test_triage_skip_title_is_skipped():
 
 def test_triage_revisit_takes_best_positional_view_and_upgrades():
     session = TriageSession("python asyncio tutorial")
-    # Weak engine, deep rank → lands in queue.
-    decision = _ingest(session, engine="yep", family="yep", rank=9)
+    # Weak engine, mid rank → lands in queue.
+    decision = _ingest(session, engine="yep", family="yep", rank=5)
     assert decision.action == TriageAction.QUEUE
     # The same page then surfaces at Google rank 1: the base must be re-priced to the
     # strongest single-engine view (not stay at the yep-rank-9 view) and the second
@@ -186,7 +167,7 @@ def test_triage_revisit_takes_best_positional_view_and_upgrades():
 def test_triage_vote_weight_follows_family_class():
     def bump_from(family: str) -> float:
         session = TriageSession("python asyncio tutorial")
-        _ingest(session, engine="yep", family="yep", rank=9)
+        _ingest(session, engine="yep", family="yep", rank=5)
         before = session.score_of("https://ex.com/a")
         session.ingest_vote(provider_family=family, url="https://ex.com/a")
         return session.score_of("https://ex.com/a") - before
@@ -197,7 +178,7 @@ def test_triage_vote_weight_follows_family_class():
 
 def test_triage_google_startpage_one_family_vote():
     session = TriageSession("python asyncio tutorial")
-    decision = _ingest(session, engine="yep", family="yep", rank=9)
+    decision = _ingest(session, engine="yep", family="yep", rank=5)
     assert decision.action == TriageAction.QUEUE
     score_before = session.score_of("https://ex.com/a")
     session.ingest_vote(provider_family="google", url="https://ex.com/a")

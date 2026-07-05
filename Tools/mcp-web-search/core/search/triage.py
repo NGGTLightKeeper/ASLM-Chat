@@ -29,7 +29,6 @@ from .quality import (
     insecure_scheme_penalty,
     is_established_tld,
     is_skip_title,
-    lexical_score,
     page_date_score,
     query_years,
     seo_slug_penalty,
@@ -38,15 +37,19 @@ from .quality import (
 
 # Signal weights. Position dominates BY POLICY: the engines already solved authority
 # ranking, and our job is triage + junk suppression, not re-ranking their SERPs. The
-# previous balance (lexical 0.45 vs position 0.30) let title-stuffed SEO farms — which
-# by construction max out term coverage — outscore rank-1 primary sources; lexical is
-# now a tie-breaker, never the driver. The date weight pays for a REAL extracted date
-# (see quality.extract_date), not year tokens in the title.
-# 0.15 for lexical is sweep-validated (2026-07, offline sweeps + live holdout A/B over
-# captured SERPs): 0.20 still left an SEO farm at top-1 on one case, 0.15 cleared all,
-# while 0.10 started demoting legitimately relevant non-official pages.
-_W_POSITION = 0.50
-_W_LEXICAL = 0.15
+# date weight pays for a REAL extracted date (see quality.extract_date), not year
+# tokens in the title.
+# There is NO lexical term-matching channel — deleted outright, BY MEASUREMENT
+# (ablation 2026-07-05, 9 live-captured cases incl. two real-world failures): removing
+# it beat every weighting tried (expected top1 7/9 vs 6/9 at lex=0.15, mean rank 1.67
+# vs 1.89, no case worse). Flat term matching only ever paid SEO titles for filler
+# words — "GPT-4 Technical Report" outranked the asked-for GPT-4o System Card because
+# it matched "technical report". IDF-weighted and version-token-weighted variants were
+# also measured and did NOT outperform plain removal, so no cleverness was kept.
+# Relevance discrimination is consensus + position + earned signals; the next lever
+# for cases those can't split (premier engines disagreeing at rank 1) is post-parse
+# content rescore, not term matching.
+_W_POSITION = 0.60
 _W_SNIPPET_LEN = 0.05
 _W_DATE = 0.10
 
@@ -158,7 +161,6 @@ class TriageSession:
     ) -> tuple[float, float]:
         position = max(0.0, 1.0 - (max(1, rank) - 1) / _POSITION_DEPTH)
         position_weight = _ENGINE_POSITION_WEIGHT.get(engine, _DEFAULT_POSITION_WEIGHT)
-        lex = lexical_score(self.query, title, snippet, url)
         hub = hub_penalty(url, title, snippet)
         snip_len = min(1.0, len(snippet) / 300)
         # Only the snippet may carry the date: engines prefix real publication dates
@@ -167,7 +169,6 @@ class TriageSession:
 
         score = (
             _W_POSITION * position * position_weight
-            + _W_LEXICAL * lex
             + _W_SNIPPET_LEN * snip_len
             + _W_DATE * date_value
         )
