@@ -51,11 +51,13 @@ def test_tavily_returns_content(monkeypatch):
     assert out[0].snippet == "short"
 
 
-def test_firecrawl_returns_markdown_content(monkeypatch):
+def test_firecrawl_content_mode_returns_markdown(monkeypatch):
     monkeypatch.setattr(hp, "load_api_keys", lambda: _keys(firecrawl_api_key="k"))
+    monkeypatch.setattr(hp, "provider_mode", lambda name: "content")
 
     def handler(req):
         assert req.headers.get("authorization") == "Bearer k"
+        assert b"scrapeOptions" in req.content  # content mode pays for the scrape
         return httpx.Response(200, json={"data": [
             {"url": "https://b.com", "title": "B", "description": "desc",
              "markdown": "# Heading\n\nbody text"},
@@ -68,6 +70,27 @@ def test_firecrawl_returns_markdown_content(monkeypatch):
     out = asyncio.run(go())
     assert out[0].content == "# Heading\n\nbody text"
     assert out[0].provider_family == "firecrawl"
+
+
+def test_firecrawl_default_serp_mode_skips_scrape(monkeypatch):
+    # Default mode is "serp": no scrapeOptions in the request (no credits burned on
+    # scrapes the hosted deadline would then discard) and no stub content for the cache.
+    monkeypatch.setattr(hp, "load_api_keys", lambda: _keys(firecrawl_api_key="k"))
+
+    def handler(req):
+        assert b"scrapeOptions" not in req.content
+        return httpx.Response(200, json={"data": [
+            {"url": "https://b.com", "title": "B", "description": "desc",
+             "markdown": "# should be ignored in serp mode"},
+        ]})
+
+    async def go():
+        async with _client(handler) as c:
+            return await FirecrawlClient().search(c, "q", max_results=5)
+
+    out = asyncio.run(go())
+    assert out[0].content == ""
+    assert out[0].snippet == "desc"
 
 
 def test_serpapi_family_is_google_and_no_content(monkeypatch):

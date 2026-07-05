@@ -116,6 +116,22 @@ class TorSection:
     # removed as more risk than value while the static link-search layer is still unfinished.)
 
 
+# Hosted (paid API) provider modes. Per provider: "content" | "serp" | "off".
+#   content — SERP rows + full page text pre-fed into SourceCache (costs scrape credits)
+#   serp    — SERP rows only: cheap consensus/coverage votes, no content fetch
+#   off     — provider excluded even when its API key is configured
+# Defaults are cost-aware: Firecrawl's content mode scrapes every result with a headless
+# fetch (~9s measured) — slower than the medium-effort hosted deadline, so the credits
+# were spent on results the deadline then discarded. SERP-only keeps its consensus value
+# at near-zero latency; flip to "content" deliberately for high-effort/agent workloads.
+@dataclass
+class HostedApiSection:
+    tavily: str = "content"     # fast even with raw content (~2.4s measured)
+    firecrawl: str = "serp"     # content mode measured at ~9.4s — deadline-hostile
+    brave: str = "serp"         # SERP-native providers: "content" behaves as "serp"
+    serpapi: str = "serp"
+
+
 @dataclass
 class SearchConfig:
     search: SearchSection = field(default_factory=SearchSection)
@@ -124,6 +140,7 @@ class SearchConfig:
     query: QuerySection = field(default_factory=QuerySection)
     browser: BrowserSection = field(default_factory=BrowserSection)
     tor: TorSection = field(default_factory=TorSection)
+    hosted_api: HostedApiSection = field(default_factory=HostedApiSection)
 
 
 _cached_config: SearchConfig | None = None
@@ -176,6 +193,8 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
     q = raw.get("query", {})
     b = raw.get("browser", {})
     t = raw.get("tor", {})
+    h = raw.get("hosted_api", {})
+    _hosted_modes = {"content", "serp", "off"}
 
     config = SearchConfig(
         search=SearchSection(
@@ -233,6 +252,12 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             enabled=bool(t.get("enabled", False)),
             socks_url=str(t.get("socks_url", "")),
             fetch_timeout=float(t.get("fetch_timeout", 60.0)),
+        ),
+        hosted_api=HostedApiSection(
+            tavily=_one_of(h.get("tavily", "content"), _hosted_modes, "content"),
+            firecrawl=_one_of(h.get("firecrawl", "serp"), _hosted_modes, "serp"),
+            brave=_one_of(h.get("brave", "serp"), _hosted_modes, "serp"),
+            serpapi=_one_of(h.get("serpapi", "serp"), _hosted_modes, "serp"),
         ),
     )
 

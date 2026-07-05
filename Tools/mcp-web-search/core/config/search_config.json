@@ -29,5 +29,11 @@
   },
   "tor": {
     "enabled": false
+  },
+  "hosted_api": {
+    "tavily": "content",
+    "firecrawl": "serp",
+    "brave": "serp",
+    "serpapi": "serp"
   }
 }

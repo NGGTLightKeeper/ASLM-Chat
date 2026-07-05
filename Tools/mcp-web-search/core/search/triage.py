@@ -55,10 +55,17 @@ _W_DATE = 0.10
 
 # Engine classes drive how much a SERP position is worth:
 # premier indexes earn a strong positional prior, recall helpers a weak one.
+# Hosted API providers sit ABOVE the google family by design (Dima's call): they are
+# paid, curated, relevance-reranked SERPs immune to our scrape-blocking noise — when
+# the user pays for them, their placement is trusted the most.
 # Yandex is deliberately floored: its organic ranking has proven unreliable across the
 # board, so its placement carries less prior than any recall helper — its finds must
 # earn their parse slot through other families' consensus or leftover budget.
 _ENGINE_POSITION_WEIGHT = {
+    "hosted:tavily": 1.05,
+    "hosted:firecrawl": 1.05,
+    "hosted:brave": 1.05,
+    "hosted:serpapi": 1.05,
     "google": 1.00,
     "startpage": 1.00,  # same family, same prior
     "duckduckgo": 0.85,
@@ -79,13 +86,19 @@ _POSITION_DEPTH = 10
 # view and the REST vote, so the bonus does not depend on arrival order.
 _CONSENSUS_STEP = 0.18
 _CONSENSUS_CAP = 0.36
+# NOTE: vote weight is NOT the position weight. Position weight prices how much we
+# trust a family's ORDERING; vote weight prices how much its listing counts as
+# INDEPENDENT EVIDENCE that the page matters. Hence brave votes above ddg despite the
+# weaker positional prior (own index → more independent evidence; ddg is bing-flavored
+# and correlates with everyone), and firecrawl (google-proxying) votes at google grade
+# while tavily's reranked feed sits just under it. Hand-tuned 2026-07-05.
 _FAMILY_VOTE_WEIGHT = {
+    "tavily": 0.95,
+    "firecrawl": 1.00,
     "google": 1.00,
-    "duckduckgo": 0.85,
-    "brave": 0.80,
-    "tavily": 0.80,
-    "firecrawl": 0.80,
-    "qwant": 0.60,
+    "duckduckgo": 0.80,
+    "brave": 0.85,
+    "qwant": 0.65,
     "yep": 0.50,
     "yandex": 0.35,
 }
