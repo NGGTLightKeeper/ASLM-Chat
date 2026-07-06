@@ -79,13 +79,17 @@ class TavilyClient:
         api_key = load_api_keys().search.hosted_api.tavily_api_key
         if not api_key:
             return []
+        # serp mode: cheap consensus rows only — basic depth, no raw page text, and
+        # nothing fed into SourceCache (a snippet cached as "the page" would poison
+        # read_page with a 200-char stub).
+        content_mode = provider_mode(self.name) == "content"
         payload: dict[str, Any] = {
             "api_key": api_key,
             "query": query,
             "max_results": max_results,
-            "search_depth": _TAVILY_SEARCH_DEPTH,
+            "search_depth": _TAVILY_SEARCH_DEPTH if content_mode else "basic",
             "include_answer": False,
-            "include_raw_content": True,
+            "include_raw_content": content_mode,
         }
         data = await _post_json(client, self.BASE_URL, json=payload, provider=self.name)
         out: list[HostedResult] = []
@@ -93,7 +97,7 @@ class TavilyClient:
             url = item.get("url") or ""
             if not url:
                 continue
-            content = item.get("raw_content") or item.get("content") or ""
+            content = (item.get("raw_content") or item.get("content") or "") if content_mode else ""
             out.append(HostedResult(
                 url=url,
                 title=item.get("title") or "",
@@ -120,11 +124,16 @@ class FirecrawlClient:
         api_key = load_api_keys().search.hosted_api.firecrawl_api_key
         if not api_key:
             return []
+        # serp mode (the default): plain search rows, no per-result headless scrape.
+        # Content mode was measured at ~9.4s — past the medium hosted deadline, so the
+        # scrape credits were being spent on results the deadline then threw away.
+        content_mode = provider_mode(self.name) == "content"
         payload: dict[str, Any] = {
             "query": query,
             "limit": max_results,
-            "scrapeOptions": {"formats": ["markdown"]},
         }
+        if content_mode:
+            payload["scrapeOptions"] = {"formats": ["markdown"]}
         data = await _post_json(
             client, self.BASE_URL, json=payload, provider=self.name,
             headers={"Authorization": f"Bearer {api_key}"},
@@ -142,7 +151,7 @@ class FirecrawlClient:
                 provider=self.name,
                 provider_family=self.provider_family,
                 published_date=str(meta.get("publishedTime") or ""),
-                content=item.get("markdown") or "",
+                content=(item.get("markdown") or "") if content_mode else "",
             ))
         return out
 
@@ -227,10 +236,20 @@ _PROVIDERS: tuple[HostedProvider, ...] = (
 )
 
 
-# Providers that have an API key configured right now.
+# Configured mode for a provider: "content" | "serp" | "off" (see HostedApiSection).
+def provider_mode(name: str) -> str:
+    from core.config import load_search_config
+
+    return str(getattr(load_search_config().hosted_api, name, "serp"))
+
+
+# Providers that have an API key configured right now and are not switched off.
 def available_providers() -> list[HostedProvider]:
     keys = load_api_keys().search.hosted_api
-    return [p for p in _PROVIDERS if (p.key(keys) or "").strip()]
+    return [
+        p for p in _PROVIDERS
+        if (p.key(keys) or "").strip() and provider_mode(p.name) != "off"
+    ]
 
 
 # POST JSON helper; never raises (returns None on any failure).

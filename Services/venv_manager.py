@@ -269,6 +269,7 @@ def _pip_install(
         "pip",
         "install",
         "--no-warn-script-location",
+        "--prefer-binary",
     ]
     if no_deps:
         command.append("--no-deps")

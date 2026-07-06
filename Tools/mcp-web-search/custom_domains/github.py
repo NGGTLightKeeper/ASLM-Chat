@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import time
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -50,7 +51,7 @@ def _github_headers() -> dict[str, str]:
 
 
 # Synchronous GET returning parsed JSON from the GitHub API.
-def _api_get_json(url: str, timeout: int) -> Any:
+def _api_get_json(url: str, timeout: float) -> Any:
     import httpx
 
     resp = httpx.get(url, headers=_github_headers(), timeout=timeout, follow_redirects=False)
@@ -157,38 +158,55 @@ def _format_tree(items: list[Any], owner: str, repo: str, ref: str, path: str, u
 
 
 # Fetch repo, issue, blob, or tree via GitHub API and return formatted markdown.
+#
+# The whole body below runs SYNCHRONOUSLY inside one shared-io_pool worker thread (see
+# run_in_executor at the bottom). That matters: `_parse_one` wraps this call in
+# `asyncio.timeout(profile.parse_timeout)`, but asyncio cancellation only stops AWAITING
+# the executor future — it cannot stop a thread already blocked inside httpx.get(). A repo
+# page can need up to 3 SEQUENTIAL API calls (repo, then readme/blob/tree); giving each one
+# a fresh `timeout` would let the whole handler run to 2-3x the caller's real budget while
+# every asyncio-side deadline above it already gave up — a hung/slow GitHub response then
+# occupies the worker thread indefinitely, which is exactly the executor-exhaustion failure
+# mode (see TODO.md's known-bugs backlog). A single monotonic deadline, decremented across
+# calls, is the only thing that actually bounds this to the caller's declared budget.
 async def fetch_github_page(url: str, timeout: float = 20.0) -> str:
     parsed = _repo_parts(url)
     if not parsed:
         return f"Error: Unsupported GitHub URL: {url}"
     owner, repo, rest = parsed
-    timeout_i = max(10, int(timeout))
     owner_q = quote(owner, safe="")
     repo_q = quote(repo, safe="")
+    deadline = time.monotonic() + max(3.0, float(timeout))
+
+    # Seconds left before the caller's own budget is spent; never negative/zero so a
+    # trailing httpx call still gets a moment to fail cleanly instead of timeout=0 raising.
+    def _remaining() -> float:
+        return max(0.5, deadline - time.monotonic())
 
     # Blocking API work run on the shared I/O thread pool.
     def _sync() -> str:
         api_root = f"https://api.github.com/repos/{owner_q}/{repo_q}"
         try:
-            repo_data = _api_get_json(api_root, timeout_i)
+            repo_data = _api_get_json(api_root, _remaining())
         except Exception as exc:
             return f"Error: GitHub API repo fetch failed for {url}: {exc}"
 
         if not rest:
             readme = ""
-            try:
-                readme_data = _api_get_json(f"{api_root}/readme", timeout_i)
-                readme = _decode_content_payload(readme_data)
-            except Exception:
-                readme = ""
+            if time.monotonic() < deadline:
+                try:
+                    readme_data = _api_get_json(f"{api_root}/readme", _remaining())
+                    readme = _decode_content_payload(readme_data)
+                except Exception:
+                    readme = ""
             return _format_repo(repo_data, readme, url)
 
         kind = rest[0]
         if kind in {"issues", "pull"} and len(rest) >= 2 and rest[1].isdigit():
             number = rest[1]
             try:
-                issue = _api_get_json(f"{api_root}/issues/{number}", timeout_i)
-                comments = _api_get_json(f"{api_root}/issues/{number}/comments?per_page=20", timeout_i)
+                issue = _api_get_json(f"{api_root}/issues/{number}", _remaining())
+                comments = _api_get_json(f"{api_root}/issues/{number}/comments?per_page=20", _remaining())
             except Exception as exc:
                 return f"Error: GitHub API issue fetch failed for {url}: {exc}"
             return _format_issue(issue, comments if isinstance(comments, list) else [], url)
@@ -208,15 +226,17 @@ async def fetch_github_page(url: str, timeout: float = 20.0) -> str:
                     resp = httpx.get(
                         raw_url,
                         headers={"User-Agent": _UA},
-                        timeout=timeout_i,
+                        timeout=_remaining(),
                         follow_redirects=True,
                     )
                     resp.raise_for_status()
                     text = resp.text
                     return f"# {owner}/{repo}: {path}\nURL: {url}\nRef: {ref}\n\n{text}".strip()
                 except Exception:
+                    if time.monotonic() >= deadline:
+                        return f"Error: GitHub raw fetch timed out for {url}"
                     try:
-                        data = _api_get_json(f"{api_root}/contents/{path_q}?ref={quote(ref, safe='')}", timeout_i)
+                        data = _api_get_json(f"{api_root}/contents/{path_q}?ref={quote(ref, safe='')}", _remaining())
                         text = _decode_content_payload(data)
                         if text:
                             return f"# {owner}/{repo}: {path}\nURL: {url}\nRef: {ref}\n\n{text}".strip()
@@ -225,7 +245,7 @@ async def fetch_github_page(url: str, timeout: float = 20.0) -> str:
             else:
                 try:
                     contents_url = f"{api_root}/contents/{path_q}?ref={quote(ref, safe='')}" if path else f"{api_root}/contents?ref={quote(ref, safe='')}"
-                    data = _api_get_json(contents_url, timeout_i)
+                    data = _api_get_json(contents_url, _remaining())
                     if isinstance(data, list):
                         return _format_tree(data, owner, repo, ref, path, url)
                 except Exception as exc:

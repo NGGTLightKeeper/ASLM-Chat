@@ -40,7 +40,7 @@ from ..engines import (
 )
 from core.cache.source_cache import canonicalize_url
 from .health import EngineHealthTracker, get_health_tracker
-from .quality import infer_query_language
+from .quality import infer_query_language, markdown_meta_date
 from .serp_api import SerpApi, _get_transport
 from .triage import TriageAction, TriageSession
 
@@ -511,7 +511,17 @@ class WebSearchService:
             engines=tuple(engines),
         )
 
-        triage = TriageSession(query)
+        # Learned domain trust: one snapshot per search (single DB read), so triage
+        # itself stays I/O-free. A missing/failed store degrades to a neutral session.
+        try:
+            from core.profiles import get_runtime_profiles
+
+            reputation = get_runtime_profiles().reputation_snapshot()
+        except Exception as exc:  # noqa: BLE001 — reputation must never sink a search
+            logger.debug("reputation snapshot unavailable: %s", exc)
+            reputation = None
+
+        triage = TriageSession(query, reputation=reputation)
         sources: dict[str, _Source] = {}
         queue: list[str] = []  # urls in QUEUE state
         engine_payloads: dict[str, dict[str, Any]] = {}
@@ -554,9 +564,9 @@ class WebSearchService:
             if hosted is not None:
                 event_stream = _merge_streams(event_stream, hosted)
 
-        # Apply a consensus vote from another provider family to an already-seen source.
-        def apply_vote(url: str, family: str) -> None:
-            decision = triage.ingest_vote(provider_family=family, url=url)
+        # Fold a triage re-score of an already-seen source (a consensus vote, or a full
+        # revisit that may also improve the positional view) back into its live state.
+        def apply_rescore(url: str, family: str, decision) -> None:
             source = sources.get(url)
             if source is not None and family not in source.families:
                 source.families.append(family)
@@ -571,6 +581,9 @@ class WebSearchService:
                     queue.remove(url)
                 spawn_parse(url)
 
+        def apply_vote(url: str, family: str) -> None:
+            apply_rescore(url, family, triage.ingest_vote(provider_family=family, url=url))
+
         try:
             async with asyncio.timeout(profile.deadline):
                 async for event in event_stream:
@@ -582,9 +595,21 @@ class WebSearchService:
                         # merges into one source and casts a vote instead of a duplicate.
                         url = canonicalize_url(raw_url)
                         # The same URL arriving from another stream/provider is a
-                        # consensus vote, not a fresh source — never overwrite.
+                        # consensus vote plus a chance at a better positional view
+                        # (rank/snippet from this engine), never an overwrite.
                         if url in sources:
-                            apply_vote(url, event["provider_family"])
+                            apply_rescore(
+                                url,
+                                event["provider_family"],
+                                triage.ingest_revisit(
+                                    engine=event["engine"],
+                                    provider_family=event["provider_family"],
+                                    rank=event["rank"],
+                                    url=url,
+                                    title=event["serp"]["title"],
+                                    snippet=event["serp"]["snippet"],
+                                ),
+                            )
                             continue
                         decision = triage.ingest_source(
                             engine=event["engine"],
@@ -648,6 +673,15 @@ class WebSearchService:
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
 
+        # A parsed page's declared date beats the snippet estimate: swap it into the
+        # triage score before the final sort, so freshness ranks on what the page
+        # actually says about itself, not on what the engine guessed.
+        for url, source in sources.items():
+            if source.parsed_ok and source.parsed_markdown:
+                if page_date := markdown_meta_date(source.parsed_markdown):
+                    triage.apply_page_date(url, page_date)
+                    source.score = triage.score_of(url)
+
         ranked = _dedupe_near_duplicates(
             sorted(sources.values(), key=lambda s: s.score, reverse=True)
         )
@@ -692,30 +726,47 @@ class WebSearchService:
             for rank, s in enumerate(top, 1)
         ]
 
+        # Vertical merges run AFTER the SERP deadline block above, so without their own
+        # cap they were unbounded — a slow scholarly/shopping API stretched the search
+        # far past its declared budget with no timeout owning it (seen live: high with
+        # academic=true ran minutes while the deadline had long "fired"). Half the
+        # profile deadline is plenty for a supplement and bounds the worst-case total
+        # at ~1.5x the declared deadline. A timed-out vertical is dropped, not fatal —
+        # same soft-failure contract the verticals already had.
+        async def merge_vertical(name: str, coro) -> list[dict[str, Any]]:
+            try:
+                return await asyncio.wait_for(coro, timeout=profile.deadline * 0.5)
+            except (TimeoutError, asyncio.TimeoutError):
+                logger.warning("%s merge timed out after %.1fs for query=%r",
+                               name, profile.deadline * 0.5, query[:120])
+                return []
+
         # Shopping opt-in: merge structured product results (price/seller/rating) in as
         # additional citable sources, continuing the citation-handle sequence. Off by
         # default; failure is soft (web results still stand).
         if shopping:
             source_dicts.extend(
-                await self._shopping_sources(
+                await merge_vertical("shopping", self._shopping_sources(
                     query, profile, language, search_id, start_rank=len(source_dicts) + 1
-                )
+                ))
             )
 
         # Academic opt-in: merge structured scholarly results (paper/authors/DOI/abstract)
         # in as additional citable sources. Off by default; failure is soft.
         if academic:
             source_dicts.extend(
-                await self._academic_sources(
+                await merge_vertical("academic", self._academic_sources(
                     query, profile, search_id, start_rank=len(source_dicts) + 1
-                )
+                ))
             )
 
         # Onion opt-in: surface vetted censorship-resistant onion sources over Tor as
         # additional citable sources. Off by default; failure is soft (web results stand).
         if onion:
             source_dicts.extend(
-                await self._onion_sources(query, profile, search_id, start_rank=len(source_dicts) + 1)
+                await merge_vertical("onion", self._onion_sources(
+                    query, profile, search_id, start_rank=len(source_dicts) + 1
+                ))
             )
 
         model_context = _build_model_context(

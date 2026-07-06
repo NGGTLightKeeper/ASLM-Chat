@@ -22,6 +22,7 @@ from custom_domains.amazon import HANDLER as _amazon
 from custom_domains.dns_shop import HANDLER as _dns_shop
 from custom_domains.ebay import HANDLER as _ebay
 from custom_domains.github import HANDLER as _github
+from custom_domains.hackernews import HANDLER as _hackernews
 from custom_domains.reddit import HANDLER as _reddit
 from custom_domains.stackexchange import HANDLER as _stackexchange
 from custom_domains.x import HANDLER as _x
@@ -32,6 +33,7 @@ HANDLERS: list[DomainHandler] = [
     _reddit,
     _x,
     _stackexchange,
+    _hackernews,
     _youtube,
     _amazon,
     _ebay,

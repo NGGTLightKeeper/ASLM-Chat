@@ -9,7 +9,7 @@ import threading
 import time
 
 from .known_domains import domain_of, get_override
-from .models import FetchAttempt, ProfileHint
+from .models import FetchAttempt, ProfileHint, ReputationSnapshot
 
 logger = logging.getLogger("core.profiles.runtime")
 
@@ -25,8 +25,35 @@ _AVOID_FETCH_MS = 12_000.0
 # A method that succeeds less than half the time is treated as unreliable.
 _MIN_SUCCESS_RATE = 0.5
 
+# --- domain reputation (negative trust, earned at runtime) ----------------------
+# Anti-recursion contract (do not weaken):
+#   * the table stores RAW event counters only — the penalty is computed at read time
+#     and never stored, so a penalty can never compound on top of itself;
+#   * events come exclusively from real fetch/parse outcomes — a source triage skipped
+#     writes nothing, so a penalised domain is never re-penalised for being skipped;
+#   * counters from a stale epoch (silent for _TTL_SECONDS) are reset on the next
+#     write, and the snapshot ignores domains without FRESH failures — a domain nobody
+#     re-observes simply ages out of the penalty set instead of rotting in it.
+_REP_TLS_MIN_FAILS = 2        # one broken handshake may be a transient network blip
+_REP_TLS_STEP = 0.10          # per TLS failure beyond the first
+_REP_TLS_CAP = 0.20
+_REP_EMPTY_MIN_ATTEMPTS = 3   # the empty-parse ratio needs a sample to mean anything
+_REP_EMPTY_CAP = 0.15
+_REP_TOTAL_CAP = 0.25         # hard ceiling for the combined penalty magnitude
+_REP_MIN_PENALTY = 0.02       # below this the domain is left out of the snapshot
+_REP_PROVEN_PARSES = 2        # recent successful parses that mark a domain proven
+
 _SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
+
+CREATE TABLE IF NOT EXISTS domain_reputation (
+    domain      TEXT PRIMARY KEY,
+    tls_fail    INTEGER NOT NULL DEFAULT 0,
+    parse_ok    INTEGER NOT NULL DEFAULT 0,
+    parse_empty INTEGER NOT NULL DEFAULT 0,
+    last_fail   REAL NOT NULL DEFAULT 0,
+    last_ok     REAL NOT NULL DEFAULT 0
+);
 
 CREATE TABLE IF NOT EXISTS domain_methods (
     domain            TEXT NOT NULL,
@@ -126,6 +153,104 @@ class RuntimeDomainProfiles:
                     )
         except sqlite3.DatabaseError as exc:
             logger.warning("runtime_profiles: record failed domain=%r: %s", domain, exc)
+
+    # Record one trust observation for a domain. Raw counters only — the caller reports
+    # what physically happened (TLS handshake failed / page parsed to content / parsed to
+    # nothing); any penalty in force at evaluation time is deliberately not consulted.
+    def record_reputation(
+        self,
+        url_or_domain: str,
+        *,
+        tls_failed: bool = False,
+        parse_ok: bool = False,
+        parse_empty: bool = False,
+    ) -> None:
+        domain = domain_of(url_or_domain)
+        if not domain or not (tls_failed or parse_ok or parse_empty):
+            return
+        now = time.time()
+        stale_before = now - _TTL_SECONDS
+        failed = tls_failed or parse_empty
+        try:
+            with self._write_lock:
+                conn = self._get_conn()
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO domain_reputation (
+                            domain, tls_fail, parse_ok, parse_empty, last_fail, last_ok
+                        )
+                        VALUES (:domain, :tls, :ok, :empty, :last_fail, :last_ok)
+                        ON CONFLICT(domain) DO UPDATE SET
+                            tls_fail    = CASE WHEN MAX(last_fail, last_ok) < :stale
+                                               THEN 0 ELSE tls_fail END + excluded.tls_fail,
+                            parse_ok    = CASE WHEN MAX(last_fail, last_ok) < :stale
+                                               THEN 0 ELSE parse_ok END + excluded.parse_ok,
+                            parse_empty = CASE WHEN MAX(last_fail, last_ok) < :stale
+                                               THEN 0 ELSE parse_empty END + excluded.parse_empty,
+                            last_fail   = MAX(last_fail, excluded.last_fail),
+                            last_ok     = MAX(last_ok, excluded.last_ok)
+                        """,
+                        {
+                            "domain": domain,
+                            "tls": 1 if tls_failed else 0,
+                            "ok": 1 if parse_ok else 0,
+                            "empty": 1 if parse_empty else 0,
+                            "last_fail": now if failed else 0.0,
+                            "last_ok": now if parse_ok else 0.0,
+                            "stale": stale_before,
+                        },
+                    )
+        except sqlite3.DatabaseError as exc:
+            logger.warning("runtime_profiles: reputation record failed domain=%r: %s", domain, exc)
+
+    # Compute the point-in-time trust snapshot for one search session. Penalties are
+    # derived from raw counters on every call (never persisted), decayed by failure age,
+    # and capped at _REP_TOTAL_CAP so a bad domain is nudged down, not executed.
+    def reputation_snapshot(self) -> ReputationSnapshot:
+        now = time.time()
+        cutoff = now - _TTL_SECONDS
+        try:
+            rows = self._get_conn().execute(
+                "SELECT * FROM domain_reputation WHERE MAX(last_fail, last_ok) > ?",
+                (cutoff,),
+            ).fetchall()
+        except sqlite3.DatabaseError as exc:
+            logger.warning("runtime_profiles: reputation snapshot failed: %s", exc)
+            return ReputationSnapshot(penalties={}, proven=frozenset())
+
+        penalties: dict[str, float] = {}
+        proven: set[str] = set()
+        for row in rows:
+            domain = str(row["domain"])
+            tls_fail = int(row["tls_fail"] or 0)
+            parse_ok = int(row["parse_ok"] or 0)
+            parse_empty = int(row["parse_empty"] or 0)
+            last_fail = float(row["last_fail"] or 0.0)
+            last_ok = float(row["last_ok"] or 0.0)
+
+            if parse_ok >= _REP_PROVEN_PARSES and last_ok > cutoff:
+                proven.add(domain)
+            if last_fail <= cutoff:
+                continue  # no fresh failures → no penalty, whatever the history says
+
+            penalty = 0.0
+            # TLS: needs repeat failures AND no success since — a host that recovered
+            # (or renewed its certificate) sheds the penalty on the first good fetch.
+            if tls_fail >= _REP_TLS_MIN_FAILS and last_fail > last_ok:
+                penalty += min(_REP_TLS_CAP, _REP_TLS_STEP * (tls_fail - 1))
+            # Systematic empty parses: ratio-based so successes offset failures; scales
+            # 0 → cap as the empty share climbs from ½ to 1.
+            attempts = parse_ok + parse_empty
+            if attempts >= _REP_EMPTY_MIN_ATTEMPTS:
+                empty_share = parse_empty / attempts
+                if empty_share > 0.5:
+                    penalty += _REP_EMPTY_CAP * (empty_share - 0.5) * 2.0
+            decay = 0.5 ** ((now - last_fail) / _HALFLIFE_SECONDS)
+            penalty = min(_REP_TOTAL_CAP, penalty) * decay
+            if penalty >= _REP_MIN_PENALTY:
+                penalties[domain] = round(penalty, 4)
+        return ReputationSnapshot(penalties=penalties, proven=frozenset(proven))
 
     # Recommend the best learned fetch method for a domain, or None when unknown.
     # A hard override from known_domains wins while runtime confidence is still low.
