@@ -5340,6 +5340,32 @@ export function createMessagesUi(context, dependencies) {
 
 
   // Message row rendering.
+  // Render user text with slash commands shown as styled inline chips.
+  // Mirrors the backend command grammar: /search, /tool <id>, /skill <name>.
+  function buildUserTextSpan(text) {
+    const $span = $('<span>');
+    const value = String(text ?? '');
+    const commandPattern = /(^|\s)\/(search(?![\w-])|(?:tool|skill)[ \t]+[\w][\w.-]*)/gi;
+    let cursor = 0;
+    let match;
+    while ((match = commandPattern.exec(value)) !== null) {
+      const commandStart = match.index + match[1].length;
+      if (commandStart > cursor) {
+        $span.append(document.createTextNode(value.slice(cursor, commandStart)));
+      }
+      const command = match[2];
+      const label = /^search$/i.test(command)
+        ? t('composer.searchCommandLabel', null, 'Web Search')
+        : command.replace(/^(?:tool|skill)[ \t]+/i, '');
+      $span.append($('<span class="msg-inline-command">').text(label));
+      cursor = commandStart + 1 + command.length;
+    }
+    if (cursor < value.length) {
+      $span.append(document.createTextNode(value.slice(cursor)));
+    }
+    return $span;
+  }
+
   // Build one user or assistant message row.
   function buildMessageRow(role, text, attachments, timestamp, options) {
     const viewOptions = options || {};
@@ -5404,11 +5430,11 @@ export function createMessagesUi(context, dependencies) {
         const body = String(text ?? '');
         if (body.length > 0) {
           $bubble.append(
-            $('<div class="msg-bubble-caption"></div>').append($('<span>').text(text))
+            $('<div class="msg-bubble-caption"></div>').append(buildUserTextSpan(text))
           );
         }
       } else {
-        $bubble.append($('<span>').text(text));
+        $bubble.append(buildUserTextSpan(text));
       }
       $bubble.data('attachments', attachments || []);
     } else if (normalizedActivitySegments.length > 0) {

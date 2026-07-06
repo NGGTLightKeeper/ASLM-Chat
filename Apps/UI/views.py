@@ -21,7 +21,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
 
 from django.http import FileResponse, HttpResponse, JsonResponse, StreamingHttpResponse
@@ -518,6 +518,7 @@ def _compose_system_prompt(
     *,
     consume_skill_notifications: bool = True,
     include_skills_baseline: bool = False,
+    forced_skill_names: list[str] | None = None,
 ) -> str:
     parts: list[str] = []
 
@@ -540,11 +541,73 @@ def _compose_system_prompt(
     if skill_delta:
         parts.append(skill_delta)
 
+    forced_skill_section = _build_forced_skill_prompt_section(forced_skill_names or [])
+    if forced_skill_section:
+        parts.append(forced_skill_section)
+
     user_prompt = str(user_system_prompt or "").strip()
     if user_prompt:
         parts.append(f"Additional instructions:\n{user_prompt}")
 
     return "\n\n".join(parts)
+
+
+# Build a deterministic system prompt block for skills explicitly selected by a slash command.
+def _build_forced_skill_prompt_section(skill_names: list[str]) -> str:
+    unique_names: list[str] = []
+    seen: set[str] = set()
+    for raw_name in skill_names or []:
+        name = str(raw_name or "").strip()
+        key = name.casefold()
+        if name and key not in seen:
+            unique_names.append(name)
+            seen.add(key)
+    if not unique_names:
+        return ""
+
+    try:
+        payload = skills_config.list_skills()
+    except Exception:
+        logger.exception("Failed to list skills for forced injection")
+        return ""
+
+    root = Path(str(payload.get("root") or skills_config.SKILLS_DIR))
+    folder_by_key = {
+        str(folder.get("name") or "").casefold(): folder
+        for folder in payload.get("folders", [])
+        if isinstance(folder, dict)
+    }
+    sections = [
+        "Forced skill instructions:",
+        "",
+        "The user explicitly selected these skill(s) for this request. Follow the included instructions.",
+    ]
+
+    for name in unique_names:
+        folder = folder_by_key.get(name.casefold())
+        if not folder:
+            sections.append(f"\nSkill '{name}' was requested but is not installed.")
+            continue
+        if folder.get("enabled") is False:
+            sections.append(f"\nSkill '{name}' was requested but is disabled.")
+            continue
+
+        folder_name = str(folder.get("name") or name)
+        primary = str(folder.get("primary_file") or "SKILL.md").strip() or "SKILL.md"
+        skill_root = (root / folder_name).resolve()
+        skill_path = (skill_root / primary).resolve()
+        try:
+            skill_path.relative_to(skill_root)
+            content = skill_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            logger.exception("Failed to inject forced skill %s", name)
+            content = ""
+        if content:
+            sections.append(f"\n--- Skill: {folder_name}/{primary} ---\n{content}")
+
+    return "\n".join(sections).strip()
+
+
 TEXT_ATTACHMENT_FILENAMES = {
     ".bash_profile",
     ".bashrc",
@@ -611,6 +674,119 @@ LLM_CONTROL_TOKEN_PATTERNS = (
     re.compile(r"<\|im_(?:start|end)\|>", flags=re.IGNORECASE),
     re.compile(r"<\|(?:assistant|user|system|endoftext)\|>", flags=re.IGNORECASE),
 )
+SLASH_SEARCH_COMMAND_PATTERN = re.compile(r"(?:(?<=\s)|^)/search(?![\w-])", flags=re.IGNORECASE)
+SLASH_TOOL_COMMAND_PATTERN = re.compile(r"(?:(?<=\s)|^)/tool[ \t]+(?P<id>[\w][\w.-]*)", flags=re.IGNORECASE)
+SLASH_SKILL_COMMAND_PATTERN = re.compile(r"(?:(?<=\s)|^)/skill[ \t]+(?P<name>[\w][\w.-]*)", flags=re.IGNORECASE)
+SLASH_SEARCH_DIRECTIVE = (
+    "The user selected web search for this request. Use the web_search tool first, "
+    "then answer from the result. If forced tool choice is unavailable, still call web_search when possible."
+)
+SLASH_INLINE_MARKER_DIRECTIVE = (
+    "The user's message contains inline '[user command: ...]' markers. Each marker shows the exact "
+    "place where the user invoked a command, so satisfy it for that part of the message."
+)
+
+
+@dataclass(frozen=True)
+class ChatCommandPlan:
+    message: str
+    directives: list[str]
+    tool_server_ids: list[str]
+    required_tool_server_ids: list[str]
+    forced_tool_name: str
+    forced_skill_names: list[str]
+
+
+# Parse slash commands anywhere in the message into deterministic generation controls.
+# Each recognized command is rewritten in place into an inline marker so the model sees
+# the request at the exact position where the user typed it.
+def _parse_chat_command_plan(
+    message: str,
+    existing_tool_ids: list[str] | None = None,
+    *,
+    is_known_tool_id: Callable[[str], bool] | None = None,
+) -> ChatCommandPlan:
+    text = str(message or "")
+    tool_ids = [str(item).strip() for item in existing_tool_ids or [] if str(item).strip()]
+    directives: list[str] = []
+    required_tool_ids: list[str] = []
+    forced_tool_name = ""
+    forced_skill_names: list[str] = []
+    known_tool_id_cache: dict[str, bool] = {}
+
+    def _tool_id_known(tool_id: str) -> bool:
+        if is_known_tool_id is None:
+            return True
+        if tool_id not in known_tool_id_cache:
+            try:
+                known_tool_id_cache[tool_id] = bool(is_known_tool_id(tool_id))
+            except Exception:
+                logger.exception("Failed to validate slash-command tool id %s", tool_id)
+                known_tool_id_cache[tool_id] = False
+        return known_tool_id_cache[tool_id]
+
+    def _require_tool(tool_id: str) -> None:
+        if tool_id not in tool_ids:
+            tool_ids.append(tool_id)
+        if tool_id not in required_tool_ids:
+            required_tool_ids.append(tool_id)
+
+    def _replace_search(match: re.Match) -> str:
+        nonlocal forced_tool_name
+        # Unknown on this engine: leave the literal text so the request still succeeds.
+        if not _tool_id_known("web_search"):
+            return match.group(0)
+        _require_tool("web_search")
+        forced_tool_name = "web_search"
+        if SLASH_SEARCH_DIRECTIVE not in directives:
+            directives.append(SLASH_SEARCH_DIRECTIVE)
+        return "[user command: run a web search (web_search tool) for this part of the request]"
+
+    def _replace_tool(match: re.Match) -> str:
+        tool_id = str(match.group("id") or "").strip()
+        if not tool_id or not _tool_id_known(tool_id):
+            return match.group(0)
+        _require_tool(tool_id)
+        directive = (
+            f"The user selected tool server '{tool_id}' for this request. "
+            "Actually call its tools where they apply instead of answering from memory."
+        )
+        if directive not in directives:
+            directives.append(directive)
+        return f"[user command: use the '{tool_id}' tools for this part of the request]"
+
+    def _replace_skill(match: re.Match) -> str:
+        skill_name = str(match.group("name") or "").strip()
+        if not skill_name:
+            return match.group(0)
+        if skill_name not in forced_skill_names:
+            forced_skill_names.append(skill_name)
+        return f"[user command: apply the skill '{skill_name}' to this request]"
+
+    text = SLASH_TOOL_COMMAND_PATTERN.sub(_replace_tool, text)
+    text = SLASH_SKILL_COMMAND_PATTERN.sub(_replace_skill, text)
+    text = SLASH_SEARCH_COMMAND_PATTERN.sub(_replace_search, text)
+
+    if directives or forced_skill_names:
+        directives.insert(0, SLASH_INLINE_MARKER_DIRECTIVE)
+
+    return ChatCommandPlan(
+        message=text.strip(),
+        directives=directives,
+        tool_server_ids=tool_ids,
+        required_tool_server_ids=required_tool_ids,
+        forced_tool_name=forced_tool_name,
+        forced_skill_names=forced_skill_names,
+    )
+
+
+# Append one-shot slash-command directives to a system prompt.
+def _append_command_directives_to_system_prompt(system_prompt: str, directives: list[str]) -> str:
+    cleaned_directives = [str(item or "").strip() for item in directives or [] if str(item or "").strip()]
+    if not cleaned_directives:
+        return system_prompt
+    directive_block = "Request command directives:\n" + "\n".join(f"- {item}" for item in cleaned_directives)
+    return "\n\n".join(part for part in [str(system_prompt or "").strip(), directive_block] if part).strip()
 
 _metadata_cache_lock = threading.RLock()
 _model_info_cache: dict[tuple[str, str, str, str], tuple[float, dict[str, Any]]] = {}
@@ -4140,7 +4316,8 @@ def _build_generate_kwargs(
         }
         if isinstance(external_tool_context, dict):
             for key, value in external_tool_context.items():
-                if value not in {None, ""}:
+                # Tuple membership compares with ==, so unhashable values (lists) are fine.
+                if value not in (None, ""):
                     tool_context[key] = value
         generate_kwargs["tool_context"] = tool_context
 
@@ -4654,6 +4831,34 @@ def generate_api(request):
         if isinstance(prepared, JsonResponse):
             return prepared
 
+        source_tool_ids = {
+            str(raw_id or "").strip()
+            for source in prepared.tool_sources or []
+            for raw_id in source.get("tool_server_ids") or []
+        }
+        command_plan = _parse_chat_command_plan(
+            user_message,
+            [server["id"] for server in prepared.selected_tool_servers],
+            is_known_tool_id=lambda tool_id: (
+                tool_id in source_tool_ids
+                or tool_registry.get_server(tool_id, engine=prepared.engine, model_name=prepared.model_name) is not None
+            ),
+        )
+        selected_tool_servers = prepared.selected_tool_servers
+        if command_plan.tool_server_ids != [server["id"] for server in prepared.selected_tool_servers]:
+            selected_tool_servers = _resolve_tool_servers(
+                prepared.engine,
+                prepared.model_name,
+                command_plan.tool_server_ids,
+                tool_sources=prepared.tool_sources,
+            )
+            _validate_tool_server_support(
+                prepared.engine,
+                prepared.model_name,
+                [server["id"] for server in selected_tool_servers],
+                payload=prepared.model_info_payload,
+            )
+
         session_id = str(data.get("session_id") or "").strip() or str(uuid.uuid4())
         consume_skill_notifications = data.get("consume_skill_notifications", True)
         if not isinstance(consume_skill_notifications, bool):
@@ -4662,9 +4867,11 @@ def generate_api(request):
             data.get("system_prompt", ""),
             consume_skill_notifications=consume_skill_notifications,
             include_skills_baseline=_resolve_include_skills_baseline(data, history_messages),
+            forced_skill_names=command_plan.forced_skill_names,
         )
+        system_prompt = _append_command_directives_to_system_prompt(system_prompt, command_plan.directives)
         current_entry = _build_current_user_llm_entry(
-            user_message,
+            command_plan.message,
             prepared.attachments,
             prepared.upload_manifests,
         )
@@ -4676,9 +4883,14 @@ def generate_api(request):
             prepared.model_name,
             prepared.model_info_payload,
             session_id=session_id,
-            sandbox_enabled=prepared.sandbox_enabled,
+            sandbox_enabled=_selected_tools_include_sandbox(selected_tool_servers),
         )
         model_info_payload = prepared.model_info_payload
+        external_tool_context = dict(prepared.external_tool_context)
+        if command_plan.forced_tool_name:
+            external_tool_context["forced_tool_name"] = command_plan.forced_tool_name
+        if command_plan.required_tool_server_ids:
+            external_tool_context["required_tool_server_ids"] = command_plan.required_tool_server_ids
         generate_kwargs = _build_generate_kwargs(
             prepared.engine,
             prepared.model_name,
@@ -4687,12 +4899,12 @@ def generate_api(request):
             prepared.think_level_value,
             prepared.clean_options,
             session_id,
-            prepared.selected_tool_servers,
+            selected_tool_servers,
             think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
             think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
             sync_operation_defaults=prepared.sync_operation_defaults,
             tool_sources=prepared.tool_sources,
-            external_tool_context=prepared.external_tool_context,
+            external_tool_context=external_tool_context,
         )
 
         generation_id = uuid.uuid4().hex
@@ -4743,6 +4955,17 @@ def chat_api(request):
         if isinstance(raw_tool_ids, str):
             raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
         tool_server_ids = [str(s).strip() for s in raw_tool_ids if str(s).strip()]
+        command_plan = _parse_chat_command_plan(
+            user_message,
+            tool_server_ids,
+            is_known_tool_id=lambda tool_id: (
+                tool_registry.get_server(tool_id, engine=engine, model_name=model_name) is not None
+            ),
+        )
+        # The stored message keeps the raw slash commands the user typed; the model
+        # receives the command_plan.message variant with inline command markers.
+        user_message = str(user_message or "")
+        llm_user_message = command_plan.message
 
         if not model_name:
             return JsonResponse({"error": "Missing model parameter"}, status=400)
@@ -4750,7 +4973,11 @@ def chat_api(request):
             return JsonResponse({"error": "Missing message or attachments"}, status=400)
 
         _remember_active_model(engine, model_name)
-        selected_tool_servers = _resolve_tool_servers(engine, model_name, tool_server_ids)
+        selected_tool_servers = _resolve_tool_servers(
+            engine,
+            model_name,
+            command_plan.tool_server_ids,
+        )
         model_info_payload = _build_model_info_payload(engine, model_name, allow_fallback=True)
         _sync_runtime_model_metadata(
             engine,
@@ -4797,7 +5024,9 @@ def chat_api(request):
         system_prompt = _compose_system_prompt(
             data.get("system_prompt", ""),
             include_skills_baseline=_chat_is_first_user_turn(chat),
+            forced_skill_names=command_plan.forced_skill_names,
         )
+        system_prompt = _append_command_directives_to_system_prompt(system_prompt, command_plan.directives)
 
         import json as _json
         active_slug = _json.dumps([s["id"] for s in selected_tool_servers], ensure_ascii=False)
@@ -4828,7 +5057,7 @@ def chat_api(request):
         llm_messages, compression_event = _build_chat_history(
             chat,
             user_message_record,
-            user_message,
+            llm_user_message,
             system_prompt,
             engine,
             model_name,
@@ -4844,6 +5073,11 @@ def chat_api(request):
         )
 
         # Build the final generation payload for the adapter layer.
+        external_tool_context = {}
+        if command_plan.forced_tool_name:
+            external_tool_context["forced_tool_name"] = command_plan.forced_tool_name
+        if command_plan.required_tool_server_ids:
+            external_tool_context["required_tool_server_ids"] = command_plan.required_tool_server_ids
         generate_kwargs = _build_generate_kwargs(
             engine,
             model_name,
@@ -4861,6 +5095,7 @@ def chat_api(request):
                 think_value,
                 think_level_value,
             ),
+            external_tool_context=external_tool_context,
         )
 
         generation_id = uuid.uuid4().hex

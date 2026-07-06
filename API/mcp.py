@@ -578,6 +578,70 @@ def forced_final_prompt_after_tool_blocks() -> str:
     return TOOL_BLOCK_FINAL_PROMPT
 
 
+# How many times the tool loop re-prompts a model that ignored user-required tools.
+MAX_REQUIRED_TOOL_NUDGES = 2
+
+
+# Resolve the owning tool-server id for one public tool alias.
+def tool_server_id_for_alias(tool_lookup: dict[str, dict[str, Any]] | None, alias: str) -> str:
+    """Return the owning tool-server id for one public tool alias."""
+
+    entry = (tool_lookup or {}).get(str(alias or "")) or {}
+    server = entry.get("server") if isinstance(entry, dict) else None
+    if not isinstance(server, dict):
+        return ""
+    return str(server.get("id") or "")
+
+
+# Read user-required tool servers from the generation context.
+def required_tool_server_ids_from_context(
+    tool_context: dict[str, Any] | None,
+    tool_lookup: dict[str, dict[str, Any]] | None,
+) -> list[str]:
+    """Return required tool-server ids that actually expose tools in this loop."""
+
+    raw_ids = tool_context.get("required_tool_server_ids") if isinstance(tool_context, dict) else None
+    if isinstance(raw_ids, str):
+        raw_ids = [raw_ids]
+    if not isinstance(raw_ids, list):
+        return []
+
+    available_server_ids = {
+        tool_server_id_for_alias(tool_lookup, alias)
+        for alias in (tool_lookup or {})
+    }
+    required: list[str] = []
+    for raw_id in raw_ids:
+        server_id = str(raw_id or "").strip()
+        if server_id and server_id not in required and server_id in available_server_ids:
+            required.append(server_id)
+    return required
+
+
+# Build the corrective prompt for a model that answered without the required tools.
+def required_tools_reminder_prompt(
+    unmet_server_ids: list[str],
+    tool_lookup: dict[str, dict[str, Any]] | None,
+) -> str:
+    """Return the supervisor prompt sent when required tools were not called."""
+
+    aliases_by_server: dict[str, list[str]] = {}
+    for alias in tool_lookup or {}:
+        server_id = tool_server_id_for_alias(tool_lookup, alias)
+        if server_id in unmet_server_ids:
+            aliases_by_server.setdefault(server_id, []).append(alias)
+
+    listing = "; ".join(
+        f"'{server_id}' (tools: {', '.join(sorted(aliases_by_server.get(server_id, []))) or server_id})"
+        for server_id in unmet_server_ids
+    )
+    return (
+        "[command supervisor] The user explicitly requested these tool servers for this message, "
+        f"but you have not called any of their tools yet: {listing}. Do not answer from memory. "
+        "Call the most relevant of these tools now, then continue your answer using the results."
+    )
+
+
 # Return a stable representation for duplicate tool-call detection.
 def _canonical_tool_arguments(value: Any) -> Any:
     """Return a stable representation for duplicate tool-call detection."""

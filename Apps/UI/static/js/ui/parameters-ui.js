@@ -1496,6 +1496,7 @@ export function createParametersUi(context) {
     handleRangeInput,
     normalizeOptionalNumericInput,
     renderModelParameters,
+    reloadAvailableToolServers,
     renderThinkLevelControls,
     renderToolControls,
     resetDynamicPanels,
