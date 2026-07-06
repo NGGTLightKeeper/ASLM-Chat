@@ -1702,8 +1702,8 @@
   width: 15px;
   height: 15px;
   background: currentColor;
-  -webkit-mask: url("../../img/ui/refresh.svg") center / contain no-repeat;
-  mask: url("../../img/ui/refresh.svg") center / contain no-repeat;
+  -webkit-mask: url("../../img/ui/state-refresh.svg") center / contain no-repeat;
+  mask: url("../../img/ui/state-refresh.svg") center / contain no-repeat;
 }
 
 .composer-tool-refresh.is-loading {
