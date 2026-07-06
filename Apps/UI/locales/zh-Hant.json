@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "此工具需要 Docker。",
+    "refreshDocker": "重新檢查 Docker"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM - 進階系統語言模型"

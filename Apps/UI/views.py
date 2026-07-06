@@ -852,13 +852,28 @@ def _list_tool_servers_cached(engine: str, model_name: str | None = None) -> lis
         if cached is not None:
             cached_at, servers = cached
             if now - cached_at <= MODEL_LIST_CACHE_TTL_SECONDS:
-                return _clone_metadata_payload(servers)
+                return _stamp_docker_availability(_clone_metadata_payload(servers))
             _tool_server_cache.pop(cache_key, None)
 
     servers = tool_registry.list_servers(engine, model_name)
     with _metadata_cache_lock:
         _tool_server_cache[cache_key] = (time.monotonic(), _clone_metadata_payload(servers))
-    return _clone_metadata_payload(servers)
+    return _stamp_docker_availability(_clone_metadata_payload(servers))
+
+
+# Stamp live Docker availability onto servers that require it (e.g. the sandbox).
+# Kept outside the metadata cache so the flag always reflects the latest probe.
+def _stamp_docker_availability(servers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not any(server.get("requires_docker") for server in servers):
+        return servers
+
+    from Services import docker_status
+
+    available = docker_status.is_available()
+    for server in servers:
+        if server.get("requires_docker"):
+            server["docker_available"] = available
+    return servers
 
 
 # Emit one concise runtime event for the ASLM console.
@@ -5779,6 +5794,19 @@ def get_tools_api(request):
     model_name = str(request.GET.get("model", "") or "").strip() or None
     servers = _list_tool_servers_cached(engine, model_name)
     return JsonResponse({"tool_servers": servers, "servers": servers, "tools": servers})
+
+
+# Re-probe Docker availability on demand and return the fresh result.
+def docker_status_refresh_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    from Services import docker_status
+
+    status = docker_status.refresh()
+    return JsonResponse(
+        {"available": status["available"], "checked_at": status["checked_at"]}
+    )
 
 
 # Resolve and proxy a stable favicon for a search result domain.

@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "Voor deze tool is Docker vereist.",
+    "refreshDocker": "Docker opnieuw controleren"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM - Geavanceerde systeemtaalmodellen"

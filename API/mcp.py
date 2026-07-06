@@ -143,6 +143,9 @@ def _venv_subprocess_env(python_path: Path) -> dict[str, str]:
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     env.pop("PYTHONHOME", None)
+    # Let the sandbox tool auto-launch Docker on demand when the model calls it.
+    # Only the sandbox worker reads this; other tools ignore it.
+    env["SANDBOX_AUTO_START_DOCKER"] = "1"
     # Hand the ASLM-assigned warm-browser daemon port to the tool venv (only web-search
     # reads it). Lets ASLM place the daemon in its chosen port range; the tool defaults to
     # the same value if the var is absent.
@@ -1042,6 +1045,7 @@ def _load_external_server(server_file: Path) -> dict[str, Any]:
         "id": server_id,
         "name": str(description.get("name") or server_file.parent.name).strip() or server_file.parent.name,
         "description": str(description.get("description") or "").strip(),
+        "requires_docker": bool(description.get("requires_docker")),
         "tools": tools,
         "module": None,
         "supports": None,
@@ -1220,6 +1224,7 @@ def _extract_server_definition(module: ModuleType, folder_name: str, server_file
         "id": server_id,
         "name": server_name,
         "description": description,
+        "requires_docker": bool(raw_server.get("requires_docker")),
         "tools": tools,
         "module": module,
         "supports": supports_fn if callable(supports_fn) else None,
@@ -1400,6 +1405,8 @@ def _serialize_server(server_definition: dict[str, Any]) -> dict[str, Any]:
         "tool_count": len(tools),
         "tools": tools,
     }
+    if server_definition.get("requires_docker"):
+        payload["requires_docker"] = True
     if server_definition.get("user_mcp"):
         payload["user_mcp"] = True
     return payload

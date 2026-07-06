@@ -195,6 +195,7 @@ def cmd_runserver(port: int, log: bool) -> None:
     ) as httpd:
         app.load_in_background()
         maybe_start_local_engine_service(log=log)
+        _probe_docker_status_async(log=log)
         if log:
             print(f"[ASLM-Chat] UI server listening at http://127.0.0.1:{port}/", flush=True)
         httpd.serve_forever()
@@ -344,6 +345,19 @@ def maybe_start_local_engine_service(log: bool) -> None:
     except Exception as exc:
         if log:
             print(f"[ASLM-Chat] Warning: Failed to sync enabled engine runtimes. {exc}")
+
+
+# Probe Docker availability in the background so sandbox tool availability stays fresh.
+def _probe_docker_status_async(log: bool) -> None:
+    """Kick off a non-blocking Docker daemon probe at server startup."""
+
+    try:
+        from Services import docker_status
+
+        docker_status.refresh_async()
+    except Exception as exc:  # noqa: BLE001 - never let the probe block startup
+        if log:
+            print(f"[ASLM-Chat] Warning: Docker status probe could not start. {exc}")
 
 
 def cmd_ollama_runtime(log: bool) -> None:

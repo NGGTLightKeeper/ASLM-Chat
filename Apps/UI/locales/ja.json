@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "このツールには Docker が必要です。",
+    "refreshDocker": "Docker を再確認"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM - 高度なシステム言語モデル"

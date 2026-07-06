@@ -52,6 +52,7 @@ MODEL_RUNTIME_METADATA_PATH = Path(__file__).resolve().parents[3] / "model_runti
 MCP_SERVER = {
     "id": "sandbox",
     "name": "Sandbox",
+    "requires_docker": True,
     "description": (
         "Linux sandbox with shared workspace. "
         "Use bash for real shell commands, builds, tests, git, installs, and system inspection. "

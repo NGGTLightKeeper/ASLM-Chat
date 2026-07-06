@@ -1646,6 +1646,93 @@
   margin-left: auto;
 }
 
+.composer-tool-row .composer-tool-label {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-tool-row .composer-tool-label .tool-server-name {
+  flex: 0 1 auto;
+}
+
+.composer-tool-help {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--c-text-muted);
+}
+
+.composer-tool-help .setting-help-icon {
+  width: 15px;
+  height: 15px;
+  opacity: 0.5;
+}
+
+.composer-tool-row:hover .composer-tool-help .setting-help-icon,
+.composer-tool-help:hover .setting-help-icon,
+.composer-tool-help:focus-visible .setting-help-icon {
+  opacity: 1;
+}
+
+.composer-tool-refresh {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+
+.composer-tool-refresh:hover {
+  color: var(--c-text);
+  background: var(--c-surface-2);
+}
+
+.composer-tool-refresh-icon {
+  width: 15px;
+  height: 15px;
+  background: currentColor;
+  -webkit-mask: url("../../img/ui/refresh.svg") center / contain no-repeat;
+  mask: url("../../img/ui/refresh.svg") center / contain no-repeat;
+}
+
+.composer-tool-refresh.is-loading {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.composer-tool-refresh.is-loading .composer-tool-refresh-icon {
+  animation: composer-tool-refresh-spin 0.8s linear infinite;
+}
+
+@keyframes composer-tool-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.composer-tool-row.is-unavailable {
+  cursor: default;
+}
+
+.composer-tool-row.is-unavailable .tool-server-name {
+  opacity: 0.55;
+}
+
+.composer-tool-row.is-unavailable .tool-server-checkbox {
+  cursor: not-allowed;
+}
+
 .composer-menu-popover .tool-server-checkbox {
   position: relative;
   flex: 0 0 auto;

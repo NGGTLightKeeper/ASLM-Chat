@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "Công cụ này yêu cầu Docker.",
+    "refreshDocker": "Kiểm tra lại Docker"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM - Mô hình ngôn ngữ hệ thống nâng cao"

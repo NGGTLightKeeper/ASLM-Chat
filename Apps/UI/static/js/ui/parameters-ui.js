@@ -13,7 +13,7 @@ import {
   isThinkingParameterKey,
   setNestedValue
 } from '../main/utils.js';
-import { getJson, patchJson } from '../main/api.js';
+import { getJson, patchJson, postJson } from '../main/api.js';
 import { t } from '../main/i18n.js';
 import { messageDialog } from './dialogs.js';
 
@@ -59,6 +59,13 @@ export function createParametersUi(context) {
       }
     });
 
+    // Drop any selected tool whose Docker requirement is currently unmet.
+    state.availableToolServers.forEach(function pruneUnavailable(server) {
+      if (server && server.requires_docker && server.docker_available === false) {
+        state.selectedToolServerIds.delete(normalizeToolServerId(server.id));
+      }
+    });
+
     renderToolControls();
   }
 
@@ -92,6 +99,50 @@ export function createParametersUi(context) {
     return 'is-generic-tool';
   }
 
+  // Build the "requires Docker" info affordance, mirroring the settings help icon.
+  function buildDockerHelp() {
+    const text = t('tools.requiresDocker', null, 'This tool requires Docker.');
+    const $help = $('<span class="setting-help composer-tool-help" tabindex="0" role="button">').attr('aria-label', text);
+    $help.append('<span class="setting-help-icon" aria-hidden="true"></span>');
+    $('<span class="setting-help-popover" role="tooltip">')
+      .append($('<p class="setting-help-desc">').text(text))
+      .appendTo($help);
+    // The row is a <label>; keep hover/focus on the icon from toggling the checkbox.
+    $help.on('mousedown click', function stopHelp(ev) {
+      ev.stopPropagation();
+    });
+    return $help;
+  }
+
+  // Build the refresh control that re-probes the host for Docker and reloads tools.
+  function buildDockerRefreshButton() {
+    const text = t('tools.refreshDocker', null, 'Re-check Docker');
+    const $btn = $('<button type="button" class="composer-tool-refresh">').attr({ 'aria-label': text, title: text });
+    $btn.append('<span class="composer-tool-refresh-icon" aria-hidden="true"></span>');
+    $btn.on('mousedown', function stopDown(ev) {
+      ev.stopPropagation();
+    });
+    $btn.on('click', async function onRefresh(ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if ($btn.hasClass('is-loading')) {
+        return;
+      }
+      $btn.addClass('is-loading');
+      try {
+        await postJson('/api/docker_status/refresh/', {});
+      } catch (_err) {
+        // Ignore; the reload below reflects whatever the server now reports.
+      }
+      try {
+        await reloadAvailableToolServers();
+      } catch (_err) {
+        $btn.removeClass('is-loading');
+      }
+    });
+    return $btn;
+  }
+
   // Render bundled tool server checkboxes into one target.
   function renderToolServerList($target, hasToolSupport) {
     $target.empty();
@@ -102,13 +153,19 @@ export function createParametersUi(context) {
     state.availableToolServers.forEach(function renderServer(server) {
       const serverId = normalizeToolServerId(server.id);
       const label = server.name || serverId;
-      const checked = state.selectedToolServerIds.has(serverId);
+      const requiresDocker = Boolean(server.requires_docker);
+      const unavailable = requiresDocker && server.docker_available === false;
+      const checked = state.selectedToolServerIds.has(serverId) && !unavailable;
 
       const $row = $('<label class="tool-server-row composer-tool-row">');
+      if (unavailable) {
+        $row.addClass('is-unavailable');
+      }
       const $icon = $('<span class="composer-tool-icon">').addClass(toolServerIconClass(server)).attr('aria-hidden', 'true');
       const $checkbox = $('<input type="checkbox" class="tool-server-checkbox">').val(serverId).prop('checked', checked);
       const $name = $('<span class="tool-server-name">').text(label);
 
+      $checkbox.prop('disabled', unavailable);
       $checkbox.on('change', function onChange() {
         if (this.checked) {
           state.selectedToolServerIds.add(serverId);
@@ -118,7 +175,15 @@ export function createParametersUi(context) {
         renderToolControls();
       });
 
-      $row.append($icon).append($name).append($checkbox);
+      const $lead = $('<span class="composer-tool-label">').append($name);
+      if (requiresDocker) {
+        $lead.append(buildDockerHelp());
+      }
+      $row.append($icon).append($lead);
+      if (unavailable) {
+        $row.append(buildDockerRefreshButton());
+      }
+      $row.append($checkbox);
       $target.append($row);
     });
   }
@@ -252,14 +317,19 @@ export function createParametersUi(context) {
     return lines.join('\n');
   }
 
-  // Reload tool servers after MCP config is saved.
-  async function refreshToolServersAfterMcpSave() {
+  // Re-fetch the live tool server list and refresh the composer controls.
+  async function reloadAvailableToolServers() {
     const engine = normalizeEngineValue(state.activeEngine || 'ollama-service');
     const modelName = String(dom.$modelSelector.val() || '').trim();
     const data = await getJson(
       `/api/tools/?engine=${encodeURIComponent(engine)}&model=${encodeURIComponent(modelName)}`
     );
     updateAvailableToolServers(data.tool_servers || data.tools || data.servers || []);
+  }
+
+  // Reload tool servers after MCP config is saved.
+  async function refreshToolServersAfterMcpSave() {
+    await reloadAvailableToolServers();
   }
 
   // Open the modal MCP JSON configuration editor.

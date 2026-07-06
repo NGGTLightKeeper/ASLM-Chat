@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "Этот инструмент требует Docker.",
+    "refreshDocker": "Проверить Docker заново"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM — продвинутые системные языковые модели"

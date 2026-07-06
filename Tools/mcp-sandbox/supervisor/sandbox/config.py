@@ -152,6 +152,18 @@ WINDOWS_DOCKER_DESKTOP_PATHS = [
     os.path.expandvars(r"%LocalAppData%\Docker\Docker Desktop.exe"),
 ]
 
+MACOS_DOCKER_DESKTOP_PATHS = [
+    "/Applications/Docker.app",
+    os.path.expanduser("~/Applications/Docker.app"),
+]
+
+# Linux Docker Desktop binaries (best-effort; the system daemon usually needs a service).
+LINUX_DOCKER_DESKTOP_PATHS = [
+    "/opt/docker-desktop/bin/docker-desktop",
+    "/usr/bin/docker-desktop",
+    "/usr/local/bin/docker-desktop",
+]
+
 
 IGNORED_DIR_NAMES = {
     ".git",
