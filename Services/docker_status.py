@@ -22,11 +22,14 @@ def _no_window_flags() -> int:
     return getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
-# Return True when the Docker daemon answers on this host right now.
+# Return True when Docker is installed on this host, regardless of whether the
+# daemon is currently running. The sandbox tool starts a stopped daemon on demand,
+# so we probe the client binary ("docker --version"), which answers even when
+# Docker Desktop is not running - "installed" is what gates tool availability.
 def probe() -> bool:
     try:
         result = subprocess.run(
-            ["docker", "info", "--format", "{{json .}}"],
+            ["docker", "--version"],
             capture_output=True,
             text=True,
             timeout=_PROBE_TIMEOUT_SECONDS,
