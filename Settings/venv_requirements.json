@@ -29,9 +29,7 @@
             "packages": [
                 "camoufox==0.4.10",
                 "mcp==1.26.0",
-                "playwright==1.50.0",
-                "starlette",
-                "uvicorn[standard]==0.40.0"
+                "playwright==1.50.0"
             ]
         },
         {
@@ -43,26 +41,19 @@
                 "beautifulsoup4==4.12.3",
                 "cffi==1.17.1",
                 "cloakbrowser==0.3.31",
-                "colorama==0.4.6",
                 "curl_cffi==0.7.0",
                 "httpx[http2,socks,brotli]==0.28.1",
                 "lxml==5.4.0",
-                "mcp==1.26.0",
                 "orjson==3.11.7",
                 "playwright==1.50.0",
                 "primp==1.2.3",
                 "psutil==7.2.2",
-                "pydantic==2.11.7",
-                "pydantic-settings==2.7.0",
                 "pylatexenc==2.10",
                 "PyMuPDF==1.27.2",
                 "pymupdf4llm==0.3.4",
-                "pyyaml==6.0.2",
                 "requests==2.32.3",
                 "selectolax==0.4.6",
-                "tqdm==4.67.0",
                 "trafilatura==2.0.0",
-                "uvicorn[standard]==0.40.0",
                 "youtube-transcript-api==1.2.4",
                 "yt-dlp==2026.3.3"
             ]
@@ -71,9 +62,7 @@
             "id": "mcp-sandbox",
             "path": "Data/venvs/tools/mcp-sandbox",
             "tool": "mcp-sandbox",
-            "packages": [
-                "mcp==1.26.0"
-            ]
+            "packages": []
         }
     ]
 }
