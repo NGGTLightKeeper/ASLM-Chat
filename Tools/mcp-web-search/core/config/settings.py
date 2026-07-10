@@ -116,6 +116,30 @@ class TorSection:
     # removed as more risk than value while the static link-search layer is still unfinished.)
 
 
+# Import the user's REAL browser cookies/metadata into the identity layer so HTTP SERP
+# engines and the warm browser replay a logged-in, human fingerprint. OFF by default and
+# privacy-sensitive: reading a browser's cookie jar exposes the user's live sessions, so it
+# is strictly opt-in. Cross-browser: Chrome/Edge/Brave (chromium family) + Firefox. `browsers`
+# selects which to harvest; empty domains allowlist means every domain (narrow it to search
+# engines to limit exposure). Only cookies whose domain matches the allowlist are imported.
+@dataclass
+class ProfileImportSection:
+    enabled: bool = False                              # master switch — off → no profile is ever read
+    browsers: list[str] = field(                       # which installed browsers to harvest
+        default_factory=lambda: ["chrome", "edge", "brave", "firefox"]
+    )
+    domains: list[str] = field(                        # cookie-domain allowlist (empty = all domains)
+        default_factory=lambda: [
+            "google.com", "bing.com", "duckduckgo.com", "startpage.com",
+            "yandex.com", "yandex.ru", "qwant.com", "brave.com", "search.brave.com",
+            "reddit.com",
+        ]
+    )
+    all_profiles: bool = False                         # False → default profile only; True → every profile
+    refresh_hours: float = 12.0                        # re-harvest only after this long (0 = every start)
+    purge_on_disable: bool = True                      # wipe imported cookies from the store when disabled
+
+
 # Hosted (paid API) provider modes. Per provider: "content" | "serp" | "off".
 #   content — SERP rows + full page text pre-fed into SourceCache (costs scrape credits)
 #   serp    — SERP rows only: cheap consensus/coverage votes, no content fetch
@@ -141,6 +165,7 @@ class SearchConfig:
     browser: BrowserSection = field(default_factory=BrowserSection)
     tor: TorSection = field(default_factory=TorSection)
     hosted_api: HostedApiSection = field(default_factory=HostedApiSection)
+    profile_import: ProfileImportSection = field(default_factory=ProfileImportSection)
 
 
 _cached_config: SearchConfig | None = None
@@ -156,6 +181,24 @@ def _one_of(value: object, allowed: set[str], default: str) -> str:
     if value not in (None, ""):
         logger.warning("config: invalid value %r (allowed: %s) — using %r", value, sorted(allowed), default)
     return default
+
+
+# Coerce a JSON value to a clean lowercased string list. None/non-list → default.
+# When `allowed` is given, entries outside it are dropped (unknown browser names, etc.).
+def _string_list(value: object, allowed: Optional[set[str]], default: list[str]) -> list[str]:
+    if not isinstance(value, list):
+        return list(default)
+    out: list[str] = []
+    for item in value:
+        s = str(item or "").strip().lower()
+        if not s:
+            continue
+        if allowed is not None and s not in allowed:
+            logger.warning("config: ignoring unknown profile_import entry %r", item)
+            continue
+        if s not in out:
+            out.append(s)
+    return out
 
 
 # Coerce JSON values to optional strings (empty string → None).
@@ -194,7 +237,9 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
     b = raw.get("browser", {})
     t = raw.get("tor", {})
     h = raw.get("hosted_api", {})
+    p = raw.get("profile_import", {})
     _hosted_modes = {"content", "serp", "off"}
+    _known_browsers = {"chrome", "edge", "brave", "firefox"}
 
     config = SearchConfig(
         search=SearchSection(
@@ -258,6 +303,14 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             firecrawl=_one_of(h.get("firecrawl", "serp"), _hosted_modes, "serp"),
             brave=_one_of(h.get("brave", "serp"), _hosted_modes, "serp"),
             serpapi=_one_of(h.get("serpapi", "serp"), _hosted_modes, "serp"),
+        ),
+        profile_import=ProfileImportSection(
+            enabled=bool(p.get("enabled", False)),
+            browsers=_string_list(p.get("browsers"), _known_browsers, ["chrome", "edge", "brave", "firefox"]),
+            domains=_string_list(p.get("domains"), None, ProfileImportSection().domains),
+            all_profiles=bool(p.get("all_profiles", False)),
+            refresh_hours=float(p.get("refresh_hours", 12.0)),
+            purge_on_disable=bool(p.get("purge_on_disable", True)),
         ),
     )
 

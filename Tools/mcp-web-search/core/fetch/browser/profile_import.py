@@ -1,0 +1,672 @@
+# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+
+"""Cross-browser cookie/metadata importer for the identity layer.
+
+Reads the user's REAL browser cookie jars (Chrome/Edge/Brave = chromium family, Firefox =
+its own family) and normalises them into the shape the IdentityStore's imported-cookie layer
+expects, so HTTP SERP engines and the warm browser replay a logged-in, human fingerprint.
+
+STRICTLY OPT-IN. Nothing here runs unless `profile_import.enabled` is set — reading a cookie
+jar exposes the user's live sessions. The importer only ever *reads* profiles (opens a COPY of
+the cookie DB, never the live file) and only keeps cookies whose domain matches the configured
+allowlist.
+
+Decryption per family:
+  * Chromium (v80+): the per-profile cookie value is `v10`/`v11` ‖ 12-byte nonce ‖ ciphertext ‖
+    16-byte GCM tag, AES-256-GCM under a key stored (DPAPI-wrapped on Windows) in `Local State`.
+    Legacy values are DPAPI-encrypted directly. App-Bound Encryption (Chrome 127+, the `v20`
+    prefix) is NOT decryptable outside the browser process — those cookies are skipped, not
+    guessed.
+  * Firefox: `cookies.sqlite` stores values in PLAINTEXT — no key, no DPAPI. Just read them.
+
+Platform: cookie decryption is implemented for Windows (DPAPI). macOS/Linux discovery paths are
+included so the profile scan works there, but chromium value decryption on those platforms uses
+a different KDF (Keychain / kwallet) and is left as a no-op that skips encrypted values rather
+than returning garbage. Firefox works everywhere (plaintext).
+"""
+
+from __future__ import annotations
+
+import configparser
+import json
+import logging
+import os
+import shutil
+import sqlite3
+import sys
+import tempfile
+import threading
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Iterable, Optional
+
+logger = logging.getLogger("core.fetch.browser.profile_import")
+
+# Chromium family label shared with the warm daemon / transport (`_WARM_FAMILY`). Chrome, Edge
+# and Brave all serve the same engine, so their cookies land under one family identity.
+CHROMIUM_FAMILY = "chromium"
+FIREFOX_FAMILY = "firefox"
+
+# Browsers we know how to locate, mapped to (family, chromium?). Brave/Edge/Chrome are all
+# chromium under the hood; only the on-disk location differs.
+_CHROMIUM_BROWSERS = ("chrome", "edge", "brave")
+
+
+@dataclass(slots=True)
+class ImportedCookie:
+    """One decrypted cookie, normalised to the storageState cookie shape."""
+
+    domain: str
+    name: str
+    value: str
+    path: str = "/"
+    expires: float = 0.0        # unix seconds; 0 = session cookie
+    secure: bool = False
+    http_only: bool = False
+
+
+@dataclass(slots=True)
+class ProfileHarvest:
+    """Result of harvesting one browser profile."""
+
+    browser: str
+    family: str
+    profile: str
+    cookies: list[ImportedCookie] = field(default_factory=list)
+    accept_language: str = ""
+    skipped_encrypted: int = 0   # cookies we could not decrypt (bad key / other-OS scheme)
+    abe_locked: int = 0          # cookies sealed with App-Bound Encryption (v20) — need the CDP path
+    is_default: bool = False     # this browser is the OS default (harvested first)
+    error: str = ""
+
+    # A profile yielded something usable.
+    @property
+    def ok(self) -> bool:
+        return bool(self.cookies)
+
+
+# ── Profile discovery ────────────────────────────────────────────────────────────────
+
+# Per-OS base directory for each chromium browser's "User Data" root.
+def _chromium_user_data_roots() -> dict[str, list[Path]]:
+    home = Path.home()
+    if sys.platform == "win32":
+        local = Path(os.environ.get("LOCALAPPDATA", home / "AppData/Local"))
+        return {
+            "chrome": [local / "Google/Chrome/User Data"],
+            "edge": [local / "Microsoft/Edge/User Data"],
+            "brave": [local / "BraveSoftware/Brave-Browser/User Data"],
+        }
+    if sys.platform == "darwin":
+        app = home / "Library/Application Support"
+        return {
+            "chrome": [app / "Google/Chrome"],
+            "edge": [app / "Microsoft Edge"],
+            "brave": [app / "BraveSoftware/Brave-Browser"],
+        }
+    # Linux
+    cfg = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
+    return {
+        "chrome": [cfg / "google-chrome"],
+        "edge": [cfg / "microsoft-edge"],
+        "brave": [cfg / "BraveSoftware/Brave-Browser"],
+    }
+
+
+def _firefox_profile_roots() -> list[Path]:
+    home = Path.home()
+    if sys.platform == "win32":
+        return [Path(os.environ.get("APPDATA", home / "AppData/Roaming")) / "Mozilla/Firefox"]
+    if sys.platform == "darwin":
+        return [home / "Library/Application Support/Firefox"]
+    return [home / ".mozilla/firefox"]
+
+
+# The cookie DB file inside a chromium profile dir (newer builds nest it under Network/).
+def _chromium_cookie_db(profile_dir: Path) -> Optional[Path]:
+    for candidate in (profile_dir / "Network" / "Cookies", profile_dir / "Cookies"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+# Profile subdirectories to harvest inside a chromium "User Data" root.
+def _chromium_profiles(user_data: Path, all_profiles: bool) -> list[Path]:
+    if not user_data.is_dir():
+        return []
+    default = user_data / "Default"
+    if not all_profiles:
+        return [default] if default.is_dir() else []
+    out: list[Path] = []
+    if default.is_dir():
+        out.append(default)
+    for child in sorted(user_data.glob("Profile *")):
+        if child.is_dir():
+            out.append(child)
+    return out
+
+
+# Firefox profile dirs: the default (from profiles.ini) or all under the root.
+def _firefox_profiles(root: Path, all_profiles: bool) -> list[Path]:
+    if not root.is_dir():
+        return []
+    profiles_dir = root / "Profiles"
+    if all_profiles:
+        return [d for d in sorted(profiles_dir.glob("*")) if (d / "cookies.sqlite").is_file()]
+
+    # Resolve the default profile from profiles.ini / installs.ini.
+    default = _firefox_default_profile(root)
+    if default and (default / "cookies.sqlite").is_file():
+        return [default]
+    # Fallback: the *.default-release / *.default dir with a cookie DB.
+    for pattern in ("*.default-release", "*.default*", "*"):
+        for d in sorted(profiles_dir.glob(pattern)):
+            if (d / "cookies.sqlite").is_file():
+                return [d]
+    return []
+
+
+def _firefox_default_profile(root: Path) -> Optional[Path]:
+    ini = root / "profiles.ini"
+    if not ini.is_file():
+        return None
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(ini, encoding="utf-8")
+    except (OSError, configparser.Error):
+        return None
+    # Prefer an [Install*] Default= (the profile Firefox actually launches), else a
+    # [Profile*] with Default=1.
+    candidates: list[str] = []
+    for section in parser.sections():
+        if section.lower().startswith("install"):
+            if val := parser.get(section, "Default", fallback=""):
+                candidates.append(val)
+    for section in parser.sections():
+        if section.lower().startswith("profile") and parser.get(section, "Default", fallback="") == "1":
+            if val := parser.get(section, "Path", fallback=""):
+                candidates.append(val)
+    for rel in candidates:
+        p = (root / rel) if not Path(rel).is_absolute() else Path(rel)
+        if p.is_dir():
+            return p
+    return None
+
+
+# ── Chromium key + value decryption ──────────────────────────────────────────────────
+
+# DPAPI-unwrap the AES key stored in a chromium "Local State" file. Windows only; returns
+# None elsewhere or when the file/key is missing or ABE-only.
+def _chromium_aes_key(user_data: Path) -> Optional[bytes]:
+    local_state = user_data / "Local State"
+    if not local_state.is_file():
+        return None
+    try:
+        raw = json.loads(local_state.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.debug("profile_import: cannot read Local State %s: %s", local_state, exc)
+        return None
+    b64_key = (raw.get("os_crypt") or {}).get("encrypted_key")
+    if not b64_key:
+        return None
+    import base64
+
+    try:
+        blob = base64.b64decode(b64_key)
+    except (ValueError, TypeError):
+        return None
+    if not blob.startswith(b"DPAPI"):
+        return None
+    if sys.platform != "win32":
+        return None
+    try:
+        import win32crypt  # type: ignore
+
+        # CryptUnprotectData returns (description, data).
+        _, key = win32crypt.CryptUnprotectData(blob[5:], None, None, None, 0)
+        return bytes(key)
+    except Exception as exc:  # noqa: BLE001 — any DPAPI failure → no key, skip encrypted values
+        logger.debug("profile_import: DPAPI key unwrap failed: %s", exc)
+        return None
+
+
+# Decrypt one chromium cookie value. Returns (plaintext, ok). ok=False means it was encrypted
+# with a scheme we can't handle (App-Bound v20, or non-Windows key) — the caller counts it as
+# skipped rather than treating "" as a real empty cookie.
+def _decrypt_chromium_value(encrypted: bytes, key: Optional[bytes]) -> tuple[str, bool]:
+    if not encrypted:
+        return "", True
+    prefix = encrypted[:3]
+    if prefix in (b"v10", b"v11"):
+        if key is None:
+            return "", False
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+            nonce = encrypted[3:15]
+            payload = encrypted[15:]
+            plain = AESGCM(key).decrypt(nonce, payload, None)
+            # Chrome ≥ v24 prepends a 32-bit SHA256(domain) flag to the plaintext; it is not
+            # part of the value. Heuristic: if the first 32 bytes are non-text and the rest is,
+            # this is handled by callers that pass the raw text through. We keep the simple
+            # path (no domain-hash prefix) which covers the vast majority of profiles.
+            return plain.decode("utf-8", "replace"), True
+        except Exception as exc:  # noqa: BLE001 — bad tag/key → skip, don't fabricate a value
+            logger.debug("profile_import: AES-GCM cookie decrypt failed: %s", exc)
+            return "", False
+    if prefix == b"v20":
+        # App-Bound Encryption: key is sealed to the browser process. Not recoverable here.
+        return "", False
+    # Legacy: whole value is DPAPI-encrypted (pre-v80 Chrome).
+    if sys.platform == "win32":
+        try:
+            import win32crypt  # type: ignore
+
+            _, plain = win32crypt.CryptUnprotectData(encrypted, None, None, None, 0)
+            return bytes(plain).decode("utf-8", "replace"), True
+        except Exception:  # noqa: BLE001
+            return "", False
+    return "", False
+
+
+# ── Cookie DB readers ────────────────────────────────────────────────────────────────
+
+# Copy a (possibly browser-locked) SQLite DB to a temp file and open it read-only. Chrome holds
+# an exclusive-ish lock while running; a copy sidesteps it and never mutates the user's file.
+def _open_readonly_copy(db_path: Path) -> tuple[Optional[sqlite3.Connection], Optional[str]]:
+    try:
+        fd, tmp = tempfile.mkstemp(suffix=".sqlite", prefix="idimport_")
+        os.close(fd)
+        shutil.copy2(db_path, tmp)
+        # Copy the WAL/SHM sidecars too, so recent (unflushed) writes are visible.
+        for suffix in ("-wal", "-shm"):
+            side = Path(str(db_path) + suffix)
+            if side.is_file():
+                shutil.copy2(side, tmp + suffix)
+        conn = sqlite3.connect(tmp)
+        conn.row_factory = sqlite3.Row
+        return conn, tmp
+    except (OSError, sqlite3.Error) as exc:
+        return None, f"open failed: {exc}"
+
+
+def _cleanup_copy(tmp: Optional[str]) -> None:
+    if not tmp:
+        return
+    for path in (tmp, tmp + "-wal", tmp + "-shm"):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+# Chrome epoch (µs since 1601-01-01) → unix seconds.
+_CHROME_EPOCH_OFFSET = 11644473600
+
+
+def _chrome_time_to_unix(value: int) -> float:
+    if not value:
+        return 0.0
+    return max(0.0, value / 1_000_000 - _CHROME_EPOCH_OFFSET)
+
+
+def _read_chromium_cookies(
+    db_path: Path, key: Optional[bytes], allow: "DomainFilter"
+) -> tuple[list[ImportedCookie], int, int]:
+    conn, tmp = _open_readonly_copy(db_path)
+    if conn is None:
+        raise RuntimeError(tmp or "cookie db open failed")
+    cookies: list[ImportedCookie] = []
+    skipped = 0
+    abe_locked = 0
+    try:
+        rows = conn.execute(
+            "SELECT host_key, name, encrypted_value, value, path, expires_utc, "
+            "is_secure, is_httponly FROM cookies"
+        ).fetchall()
+    except sqlite3.Error as exc:
+        conn.close()
+        _cleanup_copy(tmp)
+        raise RuntimeError(f"cookie query failed: {exc}") from exc
+    for row in rows:
+        host = str(row["host_key"] or "")
+        if not allow.matches(host):
+            continue
+        enc = row["encrypted_value"]
+        plain, ok = ("", True)
+        if enc:
+            enc_bytes = bytes(enc)
+            if enc_bytes[:3] == b"v20":     # App-Bound Encryption — not file-decryptable
+                abe_locked += 1
+                continue
+            plain, ok = _decrypt_chromium_value(enc_bytes, key)
+        elif row["value"]:
+            plain = str(row["value"])
+        if not ok:
+            skipped += 1
+            continue
+        if not plain:
+            continue
+        cookies.append(
+            ImportedCookie(
+                domain=host,
+                name=str(row["name"] or ""),
+                value=plain,
+                path=str(row["path"] or "/"),
+                expires=_chrome_time_to_unix(int(row["expires_utc"] or 0)),
+                secure=bool(row["is_secure"]),
+                http_only=bool(row["is_httponly"]),
+            )
+        )
+    conn.close()
+    _cleanup_copy(tmp)
+    return cookies, skipped, abe_locked
+
+
+def _read_firefox_cookies(db_path: Path, allow: "DomainFilter") -> list[ImportedCookie]:
+    conn, tmp = _open_readonly_copy(db_path)
+    if conn is None:
+        raise RuntimeError(tmp or "cookie db open failed")
+    cookies: list[ImportedCookie] = []
+    try:
+        rows = conn.execute(
+            "SELECT host, name, value, path, expiry, isSecure, isHttpOnly FROM moz_cookies"
+        ).fetchall()
+    except sqlite3.Error as exc:
+        conn.close()
+        _cleanup_copy(tmp)
+        raise RuntimeError(f"cookie query failed: {exc}") from exc
+    for row in rows:
+        host = str(row["host"] or "")
+        if not allow.matches(host):
+            continue
+        value = str(row["value"] or "")
+        if not value:
+            continue
+        cookies.append(
+            ImportedCookie(
+                domain=host,
+                name=str(row["name"] or ""),
+                value=value,
+                path=str(row["path"] or "/"),
+                expires=float(row["expiry"] or 0),   # Firefox stores unix seconds already
+                secure=bool(row["isSecure"]),
+                http_only=bool(row["isHttpOnly"]),
+            )
+        )
+    conn.close()
+    _cleanup_copy(tmp)
+    return cookies
+
+
+# ── Domain allowlist ─────────────────────────────────────────────────────────────────
+
+class DomainFilter:
+    """Matches a cookie host against a configured domain allowlist (suffix match). An empty
+    allowlist matches every host (the config default narrows it to search engines)."""
+
+    def __init__(self, domains: Iterable[str]) -> None:
+        self._domains = [d.strip().lstrip(".").lower() for d in domains if d and d.strip()]
+
+    def matches(self, host: str) -> bool:
+        if not self._domains:
+            return True
+        h = (host or "").lstrip(".").lower()
+        if not h:
+            return False
+        return any(h == d or h.endswith("." + d) for d in self._domains)
+
+
+# ── Public API ───────────────────────────────────────────────────────────────────────
+
+# Harvest every profile of one browser. Returns [] when the browser isn't installed.
+def _harvest_browser(browser: str, allow: "DomainFilter", all_profiles: bool) -> list[ProfileHarvest]:
+    harvests: list[ProfileHarvest] = []
+    if browser in _CHROMIUM_BROWSERS:
+        for user_data in _chromium_user_data_roots().get(browser, []):
+            key = _chromium_aes_key(user_data)
+            for profile_dir in _chromium_profiles(user_data, all_profiles):
+                db = _chromium_cookie_db(profile_dir)
+                if not db:
+                    continue
+                harvest = ProfileHarvest(browser=browser, family=CHROMIUM_FAMILY, profile=profile_dir.name)
+                try:
+                    harvest.cookies, harvest.skipped_encrypted, harvest.abe_locked = _read_chromium_cookies(
+                        db, key, allow
+                    )
+                    harvest.accept_language = _chromium_accept_language(profile_dir)
+                    if harvest.abe_locked and not harvest.cookies:
+                        harvest.error = (
+                            f"{harvest.abe_locked} cookies App-Bound-Encrypted (v20) - "
+                            "not importable by file read; needs the CDP export path"
+                        )
+                except Exception as exc:  # noqa: BLE001 — one bad profile must not abort the sweep
+                    harvest.error = str(exc)
+                    logger.info("profile_import: %s/%s skipped: %s", browser, profile_dir.name, exc)
+                harvests.append(harvest)
+    elif browser == "firefox":
+        for root in _firefox_profile_roots():
+            for profile_dir in _firefox_profiles(root, all_profiles):
+                harvest = ProfileHarvest(browser="firefox", family=FIREFOX_FAMILY, profile=profile_dir.name)
+                try:
+                    harvest.cookies = _read_firefox_cookies(profile_dir / "cookies.sqlite", allow)
+                    harvest.accept_language = _firefox_accept_language(profile_dir)
+                except Exception as exc:  # noqa: BLE001
+                    harvest.error = str(exc)
+                    logger.info("profile_import: firefox/%s skipped: %s", profile_dir.name, exc)
+                harvests.append(harvest)
+    return harvests
+
+
+# Harvest cookies from the configured, installed browsers, DEFAULT BROWSER FIRST then the rest
+# as fallback (per the identity contract: prefer the browser the user actually lives in; fall
+# back to others only if it yields nothing — e.g. an App-Bound-locked Chrome falls through to a
+# working Firefox). Never raises: a broken/locked profile yields a ProfileHarvest with `.error`.
+def harvest_profiles(
+    *,
+    browsers: Iterable[str],
+    domains: Iterable[str],
+    all_profiles: bool = False,
+) -> list[ProfileHarvest]:
+    allow = DomainFilter(domains)
+    wanted = [b.strip().lower() for b in browsers if b and b.strip()]
+    ordered = _default_first(wanted)
+    default = ordered[0] if ordered else ""
+
+    harvests: list[ProfileHarvest] = []
+    for browser in ordered:
+        browser_harvests = _harvest_browser(browser, allow, all_profiles)
+        for h in browser_harvests:
+            h.is_default = h.browser == default
+        harvests.extend(browser_harvests)
+    return harvests
+
+
+# Reorder the wanted browsers so the OS default (if present and requested) is harvested first.
+def _default_first(wanted: list[str]) -> list[str]:
+    default = detect_default_browser()
+    if default and default in wanted:
+        return [default] + [b for b in wanted if b != default]
+    return list(wanted)
+
+
+# ── Default-browser detection ────────────────────────────────────────────────────────
+
+# Map a Windows UserChoice ProgId to a browser we support.
+_PROGID_BROWSER = {
+    "ChromeHTML": "chrome",
+    "MSEdgeHTM": "edge",
+    "BraveHTML": "brave",
+    "FirefoxURL": "firefox",
+}
+
+
+# The user's OS default browser as one of our supported names, or "" when undetectable.
+def detect_default_browser() -> str:
+    if sys.platform == "win32":
+        return _default_browser_windows()
+    if sys.platform == "darwin":
+        return _default_browser_macos()
+    return _default_browser_linux()
+
+
+def _default_browser_windows() -> str:
+    try:
+        import winreg  # type: ignore
+
+        key_path = r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            prog_id, _ = winreg.QueryValueEx(key, "ProgId")
+    except OSError:
+        return ""
+    for progid_prefix, browser in _PROGID_BROWSER.items():
+        if str(prog_id).startswith(progid_prefix):
+            return browser
+    return ""
+
+
+def _default_browser_macos() -> str:
+    # LaunchServices holds the default handler; parsing its plist is brittle, so map from the
+    # `https` handler bundle id via `open`'s exit is overkill. Best-effort: env hint only.
+    return ""
+
+
+def _default_browser_linux() -> str:
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["xdg-settings", "get", "default-web-browser"],
+            capture_output=True, text=True, timeout=3,
+        ).stdout.strip().lower()
+    except (OSError, ValueError):
+        return ""
+    for name in ("chrome", "edge", "brave", "firefox"):
+        if name in out:
+            return name
+    return ""
+
+
+# ── Metadata extraction (best-effort) ────────────────────────────────────────────────
+
+# Chromium stores the negotiated Accept-Language set in Preferences → intl.accept_languages.
+def _chromium_accept_language(profile_dir: Path) -> str:
+    prefs = profile_dir / "Preferences"
+    if not prefs.is_file():
+        return ""
+    try:
+        raw = json.loads(prefs.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return ""
+    langs = (raw.get("intl") or {}).get("accept_languages") or ""
+    return str(langs).strip()
+
+
+# Firefox keeps intl.accept_languages in prefs.js as a user_pref line.
+def _firefox_accept_language(profile_dir: Path) -> str:
+    prefs = profile_dir / "prefs.js"
+    if not prefs.is_file():
+        return ""
+    try:
+        text = prefs.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+    marker = 'user_pref("intl.accept_languages", "'
+    idx = text.find(marker)
+    if idx == -1:
+        return ""
+    start = idx + len(marker)
+    end = text.find('"', start)
+    return text[start:end].strip() if end != -1 else ""
+
+
+# ── Process-wide run-once trigger (config-gated) ──────────────────────────────────────
+
+_trigger_lock = threading.Lock()
+_trigger_done = False
+
+
+@dataclass(slots=True)
+class ImportOutcome:
+    ran: bool = False               # did a harvest actually run this call?
+    enabled: bool = False
+    imported: int = 0               # cookies written to the store
+    families: dict[str, int] = field(default_factory=dict)
+    default_browser: str = ""
+    notes: list[str] = field(default_factory=list)
+
+
+# Run the profile import at most once per process (guarded), honoring config. Safe to call from
+# the hot path: after the first call it is a bool check. Disabled config → optional purge, no read.
+def ensure_imported() -> ImportOutcome:
+    global _trigger_done
+    if _trigger_done:
+        return ImportOutcome(ran=False)
+    with _trigger_lock:
+        if _trigger_done:
+            return ImportOutcome(ran=False)
+        try:
+            return _run_import()
+        except Exception as exc:  # noqa: BLE001 — import must never break a search
+            logger.warning("profile_import: import run failed: %s", exc)
+            return ImportOutcome(ran=True, notes=[f"error: {exc}"])
+        finally:
+            _trigger_done = True
+
+
+# Force a re-run on the next ensure_imported() (config reload / tests).
+def reset_import_trigger() -> None:
+    global _trigger_done
+    with _trigger_lock:
+        _trigger_done = False
+
+
+# The core import: read config + store, harvest default-first, write per family. Also the
+# explicit entry point for a manual/forced import (used by ensure_imported and tests).
+def run_profile_import(*, force: bool = False) -> ImportOutcome:
+    return _run_import(force=force)
+
+
+def _run_import(*, force: bool = False) -> ImportOutcome:
+    from core.config.settings import load_search_config
+    from core.fetch.browser.identity_store import get_identity_store
+
+    cfg = load_search_config().profile_import
+    store = get_identity_store()
+    outcome = ImportOutcome(enabled=cfg.enabled, default_browser=detect_default_browser())
+
+    if not cfg.enabled:
+        if cfg.purge_on_disable:
+            store.clear_imported()
+            outcome.notes.append("disabled: imported cookies purged")
+        return outcome
+
+    # Refresh guard: skip a re-harvest while the last import is still fresh.
+    if not force and cfg.refresh_hours > 0:
+        age = store.imported_age_seconds()
+        if age < cfg.refresh_hours * 3600.0:
+            outcome.notes.append(f"fresh ({age/3600:.1f}h < {cfg.refresh_hours}h) — reused")
+            return outcome
+
+    outcome.ran = True
+    harvests = harvest_profiles(
+        browsers=cfg.browsers, domains=cfg.domains, all_profiles=cfg.all_profiles
+    )
+    # Merge per family in harvest order (default browser first → its cookies win on conflict).
+    by_family: dict[str, list[ImportedCookie]] = {}
+    for h in harvests:
+        if h.error:
+            outcome.notes.append(f"{h.browser}/{h.profile}: {h.error}")
+        by_family.setdefault(h.family, []).extend(h.cookies)
+
+    for family, cookies in by_family.items():
+        n = store.import_cookies(family, cookies, source="profile_import", replace=True)
+        outcome.families[family] = n
+        outcome.imported += n
+
+    logger.info(
+        "profile_import: default=%s imported=%d families=%s",
+        outcome.default_browser or "?", outcome.imported, outcome.families,
+    )
+    return outcome

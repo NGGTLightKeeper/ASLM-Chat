@@ -35,5 +35,17 @@
     "firecrawl": "serp",
     "brave": "serp",
     "serpapi": "serp"
+  },
+  "profile_import": {
+    "enabled": false,
+    "browsers": ["chrome", "edge", "brave", "firefox"],
+    "domains": [
+      "google.com", "bing.com", "duckduckgo.com", "startpage.com",
+      "yandex.com", "yandex.ru", "qwant.com", "brave.com", "search.brave.com",
+      "reddit.com"
+    ],
+    "all_profiles": false,
+    "refresh_hours": 12.0,
+    "purge_on_disable": true
   }
 }
