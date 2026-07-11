@@ -670,6 +670,34 @@ def _extract_text_with_bs4(cleaned_html: str) -> str:
     return "\n\n".join(blocks)
 
 
+# Full-body strip set — ONLY non-content machinery. Deliberately narrower than
+# _NOISE_TAGS: nav/header/footer/form/button are kept, because on landing pages, doc
+# indexes and download pages that "chrome" IS the information (ported from openserp's
+# extractFullBody, whose clean-vs-full fallback beat us on exactly those pages).
+_FULLBODY_STRIP_TAGS = ("script", "style", "noscript", "template", "svg", "iframe")
+
+
+# The whole readable <body> as trimmed text lines, keeping nav/header/footer chrome.
+# The thin-extraction rescue path: never the primary extractor.
+def extract_full_body_text(raw_html: str) -> str:
+    if not raw_html:
+        return ""
+    try:
+        from bs4 import BeautifulSoup
+    except Exception:  # noqa: BLE001 — rescue path must degrade to a no-op
+        return ""
+    soup = BeautifulSoup(raw_html, _BS_PARSER)
+    for tag_name in _FULLBODY_STRIP_TAGS:
+        for node in soup.find_all(tag_name):
+            node.decompose()
+    body = soup.body or soup
+    lines = (
+        _WHITESPACE_RE.sub(" ", line).strip()
+        for line in body.get_text(separator="\n").splitlines()
+    )
+    return "\n".join(line for line in lines if line)
+
+
 # Return a callable that returns True for boilerplate text blocks.
 def _get_boilerplate_filter():
     # Fallback boilerplate check using noise markers and minimum length.

@@ -156,6 +156,34 @@ class HostedApiSection:
     serpapi: str = "serp"
 
 
+# Per-engine kill switches for web_search's tiered selection (TODO §D). An engine set to
+# False never enters a tier — the user opts weak engines in, they are not opted out by
+# health at runtime (that's the breaker's job, this is policy). Yandex and Yep default OFF:
+# Yandex drags ad-redirects/mirrors on download-intent queries and Yep only ever added
+# high-tier recall. Turning either back on is one config flip, no code.
+@dataclass
+class EnginesSection:
+    google: bool = True
+    duckduckgo: bool = True
+    startpage: bool = True
+    qwant: bool = True
+    brave: bool = True
+    yandex: bool = False
+    yep: bool = False
+
+    # {engine name: enabled} view for selection code.
+    def as_map(self) -> dict[str, bool]:
+        return {
+            "google": self.google,
+            "duckduckgo": self.duckduckgo,
+            "startpage": self.startpage,
+            "qwant": self.qwant,
+            "brave": self.brave,
+            "yandex": self.yandex,
+            "yep": self.yep,
+        }
+
+
 @dataclass
 class SearchConfig:
     search: SearchSection = field(default_factory=SearchSection)
@@ -166,6 +194,7 @@ class SearchConfig:
     tor: TorSection = field(default_factory=TorSection)
     hosted_api: HostedApiSection = field(default_factory=HostedApiSection)
     profile_import: ProfileImportSection = field(default_factory=ProfileImportSection)
+    engines: EnginesSection = field(default_factory=EnginesSection)
 
 
 _cached_config: SearchConfig | None = None
@@ -238,8 +267,15 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
     t = raw.get("tor", {})
     h = raw.get("hosted_api", {})
     p = raw.get("profile_import", {})
+    g = raw.get("engines", {})
     _hosted_modes = {"content", "serp", "off"}
     _known_browsers = {"chrome", "edge", "brave", "firefox"}
+    if isinstance(g, dict):
+        for key in g:
+            if key not in EnginesSection().as_map():
+                logger.warning("config: ignoring unknown engines entry %r", key)
+    else:
+        g = {}
 
     config = SearchConfig(
         search=SearchSection(
@@ -311,6 +347,15 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             all_profiles=bool(p.get("all_profiles", False)),
             refresh_hours=float(p.get("refresh_hours", 12.0)),
             purge_on_disable=bool(p.get("purge_on_disable", True)),
+        ),
+        engines=EnginesSection(
+            google=bool(g.get("google", True)),
+            duckduckgo=bool(g.get("duckduckgo", True)),
+            startpage=bool(g.get("startpage", True)),
+            qwant=bool(g.get("qwant", True)),
+            brave=bool(g.get("brave", True)),
+            yandex=bool(g.get("yandex", False)),
+            yep=bool(g.get("yep", False)),
         ),
     )
 

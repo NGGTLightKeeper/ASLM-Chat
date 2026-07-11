@@ -318,6 +318,11 @@ def _build_markdown(meta: dict[str, str], content: str) -> str:
     return text
 
 
+# Clean extraction below this is "too thin" — worth comparing against the full body
+# (mirrors openserp's minCleanTextRunes).
+_MIN_CLEAN_CHARS = 250
+
+
 # Produce a clean, structured markdown representation of a web page.
 def normalize_page(
     url: str,
@@ -327,15 +332,29 @@ def normalize_page(
     meta = _extract_meta(raw_html, fallback_text, url)
     content = _extract_content(raw_html, fallback_text, url)
 
-    if not content.strip():
+    cleaned = ""
+    if content.strip():
+        strict = bool(raw_html)
+        cleaned = _clean_content(content, strict=strict)
+
+        block_count = len([b for b in cleaned.split("\n\n") if b.strip()])
+        if block_count <= 1 and len(cleaned) > 300:
+            cleaned = _fallback_segment(content)
+            cleaned = _clean_content(cleaned, strict=strict)
+
+    # thin→full-body rescue (openserp port): the clean pass strips everything it deems
+    # boilerplate, which guts landing pages, doc indexes and download pages where the
+    # "chrome" is the actual information. When the cleaned result is near-empty but the
+    # page itself carried more visible text, return the whole readable body instead of a
+    # husk — metadata keeps the clean pass's title/date. Bypasses _clean_content: block
+    # filters would re-delete the short nav/CTA lines this path exists to preserve.
+    if raw_html and len(_normalize_text(cleaned)) < _MIN_CLEAN_CHARS:
+        from core.extract.content_processor import extract_full_body_text
+
+        full = extract_full_body_text(raw_html)
+        if len(_normalize_text(full)) > len(_normalize_text(cleaned)):
+            return _build_markdown(meta, full)
+
+    if not cleaned.strip():
         return _build_markdown(meta, "*No content extracted.*")
-
-    strict = bool(raw_html)
-    cleaned = _clean_content(content, strict=strict)
-
-    block_count = len([b for b in cleaned.split("\n\n") if b.strip()])
-    if block_count <= 1 and len(cleaned) > 300:
-        cleaned = _fallback_segment(content)
-        cleaned = _clean_content(cleaned, strict=strict)
-
     return _build_markdown(meta, cleaned)

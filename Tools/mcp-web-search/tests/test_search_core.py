@@ -273,9 +273,13 @@ def test_pacing_skipped_for_tolerant_engines():
 
 # --- engine selection ------------------------------------------------------------
 
+# All engines enabled — isolates breaker behaviour from the config layer.
+_ALL_ON = {n: True for n in ("google", "duckduckgo", "startpage", "qwant", "brave", "yandex", "yep")}
+
+
 def test_select_engines_low_default_pair():
     tracker = EngineHealthTracker(clock=_Clock())
-    names = [e.name for e in select_engines("low", tracker)]
+    names = [e.name for e in select_engines("low", tracker, enabled=_ALL_ON)]
     assert names == ["yandex", "duckduckgo"]
 
 
@@ -284,7 +288,7 @@ def test_select_engines_low_falls_back_to_startpage():
     tracker = EngineHealthTracker(clock=clock)
     tracker.record("yandex", status="blocked", fetch_ms=100, results=0)
     tracker.record("duckduckgo", status="blocked", fetch_ms=100, results=0)
-    names = [e.name for e in select_engines("low", tracker)]
+    names = [e.name for e in select_engines("low", tracker, enabled=_ALL_ON)]
     assert names == ["startpage"]
 
 
@@ -293,17 +297,109 @@ def test_select_engines_low_never_empty():
     tracker = EngineHealthTracker(clock=clock)
     for engine in ("yandex", "duckduckgo", "startpage"):
         tracker.record(engine, status="blocked", fetch_ms=100, results=0)
-    names = [e.name for e in select_engines("low", tracker)]
-    assert names == ["yandex"]  # forced through an open breaker
+    names = [e.name for e in select_engines("low", tracker, enabled=_ALL_ON)]
+    assert names == ["duckduckgo"]  # first enabled lead, forced through an open breaker
+
+
+def test_select_engines_medium_google_healthy_startpage_stays_standby():
+    # Google solidly CLOSED → it owns the family slot alone; Startpage stays a warm standby.
+    clock = _Clock()
+    tracker = EngineHealthTracker(clock=clock)
+    names = [e.name for e in select_engines("medium", tracker, enabled=_ALL_ON)]
+    assert "google" in names
+    assert "startpage" not in names
 
 
 def test_select_engines_medium_startpage_standby_when_google_open():
     clock = _Clock()
     tracker = EngineHealthTracker(clock=clock)
     tracker.record("google", status="blocked", fetch_ms=100, results=0)
-    names = [e.name for e in select_engines("medium", tracker)]
+    names = [e.name for e in select_engines("medium", tracker, enabled=_ALL_ON)]
     assert "google" not in names
     assert "startpage" in names  # hot standby of the google family
+
+
+def test_select_engines_medium_startpage_rides_along_on_google_probe():
+    # Google's cooldown elapsed → next selection sends a half-open PROBE. Because recovery
+    # is unproven, Startpage must ride along so a still-blocked probe doesn't cost the
+    # search its google-family result (the "remember Google is bad" fix).
+    clock = _Clock()
+    tracker = EngineHealthTracker(clock=clock)
+    tracker.record("google", status="blocked", fetch_ms=100, results=0)
+    clock.now = ERROR_COOLDOWN + 1
+    names = [e.name for e in select_engines("medium", tracker, enabled=_ALL_ON)]
+    assert "google" in names      # the probe fires
+    assert "startpage" in names   # …and the safety net rides along
+    assert tracker._health("google").state == BreakerState.HALF_OPEN
+
+
+def test_is_healthy_pure_read_no_side_effects():
+    clock = _Clock()
+    tracker = EngineHealthTracker(clock=clock)
+    assert tracker.is_healthy("google")          # never-seen → CLOSED → healthy
+    tracker.record("google", status="blocked", fetch_ms=100, results=0)
+    assert not tracker.is_healthy("google")      # OPEN → unhealthy
+    clock.now = ERROR_COOLDOWN + 1
+    assert not tracker.is_healthy("google")       # cooldown elapsed but unprobed → unhealthy
+    # Pure read must not have consumed the probe: allow() still admits it.
+    assert tracker.allow("google")
+
+
+# --- per-engine config switches (TODO §D) -----------------------------------------
+
+def test_select_engines_default_config_excludes_yandex_and_yep():
+    # Shipped defaults: yandex/yep off. High tier is the widest fan-out — neither may appear.
+    from core.config.settings import EnginesSection
+
+    tracker = EngineHealthTracker(clock=_Clock())
+    names = [e.name for e in select_engines("high", tracker, enabled=EnginesSection().as_map())]
+    assert "yandex" not in names
+    assert "yep" not in names
+    assert "duckduckgo" in names  # the lead survives
+
+
+def test_select_engines_user_opts_yandex_and_yep_back_in():
+    from core.config.settings import EnginesSection
+
+    enabled = EnginesSection(yandex=True, yep=True).as_map()
+    tracker = EngineHealthTracker(clock=_Clock())
+    names = [e.name for e in select_engines("high", tracker, enabled=enabled)]
+    assert "yandex" in names
+    assert "yep" in names
+
+
+def test_select_engines_disabled_engine_never_forced():
+    # Even the never-empty last resort respects the config: with yandex off and every
+    # breaker open, the forced pick is the first ENABLED lead, not yandex.
+    from core.config.settings import EnginesSection
+
+    clock = _Clock()
+    tracker = EngineHealthTracker(clock=clock)
+    for engine in ("duckduckgo", "startpage"):
+        tracker.record(engine, status="blocked", fetch_ms=100, results=0)
+    names = [e.name for e in select_engines("low", tracker, enabled=EnginesSection().as_map())]
+    assert names == ["duckduckgo"]
+
+
+def test_select_engines_all_disabled_still_returns_lead():
+    tracker = EngineHealthTracker(clock=_Clock())
+    all_off = {n: False for n in _ALL_ON}
+    names = [e.name for e in select_engines("low", tracker, enabled=all_off)]
+    assert names == ["duckduckgo"]  # misconfiguration guard: never return zero engines
+
+
+def test_engines_config_section_loads(tmp_path):
+    import json as _json
+
+    from core.config.settings import load_search_config
+
+    cfg_path = tmp_path / "search_config.json"
+    cfg_path.write_text(_json.dumps({"engines": {"yandex": True, "brave": False}}), encoding="utf-8")
+    cfg = load_search_config(cfg_path)
+    assert cfg.engines.yandex is True      # user opt-in honoured
+    assert cfg.engines.brave is False      # explicit off honoured
+    assert cfg.engines.duckduckgo is True  # absent → default on
+    assert cfg.engines.yep is False        # absent → default off
 
 
 # --- inline-parse policy (custom-domain scope + learned-slow) --------------------

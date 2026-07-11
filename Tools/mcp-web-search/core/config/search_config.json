@@ -30,6 +30,15 @@
   "tor": {
     "enabled": false
   },
+  "engines": {
+    "google": true,
+    "duckduckgo": true,
+    "startpage": true,
+    "qwant": true,
+    "brave": true,
+    "yandex": false,
+    "yep": false
+  },
   "hosted_api": {
     "tavily": "content",
     "firecrawl": "serp",
