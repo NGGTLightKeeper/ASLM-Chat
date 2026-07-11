@@ -310,6 +310,11 @@ def _build_markdown(meta: dict[str, str], content: str) -> str:
     parts.append(content)
 
     text = "\n".join(parts)
+    # Repair GFM tables (trafilatura drops the header row's leading `|`, etc.) so every
+    # renderer parses them. No-op on table-free pages.
+    from core.extract.markdown_tables import normalize_markdown_tables
+
+    text = normalize_markdown_tables(text)
     text = _BLANK_LINES_RE.sub("\n\n", text)
 
     if len(text) > _MAX_OUTPUT_CHARS:

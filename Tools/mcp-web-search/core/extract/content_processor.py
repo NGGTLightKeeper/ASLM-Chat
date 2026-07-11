@@ -691,11 +691,20 @@ def extract_full_body_text(raw_html: str) -> str:
         for node in soup.find_all(tag_name):
             node.decompose()
     body = soup.body or soup
+
+    # Preserve tables as markdown instead of flattening them to a text wall: swap each
+    # <table> for a positional marker, take the body text, then restore the markdown.
+    from core.extract.markdown_tables import swap_tables_for_markers
+
+    table_md = swap_tables_for_markers(soup)
     lines = (
-        _WHITESPACE_RE.sub(" ", line).strip()
+        line.strip() if line.strip().startswith("\x00TBL") else _WHITESPACE_RE.sub(" ", line).strip()
         for line in body.get_text(separator="\n").splitlines()
     )
-    return "\n".join(line for line in lines if line)
+    text = "\n".join(line for line in lines if line)
+    for marker, md in table_md.items():
+        text = text.replace(marker, f"\n{md}\n")
+    return text
 
 
 # Return a callable that returns True for boilerplate text blocks.

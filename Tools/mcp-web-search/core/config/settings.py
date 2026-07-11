@@ -49,10 +49,10 @@ class SearchSection:
 @dataclass
 class ExtractionSection:
     timeout_seconds: float = 25.0
-    max_page_chars: int = 20_000
+    max_page_chars: int = 30_000
     min_content_length: int = 800
     enable_read_page_compress: bool = True
-    read_page_compress_threshold_chars: int = 10_000
+    read_page_compress_threshold_chars: int = 25_000
     read_page_compress_target_chars: int = 10_000
 
 
