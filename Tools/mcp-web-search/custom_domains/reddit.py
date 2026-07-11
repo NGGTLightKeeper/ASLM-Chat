@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 from core.fetch.thread_pool import io_pool as _io_pool
+from custom_domains.reddit_parse import try_extract_markdown
 
 logger = logging.getLogger("custom_domains.reddit")
 
@@ -124,18 +125,32 @@ def _fetch_reddit_json_curl(json_url: str, thread_url: str, timeout: float) -> l
     return data if isinstance(data, list) else None
 
 
-# Fetch the rendered thread page via the warm cloakbrowser; return cleaned inner_text markdown.
+# Fetch the rendered thread page via the warm cloakbrowser and format it as markdown.
+# Two extraction paths on the SAME rendered page (no second fetch):
+#   1. structural parse of result.html — post + nested comments with per-comment
+#      score/depth/author/OP preserved (the high-value path, ported from webclaw);
+#   2. inner_text + nav strip — the legacy fallback when the structure isn't there
+#      (a layout change, a comment-permalink page the selectors miss, an error wall).
 async def _fetch_reddit_browser_page(thread_url: str, timeout: float) -> str | None:
     from core.fetch.browser.client import browser_fetch
 
     result = await browser_fetch(thread_url, nav_timeout=max(float(timeout), 30.0), wait_sec=5.0)
-    if not result.ok or not result.text:
+    if not result.ok:
         logger.debug(
             "reddit browser page fetch failed for %s: %s", thread_url, result.error or result.status
         )
         return None
 
-    text = _strip_reddit_nav(result.text)
+    if result.html:
+        try:
+            markdown = try_extract_markdown(result.html, thread_url)
+        except Exception as exc:  # noqa: BLE001 — parse must never break the fetch
+            logger.debug("reddit structural parse failed for %s: %s", thread_url, exc)
+            markdown = None
+        if markdown and len(markdown) >= 200:
+            return markdown
+
+    text = _strip_reddit_nav(result.text or "")
     if len(text.strip()) < 200:
         logger.debug("reddit browser inner_text too short (%d chars) for %s", len(text), thread_url)
         return None
