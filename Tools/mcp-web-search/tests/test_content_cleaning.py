@@ -71,6 +71,21 @@ def test_formatted_primary_keeps_structure_and_links():
     assert "Menu" not in md
 
 
+def test_formatted_extraction_disables_process_global_dedupe(monkeypatch):
+    import core.extract.page_normalizer as normalizer
+
+    captured = {}
+
+    def fake_extract(_html, **kwargs):
+        captured.update(kwargs)
+        return "Substantial formatted extraction output that safely exceeds no limits."
+
+    monkeypatch.setattr(normalizer.trafilatura, "extract", fake_extract)
+    normalizer._extract_with_trafilatura_formatted("<article>content</article>")
+
+    assert captured["deduplicate"] is False
+
+
 def test_cleaning_keeps_short_facts_and_long_prose_with_common_words():
     from core.extract.page_normalizer import _clean_content
 
@@ -94,6 +109,61 @@ def test_dedupe_does_not_merge_common_prefixes():
     blocks = [f"{prefix} alpha fact.", f"{prefix} beta fact."]
 
     assert _dedupe_blocks(blocks) == blocks
+
+
+def test_budget_never_cuts_through_fenced_code():
+    code = "```python\n" + "\n".join(f"    value_{i} = {i}" for i in range(30)) + "\n```"
+    text = "Introductory prose before the example.\n\n" + code + "\n\nTrailing prose."
+
+    out = compress_read_page_markdown(
+        text,
+        max_chars=220,
+        compress_threshold=10**9,
+        compress_target=0,
+        enable_compress=False,
+    )
+
+    assert out.count("```") % 2 == 0
+    assert "value_0" not in out
+    assert "[...truncated]" in out
+
+
+def test_micro_prune_preserves_fenced_code_verbatim():
+    code = "```python\nasync def main():\n    await important_query_call()\n```"
+    text = "Useful prose about the important query.\n\n" + code
+
+    out = compress_read_page_markdown(
+        text,
+        focus="important query",
+        max_chars=5_000,
+        compress_threshold=10**9,
+        compress_target=0,
+        enable_compress=True,
+    )
+
+    assert code in out
+    assert out.count("```") == 2
+
+
+def test_unclosed_fence_degrades_to_prose_instead_of_swallowing_tail():
+    text = (
+        "Introductory paragraph.\n\n"
+        "```python\n"
+        "useful_call()\n\n"
+        "Important explanatory tail that must remain eligible for compaction."
+    )
+
+    out = compress_read_page_markdown(
+        text,
+        max_chars=5_000,
+        compress_threshold=10**9,
+        compress_target=0,
+        enable_compress=True,
+    )
+
+    assert "```" not in out
+    assert "useful_call()" in out
+    assert "Important explanatory tail" in out
 
 
 def test_micro_prune_drops_keyword_stuffed_clause():

@@ -121,7 +121,7 @@ def _extract_with_trafilatura_formatted(cleaned_html: str, url: str = "") -> str
             include_formatting=True,
             include_links=True,
             favor_precision=True,
-            deduplicate=True,
+            deduplicate=False,
             output_format="txt",
         )
     except Exception:
@@ -318,7 +318,9 @@ def _build_markdown(meta: dict[str, str], content: str) -> str:
     text = _BLANK_LINES_RE.sub("\n\n", text)
 
     if len(text) > _MAX_OUTPUT_CHARS:
-        text = text[:_MAX_OUTPUT_CHARS].rsplit("\n", 1)[0] + "\n\n[...truncated]"
+        from core.extract.content_processor import _truncate_markdown_to_budget
+
+        text = _truncate_markdown_to_budget(text, _MAX_OUTPUT_CHARS)
 
     return text
 

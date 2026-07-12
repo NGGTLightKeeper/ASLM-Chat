@@ -300,7 +300,7 @@ def compress_to_budget(text: str, query: str, max_chars: int) -> str:
 
     paragraphs = _split_blocks(text)
     if not paragraphs:
-        return text[:max_chars]
+        return _truncate_markdown_to_budget(text, max_chars)
 
     query_terms = _bm25_tokenize(query)
     if not query_terms:
@@ -311,7 +311,7 @@ def compress_to_budget(text: str, query: str, max_chars: int) -> str:
             if cost <= budget:
                 selected.append(p)
                 budget -= cost
-        return "\n\n".join(selected) if selected else text[:max_chars]
+        return "\n\n".join(selected) if selected else _truncate_markdown_to_budget(text, max_chars)
 
     # Score against LaTeX-clean versions so math notation doesn't confuse
     # tokenisation, but keep original paragraph text for the output.
@@ -335,7 +335,7 @@ def compress_to_budget(text: str, query: str, max_chars: int) -> str:
 
     # Reconstruct in original order
     result = [paragraphs[i] for i in sorted(selected)]
-    return "\n\n".join(result) if result else text[:max_chars]
+    return "\n\n".join(result) if result else _truncate_markdown_to_budget(text, max_chars)
 
 
 # Fallback BM25 query from URL path segments and page title.
@@ -392,7 +392,7 @@ def compress_read_page_markdown(
     compress_target: int,
     enable_compress: bool = True,
 ) -> str:
-    text = markdown or ""
+    text = _repair_unclosed_fence(markdown or "")
     if not text:
         return text
 
@@ -417,12 +417,19 @@ def compress_read_page_markdown(
     if enable_compress and focus.strip() and text.strip():
         from core.extract.micro_chunk_worker import prune_micro_chunks
 
-        pruned, _micro = prune_micro_chunks(text, focus)
-        if pruned.strip():
-            text = pruned
+        protected: list[str] = []
+        for block in _split_blocks(text):
+            if _is_fenced_code_block(block):
+                protected.append(block)
+                continue
+            pruned, _micro = prune_micro_chunks(block, focus)
+            if pruned.strip():
+                protected.append(pruned)
+        if protected:
+            text = "\n\n".join(protected)
 
     if len(text) > max_chars:
-        text = text[:max_chars].rsplit("\n", 1)[0] + "\n\n[...truncated]"
+        text = _truncate_markdown_to_budget(text, max_chars)
     return text
 
 
@@ -733,10 +740,128 @@ def _dedupe_blocks(blocks: Iterable[str]) -> list[str]:
     return deduped
 
 
-# Split text into normalized paragraph blocks.
+# Opening Markdown fence: up to three leading spaces, then backticks or tildes.
+_MD_FENCE_OPEN_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})(?:[^`~].*)?$")
+
+
+# Return the fence marker when a line opens a fenced block.
+def _fence_marker(line: str) -> str:
+    match = _MD_FENCE_OPEN_RE.match(line.rstrip())
+    return match.group(1) if match else ""
+
+
+# True when a line closes the given fence marker.
+def _closes_fence(line: str, marker: str) -> bool:
+    stripped = line.strip()
+    if not marker or not stripped.startswith(marker[0] * len(marker)):
+        return False
+    return not stripped[len(marker):].strip(marker[0]).strip()
+
+
+# Remove a final unmatched opener while retaining all following text as ordinary prose.
+# A malformed source fence must not turn the remainder of a document into one huge atom.
+def _repair_unclosed_fence(text: str) -> str:
+    lines = (text or "").splitlines()
+    marker = ""
+    opener_index = -1
+    for index, line in enumerate(lines):
+        if marker:
+            if _closes_fence(line, marker):
+                marker = ""
+                opener_index = -1
+            continue
+        opened = _fence_marker(line)
+        if opened:
+            marker = opened
+            opener_index = index
+    if marker and opener_index >= 0:
+        del lines[opener_index]
+        return "\n".join(lines)
+    return text
+
+
+# Split text into paragraph blocks while keeping every fenced code block atomic.
 def _split_blocks(text: str) -> list[str]:
-    pieces = re.split(r"\n\s*\n|(?<=\.)\s{2,}", text or "")
-    return [n for p in pieces if (n := _normalize_text(p))]
+    blocks: list[str] = []
+    prose: list[str] = []
+    fenced: list[str] = []
+    marker = ""
+
+    def flush_prose() -> None:
+        if not prose:
+            return
+        segment = "\n".join(prose)
+        prose.clear()
+        for piece in re.split(r"\n\s*\n|(?<=\.)\s{2,}", segment):
+            stripped = piece.strip()
+            if stripped:
+                blocks.append(stripped)
+
+    for line in (text or "").splitlines():
+        if marker:
+            fenced.append(line)
+            if _closes_fence(line, marker):
+                blocks.append("\n".join(fenced).strip("\n"))
+                fenced.clear()
+                marker = ""
+            continue
+
+        opened = _fence_marker(line)
+        if opened:
+            flush_prose()
+            marker = opened
+            fenced.append(line)
+        else:
+            prose.append(line)
+
+    if fenced:
+        # Degrade an unterminated source fence to prose instead of swallowing the whole
+        # tail into an oversized atomic block. The unmatched opener itself is discarded.
+        prose.extend(fenced[1:])
+    flush_prose()
+    return blocks
+
+
+# True when one block starts with a Markdown fence.
+def _is_fenced_code_block(block: str) -> bool:
+    first_line = (block or "").lstrip().split("\n", 1)[0]
+    return bool(_fence_marker(first_line))
+
+
+# Truncate Markdown at block boundaries, never inside fenced code.
+def _truncate_markdown_to_budget(text: str, max_chars: int) -> str:
+    text = _repair_unclosed_fence(text)
+    if max_chars <= 0:
+        return ""
+    if len(text) <= max_chars:
+        return text
+
+    suffix = "[...truncated]"
+    content_budget = max(0, max_chars - len(suffix) - 2)
+    selected: list[str] = []
+    used = 0
+    for block in _split_blocks(text):
+        separator = 2 if selected else 0
+        cost = separator + len(block)
+        if used + cost <= content_budget:
+            selected.append(block)
+            used += cost
+            continue
+
+        if _is_fenced_code_block(block):
+            # Omit this block atomically, but keep scanning: later prose or smaller code
+            # can still use the remaining budget instead of being discarded with it.
+            continue
+
+        remaining = content_budget - used - separator
+        if remaining > 0:
+            fragment = _truncate_at_sentence(block, remaining)
+            if fragment:
+                selected.append(fragment)
+        break
+
+    prefix = "\n\n".join(selected).rstrip()
+    return f"{prefix}\n\n{suffix}" if prefix else suffix
 
 
 # Quality scoring and trafilatura extraction.
@@ -760,7 +885,7 @@ def _extract_text_with_trafilatura(cleaned_html: str) -> str:
             include_comments=False,
             include_tables=True,
             favor_precision=True,
-            deduplicate=True,
+            deduplicate=False,
             output_format="txt",
         )
     except Exception:
@@ -793,4 +918,3 @@ def _estimate_quality(text: str, block_count: int) -> float:
     score -= min(digit_ratio, 0.20) * 0.20
     score -= min(marker_penalty * 0.08, 0.25)
     return max(0.0, min(round(score, 4), 1.0))
-

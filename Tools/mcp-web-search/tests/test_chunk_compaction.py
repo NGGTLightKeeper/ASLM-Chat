@@ -50,3 +50,20 @@ def test_compress_empty_query_does_not_crash():
     doc = _doc()
     out = compress_chunks(doc, "", char_budget=1_400)
     assert isinstance(out, str)
+
+
+def test_compress_chunks_keeps_selected_fence_atomic():
+    code = (
+        "```python\n"
+        "# Transformer attention query computes 42 token weights.\n"
+        "async def attention_query():\n"
+        "    return transformer_attention_result\n"
+        "```"
+    )
+    filler = "Unrelated cooking and travel paragraph with enough words to be scored."
+    doc = "\n\n".join([filler] * 8 + [code] + [filler] * 8)
+
+    out = compress_chunks(doc, "transformer attention query", char_budget=600)
+
+    assert code in out
+    assert out.count("```") == 2

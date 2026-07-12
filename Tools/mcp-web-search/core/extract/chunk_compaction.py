@@ -24,8 +24,9 @@ from core.extract.content_processor import (
     _bm25_tokenize,
     _clean_latex_for_index,
     _has_latex,
+    _is_fenced_code_block,
     _split_blocks,
-    _truncate_at_sentence,
+    _truncate_markdown_to_budget,
 )
 
 
@@ -46,9 +47,8 @@ _DEFAULT_POLICY = _Policy()
 def _policy_for(char_budget: int | None) -> _Policy:
     if char_budget is None or char_budget <= 0:
         return _DEFAULT_POLICY
-    scale = max(0.5, min(3.0, char_budget / _DEFAULT_POLICY.char_budget))
     return _Policy(
-        char_budget=max(400, int(_DEFAULT_POLICY.char_budget * scale)),
+        char_budget=max(400, int(char_budget)),
         min_score=_DEFAULT_POLICY.min_score,
         max_chunks=_DEFAULT_POLICY.max_chunks,
         max_chunks_expanded=_DEFAULT_POLICY.max_chunks_expanded,
@@ -107,7 +107,10 @@ def _score_paragraphs(
     bm25_raw = _bm25_score_paragraphs(index_paras, query_terms) if query_terms else [0.0] * len(paragraphs)
     bm25 = _normalize_scores(bm25_raw)
     entity = [_entity_heuristic_score(p) for p in paragraphs]
-    seo = [seo_keyword_stuffing_penalty(p, query_terms) for p in paragraphs]
+    seo = [
+        0.0 if _is_fenced_code_block(p) else seo_keyword_stuffing_penalty(p, query_terms)
+        for p in paragraphs
+    ]
 
     seo_w = max(0.0, min(1.0, policy.seo_weight))
     remainder = max(0.05, 1.0 - seo_w)
@@ -135,7 +138,7 @@ def compress_chunks(text: str, query: str, *, char_budget: int | None = None) ->
 
     paragraphs = _split_blocks(text)
     if not paragraphs:
-        return _truncate_at_sentence(text[: policy.char_budget], policy.char_budget)
+        return _truncate_markdown_to_budget(text, policy.char_budget)
 
     query_terms = _bm25_tokenize(query)
     scored = _score_paragraphs(paragraphs, query_terms, policy)
@@ -187,9 +190,9 @@ def compress_chunks(text: str, query: str, *, char_budget: int | None = None) ->
         selected_idx = sorted(selected)
 
     if not selected_idx:
-        return _truncate_at_sentence(text[: policy.char_budget], policy.char_budget)
+        return _truncate_markdown_to_budget(text, policy.char_budget)
 
     joined = "\n\n".join(paragraphs[i] for i in selected_idx)
     if len(joined) > policy.char_budget:
-        joined = _truncate_at_sentence(joined, policy.char_budget)
+        joined = _truncate_markdown_to_budget(joined, policy.char_budget)
     return joined
