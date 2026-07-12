@@ -48,6 +48,54 @@ def test_normalize_page_drops_junk_keeps_content():
         assert junk not in md, f"junk survived: {junk!r}"
 
 
+def test_formatted_primary_keeps_structure_and_links():
+    html = """<html><body>
+    <main>
+      <nav><a href='/menu'>Menu</a></nav>
+      <article>
+        <h2>Structured reference</h2>
+        <p>This semantic article contains enough substantial prose for extraction and
+        links to the <a href='/guide'>complete guide</a> without relying on host rules.</p>
+        <pre><code>first line\n    indented line</code></pre>
+        <p>A second substantial paragraph keeps the article above the extraction floor
+        while the surrounding navigation remains outside the nested article.</p>
+      </article>
+    </main>
+    </body></html>"""
+
+    md = normalize_page("https://example.com/reference", raw_html=html)
+
+    assert "# Structured reference" in md
+    assert "[complete guide](https://example.com/guide)" in md
+    assert "```" in md
+    assert "Menu" not in md
+
+
+def test_cleaning_keeps_short_facts_and_long_prose_with_common_words():
+    from core.extract.page_normalizer import _clean_content
+
+    text = (
+        "Added in version 3.11.\n\n"
+        "Processes share memory through an implementation-specific mechanism, and this "
+        "long explanatory paragraph must remain content even though it contains a word "
+        "that can also occur in a compact social control."
+    )
+
+    cleaned = _clean_content(text, strict=True)
+
+    assert "Added in version 3.11." in cleaned
+    assert "Processes share memory" in cleaned
+
+
+def test_dedupe_does_not_merge_common_prefixes():
+    from core.extract.content_processor import _dedupe_blocks
+
+    prefix = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen"
+    blocks = [f"{prefix} alpha fact.", f"{prefix} beta fact."]
+
+    assert _dedupe_blocks(blocks) == blocks
+
+
 def test_micro_prune_drops_keyword_stuffed_clause():
     # One sentence: a factual clause (kept) + a query-keyword-stuffed, fact-poor clause
     # (an "SEO tumor" — what micro_chunk_worker targets).

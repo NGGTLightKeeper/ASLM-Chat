@@ -119,7 +119,7 @@ def _extract_with_trafilatura_formatted(cleaned_html: str, url: str = "") -> str
             include_comments=False,
             include_tables=True,
             include_formatting=True,
-            include_links=False,
+            include_links=True,
             favor_precision=True,
             deduplicate=True,
             output_format="txt",
@@ -335,6 +335,16 @@ def normalize_page(
     fallback_text: Optional[str] = None,
 ) -> str:
     meta = _extract_meta(raw_html, fallback_text, url)
+
+    # Trafilatura's formatted precision pass is both faster and more faithful on normal
+    # articles and reference pages than flattening the same document into DOM blocks and
+    # rebuilding structure afterwards. Keep the DOM/full-body machinery as the fallback
+    # for genuinely thin extraction instead of running every successful page through it.
+    if raw_html and _HAS_TRAFILATURA:
+        formatted = _extract_with_trafilatura_formatted(raw_html, url)
+        if len(_normalize_text(formatted)) >= 200:
+            return _build_markdown(meta, formatted)
+
     content = _extract_content(raw_html, fallback_text, url)
 
     cleaned = ""

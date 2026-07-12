@@ -709,20 +709,18 @@ def extract_full_body_text(raw_html: str) -> str:
 
 # Return a callable that returns True for boilerplate text blocks.
 def _get_boilerplate_filter():
-    # Fallback boilerplate check using noise markers and minimum length.
+    # A noise word is meaningful only on a short UI-like block. Long prose can use the
+    # same word legitimately, and short headings/version notes are content by default.
     def _fallback(text: str) -> bool:
         compact = _normalize_text(text).lower()
-        if len(compact) < 40:
-            return True
-        return any(marker in compact for marker in _NOISE_MARKERS)
+        return len(compact) <= 120 and any(marker in compact for marker in _NOISE_MARKERS)
     return _fallback
 
 
-# Deduplicate blocks by exact text and token signature.
+# Deduplicate blocks by exact normalized text while preserving their original layout.
 def _dedupe_blocks(blocks: Iterable[str]) -> list[str]:
     deduped: list[str] = []
     seen_exact: set[str] = set()
-    seen_signatures: set[str] = set()
     for block in blocks:
         normalized = _normalize_text(block)
         if not normalized:
@@ -730,14 +728,8 @@ def _dedupe_blocks(blocks: Iterable[str]) -> list[str]:
         exact_key = normalized.lower()
         if exact_key in seen_exact:
             continue
-        tokens = re.findall(r"\w+", exact_key)
-        signature = " ".join(tokens[:18])
-        if signature and signature in seen_signatures:
-            continue
         seen_exact.add(exact_key)
-        if signature:
-            seen_signatures.add(signature)
-        deduped.append(normalized)
+        deduped.append(block.strip())
     return deduped
 
 
@@ -801,5 +793,4 @@ def _estimate_quality(text: str, block_count: int) -> float:
     score -= min(digit_ratio, 0.20) * 0.20
     score -= min(marker_penalty * 0.08, 0.25)
     return max(0.0, min(round(score, 4), 1.0))
-
 
