@@ -124,7 +124,8 @@ def test_budget_never_cuts_through_fenced_code():
     )
 
     assert out.count("```") % 2 == 0
-    assert "value_0" not in out
+    assert code in out
+    assert len(out) > 220
     assert "[...truncated]" in out
 
 

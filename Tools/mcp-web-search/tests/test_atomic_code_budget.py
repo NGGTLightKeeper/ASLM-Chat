@@ -74,6 +74,11 @@ def test_skipped_code_does_not_discard_following_prose():
 
 def test_production_compactor_never_emits_partial_synthetic_blocks():
     markdown = _markdown()
+    source_code = re.findall(
+        r"^[ \t]{0,3}(?:`{3,}|~{3,})[^\n]*\n.*?^[ \t]{0,3}(?:`{3,}|~{3,})[ \t]*$",
+        markdown,
+        re.MULTILINE | re.DOTALL,
+    )
 
     for budget in (500, 1_000, 1_243, 1_244, 4_000, 6_546, 6_547, 10_000, 20_000):
         output = compress_read_page_markdown(
@@ -86,12 +91,25 @@ def test_production_compactor_never_emits_partial_synthetic_blocks():
             enable_compress=True,
         )
 
-        assert len(output) <= budget
+        assert all(block in output for block in source_code)
         assert _fences_balanced(output)
-        assert all(_paired(output, marker) for marker in _MARKERS)
+        assert all(f"SYNTH_{marker}_BEGIN" in output for marker in _MARKERS)
+        assert all(f"SYNTH_{marker}_END" in output for marker in _MARKERS)
+
+    assert len(
+        compress_read_page_markdown(
+            markdown,
+            url=_URL,
+            focus="",
+            max_chars=500,
+            compress_threshold=1,
+            compress_target=500,
+            enable_compress=True,
+        )
+    ) > 500
 
 
-def test_query_compactor_honors_budget_for_large_repetitive_code():
+def test_query_compactor_pins_all_code_even_when_it_exceeds_budget():
     markdown = _markdown()
 
     boundary = compress_read_page_markdown(
@@ -113,9 +131,9 @@ def test_query_compactor_honors_budget_for_large_repetitive_code():
         enable_compress=True,
     )
 
-    assert "SYNTH_BOUNDARY_BEGIN" in boundary
-    assert "SYNTH_BOUNDARY_END" in boundary
-    assert len(boundary) <= 6_000
-    assert "SYNTH_OVERSIZED_BEGIN" in oversized
-    assert "SYNTH_OVERSIZED_END" in oversized
-    assert len(oversized) <= 14_000
+    for output in (boundary, oversized):
+        assert all(f"SYNTH_{marker}_BEGIN" in output for marker in _MARKERS)
+        assert all(f"SYNTH_{marker}_END" in output for marker in _MARKERS)
+        assert _fences_balanced(output)
+    assert len(boundary) > 6_000
+    assert len(oversized) > 14_000

@@ -293,25 +293,33 @@ def _bm25_score_paragraphs(paragraphs: list[str], query_terms: list[str]) -> lis
     return scores
 
 
-# Select top paragraphs by BM25 relevance that fit within max_chars.
+# Pin fenced code verbatim, then spend the remaining character budget on BM25 prose.
+# Protected code may make the result exceed max_chars.
 def compress_to_budget(text: str, query: str, max_chars: int) -> str:
     if not text or len(text) <= max_chars:
         return text
 
     paragraphs = _split_blocks(text)
     if not paragraphs:
-        return _truncate_markdown_to_budget(text, max_chars)
+        return _truncate_markdown_to_budget(text, max_chars, preserve_fenced_code=True)
+
+    pinned = {idx for idx, paragraph in enumerate(paragraphs) if _is_fenced_code_block(paragraph)}
+    pinned_cost = sum(len(paragraphs[idx]) + 2 for idx in pinned)
+    prose_budget = max(0, max_chars - pinned_cost)
 
     query_terms = _bm25_tokenize(query)
     if not query_terms:
         # No query terms — greedily take paragraphs from the top
-        selected, budget = [], max_chars
-        for p in paragraphs:
+        selected = set(pinned)
+        budget = prose_budget
+        for idx, p in enumerate(paragraphs):
+            if idx in pinned:
+                continue
             cost = len(p) + 2
             if cost <= budget:
-                selected.append(p)
+                selected.add(idx)
                 budget -= cost
-        return "\n\n".join(selected) if selected else _truncate_markdown_to_budget(text, max_chars)
+        return "\n\n".join(paragraphs[idx] for idx in sorted(selected))
 
     # Score against LaTeX-clean versions so math notation doesn't confuse
     # tokenisation, but keep original paragraph text for the output.
@@ -323,9 +331,11 @@ def compress_to_budget(text: str, query: str, max_chars: int) -> str:
     scores = _bm25_score_paragraphs(score_paras, query_terms)
     ranked = sorted(range(len(paragraphs)), key=lambda i: -scores[i])
 
-    selected: set[int] = set()
-    budget = max_chars
+    selected: set[int] = set(pinned)
+    budget = prose_budget
     for idx in ranked:
+        if idx in pinned:
+            continue
         cost = len(paragraphs[idx]) + 2
         if cost <= budget:
             selected.add(idx)
@@ -335,7 +345,9 @@ def compress_to_budget(text: str, query: str, max_chars: int) -> str:
 
     # Reconstruct in original order
     result = [paragraphs[i] for i in sorted(selected)]
-    return "\n\n".join(result) if result else _truncate_markdown_to_budget(text, max_chars)
+    return "\n\n".join(result) if result else _truncate_markdown_to_budget(
+        text, max_chars, preserve_fenced_code=True
+    )
 
 
 # Fallback BM25 query from URL path segments and page title.
@@ -381,7 +393,8 @@ def _resolve_read_page_compress_query(focus: str, url: str, markdown: str) -> st
         return ""
 
 
-# Shrink long read_page output with BM25 relevance before the hard max_chars cap.
+# Shrink long read_page output with BM25 relevance. Fenced code is outside the
+# prose budget, so max_chars becomes a soft ceiling when protected code alone is larger.
 def compress_read_page_markdown(
     markdown: str,
     *,
@@ -429,7 +442,7 @@ def compress_read_page_markdown(
             text = "\n\n".join(protected)
 
     if len(text) > max_chars:
-        text = _truncate_markdown_to_budget(text, max_chars)
+        text = _truncate_markdown_to_budget(text, max_chars, preserve_fenced_code=True)
     return text
 
 
@@ -701,8 +714,10 @@ def extract_full_body_text(raw_html: str) -> str:
 
     # Preserve tables as markdown instead of flattening them to a text wall: swap each
     # <table> for a positional marker, take the body text, then restore the markdown.
+    from core.extract.markdown_code import restore_pre_markers, wrap_pre_with_markers
     from core.extract.markdown_tables import swap_tables_for_markers
 
+    code_md = wrap_pre_with_markers(soup)
     table_md = swap_tables_for_markers(soup)
     lines = (
         line.strip() if line.strip().startswith("\x00TBL") else _WHITESPACE_RE.sub(" ", line).strip()
@@ -711,7 +726,7 @@ def extract_full_body_text(raw_html: str) -> str:
     text = "\n".join(line for line in lines if line)
     for marker, md in table_md.items():
         text = text.replace(marker, f"\n{md}\n")
-    return text
+    return restore_pre_markers(text, code_md)
 
 
 # Return a callable that returns True for boilerplate text blocks.
@@ -828,8 +843,14 @@ def _is_fenced_code_block(block: str) -> bool:
     return bool(_fence_marker(first_line))
 
 
-# Truncate Markdown at block boundaries, never inside fenced code.
-def _truncate_markdown_to_budget(text: str, max_chars: int) -> str:
+# Truncate Markdown at block boundaries. With preserve_fenced_code, every fenced
+# block is pinned verbatim and the result may exceed max_chars.
+def _truncate_markdown_to_budget(
+    text: str,
+    max_chars: int,
+    *,
+    preserve_fenced_code: bool = False,
+) -> str:
     text = _repair_unclosed_fence(text)
     if max_chars <= 0:
         return ""
@@ -837,10 +858,35 @@ def _truncate_markdown_to_budget(text: str, max_chars: int) -> str:
         return text
 
     suffix = "[...truncated]"
+    blocks = _split_blocks(text)
+    if preserve_fenced_code:
+        pinned = {idx for idx, block in enumerate(blocks) if _is_fenced_code_block(block)}
+        pinned_cost = sum(len(blocks[idx]) + 2 for idx in pinned)
+        prose_budget = max(0, max_chars - pinned_cost - len(suffix) - 2)
+        selected: dict[int, str] = {idx: blocks[idx] for idx in pinned}
+        used = 0
+        for idx, block in enumerate(blocks):
+            if idx in pinned:
+                continue
+            separator = 2 if selected else 0
+            cost = separator + len(block)
+            if used + cost <= prose_budget:
+                selected[idx] = block
+                used += cost
+                continue
+            remaining = prose_budget - used - separator
+            if remaining > 0:
+                fragment = _truncate_at_sentence(block, remaining)
+                if fragment:
+                    selected[idx] = fragment
+            break
+        prefix = "\n\n".join(selected[idx] for idx in sorted(selected)).rstrip()
+        return f"{prefix}\n\n{suffix}" if prefix else suffix
+
     content_budget = max(0, max_chars - len(suffix) - 2)
     selected: list[str] = []
     used = 0
-    for block in _split_blocks(text):
+    for block in blocks:
         separator = 2 if selected else 0
         cost = separator + len(block)
         if used + cost <= content_budget:

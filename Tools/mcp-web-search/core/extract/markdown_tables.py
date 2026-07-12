@@ -114,13 +114,29 @@ def _repair_table_block(block: list[str]) -> list[str]:
 # non-blank lines that all contain `|` AND include a dashed separator row — so prose lines
 # with an incidental pipe are never touched.
 def normalize_markdown_tables(markdown: str) -> str:
+    from core.extract.markdown_code import closes_markdown_fence, markdown_fence_marker
+
     if "|" not in (markdown or ""):
         return markdown
     lines = markdown.split("\n")
     out: list[str] = []
     i = 0
     n = len(lines)
+    fence = ""
     while i < n:
+        current = markdown_fence_marker(lines[i])
+        if fence:
+            if closes_markdown_fence(lines[i], fence):
+                fence = ""
+            out.append(lines[i])
+            i += 1
+            continue
+        if current:
+            fence = current
+            out.append(lines[i])
+            i += 1
+            continue
+
         # Gather a maximal run of consecutive pipe-bearing non-blank lines.
         j = i
         while j < n and lines[j].strip() and "|" in lines[j]:

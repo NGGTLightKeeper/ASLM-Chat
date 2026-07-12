@@ -76,6 +76,12 @@ def test_normalize_no_table_is_noop():
     assert normalize_markdown_tables(text) == text
 
 
+def test_normalize_ignores_table_shaped_code():
+    code = "```text\nleft | right\n--- | ---\na | b\n```"
+
+    assert normalize_markdown_tables(code) == code
+
+
 def test_full_body_preserves_table_as_markdown():
     # A landing page rescued by full-body must keep its table, not flatten it.
     html = (

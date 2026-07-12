@@ -30,7 +30,6 @@ from core.extract.content_processor import (
 
 _MAX_OUTPUT_CHARS = 50_000
 _WHITESPACE_RE = re.compile(r"[ \t\r\f\v]+")
-_BLANK_LINES_RE = re.compile(r"\n{3,}")
 _TAG_RE = re.compile(r"<[^>]+>")
 
 _MD_HEADING_RE = re.compile(r"^#{1,6}\s")
@@ -112,9 +111,17 @@ def _extract_meta(raw_html: Optional[str], fallback_text: Optional[str], url: st
 def _extract_with_trafilatura_formatted(cleaned_html: str, url: str = "") -> str:
     if not cleaned_html:
         return ""
+    source_html = cleaned_html
+    code_markers: list[tuple[str, str, str]] = []
+    if _HAS_BS4 and "<pre" in cleaned_html.lower():
+        from core.extract.markdown_code import wrap_pre_with_markers
+
+        soup = BeautifulSoup(cleaned_html, "lxml")
+        code_markers = wrap_pre_with_markers(soup)
+        source_html = str(soup)
     try:
         text = trafilatura.extract(
-            cleaned_html,
+            source_html,
             url=url or None,
             include_comments=False,
             include_tables=True,
@@ -126,7 +133,9 @@ def _extract_with_trafilatura_formatted(cleaned_html: str, url: str = "") -> str
         )
     except Exception:
         return ""
-    return text or ""
+    from core.extract.markdown_code import restore_pre_markers
+
+    return restore_pre_markers(text or "", code_markers)
 
 
 # DOM block extraction with structural nav/UI rejection. Returns (joined_text, stats);
@@ -315,7 +324,9 @@ def _build_markdown(meta: dict[str, str], content: str) -> str:
     from core.extract.markdown_tables import normalize_markdown_tables
 
     text = normalize_markdown_tables(text)
-    text = _BLANK_LINES_RE.sub("\n\n", text)
+    from core.extract.markdown_code import collapse_blank_lines_preserving_fences
+
+    text = collapse_blank_lines_preserving_fences(text)
 
     if len(text) > _MAX_OUTPUT_CHARS:
         from core.extract.content_processor import _truncate_markdown_to_budget

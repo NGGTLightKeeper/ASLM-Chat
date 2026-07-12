@@ -67,3 +67,19 @@ def test_compress_chunks_keeps_selected_fence_atomic():
 
     assert code in out
     assert out.count("```") == 2
+
+
+def test_compress_chunks_pins_irrelevant_code_verbatim_over_budget():
+    code = (
+        "```python\n"
+        + "\n".join(f"preserved_value_{i} = {i}" for i in range(80))
+        + "\n```"
+    )
+    relevant = (
+        "Transformer attention uses query-key products to compute token relevance."
+    )
+
+    out = compress_chunks(f"{relevant}\n\n{code}", "transformer attention", char_budget=300)
+
+    assert code in out
+    assert len(out) > 300
