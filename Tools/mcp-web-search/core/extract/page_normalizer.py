@@ -107,8 +107,15 @@ def _extract_meta(raw_html: Optional[str], fallback_text: Optional[str], url: st
     return meta
 
 
-# Use trafilatura with include_formatting=True for markdown-like output.
-def _extract_with_trafilatura_formatted(cleaned_html: str, url: str = "") -> str:
+# Use trafilatura with include_formatting=True for markdown-like output. Recall mode is
+# useful for already-isolated article HTML returned by structured APIs: there is no site
+# chrome to reject, so retaining the whole article is safer than main-content guessing.
+def _extract_with_trafilatura_formatted(
+    cleaned_html: str,
+    url: str = "",
+    *,
+    favor_recall: bool = False,
+) -> str:
     if not cleaned_html:
         return ""
     source_html = cleaned_html
@@ -127,9 +134,10 @@ def _extract_with_trafilatura_formatted(cleaned_html: str, url: str = "") -> str
             include_tables=True,
             include_formatting=True,
             include_links=True,
-            favor_precision=True,
+            favor_precision=not favor_recall,
+            favor_recall=favor_recall,
             deduplicate=False,
-            output_format="txt",
+            output_format="markdown" if favor_recall else "txt",
         )
     except Exception:
         return ""
@@ -346,6 +354,8 @@ def normalize_page(
     url: str,
     raw_html: Optional[str] = None,
     fallback_text: Optional[str] = None,
+    *,
+    favor_recall: bool = False,
 ) -> str:
     meta = _extract_meta(raw_html, fallback_text, url)
 
@@ -354,7 +364,7 @@ def normalize_page(
     # rebuilding structure afterwards. Keep the DOM/full-body machinery as the fallback
     # for genuinely thin extraction instead of running every successful page through it.
     if raw_html and _HAS_TRAFILATURA:
-        formatted = _extract_with_trafilatura_formatted(raw_html, url)
+        formatted = _extract_with_trafilatura_formatted(raw_html, url, favor_recall=favor_recall)
         if len(_normalize_text(formatted)) >= 200:
             return _build_markdown(meta, formatted)
 
