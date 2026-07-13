@@ -86,6 +86,28 @@ def test_formatted_extraction_disables_process_global_dedupe(monkeypatch):
     assert captured["deduplicate"] is False
 
 
+def test_content_router_keeps_complete_formatted_result(monkeypatch):
+    import core.extract.page_normalizer as normalizer
+
+    formatted = (
+        "Formatted article with [a live link](https://example.com/guide).\n\n"
+        "```python\nprint('structure survives')\n```\n\n"
+        + "Substantial reference prose. " * 12
+    )
+    monkeypatch.setattr(normalizer, "_extract_with_trafilatura_formatted", lambda *_args: formatted)
+
+    def unexpected_dom(*_args):
+        raise AssertionError("DOM fallback ran after a complete formatted extraction")
+
+    monkeypatch.setattr(normalizer, "_extract_with_dom_blocks", unexpected_dom)
+
+    result = normalizer._extract_content(
+        "<article>source</article>", None, "https://example.com"
+    )
+
+    assert result == formatted
+
+
 def test_cleaning_keeps_short_facts_and_long_prose_with_common_words():
     from core.extract.page_normalizer import _clean_content
 

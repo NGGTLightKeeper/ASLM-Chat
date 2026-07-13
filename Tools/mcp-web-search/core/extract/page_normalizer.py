@@ -107,6 +107,18 @@ def _extract_meta(raw_html: Optional[str], fallback_text: Optional[str], url: st
     return meta
 
 
+# Protect preformatted blocks before an extractor normalizes the surrounding DOM.
+def _protect_pre_blocks(source_html: str) -> tuple[str, list[tuple[str, str, str]]]:
+    if not (_HAS_BS4 and "<pre" in source_html.lower()):
+        return source_html, []
+
+    from core.extract.markdown_code import wrap_pre_with_markers
+
+    soup = BeautifulSoup(source_html, "lxml")
+    markers = wrap_pre_with_markers(soup)
+    return str(soup), markers
+
+
 # Use trafilatura with include_formatting=True for markdown-like output. Recall mode is
 # useful for already-isolated article HTML returned by structured APIs: there is no site
 # chrome to reject, so retaining the whole article is safer than main-content guessing.
@@ -118,14 +130,7 @@ def _extract_with_trafilatura_formatted(
 ) -> str:
     if not cleaned_html:
         return ""
-    source_html = cleaned_html
-    code_markers: list[tuple[str, str, str]] = []
-    if _HAS_BS4 and "<pre" in cleaned_html.lower():
-        from core.extract.markdown_code import wrap_pre_with_markers
-
-        soup = BeautifulSoup(cleaned_html, "lxml")
-        code_markers = wrap_pre_with_markers(soup)
-        source_html = str(soup)
+    source_html, code_markers = _protect_pre_blocks(cleaned_html)
     try:
         text = trafilatura.extract(
             source_html,
@@ -151,9 +156,12 @@ def _extract_with_trafilatura_formatted(
 def _extract_with_dom_blocks(cleaned_html: str, url: str) -> tuple[str, dict]:
     try:
         from core.extract.dom_block_extractor import extract_dom_blocks
+        from core.extract.markdown_code import restore_pre_markers
 
-        blocks, stats = extract_dom_blocks(cleaned_html, url=url)
-        return "\n\n".join(blocks), dict(stats)
+        source_html, code_markers = _protect_pre_blocks(cleaned_html)
+        blocks, stats = extract_dom_blocks(source_html, url=url)
+        text = restore_pre_markers("\n\n".join(blocks), code_markers)
+        return text, dict(stats)
     except Exception:  # noqa: BLE001 — extraction refinement must never sink a read
         return "", {}
 
@@ -164,22 +172,16 @@ def _extract_content(raw_html: Optional[str], fallback_text: Optional[str], url:
         cleaned_html = _preclean_html(raw_html)
         min_chars = 200
 
-        # Structural nav/UI rejection (menus, control clusters, link farms) — catches
-        # boilerplate that survives trafilatura's main-content heuristic.
-        dom_text, dom_stats = _extract_with_dom_blocks(cleaned_html, url)
-        dom_ok = len(_normalize_text(dom_text)) >= min_chars
-
+        # Keep the formatted result whenever it is substantial. A DOM pass's own reject
+        # count cannot tell us whether this different extractor retained boilerplate.
         if _HAS_TRAFILATURA:
             text = _extract_with_trafilatura_formatted(cleaned_html, url)
             if len(_normalize_text(text)) >= min_chars:
-                # When the DOM pass rejected several nav/UI blocks, the page carries real
-                # boilerplate that trafilatura's main-content heuristic tends to swallow —
-                # prefer the structurally-filtered blocks. Clean pages (few/no rejects)
-                # keep trafilatura's richer formatting (headings/lists/tables).
-                if dom_ok and int(dom_stats.get("nav_rejected", 0)) >= 3:
-                    return dom_text
                 return text
 
+        # Structural nav/UI rejection remains the fallback for thin formatted output.
+        dom_text, _dom_stats = _extract_with_dom_blocks(cleaned_html, url)
+        dom_ok = len(_normalize_text(dom_text)) >= min_chars
         if dom_ok:
             return dom_text
 

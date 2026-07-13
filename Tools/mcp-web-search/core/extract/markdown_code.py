@@ -84,7 +84,7 @@ def fenced_code(text: str, language: str = "") -> str:
 
 # Wrap every <pre> with boundary markers while leaving the original DOM intact.
 def wrap_pre_with_markers(soup) -> list[tuple[str, str, str]]:
-    source_fingerprint = hashlib.sha256(str(soup).encode("utf-8", errors="replace")).hexdigest()[:12].upper()
+    source_fingerprint = hashlib.sha256(str(soup).encode("utf-8", errors="replace")).hexdigest()[:24].upper()
     markers: list[tuple[str, str, str]] = []
     for index, pre in enumerate(list(soup.find_all("pre"))):
         text = pre_to_text(pre)

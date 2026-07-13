@@ -87,3 +87,19 @@ def test_marker_boundaries_replace_extractor_generated_code_range():
 
     assert restored == inner
     assert restored.count("```") == 2
+
+
+def test_dom_fallback_preserves_preformatted_code():
+    from core.extract.page_normalizer import _extract_with_dom_blocks
+
+    html = f"""<html><body><article>
+    <p>{_PROSE}</p>
+    <pre><code class="language-python">async def fallback():
+    await task()</code></pre>
+    <p>{_PROSE}</p>
+    </article></body></html>"""
+
+    text, _stats = _extract_with_dom_blocks(html, "https://fixture.test/dom-fallback")
+
+    assert "```python\nasync def fallback():\n    await task()\n```" in text
+    assert "ASLMCODE" not in text
