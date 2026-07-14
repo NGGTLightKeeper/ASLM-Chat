@@ -1440,6 +1440,15 @@
   border-color: var(--c-error);
 }
 
+/* Pasted text rendered as regular file chip: make the whole area clickable for editor */
+.file-preview-chip.is-pasted {
+  cursor: pointer;
+}
+
+.file-preview-chip.is-pasted:hover {
+  border-color: var(--c-primary);
+}
+
 .file-preview-icon {
   grid-row: 1 / span 2;
   display: flex;
@@ -1500,6 +1509,8 @@
 .img-preview-remove:hover {
   background: var(--danger-hover);
 }
+
+/* Pasted text attachments use the standard .file-preview-chip with .is-pasted class for editor click handling */
 
 .chat-input {
   width: 100%;
@@ -6013,6 +6024,39 @@ body.is-resizing-reasoning-drawer * {
   justify-content: flex-end;
   gap: var(--space-2);
   margin-top: var(--space-5);
+}
+
+/* Larger textarea editor used for PASTED text artifacts */
+.aslm-dialog-backdrop--editor {
+  z-index: 10050; /* sit above most floating UI */
+}
+
+.aslm-dialog--editor {
+  width: min(720px, 94vw);
+  max-height: 72vh;
+}
+
+.aslm-dialog-textarea {
+  width: 100%;
+  min-height: 220px;
+  max-height: 48vh;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 10px 12px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface-primary);
+  color: var(--c-text);
+  white-space: pre;
+  overflow: auto;
+}
+
+.aslm-dialog-textarea:focus {
+  outline: none;
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 1px var(--focus-ring);
 }
 
 /* Add-skills dialog */

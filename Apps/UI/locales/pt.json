@@ -229,7 +229,15 @@
     "cancel": "Cancelar",
     "confirm": "Confirmar",
     "input": "Entrada",
-    "valueRequired": "O valor é obrigatório."
+    "valueRequired": "O valor é obrigatório.",
+    "save": "Guardar alterações",
+    "pastedBadge": "COLADO",
+    "pastedRemove": "Remover texto colado",
+    "pastedUploading": "A carregar...",
+    "pastedUploadFailed": "Falha no carregamento",
+    "pastedTypeLabel": "Colado",
+    "editPastedTitle": "Editar conteúdo colado",
+    "editPastedPlaceholder": "Edite o texto colado. Use Ctrl/Cmd+Enter para guardar."
   },
   "errors": {
     "generic": "Algo correu mal",

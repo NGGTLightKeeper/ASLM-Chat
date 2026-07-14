@@ -229,7 +229,15 @@
     "cancel": "キャンセル",
     "confirm": "確認",
     "input": "入力",
-    "valueRequired": "値は必須です。"
+    "valueRequired": "値は必須です。",
+    "save": "変更を保存",
+    "pastedBadge": "貼り付け済み",
+    "pastedRemove": "貼り付けたテキストを削除",
+    "pastedUploading": "アップロード中...",
+    "pastedUploadFailed": "アップロード失敗",
+    "pastedTypeLabel": "貼り付け済み",
+    "editPastedTitle": "貼り付けた内容を編集",
+    "editPastedPlaceholder": "貼り付けたテキストを編集します。Ctrl/Cmd+Enter で保存。"
   },
   "errors": {
     "generic": "問題が発生しました",

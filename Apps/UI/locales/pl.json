@@ -229,7 +229,15 @@
     "cancel": "Anuluj",
     "confirm": "Potwierdź",
     "input": "Wprowadzanie",
-    "valueRequired": "Wartość jest wymagana."
+    "valueRequired": "Wartość jest wymagana.",
+    "save": "Zapisz zmiany",
+    "pastedBadge": "WKLEJONO",
+    "pastedRemove": "Usuń wklejony tekst",
+    "pastedUploading": "Przesyłanie...",
+    "pastedUploadFailed": "Przesyłanie nie powiodło się",
+    "pastedTypeLabel": "Wklejono",
+    "editPastedTitle": "Edytuj wklejoną zawartość",
+    "editPastedPlaceholder": "Edytuj wklejony tekst. Użyj Ctrl/Cmd+Enter, aby zapisać."
   },
   "errors": {
     "generic": "Coś poszło nie tak",

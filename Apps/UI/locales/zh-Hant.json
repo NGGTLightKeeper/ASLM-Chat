@@ -229,7 +229,15 @@
     "cancel": "取消",
     "confirm": "確認",
     "input": "輸入",
-    "valueRequired": "必須填寫值。"
+    "valueRequired": "必須填寫值。",
+    "save": "儲存變更",
+    "pastedBadge": "已貼上",
+    "pastedRemove": "移除已貼上的文字",
+    "pastedUploading": "上傳中...",
+    "pastedUploadFailed": "上傳失敗",
+    "pastedTypeLabel": "已貼上",
+    "editPastedTitle": "編輯已貼上的內容",
+    "editPastedPlaceholder": "編輯已貼上的文字。使用 Ctrl/Cmd+Enter 儲存。"
   },
   "errors": {
     "generic": "發生錯誤",

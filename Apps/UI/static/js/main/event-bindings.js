@@ -338,6 +338,16 @@ export function bindEventHandlers(context, dependencies) {
     attachmentsUi.removePendingAttachment(index);
   });
 
+  // Click anywhere on a pasted file chip (except the remove X) opens the editor.
+  // This makes the entire attachment widget clickable for editing the pasted content.
+  $(document).on('click', '.file-preview-chip.is-pasted', function onPastedFileClick(event) {
+    if ($(event.target).closest('.img-preview-remove').length) {
+      return;
+    }
+    const index = $(this).closest('[data-idx]').data('idx');
+    attachmentsUi.editPastedAttachment(index);
+  });
+
 
   // File drag-and-drop helpers.
   // Read the DataTransfer object from a native or jQuery event.

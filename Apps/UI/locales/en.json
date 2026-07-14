@@ -237,7 +237,15 @@
     "cancel": "Cancel",
     "confirm": "Confirm",
     "input": "Input",
-    "valueRequired": "Value is required."
+    "valueRequired": "Value is required.",
+    "save": "Save changes",
+    "pastedBadge": "PASTED",
+    "pastedRemove": "Remove pasted text",
+    "pastedUploading": "Uploading...",
+    "pastedUploadFailed": "Upload failed",
+    "pastedTypeLabel": "Pasted",
+    "editPastedTitle": "Edit pasted content",
+    "editPastedPlaceholder": "Edit the pasted text. Use Ctrl/Cmd+Enter to save."
   },
   "errors": {
     "generic": "Something went wrong",

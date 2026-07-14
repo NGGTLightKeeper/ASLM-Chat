@@ -229,7 +229,15 @@
     "cancel": "Annulla",
     "confirm": "Conferma",
     "input": "Input",
-    "valueRequired": "Il valore è obbligatorio."
+    "valueRequired": "Il valore è obbligatorio.",
+    "save": "Salva modifiche",
+    "pastedBadge": "INCOLLATO",
+    "pastedRemove": "Rimuovi testo incollato",
+    "pastedUploading": "Caricamento in corso...",
+    "pastedUploadFailed": "Caricamento non riuscito",
+    "pastedTypeLabel": "Incollato",
+    "editPastedTitle": "Modifica contenuto incollato",
+    "editPastedPlaceholder": "Modifica il testo incollato. Usa Ctrl/Cmd+Invio per salvare."
   },
   "errors": {
     "generic": "Si è verificato un errore",

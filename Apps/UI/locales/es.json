@@ -229,7 +229,15 @@
     "cancel": "Cancelar",
     "confirm": "Confirmar",
     "input": "Entrada",
-    "valueRequired": "El valor es obligatorio."
+    "valueRequired": "El valor es obligatorio.",
+    "save": "Guardar cambios",
+    "pastedBadge": "PEGADO",
+    "pastedRemove": "Eliminar texto pegado",
+    "pastedUploading": "Subiendo...",
+    "pastedUploadFailed": "Error al subir",
+    "pastedTypeLabel": "Pegado",
+    "editPastedTitle": "Editar contenido pegado",
+    "editPastedPlaceholder": "Edita el texto pegado. Usa Ctrl/Cmd+Intro para guardar."
   },
   "errors": {
     "generic": "Algo salió mal",

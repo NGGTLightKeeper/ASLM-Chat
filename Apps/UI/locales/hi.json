@@ -229,7 +229,15 @@
     "cancel": "रद्द करें",
     "confirm": "पुष्टि",
     "input": "इनपुट",
-    "valueRequired": "मान आवश्यक है।"
+    "valueRequired": "मान आवश्यक है।",
+    "save": "परिवर्तन सहेजें",
+    "pastedBadge": "पेस्ट किया गया",
+    "pastedRemove": "पेस्ट किया गया टेक्स्ट हटाएं",
+    "pastedUploading": "अपलोड हो रहा है...",
+    "pastedUploadFailed": "अपलोड विफल",
+    "pastedTypeLabel": "पेस्ट किया गया",
+    "editPastedTitle": "पेस्ट की गई सामग्री संपादित करें",
+    "editPastedPlaceholder": "पेस्ट किए गए टेक्स्ट को संपादित करें। सहेजने के लिए Ctrl/Cmd+Enter दबाएं।"
   },
   "errors": {
     "generic": "कुछ गलत हो गया",

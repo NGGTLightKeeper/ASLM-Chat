@@ -229,7 +229,15 @@
     "cancel": "Annuleren",
     "confirm": "Bevestigen",
     "input": "Invoer",
-    "valueRequired": "Waarde is verplicht."
+    "valueRequired": "Waarde is verplicht.",
+    "save": "Wijzigingen opslaan",
+    "pastedBadge": "GEPLAKT",
+    "pastedRemove": "Geplakte tekst verwijderen",
+    "pastedUploading": "Bezig met uploaden...",
+    "pastedUploadFailed": "Upload mislukt",
+    "pastedTypeLabel": "Geplakt",
+    "editPastedTitle": "Geplakte inhoud bewerken",
+    "editPastedPlaceholder": "Bewerk de geplakte tekst. Gebruik Ctrl/Cmd+Enter om op te slaan."
   },
   "errors": {
     "generic": "Er is iets misgegaan",
