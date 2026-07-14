@@ -455,6 +455,13 @@ export function bindEventHandlers(context, dependencies) {
     if (files && files.length > 0) {
       attachmentsUi.handleDroppedFiles(files);
     }
+
+    // Support dropping links (e.g. from bookmarks or other pages) as URL attachments.
+    // The link text/URL may be inserted by the browser into the input; we attach it anyway.
+    if (attachmentsUi.collectDroppedUrls && attachmentsUi.queueUrlAttachment) {
+      const urls = attachmentsUi.collectDroppedUrls(dataTransfer) || [];
+      urls.forEach(function (u) { attachmentsUi.queueUrlAttachment(u); });
+    }
   }
 
   const dragTargets = [

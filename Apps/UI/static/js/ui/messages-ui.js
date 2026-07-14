@@ -2350,11 +2350,20 @@ export function createMessagesUi(context, dependencies) {
         displayKind = 'video';
       } else if (isImageAttachment(file)) {
         displayKind = 'image';
+      } else if (isUrlAttachment(file)) {
+        displayKind = 'url';
       } else {
         displayKind = 'file';
       }
     }
     return displayKind;
+  }
+
+  function isUrlAttachment(file) {
+    const kind = attachmentDisplayKind(file);
+    const mime = attachmentMimeType(file);
+    const name = attachmentFilename(file);
+    return kind === 'url' || /url|x-url|uri-list/i.test(mime) || /^https?:\/\//i.test(name);
   }
 
   // Render one compact chip for a user upload.
@@ -2368,6 +2377,21 @@ export function createMessagesUi(context, dependencies) {
         <span class="msg-upload-file-main">
           <span class="msg-upload-file-name">${escHtml(filename)}</span>
           <span class="msg-upload-file-meta">${escHtml(mediaMetaText(file))}</span>
+        </span>
+      </div>
+    `;
+  }
+
+  // Render URL attachment (fixed "URL" label, address as description, truncated to fit).
+  function renderUrlAttachmentCard(file) {
+    const url = file.url || file.name || file.contentUrl || attachmentFilename(file);
+    const short = (url.length > 55) ? url.slice(0, 32) + '...' + url.slice(-18) : url;
+    return `
+      <div class="msg-upload-file-chip msg-attachment-card msg-url-card">
+        <span class="msg-upload-file-badge" aria-hidden="true">URL</span>
+        <span class="msg-upload-file-main">
+          <span class="msg-upload-file-name" title="${escapeAttributeValue(url)}">${escHtml(short)}</span>
+          <span class="msg-upload-file-meta">URL</span>
         </span>
       </div>
     `;
@@ -2450,7 +2474,13 @@ export function createMessagesUi(context, dependencies) {
       return '';
     }
     if (renderOptions.source === 'upload' && renderOptions.side === 'user') {
+      if (isUrlAttachment(normalized)) {
+        return renderUrlAttachmentCard(normalized);
+      }
       return renderUserUploadAttachmentChip(normalized);
+    }
+    if (isUrlAttachment(normalized)) {
+      return renderUrlAttachmentCard(normalized);
     }
     if (isAudioAttachment(normalized)) {
       return renderAudioAttachmentCard(normalized, renderOptions);

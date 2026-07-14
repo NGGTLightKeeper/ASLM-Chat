@@ -122,7 +122,9 @@ export function createAttachmentsUi(context) {
       typeLabel: attachment.typeLabel || attachment.type_label || '',
       // Preserve pasted-artifact specific fields (full text for preview/edit before send).
       pasted: !!attachment.pasted,
-      textContent: attachment.textContent || attachment.text_content || ''
+      textContent: attachment.textContent || attachment.text_content || '',
+      // URL attachment (link pasted or dropped; content fetched server-side via read_page).
+      url: attachment.url || attachment.href || '',
     };
   }
 
@@ -159,7 +161,8 @@ export function createAttachmentsUi(context) {
       dataUrl,
       // Carry forward pasted artifact info (textContent is the source of truth for edits).
       pasted: normalized.pasted,
-      textContent: normalized.textContent
+      textContent: normalized.textContent,
+      url: normalized.url
     };
   }
 
@@ -277,6 +280,31 @@ export function createAttachmentsUi(context) {
     return t.substring(0, maxLen - 3) + '...';
   }
 
+  // URL detection and helpers for link attachments (keep original text in input).
+  function isValidHttpUrl(str) {
+    try {
+      const u = new URL(String(str || '').trim());
+      return u.protocol === 'http:' || u.protocol === 'https:';
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function extractUrls(text) {
+    const re = /https?:\/\/[^\s<>"'`{}|\\^[\]]+/gi;
+    const matches = String(text || '').match(re) || [];
+    return [...new Set(matches)].filter(isValidHttpUrl);
+  }
+
+  function truncateUrlForWidget(url, maxLen = 50) {
+    const t = String(url || '').trim();
+    if (t.length <= maxLen) return t;
+    // simple head...tail for urls
+    const head = t.slice(0, Math.floor(maxLen * 0.6));
+    const tail = t.slice(-Math.floor(maxLen * 0.3));
+    return `${head}...${tail}`;
+  }
+
   // Rebuild both preview strips from the current pending attachments.
   function rebuildPreviewStrips() {
     const $strips = dom.$imagePreviewStrip.add(dom.$imagePreviewStripConv);
@@ -321,6 +349,25 @@ export function createAttachmentsUi(context) {
             <div class="file-preview-name">${escHtml(displayName)}</div>
             <div class="file-preview-meta">${escHtml(meta)}</div>
             <button class="img-preview-remove" aria-label="${escHtml(t('dialog.pastedRemove', null, 'Remove pasted text'))}">
+              ${icons.REMOVE_ATTACHMENT_ICON}
+            </button>
+          </div>
+        `;
+      } else if (attachment.displayKind === 'url' || attachment.kind === 'url') {
+        // URL attachment: looks like regular file chip, badge "URL", description = the address (truncated to fit).
+        // Text of the URL is kept in the input (we never preventDefault for links).
+        const isUploading = attachment.status === 'uploading';
+        const isError = attachment.status === 'error';
+        const url = attachment.url || attachment.name || '';
+        const displayUrl = truncateUrlForWidget(url);
+        const meta = isUploading ? t('dialog.pastedUploading', null, 'Uploading...') :
+                     (isError ? t('dialog.pastedUploadFailed', null, 'Upload failed') : 'URL');
+        html = `
+          <div class="file-preview-chip is-url${isUploading ? ' is-uploading' : ''}${isError ? ' is-error' : ''}" data-idx="${index}">
+            <div class="file-preview-icon" aria-hidden="true">URL</div>
+            <div class="file-preview-name">${escHtml(displayUrl)}</div>
+            <div class="file-preview-meta">${escHtml(meta)}</div>
+            <button class="img-preview-remove" aria-label="Remove URL attachment">
               ${icons.REMOVE_ATTACHMENT_ICON}
             </button>
           </div>
@@ -644,16 +691,46 @@ export function createAttachmentsUi(context) {
       return true;
     }
 
-    // Large plain text paste → create as editable PASTED file/artifact instead of dumping into textarea.
     const text = clipboardData && typeof clipboardData.getData === 'function'
       ? clipboardData.getData('text/plain')
       : '';
+
+    // Always extract and attach any URLs found in the paste.
+    // Do NOT preventDefault for URLs — the link text must remain in the input.
+    const urls = extractUrls(text);
+    urls.forEach(function queueOne(u) { queueUrlAttachment(u); });
+
+    // Large plain text paste → artifact (but URLs above are already attached).
     if (text && shouldTreatPasteAsArtifact(text)) {
       queuePastedTextArtifact(text);
       return true;
     }
 
     return false;
+  }
+
+  // Queue a URL as a special attachment (no file upload). The URL text stays in the composer input.
+  // Displayed like a file chip with "URL" badge + truncated address. Content will be fetched
+  // server-side via WebSearch read_page after send and injected into LLM context.
+  function queueUrlAttachment(url) {
+    const clean = String(url || '').trim();
+    if (!clean || !isValidHttpUrl(clean)) {
+      return;
+    }
+    const pending = {
+      kind: 'url',
+      url: clean,
+      name: clean,
+      mimeType: 'text/x-url',
+      size: 0,
+      base64: '',
+      dataUrl: '',
+      status: 'ready',
+      displayKind: 'url',
+      typeLabel: 'URL'
+    };
+    state.attachmentState.pending.push(pending);
+    rebuildPreviewStrips();
   }
 
   // Create a synthetic text file from a large clipboard paste and queue it as a special editable artifact.
@@ -704,13 +781,34 @@ export function createAttachmentsUi(context) {
     queueFiles(files || []);
   }
 
+  // Collect URLs from drag data (text/uri-list or plain text link) for drag & drop of links.
+  function collectDroppedUrls(dataTransfer) {
+    const out = [];
+    if (!dataTransfer) return out;
+
+    const uriList = dataTransfer.getData('text/uri-list') || '';
+    if (uriList) {
+      uriList.split(/\r?\n/).forEach(function (line) {
+        const u = line.trim();
+        if (u && isValidHttpUrl(u)) out.push(u);
+      });
+    }
+    const plain = (dataTransfer.getData('text/plain') || '').trim();
+    if (plain && isValidHttpUrl(plain) && !out.includes(plain)) {
+      out.push(plain);
+    }
+    return out;
+  }
+
   return {
     clearPendingAttachments,
+    collectDroppedUrls,
     editPastedAttachment,
     handleDroppedFiles,
     handleFileInput,
     handleClipboardPaste,
     normalizeAttachment,
+    queueUrlAttachment,
     rebuildPreviewStrips,
     removePendingAttachment,
     resolveAttachmentData,

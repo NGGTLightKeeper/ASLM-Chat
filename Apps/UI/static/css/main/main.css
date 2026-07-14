@@ -1449,6 +1449,10 @@
   border-color: var(--c-primary);
 }
 
+.file-preview-chip.is-url {
+  /* URL attachments look like regular files but with fixed "URL" badge */
+}
+
 .file-preview-icon {
   grid-row: 1 / span 2;
   display: flex;

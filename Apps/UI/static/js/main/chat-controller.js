@@ -361,7 +361,23 @@ export function createChatController(context, dependencies) {
 
     for (const attachment of attachments || []) {
       const resolved = await attachmentUi.resolveAttachmentData(attachment);
-      if (!resolved || !resolved.base64) {
+      if (!resolved) {
+        continue;
+      }
+
+      // URL attachments: sent without data/base64. Server will fetch content via read_page.
+      if (resolved.kind === 'url' || resolved.url) {
+        payloads.push({
+          kind: 'url',
+          name: resolved.name || resolved.url,
+          url: resolved.url || resolved.name,
+          mime_type: resolved.mimeType || 'text/x-url',
+          size_bytes: 0
+        });
+        continue;
+      }
+
+      if (!resolved.base64) {
         continue;
       }
       if (resolved.fileId && resolved.kind !== 'image') {

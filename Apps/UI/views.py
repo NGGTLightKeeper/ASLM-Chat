@@ -103,6 +103,86 @@ TOOLS_PATH = settings.BASE_DIR / "Tools"
 if str(TOOLS_PATH) not in sys.path:
     sys.path.insert(0, str(TOOLS_PATH))
 
+# For saving read results to user_files in the same style as uploads
+import re as _re
+import hashlib as _hashlib
+import uuid as _uuid
+
+# Direct access to WebSearch read_page for URL attachments.
+# Performed for every URL attachment regardless of whether "web_search" tool is enabled in UI.
+try:
+    _mcp_ws_dir = TOOLS_PATH / "mcp-web-search"
+    if str(_mcp_ws_dir) not in sys.path:
+        sys.path.insert(0, str(_mcp_ws_dir))
+    from core.read.service import run_read_page
+    from core.search_io_logger import write_search_io_event
+except Exception:
+    run_read_page = None
+    write_search_io_event = lambda event: None
+    logger.warning("WebSearch read_page / io_logger not importable — URL attachments will have limited support")
+
+
+def _save_url_read_result_to_user_files(url: str, content: str) -> None:
+    """Save read_page result to Tools/user_files the same way search/read_page results are persisted.
+
+    Writes the markdown content and a manifest so the result is available like other user/search files.
+    """
+    if not content or str(content).lower().startswith(("error", "warning")):
+        return
+    try:
+        from Apps.UI.upload_storage import (
+            USER_FILE_MANIFEST_ROOT,
+            _safe_scope,
+            _write_manifest,
+            build_uploaded_file_manifest,
+        )
+        from pathlib import Path as _PPath
+        import json as _json
+
+        safe_hash = _re.sub(r"[^a-fA-F0-9]+", "", _hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]) or "url"
+        scope = _safe_scope(safe_hash)
+        target_dir = USER_FILE_MANIFEST_ROOT / scope
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        file_id = _uuid.uuid4().hex
+        safe_name = _re.sub(r"[^a-zA-Z0-9._-]", "_", url)[:80] + ".md"
+        stored_name = f"{file_id}__{safe_name}"
+        file_path = target_dir / stored_name
+        file_bytes = content.encode("utf-8")
+        file_path.write_bytes(file_bytes)
+
+        # Create manifest using the same builder as uploads/user files
+        manifest = build_uploaded_file_manifest(
+            file_bytes,
+            name=safe_name,
+            mime="text/markdown",
+            sandbox_path=f"/workspace/_sandbox/User/{scope}/{stored_name}",
+            model_supports_vision=False,
+            file_id=file_id,
+            tool_server_id="web_search",
+        )
+        _write_manifest(manifest)
+
+        # Augment manifest with URL source info (written next to the .manifest.json)
+        try:
+            mpath = file_path.with_name(file_path.name + ".manifest.json")
+            if mpath.exists():
+                data = _json.loads(mpath.read_text(encoding="utf-8"))
+            else:
+                data = {}
+            data.update({
+                "source_url": url,
+                "source_kind": "url_attachment_read_page",
+                "text_available": True,
+                "text_total_chars": len(content),
+            })
+            mpath.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+    except Exception as e:
+        logger.warning("Failed to save URL read result to user_files for %s: %s", url, e)
+
+
 from context_compression.history_compressor import (  # noqa: E402
     build_structured_history_summary,
     decide_compression,
@@ -1250,6 +1330,20 @@ def _normalize_attachment_payload(raw_attachment: Any, order: int) -> dict[str, 
     else:
         return None
 
+    # URL attachments (pasted/dropped links). No data required. Handled specially:
+    # keep original URL text in input, add attachment, fetch content via read_page after send.
+    url_val = str(raw_attachment.get("url") or raw_attachment.get("href") or "").strip()
+    if url_val and (url_val.lower().startswith("http://") or url_val.lower().startswith("https://")):
+        return {
+            "kind": "url",
+            "name": url_val,
+            "mime_type": "text/x-url",
+            "data": "",
+            "size_bytes": 0,
+            "url": url_val,
+            "order": order,
+        }
+
     encoded = str(raw_data or "").strip()
     if not encoded:
         return None
@@ -1309,6 +1403,7 @@ def _serialize_attachment_record(attachment: Any, *, include_data: bool = True) 
             "size_bytes": attachment.size_bytes,
             "order": attachment.order,
             "content_url": _attachment_content_url("attachment", attachment.id),
+            "url": attachment.name if attachment.kind == "url" else "",
         }
         if include_data:
             payload["data_url"] = attachment.data_url()
@@ -1421,6 +1516,11 @@ def _extract_attachment_text(attachment: dict[str, Any]) -> str:
     if attachment.get("extracted_text_ready"):
         return _truncate_attachment_text(str(attachment.get("extracted_text") or ""))
 
+    # For URL attachments the page content is pre-fetched into extracted_text by chat_api.
+    if str(attachment.get("kind") or "").lower() == "url":
+        # If not ready yet (should not happen), return stub.
+        return _cache_attachment_text(attachment, str(attachment.get("extracted_text") or ""))
+
     attachment_name = str(attachment.get("name") or "file").strip() or "file"
     mime_type = str(attachment.get("mime_type") or "application/octet-stream").strip()
     file_bytes = _attachment_data_to_bytes(attachment)
@@ -1454,6 +1554,17 @@ def _build_file_attachment_prompt_block(attachment: dict[str, Any]) -> str:
     mime_type = str(attachment.get("mime_type") or "application/octet-stream").strip()
     size_bytes = int(attachment.get("size_bytes") or 0)
     extracted_text = _extract_attachment_text(attachment)
+
+    # Special friendly block for URL attachments (fetched via read_page).
+    if str(attachment.get("kind") or "").lower() == "url" or mime_type == "text/x-url":
+        url = attachment.get("url") or attachment_name
+        if extracted_text and not str(extracted_text).lower().startswith("error"):
+            return (
+                f"[Attached URL: {url}]\n"
+                f"Content:\n{extracted_text}\n"
+                f"[/Attached URL]"
+            )
+        return f"[Attached URL: {url} — content could not be fetched]"
 
     if extracted_text:
         return (
@@ -5043,6 +5154,136 @@ def chat_api(request):
         )
         _store_message_attachments(user_message_record, attachments)
         Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
+
+        # URL attachments: fetch page content via WebSearch read_page (always, even if tool not selected).
+        # This runs AFTER the user message is persisted but BEFORE we build LLM history / call the model.
+        # Uses built-in search IO logging and saves result to Tools/user_files like the search tool itself.
+        # The markdown is stored in extracted_text so prompt builders pick it up.
+        url_atts = [a for a in (attachments or []) if isinstance(a, dict) and (str(a.get("kind") or "").lower() == "url" or a.get("url"))]
+        if url_atts:
+            for ua in url_atts:
+                u = str(ua.get("url") or ua.get("name") or "").strip()
+                if not u:
+                    continue
+                write_search_io_event({
+                    "layer": "url_attachment",
+                    "phase": "read_page.request",
+                    "tool_id": "read_page",
+                    "url": u,
+                })
+                started = time.perf_counter()
+                content = ""
+                try:
+                    # Call via the MCP tool worker (like the search tool itself does).
+                    # This ensures correct python env, deps (selectolax etc), browser daemon, and built-in logging.
+                    server_file = TOOLS_PATH / "mcp-web-search" / "mcp-server.py"
+                    worker_payload = {
+                        "tool_id": "read_page",
+                        "arguments": {"url": u},
+                        "context": {"chat_id": str(chat.id) if chat else ""},
+                    }
+                    try:
+                        from API.mcp import _get_worker_session
+                        session = _get_worker_session(server_file)
+                        envelope = session.request(
+                            "call",
+                            worker_payload,
+                            timeout_s=60,
+                        )
+                    except Exception as worker_exc:
+                        logger.warning("Persistent worker call failed for read_page, falling back to one-shot: %s", worker_exc)
+                        # Fallback one-shot using the worker script
+                        python_path = None
+                        try:
+                            from API.mcp import _get_worker_python
+                            python_path = _get_worker_python(server_file)
+                        except Exception:
+                            pass
+                        if python_path is None:
+                            python_path = sys.executable
+                        import subprocess, json as _json
+                        req = _json.dumps(worker_payload, ensure_ascii=False)
+                        res = subprocess.run(
+                            [str(python_path), str(TOOLS_PATH.parent / "Services" / "tool_worker.py"), "call", str(server_file)],
+                            input=req,
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            cwd=str(server_file.parent),
+                            timeout=60,
+                            check=False,
+                        )
+                        stdout = (res.stdout or "").strip()
+                        envelope = None
+                        for line in reversed(stdout.splitlines()):
+                            try:
+                                envelope = _json.loads(line)
+                                break
+                            except Exception:
+                                continue
+                        if not isinstance(envelope, dict) or not envelope.get("ok"):
+                            raise RuntimeError(f"Worker failed: {stdout[:300]} {res.stderr[:300]}")
+                        envelope = envelope.get("result") or envelope
+
+                    # Extract content from the read_page payload (same shape as mcp-server _call_read_page)
+                    if isinstance(envelope, dict):
+                        if "model_context" in envelope:
+                            content = envelope.get("model_context") or ""
+                        elif "result" in envelope and isinstance(envelope["result"], dict):
+                            content = envelope["result"].get("model_context") or ""
+                        else:
+                            content = str(envelope)
+                    else:
+                        content = str(envelope)
+
+                    elapsed = time.perf_counter() - started
+                    write_search_io_event({
+                        "layer": "url_attachment",
+                        "phase": "read_page.result",
+                        "tool_id": "read_page",
+                        "url": u,
+                        "result": {"model_context": (content or "")[:2000]},
+                        "elapsed_seconds": elapsed,
+                    })
+                    try:
+                        from API.mcp import log_search_tool_io
+                        log_search_tool_io(
+                            phase="result",
+                            tool_event={"tool_id": "read_page", "tool_name": "Read Page (URL attachment)"},
+                            arguments={"url": u},
+                            result=(content or "")[:1000],
+                            elapsed_seconds=elapsed,
+                        )
+                    except Exception:
+                        pass
+
+                    # Save the result to Tools/user_files like the search tool itself does for read_page results.
+                    try:
+                        _save_url_read_result_to_user_files(u, content)
+                    except Exception as save_exc:
+                        logger.warning("Failed to persist read_page result to user_files for %s: %s", u, save_exc)
+
+                    # Update DB attachment so it gets injected into prompt context via extracted_text
+                    MessageAttachment.objects.filter(
+                        message=user_message_record,
+                        name=u,
+                        kind="url",
+                    ).update(extracted_text=content or "", extracted_text_ready=True)
+                except Exception as exc:
+                    logger.warning("Failed to read_page for URL attachment %s: %s", u, exc)
+                    write_search_io_event({
+                        "layer": "url_attachment",
+                        "phase": "read_page.error",
+                        "tool_id": "read_page",
+                        "url": u,
+                        "error": str(exc),
+                    })
+                    try:
+                        MessageAttachment.objects.filter(message=user_message_record, name=u, kind="url").update(
+                            extracted_text=f"Error: could not fetch page content: {exc}", extracted_text_ready=True
+                        )
+                    except Exception:
+                        pass
 
         # Pre-create the assistant row so the client knows its ID up front
         # and can target it for delete/regenerate without waiting for reload.

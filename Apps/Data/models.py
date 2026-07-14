@@ -56,6 +56,7 @@ class Message(models.Model):
 class MessageAttachmentKind(models.TextChoices):
     IMAGE = "image", "Image"
     FILE = "file", "File"
+    URL = "url", "URL"
 
 
 # Store normalized message attachments.
