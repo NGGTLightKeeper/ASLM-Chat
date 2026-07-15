@@ -290,12 +290,6 @@ export function createAttachmentsUi(context) {
     }
   }
 
-  function extractUrls(text) {
-    const re = /https?:\/\/[^\s<>"'`{}|\\^[\]]+/gi;
-    const matches = String(text || '').match(re) || [];
-    return [...new Set(matches)].filter(isValidHttpUrl);
-  }
-
   function truncateUrlForWidget(url, maxLen = 50) {
     const t = String(url || '').trim();
     if (t.length <= maxLen) return t;
@@ -695,12 +689,15 @@ export function createAttachmentsUi(context) {
       ? clipboardData.getData('text/plain')
       : '';
 
-    // Always extract and attach any URLs found in the paste.
-    // Do NOT preventDefault for URLs — the link text must remain in the input.
-    const urls = extractUrls(text);
-    urls.forEach(function queueOne(u) { queueUrlAttachment(u); });
+    // Only a paste consisting entirely of one URL becomes a URL attachment.
+    // Return false so the browser also keeps that URL in the input.
+    const pastedUrl = String(text || '').trim();
+    if (pastedUrl && !/\s/.test(pastedUrl) && isValidHttpUrl(pastedUrl)) {
+      queueUrlAttachment(pastedUrl);
+      return false;
+    }
 
-    // Large plain text paste → artifact (but URLs above are already attached).
+    // Large plain text paste becomes one editable artifact without URL attachments.
     if (text && shouldTreatPasteAsArtifact(text)) {
       queuePastedTextArtifact(text);
       return true;
