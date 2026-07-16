@@ -95,7 +95,8 @@ class HostProxyTests(unittest.TestCase):
             ok, message = docker_host_mod._ensure_docker_running()
 
         self.assertFalse(ok)
-        self.assertIn("Start Docker Desktop manually", message)
+        self.assertIn("Docker daemon is not running", message)
+        self.assertIn("SANDBOX_AUTO_START_DOCKER=1", message)
         popen_mock.assert_not_called()
 
     def test_forward_binary_stream_uses_read1_for_pipe_responsiveness(self) -> None:
