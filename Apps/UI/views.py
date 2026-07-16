@@ -1332,7 +1332,9 @@ def _normalize_attachment_payload(raw_attachment: Any, order: int) -> dict[str, 
 
     # URL attachments (pasted/dropped links). No data required. Handled specially:
     # keep original URL text in input, add attachment, fetch content via read_page after send.
-    url_val = str(raw_attachment.get("url") or raw_attachment.get("href") or "").strip()
+    url_val = ""
+    if isinstance(raw_attachment, dict):
+        url_val = str(raw_attachment.get("url") or raw_attachment.get("href") or "").strip()
     if url_val and (url_val.lower().startswith("http://") or url_val.lower().startswith("https://")):
         return {
             "kind": "url",
