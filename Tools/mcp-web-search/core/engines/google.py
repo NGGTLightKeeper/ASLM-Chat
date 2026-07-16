@@ -59,7 +59,7 @@ def _is_internal(value: str) -> bool:
 
 
 # Google SERP parser with structural fallbacks and degradation reporting.
-class GoogleParser:
+class GoogleHtmlParser:
     name = "google"
     # Engines sharing a provider family serve the same underlying index; consensus
     # voting counts one vote per family, not per engine.
@@ -115,7 +115,7 @@ class GoogleParser:
         }
         return EngineRequest(
             method="GET",
-            url=GoogleParser.search_url,
+            url=GoogleHtmlParser.search_url,
             params=params,
             headers=headers,
             cookies=_GOOGLE_COOKIES,

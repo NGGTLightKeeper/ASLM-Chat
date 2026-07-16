@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "Công cụ này yêu cầu Docker.",
+    "refreshDocker": "Kiểm tra lại Docker"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM - Mô hình ngôn ngữ hệ thống nâng cao"
@@ -225,7 +229,15 @@
     "cancel": "Hủy",
     "confirm": "Xác nhận",
     "input": "Nhập",
-    "valueRequired": "Giá trị là bắt buộc."
+    "valueRequired": "Giá trị là bắt buộc.",
+    "save": "Lưu thay đổi",
+    "pastedBadge": "ĐÃ DÁN",
+    "pastedRemove": "Xóa văn bản đã dán",
+    "pastedUploading": "Đang tải lên...",
+    "pastedUploadFailed": "Tải lên thất bại",
+    "pastedTypeLabel": "Đã dán",
+    "editPastedTitle": "Chỉnh sửa nội dung đã dán",
+    "editPastedPlaceholder": "Chỉnh sửa văn bản đã dán. Sử dụng Ctrl/Cmd+Enter để lưu."
   },
   "errors": {
     "generic": "Đã xảy ra lỗi",

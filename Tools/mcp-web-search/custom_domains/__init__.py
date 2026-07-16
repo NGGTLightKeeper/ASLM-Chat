@@ -25,11 +25,13 @@ from custom_domains.github import HANDLER as _github
 from custom_domains.hackernews import HANDLER as _hackernews
 from custom_domains.reddit import HANDLER as _reddit
 from custom_domains.stackexchange import HANDLER as _stackexchange
+from custom_domains.wikipedia import HANDLER as _wikipedia
 from custom_domains.x import HANDLER as _x
 from custom_domains.youtube import HANDLER as _youtube
 
 HANDLERS: list[DomainHandler] = [
     _github,
+    _wikipedia,
     _reddit,
     _x,
     _stackexchange,

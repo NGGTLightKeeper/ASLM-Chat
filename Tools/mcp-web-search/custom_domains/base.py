@@ -10,14 +10,14 @@ from typing import Any, Protocol, runtime_checkable
 #   both       — usable by web_search inline parsing AND the read_page tool (default);
 #   read_page  — read_page tool only; web_search keeps the source as a snippet and never
 #                parses it inline (handlers that need a browser or a slow API: reddit, x,
-#                ebay, youtube). Cheap, fast handlers (github/stackexchange APIs) stay both.
+#                ebay, youtube). Cheap handlers (github/Wikipedia/stackexchange APIs) stay both.
 SCOPE_BOTH = "both"
 SCOPE_READ_PAGE = "read_page"
 
 # Unified contract for the custom-domains pass-through layer. read_page stays thin: it
 # asks `match(url)` for a handler and calls `handler.read(url, ctx)`. Two handler shapes
 # share this one API:
-#   - terminal handlers (github, reddit, x, stackexchange, amazon, ebay, youtube) produce
+#   - terminal handlers (github, Wikipedia, reddit, x, stackexchange, amazon, ebay, youtube) produce
 #     their own final markdown;
 #   - strategy handlers (retail dns-shop/citilink, twitch, cursor, …) reuse read_page's
 #     generic pipeline via `ctx.generic_read(...)` with per-domain parameters, so domain

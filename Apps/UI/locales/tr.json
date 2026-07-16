@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "Bu araç Docker gerektirir.",
+    "refreshDocker": "Docker'ı yeniden denetle"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM - Gelişmiş Sistem Dil Modelleri"
@@ -225,7 +229,15 @@
     "cancel": "İptal",
     "confirm": "Onayla",
     "input": "Giriş",
-    "valueRequired": "Değer gerekli."
+    "valueRequired": "Değer gerekli.",
+    "save": "Değişiklikleri kaydet",
+    "pastedBadge": "YAPIŞTIRILDI",
+    "pastedRemove": "Yapıştırılan metni kaldır",
+    "pastedUploading": "Yükleniyor...",
+    "pastedUploadFailed": "Yükleme başarısız",
+    "pastedTypeLabel": "Yapıştırıldı",
+    "editPastedTitle": "Yapıştırılan içeriği düzenle",
+    "editPastedPlaceholder": "Yapıştırılan metni düzenleyin. Kaydetmek için Ctrl/Cmd+Enter kullanın."
   },
   "errors": {
     "generic": "Bir şeyler ters gitti",

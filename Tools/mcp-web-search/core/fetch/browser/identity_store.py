@@ -65,6 +65,21 @@ CREATE TABLE IF NOT EXISTS http_cookies (
 );
 
 CREATE INDEX IF NOT EXISTS idx_http_cookies_owner ON http_cookies(owner);
+
+CREATE TABLE IF NOT EXISTS imported_cookies (
+    family   TEXT    NOT NULL,
+    domain   TEXT    NOT NULL,
+    name     TEXT    NOT NULL,
+    value    TEXT    NOT NULL,
+    path     TEXT    NOT NULL DEFAULT '/',
+    expires  REAL    NOT NULL DEFAULT 0,
+    secure   INTEGER NOT NULL DEFAULT 0,
+    source   TEXT    NOT NULL DEFAULT '',
+    imported REAL    NOT NULL,
+    PRIMARY KEY (family, domain, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_imported_family ON imported_cookies(family);
 """
 
 
@@ -313,6 +328,142 @@ class IdentityStore:
     # A ready "k=v; ..." Cookie header for a host from the owner's HTTP cookie history.
     def http_cookie_header(self, owner: str, host: str) -> str:
         return "; ".join(f"{n}={v}" for n, v in self.http_cookies_map(owner, host).items())
+
+    # ── Imported-browser cookie layer (opt-in profile import) ─────────────────────────
+    # A third, family-keyed layer, distinct from the warm-browser generations (rotated) and
+    # the per-engine http_cookies (self-earned). These are cookies imported wholesale from the
+    # user's REAL browser (chromium ← Chrome/Edge/Brave, firefox ← Firefox). Replayed by the
+    # transport for that family and used to seed the warm browser. A re-import replaces the
+    # family's set so stale sessions don't accumulate; disabling the feature clears it.
+
+    # Replace (or, with replace=False, merge) a family's imported cookies. `cookies` is a list
+    # of dicts/objects exposing domain/name/value(/path/expires/secure). Within one batch the
+    # FIRST occurrence of a (domain,name) wins, so callers pass default-browser cookies first.
+    def import_cookies(
+        self, family: str, cookies: list[Any], *, source: str = "", replace: bool = True
+    ) -> int:
+        family = (family or "").strip() or "default"
+        now = time.time()
+        seen: set[tuple[str, str]] = set()
+        rows: list[tuple[str, str, str, str, str, float, int, str, float]] = []
+        for c in cookies:
+            domain = str(_attr(c, "domain") or "").strip()
+            name = str(_attr(c, "name") or "").strip()
+            if not domain or not name:
+                continue
+            dedup_key = (domain.lstrip(".").lower(), name)
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+            rows.append(
+                (
+                    family,
+                    domain,
+                    name,
+                    str(_attr(c, "value") or ""),
+                    str(_attr(c, "path") or "/") or "/",
+                    float(_attr(c, "expires") or 0.0),
+                    1 if _attr(c, "secure") else 0,
+                    source,
+                    now,
+                )
+            )
+        with self._write_lock:
+            conn = self._get_conn()
+            try:
+                with conn:
+                    if replace:
+                        conn.execute("DELETE FROM imported_cookies WHERE family = ?", (family,))
+                    if rows:
+                        conn.executemany(
+                            "INSERT OR REPLACE INTO imported_cookies "
+                            "(family, domain, name, value, path, expires, secure, source, imported) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            rows,
+                        )
+            except sqlite3.DatabaseError as exc:
+                logger.warning("identity_store: import_cookies failed for %r: %s", family, exc)
+                return 0
+        return len(rows)
+
+    # The family's non-expired imported cookies, host-filtered, in storageState cookie shape
+    # (name/value/domain/path/secure) for seeding a Playwright context.
+    def imported_cookies_for(self, family: str, *, host: str = "") -> list[dict[str, Any]]:
+        rows = self._imported_rows(family)
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if host and not _domain_matches(str(row["domain"]), host):
+                continue
+            out.append(
+                {
+                    "name": str(row["name"]),
+                    "value": str(row["value"]),
+                    "domain": str(row["domain"]),
+                    "path": str(row["path"] or "/"),
+                    "secure": bool(row["secure"]),
+                }
+            )
+        return out
+
+    # The family's non-expired imported cookies for a host as {name: value} (transport replay).
+    def imported_cookies_map(self, family: str, host: str) -> dict[str, str]:
+        if not host:
+            return {}
+        out: dict[str, str] = {}
+        for row in self._imported_rows(family):
+            if _domain_matches(str(row["domain"]), host):
+                out[str(row["name"])] = str(row["value"])
+        return out
+
+    # Non-expired imported rows for a family (expires>0 in the past → dropped; 0 = session, kept).
+    def _imported_rows(self, family: str) -> list[sqlite3.Row]:
+        family = (family or "").strip() or "default"
+        now = time.time()
+        try:
+            rows = self._get_conn().execute(
+                "SELECT domain, name, value, path, expires, secure FROM imported_cookies "
+                "WHERE family = ?",
+                (family,),
+            ).fetchall()
+        except sqlite3.DatabaseError as exc:
+            logger.warning("identity_store: imported read failed for %r: %s", family, exc)
+            return []
+        return [r for r in rows if not (r["expires"] and float(r["expires"]) < now)]
+
+    # Drop imported cookies for one family, or all families when family is None.
+    def clear_imported(self, family: str | None = None) -> None:
+        with self._write_lock:
+            conn = self._get_conn()
+            try:
+                with conn:
+                    if family is None:
+                        conn.execute("DELETE FROM imported_cookies")
+                    else:
+                        conn.execute(
+                            "DELETE FROM imported_cookies WHERE family = ?",
+                            ((family or "").strip() or "default",),
+                        )
+            except sqlite3.DatabaseError as exc:
+                logger.warning("identity_store: clear_imported failed: %s", exc)
+
+    # Most-recent import time across all families (0 when nothing imported) — the refresh clock.
+    def imported_age_seconds(self) -> float:
+        try:
+            row = self._get_conn().execute(
+                "SELECT MAX(imported) AS m FROM imported_cookies"
+            ).fetchone()
+        except sqlite3.DatabaseError:
+            return float("inf")
+        if not row or row["m"] is None:
+            return float("inf")
+        return max(0.0, time.time() - float(row["m"]))
+
+
+# Read an attribute from a dict or an object (ImportedCookie) uniformly.
+def _attr(obj: Any, key: str) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
 
 
 _store: Optional[IdentityStore] = None

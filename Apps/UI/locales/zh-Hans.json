@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "此工具需要 Docker。",
+    "refreshDocker": "重新检查 Docker"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM - 高级系统语言模型"
@@ -225,7 +229,15 @@
     "cancel": "取消",
     "confirm": "确认",
     "input": "输入",
-    "valueRequired": "必须填写值。"
+    "valueRequired": "必须填写值。",
+    "save": "保存更改",
+    "pastedBadge": "已粘贴",
+    "pastedRemove": "移除已粘贴的文本",
+    "pastedUploading": "上传中...",
+    "pastedUploadFailed": "上传失败",
+    "pastedTypeLabel": "已粘贴",
+    "editPastedTitle": "编辑已粘贴的内容",
+    "editPastedPlaceholder": "编辑已粘贴的文本。使用 Ctrl/Cmd+Enter 保存。"
   },
   "errors": {
     "generic": "出了点问题",

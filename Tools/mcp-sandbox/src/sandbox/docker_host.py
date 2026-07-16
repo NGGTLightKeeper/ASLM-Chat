@@ -53,6 +53,8 @@ from sandbox.config import (
     WORKSPACE_CLEANUP_IDLE_SECONDS,
     WORKSPACE_CLEANUP_INTERVAL_SECONDS,
     WORKSPACE_CLEANUP_RECYCLE_SECONDS,
+    LINUX_DOCKER_DESKTOP_PATHS,
+    MACOS_DOCKER_DESKTOP_PATHS,
     WINDOWS_DOCKER_DESKTOP_PATHS,
 )
 from sandbox.exec import (
@@ -155,6 +157,63 @@ def _auto_start_docker_enabled() -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Attempt to launch Docker for the current platform.
+# Returns (launched, message); launched=True means a start was triggered and the
+# caller should poll the daemon, False means nothing could be started here.
+def _launch_docker_desktop() -> tuple[bool, str]:
+    if sys.platform == "win32":
+        for path in WINDOWS_DOCKER_DESKTOP_PATHS:
+            if not os.path.isfile(path):
+                continue
+            subprocess.Popen(
+                [path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=0x00000008,  # DETACHED_PROCESS
+            )
+            return True, "Docker Desktop is starting."
+        return False, "Docker Desktop not found. Install or start it manually."
+
+    if sys.platform == "darwin":
+        app_path = next((p for p in MACOS_DOCKER_DESKTOP_PATHS if os.path.isdir(p)), None)
+        command = ["open", "-a", "Docker"] if app_path is None else ["open", app_path]
+        try:
+            subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True, "Docker Desktop is starting."
+        except Exception as exc:
+            return False, f"Could not launch Docker Desktop: {exc}"
+
+    if sys.platform.startswith("linux"):
+        # Docker Desktop for Linux runs as a per-user systemd service.
+        try:
+            result = _run_command(["systemctl", "--user", "start", "docker-desktop"], timeout=15)
+            if result.returncode == 0:
+                return True, "Docker Desktop is starting."
+        except Exception:
+            pass
+        for path in LINUX_DOCKER_DESKTOP_PATHS:
+            if not os.path.isfile(path):
+                continue
+            try:
+                subprocess.Popen(
+                    [path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                return True, "Docker Desktop is starting."
+            except Exception:
+                continue
+        # The system docker daemon cannot be started without privileges from here.
+        return (
+            False,
+            "Docker daemon is not running. Start it manually "
+            "(e.g. 'sudo systemctl start docker') and try again.",
+        )
+
+    return False, "Docker daemon is not running. Start Docker and try again."
+
+
 # Ensure the Docker daemon is available.
 def _ensure_docker_running() -> tuple[bool, str]:
     if not _docker_cli_available():
@@ -167,31 +226,16 @@ def _ensure_docker_running() -> tuple[bool, str]:
     except Exception:
         pass
 
-    if os.name != "nt":
-        return False, "Docker daemon is not running. Start Docker and try again."
-
     if not _auto_start_docker_enabled():
         return (
             False,
-            "Docker daemon is not running. Start Docker Desktop manually to use sandbox tools, "
+            "Docker daemon is not running. Start Docker to use sandbox tools, "
             "or set SANDBOX_AUTO_START_DOCKER=1 to allow automatic launch.",
         )
 
-    launched = False
-    for path in WINDOWS_DOCKER_DESKTOP_PATHS:
-        if not os.path.isfile(path):
-            continue
-        subprocess.Popen(
-            [path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=0x00000008,
-        )
-        launched = True
-        break
-
+    launched, message = _launch_docker_desktop()
     if not launched:
-        return False, "Docker Desktop not found. Install or start it manually."
+        return False, message
 
     deadline = time.time() + DOCKER_START_TIMEOUT_SECONDS
     while time.time() < deadline:
@@ -199,14 +243,13 @@ def _ensure_docker_running() -> tuple[bool, str]:
         try:
             check_result = _docker_info(timeout=5)
             if check_result.returncode == 0:
-                return True, "Docker Desktop started successfully."
+                return True, "Docker started successfully."
         except Exception:
             continue
 
     return (
         False,
-        "Docker Desktop launched but daemon did not respond in "
-        f"{DOCKER_START_TIMEOUT_SECONDS}s.",
+        f"Docker was launched but the daemon did not respond in {DOCKER_START_TIMEOUT_SECONDS}s.",
     )
 
 

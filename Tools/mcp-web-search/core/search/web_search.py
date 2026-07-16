@@ -344,43 +344,77 @@ def _build_ui(sources: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-# Pick engines for a tier, honoring the circuit breaker.
-# Never returns an empty list: low's lead pair falls back to Startpage, and as a
-# last resort Yandex is forced even through an open breaker.
-def select_engines(effort: str, tracker: EngineHealthTracker) -> list[type]:
+# Pick engines for a tier, honoring the per-engine config switch and the circuit breaker.
+# Config is policy (an engine the user turned off never enters a tier — Yandex/Yep default
+# off, one flip re-enables them); the breaker is health. Never returns an empty list: low's
+# leads fall back to Startpage, and as a last resort the first ENABLED lead is forced even
+# through an open breaker. `enabled` overrides the config map (tests).
+def select_engines(
+    effort: str, tracker: EngineHealthTracker, *, enabled: dict[str, bool] | None = None
+) -> list[type]:
+    if enabled is None:
+        from core.config import load_search_config
+
+        enabled = load_search_config().engines.as_map()
+
+    def on(parser: type) -> bool:
+        return bool(enabled.get(parser.name, True))
+
     selected: list[type] = []
 
-    # low core: Yandex (default) + DDG (lead, breaker-gated).
-    if tracker.allow(YandexParser.name):
+    # low core: DDG (lead) + Yandex (opt-in), breaker-gated.
+    if on(YandexParser) and tracker.allow(YandexParser.name):
         selected.append(YandexParser)
-    if tracker.allow(DuckDuckGoParser.name):
+    if on(DuckDuckGoParser) and tracker.allow(DuckDuckGoParser.name):
         selected.append(DuckDuckGoParser)
     if not selected:
-        # Both leads are cooling down — pull the reserve.
-        if tracker.allow(StartpageParser.name):
+        # Leads are cooling down or switched off — pull the reserve.
+        if on(StartpageParser) and tracker.allow(StartpageParser.name):
             selected.append(StartpageParser)
         else:
-            selected.append(YandexParser)  # forced: low must never be empty
+            # Forced: low must never be empty. First enabled lead wins; an all-off
+            # config is a misconfiguration and still gets DDG rather than nothing.
+            forced = next(
+                (p for p in (DuckDuckGoParser, StartpageParser, YandexParser, GoogleParser) if on(p)),
+                DuckDuckGoParser,
+            )
+            selected.append(forced)
 
     if effort == "low":
         return selected
 
-    # medium: one google-family slot (Google primary, Startpage hot standby)…
-    if tracker.allow(GoogleParser.name):
+    # medium: the google-family slot. Google and Startpage serve the SAME index; Startpage
+    # is more scrape-stable, so it is Google's standby. The substitution is keyed on Google
+    # being *solidly healthy* (breaker CLOSED), not merely on it being pickable this instant:
+    #   • Google CLOSED           → Google alone (Startpage stays a warm standby).
+    #   • Google OPEN (cooling)   → Startpage substitutes for the whole cooldown.
+    #   • Google HALF_OPEN probe  → Google probes AND Startpage rides along, so a failed
+    #                               probe (a still-blocked IP) doesn't cost the search its
+    #                               google-family result. Same family → triage dedups the
+    #                               overlap into one consensus vote, never a double count.
+    # This is the "remember Google is bad" fix: while Google is unproven, Startpage is a
+    # first-class member of the tier, not a fill-in that vanishes the moment a probe fires.
+    google_fired = on(GoogleParser) and tracker.allow(GoogleParser.name)
+    if google_fired:
         selected.append(GoogleParser)
-    elif StartpageParser not in selected and tracker.allow(StartpageParser.name):
+    if (
+        StartpageParser not in selected
+        and on(StartpageParser)
+        and (not google_fired or not tracker.is_healthy(GoogleParser.name))
+        and tracker.allow(StartpageParser.name)
+    ):
         selected.append(StartpageParser)
     # …plus Qwant as a health-gated helper.
-    if tracker.allow(QwantParser.name):
+    if on(QwantParser) and tracker.allow(QwantParser.name):
         selected.append(QwantParser)
 
     if effort == "medium":
         return selected
 
-    # high: Brave (rate-governed by its breaker) and Yep (max recall).
-    if tracker.allow(BraveParser.name):
+    # high: Brave (rate-governed by its breaker) and Yep (max recall, opt-in).
+    if on(BraveParser) and tracker.allow(BraveParser.name):
         selected.append(BraveParser)
-    if tracker.allow(YepParser.name):
+    if on(YepParser) and tracker.allow(YepParser.name):
         selected.append(YepParser)
     return selected
 

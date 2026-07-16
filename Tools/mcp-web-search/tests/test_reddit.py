@@ -1,6 +1,6 @@
 # Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
 
-"""Reddit thread fetch: URL shaping, payload parsing, and the tiered fallback chain."""
+"""Reddit thread fetch: URL shaping, markdown shaping, and the page-first fallback chain."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ _LISTING = [
 ]
 
 
-# .json / page URLs honor a host override (so the old.reddit fallback hits the right host).
+# .json / page URLs honor a host override (so the old.reddit page path hits the right host).
 def test_url_host_override():
     assert reddit.reddit_json_url(_THREAD).startswith("https://www.reddit.com/")
     assert reddit.reddit_json_url(_THREAD).endswith(".json?limit=50&depth=3")
@@ -33,13 +33,6 @@ def test_url_host_override():
     assert reddit.reddit_thread_url(_THREAD, host="old.reddit.com") == (
         "https://old.reddit.com/r/codex/comments/1uaqzvk/again_we_are_here"
     )
-
-
-# A listing rendered into a <pre> (Chrome's JSON viewer) parses like a raw body.
-def test_parse_payload_from_pre_wrapper():
-    import json
-    raw = f"<html><body><pre>{json.dumps(_LISTING)}</pre></body></html>"
-    assert reddit.parse_reddit_json_payload(raw) == _LISTING
 
 
 # Markdown carries the post header plus nested comments with author/score.
@@ -51,39 +44,75 @@ def test_markdown_shape():
     assert "  [bob | +3] nested reply" in md  # nested one indent level deeper
 
 
-# curl 403 → browser .json (www) succeeds and is parsed into structured markdown.
-def test_fallback_curl_blocked_then_browser_json(monkeypatch):
-    def _curl_blocked(*_a, **_k):
-        raise RuntimeError("HTTP Error 403")
+# old.reddit inner_text: nav head is cut at the post title, footer at the about/blog block.
+def test_strip_old_reddit_nav_and_footer():
+    raw = (
+        "jump to content\nMY SUBREDDITS\nPOPULAR-ALL-USERS\nMORE »\n"
+        "this post was submitted on 09 Apr 2026\n18 points (100% upvoted)\n"
+        "Welcome to Reddit.\n\n18\n\n"
+        "Anyone here tried Hermes Agent?Discussion (self.Rag)\n\n"
+        "submitted 2 months ago by marwan_rashad5\n"
+        "post body\n\n[–]alice 1 point 2 months ago\ntop comment\n"
+        "permalinkembedsavereportreply\n"
+        "about\nblog\nabout\nadvertising\ncareers\n"
+        "Use of this site constitutes acceptance of our User Agreement.\n"
+        "Reddit uses cookies and similar technologies to:\nCONTINUE"
+    )
+    text = reddit._strip_reddit_nav(raw)
+    assert text.startswith("Anyone here tried Hermes Agent?")
+    assert "top comment" in text
+    assert "jump to content" not in text and "MY SUBREDDITS" not in text
+    assert "advertising" not in text and "CONTINUE" not in text
 
-    calls: list[str] = []
 
-    async def _browser_json(json_url, _timeout):
-        calls.append(json_url)
+# The old.reddit page render goes first; when it succeeds the .json API is never touched.
+def test_page_first_json_untouched(monkeypatch):
+    page_urls: list[str] = []
+
+    async def _page_ok(thread_url, _timeout):
+        page_urls.append(thread_url)
+        return "r/codex\npost body rendered from old.reddit"
+
+    def _curl_must_not_run(*_a, **_k):
+        raise AssertionError(".json API must not be called when the page render succeeds")
+
+    monkeypatch.setattr(reddit, "_fetch_reddit_browser_page", _page_ok)
+    monkeypatch.setattr(reddit, "_fetch_reddit_json_curl", _curl_must_not_run)
+
+    md = asyncio.run(reddit.fetch_reddit_json(_THREAD, timeout=5.0))
+    assert "post body rendered from old.reddit" in md
+    assert page_urls and "old.reddit.com" in page_urls[0]
+
+
+# Page render failed (browser down / too short) → the .json API rung wins.
+def test_fallback_json_api(monkeypatch):
+    async def _page_dead(*_a, **_k):
+        return None
+
+    json_urls: list[str] = []
+
+    def _curl_ok(json_url, _thread_url, _timeout):
+        json_urls.append(json_url)
         return _LISTING
 
-    monkeypatch.setattr(reddit, "_fetch_reddit_json_curl", _curl_blocked)
-    monkeypatch.setattr(reddit, "_fetch_reddit_json_browser", _browser_json)
+    monkeypatch.setattr(reddit, "_fetch_reddit_browser_page", _page_dead)
+    monkeypatch.setattr(reddit, "_fetch_reddit_json_curl", _curl_ok)
 
     md = asyncio.run(reddit.fetch_reddit_json(_THREAD, timeout=5.0))
     assert "# Again! We are here" in md
-    assert calls and "www.reddit.com" in calls[0]  # www .json tried first
+    assert json_urls and json_urls[0].endswith(".json?limit=50&depth=3")
 
 
-# curl 403 + www browser block → old.reddit .json is the next rung and wins.
-def test_fallback_old_reddit_json(monkeypatch):
+# Both rungs blocked → explicit error marker (handler flips ok=False on it).
+def test_all_rungs_blocked(monkeypatch):
+    async def _page_dead(*_a, **_k):
+        raise RuntimeError("browser daemon unavailable")
+
     def _curl_blocked(*_a, **_k):
-        raise RuntimeError("HTTP Error 403")
+        raise RuntimeError("HTTP Error 429")
 
-    seen: list[str] = []
-
-    async def _browser_json(json_url, _timeout):
-        seen.append(json_url)
-        return _LISTING if "old.reddit.com" in json_url else None
-
+    monkeypatch.setattr(reddit, "_fetch_reddit_browser_page", _page_dead)
     monkeypatch.setattr(reddit, "_fetch_reddit_json_curl", _curl_blocked)
-    monkeypatch.setattr(reddit, "_fetch_reddit_json_browser", _browser_json)
 
     md = asyncio.run(reddit.fetch_reddit_json(_THREAD, timeout=5.0))
-    assert "# Again! We are here" in md
-    assert any("www.reddit.com" in u for u in seen) and any("old.reddit.com" in u for u in seen)
+    assert md.startswith("Error:")

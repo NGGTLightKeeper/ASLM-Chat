@@ -1510,6 +1510,8 @@ def _stream_openai_round(
     options: dict[str, Any],
     *,
     tools: list[dict[str, Any]] | None = None,
+    forced_tool_name: str = "",
+    require_tool_call: bool = False,
     stream: bool = True,
 ):
     """Stream one OpenAI-compatible round and return the assembled assistant message."""
@@ -1517,7 +1519,20 @@ def _stream_openai_round(
     request_kwargs: dict[str, Any] = dict(options)
     if tools:
         request_kwargs["tools"] = tools
-        request_kwargs["tool_choice"] = "auto"
+        available_tool_names = {
+            str((tool.get("function") or {}).get("name") or "").strip()
+            for tool in tools
+            if isinstance(tool, dict)
+        }
+        if forced_tool_name and forced_tool_name in available_tool_names:
+            request_kwargs["tool_choice"] = {
+                "type": "function",
+                "function": {"name": forced_tool_name},
+            }
+        elif require_tool_call:
+            request_kwargs["tool_choice"] = "required"
+        else:
+            request_kwargs["tool_choice"] = "auto"
 
     assistant_content = ""
     assistant_thinking = ""
@@ -1525,12 +1540,26 @@ def _stream_openai_round(
     parser = _ReasoningTextParser()
     yielded_chunk = False
 
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=conversation,
-        stream=stream,
-        **request_kwargs,
-    )
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=conversation,
+            stream=stream,
+            **request_kwargs,
+        )
+    except Exception as exc:
+        # Not every OpenAI-compatible backend accepts forced tool_choice payloads;
+        # degrade to auto so the request still runs and the loop supervisor can nudge.
+        if request_kwargs.get("tool_choice") in (None, "auto"):
+            raise
+        logger.warning("[OpenAI API] Forced tool_choice rejected, retrying with auto: %s", exc)
+        request_kwargs["tool_choice"] = "auto"
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=conversation,
+            stream=stream,
+            **request_kwargs,
+        )
 
     if stream:
         # Streaming deltas arrive fragment-by-fragment, so accumulate both the
@@ -1671,8 +1700,25 @@ def _run_tool_loop(
     tool_quota_counters: dict[str, int] = {}
     seen_tool_signatures: set[str] = set()
     consecutive_blocked_tool_results = 0
+    forced_tool_name = str(tool_context.get("forced_tool_name") or "").strip() if isinstance(tool_context, dict) else ""
+    required_tool_server_ids = tool_registry.required_tool_server_ids_from_context(tool_context, tool_lookup)
+    satisfied_tool_server_ids: set[str] = set()
+    required_nudges_left = tool_registry.MAX_REQUIRED_TOOL_NUDGES if required_tool_server_ids else 0
+    # Round 0 enforces user-required tools up front; later rounds re-enforce only
+    # right after a supervisor nudge so the model can still finish normally.
+    enforce_required_tools_this_round = True
 
     for round_index in range(MAX_TOOL_ROUNDS):
+        round_forced_tool_name = ""
+        round_requires_tool_call = False
+        if enforce_required_tools_this_round:
+            forced_server_id = tool_registry.tool_server_id_for_alias(tool_lookup, forced_tool_name)
+            if forced_tool_name and forced_server_id not in satisfied_tool_server_ids:
+                round_forced_tool_name = forced_tool_name
+            elif any(server_id not in satisfied_tool_server_ids for server_id in required_tool_server_ids):
+                round_requires_tool_call = True
+        enforce_required_tools_this_round = False
+
         # Each round lets the model either finish or request another batch of
         # local tool calls to continue the conversation.
         assistant_message = yield from _yield_stream_round(
@@ -1682,6 +1728,8 @@ def _run_tool_loop(
                 conversation,
                 options,
                 tools=tools,
+                forced_tool_name=round_forced_tool_name,
+                require_tool_call=round_requires_tool_call,
                 stream=stream,
             )
         )
@@ -1689,6 +1737,26 @@ def _run_tool_loop(
 
         raw_tool_calls = assistant_message.get("tool_calls") or []
         if not raw_tool_calls:
+            unmet_tool_server_ids = [
+                server_id for server_id in required_tool_server_ids
+                if server_id not in satisfied_tool_server_ids
+            ]
+            if unmet_tool_server_ids and required_nudges_left > 0:
+                # Supervisor: the model answered while ignoring user-required tools,
+                # so feed a corrective prompt and run another enforced round.
+                required_nudges_left -= 1
+                enforce_required_tools_this_round = True
+                yield {"transcript_message": assistant_message}
+                conversation.append(
+                    {
+                        "role": "user",
+                        "content": tool_registry.required_tools_reminder_prompt(
+                            unmet_tool_server_ids,
+                            tool_lookup,
+                        ),
+                    }
+                )
+                continue
             yield {"transcript_message": assistant_message}
             return
 
@@ -1707,6 +1775,11 @@ def _run_tool_loop(
                     "arguments": _normalize_tool_call_arguments(function_payload.get("arguments")),
                 }
             )
+
+        for tool_call in tool_calls:
+            satisfied_server_id = tool_registry.tool_server_id_for_alias(tool_lookup, tool_call["name"])
+            if satisfied_server_id:
+                satisfied_tool_server_ids.add(satisfied_server_id)
 
         yield {"transcript_message": assistant_message}
 
@@ -2033,4 +2106,3 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
         raise
     finally:
         _close_client(client)
-

@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "Этот инструмент требует Docker.",
+    "refreshDocker": "Проверить Docker заново"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM — продвинутые системные языковые модели"
@@ -225,7 +229,15 @@
     "cancel": "Отмена",
     "confirm": "Подтверждение",
     "input": "Ввод",
-    "valueRequired": "Укажите значение."
+    "valueRequired": "Укажите значение.",
+    "save": "Сохранить изменения",
+    "pastedBadge": "ВСТАВЛЕНО",
+    "pastedRemove": "Удалить вставленный текст",
+    "pastedUploading": "Загрузка...",
+    "pastedUploadFailed": "Ошибка загрузки",
+    "pastedTypeLabel": "Вставлено",
+    "editPastedTitle": "Редактировать вставленный текст",
+    "editPastedPlaceholder": "Отредактируйте вставленный текст. Ctrl/Cmd+Enter — сохранить."
   },
   "errors": {
     "generic": "Что-то пошло не так",

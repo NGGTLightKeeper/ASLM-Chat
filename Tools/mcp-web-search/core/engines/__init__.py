@@ -2,7 +2,8 @@
 
 from .brave import BraveParser
 from .duckduckgo import DuckDuckGoParser
-from .google import GoogleParser
+from .google import GoogleHtmlParser
+from .google_cse import GoogleParser
 from .models import EngineParseResult, EngineRequest, ParseStatus, SearchResult
 from .qwant import QwantParser
 from .startpage import StartpageParser
@@ -15,6 +16,7 @@ __all__ = [
     "EngineParseResult",
     "EngineRequest",
     "GoogleParser",
+    "GoogleHtmlParser",
     "ParseStatus",
     "QwantParser",
     "SearchResult",

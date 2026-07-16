@@ -159,3 +159,110 @@ export function messageDialog(title, message) {
     danger: false
   });
 }
+
+// Show a multi-line text editor dialog (used for editable pasted text artifacts).
+// Resolves with the (trimmed or raw) text on confirm, or null on cancel.
+export function largeTextDialog(options) {
+  return new Promise(function largeTextDialogPromise(resolve) {
+    const dialogOptions = options || {};
+    const $backdrop = $('<div class="aslm-dialog-backdrop aslm-dialog-backdrop--editor" role="dialog" aria-modal="true">');
+    const $dialog = $('<div class="aslm-dialog aslm-dialog--editor">');
+
+    const titleText = dialogOptions.title || t('dialog.editPastedTitle', null, 'Edit pasted content');
+    const $title = $('<div class="aslm-dialog-title">').text(titleText);
+
+    const labelText = dialogOptions.label || '';
+    const $label = labelText ? $('<div class="aslm-dialog-label">').text(labelText) : null;
+
+    const initialValue = String(dialogOptions.value || dialogOptions.text || '');
+    const $textarea = $('<textarea class="aslm-dialog-textarea" spellcheck="false"></textarea>')
+      .val(initialValue)
+      .attr('placeholder', dialogOptions.placeholder || t('dialog.editPastedPlaceholder', null, 'Edit the pasted text. Use Ctrl/Cmd+Enter to save.'));
+
+    const $error = $('<div class="aslm-dialog-error" role="alert">').hide();
+    const $actions = $('<div class="aslm-dialog-actions">');
+
+    const cancelText = dialogOptions.cancelText === undefined ? t('dialog.cancel', null, 'Cancel') : String(dialogOptions.cancelText || '');
+    const confirmText = dialogOptions.confirmText || t('dialog.save', null, 'Save changes');
+
+    const $cancel = $('<button type="button" class="preset-action-btn">').text(cancelText);
+    const $confirm = $('<button type="button" class="preset-action-btn preset-action-btn-primary">').text(confirmText);
+
+    let closed = false;
+
+    function close(value) {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      $(document).off('keydown', onKeyDown);
+      $backdrop.remove();
+      resolve(value);
+    }
+
+    function submit() {
+      const raw = String($textarea.val() || '');
+      // Allow empty on explicit save (user may want to clear), but respect required if set.
+      const required = dialogOptions.required !== false; // default true like textDialog
+      if (required && !raw.trim()) {
+        $error.text(t('dialog.valueRequired', null, 'Value is required.')).show();
+        return;
+      }
+      // Return the raw text (caller decides whether to trim). Preserve user's newlines.
+      close(raw);
+    }
+
+    function onKeyDown(ev) {
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        close(null);
+      } else if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+        // Ctrl/Cmd+Enter to save (common for text areas)
+        ev.preventDefault();
+        submit();
+      }
+    }
+
+    $cancel.on('click', function onCancel() {
+      close(null);
+    });
+    $confirm.on('click', submit);
+
+    $textarea.on('keydown', function onTextareaKeyDown(ev) {
+      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+        ev.preventDefault();
+        submit();
+      }
+    });
+
+    $backdrop.on('click', function onBackdropClick(ev) {
+      if (ev.target === $backdrop[0]) {
+        close(null);
+      }
+    });
+
+    $(document).on('keydown', onKeyDown);
+
+    $actions.append($cancel).append($confirm);
+
+    $dialog.append($title);
+    if ($label) {
+      $dialog.append($label);
+    }
+    $dialog.append($textarea).append($error).append($actions);
+    $backdrop.append($dialog);
+    $('body').append($backdrop);
+
+    requestAnimationFrame(function focusTextarea() {
+      $textarea.trigger('focus');
+      // Move caret to end
+      try {
+        const ta = $textarea.get(0);
+        if (ta) {
+          const len = ta.value.length;
+          ta.setSelectionRange(len, len);
+        }
+      } catch (_) {}
+    });
+  });
+}

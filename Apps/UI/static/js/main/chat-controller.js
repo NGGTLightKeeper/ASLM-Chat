@@ -12,7 +12,8 @@ export function createChatController(context, dependencies) {
     engineManager,
     historyUi,
     messagesUi,
-    parametersUi
+    parametersUi,
+    skillsUi
   } = dependencies;
   const { dom, state } = context;
   const contextUsagePollIntervalMs = 2000;
@@ -26,6 +27,15 @@ export function createChatController(context, dependencies) {
   let clearCompressedIndicatorAfterNextAssistant = false;
   let sendCooldownUntil = 0;
   const sendCooldownMs = 1500;
+  const slashPalette = {
+    $input: null,
+    $panel: null,
+    entries: [],
+    activeIndex: 0,
+    query: '',
+    tokenStart: -1,
+    tokenEnd: -1
+  };
 
   // Chat lifecycle helpers.
   // Build a short title from the first user prompt.
@@ -351,7 +361,23 @@ export function createChatController(context, dependencies) {
 
     for (const attachment of attachments || []) {
       const resolved = await attachmentUi.resolveAttachmentData(attachment);
-      if (!resolved || !resolved.base64) {
+      if (!resolved) {
+        continue;
+      }
+
+      // URL attachments: sent without data/base64. Server will fetch content via read_page.
+      if (resolved.kind === 'url' || resolved.url) {
+        payloads.push({
+          kind: 'url',
+          name: resolved.name || resolved.url,
+          url: resolved.url || resolved.name,
+          mime_type: resolved.mimeType || 'text/x-url',
+          size_bytes: 0
+        });
+        continue;
+      }
+
+      if (!resolved.base64) {
         continue;
       }
       if (resolved.fileId && resolved.kind !== 'image') {
@@ -887,6 +913,461 @@ export function createChatController(context, dependencies) {
 
 
   // Composer wiring.
+  // Slash command palette helpers.
+  function closeSlashPalette() {
+    if (slashPalette.$panel) {
+      slashPalette.$panel.remove();
+    }
+    slashPalette.$panel = null;
+    slashPalette.$input = null;
+    slashPalette.entries = [];
+    slashPalette.activeIndex = 0;
+    slashPalette.query = '';
+    slashPalette.tokenStart = -1;
+    slashPalette.tokenEnd = -1;
+  }
+
+  // Shared icon resolver for tool server rows in the slash palette.
+  function toolServerIconClass(server) {
+    const text = `${server && server.id ? server.id : ''} ${server && server.name ? server.name : ''}`.toLowerCase();
+    if (text.includes('browser')) {
+      return 'is-browser-agent';
+    }
+    if (text.includes('sandbox')) {
+      return 'is-sandbox';
+    }
+    if (text.includes('web') || text.includes('search')) {
+      return 'is-web-search';
+    }
+    if (server && server.user_mcp) {
+      return 'is-mcp';
+    }
+    return 'is-generic-tool';
+  }
+
+  // Read the current slash token from a textarea caret position.
+  function getSlashToken($input) {
+    const inputEl = $input && $input[0];
+    if (!inputEl) {
+      return null;
+    }
+    const value = String($input.val() || '');
+    const caret = Number(inputEl.selectionStart || 0);
+    const before = value.slice(0, caret);
+    const match = before.match(/(?:^|\s)\/([^\s]*)$/);
+    if (!match) {
+      return null;
+    }
+    const tokenStart = caret - match[0].trimStart().length;
+    return {
+      query: String(match[1] || '').toLowerCase(),
+      tokenStart,
+      tokenEnd: caret
+    };
+  }
+
+  // Read the server list embedded in the page before async model state arrives.
+  function readToolServersFromPage() {
+    try {
+      const raw = document.getElementById('availableToolServersData')?.textContent || '[]';
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  // Return bundled tools and user MCP servers from live state or page fallback.
+  function getSlashToolSources() {
+    const bundledTools = Array.isArray(state.availableToolServers) && state.availableToolServers.length
+      ? state.availableToolServers
+      : (Array.isArray(state.defaultAvailableToolServers) ? state.defaultAvailableToolServers : []);
+    const userMcpTools = Array.isArray(state.userMcpToolServers) && state.userMcpToolServers.length
+      ? state.userMcpToolServers
+      : (Array.isArray(state.defaultUserMcpToolServers) ? state.defaultUserMcpToolServers : []);
+    const allTools = [...bundledTools, ...userMcpTools];
+    const pageTools = allTools.length ? [] : readToolServersFromPage();
+    const source = allTools.length ? allTools : pageTools;
+    return {
+      tools: source.filter(function filterTool(server) {
+        return server && !server.user_mcp;
+      }),
+      mcp: source.filter(function filterMcp(server) {
+        return server && server.user_mcp;
+      })
+    };
+  }
+
+  // Check whether the selected engine/model can receive tool definitions.
+  function modelSupportsToolsForSlash() {
+    if (!state.toolState || state.toolState.supported !== true) {
+      return false;
+    }
+    if (state.currentModelInfo && state.currentModelInfo.supports_tool_calling === false) {
+      return false;
+    }
+    return true;
+  }
+
+  // Explain why a tool row cannot be applied from the slash palette.
+  function slashToolUnavailableReason(server) {
+    if (!modelSupportsToolsForSlash()) {
+      return t('tools.unsupportedByModel', null, 'Model does not support tools');
+    }
+    if (server && server.requires_docker && server.docker_available === false) {
+      return t('tools.dockerRequiredShort', null, 'Docker required');
+    }
+    return '';
+  }
+
+  // Build the canonical slash command for one tool server id.
+  function slashToolCommand(serverId) {
+    return serverId === 'web_search' ? '/search ' : `/tool ${serverId} `;
+  }
+
+  // Build the small right-side status chip for one tool row.
+  function slashEntryStatus(server, unavailableReason) {
+    const serverId = String(server && server.id || '').trim();
+    if (unavailableReason) {
+      return '';
+    }
+    if (serverId && state.selectedToolServerIds && state.selectedToolServerIds.has(serverId)) {
+      return t('common.enabled', null, 'Enabled');
+    }
+    if (server && server.user_mcp) {
+      const count = Number(server.tool_count || (server.tools || []).length || 0);
+      return count > 0 ? t('mcp.toolCountShort', { count }, `${count} tools`) : '';
+    }
+    return '';
+  }
+
+  // Convert one tool or MCP server into a slash palette entry.
+  function buildSlashToolEntry(server, section) {
+    const serverId = String(server && server.id || '').trim();
+    if (!serverId) {
+      return null;
+    }
+    const unavailableReason = slashToolUnavailableReason(server);
+    const command = slashToolCommand(serverId);
+    return {
+      kind: section,
+      section,
+      command,
+      iconClass: toolServerIconClass(server),
+      title: String(server && server.name || serverId),
+      detail: command.trim(),
+      status: slashEntryStatus(server, unavailableReason),
+      disabled: Boolean(unavailableReason),
+      serverId,
+      requiresDocker: Boolean(server && server.requires_docker),
+      dockerUnavailable: Boolean(server && server.requires_docker && server.docker_available === false),
+      keywords: `${command} ${serverId} ${server && server.name ? server.name : ''}`
+    };
+  }
+
+  // Match slash entries by prefix only, like command autocomplete.
+  function slashMatchesQuery(entry, needle) {
+    if (!needle) {
+      return true;
+    }
+    const haystack = `${entry.command} ${entry.title} ${entry.detail} ${entry.keywords}`
+      .toLowerCase()
+      .split(/[^a-z0-9_.-]+/)
+      .filter(Boolean);
+    return haystack.some(function matchToken(token) {
+      return token.startsWith(needle);
+    });
+  }
+
+  // Build all visible slash entries for the current token.
+  function buildSlashEntries(query) {
+    const entries = [];
+    const sources = getSlashToolSources();
+
+    sources.tools.forEach(function addTool(server) {
+      const entry = buildSlashToolEntry(server, 'tools');
+      if (entry) {
+        entries.push(entry);
+      }
+    });
+
+    sources.mcp.forEach(function addMcp(server) {
+      const entry = buildSlashToolEntry(server, 'mcp');
+      if (entry) {
+        entries.push(entry);
+      }
+    });
+
+    const folders = skillsUi && typeof skillsUi.getSkillFolders === 'function'
+      ? skillsUi.getSkillFolders()
+      : [];
+    (Array.isArray(folders) ? folders : []).forEach(function addSkill(folder) {
+      if (!folder) {
+        return;
+      }
+      const name = String(folder.name || '').trim();
+      if (!name) {
+        return;
+      }
+      const skillDisabled = folder.enabled === false;
+      entries.push({
+        kind: 'skill',
+        section: 'skills',
+        command: `/skill ${name} `,
+        iconClass: 'is-skills-file',
+        title: String(folder.title || name),
+        skillName: name,
+        detail: `/skill ${name}`,
+        status: skillDisabled ? t('skills.disabledShort', null, 'Disabled') : '',
+        disabled: skillDisabled,
+        keywords: `/skill ${name} ${folder.title || ''}`
+      });
+    });
+
+    // The palette scrolls, so every matching entry stays visible.
+    const needle = String(query || '').trim().toLowerCase();
+    return entries.filter(function matchEntry(entry) {
+      return slashMatchesQuery(entry, needle);
+    });
+  }
+
+  // Find the first command that can actually be inserted.
+  function firstEnabledSlashEntryIndex(entries) {
+    return Math.max(0, entries.findIndex(function findEnabled(entry) {
+      return !entry.disabled;
+    }));
+  }
+
+  // Keep keyboard focus on an enabled row when possible.
+  function clampSlashActiveIndex(entries, currentIndex) {
+    if (!entries.length) {
+      return 0;
+    }
+    const currentEntry = entries[currentIndex];
+    if (currentEntry && !currentEntry.disabled) {
+      return currentIndex;
+    }
+    return firstEnabledSlashEntryIndex(entries);
+  }
+
+  // Move the active keyboard row while skipping disabled commands.
+  function moveSlashActive(delta) {
+    const entries = slashPalette.entries;
+    if (!entries.length || entries.every(function allDisabled(entry) { return entry.disabled; })) {
+      return;
+    }
+    let index = slashPalette.activeIndex;
+    for (let step = 0; step < entries.length; step += 1) {
+      index = (index + delta + entries.length) % entries.length;
+      if (!entries[index].disabled) {
+        slashPalette.activeIndex = index;
+        return;
+      }
+    }
+  }
+
+  // Return the visual section title for one slash entry group.
+  function slashSectionLabel(section) {
+    if (section === 'mcp') {
+      return t('settings.mcp', null, 'MCP');
+    }
+    if (section === 'skills') {
+      return t('settings.skills', null, 'Skills');
+    }
+    return t('settings.tools', null, 'Tools');
+  }
+
+  // Re-check Docker availability and refresh tool metadata in place.
+  async function refreshDockerForSlash(ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const $btn = $(ev.currentTarget);
+    if ($btn.hasClass('is-loading')) {
+      return;
+    }
+    $btn.addClass('is-loading');
+    try {
+      await postJson('/api/docker_status/refresh/', {});
+      if (parametersUi && typeof parametersUi.reloadAvailableToolServers === 'function') {
+        await parametersUi.reloadAvailableToolServers();
+      }
+    } catch (_error) {
+      // The next render reflects the current server-side status if it changed.
+    } finally {
+      $btn.removeClass('is-loading');
+      if (slashPalette.$input && slashPalette.$input.length) {
+        updateSlashPalette(slashPalette.$input);
+      }
+    }
+  }
+
+  // Render one slash palette row.
+  function renderSlashEntry(entry, index) {
+    const $row = $('<div class="slash-command-row" role="option" tabindex="-1">')
+      .toggleClass('is-active', index === slashPalette.activeIndex)
+      .toggleClass('is-disabled', Boolean(entry.disabled))
+      .attr('aria-selected', index === slashPalette.activeIndex ? 'true' : 'false')
+      .attr('aria-disabled', entry.disabled ? 'true' : 'false');
+    $row.append($('<span class="composer-tool-icon slash-command-icon" aria-hidden="true">').addClass(entry.iconClass));
+
+    const $text = $('<span class="slash-command-text">');
+    const $main = $('<span class="slash-command-main">');
+    $main.append($('<span class="slash-command-title">').text(entry.title));
+    if (entry.status) {
+      $main.append($('<span class="slash-command-status">')
+        .toggleClass('is-warning', Boolean(entry.disabled))
+        .toggleClass('is-enabled', !entry.disabled && state.selectedToolServerIds && state.selectedToolServerIds.has(entry.serverId))
+        .text(entry.status));
+    }
+    $text.append($main);
+    $text.append($('<span class="slash-command-detail">').text(entry.detail));
+    $row.append($text);
+
+    if (entry.dockerUnavailable) {
+      const $refresh = $('<button type="button" class="slash-command-refresh" aria-label="Re-check Docker" title="Re-check Docker">');
+      $refresh.append('<span class="composer-tool-refresh-icon" aria-hidden="true"></span>');
+      $refresh.on('mousedown click', function stopRefreshPointer(pointerEv) {
+        pointerEv.stopPropagation();
+      });
+      $refresh.on('click', refreshDockerForSlash);
+      $row.append($refresh);
+    }
+
+    $row.on('mousedown', function onMouseDown(ev) {
+      ev.preventDefault();
+    });
+    $row.on('click', function onClick(ev) {
+      ev.preventDefault();
+      applySlashEntry(index);
+    });
+    return $row;
+  }
+
+  // Render one slash palette section with its divider and rows.
+  function renderSlashSection($panel, section, entries) {
+    if (!entries.length) {
+      return;
+    }
+    const $section = $('<div class="slash-command-section">');
+    $section.append($('<div class="slash-command-section-title">').text(slashSectionLabel(section)));
+    entries.forEach(function appendEntry(entry) {
+      const index = slashPalette.entries.indexOf(entry);
+      $section.append(renderSlashEntry(entry, index));
+    });
+    $panel.append($section);
+  }
+
+  // Render or update the slash palette for the current composer token.
+  function renderSlashPalette($input, token) {
+    const entries = buildSlashEntries(token.query);
+    if (!entries.length) {
+      closeSlashPalette();
+      return;
+    }
+
+    const queryChanged = slashPalette.query !== token.query;
+    slashPalette.$input = $input;
+    slashPalette.entries = entries;
+    slashPalette.query = token.query;
+    slashPalette.activeIndex = queryChanged
+      ? firstEnabledSlashEntryIndex(entries)
+      : clampSlashActiveIndex(entries, Math.min(slashPalette.activeIndex, entries.length - 1));
+    slashPalette.tokenStart = token.tokenStart;
+    slashPalette.tokenEnd = token.tokenEnd;
+
+    if (!slashPalette.$panel) {
+      slashPalette.$panel = $('<div class="slash-command-palette" role="listbox" aria-label="Slash commands">');
+      $input.closest('.input-wrapper').append(slashPalette.$panel);
+    }
+
+    slashPalette.$panel.empty();
+    ['tools', 'mcp', 'skills'].forEach(function renderSection(section) {
+      renderSlashSection(
+        slashPalette.$panel,
+        section,
+        entries.filter(function filterBySection(entry) {
+          return entry.section === section;
+        })
+      );
+    });
+  }
+
+  // Open, update, or close the slash palette after composer input changes.
+  function updateSlashPalette($input) {
+    const token = getSlashToken($input);
+    if (!token) {
+      closeSlashPalette();
+      return;
+    }
+    renderSlashPalette($input, token);
+  }
+
+  // Insert the selected slash command as inline text at the typed token.
+  // The command stays part of the message, so the backend sees it at the
+  // exact position where the user wrote it.
+  function applySlashEntry(index) {
+    const entry = slashPalette.entries[index];
+    const $input = slashPalette.$input;
+    if (!entry || !$input || !$input.length) {
+      closeSlashPalette();
+      return;
+    }
+    if (entry.disabled) {
+      return;
+    }
+    const value = String($input.val() || '');
+    const before = value.slice(0, slashPalette.tokenStart);
+    const after = value.slice(slashPalette.tokenEnd).replace(/^[ \t]+/, '');
+    const insertion = String(entry.command || '');
+    const nextValue = `${before}${insertion}${after}`;
+    const caret = before.length + insertion.length;
+    $input.val(nextValue);
+    const inputEl = $input[0];
+    if (inputEl && inputEl.setSelectionRange) {
+      inputEl.setSelectionRange(caret, caret);
+    }
+    closeSlashPalette();
+    $input.trigger('input').trigger('focus');
+  }
+
+  // Handle keyboard navigation while the slash palette is open.
+  function handleSlashPaletteKeydown(event) {
+    if (!slashPalette.$panel || !slashPalette.entries.length) {
+      return false;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      moveSlashActive(1);
+      renderSlashPalette(slashPalette.$input, {
+        query: slashPalette.query,
+        tokenStart: slashPalette.tokenStart,
+        tokenEnd: slashPalette.tokenEnd
+      });
+      return true;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveSlashActive(-1);
+      renderSlashPalette(slashPalette.$input, {
+        query: slashPalette.query,
+        tokenStart: slashPalette.tokenStart,
+        tokenEnd: slashPalette.tokenEnd
+      });
+      return true;
+    }
+    if (event.key === 'Enter' || event.key === 'Tab') {
+      event.preventDefault();
+      applySlashEntry(slashPalette.activeIndex);
+      return true;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSlashPalette();
+      return true;
+    }
+    return false;
+  }
+
   // Bind one textarea and send button pair to the chat workflow.
   function wireInput($input, $button) {
     $input.on('input', function onInput() {
@@ -894,15 +1375,28 @@ export function createChatController(context, dependencies) {
       this.style.height = `${Math.min(this.scrollHeight, 200)}px`;
       messagesUi.updateSendButtons();
       scheduleContextUsageRefresh();
+      updateSlashPalette($input);
     });
 
     $input.on('keydown', function onKeyDown(event) {
+      if (handleSlashPaletteKeydown(event)) {
+        return;
+      }
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
 
         if (!$button.prop('disabled')) {
+          closeSlashPalette();
           void sendMessage($input.val(), $input);
         }
+      }
+    });
+
+    $input.on('blur', function onBlur() {
+      // Row clicks keep focus because the palette swallows mousedown, so a
+      // real blur means the user moved on and the palette should close.
+      if (slashPalette.$input && slashPalette.$input[0] === this) {
+        closeSlashPalette();
       }
     });
 
@@ -922,6 +1416,7 @@ export function createChatController(context, dependencies) {
       }
 
       if (!$button.prop('disabled')) {
+        closeSlashPalette();
         void sendMessage($input.val(), $input);
       }
     });

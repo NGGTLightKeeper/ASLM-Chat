@@ -143,6 +143,9 @@ def _venv_subprocess_env(python_path: Path) -> dict[str, str]:
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     env.pop("PYTHONHOME", None)
+    # Let the sandbox tool auto-launch Docker on demand when the model calls it.
+    # Only the sandbox worker reads this; other tools ignore it.
+    env["SANDBOX_AUTO_START_DOCKER"] = "1"
     # Hand the ASLM-assigned warm-browser daemon port to the tool venv (only web-search
     # reads it). Lets ASLM place the daemon in its chosen port range; the tool defaults to
     # the same value if the var is absent.
@@ -573,6 +576,70 @@ def forced_final_prompt_after_tool_blocks() -> str:
     """Return the instruction used when the tool loop must stop retrying tools."""
 
     return TOOL_BLOCK_FINAL_PROMPT
+
+
+# How many times the tool loop re-prompts a model that ignored user-required tools.
+MAX_REQUIRED_TOOL_NUDGES = 2
+
+
+# Resolve the owning tool-server id for one public tool alias.
+def tool_server_id_for_alias(tool_lookup: dict[str, dict[str, Any]] | None, alias: str) -> str:
+    """Return the owning tool-server id for one public tool alias."""
+
+    entry = (tool_lookup or {}).get(str(alias or "")) or {}
+    server = entry.get("server") if isinstance(entry, dict) else None
+    if not isinstance(server, dict):
+        return ""
+    return str(server.get("id") or "")
+
+
+# Read user-required tool servers from the generation context.
+def required_tool_server_ids_from_context(
+    tool_context: dict[str, Any] | None,
+    tool_lookup: dict[str, dict[str, Any]] | None,
+) -> list[str]:
+    """Return required tool-server ids that actually expose tools in this loop."""
+
+    raw_ids = tool_context.get("required_tool_server_ids") if isinstance(tool_context, dict) else None
+    if isinstance(raw_ids, str):
+        raw_ids = [raw_ids]
+    if not isinstance(raw_ids, list):
+        return []
+
+    available_server_ids = {
+        tool_server_id_for_alias(tool_lookup, alias)
+        for alias in (tool_lookup or {})
+    }
+    required: list[str] = []
+    for raw_id in raw_ids:
+        server_id = str(raw_id or "").strip()
+        if server_id and server_id not in required and server_id in available_server_ids:
+            required.append(server_id)
+    return required
+
+
+# Build the corrective prompt for a model that answered without the required tools.
+def required_tools_reminder_prompt(
+    unmet_server_ids: list[str],
+    tool_lookup: dict[str, dict[str, Any]] | None,
+) -> str:
+    """Return the supervisor prompt sent when required tools were not called."""
+
+    aliases_by_server: dict[str, list[str]] = {}
+    for alias in tool_lookup or {}:
+        server_id = tool_server_id_for_alias(tool_lookup, alias)
+        if server_id in unmet_server_ids:
+            aliases_by_server.setdefault(server_id, []).append(alias)
+
+    listing = "; ".join(
+        f"'{server_id}' (tools: {', '.join(sorted(aliases_by_server.get(server_id, []))) or server_id})"
+        for server_id in unmet_server_ids
+    )
+    return (
+        "[command supervisor] The user explicitly requested these tool servers for this message, "
+        f"but you have not called any of their tools yet: {listing}. Do not answer from memory. "
+        "Call the most relevant of these tools now, then continue your answer using the results."
+    )
 
 
 # Return a stable representation for duplicate tool-call detection.
@@ -1042,6 +1109,7 @@ def _load_external_server(server_file: Path) -> dict[str, Any]:
         "id": server_id,
         "name": str(description.get("name") or server_file.parent.name).strip() or server_file.parent.name,
         "description": str(description.get("description") or "").strip(),
+        "requires_docker": bool(description.get("requires_docker")),
         "tools": tools,
         "module": None,
         "supports": None,
@@ -1220,6 +1288,7 @@ def _extract_server_definition(module: ModuleType, folder_name: str, server_file
         "id": server_id,
         "name": server_name,
         "description": description,
+        "requires_docker": bool(raw_server.get("requires_docker")),
         "tools": tools,
         "module": module,
         "supports": supports_fn if callable(supports_fn) else None,
@@ -1400,6 +1469,8 @@ def _serialize_server(server_definition: dict[str, Any]) -> dict[str, Any]:
         "tool_count": len(tools),
         "tools": tools,
     }
+    if server_definition.get("requires_docker"):
+        payload["requires_docker"] = True
     if server_definition.get("user_mcp"):
         payload["user_mcp"] = True
     return payload

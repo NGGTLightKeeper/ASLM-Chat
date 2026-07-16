@@ -115,6 +115,22 @@ class EngineHealthTracker:
         self._note_fired(engine, health, now)
         return True
 
+    # True only when the engine's breaker is solidly CLOSED (healthy). Pure read — no
+    # pacing, no probe consumption, no state transition — so selection code can ask "is
+    # this engine trustworthy right now?" without side effects. An OPEN breaker (cooling)
+    # OR a HALF_OPEN probe (recovery unproven) both read False: in either case a same-family
+    # substitute should ride along so a failed/blocked slot doesn't cost the search its
+    # family result. A never-seen engine is CLOSED, hence healthy.
+    def is_healthy(self, engine: str) -> bool:
+        health = self._engines.get(engine)
+        if health is None:
+            return True
+        if health.state == BreakerState.OPEN and self._clock() >= health.open_until:
+            # Cooldown elapsed but not yet probed — the next allow() will probe, so it is
+            # not solidly healthy. Treat as unhealthy for substitution purposes.
+            return False
+        return health.state == BreakerState.CLOSED
+
     # The circuit-breaker half of allow(): CLOSED passes, OPEN waits then probes once.
     def _breaker_admits(self, health: EngineHealth, now: float) -> bool:
         if health.state == BreakerState.CLOSED:

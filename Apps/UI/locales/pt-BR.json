@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "Esta ferramenta requer o Docker.",
+    "refreshDocker": "Verificar o Docker novamente"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM - Modelos de Linguagem de Sistema Avançados"
@@ -225,7 +229,15 @@
     "cancel": "Cancelar",
     "confirm": "Confirmar",
     "input": "Entrada",
-    "valueRequired": "O valor é obrigatório."
+    "valueRequired": "O valor é obrigatório.",
+    "save": "Salvar alterações",
+    "pastedBadge": "COLADO",
+    "pastedRemove": "Remover texto colado",
+    "pastedUploading": "Enviando...",
+    "pastedUploadFailed": "Falha no envio",
+    "pastedTypeLabel": "Colado",
+    "editPastedTitle": "Editar conteúdo colado",
+    "editPastedPlaceholder": "Edite o texto colado. Use Ctrl/Cmd+Enter para salvar."
   },
   "errors": {
     "generic": "Algo deu errado",

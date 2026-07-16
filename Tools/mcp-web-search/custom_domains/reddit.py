@@ -3,19 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import html as html_lib
-import json
 import logging
 import re
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 from core.fetch.thread_pool import io_pool as _io_pool
+from custom_domains.reddit_parse import try_extract_markdown
 
 logger = logging.getLogger("custom_domains.reddit")
 
 _REDDIT_PATTERN = re.compile(r"reddit\.com/r/[^/]+/comments/")
-_PRE_JSON_RE = re.compile(r"<pre[^>]*>(.*?)</pre>", re.IGNORECASE | re.DOTALL)
 
 
 # True when URL looks like a Reddit thread comments page.
@@ -41,27 +39,6 @@ def reddit_thread_url(url: str, host: str | None = None) -> str:
     if path.endswith(".json"):
         path = path[: -len(".json")]
     return urlunparse((parsed.scheme, host or parsed.netloc, path, "", "", ""))
-
-
-# Parse Reddit listing JSON from raw text or minimal HTML wrapper.
-def parse_reddit_json_payload(raw: str) -> list[Any] | None:
-    text = (raw or "").strip()
-    if not text:
-        return None
-    if text.startswith("[") or text.startswith("{"):
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            return None
-        return data if isinstance(data, list) else None
-    match = _PRE_JSON_RE.search(text)
-    if match:
-        try:
-            data = json.loads(html_lib.unescape(match.group(1)).strip())
-        except json.JSONDecodeError:
-            return None
-        return data if isinstance(data, list) else None
-    return None
 
 
 # Format Reddit thread JSON as markdown (post + nested comments).
@@ -98,6 +75,37 @@ def reddit_data_to_markdown(data: list[Any], url: str) -> str:
     return "\n".join(lines)[:15_000]
 
 
+# Nav-cruft prefix pattern: lines before the real post body (www SPA header).
+_NAV_END_RE = re.compile(
+    r"(?:^|\n)(?:Go to \w|r/\w+)\n",
+    re.MULTILINE,
+)
+
+# old.reddit "submitted … by author" line — the post title sits on the line right above it.
+_OLD_SUBMITTED_RE = re.compile(r"^submitted .+? by ", re.MULTILINE)
+# old.reddit footer start (site links + cookie banner) — everything from here is cruft.
+_OLD_FOOTER_RE = re.compile(r"\nabout\nblog\n")
+
+
+# Strip nav/footer cruft from thread inner_text. old.reddit markers first (title line found
+# via the "submitted … by" line, footer via the about/blog link block), then the www SPA
+# header pattern as fallback.
+def _strip_reddit_nav(text: str) -> str:
+    text = text.strip()
+    foot = _OLD_FOOTER_RE.search(text)
+    if foot:
+        text = text[: foot.start()].rstrip()
+    sub = _OLD_SUBMITTED_RE.search(text)
+    if sub:
+        # The title is the nearest non-empty line above "submitted … by" (blank line between).
+        head_lines = text[: sub.start()].splitlines()
+        title = next((ln.strip() for ln in reversed(head_lines) if ln.strip()), "")
+        body = text[sub.start() :].strip()
+        return f"{title}\n{body}" if title else body
+    m = _NAV_END_RE.search(text)
+    return text[m.start() :].strip() if m else text
+
+
 # Fetch thread JSON via curl_cffi TLS impersonation.
 def _fetch_reddit_json_curl(json_url: str, thread_url: str, timeout: float) -> list[Any] | None:
     from curl_cffi import requests as _r
@@ -117,98 +125,76 @@ def _fetch_reddit_json_curl(json_url: str, thread_url: str, timeout: float) -> l
     return data if isinstance(data, list) else None
 
 
-# Nav-cruft prefix pattern: lines before the real post body.
-_NAV_END_RE = re.compile(
-    r"(?:^|\n)(?:Go to \w|r/\w+)\n",
-    re.MULTILINE,
-)
-
-
-# Strip Reddit's SPA header (Sign Up / Log In / Expand user menu / …) from inner_text.
-def _strip_reddit_nav(text: str) -> str:
-    m = _NAV_END_RE.search(text)
-    return text[m.start() :].strip() if m else text.strip()
-
-
-# Fetch the thread .json through the warm cloakbrowser and parse the listing payload.
-# Chrome renders the JSON inside a <pre>, so the same parser used for curl handles it.
-async def _fetch_reddit_json_browser(json_url: str, timeout: float) -> list[Any] | None:
-    from core.fetch.browser.client import browser_fetch
-
-    result = await browser_fetch(json_url, nav_timeout=max(float(timeout), 30.0), wait_sec=3.0)
-    if not result.ok:
-        logger.debug("reddit browser .json fetch failed for %s: %s", json_url, result.error or result.status)
-        return None
-    return parse_reddit_json_payload(result.html or "") or parse_reddit_json_payload(result.text or "")
-
-
-# Fetch the rendered thread page via the warm cloakbrowser; return cleaned inner_text markdown.
+# Fetch the rendered thread page via the warm cloakbrowser and format it as markdown.
+# Two extraction paths on the SAME rendered page (no second fetch):
+#   1. structural parse of result.html — post + nested comments with per-comment
+#      score/depth/author/OP preserved (the high-value path, ported from webclaw);
+#   2. inner_text + nav strip — the legacy fallback when the structure isn't there
+#      (a layout change, a comment-permalink page the selectors miss, an error wall).
 async def _fetch_reddit_browser_page(thread_url: str, timeout: float) -> str | None:
     from core.fetch.browser.client import browser_fetch
 
     result = await browser_fetch(thread_url, nav_timeout=max(float(timeout), 30.0), wait_sec=5.0)
-    if not result.ok or not result.text:
+    if not result.ok:
         logger.debug(
             "reddit browser page fetch failed for %s: %s", thread_url, result.error or result.status
         )
         return None
 
-    text = _strip_reddit_nav(result.text)
+    if result.html:
+        try:
+            markdown = try_extract_markdown(result.html, thread_url)
+        except Exception as exc:  # noqa: BLE001 — parse must never break the fetch
+            logger.debug("reddit structural parse failed for %s: %s", thread_url, exc)
+            markdown = None
+        if markdown and len(markdown) >= 200:
+            return markdown
+
+    text = _strip_reddit_nav(result.text or "")
     if len(text.strip()) < 200:
         logger.debug("reddit browser inner_text too short (%d chars) for %s", len(text), thread_url)
         return None
     return text
 
 
-# Fetch a thread through a tiered fallback that degrades on antibot blocks:
-#   1. curl_cffi .json (www)         — fast, no browser; Reddit increasingly 403s this
-#   2. warm-browser .json (www)      — JSON behind the browser identity (clean structured md)
-#   3. warm-browser .json (old)      — same on old.reddit.com (lighter, less guarded host)
-#   4. warm-browser page (old)       — last resort: render old.reddit and strip nav cruft
+# Fetch a thread; two methods only, ordered to look like a human before touching the API:
+#   1. warm-browser page (old.reddit) — a normal user browsing the light host; works even
+#      when the IP is rate-limited, and doesn't feed the antibot extra .json suspicion
+#   2. curl_cffi .json               — the public API, structured fallback (post score +
+#      nested comments); host is irrelevant — www and old .json behave identically, and
+#      a rate-limited IP loses both, which is exactly why the page render goes first
 async def fetch_reddit_json(url: str, timeout: float = 15.0) -> str:
-    www_thread = reddit_thread_url(url)
-    www_json = reddit_json_url(url)
-    loop = asyncio.get_running_loop()
-
-    # 1. curl_cffi .json — cheapest path when Reddit lets it through.
-    try:
-        data = await loop.run_in_executor(
-            _io_pool,
-            lambda: _fetch_reddit_json_curl(www_json, www_thread, timeout),
-        )
-        if data is not None:
-            return reddit_data_to_markdown(data, url)
-    except Exception as exc:
-        logger.info("reddit curl_cffi json blocked for %s: %s — falling back to browser", www_json, exc)
-
-    # 2. + 3. warm-browser .json, www then old.reddit (the antibot fallback).
-    old_json = reddit_json_url(url, host="old.reddit.com")
-    for json_url in (www_json, old_json):
-        try:
-            data = await _fetch_reddit_json_browser(json_url, timeout)
-            if data is not None:
-                return reddit_data_to_markdown(data, url)
-        except Exception as exc:
-            logger.info("reddit browser .json failed for %s: %s", json_url, exc)
-
-    # 4. Last resort: render the old.reddit thread page and strip its nav header.
+    # 1. Render the old.reddit thread page and strip its nav header.
     try:
         text = await _fetch_reddit_browser_page(reddit_thread_url(url, host="old.reddit.com"), timeout)
         if text:
             return text
     except Exception as exc:
-        logger.warning("reddit old.reddit page fetch failed for %s: %s", url, exc)
+        logger.info("reddit old.reddit page fetch failed for %s: %s — falling back to .json", url, exc)
+
+    # 2. Fallback: the thread .json API.
+    www_json = reddit_json_url(url)
+    try:
+        loop = asyncio.get_running_loop()
+        data = await loop.run_in_executor(
+            _io_pool,
+            lambda: _fetch_reddit_json_curl(www_json, reddit_thread_url(url), timeout),
+        )
+        if data is not None:
+            return reddit_data_to_markdown(data, url)
+    except Exception as exc:
+        logger.warning("reddit .json api failed for %s: %s", www_json, exc)
 
     return f"Error: Reddit fetch failed for {url}"
 
 
 from custom_domains.base import FetchContext, PageResult
 
-# Reddit needs room for curl_cffi + a warm-browser render of the thread page.
+# Reddit needs room for a warm-browser render of the thread page + the .json fallback.
 _REDDIT_READ_TIMEOUT_SEC = 60.0
 
 
-# Unified handler: fetch a Reddit thread as JSON (curl_cffi → warm-browser in-page).
+# Unified handler: fetch a Reddit thread (old.reddit page render → .json API).
 class RedditHandler:
     name = "reddit"
     fallback_to_generic = False
@@ -226,7 +212,7 @@ class RedditHandler:
         return PageResult(
             markdown=markdown or f"Error: Reddit fetch failed for {url}",
             ok=ok,
-            method="reddit_json",
+            method="reddit",
             apply_budget=ok,
             error="" if ok else (markdown or "reddit fetch failed"),
         )

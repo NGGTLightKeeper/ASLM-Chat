@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "Alat ini memerlukan Docker.",
+    "refreshDocker": "Periksa ulang Docker"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM - Model Bahasa Sistem Lanjutan"
@@ -225,7 +229,15 @@
     "cancel": "Batal",
     "confirm": "Konfirmasi",
     "input": "Masukan",
-    "valueRequired": "Nilai wajib diisi."
+    "valueRequired": "Nilai wajib diisi.",
+    "save": "Simpan perubahan",
+    "pastedBadge": "DITEMPEL",
+    "pastedRemove": "Hapus teks yang ditempel",
+    "pastedUploading": "Mengunggah...",
+    "pastedUploadFailed": "Unggah gagal",
+    "pastedTypeLabel": "Ditempel",
+    "editPastedTitle": "Edit konten yang ditempel",
+    "editPastedPlaceholder": "Edit teks yang ditempel. Gunakan Ctrl/Cmd+Enter untuk menyimpan."
   },
   "errors": {
     "generic": "Terjadi kesalahan",

@@ -293,25 +293,33 @@ def _bm25_score_paragraphs(paragraphs: list[str], query_terms: list[str]) -> lis
     return scores
 
 
-# Select top paragraphs by BM25 relevance that fit within max_chars.
+# Pin fenced code verbatim, then spend the remaining character budget on BM25 prose.
+# Protected code may make the result exceed max_chars.
 def compress_to_budget(text: str, query: str, max_chars: int) -> str:
     if not text or len(text) <= max_chars:
         return text
 
     paragraphs = _split_blocks(text)
     if not paragraphs:
-        return text[:max_chars]
+        return _truncate_markdown_to_budget(text, max_chars, preserve_fenced_code=True)
+
+    pinned = {idx for idx, paragraph in enumerate(paragraphs) if _is_fenced_code_block(paragraph)}
+    pinned_cost = sum(len(paragraphs[idx]) + 2 for idx in pinned)
+    prose_budget = max(0, max_chars - pinned_cost)
 
     query_terms = _bm25_tokenize(query)
     if not query_terms:
         # No query terms — greedily take paragraphs from the top
-        selected, budget = [], max_chars
-        for p in paragraphs:
+        selected = set(pinned)
+        budget = prose_budget
+        for idx, p in enumerate(paragraphs):
+            if idx in pinned:
+                continue
             cost = len(p) + 2
             if cost <= budget:
-                selected.append(p)
+                selected.add(idx)
                 budget -= cost
-        return "\n\n".join(selected) if selected else text[:max_chars]
+        return "\n\n".join(paragraphs[idx] for idx in sorted(selected))
 
     # Score against LaTeX-clean versions so math notation doesn't confuse
     # tokenisation, but keep original paragraph text for the output.
@@ -323,9 +331,11 @@ def compress_to_budget(text: str, query: str, max_chars: int) -> str:
     scores = _bm25_score_paragraphs(score_paras, query_terms)
     ranked = sorted(range(len(paragraphs)), key=lambda i: -scores[i])
 
-    selected: set[int] = set()
-    budget = max_chars
+    selected: set[int] = set(pinned)
+    budget = prose_budget
     for idx in ranked:
+        if idx in pinned:
+            continue
         cost = len(paragraphs[idx]) + 2
         if cost <= budget:
             selected.add(idx)
@@ -335,7 +345,9 @@ def compress_to_budget(text: str, query: str, max_chars: int) -> str:
 
     # Reconstruct in original order
     result = [paragraphs[i] for i in sorted(selected)]
-    return "\n\n".join(result) if result else text[:max_chars]
+    return "\n\n".join(result) if result else _truncate_markdown_to_budget(
+        text, max_chars, preserve_fenced_code=True
+    )
 
 
 # Fallback BM25 query from URL path segments and page title.
@@ -381,7 +393,8 @@ def _resolve_read_page_compress_query(focus: str, url: str, markdown: str) -> st
         return ""
 
 
-# Shrink long read_page output with BM25 relevance before the hard max_chars cap.
+# Shrink long read_page output with BM25 relevance. Fenced code is outside the
+# prose budget, so max_chars becomes a soft ceiling when protected code alone is larger.
 def compress_read_page_markdown(
     markdown: str,
     *,
@@ -392,7 +405,7 @@ def compress_read_page_markdown(
     compress_target: int,
     enable_compress: bool = True,
 ) -> str:
-    text = markdown or ""
+    text = _repair_unclosed_fence(markdown or "")
     if not text:
         return text
 
@@ -417,12 +430,19 @@ def compress_read_page_markdown(
     if enable_compress and focus.strip() and text.strip():
         from core.extract.micro_chunk_worker import prune_micro_chunks
 
-        pruned, _micro = prune_micro_chunks(text, focus)
-        if pruned.strip():
-            text = pruned
+        protected: list[str] = []
+        for block in _split_blocks(text):
+            if _is_fenced_code_block(block):
+                protected.append(block)
+                continue
+            pruned, _micro = prune_micro_chunks(block, focus)
+            if pruned.strip():
+                protected.append(pruned)
+        if protected:
+            text = "\n\n".join(protected)
 
     if len(text) > max_chars:
-        text = text[:max_chars].rsplit("\n", 1)[0] + "\n\n[...truncated]"
+        text = _truncate_markdown_to_budget(text, max_chars, preserve_fenced_code=True)
     return text
 
 
@@ -670,22 +690,59 @@ def _extract_text_with_bs4(cleaned_html: str) -> str:
     return "\n\n".join(blocks)
 
 
+# Full-body strip set — ONLY non-content machinery. Deliberately narrower than
+# _NOISE_TAGS: nav/header/footer/form/button are kept, because on landing pages, doc
+# indexes and download pages that "chrome" IS the information (ported from openserp's
+# extractFullBody, whose clean-vs-full fallback beat us on exactly those pages).
+_FULLBODY_STRIP_TAGS = ("script", "style", "noscript", "template", "svg", "iframe")
+
+
+# The whole readable <body> as trimmed text lines, keeping nav/header/footer chrome.
+# The thin-extraction rescue path: never the primary extractor.
+def extract_full_body_text(raw_html: str) -> str:
+    if not raw_html:
+        return ""
+    try:
+        from bs4 import BeautifulSoup
+    except Exception:  # noqa: BLE001 — rescue path must degrade to a no-op
+        return ""
+    soup = BeautifulSoup(raw_html, _BS_PARSER)
+    for tag_name in _FULLBODY_STRIP_TAGS:
+        for node in soup.find_all(tag_name):
+            node.decompose()
+    body = soup.body or soup
+
+    # Preserve tables as markdown instead of flattening them to a text wall: swap each
+    # <table> for a positional marker, take the body text, then restore the markdown.
+    from core.extract.markdown_code import restore_pre_markers, wrap_pre_with_markers
+    from core.extract.markdown_tables import swap_tables_for_markers
+
+    code_md = wrap_pre_with_markers(soup)
+    table_md = swap_tables_for_markers(soup)
+    lines = (
+        line.strip() if line.strip().startswith("\x00TBL") else _WHITESPACE_RE.sub(" ", line).strip()
+        for line in body.get_text(separator="\n").splitlines()
+    )
+    text = "\n".join(line for line in lines if line)
+    for marker, md in table_md.items():
+        text = text.replace(marker, f"\n{md}\n")
+    return restore_pre_markers(text, code_md)
+
+
 # Return a callable that returns True for boilerplate text blocks.
 def _get_boilerplate_filter():
-    # Fallback boilerplate check using noise markers and minimum length.
+    # A noise word is meaningful only on a short UI-like block. Long prose can use the
+    # same word legitimately, and short headings/version notes are content by default.
     def _fallback(text: str) -> bool:
         compact = _normalize_text(text).lower()
-        if len(compact) < 40:
-            return True
-        return any(marker in compact for marker in _NOISE_MARKERS)
+        return len(compact) <= 120 and any(marker in compact for marker in _NOISE_MARKERS)
     return _fallback
 
 
-# Deduplicate blocks by exact text and token signature.
+# Deduplicate blocks by exact normalized text while preserving their original layout.
 def _dedupe_blocks(blocks: Iterable[str]) -> list[str]:
     deduped: list[str] = []
     seen_exact: set[str] = set()
-    seen_signatures: set[str] = set()
     for block in blocks:
         normalized = _normalize_text(block)
         if not normalized:
@@ -693,21 +750,164 @@ def _dedupe_blocks(blocks: Iterable[str]) -> list[str]:
         exact_key = normalized.lower()
         if exact_key in seen_exact:
             continue
-        tokens = re.findall(r"\w+", exact_key)
-        signature = " ".join(tokens[:18])
-        if signature and signature in seen_signatures:
-            continue
         seen_exact.add(exact_key)
-        if signature:
-            seen_signatures.add(signature)
-        deduped.append(normalized)
+        deduped.append(block.strip())
     return deduped
 
 
-# Split text into normalized paragraph blocks.
+# Opening Markdown fence: up to three leading spaces, then backticks or tildes.
+_MD_FENCE_OPEN_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})(?:[^`~].*)?$")
+
+
+# Return the fence marker when a line opens a fenced block.
+def _fence_marker(line: str) -> str:
+    match = _MD_FENCE_OPEN_RE.match(line.rstrip())
+    return match.group(1) if match else ""
+
+
+# True when a line closes the given fence marker.
+def _closes_fence(line: str, marker: str) -> bool:
+    stripped = line.strip()
+    if not marker or not stripped.startswith(marker[0] * len(marker)):
+        return False
+    return not stripped[len(marker):].strip(marker[0]).strip()
+
+
+# Remove a final unmatched opener while retaining all following text as ordinary prose.
+# A malformed source fence must not turn the remainder of a document into one huge atom.
+def _repair_unclosed_fence(text: str) -> str:
+    lines = (text or "").splitlines()
+    marker = ""
+    opener_index = -1
+    for index, line in enumerate(lines):
+        if marker:
+            if _closes_fence(line, marker):
+                marker = ""
+                opener_index = -1
+            continue
+        opened = _fence_marker(line)
+        if opened:
+            marker = opened
+            opener_index = index
+    if marker and opener_index >= 0:
+        del lines[opener_index]
+        return "\n".join(lines)
+    return text
+
+
+# Split text into paragraph blocks while keeping every fenced code block atomic.
 def _split_blocks(text: str) -> list[str]:
-    pieces = re.split(r"\n\s*\n|(?<=\.)\s{2,}", text or "")
-    return [n for p in pieces if (n := _normalize_text(p))]
+    blocks: list[str] = []
+    prose: list[str] = []
+    fenced: list[str] = []
+    marker = ""
+
+    def flush_prose() -> None:
+        if not prose:
+            return
+        segment = "\n".join(prose)
+        prose.clear()
+        for piece in re.split(r"\n\s*\n|(?<=\.)\s{2,}", segment):
+            stripped = piece.strip()
+            if stripped:
+                blocks.append(stripped)
+
+    for line in (text or "").splitlines():
+        if marker:
+            fenced.append(line)
+            if _closes_fence(line, marker):
+                blocks.append("\n".join(fenced).strip("\n"))
+                fenced.clear()
+                marker = ""
+            continue
+
+        opened = _fence_marker(line)
+        if opened:
+            flush_prose()
+            marker = opened
+            fenced.append(line)
+        else:
+            prose.append(line)
+
+    if fenced:
+        # Degrade an unterminated source fence to prose instead of swallowing the whole
+        # tail into an oversized atomic block. The unmatched opener itself is discarded.
+        prose.extend(fenced[1:])
+    flush_prose()
+    return blocks
+
+
+# True when one block starts with a Markdown fence.
+def _is_fenced_code_block(block: str) -> bool:
+    first_line = (block or "").lstrip().split("\n", 1)[0]
+    return bool(_fence_marker(first_line))
+
+
+# Truncate Markdown at block boundaries. With preserve_fenced_code, every fenced
+# block is pinned verbatim and the result may exceed max_chars.
+def _truncate_markdown_to_budget(
+    text: str,
+    max_chars: int,
+    *,
+    preserve_fenced_code: bool = False,
+) -> str:
+    text = _repair_unclosed_fence(text)
+    if max_chars <= 0:
+        return ""
+    if len(text) <= max_chars:
+        return text
+
+    suffix = "[...truncated]"
+    blocks = _split_blocks(text)
+    if preserve_fenced_code:
+        pinned = {idx for idx, block in enumerate(blocks) if _is_fenced_code_block(block)}
+        pinned_cost = sum(len(blocks[idx]) + 2 for idx in pinned)
+        prose_budget = max(0, max_chars - pinned_cost - len(suffix) - 2)
+        selected: dict[int, str] = {idx: blocks[idx] for idx in pinned}
+        used = 0
+        for idx, block in enumerate(blocks):
+            if idx in pinned:
+                continue
+            separator = 2 if selected else 0
+            cost = separator + len(block)
+            if used + cost <= prose_budget:
+                selected[idx] = block
+                used += cost
+                continue
+            remaining = prose_budget - used - separator
+            if remaining > 0:
+                fragment = _truncate_at_sentence(block, remaining)
+                if fragment:
+                    selected[idx] = fragment
+            break
+        prefix = "\n\n".join(selected[idx] for idx in sorted(selected)).rstrip()
+        return f"{prefix}\n\n{suffix}" if prefix else suffix
+
+    content_budget = max(0, max_chars - len(suffix) - 2)
+    selected: list[str] = []
+    used = 0
+    for block in blocks:
+        separator = 2 if selected else 0
+        cost = separator + len(block)
+        if used + cost <= content_budget:
+            selected.append(block)
+            used += cost
+            continue
+
+        if _is_fenced_code_block(block):
+            # Omit this block atomically, but keep scanning: later prose or smaller code
+            # can still use the remaining budget instead of being discarded with it.
+            continue
+
+        remaining = content_budget - used - separator
+        if remaining > 0:
+            fragment = _truncate_at_sentence(block, remaining)
+            if fragment:
+                selected.append(fragment)
+        break
+
+    prefix = "\n\n".join(selected).rstrip()
+    return f"{prefix}\n\n{suffix}" if prefix else suffix
 
 
 # Quality scoring and trafilatura extraction.
@@ -731,7 +931,7 @@ def _extract_text_with_trafilatura(cleaned_html: str) -> str:
             include_comments=False,
             include_tables=True,
             favor_precision=True,
-            deduplicate=True,
+            deduplicate=False,
             output_format="txt",
         )
     except Exception:
@@ -764,5 +964,3 @@ def _estimate_quality(text: str, block_count: int) -> float:
     score -= min(digit_ratio, 0.20) * 0.20
     score -= min(marker_penalty * 0.08, 0.25)
     return max(0.0, min(round(score, 4), 1.0))
-
-

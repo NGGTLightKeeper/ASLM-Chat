@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "Цей інструмент потребує Docker.",
+    "refreshDocker": "Перевірити Docker знову"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM — розширені системні мовні моделі"
@@ -225,7 +229,15 @@
     "cancel": "Скасувати",
     "confirm": "Підтвердження",
     "input": "Введення",
-    "valueRequired": "Вкажіть значення."
+    "valueRequired": "Вкажіть значення.",
+    "save": "Зберегти зміни",
+    "pastedBadge": "ВСТАВЛЕНО",
+    "pastedRemove": "Видалити вставлений текст",
+    "pastedUploading": "Завантаження...",
+    "pastedUploadFailed": "Помилка завантаження",
+    "pastedTypeLabel": "Вставлено",
+    "editPastedTitle": "Редагувати вставлений вміст",
+    "editPastedPlaceholder": "Відредагуйте вставлений текст. Використовуйте Ctrl/Cmd+Enter для збереження."
   },
   "errors": {
     "generic": "Щось пішло не так",

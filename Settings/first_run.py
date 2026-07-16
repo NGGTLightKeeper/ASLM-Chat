@@ -164,28 +164,6 @@ print("[ASLM-Chat] spaCy model 'en_core_web_sm' is already installed.")
         _print_warning("spaCy model bootstrap did not complete successfully.")
 
 
-# Download ASLM web-search embedding models from Hugging Face when missing.
-def _ensure_aslm_embedding_models(log: bool) -> None:
-    from Services import venv_manager
-
-    tool_root = TOOLS_DIR / "mcp-web-search"
-    if not tool_root.is_dir():
-        _print_warning(f"Skipping ASLM embedding download; tool not found: {tool_root}")
-        return
-
-    if log:
-        print("[ASLM-Chat] Ensuring ASLM web-search embedding models (Hugging Face)...")
-
-    code = f"""
-import sys
-sys.path.insert(0, {str(tool_root)!r})
-from core.query.aslm_embedding_bootstrap import ensure_aslm_embedding_models
-ensure_aslm_embedding_models()
-"""
-    if not venv_manager.run_venv_code("mcp-web-search", code, log=log):
-        _print_warning("ASLM embedding model bootstrap did not complete successfully.")
-
-
 # Run post-dependency bootstrap tasks for bundled tools.
 def _run_tool_bootstrap(log: bool) -> None:
     from Services import venv_manager
@@ -225,10 +203,6 @@ def _run_tool_bootstrap(log: bool) -> None:
                     future.result()
                 except Exception as exc:
                     _print_warning(f"Browser bootstrap task failed: {exc}")
-
-    # nltk/spacy bootstrap dropped: those deps (and the embedder/GLiNER stack) were
-    # removed — web search is BM25 + an optional CPU decoder re-ranker now.
-    _ensure_aslm_embedding_models(log)
 
 
 # Print a short summary of the written first-run settings.

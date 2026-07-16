@@ -1533,6 +1533,7 @@ export function createSkillsUi(context) {
   }
 
   return {
+    getSkillFolders: folderList,
     init,
     openManager,
     renderComposerSkillsMenu,

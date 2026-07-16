@@ -30,7 +30,6 @@ from core.extract.content_processor import (
 
 _MAX_OUTPUT_CHARS = 50_000
 _WHITESPACE_RE = re.compile(r"[ \t\r\f\v]+")
-_BLANK_LINES_RE = re.compile(r"\n{3,}")
 _TAG_RE = re.compile(r"<[^>]+>")
 
 _MD_HEADING_RE = re.compile(r"^#{1,6}\s")
@@ -108,25 +107,48 @@ def _extract_meta(raw_html: Optional[str], fallback_text: Optional[str], url: st
     return meta
 
 
-# Use trafilatura with include_formatting=True for markdown-like output.
-def _extract_with_trafilatura_formatted(cleaned_html: str, url: str = "") -> str:
+# Protect preformatted blocks before an extractor normalizes the surrounding DOM.
+def _protect_pre_blocks(source_html: str) -> tuple[str, list[tuple[str, str, str]]]:
+    if not (_HAS_BS4 and "<pre" in source_html.lower()):
+        return source_html, []
+
+    from core.extract.markdown_code import wrap_pre_with_markers
+
+    soup = BeautifulSoup(source_html, "lxml")
+    markers = wrap_pre_with_markers(soup)
+    return str(soup), markers
+
+
+# Use trafilatura with include_formatting=True for markdown-like output. Recall mode is
+# useful for already-isolated article HTML returned by structured APIs: there is no site
+# chrome to reject, so retaining the whole article is safer than main-content guessing.
+def _extract_with_trafilatura_formatted(
+    cleaned_html: str,
+    url: str = "",
+    *,
+    favor_recall: bool = False,
+) -> str:
     if not cleaned_html:
         return ""
+    source_html, code_markers = _protect_pre_blocks(cleaned_html)
     try:
         text = trafilatura.extract(
-            cleaned_html,
+            source_html,
             url=url or None,
             include_comments=False,
             include_tables=True,
             include_formatting=True,
-            include_links=False,
-            favor_precision=True,
-            deduplicate=True,
-            output_format="txt",
+            include_links=True,
+            favor_precision=not favor_recall,
+            favor_recall=favor_recall,
+            deduplicate=False,
+            output_format="markdown" if favor_recall else "txt",
         )
     except Exception:
         return ""
-    return text or ""
+    from core.extract.markdown_code import restore_pre_markers
+
+    return restore_pre_markers(text or "", code_markers)
 
 
 # DOM block extraction with structural nav/UI rejection. Returns (joined_text, stats);
@@ -134,9 +156,12 @@ def _extract_with_trafilatura_formatted(cleaned_html: str, url: str = "") -> str
 def _extract_with_dom_blocks(cleaned_html: str, url: str) -> tuple[str, dict]:
     try:
         from core.extract.dom_block_extractor import extract_dom_blocks
+        from core.extract.markdown_code import restore_pre_markers
 
-        blocks, stats = extract_dom_blocks(cleaned_html, url=url)
-        return "\n\n".join(blocks), dict(stats)
+        source_html, code_markers = _protect_pre_blocks(cleaned_html)
+        blocks, stats = extract_dom_blocks(source_html, url=url)
+        text = restore_pre_markers("\n\n".join(blocks), code_markers)
+        return text, dict(stats)
     except Exception:  # noqa: BLE001 — extraction refinement must never sink a read
         return "", {}
 
@@ -147,22 +172,16 @@ def _extract_content(raw_html: Optional[str], fallback_text: Optional[str], url:
         cleaned_html = _preclean_html(raw_html)
         min_chars = 200
 
-        # Structural nav/UI rejection (menus, control clusters, link farms) — catches
-        # boilerplate that survives trafilatura's main-content heuristic.
-        dom_text, dom_stats = _extract_with_dom_blocks(cleaned_html, url)
-        dom_ok = len(_normalize_text(dom_text)) >= min_chars
-
+        # Keep the formatted result whenever it is substantial. A DOM pass's own reject
+        # count cannot tell us whether this different extractor retained boilerplate.
         if _HAS_TRAFILATURA:
             text = _extract_with_trafilatura_formatted(cleaned_html, url)
             if len(_normalize_text(text)) >= min_chars:
-                # When the DOM pass rejected several nav/UI blocks, the page carries real
-                # boilerplate that trafilatura's main-content heuristic tends to swallow —
-                # prefer the structurally-filtered blocks. Clean pages (few/no rejects)
-                # keep trafilatura's richer formatting (headings/lists/tables).
-                if dom_ok and int(dom_stats.get("nav_rejected", 0)) >= 3:
-                    return dom_text
                 return text
 
+        # Structural nav/UI rejection remains the fallback for thin formatted output.
+        dom_text, _dom_stats = _extract_with_dom_blocks(cleaned_html, url)
+        dom_ok = len(_normalize_text(dom_text)) >= min_chars
         if dom_ok:
             return dom_text
 
@@ -310,12 +329,26 @@ def _build_markdown(meta: dict[str, str], content: str) -> str:
     parts.append(content)
 
     text = "\n".join(parts)
-    text = _BLANK_LINES_RE.sub("\n\n", text)
+    # Repair GFM tables (trafilatura drops the header row's leading `|`, etc.) so every
+    # renderer parses them. No-op on table-free pages.
+    from core.extract.markdown_tables import normalize_markdown_tables
+
+    text = normalize_markdown_tables(text)
+    from core.extract.markdown_code import collapse_blank_lines_preserving_fences
+
+    text = collapse_blank_lines_preserving_fences(text)
 
     if len(text) > _MAX_OUTPUT_CHARS:
-        text = text[:_MAX_OUTPUT_CHARS].rsplit("\n", 1)[0] + "\n\n[...truncated]"
+        from core.extract.content_processor import _truncate_markdown_to_budget
+
+        text = _truncate_markdown_to_budget(text, _MAX_OUTPUT_CHARS)
 
     return text
+
+
+# Clean extraction below this is "too thin" — worth comparing against the full body
+# (mirrors openserp's minCleanTextRunes).
+_MIN_CLEAN_CHARS = 250
 
 
 # Produce a clean, structured markdown representation of a web page.
@@ -323,19 +356,45 @@ def normalize_page(
     url: str,
     raw_html: Optional[str] = None,
     fallback_text: Optional[str] = None,
+    *,
+    favor_recall: bool = False,
 ) -> str:
     meta = _extract_meta(raw_html, fallback_text, url)
+
+    # Trafilatura's formatted precision pass is both faster and more faithful on normal
+    # articles and reference pages than flattening the same document into DOM blocks and
+    # rebuilding structure afterwards. Keep the DOM/full-body machinery as the fallback
+    # for genuinely thin extraction instead of running every successful page through it.
+    if raw_html and _HAS_TRAFILATURA:
+        formatted = _extract_with_trafilatura_formatted(raw_html, url, favor_recall=favor_recall)
+        if len(_normalize_text(formatted)) >= 200:
+            return _build_markdown(meta, formatted)
+
     content = _extract_content(raw_html, fallback_text, url)
 
-    if not content.strip():
+    cleaned = ""
+    if content.strip():
+        strict = bool(raw_html)
+        cleaned = _clean_content(content, strict=strict)
+
+        block_count = len([b for b in cleaned.split("\n\n") if b.strip()])
+        if block_count <= 1 and len(cleaned) > 300:
+            cleaned = _fallback_segment(content)
+            cleaned = _clean_content(cleaned, strict=strict)
+
+    # thin→full-body rescue (openserp port): the clean pass strips everything it deems
+    # boilerplate, which guts landing pages, doc indexes and download pages where the
+    # "chrome" is the actual information. When the cleaned result is near-empty but the
+    # page itself carried more visible text, return the whole readable body instead of a
+    # husk — metadata keeps the clean pass's title/date. Bypasses _clean_content: block
+    # filters would re-delete the short nav/CTA lines this path exists to preserve.
+    if raw_html and len(_normalize_text(cleaned)) < _MIN_CLEAN_CHARS:
+        from core.extract.content_processor import extract_full_body_text
+
+        full = extract_full_body_text(raw_html)
+        if len(_normalize_text(full)) > len(_normalize_text(cleaned)):
+            return _build_markdown(meta, full)
+
+    if not cleaned.strip():
         return _build_markdown(meta, "*No content extracted.*")
-
-    strict = bool(raw_html)
-    cleaned = _clean_content(content, strict=strict)
-
-    block_count = len([b for b in cleaned.split("\n\n") if b.strip()])
-    if block_count <= 1 and len(cleaned) > 300:
-        cleaned = _fallback_segment(content)
-        cleaned = _clean_content(cleaned, strict=strict)
-
     return _build_markdown(meta, cleaned)

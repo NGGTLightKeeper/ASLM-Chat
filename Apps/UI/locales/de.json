@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "Dieses Tool benötigt Docker.",
+    "refreshDocker": "Docker erneut prüfen"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM – Fortgeschrittene System-Sprachmodelle"
@@ -225,7 +229,15 @@
     "cancel": "Abbrechen",
     "confirm": "Bestätigen",
     "input": "Eingabe",
-    "valueRequired": "Wert ist erforderlich."
+    "valueRequired": "Wert ist erforderlich.",
+    "save": "Änderungen speichern",
+    "pastedBadge": "EINGEFÜGT",
+    "pastedRemove": "Eingefügten Text entfernen",
+    "pastedUploading": "Wird hochgeladen...",
+    "pastedUploadFailed": "Hochladen fehlgeschlagen",
+    "pastedTypeLabel": "Eingefügt",
+    "editPastedTitle": "Eingefügten Inhalt bearbeiten",
+    "editPastedPlaceholder": "Bearbeiten Sie den eingefügten Text. Strg/Cmd+Eingabe zum Speichern."
   },
   "errors": {
     "generic": "Etwas ist schiefgelaufen",

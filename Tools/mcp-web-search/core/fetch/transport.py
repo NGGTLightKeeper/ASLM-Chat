@@ -22,6 +22,29 @@ _CHROMIUM_FAMILIES = frozenset({"chrome", "edge"})
 _WARM_FAMILY = "chromium"
 
 
+# Imported-cookie jars, one per browser family. Chrome/Edge/Brave land in "chromium"; Firefox
+# in "firefox". Replay prefers the engine's own family then falls back across the rest.
+_IMPORTED_FAMILIES = ("chromium", "firefox")
+
+# Engines that must NOT receive imported real-browser cookies. Google's parser relies on the
+# GSA (Google Search App) User-Agent trick to get the clean, parseable mobile SERP; that identity
+# is deliberately cookie-light. Injecting the user's full desktop session (verified live) flips
+# Google onto its JS-gated desktop layout (the `enablejs` page) which the GSA parser can't read —
+# so the "logged-in" cookies actively hurt this one engine. Other engines (Startpage/DDG/Brave/
+# Qwant/Bing/Yandex) and read_page still benefit from the imported session.
+_IMPORTED_COOKIE_DENYLIST = frozenset({"google"})
+
+
+# Map an engine's primp_target to its imported-cookie family (opt-in profile import). Chrome/Edge
+# share the chromium jar (Chrome/Edge/Brave imports); Firefox has its own. Unknown → no primary.
+def _imported_family(primp_target: str) -> str:
+    if primp_target in _CHROMIUM_FAMILIES:
+        return "chromium"
+    if primp_target == "firefox":
+        return "firefox"
+    return ""
+
+
 # Merge an engine's persistent cookies into the outgoing request (read half of Stage B).
 # Layered: stored HTTP-earned cookies, plus the warm browser's cookies for chromium engines,
 # then the engine's own per-request seed cookies on top (fresh intent wins on a name clash).
@@ -39,6 +62,20 @@ def _replay_identity_cookies(request: EngineRequest, host: str) -> EngineRequest
                 name = cookie.get("name")
                 if name:
                     stored[str(name)] = str(cookie.get("value", ""))
+        # Imported real-browser cookies (opt-in) are the BASE layer: a session the engine can't
+        # earn itself (a logged-in SID) fills in, but any cookie the engine has since earned
+        # (consent/region) overrides the imported one. The engine's own family jar is preferred,
+        # then OTHER families fill in for the same host: a valid session cookie is not bound to a
+        # TLS fingerprint, so a Google SID living in the user's Firefox still helps a Chrome-
+        # impersonating Google engine (its chromium jar is empty when Chrome uses App-Bound enc).
+        if owner not in _IMPORTED_COOKIE_DENYLIST:
+            primary = _imported_family(request.primp_target)
+            imported: dict[str, str] = {}
+            for family in ([primary] if primary else []) + [f for f in _IMPORTED_FAMILIES if f != primary]:
+                for name, value in store.imported_cookies_map(family, host).items():
+                    imported.setdefault(name, value)
+            if imported:
+                stored = {**imported, **stored}
     except Exception as exc:  # noqa: BLE001 — cookie replay must never break a fetch
         logger.debug("identity cookie replay skipped for %s: %s", owner, exc)
         return request
@@ -154,6 +191,14 @@ class PrimpTransport:
             thread_name_prefix="serp-primp",
         )
         self._clients: dict[str, primp.Client] = {}
+        # Populate the imported-browser cookie layer once per process (config-gated; a no-op
+        # unless profile_import.enabled). Best-effort — never let it break transport setup.
+        try:
+            from core.fetch.browser.profile_import import ensure_imported
+
+            ensure_imported()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("profile_import trigger skipped: %s", exc)
 
     # Return or create a primp client keyed by host+impersonation identity.
     def _client(self, host: str, primp_target: str, primp_os: str) -> primp.Client:

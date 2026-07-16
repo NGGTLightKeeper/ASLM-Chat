@@ -155,6 +155,20 @@ def _nextjs_rsc_to_markdown(url: str, raw_html: str) -> str:
     return _fallback_text_to_markdown(url, text) if text else ""
 
 
+# Recover supplemental prose from JSON data islands when the DOM markdown parsed sparse.
+# Word count drives the gate (matches webclaw's SPARSE_THRESHOLD); returns "" when the DOM
+# already had enough, nothing parsed, or the recovered text duplicated the DOM.
+def _data_island_supplement(raw_html: str, dom_markdown: str) -> str:
+    try:
+        from core.extract.data_island import try_extract_data_islands
+
+        dom_words = len((dom_markdown or "").split())
+        return try_extract_data_islands(raw_html, dom_words, dom_markdown) or ""
+    except Exception as exc:  # noqa: BLE001 — a fallback must never break extraction
+        logger.debug("data-island extraction skipped: %s", exc)
+        return ""
+
+
 # True when an exception chain bottoms out in a TLS failure. httpx wraps ssl.SSLError
 # inside ConnectError (walk __cause__/__context__); curl_cffi flattens curl codes
 # 35/51/58/60 into a message string, so a text probe is the only uniform test there.
@@ -554,7 +568,15 @@ class ReadPageService:
                     rsc = _nextjs_rsc_to_markdown(cand, html_text)
                     if rsc:
                         return prepend_retail_metadata(rsc, retail_meta)
-                return prepend_retail_metadata(normalize_page(cand, html_text), retail_meta)
+                page_md = normalize_page(cand, html_text)
+                # SPA fallback: when the DOM parsed sparse, recover prose from JSON data
+                # islands (React/Next/Contentful ship content as script JSON and hydrate
+                # client-side, so a static fetch's DOM is near-empty). Appended, never a
+                # replacement — genuine DOM content stays first and duplicates are dropped.
+                island_md = _data_island_supplement(html_text, page_md)
+                if island_md:
+                    page_md = f"{page_md}\n\n{island_md}" if page_md.strip() else island_md
+                return prepend_retail_metadata(page_md, retail_meta)
 
             md = await asyncio.get_running_loop().run_in_executor(_io_pool, _extract)
             parse_ms = (time.perf_counter() - parse0) * 1000

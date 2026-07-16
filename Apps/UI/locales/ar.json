@@ -1,4 +1,8 @@
 {
+  "tools": {
+    "requiresDocker": "تتطلب هذه الأداة Docker.",
+    "refreshDocker": "إعادة فحص Docker"
+  },
   "meta": {
     "appTitle": "ASLM Chat",
     "appDescription": "ASLM - نماذج لغوية نظامية متقدمة"
@@ -225,7 +229,15 @@
     "cancel": "إلغاء",
     "confirm": "تأكيد",
     "input": "إدخال",
-    "valueRequired": "القيمة مطلوبة."
+    "valueRequired": "القيمة مطلوبة.",
+    "save": "حفظ التغييرات",
+    "pastedBadge": "ملصق",
+    "pastedRemove": "إزالة النص الملصق",
+    "pastedUploading": "جارٍ التحميل...",
+    "pastedUploadFailed": "فشل التحميل",
+    "pastedTypeLabel": "ملصق",
+    "editPastedTitle": "تحرير المحتوى الملصق",
+    "editPastedPlaceholder": "قم بتحرير النص الملصق. استخدم Ctrl/Cmd+Enter للحفظ."
   },
   "errors": {
     "generic": "حدث خطأ ما",

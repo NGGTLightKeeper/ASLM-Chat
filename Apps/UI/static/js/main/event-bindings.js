@@ -338,6 +338,16 @@ export function bindEventHandlers(context, dependencies) {
     attachmentsUi.removePendingAttachment(index);
   });
 
+  // Click anywhere on a pasted file chip (except the remove X) opens the editor.
+  // This makes the entire attachment widget clickable for editing the pasted content.
+  $(document).on('click', '.file-preview-chip.is-pasted', function onPastedFileClick(event) {
+    if ($(event.target).closest('.img-preview-remove').length) {
+      return;
+    }
+    const index = $(this).closest('[data-idx]').data('idx');
+    attachmentsUi.editPastedAttachment(index);
+  });
+
 
   // File drag-and-drop helpers.
   // Read the DataTransfer object from a native or jQuery event.
@@ -444,6 +454,13 @@ export function bindEventHandlers(context, dependencies) {
     hideDropOverlay();
     if (files && files.length > 0) {
       attachmentsUi.handleDroppedFiles(files);
+    }
+
+    // Support dropping links (e.g. from bookmarks or other pages) as URL attachments.
+    // The link text/URL may be inserted by the browser into the input; we attach it anyway.
+    if (attachmentsUi.collectDroppedUrls && attachmentsUi.queueUrlAttachment) {
+      const urls = attachmentsUi.collectDroppedUrls(dataTransfer) || [];
+      urls.forEach(function (u) { attachmentsUi.queueUrlAttachment(u); });
     }
   }
 

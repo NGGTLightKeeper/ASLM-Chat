@@ -24,8 +24,9 @@ from core.extract.content_processor import (
     _bm25_tokenize,
     _clean_latex_for_index,
     _has_latex,
+    _is_fenced_code_block,
     _split_blocks,
-    _truncate_at_sentence,
+    _truncate_markdown_to_budget,
 )
 
 
@@ -46,9 +47,8 @@ _DEFAULT_POLICY = _Policy()
 def _policy_for(char_budget: int | None) -> _Policy:
     if char_budget is None or char_budget <= 0:
         return _DEFAULT_POLICY
-    scale = max(0.5, min(3.0, char_budget / _DEFAULT_POLICY.char_budget))
     return _Policy(
-        char_budget=max(400, int(_DEFAULT_POLICY.char_budget * scale)),
+        char_budget=max(400, int(char_budget)),
         min_score=_DEFAULT_POLICY.min_score,
         max_chunks=_DEFAULT_POLICY.max_chunks,
         max_chunks_expanded=_DEFAULT_POLICY.max_chunks_expanded,
@@ -107,7 +107,10 @@ def _score_paragraphs(
     bm25_raw = _bm25_score_paragraphs(index_paras, query_terms) if query_terms else [0.0] * len(paragraphs)
     bm25 = _normalize_scores(bm25_raw)
     entity = [_entity_heuristic_score(p) for p in paragraphs]
-    seo = [seo_keyword_stuffing_penalty(p, query_terms) for p in paragraphs]
+    seo = [
+        0.0 if _is_fenced_code_block(p) else seo_keyword_stuffing_penalty(p, query_terms)
+        for p in paragraphs
+    ]
 
     seo_w = max(0.0, min(1.0, policy.seo_weight))
     remainder = max(0.05, 1.0 - seo_w)
@@ -128,14 +131,18 @@ def _chunk_limit(policy: _Policy, strong_count: int) -> int:
     return policy.max_chunks
 
 
-# Select the paragraphs most relevant to the query, dropping SEO-stuffed blocks, and
-# pack them into the (optionally rescaled) character budget. Returns the joined text.
+# Pin fenced code verbatim, then select relevant prose and reject SEO stuffing within
+# the remaining character budget. Protected code may make the result exceed the budget.
 def compress_chunks(text: str, query: str, *, char_budget: int | None = None) -> str:
     policy = _policy_for(char_budget)
 
     paragraphs = _split_blocks(text)
     if not paragraphs:
-        return _truncate_at_sentence(text[: policy.char_budget], policy.char_budget)
+        return _truncate_markdown_to_budget(text, policy.char_budget, preserve_fenced_code=True)
+
+    pinned = {idx for idx, paragraph in enumerate(paragraphs) if _is_fenced_code_block(paragraph)}
+    pinned_cost = sum(len(paragraphs[idx]) + 2 for idx in pinned)
+    prose_budget = max(0, policy.char_budget - pinned_cost)
 
     query_terms = _bm25_tokenize(query)
     scored = _score_paragraphs(paragraphs, query_terms, policy)
@@ -144,7 +151,7 @@ def compress_chunks(text: str, query: str, *, char_budget: int | None = None) ->
         kept = [
             idx
             for idx, ((hybrid, seo), _para) in enumerate(zip(scored, paragraphs))
-            if seo < SEO_HARD_REJECT_THRESHOLD and hybrid >= policy.min_score
+            if idx in pinned or (seo < SEO_HARD_REJECT_THRESHOLD and hybrid >= policy.min_score)
         ]
         if kept:
             return "\n\n".join(paragraphs[i] for i in sorted(kept))
@@ -152,6 +159,8 @@ def compress_chunks(text: str, query: str, *, char_budget: int | None = None) ->
 
     eligible: list[tuple[int, float, float]] = []
     for idx, ((hybrid, seo), _para) in enumerate(zip(scored, paragraphs)):
+        if idx in pinned:
+            continue
         if seo >= SEO_HARD_REJECT_THRESHOLD or hybrid < policy.min_score:
             continue
         eligible.append((idx, hybrid, seo))
@@ -160,8 +169,10 @@ def compress_chunks(text: str, query: str, *, char_budget: int | None = None) ->
         # Fallback: least-spammy paragraphs by score only.
         ranked = sorted(range(len(paragraphs)), key=lambda i: (-scored[i][0], scored[i][1]))
         fallback: list[int] = []
-        budget = policy.char_budget
+        budget = prose_budget
         for idx in ranked:
+            if idx in pinned:
+                continue
             if scored[idx][1] >= 0.92:
                 continue
             cost = len(paragraphs[idx]) + 2
@@ -170,15 +181,15 @@ def compress_chunks(text: str, query: str, *, char_budget: int | None = None) ->
                 budget -= cost
             if len(fallback) >= policy.max_chunks:
                 break
-        selected_idx = sorted(fallback)
+        selected_idx = sorted(pinned | set(fallback))
     else:
         strong = [item for item in eligible if item[1] >= policy.expand_score]
         chunk_cap = _chunk_limit(policy, len(strong))
         ranked = sorted(eligible, key=lambda x: -x[1])
-        selected: set[int] = set()
-        budget = policy.char_budget
+        selected: set[int] = set(pinned)
+        budget = prose_budget
         for idx, _hybrid, _seo in ranked:
-            if len(selected) >= chunk_cap:
+            if len(selected - pinned) >= chunk_cap:
                 break
             cost = len(paragraphs[idx]) + 2
             if cost <= budget:
@@ -187,9 +198,7 @@ def compress_chunks(text: str, query: str, *, char_budget: int | None = None) ->
         selected_idx = sorted(selected)
 
     if not selected_idx:
-        return _truncate_at_sentence(text[: policy.char_budget], policy.char_budget)
+        return _truncate_markdown_to_budget(text, policy.char_budget, preserve_fenced_code=True)
 
     joined = "\n\n".join(paragraphs[i] for i in selected_idx)
-    if len(joined) > policy.char_budget:
-        joined = _truncate_at_sentence(joined, policy.char_budget)
     return joined

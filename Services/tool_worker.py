@@ -122,11 +122,14 @@ def _server_metadata(module: ModuleType, folder_name: str) -> dict[str, Any]:
     if not isinstance(raw_server, dict):
         raise ValueError("MCP server module must expose an MCP_SERVER dictionary")
 
-    return {
+    metadata: dict[str, Any] = {
         "id": _slugify(str(raw_server.get("id") or folder_name)),
         "name": str(raw_server.get("name") or folder_name).strip() or folder_name,
         "description": str(raw_server.get("description") or "").strip(),
     }
+    if raw_server.get("requires_docker"):
+        metadata["requires_docker"] = True
+    return metadata
 
 
 # Normalize one JSON-schema-like tool parameters object.

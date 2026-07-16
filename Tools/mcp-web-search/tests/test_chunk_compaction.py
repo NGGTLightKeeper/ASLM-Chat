@@ -50,3 +50,36 @@ def test_compress_empty_query_does_not_crash():
     doc = _doc()
     out = compress_chunks(doc, "", char_budget=1_400)
     assert isinstance(out, str)
+
+
+def test_compress_chunks_keeps_selected_fence_atomic():
+    code = (
+        "```python\n"
+        "# Transformer attention query computes 42 token weights.\n"
+        "async def attention_query():\n"
+        "    return transformer_attention_result\n"
+        "```"
+    )
+    filler = "Unrelated cooking and travel paragraph with enough words to be scored."
+    doc = "\n\n".join([filler] * 8 + [code] + [filler] * 8)
+
+    out = compress_chunks(doc, "transformer attention query", char_budget=600)
+
+    assert code in out
+    assert out.count("```") == 2
+
+
+def test_compress_chunks_pins_irrelevant_code_verbatim_over_budget():
+    code = (
+        "```python\n"
+        + "\n".join(f"preserved_value_{i} = {i}" for i in range(80))
+        + "\n```"
+    )
+    relevant = (
+        "Transformer attention uses query-key products to compute token relevance."
+    )
+
+    out = compress_chunks(f"{relevant}\n\n{code}", "transformer attention", char_budget=300)
+
+    assert code in out
+    assert len(out) > 300

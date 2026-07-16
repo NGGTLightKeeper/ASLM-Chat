@@ -48,6 +48,147 @@ def test_normalize_page_drops_junk_keeps_content():
         assert junk not in md, f"junk survived: {junk!r}"
 
 
+def test_formatted_primary_keeps_structure_and_links():
+    html = """<html><body>
+    <main>
+      <nav><a href='/menu'>Menu</a></nav>
+      <article>
+        <h2>Structured reference</h2>
+        <p>This semantic article contains enough substantial prose for extraction and
+        links to the <a href='/guide'>complete guide</a> without relying on host rules.</p>
+        <pre><code>first line\n    indented line</code></pre>
+        <p>A second substantial paragraph keeps the article above the extraction floor
+        while the surrounding navigation remains outside the nested article.</p>
+      </article>
+    </main>
+    </body></html>"""
+
+    md = normalize_page("https://example.com/reference", raw_html=html)
+
+    assert "# Structured reference" in md
+    assert "[complete guide](https://example.com/guide)" in md
+    assert "```" in md
+    assert "Menu" not in md
+
+
+def test_formatted_extraction_disables_process_global_dedupe(monkeypatch):
+    import core.extract.page_normalizer as normalizer
+
+    captured = {}
+
+    def fake_extract(_html, **kwargs):
+        captured.update(kwargs)
+        return "Substantial formatted extraction output that safely exceeds no limits."
+
+    monkeypatch.setattr(normalizer.trafilatura, "extract", fake_extract)
+    normalizer._extract_with_trafilatura_formatted("<article>content</article>")
+
+    assert captured["deduplicate"] is False
+
+
+def test_content_router_keeps_complete_formatted_result(monkeypatch):
+    import core.extract.page_normalizer as normalizer
+
+    formatted = (
+        "Formatted article with [a live link](https://example.com/guide).\n\n"
+        "```python\nprint('structure survives')\n```\n\n"
+        + "Substantial reference prose. " * 12
+    )
+    monkeypatch.setattr(normalizer, "_extract_with_trafilatura_formatted", lambda *_args: formatted)
+
+    def unexpected_dom(*_args):
+        raise AssertionError("DOM fallback ran after a complete formatted extraction")
+
+    monkeypatch.setattr(normalizer, "_extract_with_dom_blocks", unexpected_dom)
+
+    result = normalizer._extract_content(
+        "<article>source</article>", None, "https://example.com"
+    )
+
+    assert result == formatted
+
+
+def test_cleaning_keeps_short_facts_and_long_prose_with_common_words():
+    from core.extract.page_normalizer import _clean_content
+
+    text = (
+        "Added in version 3.11.\n\n"
+        "Processes share memory through an implementation-specific mechanism, and this "
+        "long explanatory paragraph must remain content even though it contains a word "
+        "that can also occur in a compact social control."
+    )
+
+    cleaned = _clean_content(text, strict=True)
+
+    assert "Added in version 3.11." in cleaned
+    assert "Processes share memory" in cleaned
+
+
+def test_dedupe_does_not_merge_common_prefixes():
+    from core.extract.content_processor import _dedupe_blocks
+
+    prefix = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen"
+    blocks = [f"{prefix} alpha fact.", f"{prefix} beta fact."]
+
+    assert _dedupe_blocks(blocks) == blocks
+
+
+def test_budget_never_cuts_through_fenced_code():
+    code = "```python\n" + "\n".join(f"    value_{i} = {i}" for i in range(30)) + "\n```"
+    text = "Introductory prose before the example.\n\n" + code + "\n\nTrailing prose."
+
+    out = compress_read_page_markdown(
+        text,
+        max_chars=220,
+        compress_threshold=10**9,
+        compress_target=0,
+        enable_compress=False,
+    )
+
+    assert out.count("```") % 2 == 0
+    assert code in out
+    assert len(out) > 220
+    assert "[...truncated]" in out
+
+
+def test_micro_prune_preserves_fenced_code_verbatim():
+    code = "```python\nasync def main():\n    await important_query_call()\n```"
+    text = "Useful prose about the important query.\n\n" + code
+
+    out = compress_read_page_markdown(
+        text,
+        focus="important query",
+        max_chars=5_000,
+        compress_threshold=10**9,
+        compress_target=0,
+        enable_compress=True,
+    )
+
+    assert code in out
+    assert out.count("```") == 2
+
+
+def test_unclosed_fence_degrades_to_prose_instead_of_swallowing_tail():
+    text = (
+        "Introductory paragraph.\n\n"
+        "```python\n"
+        "useful_call()\n\n"
+        "Important explanatory tail that must remain eligible for compaction."
+    )
+
+    out = compress_read_page_markdown(
+        text,
+        max_chars=5_000,
+        compress_threshold=10**9,
+        compress_target=0,
+        enable_compress=True,
+    )
+
+    assert "```" not in out
+    assert "useful_call()" in out
+    assert "Important explanatory tail" in out
+
+
 def test_micro_prune_drops_keyword_stuffed_clause():
     # One sentence: a factual clause (kept) + a query-keyword-stuffed, fact-poor clause
     # (an "SEO tumor" — what micro_chunk_worker targets).
