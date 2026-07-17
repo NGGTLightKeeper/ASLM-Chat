@@ -257,7 +257,7 @@ export function createAttachmentsUi(context) {
   // Pasted text artifact configuration and helpers.
   // Thresholds for treating clipboard text as a compact PASTED artifact instead of raw input text.
   const PASTED_TEXT_MIN_CHARS = 512;
-  const PASTED_TEXT_MIN_LINES = 5;
+  const PASTED_TEXT_MIN_LINES = 20;
 
   // Decide whether pasted plain text should become a file-like editable artifact.
   function shouldTreatPasteAsArtifact(rawText) {
