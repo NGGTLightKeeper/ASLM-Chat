@@ -45,6 +45,8 @@ export function createMessagesUi(context, dependencies) {
   const MEDIA_CLOSE_ICON = icons.CLOSE_ICON || '&times;';
   const MEDIA_AUDIO_ICON = icons.AUDIO_FILE_ICON || '';
   const MEDIA_VIDEO_ICON = icons.VIDEO_FILE_ICON || '';
+  const CODE_SOURCE_ICON = icons.CODE_ICON || '&lt;/&gt;';
+  const CODE_PREVIEW_ICON = icons.PLAY_ICON || '&#9658;';
   const MERMAID_ZOOM_OUT_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M8 11h6M16.5 16.5 21 21"></path></svg>';
   const MERMAID_ZOOM_IN_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M8 11h6M11 8v6M16.5 16.5 21 21"></path></svg>';
   const MERMAID_FIT_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path></svg>';
@@ -367,7 +369,18 @@ export function createMessagesUi(context, dependencies) {
 
   // Syntax highlighting helpers.
   function markdownCodeLanguage(codeEl) {
-    const normalized = normalizeHighlightLanguage(markdownRawCodeLanguage(codeEl));
+    const rawLanguage = markdownRawCodeLanguage(codeEl);
+    const displayAliases = {
+      htm: 'HTML',
+      html: 'HTML',
+      javascript: 'JAVASCRIPT',
+      js: 'JAVASCRIPT',
+      svg: 'SVG'
+    };
+    if (displayAliases[rawLanguage]) {
+      return displayAliases[rawLanguage];
+    }
+    const normalized = normalizeHighlightLanguage(rawLanguage);
     return normalized === 'plaintext' ? 'Code' : normalized.toUpperCase();
   }
 
@@ -379,6 +392,20 @@ export function createMessagesUi(context, dependencies) {
   // Report whether one code block should render as Mermaid.
   function isMermaidCodeLanguage(codeEl) {
     return markdownRawCodeLanguage(codeEl) === 'mermaid';
+  }
+
+  // Resolve web languages that can run natively inside a sandboxed browser frame.
+  function markdownCodePreviewKind(codeEl) {
+    const language = markdownRawCodeLanguage(codeEl);
+    const aliases = {
+      css: 'css',
+      htm: 'html',
+      html: 'html',
+      javascript: 'javascript',
+      js: 'javascript',
+      svg: 'svg'
+    };
+    return aliases[language] || '';
   }
 
   // Keep only http and https URLs safe for markdown links.
@@ -470,12 +497,19 @@ export function createMessagesUi(context, dependencies) {
       }
 
       const language = markdownCodeHighlightLanguage(codeEl);
+      const previewKind = markdownCodePreviewKind(codeEl);
+      const source = codeEl.textContent || '';
       const safeClassLanguage = language.replace(/[^a-z0-9_-]/gi, '') || 'plaintext';
-      codeEl.innerHTML = highlightCode(codeEl.textContent || '', language);
+      codeEl.innerHTML = highlightCode(source, language);
       codeEl.classList.add('hljs', `language-${safeClassLanguage}`);
 
       const cardEl = document.createElement('div');
       cardEl.className = 'md-code-card';
+      if (previewKind) {
+        cardEl.classList.add('md-code-card--previewable');
+        cardEl.dataset.codePreviewKind = previewKind;
+        cardEl.dataset.codeView = 'source';
+      }
 
       const headerEl = document.createElement('div');
       headerEl.className = 'md-code-head';
@@ -484,12 +518,32 @@ export function createMessagesUi(context, dependencies) {
           <span class="md-code-icon" aria-hidden="true">&lt;/&gt;</span>
           <span>${escHtml(markdownCodeLanguage(codeEl))}</span>
         </span>
-        <button type="button" class="md-code-copy-btn" title="Copy code" aria-label="Copy code">${icons.COPY_MESSAGE_ICON}</button>
+        <span class="md-code-actions">
+          ${previewKind ? `
+            <button type="button" class="md-code-action-btn md-code-view-btn is-active" data-code-action="source" title="View code" aria-label="View code" aria-pressed="true">${CODE_SOURCE_ICON}</button>
+            <button type="button" class="md-code-action-btn md-code-view-btn" data-code-action="preview" title="Run preview" aria-label="Run preview" aria-pressed="false">${CODE_PREVIEW_ICON}</button>
+          ` : ''}
+          <button type="button" class="md-code-copy-btn" title="Copy code" aria-label="Copy code">${icons.COPY_MESSAGE_ICON}</button>
+        </span>
       `;
 
       preEl.parentNode.insertBefore(cardEl, preEl);
       cardEl.appendChild(headerEl);
       cardEl.appendChild(preEl);
+      if (previewKind) {
+        const previewEl = document.createElement('div');
+        previewEl.className = 'md-code-preview';
+        previewEl.hidden = true;
+
+        const frameEl = document.createElement('iframe');
+        frameEl.className = 'md-code-preview-frame';
+        frameEl.setAttribute('sandbox', 'allow-scripts');
+        frameEl.setAttribute('referrerpolicy', 'no-referrer');
+        frameEl.setAttribute('loading', 'lazy');
+        frameEl.setAttribute('title', `${markdownCodeLanguage(codeEl)} rendered preview`);
+        previewEl.appendChild(frameEl);
+        cardEl.appendChild(previewEl);
+      }
     });
 
     return template.innerHTML;
@@ -540,6 +594,8 @@ export function createMessagesUi(context, dependencies) {
       ts: 'typescript',
       tsx: 'typescript',
       html: 'xml',
+      htm: 'xml',
+      svg: 'xml',
       xml: 'xml',
       css: 'css',
       scss: 'scss',
@@ -6000,6 +6056,150 @@ export function createMessagesUi(context, dependencies) {
 
     fallbackCopy(text, onCopied);
   }
+  // Keep host theme colors in an otherwise origin-isolated preview document.
+  function codePreviewTheme() {
+    const styles = window.getComputedStyle(document.documentElement);
+    const colorScheme = String(styles.colorScheme || '').includes('light') ? 'light' : 'dark';
+    const probe = document.createElement('span');
+    probe.hidden = true;
+    const probeParent = document.body || document.documentElement;
+    if (probeParent) {
+      probeParent.appendChild(probe);
+    }
+
+    function color(variableName, fallback) {
+      probe.style.color = `var(${variableName})`;
+      const value = String(window.getComputedStyle(probe).color || '').trim();
+      return value && (!window.CSS || !CSS.supports || CSS.supports('color', value)) ? value : fallback;
+    }
+
+    const theme = {
+      scheme: colorScheme,
+      background: color('--surface-primary', colorScheme === 'light' ? '#ffffff' : '#161616'),
+      surface: color('--surface-secondary', colorScheme === 'light' ? '#f5f5f5' : '#222222'),
+      text: color('--c-text', colorScheme === 'light' ? '#171717' : '#f1f1f1'),
+      muted: color('--c-text-muted', colorScheme === 'light' ? '#666666' : '#a7a7a7'),
+      border: color('--c-border', colorScheme === 'light' ? '#dddddd' : '#3a3a3a'),
+      accent: color('--c-primary', '#6f7cff')
+    };
+
+    probe.remove();
+    return theme;
+  }
+
+  // Escape source that is embedded inside one generated script element.
+  function escapePreviewScriptSource(source) {
+    return String(source || '').replace(/<\/script/gi, '<\\/script');
+  }
+
+  // Keep a CSS fence from escaping its generated style element.
+  function escapePreviewStyleSource(source) {
+    return String(source || '').replace(/<\/style/gi, '<\\/style');
+  }
+
+  // Build a strict CSP and adaptive base style for an isolated web preview.
+  function codePreviewDocumentHead() {
+    const theme = codePreviewTheme();
+    return `
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'; navigate-to 'none'">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <style>
+        :root { color-scheme: ${theme.scheme}; --preview-bg: ${theme.background}; --preview-surface: ${theme.surface}; --preview-text: ${theme.text}; --preview-muted: ${theme.muted}; --preview-border: ${theme.border}; --preview-accent: ${theme.accent}; }
+        html { min-height: 100%; background: var(--preview-bg); color: var(--preview-text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        body { min-height: 100%; margin: 0; padding: 24px; box-sizing: border-box; }
+        *, *::before, *::after { box-sizing: border-box; }
+      </style>
+    `;
+  }
+
+  // Insert the sandbox policy before user HTML while preserving full documents.
+  function buildHtmlCodePreview(source) {
+    const head = codePreviewDocumentHead();
+    const html = String(source || '');
+    if (/<head(?:\s[^>]*)?>/i.test(html)) {
+      return html.replace(/<head(?:\s[^>]*)?>/i, function injectHead(openingHead) {
+        return `${openingHead}${head}`;
+      });
+    }
+    if (/<html(?:\s[^>]*)?>/i.test(html)) {
+      return html.replace(/<html(?:\s[^>]*)?>/i, function injectHtml(openingHtml) {
+        return `${openingHtml}<head>${head}</head>`;
+      });
+    }
+    return `<!doctype html><html><head>${head}</head><body>${html}</body></html>`;
+  }
+
+  // Build the complete srcdoc for one supported fenced web language.
+  function buildCodePreviewDocument(kind, source) {
+    const safeSource = String(source || '');
+    if (kind === 'html') {
+      return buildHtmlCodePreview(safeSource);
+    }
+    if (kind === 'svg') {
+      return `<!doctype html><html><head>${codePreviewDocumentHead()}<style>body{display:grid;place-items:center;overflow:auto}svg{max-width:100%;height:auto}</style></head><body>${safeSource}</body></html>`;
+    }
+    if (kind === 'css') {
+      return `<!doctype html><html><head>${codePreviewDocumentHead()}<style>${escapePreviewStyleSource(safeSource)}</style></head><body><main class="preview"><h1>CSS Preview</h1><p>This sample content uses the stylesheet from the code block.</p><button type="button">Button</button></main></body></html>`;
+    }
+    if (kind === 'javascript') {
+      return `<!doctype html><html><head>${codePreviewDocumentHead()}<style>#__aslm_console{margin:16px 0 0;padding:14px;border:1px solid var(--preview-border);border-radius:10px;background:var(--preview-surface);color:var(--preview-text);font:12px/1.55 ui-monospace,monospace;white-space:pre-wrap}</style></head><body><main id="app"></main><pre id="__aslm_console" hidden></pre><script>
+        (() => {
+          const output = document.getElementById('__aslm_console');
+          const write = (level, values) => {
+            output.hidden = false;
+            const line = values.map(value => {
+              if (typeof value === 'string') return value;
+              try { return JSON.stringify(value, null, 2); } catch (_error) { return String(value); }
+            }).join(' ');
+            output.textContent += (output.textContent ? '\\n' : '') + (level === 'log' ? '' : '[' + level + '] ') + line;
+          };
+          ['log', 'info', 'warn', 'error'].forEach(level => { console[level] = (...values) => write(level, values); });
+          window.addEventListener('error', event => write('error', [event.message]));
+          window.addEventListener('unhandledrejection', event => write('error', [event.reason]));
+        })();
+        ${escapePreviewScriptSource(safeSource)}
+      </script></body></html>`;
+    }
+    return '';
+  }
+
+  // Switch a previewable code card between highlighted source and live output.
+  function setCodeBlockView($button) {
+    const $btn = $button || $();
+    const $card = $btn.closest('.md-code-card--previewable');
+    const action = String($btn.attr('data-code-action') || '');
+    const card = $card[0];
+    if (!card || (action !== 'source' && action !== 'preview')) {
+      return;
+    }
+
+    const showPreview = action === 'preview';
+    const preview = card.querySelector('.md-code-preview');
+    const frame = preview && preview.querySelector('.md-code-preview-frame');
+    const code = card.querySelector('pre code');
+    const pre = card.querySelector('pre');
+    if (!preview || !frame || !code || !pre) {
+      return;
+    }
+
+    card.dataset.codeView = showPreview ? 'preview' : 'source';
+    pre.hidden = showPreview;
+    preview.hidden = !showPreview;
+    card.querySelectorAll('.md-code-view-btn').forEach(function syncCodeViewButton(button) {
+      const active = button.dataset.codeAction === action;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+
+    if (showPreview) {
+      frame.srcdoc = buildCodePreviewDocument(card.dataset.codePreviewKind, code.textContent || '');
+    } else {
+      frame.removeAttribute('srcdoc');
+    }
+  }
+
+
 
 
   // Reasoning drawer state.
@@ -6226,6 +6426,7 @@ export function createMessagesUi(context, dependencies) {
     appendTyping,
     configureMarkdown,
     copyCodeBlock,
+    setCodeBlockView,
     copyMessage,
     openToolInspectorFromCard,
     renderMessageHtml,

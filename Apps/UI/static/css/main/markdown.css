@@ -1776,3 +1776,76 @@ img.msg-search-main-icon {
   min-width: 0;
   padding-right: 24px;
 }
+/* Sandboxed live previews for fenced web code blocks. */
+.markdown-body .md-code-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.markdown-body .md-code-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--c-text);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.markdown-body .md-code-action-btn:hover,
+.markdown-body .md-code-action-btn:focus-visible,
+.markdown-body .md-code-action-btn.is-active {
+  background: color-mix(in srgb, var(--c-text) 9%, transparent);
+  color: var(--c-text);
+}
+
+.markdown-body .md-code-action-btn:active {
+  transform: scale(0.96);
+}
+
+.markdown-body .md-code-action-btn[hidden] {
+  display: none;
+}
+
+.markdown-body .md-code-action-btn svg,
+.markdown-body .md-code-action-btn .md-code-action-img {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.markdown-body .md-code-action-btn .md-code-action-img {
+  opacity: 0.9;
+}
+
+.markdown-body .md-code-preview {
+  height: clamp(300px, 52vh, 560px);
+  border-top: 1px solid var(--c-border);
+  background: var(--surface-primary);
+}
+
+.markdown-body .md-code-preview[hidden] {
+  display: none;
+}
+
+.markdown-body .md-code-preview-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--surface-primary);
+}
+
+@media (max-width: 640px) {
+  .markdown-body .md-code-preview {
+    height: clamp(260px, 48vh, 440px);
+  }
+}

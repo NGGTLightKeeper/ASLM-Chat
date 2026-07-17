@@ -1473,6 +1473,22 @@ class MainViewTests(ToolRegistryTestMixin, TestCase):
         self.assertContains(response, "/static/css/vendor/katex.min.css?v=")
         self.assertContains(response, "/static/js/vendor/katex.min.js?v=")
         self.assertContains(response, "/static/js/vendor/mermaid.min.js?v=")
+        self.assertRegex(
+            response.content.decode("utf-8"),
+            r"/static/img/ui/tools/code\.svg\?v=\d{14}",
+        )
+        self.assertRegex(
+            response.content.decode("utf-8"),
+            r"/static/img/ui/copy\.svg\?v=\d{14}",
+        )
+        self.assertRegex(
+            response.content.decode("utf-8"),
+            r"/static/img/ui/refresh\.svg\?v=\d{14}",
+        )
+        self.assertRegex(
+            response.content.decode("utf-8"),
+            r"/static/img/ui/check\.svg\?v=\d{14}",
+        )
         self.assertNotContains(response, "/profile/")
         self.assertNotContains(response, "account-btn")
 

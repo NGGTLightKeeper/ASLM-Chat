@@ -3,15 +3,15 @@
 import { createAttachmentsUi } from '../ui/attachments-ui.js';
 import { createBrowserPortalUi } from '../ui/browser-portal-ui.js';
 import { createChatHistoryUi } from '../ui/chat-history-ui.js';
-import { createMessagesUi } from '../ui/messages-ui.js?v=animated-share-file-1';
+import { createMessagesUi } from '../ui/messages-ui.js?v=web-code-preview-2';
 import { createModelSelectorUi } from '../ui/model-selector-ui.js';
 import { createParametersUi } from '../ui/parameters-ui.js';
 import { createSkillsUi } from '../ui/skills-ui.js?v=slash-inline-1';
 import { createToolInspector } from '../ui/tool-inspector.js';
-import { createAppContext } from './app-context.js';
+import { createAppContext } from './app-context.js?v=message-icons-1';
 import { createChatController } from './chat-controller.js?v=slash-inline-4';
 import { createEngineManager } from './engine-manager.js';
-import { bindEventHandlers } from './event-bindings.js';
+import { bindEventHandlers } from './event-bindings.js?v=web-code-preview-2';
 
 // Application bootstrap.
 // Initialize the chat page after the DOM is ready.

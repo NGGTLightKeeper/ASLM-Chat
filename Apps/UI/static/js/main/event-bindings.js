@@ -136,6 +136,12 @@ export function bindEventHandlers(context, dependencies) {
     messagesUi.copyCodeBlock($(this));
   });
 
+  $activityRoots.on('click', '.md-code-view-btn', function onMarkdownCodeViewClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    messagesUi.setCodeBlockView($(this));
+  });
+
   dom.$messagesInner.on('click', '.msg-delete-btn', function onDeleteClick() {
     chatController.deleteMessage($(this).closest('.msg'));
   });
