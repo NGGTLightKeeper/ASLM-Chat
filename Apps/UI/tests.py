@@ -1241,6 +1241,38 @@ class UploadFilesApiTests(SimpleTestCase):
         finally:
             temp_path.unlink(missing_ok=True)
 
+    # Test dynamic shared images render inline while the card link remains a download.
+    def test_shared_file_dynamic_image_preview_is_inline(self):
+        animated_gif = bytes.fromhex(
+            "47494638396101000100800000000000ffffff"
+            "21ff0b4e45545343415045322e300301000000"
+            "21f904000a0000002c0000000001000100000202440100"
+            "21f904000a0000002c0000000001000100000202440100"
+            "3b"
+        )
+        with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as handle:
+            handle.write(animated_gif)
+            temp_path = Path(handle.name)
+        try:
+            with patch("Apps.UI.views._resolve_shared_file_path", return_value=temp_path):
+                preview_response = self.client.get(
+                    reverse("shared_file_download_api"),
+                    {"path": str(temp_path), "name": "animated.gif", "preview": "1"},
+                )
+                download_response = self.client.get(
+                    reverse("shared_file_download_api"),
+                    {"path": str(temp_path), "name": "animated.gif"},
+                )
+
+            self.assertEqual(preview_response.status_code, 200)
+            self.assertEqual(preview_response["Content-Type"], "image/gif")
+            self.assertTrue(preview_response["Content-Disposition"].startswith("inline;"))
+            self.assertEqual(b"".join(preview_response.streaming_content), animated_gif)
+            self.assertTrue(download_response["Content-Disposition"].startswith("attachment;"))
+            download_response.close()
+        finally:
+            temp_path.unlink(missing_ok=True)
+
     # Test shared-file downloads are limited to the sandbox workspace.
     def test_shared_file_download_rejects_project_absolute_path(self):
         response = self.client.get(

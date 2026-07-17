@@ -3,7 +3,7 @@
 import { createAttachmentsUi } from '../ui/attachments-ui.js';
 import { createBrowserPortalUi } from '../ui/browser-portal-ui.js';
 import { createChatHistoryUi } from '../ui/chat-history-ui.js';
-import { createMessagesUi } from '../ui/messages-ui.js?v=mermaid-controls-1';
+import { createMessagesUi } from '../ui/messages-ui.js?v=animated-share-file-1';
 import { createModelSelectorUi } from '../ui/model-selector-ui.js';
 import { createParametersUi } from '../ui/parameters-ui.js';
 import { createSkillsUi } from '../ui/skills-ui.js?v=slash-inline-1';

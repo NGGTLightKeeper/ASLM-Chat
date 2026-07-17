@@ -2114,7 +2114,31 @@ export function createMessagesUi(context, dependencies) {
       return '';
     }
     if (file.downloadUrl) {
-      return file.downloadUrl;
+      const downloadUrl = String(file.downloadUrl || '').trim();
+      if (!(options && options.preview) || !downloadUrl) {
+        return downloadUrl;
+      }
+
+      // The backend intentionally serves the same shared-file endpoint as an
+      // attachment for downloads and inline for previews. Preserve external
+      // or signed URLs, but opt our own endpoint into inline rendering so
+      // large animated GIF/SVG files keep working when no base64 preview fits.
+      try {
+        const baseUrl = typeof window !== 'undefined' && window.location
+          ? window.location.href
+          : 'http://localhost/';
+        const parsedUrl = new URL(downloadUrl, baseUrl);
+        const baseOrigin = new URL(baseUrl).origin;
+        if (parsedUrl.origin === baseOrigin && parsedUrl.pathname === '/api/shared-file/download/') {
+          parsedUrl.searchParams.set('preview', '1');
+          return /^https?:\/\//i.test(downloadUrl)
+            ? parsedUrl.toString()
+            : `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
+        }
+      } catch (_error) {
+        // Keep malformed or non-standard URLs unchanged.
+      }
+      return downloadUrl;
     }
     if (!file.path) {
       return '';
@@ -2156,7 +2180,7 @@ export function createMessagesUi(context, dependencies) {
     }
 
     return {
-      src: sharedFileDownloadUrl(file),
+      src: sharedFileDownloadUrl(file, { preview: true }),
       width: NaN,
       height: NaN,
       mimeType: mimeType || 'image'
