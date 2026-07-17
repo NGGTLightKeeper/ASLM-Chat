@@ -45,6 +45,10 @@ export function createMessagesUi(context, dependencies) {
   const MEDIA_CLOSE_ICON = icons.CLOSE_ICON || '&times;';
   const MEDIA_AUDIO_ICON = icons.AUDIO_FILE_ICON || '';
   const MEDIA_VIDEO_ICON = icons.VIDEO_FILE_ICON || '';
+  const MERMAID_ZOOM_OUT_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M8 11h6M16.5 16.5 21 21"></path></svg>';
+  const MERMAID_ZOOM_IN_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M8 11h6M11 8v6M16.5 16.5 21 21"></path></svg>';
+  const MERMAID_FIT_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path></svg>';
+  const MERMAID_DOWNLOAD_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"></path></svg>';
   const loadedSandboxImageSrcs = new Set();
   const sandboxImageLoadStateBySrc = new Map();
   const floatingMediaPlaceholders = new WeakMap();
@@ -448,6 +452,8 @@ export function createMessagesUi(context, dependencies) {
         const canvasEl = document.createElement('div');
         canvasEl.className = 'md-mermaid-canvas';
         canvasEl.setAttribute('role', 'img');
+        canvasEl.setAttribute('aria-label', 'Interactive Mermaid diagram');
+        canvasEl.setAttribute('tabindex', '0');
 
         const statusEl = document.createElement('div');
         statusEl.className = 'md-mermaid-status';
@@ -3807,6 +3813,330 @@ export function createMessagesUi(context, dependencies) {
     applyMermaidLabelContrast(svgRoot);
   }
 
+  // Read the intrinsic Mermaid SVG size used by pan, zoom, and PNG export.
+  function mermaidSvgSize(svgRoot) {
+    if (!svgRoot) {
+      return null;
+    }
+
+    const viewBox = svgRoot.viewBox && svgRoot.viewBox.baseVal;
+    if (viewBox && Number.isFinite(viewBox.width) && viewBox.width > 0
+      && Number.isFinite(viewBox.height) && viewBox.height > 0) {
+      return { width: viewBox.width, height: viewBox.height };
+    }
+
+    const rawViewBox = String(svgRoot.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+    if (rawViewBox.length === 4 && rawViewBox.every(Number.isFinite) && rawViewBox[2] > 0 && rawViewBox[3] > 0) {
+      return { width: rawViewBox[2], height: rawViewBox[3] };
+    }
+
+    try {
+      const bounds = svgRoot.getBBox();
+      if (bounds && bounds.width > 0 && bounds.height > 0) {
+        return { width: bounds.width, height: bounds.height };
+      }
+    } catch (_error) {
+      // Ignore SVG implementations without getBBox support.
+    }
+
+    return null;
+  }
+
+  // Apply the current viewport matrix and keep the zoom indicator in sync.
+  function applyMermaidViewportTransform(canvasEl) {
+    const viewport = canvasEl && canvasEl._mermaidViewport;
+    if (!viewport) {
+      return;
+    }
+    viewport.stage.style.transform = `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.scale})`;
+    if (viewport.zoomValue) {
+      viewport.zoomValue.textContent = `${Math.round(viewport.scale * 100)}%`;
+    }
+  }
+
+  // Fit the full diagram into its viewport.
+  function fitMermaidViewport(canvasEl) {
+    const viewport = canvasEl && canvasEl._mermaidViewport;
+    if (!viewport || !canvasEl.clientWidth || !canvasEl.clientHeight) {
+      return;
+    }
+    const padding = canvasEl.clientWidth < 520 ? 28 : 44;
+    const availableWidth = Math.max(1, canvasEl.clientWidth - (padding * 2));
+    const availableHeight = Math.max(1, canvasEl.clientHeight - (padding * 2));
+    viewport.scale = Math.max(
+      viewport.minScale,
+      Math.min(viewport.maxScale, availableWidth / viewport.width, availableHeight / viewport.height)
+    );
+    viewport.x = (canvasEl.clientWidth - (viewport.width * viewport.scale)) / 2;
+    viewport.y = (canvasEl.clientHeight - (viewport.height * viewport.scale)) / 2;
+    viewport.hasInteracted = false;
+    applyMermaidViewportTransform(canvasEl);
+  }
+
+  // Zoom around one viewport point, preserving the content below the pointer.
+  function zoomMermaidViewport(canvasEl, factor, clientX, clientY) {
+    const viewport = canvasEl && canvasEl._mermaidViewport;
+    if (!viewport) {
+      return;
+    }
+    const nextScale = Math.max(viewport.minScale, Math.min(viewport.maxScale, viewport.scale * factor));
+    if (Math.abs(nextScale - viewport.scale) < 0.001) {
+      return;
+    }
+    const bounds = canvasEl.getBoundingClientRect();
+    const pointX = Number.isFinite(clientX) ? clientX - bounds.left : bounds.width / 2;
+    const pointY = Number.isFinite(clientY) ? clientY - bounds.top : bounds.height / 2;
+    const diagramX = (pointX - viewport.x) / viewport.scale;
+    const diagramY = (pointY - viewport.y) / viewport.scale;
+    viewport.x = pointX - (diagramX * nextScale);
+    viewport.y = pointY - (diagramY * nextScale);
+    viewport.scale = nextScale;
+    viewport.hasInteracted = true;
+    applyMermaidViewportTransform(canvasEl);
+  }
+
+  // Draw the thematic grid used behind Mermaid diagrams into an export canvas.
+  function drawMermaidExportBackground(context, canvasEl, width, height) {
+    const styles = window.getComputedStyle(canvasEl);
+    context.fillStyle = styles.backgroundColor || readRootCssVar('--surface-secondary', '#202326');
+    context.fillRect(0, 0, width, height);
+    context.save();
+    context.globalAlpha = 0.34;
+    context.strokeStyle = readRootCssVar('--c-border', '#5f6b76');
+    context.lineWidth = 1;
+    for (let x = 0.5; x < width; x += 24) {
+      context.beginPath();
+      context.moveTo(x, 0);
+      context.lineTo(x, height);
+      context.stroke();
+    }
+    for (let y = 0.5; y < height; y += 24) {
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(width, y);
+      context.stroke();
+    }
+    context.restore();
+  }
+
+  // Export the complete diagram (independent of current pan/zoom) as a PNG.
+  function downloadMermaidPng(canvasEl, buttonEl) {
+    const viewport = canvasEl && canvasEl._mermaidViewport;
+    if (!viewport || !viewport.svg) {
+      return;
+    }
+
+    const padding = 32;
+    const logicalWidth = viewport.width + (padding * 2);
+    const logicalHeight = viewport.height + (padding * 2);
+    const exportScale = Math.max(0.25, Math.min(2, 4096 / logicalWidth, 4096 / logicalHeight));
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = Math.max(1, Math.round(logicalWidth * exportScale));
+    exportCanvas.height = Math.max(1, Math.round(logicalHeight * exportScale));
+    const context = exportCanvas.getContext('2d');
+    if (!context) {
+      return;
+    }
+    context.scale(exportScale, exportScale);
+    drawMermaidExportBackground(context, canvasEl, logicalWidth, logicalHeight);
+
+    const svgClone = viewport.svg.cloneNode(true);
+    svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svgClone.setAttribute('width', String(viewport.width));
+    svgClone.setAttribute('height', String(viewport.height));
+    svgClone.style.maxWidth = 'none';
+    svgClone.style.width = `${viewport.width}px`;
+    svgClone.style.height = `${viewport.height}px`;
+    const exportStyles = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+    exportStyles.textContent = '.md-mermaid-katex-label{display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-family:Inter,Arial,sans-serif;font-weight:600;text-align:center}.md-mermaid-katex-label .katex{font-size:1em}';
+    svgClone.insertBefore(exportStyles, svgClone.firstChild);
+
+    const svgBlob = new Blob([new XMLSerializer().serializeToString(svgClone)], { type: 'image/svg+xml;charset=utf-8' });
+    const svgUrl = URL.createObjectURL(svgBlob);
+    const image = new Image();
+    if (buttonEl) {
+      buttonEl.disabled = true;
+      buttonEl.classList.add('is-busy');
+      buttonEl.dataset.mermaidExportState = 'working';
+    }
+
+    function finishExport(state) {
+      URL.revokeObjectURL(svgUrl);
+      if (buttonEl) {
+        buttonEl.disabled = false;
+        buttonEl.classList.remove('is-busy');
+        buttonEl.dataset.mermaidExportState = state || 'error';
+      }
+    }
+
+    image.onload = function onMermaidExportLoaded() {
+      try {
+        context.drawImage(image, padding, padding, viewport.width, viewport.height);
+        exportCanvas.toBlob(function saveMermaidPng(pngBlob) {
+          if (!pngBlob) {
+            finishExport('error');
+            return;
+          }
+          const pngUrl = URL.createObjectURL(pngBlob);
+          const link = document.createElement('a');
+          link.href = pngUrl;
+          link.download = `mermaid-diagram-${Date.now()}.png`;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(function revokeMermaidPngUrl() { URL.revokeObjectURL(pngUrl); }, 1000);
+          finishExport('ready');
+        }, 'image/png');
+      } catch (_error) {
+        finishExport('error');
+      }
+    };
+    image.onerror = function onMermaidExportError() { finishExport('error'); };
+    image.src = svgUrl;
+  }
+
+  // Wrap a rendered Mermaid SVG in the interactive pan/zoom viewport.
+  function initializeMermaidViewport(canvasEl) {
+    if (!canvasEl || canvasEl._mermaidViewport) {
+      return;
+    }
+    const svgRoot = canvasEl.querySelector('svg');
+    const size = mermaidSvgSize(svgRoot);
+    if (!svgRoot || !size) {
+      return;
+    }
+
+    const stage = document.createElement('div');
+    stage.className = 'md-mermaid-stage';
+    stage.style.width = `${size.width}px`;
+    stage.style.height = `${size.height}px`;
+    svgRoot.setAttribute('width', String(size.width));
+    svgRoot.setAttribute('height', String(size.height));
+    svgRoot.parentNode.insertBefore(stage, svgRoot);
+    stage.appendChild(svgRoot);
+
+    const controls = document.createElement('div');
+    controls.className = 'md-mermaid-controls';
+    controls.setAttribute('role', 'toolbar');
+    controls.setAttribute('aria-label', 'Diagram controls');
+    controls.innerHTML = `
+      <button type="button" class="md-mermaid-control" data-mermaid-action="zoom-out" title="Zoom out" aria-label="Zoom out">${MERMAID_ZOOM_OUT_ICON}</button>
+      <span class="md-mermaid-zoom-value" aria-live="polite">100%</span>
+      <button type="button" class="md-mermaid-control" data-mermaid-action="zoom-in" title="Zoom in" aria-label="Zoom in">${MERMAID_ZOOM_IN_ICON}</button>
+      <span class="md-mermaid-control-separator" aria-hidden="true"></span>
+      <button type="button" class="md-mermaid-control" data-mermaid-action="fit" title="Fit diagram" aria-label="Fit diagram">${MERMAID_FIT_ICON}</button>
+      <button type="button" class="md-mermaid-control" data-mermaid-action="download" title="Download PNG" aria-label="Download diagram as PNG">${MERMAID_DOWNLOAD_ICON}</button>
+    `;
+    canvasEl.appendChild(controls);
+
+    const viewport = {
+      svg: svgRoot,
+      stage,
+      controls,
+      zoomValue: controls.querySelector('.md-mermaid-zoom-value'),
+      width: size.width,
+      height: size.height,
+      scale: 1,
+      minScale: 0.2,
+      maxScale: 5,
+      x: 0,
+      y: 0,
+      hasInteracted: false,
+      activePointerId: null,
+      pointerX: 0,
+      pointerY: 0
+    };
+    canvasEl._mermaidViewport = viewport;
+
+    controls.addEventListener('click', function onMermaidControlClick(event) {
+      const button = event.target.closest('[data-mermaid-action]');
+      if (!button) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const action = button.dataset.mermaidAction;
+      if (action === 'zoom-in') {
+        zoomMermaidViewport(canvasEl, 1.2);
+      } else if (action === 'zoom-out') {
+        zoomMermaidViewport(canvasEl, 1 / 1.2);
+      } else if (action === 'fit') {
+        fitMermaidViewport(canvasEl);
+      } else if (action === 'download') {
+        downloadMermaidPng(canvasEl, button);
+      }
+    });
+
+    canvasEl.addEventListener('wheel', function onMermaidWheel(event) {
+      event.preventDefault();
+      zoomMermaidViewport(canvasEl, Math.exp(-event.deltaY * 0.0015), event.clientX, event.clientY);
+    }, { passive: false });
+
+    canvasEl.addEventListener('pointerdown', function onMermaidPointerDown(event) {
+      if (event.button !== 0 || event.target.closest('.md-mermaid-controls')) {
+        return;
+      }
+      event.preventDefault();
+      viewport.activePointerId = event.pointerId;
+      viewport.pointerX = event.clientX;
+      viewport.pointerY = event.clientY;
+      canvasEl.classList.add('is-panning');
+      canvasEl.setPointerCapture(event.pointerId);
+    });
+
+    canvasEl.addEventListener('pointermove', function onMermaidPointerMove(event) {
+      if (viewport.activePointerId !== event.pointerId) {
+        return;
+      }
+      viewport.x += event.clientX - viewport.pointerX;
+      viewport.y += event.clientY - viewport.pointerY;
+      viewport.pointerX = event.clientX;
+      viewport.pointerY = event.clientY;
+      viewport.hasInteracted = true;
+      applyMermaidViewportTransform(canvasEl);
+    });
+
+    function stopMermaidPan(event) {
+      if (viewport.activePointerId !== event.pointerId) {
+        return;
+      }
+      viewport.activePointerId = null;
+      canvasEl.classList.remove('is-panning');
+      if (canvasEl.hasPointerCapture && canvasEl.hasPointerCapture(event.pointerId)) {
+        canvasEl.releasePointerCapture(event.pointerId);
+      }
+    }
+    canvasEl.addEventListener('pointerup', stopMermaidPan);
+    canvasEl.addEventListener('pointercancel', stopMermaidPan);
+    canvasEl.addEventListener('dblclick', function onMermaidDoubleClick(event) {
+      if (!event.target.closest('.md-mermaid-controls')) {
+        fitMermaidViewport(canvasEl);
+      }
+    });
+    canvasEl.addEventListener('keydown', function onMermaidKeyDown(event) {
+      if (event.key === '+' || event.key === '=') {
+        event.preventDefault();
+        zoomMermaidViewport(canvasEl, 1.2);
+      } else if (event.key === '-' || event.key === '_') {
+        event.preventDefault();
+        zoomMermaidViewport(canvasEl, 1 / 1.2);
+      } else if (event.key === '0') {
+        event.preventDefault();
+        fitMermaidViewport(canvasEl);
+      }
+    });
+
+    if (typeof ResizeObserver !== 'undefined') {
+      viewport.resizeObserver = new ResizeObserver(function onMermaidResize() {
+        if (!viewport.hasInteracted && canvasEl.isConnected) {
+          fitMermaidViewport(canvasEl);
+        }
+      });
+      viewport.resizeObserver.observe(canvasEl);
+    }
+    requestAnimationFrame(function fitRenderedMermaid() { fitMermaidViewport(canvasEl); });
+  }
+
   // Read mermaid renderer from app state.
   function getMermaidRenderer() {
     if (typeof window !== 'undefined' && window.mermaid) {
@@ -3886,6 +4216,7 @@ export function createMessagesUi(context, dependencies) {
           if (result && typeof result.bindFunctions === 'function') {
             result.bindFunctions(canvasEl);
           }
+          initializeMermaidViewport(canvasEl);
           cardEl.dataset.mermaidState = 'rendered';
           if (statusEl) {
             statusEl.textContent = '';
