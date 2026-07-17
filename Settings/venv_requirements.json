@@ -41,6 +41,7 @@
                 "beautifulsoup4==4.12.3",
                 "cffi==1.17.1",
                 "cloakbrowser==0.3.31",
+                "cryptography==46.0.0",
                 "curl_cffi==0.7.0",
                 "httpx[http2,socks,brotli]==0.28.1",
                 "lxml==5.4.0",

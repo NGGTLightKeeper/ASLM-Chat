@@ -45,6 +45,12 @@ export function createMessagesUi(context, dependencies) {
   const MEDIA_CLOSE_ICON = icons.CLOSE_ICON || '&times;';
   const MEDIA_AUDIO_ICON = icons.AUDIO_FILE_ICON || '';
   const MEDIA_VIDEO_ICON = icons.VIDEO_FILE_ICON || '';
+  const CODE_SOURCE_ICON = icons.CODE_ICON || '&lt;/&gt;';
+  const CODE_PREVIEW_ICON = icons.PLAY_ICON || '&#9658;';
+  const MERMAID_ZOOM_OUT_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M8 11h6M16.5 16.5 21 21"></path></svg>';
+  const MERMAID_ZOOM_IN_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M8 11h6M11 8v6M16.5 16.5 21 21"></path></svg>';
+  const MERMAID_FIT_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path></svg>';
+  const MERMAID_DOWNLOAD_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"></path></svg>';
   const loadedSandboxImageSrcs = new Set();
   const sandboxImageLoadStateBySrc = new Map();
   const floatingMediaPlaceholders = new WeakMap();
@@ -363,7 +369,18 @@ export function createMessagesUi(context, dependencies) {
 
   // Syntax highlighting helpers.
   function markdownCodeLanguage(codeEl) {
-    const normalized = normalizeHighlightLanguage(markdownRawCodeLanguage(codeEl));
+    const rawLanguage = markdownRawCodeLanguage(codeEl);
+    const displayAliases = {
+      htm: 'HTML',
+      html: 'HTML',
+      javascript: 'JAVASCRIPT',
+      js: 'JAVASCRIPT',
+      svg: 'SVG'
+    };
+    if (displayAliases[rawLanguage]) {
+      return displayAliases[rawLanguage];
+    }
+    const normalized = normalizeHighlightLanguage(rawLanguage);
     return normalized === 'plaintext' ? 'Code' : normalized.toUpperCase();
   }
 
@@ -375,6 +392,20 @@ export function createMessagesUi(context, dependencies) {
   // Report whether one code block should render as Mermaid.
   function isMermaidCodeLanguage(codeEl) {
     return markdownRawCodeLanguage(codeEl) === 'mermaid';
+  }
+
+  // Resolve web languages that can run natively inside a sandboxed browser frame.
+  function markdownCodePreviewKind(codeEl) {
+    const language = markdownRawCodeLanguage(codeEl);
+    const aliases = {
+      css: 'css',
+      htm: 'html',
+      html: 'html',
+      javascript: 'javascript',
+      js: 'javascript',
+      svg: 'svg'
+    };
+    return aliases[language] || '';
   }
 
   // Keep only http and https URLs safe for markdown links.
@@ -448,6 +479,8 @@ export function createMessagesUi(context, dependencies) {
         const canvasEl = document.createElement('div');
         canvasEl.className = 'md-mermaid-canvas';
         canvasEl.setAttribute('role', 'img');
+        canvasEl.setAttribute('aria-label', 'Interactive Mermaid diagram');
+        canvasEl.setAttribute('tabindex', '0');
 
         const statusEl = document.createElement('div');
         statusEl.className = 'md-mermaid-status';
@@ -464,12 +497,19 @@ export function createMessagesUi(context, dependencies) {
       }
 
       const language = markdownCodeHighlightLanguage(codeEl);
+      const previewKind = markdownCodePreviewKind(codeEl);
+      const source = codeEl.textContent || '';
       const safeClassLanguage = language.replace(/[^a-z0-9_-]/gi, '') || 'plaintext';
-      codeEl.innerHTML = highlightCode(codeEl.textContent || '', language);
+      codeEl.innerHTML = highlightCode(source, language);
       codeEl.classList.add('hljs', `language-${safeClassLanguage}`);
 
       const cardEl = document.createElement('div');
       cardEl.className = 'md-code-card';
+      if (previewKind) {
+        cardEl.classList.add('md-code-card--previewable');
+        cardEl.dataset.codePreviewKind = previewKind;
+        cardEl.dataset.codeView = 'source';
+      }
 
       const headerEl = document.createElement('div');
       headerEl.className = 'md-code-head';
@@ -478,12 +518,32 @@ export function createMessagesUi(context, dependencies) {
           <span class="md-code-icon" aria-hidden="true">&lt;/&gt;</span>
           <span>${escHtml(markdownCodeLanguage(codeEl))}</span>
         </span>
-        <button type="button" class="md-code-copy-btn" title="Copy code" aria-label="Copy code">${icons.COPY_MESSAGE_ICON}</button>
+        <span class="md-code-actions">
+          ${previewKind ? `
+            <button type="button" class="md-code-action-btn md-code-view-btn is-active" data-code-action="source" title="View code" aria-label="View code" aria-pressed="true">${CODE_SOURCE_ICON}</button>
+            <button type="button" class="md-code-action-btn md-code-view-btn" data-code-action="preview" title="Run preview" aria-label="Run preview" aria-pressed="false">${CODE_PREVIEW_ICON}</button>
+          ` : ''}
+          <button type="button" class="md-code-copy-btn" title="Copy code" aria-label="Copy code">${icons.COPY_MESSAGE_ICON}</button>
+        </span>
       `;
 
       preEl.parentNode.insertBefore(cardEl, preEl);
       cardEl.appendChild(headerEl);
       cardEl.appendChild(preEl);
+      if (previewKind) {
+        const previewEl = document.createElement('div');
+        previewEl.className = 'md-code-preview';
+        previewEl.hidden = true;
+
+        const frameEl = document.createElement('iframe');
+        frameEl.className = 'md-code-preview-frame';
+        frameEl.setAttribute('sandbox', 'allow-scripts');
+        frameEl.setAttribute('referrerpolicy', 'no-referrer');
+        frameEl.setAttribute('loading', 'lazy');
+        frameEl.setAttribute('title', `${markdownCodeLanguage(codeEl)} rendered preview`);
+        previewEl.appendChild(frameEl);
+        cardEl.appendChild(previewEl);
+      }
     });
 
     return template.innerHTML;
@@ -534,6 +594,8 @@ export function createMessagesUi(context, dependencies) {
       ts: 'typescript',
       tsx: 'typescript',
       html: 'xml',
+      htm: 'xml',
+      svg: 'xml',
       xml: 'xml',
       css: 'css',
       scss: 'scss',
@@ -2108,7 +2170,31 @@ export function createMessagesUi(context, dependencies) {
       return '';
     }
     if (file.downloadUrl) {
-      return file.downloadUrl;
+      const downloadUrl = String(file.downloadUrl || '').trim();
+      if (!(options && options.preview) || !downloadUrl) {
+        return downloadUrl;
+      }
+
+      // The backend intentionally serves the same shared-file endpoint as an
+      // attachment for downloads and inline for previews. Preserve external
+      // or signed URLs, but opt our own endpoint into inline rendering so
+      // large animated GIF/SVG files keep working when no base64 preview fits.
+      try {
+        const baseUrl = typeof window !== 'undefined' && window.location
+          ? window.location.href
+          : 'http://localhost/';
+        const parsedUrl = new URL(downloadUrl, baseUrl);
+        const baseOrigin = new URL(baseUrl).origin;
+        if (parsedUrl.origin === baseOrigin && parsedUrl.pathname === '/api/shared-file/download/') {
+          parsedUrl.searchParams.set('preview', '1');
+          return /^https?:\/\//i.test(downloadUrl)
+            ? parsedUrl.toString()
+            : `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
+        }
+      } catch (_error) {
+        // Keep malformed or non-standard URLs unchanged.
+      }
+      return downloadUrl;
     }
     if (!file.path) {
       return '';
@@ -2150,7 +2236,7 @@ export function createMessagesUi(context, dependencies) {
     }
 
     return {
-      src: sharedFileDownloadUrl(file),
+      src: sharedFileDownloadUrl(file, { preview: true }),
       width: NaN,
       height: NaN,
       mimeType: mimeType || 'image'
@@ -3807,6 +3893,330 @@ export function createMessagesUi(context, dependencies) {
     applyMermaidLabelContrast(svgRoot);
   }
 
+  // Read the intrinsic Mermaid SVG size used by pan, zoom, and PNG export.
+  function mermaidSvgSize(svgRoot) {
+    if (!svgRoot) {
+      return null;
+    }
+
+    const viewBox = svgRoot.viewBox && svgRoot.viewBox.baseVal;
+    if (viewBox && Number.isFinite(viewBox.width) && viewBox.width > 0
+      && Number.isFinite(viewBox.height) && viewBox.height > 0) {
+      return { width: viewBox.width, height: viewBox.height };
+    }
+
+    const rawViewBox = String(svgRoot.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+    if (rawViewBox.length === 4 && rawViewBox.every(Number.isFinite) && rawViewBox[2] > 0 && rawViewBox[3] > 0) {
+      return { width: rawViewBox[2], height: rawViewBox[3] };
+    }
+
+    try {
+      const bounds = svgRoot.getBBox();
+      if (bounds && bounds.width > 0 && bounds.height > 0) {
+        return { width: bounds.width, height: bounds.height };
+      }
+    } catch (_error) {
+      // Ignore SVG implementations without getBBox support.
+    }
+
+    return null;
+  }
+
+  // Apply the current viewport matrix and keep the zoom indicator in sync.
+  function applyMermaidViewportTransform(canvasEl) {
+    const viewport = canvasEl && canvasEl._mermaidViewport;
+    if (!viewport) {
+      return;
+    }
+    viewport.stage.style.transform = `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.scale})`;
+    if (viewport.zoomValue) {
+      viewport.zoomValue.textContent = `${Math.round(viewport.scale * 100)}%`;
+    }
+  }
+
+  // Fit the full diagram into its viewport.
+  function fitMermaidViewport(canvasEl) {
+    const viewport = canvasEl && canvasEl._mermaidViewport;
+    if (!viewport || !canvasEl.clientWidth || !canvasEl.clientHeight) {
+      return;
+    }
+    const padding = canvasEl.clientWidth < 520 ? 28 : 44;
+    const availableWidth = Math.max(1, canvasEl.clientWidth - (padding * 2));
+    const availableHeight = Math.max(1, canvasEl.clientHeight - (padding * 2));
+    viewport.scale = Math.max(
+      viewport.minScale,
+      Math.min(viewport.maxScale, availableWidth / viewport.width, availableHeight / viewport.height)
+    );
+    viewport.x = (canvasEl.clientWidth - (viewport.width * viewport.scale)) / 2;
+    viewport.y = (canvasEl.clientHeight - (viewport.height * viewport.scale)) / 2;
+    viewport.hasInteracted = false;
+    applyMermaidViewportTransform(canvasEl);
+  }
+
+  // Zoom around one viewport point, preserving the content below the pointer.
+  function zoomMermaidViewport(canvasEl, factor, clientX, clientY) {
+    const viewport = canvasEl && canvasEl._mermaidViewport;
+    if (!viewport) {
+      return;
+    }
+    const nextScale = Math.max(viewport.minScale, Math.min(viewport.maxScale, viewport.scale * factor));
+    if (Math.abs(nextScale - viewport.scale) < 0.001) {
+      return;
+    }
+    const bounds = canvasEl.getBoundingClientRect();
+    const pointX = Number.isFinite(clientX) ? clientX - bounds.left : bounds.width / 2;
+    const pointY = Number.isFinite(clientY) ? clientY - bounds.top : bounds.height / 2;
+    const diagramX = (pointX - viewport.x) / viewport.scale;
+    const diagramY = (pointY - viewport.y) / viewport.scale;
+    viewport.x = pointX - (diagramX * nextScale);
+    viewport.y = pointY - (diagramY * nextScale);
+    viewport.scale = nextScale;
+    viewport.hasInteracted = true;
+    applyMermaidViewportTransform(canvasEl);
+  }
+
+  // Draw the thematic grid used behind Mermaid diagrams into an export canvas.
+  function drawMermaidExportBackground(context, canvasEl, width, height) {
+    const styles = window.getComputedStyle(canvasEl);
+    context.fillStyle = styles.backgroundColor || readRootCssVar('--surface-secondary', '#202326');
+    context.fillRect(0, 0, width, height);
+    context.save();
+    context.globalAlpha = 0.34;
+    context.strokeStyle = readRootCssVar('--c-border', '#5f6b76');
+    context.lineWidth = 1;
+    for (let x = 0.5; x < width; x += 24) {
+      context.beginPath();
+      context.moveTo(x, 0);
+      context.lineTo(x, height);
+      context.stroke();
+    }
+    for (let y = 0.5; y < height; y += 24) {
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(width, y);
+      context.stroke();
+    }
+    context.restore();
+  }
+
+  // Export the complete diagram (independent of current pan/zoom) as a PNG.
+  function downloadMermaidPng(canvasEl, buttonEl) {
+    const viewport = canvasEl && canvasEl._mermaidViewport;
+    if (!viewport || !viewport.svg) {
+      return;
+    }
+
+    const padding = 32;
+    const logicalWidth = viewport.width + (padding * 2);
+    const logicalHeight = viewport.height + (padding * 2);
+    const exportScale = Math.max(0.25, Math.min(2, 4096 / logicalWidth, 4096 / logicalHeight));
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = Math.max(1, Math.round(logicalWidth * exportScale));
+    exportCanvas.height = Math.max(1, Math.round(logicalHeight * exportScale));
+    const context = exportCanvas.getContext('2d');
+    if (!context) {
+      return;
+    }
+    context.scale(exportScale, exportScale);
+    drawMermaidExportBackground(context, canvasEl, logicalWidth, logicalHeight);
+
+    const svgClone = viewport.svg.cloneNode(true);
+    svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svgClone.setAttribute('width', String(viewport.width));
+    svgClone.setAttribute('height', String(viewport.height));
+    svgClone.style.maxWidth = 'none';
+    svgClone.style.width = `${viewport.width}px`;
+    svgClone.style.height = `${viewport.height}px`;
+    const exportStyles = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+    exportStyles.textContent = '.md-mermaid-katex-label{display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-family:Inter,Arial,sans-serif;font-weight:600;text-align:center}.md-mermaid-katex-label .katex{font-size:1em}';
+    svgClone.insertBefore(exportStyles, svgClone.firstChild);
+
+    const svgBlob = new Blob([new XMLSerializer().serializeToString(svgClone)], { type: 'image/svg+xml;charset=utf-8' });
+    const svgUrl = URL.createObjectURL(svgBlob);
+    const image = new Image();
+    if (buttonEl) {
+      buttonEl.disabled = true;
+      buttonEl.classList.add('is-busy');
+      buttonEl.dataset.mermaidExportState = 'working';
+    }
+
+    function finishExport(state) {
+      URL.revokeObjectURL(svgUrl);
+      if (buttonEl) {
+        buttonEl.disabled = false;
+        buttonEl.classList.remove('is-busy');
+        buttonEl.dataset.mermaidExportState = state || 'error';
+      }
+    }
+
+    image.onload = function onMermaidExportLoaded() {
+      try {
+        context.drawImage(image, padding, padding, viewport.width, viewport.height);
+        exportCanvas.toBlob(function saveMermaidPng(pngBlob) {
+          if (!pngBlob) {
+            finishExport('error');
+            return;
+          }
+          const pngUrl = URL.createObjectURL(pngBlob);
+          const link = document.createElement('a');
+          link.href = pngUrl;
+          link.download = `mermaid-diagram-${Date.now()}.png`;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(function revokeMermaidPngUrl() { URL.revokeObjectURL(pngUrl); }, 1000);
+          finishExport('ready');
+        }, 'image/png');
+      } catch (_error) {
+        finishExport('error');
+      }
+    };
+    image.onerror = function onMermaidExportError() { finishExport('error'); };
+    image.src = svgUrl;
+  }
+
+  // Wrap a rendered Mermaid SVG in the interactive pan/zoom viewport.
+  function initializeMermaidViewport(canvasEl) {
+    if (!canvasEl || canvasEl._mermaidViewport) {
+      return;
+    }
+    const svgRoot = canvasEl.querySelector('svg');
+    const size = mermaidSvgSize(svgRoot);
+    if (!svgRoot || !size) {
+      return;
+    }
+
+    const stage = document.createElement('div');
+    stage.className = 'md-mermaid-stage';
+    stage.style.width = `${size.width}px`;
+    stage.style.height = `${size.height}px`;
+    svgRoot.setAttribute('width', String(size.width));
+    svgRoot.setAttribute('height', String(size.height));
+    svgRoot.parentNode.insertBefore(stage, svgRoot);
+    stage.appendChild(svgRoot);
+
+    const controls = document.createElement('div');
+    controls.className = 'md-mermaid-controls';
+    controls.setAttribute('role', 'toolbar');
+    controls.setAttribute('aria-label', 'Diagram controls');
+    controls.innerHTML = `
+      <button type="button" class="md-mermaid-control" data-mermaid-action="zoom-out" title="Zoom out" aria-label="Zoom out">${MERMAID_ZOOM_OUT_ICON}</button>
+      <span class="md-mermaid-zoom-value" aria-live="polite">100%</span>
+      <button type="button" class="md-mermaid-control" data-mermaid-action="zoom-in" title="Zoom in" aria-label="Zoom in">${MERMAID_ZOOM_IN_ICON}</button>
+      <span class="md-mermaid-control-separator" aria-hidden="true"></span>
+      <button type="button" class="md-mermaid-control" data-mermaid-action="fit" title="Fit diagram" aria-label="Fit diagram">${MERMAID_FIT_ICON}</button>
+      <button type="button" class="md-mermaid-control" data-mermaid-action="download" title="Download PNG" aria-label="Download diagram as PNG">${MERMAID_DOWNLOAD_ICON}</button>
+    `;
+    canvasEl.appendChild(controls);
+
+    const viewport = {
+      svg: svgRoot,
+      stage,
+      controls,
+      zoomValue: controls.querySelector('.md-mermaid-zoom-value'),
+      width: size.width,
+      height: size.height,
+      scale: 1,
+      minScale: 0.2,
+      maxScale: 5,
+      x: 0,
+      y: 0,
+      hasInteracted: false,
+      activePointerId: null,
+      pointerX: 0,
+      pointerY: 0
+    };
+    canvasEl._mermaidViewport = viewport;
+
+    controls.addEventListener('click', function onMermaidControlClick(event) {
+      const button = event.target.closest('[data-mermaid-action]');
+      if (!button) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const action = button.dataset.mermaidAction;
+      if (action === 'zoom-in') {
+        zoomMermaidViewport(canvasEl, 1.2);
+      } else if (action === 'zoom-out') {
+        zoomMermaidViewport(canvasEl, 1 / 1.2);
+      } else if (action === 'fit') {
+        fitMermaidViewport(canvasEl);
+      } else if (action === 'download') {
+        downloadMermaidPng(canvasEl, button);
+      }
+    });
+
+    canvasEl.addEventListener('wheel', function onMermaidWheel(event) {
+      event.preventDefault();
+      zoomMermaidViewport(canvasEl, Math.exp(-event.deltaY * 0.0015), event.clientX, event.clientY);
+    }, { passive: false });
+
+    canvasEl.addEventListener('pointerdown', function onMermaidPointerDown(event) {
+      if (event.button !== 0 || event.target.closest('.md-mermaid-controls')) {
+        return;
+      }
+      event.preventDefault();
+      viewport.activePointerId = event.pointerId;
+      viewport.pointerX = event.clientX;
+      viewport.pointerY = event.clientY;
+      canvasEl.classList.add('is-panning');
+      canvasEl.setPointerCapture(event.pointerId);
+    });
+
+    canvasEl.addEventListener('pointermove', function onMermaidPointerMove(event) {
+      if (viewport.activePointerId !== event.pointerId) {
+        return;
+      }
+      viewport.x += event.clientX - viewport.pointerX;
+      viewport.y += event.clientY - viewport.pointerY;
+      viewport.pointerX = event.clientX;
+      viewport.pointerY = event.clientY;
+      viewport.hasInteracted = true;
+      applyMermaidViewportTransform(canvasEl);
+    });
+
+    function stopMermaidPan(event) {
+      if (viewport.activePointerId !== event.pointerId) {
+        return;
+      }
+      viewport.activePointerId = null;
+      canvasEl.classList.remove('is-panning');
+      if (canvasEl.hasPointerCapture && canvasEl.hasPointerCapture(event.pointerId)) {
+        canvasEl.releasePointerCapture(event.pointerId);
+      }
+    }
+    canvasEl.addEventListener('pointerup', stopMermaidPan);
+    canvasEl.addEventListener('pointercancel', stopMermaidPan);
+    canvasEl.addEventListener('dblclick', function onMermaidDoubleClick(event) {
+      if (!event.target.closest('.md-mermaid-controls')) {
+        fitMermaidViewport(canvasEl);
+      }
+    });
+    canvasEl.addEventListener('keydown', function onMermaidKeyDown(event) {
+      if (event.key === '+' || event.key === '=') {
+        event.preventDefault();
+        zoomMermaidViewport(canvasEl, 1.2);
+      } else if (event.key === '-' || event.key === '_') {
+        event.preventDefault();
+        zoomMermaidViewport(canvasEl, 1 / 1.2);
+      } else if (event.key === '0') {
+        event.preventDefault();
+        fitMermaidViewport(canvasEl);
+      }
+    });
+
+    if (typeof ResizeObserver !== 'undefined') {
+      viewport.resizeObserver = new ResizeObserver(function onMermaidResize() {
+        if (!viewport.hasInteracted && canvasEl.isConnected) {
+          fitMermaidViewport(canvasEl);
+        }
+      });
+      viewport.resizeObserver.observe(canvasEl);
+    }
+    requestAnimationFrame(function fitRenderedMermaid() { fitMermaidViewport(canvasEl); });
+  }
+
   // Read mermaid renderer from app state.
   function getMermaidRenderer() {
     if (typeof window !== 'undefined' && window.mermaid) {
@@ -3886,6 +4296,7 @@ export function createMessagesUi(context, dependencies) {
           if (result && typeof result.bindFunctions === 'function') {
             result.bindFunctions(canvasEl);
           }
+          initializeMermaidViewport(canvasEl);
           cardEl.dataset.mermaidState = 'rendered';
           if (statusEl) {
             statusEl.textContent = '';
@@ -5645,6 +6056,150 @@ export function createMessagesUi(context, dependencies) {
 
     fallbackCopy(text, onCopied);
   }
+  // Keep host theme colors in an otherwise origin-isolated preview document.
+  function codePreviewTheme() {
+    const styles = window.getComputedStyle(document.documentElement);
+    const colorScheme = String(styles.colorScheme || '').includes('light') ? 'light' : 'dark';
+    const probe = document.createElement('span');
+    probe.hidden = true;
+    const probeParent = document.body || document.documentElement;
+    if (probeParent) {
+      probeParent.appendChild(probe);
+    }
+
+    function color(variableName, fallback) {
+      probe.style.color = `var(${variableName})`;
+      const value = String(window.getComputedStyle(probe).color || '').trim();
+      return value && (!window.CSS || !CSS.supports || CSS.supports('color', value)) ? value : fallback;
+    }
+
+    const theme = {
+      scheme: colorScheme,
+      background: color('--surface-primary', colorScheme === 'light' ? '#ffffff' : '#161616'),
+      surface: color('--surface-secondary', colorScheme === 'light' ? '#f5f5f5' : '#222222'),
+      text: color('--c-text', colorScheme === 'light' ? '#171717' : '#f1f1f1'),
+      muted: color('--c-text-muted', colorScheme === 'light' ? '#666666' : '#a7a7a7'),
+      border: color('--c-border', colorScheme === 'light' ? '#dddddd' : '#3a3a3a'),
+      accent: color('--c-primary', '#6f7cff')
+    };
+
+    probe.remove();
+    return theme;
+  }
+
+  // Escape source that is embedded inside one generated script element.
+  function escapePreviewScriptSource(source) {
+    return String(source || '').replace(/<\/script/gi, '<\\/script');
+  }
+
+  // Keep a CSS fence from escaping its generated style element.
+  function escapePreviewStyleSource(source) {
+    return String(source || '').replace(/<\/style/gi, '<\\/style');
+  }
+
+  // Build a strict CSP and adaptive base style for an isolated web preview.
+  function codePreviewDocumentHead() {
+    const theme = codePreviewTheme();
+    return `
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'; navigate-to 'none'">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <style>
+        :root { color-scheme: ${theme.scheme}; --preview-bg: ${theme.background}; --preview-surface: ${theme.surface}; --preview-text: ${theme.text}; --preview-muted: ${theme.muted}; --preview-border: ${theme.border}; --preview-accent: ${theme.accent}; }
+        html { min-height: 100%; background: var(--preview-bg); color: var(--preview-text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        body { min-height: 100%; margin: 0; padding: 24px; box-sizing: border-box; }
+        *, *::before, *::after { box-sizing: border-box; }
+      </style>
+    `;
+  }
+
+  // Insert the sandbox policy before user HTML while preserving full documents.
+  function buildHtmlCodePreview(source) {
+    const head = codePreviewDocumentHead();
+    const html = String(source || '');
+    if (/<head(?:\s[^>]*)?>/i.test(html)) {
+      return html.replace(/<head(?:\s[^>]*)?>/i, function injectHead(openingHead) {
+        return `${openingHead}${head}`;
+      });
+    }
+    if (/<html(?:\s[^>]*)?>/i.test(html)) {
+      return html.replace(/<html(?:\s[^>]*)?>/i, function injectHtml(openingHtml) {
+        return `${openingHtml}<head>${head}</head>`;
+      });
+    }
+    return `<!doctype html><html><head>${head}</head><body>${html}</body></html>`;
+  }
+
+  // Build the complete srcdoc for one supported fenced web language.
+  function buildCodePreviewDocument(kind, source) {
+    const safeSource = String(source || '');
+    if (kind === 'html') {
+      return buildHtmlCodePreview(safeSource);
+    }
+    if (kind === 'svg') {
+      return `<!doctype html><html><head>${codePreviewDocumentHead()}<style>body{display:grid;place-items:center;overflow:auto}svg{max-width:100%;height:auto}</style></head><body>${safeSource}</body></html>`;
+    }
+    if (kind === 'css') {
+      return `<!doctype html><html><head>${codePreviewDocumentHead()}<style>${escapePreviewStyleSource(safeSource)}</style></head><body><main class="preview"><h1>CSS Preview</h1><p>This sample content uses the stylesheet from the code block.</p><button type="button">Button</button></main></body></html>`;
+    }
+    if (kind === 'javascript') {
+      return `<!doctype html><html><head>${codePreviewDocumentHead()}<style>#__aslm_console{margin:16px 0 0;padding:14px;border:1px solid var(--preview-border);border-radius:10px;background:var(--preview-surface);color:var(--preview-text);font:12px/1.55 ui-monospace,monospace;white-space:pre-wrap}</style></head><body><main id="app"></main><pre id="__aslm_console" hidden></pre><script>
+        (() => {
+          const output = document.getElementById('__aslm_console');
+          const write = (level, values) => {
+            output.hidden = false;
+            const line = values.map(value => {
+              if (typeof value === 'string') return value;
+              try { return JSON.stringify(value, null, 2); } catch (_error) { return String(value); }
+            }).join(' ');
+            output.textContent += (output.textContent ? '\\n' : '') + (level === 'log' ? '' : '[' + level + '] ') + line;
+          };
+          ['log', 'info', 'warn', 'error'].forEach(level => { console[level] = (...values) => write(level, values); });
+          window.addEventListener('error', event => write('error', [event.message]));
+          window.addEventListener('unhandledrejection', event => write('error', [event.reason]));
+        })();
+        ${escapePreviewScriptSource(safeSource)}
+      </script></body></html>`;
+    }
+    return '';
+  }
+
+  // Switch a previewable code card between highlighted source and live output.
+  function setCodeBlockView($button) {
+    const $btn = $button || $();
+    const $card = $btn.closest('.md-code-card--previewable');
+    const action = String($btn.attr('data-code-action') || '');
+    const card = $card[0];
+    if (!card || (action !== 'source' && action !== 'preview')) {
+      return;
+    }
+
+    const showPreview = action === 'preview';
+    const preview = card.querySelector('.md-code-preview');
+    const frame = preview && preview.querySelector('.md-code-preview-frame');
+    const code = card.querySelector('pre code');
+    const pre = card.querySelector('pre');
+    if (!preview || !frame || !code || !pre) {
+      return;
+    }
+
+    card.dataset.codeView = showPreview ? 'preview' : 'source';
+    pre.hidden = showPreview;
+    preview.hidden = !showPreview;
+    card.querySelectorAll('.md-code-view-btn').forEach(function syncCodeViewButton(button) {
+      const active = button.dataset.codeAction === action;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+
+    if (showPreview) {
+      frame.srcdoc = buildCodePreviewDocument(card.dataset.codePreviewKind, code.textContent || '');
+    } else {
+      frame.removeAttribute('srcdoc');
+    }
+  }
+
+
 
 
   // Reasoning drawer state.
@@ -5871,6 +6426,7 @@ export function createMessagesUi(context, dependencies) {
     appendTyping,
     configureMarkdown,
     copyCodeBlock,
+    setCodeBlockView,
     copyMessage,
     openToolInspectorFromCard,
     renderMessageHtml,

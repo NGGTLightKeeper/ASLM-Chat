@@ -311,6 +311,36 @@ class SandboxV2ContractsTests(unittest.TestCase):
         self.assertEqual(result["result"]["render"]["mime_type"], "image/png")
         self.assertEqual(result["result"]["render"]["preview"]["type"], "inline_base64")
 
+    def test_share_file_preserves_dynamic_image_bytes(self) -> None:
+        animated_gif = bytes.fromhex(
+            "47494638396101000100800000000000ffffff"
+            "21ff0b4e45545343415045322e300301000000"
+            "21f904000a0000002c0000000001000100000202440100"
+            "21f904000a0000002c0000000001000100000202440100"
+            "3b"
+        )
+        animated_svg = (
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">'
+            b'<circle cx="8" cy="8" r="4">'
+            b'<animate attributeName="r" values="2;7;2" dur="1s" repeatCount="indefinite"/>'
+            b'</circle></svg>'
+        )
+        cases = (
+            ("animated.gif", animated_gif, "image/gif"),
+            ("animated.svg", animated_svg, "image/svg+xml"),
+        )
+
+        for filename, image_bytes, expected_mime in cases:
+            with self.subTest(filename=filename):
+                (self.task_root / filename).write_bytes(image_bytes)
+                result = handle_tool("share_file", {"path": filename})
+                render = result["result"]["render"]
+
+                self.assertEqual(render["type"], "image")
+                self.assertEqual(render["mime_type"], expected_mime)
+                self.assertEqual(render["preview"]["type"], "inline_base64")
+                self.assertEqual(base64.b64decode(render["preview"]["data_base64"]), image_bytes)
+
     def test_share_file_includes_table_render_preview_for_csv(self) -> None:
         handle_tool("write", {"path": "report.csv", "content": "name,score\nalice,10\nbob,20\n"})
         result = handle_tool("share_file", {"path": "report.csv"})

@@ -175,7 +175,8 @@
   margin: 0 0 16px;
   border: 1px solid var(--c-border);
   border-radius: var(--r-md);
-  background: var(--surface-secondary);
+  background: color-mix(in srgb, var(--surface-primary) 82%, transparent);
+  box-shadow: 0 12px 34px color-mix(in srgb, var(--c-black) 14%, transparent);
 }
 
 .markdown-body .md-mermaid-head {
@@ -183,28 +184,137 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 42px;
-  padding: 9px 14px 8px 18px;
+  min-height: 46px;
+  padding: 9px 12px 8px 16px;
   border-bottom: 1px solid var(--c-border);
+  background: color-mix(in srgb, var(--surface-primary) 76%, transparent);
   color: var(--c-text);
+  backdrop-filter: blur(16px);
 }
 
 .markdown-body .md-mermaid-canvas {
-  min-height: 120px;
-  overflow-x: auto;
-  padding: 18px;
-  background: color-mix(in srgb, var(--surface-secondary) 88%, var(--c-white) 12%);
+  position: relative;
+  height: clamp(300px, 43vw, 520px);
+  min-height: 260px;
+  overflow: hidden;
+  outline: 0;
+  background-color: color-mix(in srgb, var(--surface-secondary) 72%, transparent);
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--c-border) 34%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--c-border) 34%, transparent) 1px, transparent 1px),
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--c-primary) 9%, transparent), transparent 55%);
+  background-position: center center;
+  background-size: 24px 24px, 24px 24px, 100% 100%;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  backdrop-filter: blur(10px);
 }
 
-.markdown-body .md-mermaid-canvas:empty {
+.markdown-body .md-mermaid-card:not([data-mermaid-state="rendered"]) .md-mermaid-canvas {
   display: none;
 }
 
-.markdown-body .md-mermaid-canvas svg {
+.markdown-body .md-mermaid-canvas:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c-primary) 74%, transparent);
+}
+
+.markdown-body .md-mermaid-canvas.is-panning {
+  cursor: grabbing;
+}
+
+.markdown-body .md-mermaid-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.markdown-body .md-mermaid-stage svg {
   display: block;
-  max-width: 100%;
+  max-width: none !important;
   height: auto;
-  margin: 0 auto;
+  overflow: visible;
+}
+
+.markdown-body .md-mermaid-stage svg .node rect,
+.markdown-body .md-mermaid-stage svg .cluster rect {
+  rx: 9px;
+  ry: 9px;
+}
+
+.markdown-body .md-mermaid-stage svg g.node > rect,
+.markdown-body .md-mermaid-stage svg g.node > polygon,
+.markdown-body .md-mermaid-stage svg g.node > circle,
+.markdown-body .md-mermaid-stage svg g.node > ellipse {
+  filter: drop-shadow(0 5px 9px color-mix(in srgb, var(--c-black) 18%, transparent));
+}
+
+.markdown-body .md-mermaid-stage svg .edgePath path,
+.markdown-body .md-mermaid-stage svg .flowchart-link {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.markdown-body .md-mermaid-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--c-border) 88%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-primary) 82%, transparent);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--c-black) 20%, transparent);
+  cursor: default;
+  backdrop-filter: blur(16px);
+}
+
+.markdown-body .md-mermaid-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.markdown-body .md-mermaid-control:hover,
+.markdown-body .md-mermaid-control:focus-visible {
+  outline: 0;
+  background: color-mix(in srgb, var(--c-text) 10%, transparent);
+  color: var(--c-text);
+}
+
+.markdown-body .md-mermaid-control:active {
+  transform: scale(0.94);
+}
+
+.markdown-body .md-mermaid-zoom-value {
+  min-width: 48px;
+  padding: 0 5px;
+  color: var(--c-text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  pointer-events: none;
+}
+
+.markdown-body .md-mermaid-control-separator {
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: var(--c-border);
 }
 
 .markdown-body .md-mermaid-katex-foreign {
@@ -240,6 +350,18 @@
   padding: 14px 18px;
   color: var(--c-text-muted);
   font-size: var(--font-size-caption-1);
+}
+
+@media (max-width: 640px) {
+  .markdown-body .md-mermaid-canvas {
+    height: min(58vh, 420px);
+    min-height: 280px;
+  }
+
+  .markdown-body .md-mermaid-controls {
+    right: 8px;
+    bottom: 8px;
+  }
 }
 
 .markdown-body .md-mermaid-card[data-mermaid-state="rendered"] .md-mermaid-status,
@@ -1653,4 +1775,77 @@ img.msg-search-main-icon {
 .msg-edit-code {
   min-width: 0;
   padding-right: 24px;
+}
+/* Sandboxed live previews for fenced web code blocks. */
+.markdown-body .md-code-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.markdown-body .md-code-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--c-text);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.markdown-body .md-code-action-btn:hover,
+.markdown-body .md-code-action-btn:focus-visible,
+.markdown-body .md-code-action-btn.is-active {
+  background: color-mix(in srgb, var(--c-text) 9%, transparent);
+  color: var(--c-text);
+}
+
+.markdown-body .md-code-action-btn:active {
+  transform: scale(0.96);
+}
+
+.markdown-body .md-code-action-btn[hidden] {
+  display: none;
+}
+
+.markdown-body .md-code-action-btn svg,
+.markdown-body .md-code-action-btn .md-code-action-img {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.markdown-body .md-code-action-btn .md-code-action-img {
+  opacity: 0.9;
+}
+
+.markdown-body .md-code-preview {
+  height: clamp(300px, 52vh, 560px);
+  border-top: 1px solid var(--c-border);
+  background: var(--surface-primary);
+}
+
+.markdown-body .md-code-preview[hidden] {
+  display: none;
+}
+
+.markdown-body .md-code-preview-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--surface-primary);
+}
+
+@media (max-width: 640px) {
+  .markdown-body .md-code-preview {
+    height: clamp(260px, 48vh, 440px);
+  }
 }
