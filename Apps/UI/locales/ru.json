@@ -460,6 +460,7 @@
     "serverTools": "{name} ({count} инстр.)",
     "cancel": "Отмена",
     "save": "Сохранить",
+    "reload": "Перезагрузить MCP-серверы",
     "noServers": "Нет серверов MCP"
   }
 }

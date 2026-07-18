@@ -267,6 +267,15 @@ export function createParametersUi(context) {
         });
       }
 
+      const $reload = $('<button type="button" class="composer-menu-action composer-skills-manage" role="menuitem">')
+        .append($('<span class="composer-tool-icon is-mcp" aria-hidden="true">'))
+        .append($('<span>').text(t('mcp.reload', null, 'Reload MCP servers')));
+      $reload.on('click', function onReloadMcp(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        reloadUserMcpServers($reload);
+      });
+
       const $manage = $('<button type="button" class="composer-menu-action composer-skills-manage" role="menuitem">')
         .append($('<span class="composer-tool-icon is-mcp" aria-hidden="true">'))
         .append($('<span>').text(t('mcp.editConfig')));
@@ -281,7 +290,7 @@ export function createParametersUi(context) {
       $flyout.on('click', function onFlyoutClick(ev) {
         ev.stopPropagation();
       });
-      $flyout.append($list).append($divider).append($manage);
+      $flyout.append($list).append($divider).append($reload).append($manage);
       $entry.append($trigger).append($flyout);
       $host.append($entry);
     });
@@ -325,6 +334,33 @@ export function createParametersUi(context) {
       `/api/tools/?engine=${encodeURIComponent(engine)}&model=${encodeURIComponent(modelName)}`
     );
     updateAvailableToolServers(data.tool_servers || data.tools || data.servers || []);
+  }
+
+  // Restart persistent user MCP sessions and apply the fresh server inventory.
+  async function reloadUserMcpServers($button) {
+    if ($button && $button.prop('disabled')) {
+      return;
+    }
+
+    const engine = normalizeEngineValue(state.activeEngine || 'ollama-service');
+    const modelName = String(dom.$modelSelector.val() || '').trim();
+    if ($button) {
+      $button.prop('disabled', true).attr('aria-busy', 'true');
+    }
+
+    try {
+      const data = await postJson('/api/mcp_reload/', { engine, model: modelName });
+      updateAvailableToolServers(data.tool_servers || data.tools || data.servers || []);
+    } catch (err) {
+      await messageDialog(
+        t('errors.generic', null, 'Something went wrong'),
+        err && err.message ? err.message : String(err)
+      );
+    } finally {
+      if ($button) {
+        $button.prop('disabled', false).removeAttr('aria-busy');
+      }
+    }
   }
 
   // Reload tool servers after MCP config is saved.

@@ -460,6 +460,7 @@
     "serverTools": "{name} ({count} інстр.)",
     "cancel": "Скасувати",
     "save": "Зберегти",
-    "noServers": "Немає серверів MCP"
+    "noServers": "Немає серверів MCP",
+    "reload": "Перезавантажити сервери MCP"
   }
 }

@@ -460,6 +460,7 @@
     "serverTools": "{name}({count}개 도구)",
     "cancel": "취소",
     "save": "저장",
-    "noServers": "MCP 서버 없음"
+    "noServers": "MCP 서버 없음",
+    "reload": "MCP 서버 다시 로드"
   }
 }

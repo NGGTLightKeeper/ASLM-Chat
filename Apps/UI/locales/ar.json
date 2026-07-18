@@ -460,6 +460,7 @@
     "serverTools": "{name} ({count} أدوات)",
     "cancel": "إلغاء",
     "save": "حفظ",
-    "noServers": "لا توجد خوادم MCP"
+    "noServers": "لا توجد خوادم MCP",
+    "reload": "إعادة تحميل خوادم MCP"
   }
 }

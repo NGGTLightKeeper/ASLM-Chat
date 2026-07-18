@@ -460,6 +460,7 @@
     "serverTools": "{name} ({count} उपकरण)",
     "cancel": "रद्द करें",
     "save": "सहेजें",
-    "noServers": "कोई MCP सर्वर नहीं"
+    "noServers": "कोई MCP सर्वर नहीं",
+    "reload": "MCP सर्वर पुनः लोड करें"
   }
 }

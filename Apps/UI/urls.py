@@ -47,6 +47,7 @@ urlpatterns = [
     path("api/tools/", views.get_tools_api, name="tools_api"),
     path("api/docker_status/refresh/", views.docker_status_refresh_api, name="docker_status_refresh_api"),
     path("api/mcp_config/", views.mcp_config_api, name="mcp_config_api"),
+    path("api/mcp_reload/", views.mcp_reload_api, name="mcp_reload_api"),
     path("api/skills/", views.skills_api, name="skills_api"),
     path("api/skills/folder/", views.skills_folder_api, name="skills_folder_api"),
     path("api/skills/file/", views.skills_file_api, name="skills_file_api"),

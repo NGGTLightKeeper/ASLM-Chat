@@ -460,6 +460,7 @@
     "serverTools": "{name}（{count} ツール）",
     "cancel": "キャンセル",
     "save": "保存",
-    "noServers": "MCPサーバーがありません"
+    "noServers": "MCPサーバーがありません",
+    "reload": "MCPサーバーを再読み込み"
   }
 }

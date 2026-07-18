@@ -164,6 +164,7 @@
     "serverTools": "{name} ({count} tools)",
     "cancel": "Cancel",
     "save": "Save",
+    "reload": "Reload MCP servers",
     "noServers": "No MCP servers"
   },
   "skills": {

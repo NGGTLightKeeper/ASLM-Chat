@@ -460,6 +460,7 @@
     "serverTools": "{name} ({count} outils)",
     "cancel": "Annuler",
     "save": "Enregistrer",
-    "noServers": "Aucun serveur MCP"
+    "noServers": "Aucun serveur MCP",
+    "reload": "Recharger les serveurs MCP"
   }
 }

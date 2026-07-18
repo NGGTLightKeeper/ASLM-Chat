@@ -6116,6 +6116,34 @@ def mcp_config_api(request):
     return JsonResponse({"ok": True, "content": mcp_json.load_raw_text()})
 
 
+# Restart configured user MCP sessions and return freshly discovered tools.
+def mcp_reload_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request) if request.body else {}
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    engine, engine_error = _resolve_request_engine_or_response(request, payload)
+    if engine_error is not None:
+        return engine_error
+    model_name = str(payload.get("model") or "").strip() or None
+
+    tool_registry.reset_cache()
+    _clear_tool_server_cache()
+    servers = _list_tool_servers_cached(engine, model_name)
+    return JsonResponse(
+        {
+            "ok": True,
+            "tool_servers": servers,
+            "servers": servers,
+            "tools": servers,
+        }
+    )
+
+
 # Return a normalized JSON error for skills APIs.
 def _skills_error_response(exc: Exception) -> JsonResponse:
     if isinstance(exc, FileNotFoundError):

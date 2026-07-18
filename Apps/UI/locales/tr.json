@@ -460,6 +460,7 @@
     "serverTools": "{name} ({count} araç)",
     "cancel": "İptal",
     "save": "Kaydet",
-    "noServers": "MCP sunucusu yok"
+    "noServers": "MCP sunucusu yok",
+    "reload": "MCP sunucularını yeniden yükle"
   }
 }

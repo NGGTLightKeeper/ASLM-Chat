@@ -460,6 +460,7 @@
     "serverTools": "{name}（{count} 個工具）",
     "cancel": "取消",
     "save": "儲存",
-    "noServers": "沒有 MCP 伺服器"
+    "noServers": "沒有 MCP 伺服器",
+    "reload": "重新載入 MCP 伺服器"
   }
 }

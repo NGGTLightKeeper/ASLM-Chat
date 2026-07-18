@@ -460,6 +460,7 @@
     "serverTools": "{name} ({count} strumenti)",
     "cancel": "Annulla",
     "save": "Salva",
-    "noServers": "Nessun server MCP"
+    "noServers": "Nessun server MCP",
+    "reload": "Ricarica server MCP"
   }
 }

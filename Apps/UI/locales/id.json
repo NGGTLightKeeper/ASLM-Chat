@@ -460,6 +460,7 @@
     "serverTools": "{name} ({count} alat)",
     "cancel": "Batal",
     "save": "Simpan",
-    "noServers": "Tidak ada server MCP"
+    "noServers": "Tidak ada server MCP",
+    "reload": "Muat ulang server MCP"
   }
 }

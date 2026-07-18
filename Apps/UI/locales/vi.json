@@ -460,6 +460,7 @@
     "serverTools": "{name} ({count} công cụ)",
     "cancel": "Hủy",
     "save": "Lưu",
-    "noServers": "Không có máy chủ MCP"
+    "noServers": "Không có máy chủ MCP",
+    "reload": "Tải lại máy chủ MCP"
   }
 }
