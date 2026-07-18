@@ -662,6 +662,153 @@
   color: var(--text-success);
 }
 
+/* Generic settings-sidebar selects: same chrome as the model selector, but
+   without the search field or capability markers. The native <select> stays
+   in the form for existing change handlers and is visually replaced. */
+.settings-select-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.settings-select-wrap .native-settings-select {
+  position: absolute;
+  inset: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settings-select-trigger {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-tertiary);
+  color: var(--c-text);
+  font-size: var(--font-size-caption-1);
+  line-height: var(--leading-ui);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast), box-shadow var(--t-fast);
+}
+
+.settings-select-trigger:hover:not(:disabled) {
+  border-color: var(--c-gray-2);
+}
+
+.settings-select-trigger:focus-visible,
+.settings-select-trigger.is-open {
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 1px var(--focus-ring);
+  outline: none;
+}
+
+.settings-select-trigger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-select-trigger.setting-control-compact {
+  min-height: 30px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  padding-left: 10px;
+  padding-right: 10px;
+  font-size: var(--font-size-caption-2);
+}
+
+.settings-select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-select-chevron {
+  width: 14px;
+  height: 14px;
+  justify-self: end;
+  background: currentColor;
+  color: var(--c-text-muted);
+  -webkit-mask: url("../../img/ui/chevron-down.svg") center / contain no-repeat;
+  mask: url("../../img/ui/chevron-down.svg") center / contain no-repeat;
+  transition: transform var(--t-fast), color var(--t-fast);
+}
+
+.settings-select-trigger.is-open .settings-select-chevron {
+  color: var(--c-text);
+  transform: rotate(180deg);
+}
+
+.settings-select-popover {
+  position: fixed;
+  z-index: 1200;
+  padding: 6px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-secondary);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--c-black) 34%, transparent);
+}
+
+.settings-select-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 260px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.settings-select-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--c-text);
+  font-size: var(--font-size-caption-1);
+  line-height: var(--leading-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-select-option:hover,
+.settings-select-option.is-highlighted {
+  background: var(--surface-tertiary);
+}
+
+.settings-select-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-select-option.is-selected {
+  color: var(--c-text);
+  font-weight: 600;
+}
+
+.settings-select-option-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-select-empty {
+  padding: 10px 8px;
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-1);
+}
+
 .setting-group {
   display: flex;
   flex-direction: column;
