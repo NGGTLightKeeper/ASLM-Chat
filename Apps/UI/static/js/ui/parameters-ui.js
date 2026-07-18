@@ -20,7 +20,7 @@ import { messageDialog } from './dialogs.js';
 // Parameters UI.
 // Create helpers for model controls, tool selection, and option payloads.
 export function createParametersUi(context) {
-  const { dom, state } = context;
+  const { dom, state, icons } = context;
 
   // Tool selection helpers.
   // Normalize one tool server id for Set usage.
@@ -267,18 +267,23 @@ export function createParametersUi(context) {
         });
       }
 
+      // Same chrome as "Attach files": text action row + leading SVG icon.
+      const reloadLabel = t('mcp.reload', null, 'Reload MCP servers');
       const $reload = $('<button type="button" class="composer-menu-action composer-skills-manage" role="menuitem">')
-        .append($('<span class="composer-tool-icon is-mcp" aria-hidden="true">'))
-        .append($('<span>').text(t('mcp.reload', null, 'Reload MCP servers')));
+        .attr({ title: reloadLabel, 'aria-label': reloadLabel })
+        .append(icons.MCP_RELOAD_ICON || '')
+        .append($('<span>').text(reloadLabel));
       $reload.on('click', function onReloadMcp(ev) {
         ev.preventDefault();
         ev.stopPropagation();
         reloadUserMcpServers($reload);
       });
 
+      const editLabel = t('mcp.editConfig', null, 'Edit mcp.json');
       const $manage = $('<button type="button" class="composer-menu-action composer-skills-manage" role="menuitem">')
-        .append($('<span class="composer-tool-icon is-mcp" aria-hidden="true">'))
-        .append($('<span>').text(t('mcp.editConfig')));
+        .attr({ title: editLabel, 'aria-label': editLabel })
+        .append(icons.MCP_EDIT_ICON || '')
+        .append($('<span>').text(editLabel));
       $manage.on('click', function onOpenMcp(ev) {
         ev.preventDefault();
         ev.stopPropagation();

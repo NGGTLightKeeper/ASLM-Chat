@@ -1786,6 +1786,8 @@
 }
 
 .composer-menu-action {
+  display: flex;
+  align-items: center;
   width: 100%;
   min-height: 34px;
   justify-content: flex-start;
@@ -1795,6 +1797,14 @@
   color: var(--c-text-muted);
   font-size: var(--font-size-body-2);
   font-weight: 500;
+  text-align: left;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+
+.composer-menu-action > svg {
+  flex: 0 0 auto;
+  display: block;
+  color: inherit;
 }
 
 .composer-menu-action.attach-btn {
@@ -1804,7 +1814,8 @@
   color: var(--c-text-muted);
 }
 
-.composer-menu-popover .composer-menu-action.attach-btn {
+.composer-menu-popover .composer-menu-action.attach-btn,
+.composer-skills-flyout .composer-menu-action {
   width: 100%;
   min-height: 34px;
   height: auto;
@@ -1819,7 +1830,8 @@
 }
 
 .composer-menu-popover .composer-menu-action:hover,
-.composer-menu-popover .composer-tool-row:hover {
+.composer-menu-popover .composer-tool-row:hover,
+.composer-skills-flyout .composer-menu-action:hover {
   background: var(--surface-tertiary);
   color: var(--c-text);
 }
