@@ -1250,6 +1250,19 @@ export function createParametersUi(context) {
         renderedConfig.max = Math.max(1024, Math.min(32768, data.context_length || renderedConfig.max || 32768));
         renderedConfig.note = `Maximum generated tokens. Limit: ${renderedConfig.max}.`;
       }
+      // OpenAI max completion tokens: same stepped token-range UI as num_predict,
+      // with max capped by provider output limit or context window when known.
+      if (key === 'max_completion_tokens') {
+        if (runtimeLimits.output_token_limit) {
+          renderedConfig.max = runtimeLimits.output_token_limit;
+        } else {
+          renderedConfig.max = Math.max(
+            1024,
+            Math.min(32768, data.context_length || renderedConfig.max || 32768)
+          );
+        }
+        renderedConfig.note = `Maximum generated tokens. Limit: ${renderedConfig.max}.`;
+      }
       if (key === 'max_output_tokens' && runtimeLimits.output_token_limit) {
         renderedConfig.max = runtimeLimits.output_token_limit;
         renderedConfig.note = `Maximum generated tokens. Model limit: ${runtimeLimits.output_token_limit}.`;
