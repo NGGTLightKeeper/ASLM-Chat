@@ -1048,7 +1048,8 @@
   top: 0;
   z-index: 1300;
   width: max-content;
-  max-width: 240px;
+  /* Cap width and keep the bubble inside the viewport on narrow windows. */
+  max-width: min(240px, calc(100vw - 16px));
   padding: 10px 12px;
   border: 1px solid var(--c-border-strong);
   border-radius: var(--r-md);
@@ -1057,6 +1058,12 @@
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--t-fast);
+  /* .setting-label (and some composer ancestors) set white-space: nowrap.
+     Fixed positioning escapes overflow clipping, but inheritance still applies,
+     so long help text was spilling out of the max-width bubble. */
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .setting-help:hover .setting-help-popover,
@@ -1066,15 +1073,19 @@
 }
 
 .setting-help-desc {
+  margin: 0;
   font-size: var(--font-size-caption-1);
   line-height: var(--leading-ui);
   color: var(--c-text);
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .setting-help-metrics {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  min-width: 0;
 }
 
 .setting-help-desc + .setting-help-metrics {
@@ -1085,11 +1096,13 @@
   display: flex;
   align-items: baseline;
   gap: 6px;
+  min-width: 0;
   font-size: var(--font-size-caption-2);
   line-height: var(--leading-ui);
 }
 
 .setting-help-metric-key {
+  flex: 0 0 auto;
   color: var(--c-text-muted);
 }
 
@@ -1098,8 +1111,10 @@
 }
 
 .setting-help-metric-val {
+  min-width: 0;
   color: var(--c-text);
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 /* Messages area */
