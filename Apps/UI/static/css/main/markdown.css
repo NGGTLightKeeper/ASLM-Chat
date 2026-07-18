@@ -905,6 +905,10 @@
   white-space: nowrap;
 }
 
+.msg-sandbox-command-description {
+  color: var(--c-text);
+}
+
 .msg-sandbox-section {
   min-width: 0;
   overflow: hidden;

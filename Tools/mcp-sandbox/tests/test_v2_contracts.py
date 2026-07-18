@@ -374,5 +374,31 @@ class SandboxV2ContractsTests(unittest.TestCase):
         self.assertEqual(tool_ids, {"bash", "write", "edit", "view_image", "share_file"})
 
 
+    def test_bash_requires_short_description(self) -> None:
+        from sandbox.api import TOOLS
+
+        bash_tool = next(tool for tool in TOOLS if tool["id"] == "bash")
+        parameters = bash_tool["parameters"]
+        description_schema = parameters["properties"]["description"]
+
+        self.assertIn("description", parameters["required"])
+        self.assertIn("3-4 words maximum", description_schema["description"])
+        self.assertIn("3-4 words maximum", bash_tool["description"])
+
+    def test_fastmcp_bash_schema_preserves_description_guidance(self) -> None:
+        from mcp.server.fastmcp import FastMCP
+        from sandbox.tools import register_tools
+
+        mcp = FastMCP("schema-test")
+        register_tools(mcp)
+        bash_tool = mcp._tool_manager.get_tool("bash")
+        description_schema = bash_tool.parameters["properties"]["description"]
+
+        self.assertIn("description", bash_tool.parameters["required"])
+        self.assertIn("3-4 words maximum", description_schema["description"])
+        self.assertEqual(description_schema["minLength"], 1)
+        self.assertEqual(description_schema["maxLength"], 80)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3433,6 +3433,16 @@ export function createMessagesUi(context, dependencies) {
     return `${preview.text}\n\n... ${preview.omittedChars} more characters omitted`;
   }
 
+  // Return the short model-provided intent for a sandbox command.
+  function sandboxHeaderDetail(segment) {
+    const args = segment && segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    const description = String(args.description || '').trim().replace(/\s+/g, ' ');
+    if (description) {
+      return description.split(' ').slice(0, 4).join(' ');
+    }
+    return reasoningToolDetail(segment);
+  }
+
   // Handle sandbox language.
   function sandboxLanguage(segment) {
     const identity = toolIdentityText(segment);
@@ -3520,7 +3530,7 @@ export function createMessagesUi(context, dependencies) {
   // Render sandbox tool block.
   function renderSandboxToolBlock(segment, toolSegmentIndex) {
     const status = toolStatusText(segment);
-    const detail = reasoningToolDetail(segment);
+    const detail = sandboxHeaderDetail(segment);
     const result = parseSandboxResult(segment);
     const language = sandboxLanguage(segment);
     const inputText = sandboxInputPreviewText(segment) || detail;
@@ -3543,7 +3553,7 @@ export function createMessagesUi(context, dependencies) {
         <div class="msg-sandbox-head">
           ${icons.TOOL_BASH_ICON || '<span class="msg-reasoning-tool-icon is-sandbox" aria-hidden="true">S</span>'}
           <span class="msg-sandbox-title">Sandbox</span>
-          ${detail ? `<span class="msg-sandbox-detail">${escHtml(detail)}</span>` : ''}
+          ${detail ? `<span class="msg-sandbox-detail msg-sandbox-command-description">${escHtml(detail)}</span>` : ''}
           <span class="msg-reasoning-tool-status">${escHtml(exitCodeText)}</span>
         </div>
         ${renderSandboxStreamBlock('stdin', inputText, 'is-stdin', language)}
