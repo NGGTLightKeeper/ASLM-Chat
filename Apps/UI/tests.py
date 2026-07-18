@@ -6,6 +6,7 @@ import importlib
 import json
 import io
 import os
+import subprocess
 import tempfile
 import textwrap
 import zipfile
@@ -79,6 +80,7 @@ from Apps.UI.views import (
     _normalize_uploaded_file_ids,
     _parse_active_tool_slugs,
     _resolve_request_engine,
+    _reveal_file_in_file_manager,
     _resolve_history_char_budget,
     _serialize_attachment_record,
     _selected_tools_include_sandbox,
@@ -1373,6 +1375,52 @@ class UploadFilesApiTests(SimpleTestCase):
             self.assertEqual(b"".join(response.streaming_content), b"hij")
         finally:
             temp_path.unlink(missing_ok=True)
+
+    # Test reveal endpoint applies path validation before opening the file manager.
+    @patch("Apps.UI.views._reveal_file_in_file_manager")
+    @patch("Apps.UI.views._resolve_shared_file_path")
+    def test_shared_file_reveal_opens_validated_target(self, resolve_mock, reveal_mock):
+        target = Path("C:/sandbox/User/report.svg")
+        resolve_mock.return_value = target
+
+        response = self.client.post(
+            reverse("shared_file_reveal_api"),
+            data=json.dumps({"path": "/workspace/_sandbox/User/report.svg"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True})
+        resolve_mock.assert_called_once_with("/workspace/_sandbox/User/report.svg")
+        reveal_mock.assert_called_once_with(target)
+
+    # Test missing or forbidden shared files are never sent to the file manager.
+    @patch("Apps.UI.views._reveal_file_in_file_manager")
+    @patch("Apps.UI.views._resolve_shared_file_path", side_effect=FileNotFoundError)
+    def test_shared_file_reveal_rejects_invalid_target(self, _resolve_mock, reveal_mock):
+        response = self.client.post(
+            reverse("shared_file_reveal_api"),
+            data=json.dumps({"path": "C:/outside/private.txt"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        reveal_mock.assert_not_called()
+
+    # Test Windows reveal uses Explorer's select-file argument.
+    @patch("Apps.UI.views.subprocess.Popen")
+    def test_reveal_file_manager_selects_file_on_windows(self, popen_mock):
+        target = Path("C:/sandbox/User/report.svg")
+        with patch("Apps.UI.views.sys.platform", "win32"):
+            _reveal_file_in_file_manager(target)
+
+        popen_mock.assert_called_once_with(
+            ["explorer.exe", f"/select,{target}"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
 
     # Test dynamic shared images render inline while the card link remains a download.
     def test_shared_file_dynamic_image_preview_is_inline(self):

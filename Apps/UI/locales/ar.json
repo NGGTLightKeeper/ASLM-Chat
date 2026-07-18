@@ -156,7 +156,8 @@
     "searchedFor": "بحث عن {query}",
     "noSourcesFor": "لم تُعثر على مصادر لـ {query}",
     "searchingFor": "جارٍ البحث عن {query}",
-    "badQuery": "استعلام غير صالح: {query}"
+    "badQuery": "استعلام غير صالح: {query}",
+    "openFileLocation": "فتح موقع الملف"
   },
   "skills": {
     "title": "المهارات",

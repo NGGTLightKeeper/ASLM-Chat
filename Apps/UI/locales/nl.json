@@ -156,7 +156,8 @@
     "searchedFor": "Gezocht naar {query}",
     "noSourcesFor": "Geen bronnen gevonden voor {query}",
     "searchingFor": "Zoeken naar {query}",
-    "badQuery": "Ongeldige query: {query}"
+    "badQuery": "Ongeldige query: {query}",
+    "openFileLocation": "Bestandslocatie openen"
   },
   "skills": {
     "title": "Vaardigheden",

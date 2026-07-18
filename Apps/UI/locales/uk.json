@@ -156,7 +156,8 @@
     "searchedFor": "Пошук: {query}",
     "noSourcesFor": "Джерел не знайдено для {query}",
     "searchingFor": "Пошук: {query}",
-    "badQuery": "Невірний запит: {query}"
+    "badQuery": "Невірний запит: {query}",
+    "openFileLocation": "Відкрити розташування файлу"
   },
   "skills": {
     "title": "Навички",

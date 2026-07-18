@@ -156,7 +156,8 @@
     "searchedFor": "{query} खोजा",
     "noSourcesFor": "{query} के लिए कोई स्रोत नहीं मिला",
     "searchingFor": "{query} खोज रहे हैं",
-    "badQuery": "अमान्य क्वेरी: {query}"
+    "badQuery": "अमान्य क्वेरी: {query}",
+    "openFileLocation": "फ़ाइल का स्थान खोलें"
   },
   "skills": {
     "title": "कौशल",

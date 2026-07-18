@@ -156,7 +156,8 @@
     "searchedFor": "Đã tìm {query}",
     "noSourcesFor": "Không tìm thấy nguồn cho {query}",
     "searchingFor": "Đang tìm {query}",
-    "badQuery": "Truy vấn không hợp lệ: {query}"
+    "badQuery": "Truy vấn không hợp lệ: {query}",
+    "openFileLocation": "Mở vị trí tệp"
   },
   "skills": {
     "title": "Kỹ năng",

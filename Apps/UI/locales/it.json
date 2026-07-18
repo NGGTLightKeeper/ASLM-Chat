@@ -156,7 +156,8 @@
     "searchedFor": "Cercato {query}",
     "noSourcesFor": "Nessuna fonte trovata per {query}",
     "searchingFor": "Ricerca di {query}",
-    "badQuery": "Query non valida: {query}"
+    "badQuery": "Query non valida: {query}",
+    "openFileLocation": "Apri percorso file"
   },
   "skills": {
     "title": "Competenze",

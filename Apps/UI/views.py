@@ -5617,6 +5617,43 @@ def shared_file_download_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Open the host file manager and select one validated shared file.
+def _reveal_file_in_file_manager(target: Path) -> None:
+    if sys.platform == "win32":
+        command = ["explorer.exe", f"/select,{target}"]
+    elif sys.platform == "darwin":
+        command = ["open", "-R", str(target)]
+    else:
+        command = ["xdg-open", str(target.parent)]
+
+    subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+    )
+
+
+# Reveal a model-shared local file after applying the download path policy.
+def shared_file_reveal_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        payload = _read_json_request_body(request)
+        target = _resolve_shared_file_path(str(payload.get("path") or ""))
+        _reveal_file_in_file_manager(target)
+        return JsonResponse({"ok": True})
+    except FileNotFoundError:
+        return JsonResponse({"error": "Shared file not found"}, status=404)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Failed to reveal shared file")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
 # Abort active generation.
 def abort_generation_api(request):
     if request.method != "POST":

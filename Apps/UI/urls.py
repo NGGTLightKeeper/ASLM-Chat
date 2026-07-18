@@ -22,6 +22,7 @@ urlpatterns = [
     path("api/chat/<uuid:chat_id>/regenerate/", views.regenerate_chat_api, name="regenerate_chat_api"),
     path("api/attachment/<str:record_type>/<int:attachment_id>/content/", views.attachment_content_api, name="attachment_content_api"),
     path("api/shared-file/download/", views.shared_file_download_api, name="shared_file_download_api"),
+    path("api/shared-file/reveal/", views.shared_file_reveal_api, name="shared_file_reveal_api"),
     path("api/message/<int:message_id>/delete/", views.delete_message_api, name="delete_message_api"),
     path("api/chat/<uuid:chat_id>/rename/", views.rename_chat_api, name="rename_chat_api"),
     path("api/chat/<uuid:chat_id>/delete/", views.delete_chat_api, name="delete_chat_api"),

@@ -156,7 +156,8 @@
     "searchedFor": "已搜索 {query}",
     "noSourcesFor": "未找到 {query} 的来源",
     "searchingFor": "正在搜索 {query}",
-    "badQuery": "无效查询：{query}"
+    "badQuery": "无效查询：{query}",
+    "openFileLocation": "打开文件位置"
   },
   "skills": {
     "title": "技能",

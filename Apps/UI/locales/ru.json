@@ -156,7 +156,8 @@
     "searchedFor": "Поиск: {query}",
     "noSourcesFor": "Источники не найдены: {query}",
     "searchingFor": "Поиск: {query}",
-    "badQuery": "Некорректный запрос: {query}"
+    "badQuery": "Некорректный запрос: {query}",
+    "openFileLocation": "Открыть расположение файла"
   },
   "skills": {
     "title": "Навыки",

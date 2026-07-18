@@ -221,6 +221,21 @@ export function bindEventHandlers(context, dependencies) {
     }
   });
 
+  $activityRoots.on('click', '.msg-shared-file-reveal', function onSharedFileRevealClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    messagesUi.revealSharedFile($(this));
+  });
+
+  $activityRoots.on('keydown', '.msg-shared-file-reveal', function onSharedFileRevealKeyDown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    messagesUi.revealSharedFile($(this));
+  });
+
   $activityRoots.on('click', '.msg-search-chip:not(.msg-search-chip--more)', function onSearchChipClick(event) {
     event.stopPropagation();
   });

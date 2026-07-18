@@ -2655,11 +2655,18 @@
 
 .msg-media-play-btn:hover,
 .msg-media-icon-btn:hover,
-.msg-video-center-play:hover,
-.msg-media-download:hover {
+.msg-video-center-play:hover {
   color: var(--activity-on-surface);
   border-color: var(--activity-status-border);
   background: var(--activity-status-bg);
+}
+
+.msg-media-download:hover,
+.msg-media-download:focus-visible {
+  color: var(--activity-on-surface);
+  border-color: transparent;
+  background: transparent;
+  outline: none;
 }
 
 .msg-media-play-btn:disabled,
@@ -2760,7 +2767,7 @@
 .msg-audio-card {
   width: min(100%, 500px);
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 28px;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
@@ -2915,7 +2922,10 @@
 .msg-media-download {
   width: 30px;
   height: 30px;
-  border-radius: var(--r-sm);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   text-decoration: none;
 }
 
@@ -3042,7 +3052,7 @@
 
 .msg-media-info {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr) 34px;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
   padding: 12px 2px 0;
@@ -3111,9 +3121,82 @@
   grid-template-columns: 34px auto minmax(54px, 1fr) auto 34px 34px 34px 34px;
 }
 
+.msg-shared-file-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  justify-self: end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.msg-shared-file-reveal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--activity-on-surface-muted);
+  line-height: 0;
+  cursor: pointer;
+  transition: color var(--t-fast), opacity var(--t-fast);
+}
+
+.msg-shared-file-reveal > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.msg-shared-file-reveal:hover,
+.msg-shared-file-reveal:focus-visible {
+  color: var(--activity-on-surface);
+  outline: none;
+}
+
+.msg-shared-file-reveal.is-busy {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.msg-media-actions .msg-shared-file-reveal,
+.msg-shared-image-actions .msg-shared-file-reveal {
+  width: 30px;
+  height: 30px;
+}
+
+.msg-shared-file-actions .msg-shared-file-download,
+.msg-shared-file-actions .msg-shared-image-download,
+.msg-shared-file-actions .msg-media-download {
+  color: var(--activity-on-surface-muted);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.msg-shared-file-actions .msg-shared-file-download > svg,
+.msg-shared-file-actions .msg-shared-image-download > svg,
+.msg-shared-file-actions .msg-media-download > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.msg-shared-file-actions .msg-shared-file-download:hover,
+.msg-shared-file-actions .msg-shared-image-download:hover,
+.msg-shared-file-actions .msg-media-download:hover,
+.msg-shared-file-actions .msg-media-download:focus-visible {
+  color: var(--activity-on-surface);
+  border-color: transparent;
+  background: transparent;
+  transform: none;
+}
+
 .msg-shared-file-card {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 22px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 10px;
   width: min(100%, 520px);
@@ -3165,8 +3248,10 @@
   color: var(--activity-on-surface-muted);
 }
 
-.msg-shared-file-card:hover .msg-shared-file-download {
+.msg-shared-file-download:hover,
+.msg-shared-file-download:focus-visible {
   color: var(--activity-on-surface);
+  outline: none;
 }
 
 .msg-upload-file-chip {
@@ -3274,7 +3359,7 @@
 .msg-shared-image-footer {
   min-height: 48px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   padding: 8px 10px 8px 12px;
@@ -3310,21 +3395,26 @@
 }
 
 .msg-shared-image-download {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
   justify-self: end;
-  border-radius: var(--r-sm);
-  color: var(--activity-on-surface);
-  background: var(--activity-preview-action-bg);
-  transition: background var(--t-fast), transform var(--t-fast);
+  border: 0;
+  border-radius: 0;
+  color: var(--activity-on-surface-muted);
+  background: transparent;
+  box-shadow: none;
+  transition: color var(--t-fast);
 }
 
-.msg-shared-image-card:hover .msg-shared-image-download {
-  background: var(--activity-preview-action-bg-hover);
-  transform: translateY(-1px);
+.msg-shared-image-download:hover,
+.msg-shared-image-download:focus-visible {
+  color: var(--activity-on-surface);
+  background: transparent;
+  outline: none;
+  transform: none;
 }
 
 .msg-file-name {

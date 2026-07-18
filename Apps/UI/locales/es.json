@@ -156,7 +156,8 @@
     "searchedFor": "Búsqueda de {query}",
     "noSourcesFor": "No se encontraron fuentes para {query}",
     "searchingFor": "Buscando {query}",
-    "badQuery": "Consulta no válida: {query}"
+    "badQuery": "Consulta no válida: {query}",
+    "openFileLocation": "Abrir ubicación del archivo"
   },
   "skills": {
     "title": "Habilidades",

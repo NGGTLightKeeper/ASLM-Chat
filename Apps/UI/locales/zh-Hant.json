@@ -156,7 +156,8 @@
     "searchedFor": "已搜尋 {query}",
     "noSourcesFor": "找不到與 {query} 相關的來源",
     "searchingFor": "正在搜尋 {query}",
-    "badQuery": "查詢無效：{query}"
+    "badQuery": "查詢無效：{query}",
+    "openFileLocation": "開啟檔案位置"
   },
   "skills": {
     "title": "技能",

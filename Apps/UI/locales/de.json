@@ -156,7 +156,8 @@
     "searchedFor": "Gesucht nach {query}",
     "noSourcesFor": "Keine Quellen gefunden für {query}",
     "searchingFor": "Suche nach {query}",
-    "badQuery": "Ungültige Abfrage: {query}"
+    "badQuery": "Ungültige Abfrage: {query}",
+    "openFileLocation": "Dateispeicherort öffnen"
   },
   "skills": {
     "title": "Skills",

@@ -156,7 +156,8 @@
     "searchedFor": "{query} arandı",
     "noSourcesFor": "{query} için kaynak bulunamadı",
     "searchingFor": "{query} aranıyor",
-    "badQuery": "Geçersiz sorgu: {query}"
+    "badQuery": "Geçersiz sorgu: {query}",
+    "openFileLocation": "Dosya konumunu aç"
   },
   "skills": {
     "title": "Beceriler",

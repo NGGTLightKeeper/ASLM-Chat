@@ -156,7 +156,8 @@
     "searchedFor": "「{query}」を検索",
     "noSourcesFor": "「{query}」のソースが見つかりませんでした",
     "searchingFor": "「{query}」を検索中",
-    "badQuery": "不正なクエリ: {query}"
+    "badQuery": "不正なクエリ: {query}",
+    "openFileLocation": "ファイルの場所を開く"
   },
   "skills": {
     "title": "スキル",

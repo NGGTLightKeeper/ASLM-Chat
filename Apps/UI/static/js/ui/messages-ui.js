@@ -1,5 +1,6 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
+import { postJson } from '../main/api.js';
 import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
 import {
   addSegmentCitationSources,
@@ -10,6 +11,7 @@ import {
   normalizeCitationSpacing as normalizeCitationHandleSpacing
 } from './citations-ui.js';
 import { bindCitationPreviewCards } from './citation-preview-ui.js';
+import { messageDialog } from './dialogs.js';
 import { t } from '../main/i18n.js';
 
 // marked's default GFM `del` allows single-tilde pairs (~x~), which breaks ~ for "approximately".
@@ -34,6 +36,8 @@ export function createMessagesUi(context, dependencies) {
   const REASONING_CHUNK_TARGET_CHARS = 132;
   const REASONING_CHUNK_MAX_CHARS = 168;
   const DOWNLOAD_FILE_ICON = icons.DOWNLOAD_FILE_ICON || '';
+  const SHARED_FILE_FOLDER_ICON = icons.SKILLS_FOLDER_ICON || '';
+  const OPEN_FILE_LOCATION_LABEL = t('messages.openFileLocation', null, 'Open file location');
   const MEDIA_PLAY_ICON = icons.PLAY_ICON || '&#9658;';
   const MEDIA_PAUSE_ICON = icons.PAUSE_ICON || '&#10073;&#10073;';
   const MEDIA_VOLUME_ICON = icons.VOLUME_ICON || '';
@@ -2368,6 +2372,33 @@ export function createMessagesUi(context, dependencies) {
     `;
   }
 
+  // Build the file-manager action embedded before download in shared-file cards.
+  function renderSharedFileRevealButton(file) {
+    const path = String(file && file.path ? file.path : '').trim();
+    if (!path) {
+      return '';
+    }
+    const filename = attachmentFilename(file);
+    const ariaLabel = `${OPEN_FILE_LOCATION_LABEL}: ${filename}`;
+    return `
+      <span class="msg-shared-file-reveal" role="button" tabindex="0" data-shared-file-path="${escapeAttributeValue(path)}" title="${escapeAttributeValue(OPEN_FILE_LOCATION_LABEL)}" aria-label="${escapeAttributeValue(ariaLabel)}">
+        ${SHARED_FILE_FOLDER_ICON}
+      </span>
+    `;
+  }
+
+  // Render the inline reveal/download group used by shared media cards.
+  function renderAttachmentActions(file, options, downloadClassName) {
+    const downloadButton = renderAttachmentDownloadButton(file, options, downloadClassName);
+    const revealButton = options && options.source === 'shared_file'
+      ? renderSharedFileRevealButton(file)
+      : '';
+    if (!revealButton) {
+      return downloadButton;
+    }
+    return `<span class="msg-shared-file-actions msg-media-actions">${revealButton}${downloadButton}</span>`;
+  }
+
   // Render one image attachment card.
   function renderImageAttachmentCard(file, options) {
     const renderOptions = options || {};
@@ -2389,7 +2420,7 @@ export function createMessagesUi(context, dependencies) {
     const tagName = href ? 'a' : 'span';
     const hrefAttr = href ? ` href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(filename)}"` : '';
 
-    return `
+    const cardHtml = `
       <${tagName} class="msg-attachment-card msg-image-card${renderOptions.source === 'shared_file' ? ' msg-shared-image-card' : ''}"${hrefAttr}>
         <span class="msg-shared-image-preview">
           <img class="msg-shared-image" src="${escapeAttributeValue(src)}" alt="${escapeAttributeValue(filename ? `Preview for ${filename}` : 'Attached image')}" loading="lazy">
@@ -2399,10 +2430,14 @@ export function createMessagesUi(context, dependencies) {
             <span class="msg-shared-image-name">${escHtml(filename)}</span>
             <span class="msg-shared-image-details">${escHtml(details)}</span>
           </span>
-          ${href ? `<span class="msg-shared-image-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>` : ''}
+          <span class="msg-shared-file-actions msg-shared-image-actions">
+            ${renderOptions.source === 'shared_file' ? renderSharedFileRevealButton(file) : ''}
+            ${href ? `<span class="msg-shared-image-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>` : ''}
+          </span>
         </span>
       </${tagName}>
     `;
+    return cardHtml;
   }
 
   // Render one generic file attachment chip.
@@ -2414,16 +2449,20 @@ export function createMessagesUi(context, dependencies) {
     const hrefAttr = href ? ` href="${escapeAttributeValue(href)}" download="${escapeAttributeValue(filename)}"` : '';
     const badgeLabel = inferredAttachmentDisplayKind(file).toUpperCase();
 
-    return `
+    const cardHtml = `
       <${tagName} class="msg-file-chip msg-attachment-card msg-shared-file-card"${hrefAttr}>
         <span class="msg-shared-file-badge" aria-hidden="true">${escHtml(badgeLabel.slice(0, 6) || 'FILE')}</span>
         <span class="msg-shared-file-main">
           <span class="msg-file-name">${escHtml(filename)}</span>
           <span class="msg-file-meta">${escHtml(mediaMetaText(file))}</span>
         </span>
-        ${href ? `<span class="msg-shared-file-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>` : ''}
+        <span class="msg-shared-file-actions">
+          ${renderOptions.source === 'shared_file' ? renderSharedFileRevealButton(file) : ''}
+          ${href ? `<span class="msg-shared-file-download" aria-hidden="true">${DOWNLOAD_FILE_ICON}</span>` : ''}
+        </span>
       </${tagName}>
     `;
+    return cardHtml;
   }
 
   // Infer image, audio, video, or file from metadata.
@@ -2509,7 +2548,7 @@ export function createMessagesUi(context, dependencies) {
             <input class="msg-media-range" type="range" min="0" max="1000" value="0" step="1" data-media-action="seek" aria-label="Audio progress"${src ? '' : ' disabled'}>
           </div>
         </div>
-        ${renderAttachmentDownloadButton(file, renderOptions, 'msg-media-download')}
+        ${renderAttachmentActions(file, renderOptions, 'msg-media-download')}
       </div>
     `;
   }
@@ -2546,7 +2585,7 @@ export function createMessagesUi(context, dependencies) {
             <span class="msg-media-name">${escHtml(filename)}</span>
             <span class="msg-media-meta">${escHtml(mediaMetaText(file))}</span>
           </span>
-          ${renderAttachmentDownloadButton(file, renderOptions, 'msg-media-download')}
+          ${renderAttachmentActions(file, renderOptions, 'msg-media-download')}
         </div>
       </div>
     `;
@@ -5557,6 +5596,26 @@ export function createMessagesUi(context, dependencies) {
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
 
+  // Ask the backend to reveal one validated shared file in the host file manager.
+  async function revealSharedFile($button) {
+    const path = String($button && $button.attr('data-shared-file-path') || '').trim();
+    if (!path || !$button || $button.attr('aria-disabled') === 'true') {
+      return;
+    }
+
+    $button.attr({ 'aria-busy': 'true', 'aria-disabled': 'true' }).addClass('is-busy');
+    try {
+      await postJson('/api/shared-file/reveal/', { path });
+    } catch (error) {
+      await messageDialog(
+        t('errors.generic', null, 'Something went wrong'),
+        error && error.message ? error.message : String(error)
+      );
+    } finally {
+      $button.removeAttr('aria-busy aria-disabled').removeClass('is-busy');
+    }
+  }
+
   // Open the inspector for a delegated tool-card click.
   function sourceMessageRowForActivityCard($card) {
     const $row = $card.closest('.msg');
@@ -6432,6 +6491,7 @@ export function createMessagesUi(context, dependencies) {
     renderMessageHtml,
     renderMessageStream,
     removeCompressionPending,
+    revealSharedFile,
     scrollBottom,
     setQueuedMessageState,
     toggleSearchSources,
