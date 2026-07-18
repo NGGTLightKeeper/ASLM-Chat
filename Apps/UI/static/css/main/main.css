@@ -2326,7 +2326,7 @@
 }
 
 .context-usage-indicator:hover {
-  background: color-mix(in srgb, var(--c-white) 5%, transparent);
+  background: var(--surface-hover);
   color: var(--c-text);
 }
 
@@ -2345,12 +2345,12 @@
   width: max-content;
   max-width: 230px;
   padding: 9px 11px;
-  border: 1px solid color-mix(in srgb, var(--c-white) 10%, transparent);
+  border: 1px solid var(--c-border-strong);
   border-radius: var(--r-sm);
-  background: #2d2d2f;
+  background: var(--surface-secondary);
   color: var(--c-text);
-  box-shadow: 0 14px 35px rgba(0, 0, 0, 0.35);
-  font-size: 13px;
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--c-black) 34%, transparent);
+  font-size: var(--font-size-caption-1);
   font-weight: 600;
   line-height: var(--leading-ui);
   text-align: center;
@@ -2369,7 +2369,9 @@
   z-index: 61;
   width: 8px;
   height: 8px;
-  background: #2d2d2f;
+  background: var(--surface-secondary);
+  border-right: 1px solid var(--c-border-strong);
+  border-bottom: 1px solid var(--c-border-strong);
   pointer-events: none;
   opacity: 0;
   transform: rotate(45deg) translateY(3px);
