@@ -98,7 +98,7 @@ export function createAppContext() {
     SEND_ICON: svgIcon(uiIconPaths.send, 'width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     REMOVE_ATTACHMENT_ICON: svgIcon(uiIconPaths.removeAttachment, 'width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"'),
     COPY_MESSAGE_ICON: svgIcon(uiIconPaths.copy, 'width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"'),
-    REGENERATE_ICON: svgIcon(uiIconPaths.refresh, 'width="14" height="14" viewBox="0 -960 960 960" aria-hidden="true"'),
+    REGENERATE_ICON: svgIcon(uiIconPaths.refresh, 'width="18" height="18" viewBox="0 -960 960 960" aria-hidden="true"'),
     DELETE_MESSAGE_ICON: svgIcon(uiIconPaths.trash, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     COPIED_ICON: svgIcon(uiIconPaths.check, 'width="14" height="14" viewBox="0 -960 960 960" aria-hidden="true"'),
     ARROW_LEFT_ICON: svgIcon(uiIconPaths.arrowLeft, 'width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
