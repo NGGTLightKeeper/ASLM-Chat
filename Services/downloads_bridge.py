@@ -198,11 +198,54 @@ def _detail_cache_path(slug: str) -> Path:
 
 
 # Resolve the HTML detail cache path for a rendered block.
-def _detail_html_cache_path(slug: str, block_id: str, html_document: str) -> Path:
+def _detail_html_cache_path(
+    slug: str,
+    block_id: str,
+    content_digest: str,
+    theme_fingerprint: str,
+) -> Path:
     safe_slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", slug)
     safe_block_id = re.sub(r"[^a-zA-Z0-9._-]+", "_", block_id)
-    digest = hashlib.sha256(html_document.encode("utf-8")).hexdigest()[:16]
-    return DETAIL_HTML_CACHE_DIR / f"{safe_slug}_{safe_block_id}_{digest}.html"
+    safe_theme = re.sub(r"[^a-zA-Z0-9._-]+", "_", theme_fingerprint or "default")[:16]
+    safe_content = re.sub(r"[^a-zA-Z0-9._-]+", "_", content_digest or "content")[:16]
+    return DETAIL_HTML_CACHE_DIR / f"{safe_slug}_{safe_block_id}_{safe_theme}_{safe_content}.html"
+
+
+# Default dark preview shell (matches base ASLM-Chat palette when host theme is absent).
+_DEFAULT_PREVIEW_THEME: dict[str, str] = {
+    "color_scheme": "dark",
+    "bg": "#1c1c1e",
+    "surface": "#232326",
+    "surface_strong": "#2c2c2e",
+    "border": "#38383a",
+    "text": "#ffffff",
+    "muted": "rgba(235, 235, 245, 0.72)",
+    "link": "#0a84ff",
+    "fingerprint": "default-dark",
+}
+
+
+# Load host-theme tokens for standalone preview HTML documents.
+def _resolve_preview_theme() -> dict[str, str]:
+    try:
+        # Reuse the same host palette mapping as the chat UI.
+        from Apps.UI.host_theme_bridge import resolve_preview_document_theme
+
+        tokens = resolve_preview_document_theme()
+        if isinstance(tokens, dict) and tokens.get("bg") and tokens.get("text"):
+            return tokens
+    except Exception:
+        # Bridge must stay available even if the theme module is missing.
+        pass
+    return dict(_DEFAULT_PREVIEW_THEME)
+
+
+# Escape a CSS color/token value for safe interpolation into a style block.
+def _css_token(value: str, fallback: str) -> str:
+    text = str(value or "").strip() or fallback
+    # Preview tokens are always resolved host colors or hardcoded defaults; still
+    # strip characters that could break out of a CSS declaration.
+    return re.sub(r"[^#(),.%a-zA-Z0-9\s_-]", "", text) or fallback
 
 
 # URL helpers
@@ -327,24 +370,49 @@ def _build_default_filter_payloads(search_query: OllamaSearchQuery) -> list[dict
 # HTML rendering helpers
 
 # Build a standalone HTML document for preview blocks.
-def _build_html_document(inner_html: str, page_url: str, title: str) -> str:
+def _build_html_document(
+    inner_html: str,
+    page_url: str,
+    title: str,
+    theme: dict[str, str] | None = None,
+) -> str:
+    tokens = theme or _resolve_preview_theme()
+    defaults = _DEFAULT_PREVIEW_THEME
+    color_scheme = _css_token(tokens.get("color_scheme", ""), defaults["color_scheme"])
+    if color_scheme not in {"light", "dark"}:
+        color_scheme = defaults["color_scheme"]
+    bg = _css_token(tokens.get("bg", ""), defaults["bg"])
+    surface = _css_token(tokens.get("surface", ""), defaults["surface"])
+    surface_strong = _css_token(tokens.get("surface_strong", ""), defaults["surface_strong"])
+    border = _css_token(tokens.get("border", ""), defaults["border"])
+    text = _css_token(tokens.get("text", ""), defaults["text"])
+    muted = _css_token(tokens.get("muted", ""), defaults["muted"])
+    link = _css_token(tokens.get("link", ""), defaults["link"])
+    safe_title = (
+        str(title or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="{color_scheme}">
   <base href="{page_url}">
-  <title>{title}</title>
+  <title>{safe_title}</title>
   <style>
     :root {{
-      color-scheme: dark;
-      --bg: #1c1c1e;
-      --surface: #232326;
-      --surface-strong: #2c2c2e;
-      --border: #38383a;
-      --text: #ffffff;
-      --muted: rgba(235, 235, 245, 0.72);
-      --link: #0a84ff;
+      color-scheme: {color_scheme};
+      --bg: {bg};
+      --surface: {surface};
+      --surface-strong: {surface_strong};
+      --border: {border};
+      --text: {text};
+      --muted: {muted};
+      --link: {link};
     }}
 
     * {{
@@ -506,6 +574,40 @@ def _build_html_document(inner_html: str, page_url: str, title: str) -> str:
 </html>"""
 
 
+# Pull the themed body content back out of a previously written preview HTML file.
+def _extract_preview_inner_html(document: str) -> str:
+    try:
+        soup = _make_soup(document)
+    except Exception:
+        return ""
+    content = soup.select_one("div.content")
+    if content is None:
+        return ""
+    return content.decode_contents()
+
+
+# Write a themed standalone HTML file for one preview block.
+def _write_themed_preview_file(
+    *,
+    slug: str,
+    block_id: str,
+    title: str,
+    inner_html: str,
+    page_url: str,
+    theme: dict[str, str] | None = None,
+) -> str:
+    tokens = theme or _resolve_preview_theme()
+    theme_fingerprint = str(tokens.get("fingerprint") or "default")
+    content_digest = hashlib.sha256(inner_html.encode("utf-8")).hexdigest()[:16]
+    cache_path = _detail_html_cache_path(slug, block_id, content_digest, theme_fingerprint)
+
+    if not cache_path.exists():
+        html_document = _build_html_document(inner_html, page_url, title, tokens)
+        _write_text_file(cache_path, html_document)
+
+    return str(cache_path)
+
+
 # Normalize and cache a rendered HTML block.
 def _create_html_block_file(slug: str, block_id: str, title: str, node_html: str, page_url: str) -> str:
     fragment = _make_soup(node_html)
@@ -530,13 +632,71 @@ def _create_html_block_file(slug: str, block_id: str, title: str, node_html: str
         wrapper = fragment.new_tag("div", attrs={"class": "table-wrap"})
         table.wrap(wrapper)
 
-    html_document = _build_html_document(fragment.decode_contents(), page_url, title)
-    cache_path = _detail_html_cache_path(slug, block_id, html_document)
+    return _write_themed_preview_file(
+        slug=slug,
+        block_id=block_id,
+        title=title,
+        inner_html=fragment.decode_contents(),
+        page_url=page_url,
+    )
 
-    if not cache_path.exists():
-        _write_text_file(cache_path, html_document)
 
-    return str(cache_path)
+# Rebuild html-file preview paths so cached details follow the current host theme.
+def _retheme_detail_html_blocks(detail: dict[str, Any], slug: str) -> dict[str, Any]:
+    blocks = detail.get("blocks")
+    if not isinstance(blocks, list) or not blocks:
+        return detail
+
+    theme = _resolve_preview_theme()
+    theme_fp = str(theme.get("fingerprint") or "default")
+    page_url = _normalize_text(detail.get("homepageUrl")) or _resolve_model_page_url(slug)
+    updated_blocks: list[Any] = []
+
+    for block in blocks:
+        if not isinstance(block, dict):
+            updated_blocks.append(block)
+            continue
+
+        next_block = dict(block)
+        if _normalize_filter_key(next_block.get("format")) != "html-file":
+            updated_blocks.append(next_block)
+            continue
+
+        content_url = _normalize_text(next_block.get("contentUrl"))
+        old_path = Path(content_url) if content_url else None
+        # Already themed for the active host palette.
+        if old_path is not None and theme_fp in old_path.name and old_path.is_file():
+            updated_blocks.append(next_block)
+            continue
+
+        inner_html = ""
+        if old_path is not None and old_path.is_file():
+            try:
+                inner_html = _extract_preview_inner_html(old_path.read_text(encoding="utf-8"))
+            except OSError:
+                inner_html = ""
+        if not inner_html:
+            # Fall back to inline markdown/html content when present.
+            inner_html = str(next_block.get("content") or "").strip()
+
+        if not inner_html:
+            updated_blocks.append(next_block)
+            continue
+
+        block_id = _normalize_text(next_block.get("id")) or "readme"
+        title = _normalize_text(next_block.get("title")) or f"{slug} {block_id}"
+        next_block["contentUrl"] = _write_themed_preview_file(
+            slug=slug,
+            block_id=block_id,
+            title=title,
+            inner_html=inner_html,
+            page_url=page_url,
+            theme=theme,
+        )
+        updated_blocks.append(next_block)
+
+    detail["blocks"] = updated_blocks
+    return detail
 
 
 # Search query helpers
@@ -1117,18 +1277,23 @@ def _load_item_detail(
 
     # Serve sanitized cached details immediately when requested
     if cached and prefer_cached and not force_refresh:
-        return _sanitize_detail_payload(dict(cached)), []
+        detail = _retheme_detail_html_blocks(_sanitize_detail_payload(dict(cached)), slug)
+        return detail, []
 
     try:
         # Refresh the cache from the live model page
-        detail = _sanitize_detail_payload(_parse_item_detail(slug, _request_text(_resolve_model_page_url(slug))))
+        detail = _retheme_detail_html_blocks(
+            _sanitize_detail_payload(_parse_item_detail(slug, _request_text(_resolve_model_page_url(slug)))),
+            slug,
+        )
 
         _write_cache(cache_path, detail)
         return detail, []
     except Exception as exc:
         # Fall back to cached details when refresh fails
         if cached and prefer_cached:
-            return dict(cached), [f"Using cached details for {slug}: {exc}"]
+            detail = _retheme_detail_html_blocks(_sanitize_detail_payload(dict(cached)), slug)
+            return detail, [f"Using cached details for {slug}: {exc}"]
         raise
 
 
