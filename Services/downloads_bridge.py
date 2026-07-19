@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 import re
 import sys
 from dataclasses import dataclass
@@ -187,6 +188,139 @@ def _resource_key_to_slug(resource_key: str) -> str:
     if normalized.startswith("ollama:"):
         return normalized.partition(":")[2].strip()
     return normalized
+
+
+# Platform / runtime format helpers
+#
+# Ollama publishes classic (CUDA/Vulkan/Metal-via-llama.cpp) tags and macOS MLX
+# tags side-by-side (e.g. gemma4:12b vs gemma4:12b-mlx). The downloads bridge
+# runs on the user machine via ASLM, so filter by local OS:
+#   - Windows / Linux / other → classic tags only (exclude MLX)
+#   - macOS → MLX tags only
+
+# Resolve the host OS family for model-format filtering.
+def _host_platform_family() -> str:
+    system = platform.system().strip().lower()
+    if system == "darwin" or sys.platform == "darwin":
+        return "macos"
+    if system == "windows" or sys.platform.startswith("win"):
+        return "windows"
+    if system == "linux" or sys.platform.startswith("linux"):
+        return "linux"
+    return "other"
+
+
+# Report whether this host should only see MLX model builds.
+def _host_wants_mlx_variants() -> bool:
+    return _host_platform_family() == "macos"
+
+
+# Return True when a model ref/tag denotes an MLX (Apple Silicon) build.
+def _is_mlx_model_ref(value: str | None) -> bool:
+    text = _normalize_text(value).lower()
+    if not text:
+        return False
+    if text.startswith("ollama:"):
+        text = text[len("ollama:") :].strip()
+
+    # Prefer the tag segment when the ref is slug:tag.
+    tag = text.split(":", 1)[1].strip() if ":" in text else text
+    if not tag:
+        return False
+
+    # Common Ollama MLX tags: "12b-mlx", "e2b-mlx", rarely bare "mlx".
+    if tag == "mlx" or tag.endswith("-mlx"):
+        return True
+    # Defensive: mlx as a discrete hyphen segment (foo-mlx-bar).
+    if re.search(r"(^|-)mlx($|-)", tag):
+        return True
+    return False
+
+
+# Return True when a parsed variant payload is an MLX build.
+def _variant_is_mlx(variant: dict[str, Any] | None) -> bool:
+    if not isinstance(variant, dict):
+        return False
+    if _is_mlx_model_ref(str(variant.get("resourceKey") or "")):
+        return True
+    if _is_mlx_model_ref(str(variant.get("title") or "")):
+        return True
+    for tag in variant.get("tags") or []:
+        if str(tag).strip().lower() == "mlx":
+            return True
+    return False
+
+
+# Keep only variants that match the host platform (classic vs MLX).
+def _filter_variants_for_host(variants: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    wants_mlx = _host_wants_mlx_variants()
+    filtered: list[dict[str, Any]] = []
+    for variant in variants or []:
+        if not isinstance(variant, dict):
+            continue
+        is_mlx = _variant_is_mlx(variant)
+        if wants_mlx and not is_mlx:
+            continue
+        if not wants_mlx and is_mlx:
+            continue
+        next_variant = dict(variant)
+        next_variant["sortOrder"] = len(filtered)
+        filtered.append(next_variant)
+    return filtered
+
+
+# Pick the default variant resource key after platform filtering.
+def _select_default_variant_key(variants: list[dict[str, Any]]) -> str:
+    if not variants:
+        return ""
+    for variant in variants:
+        key = str(variant.get("resourceKey") or "")
+        title = str(variant.get("title") or "").strip().lower()
+        if key.endswith(":latest") or title == "latest":
+            return key
+    return str(variants[0].get("resourceKey") or "")
+
+
+# Apply host platform variant filtering to a detail payload in place/copy.
+def _apply_platform_variant_filter(detail: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(detail or {})
+    variants = normalized.get("variants")
+    if not isinstance(variants, list):
+        return normalized
+
+    filtered = _filter_variants_for_host(variants)
+    normalized["variants"] = filtered
+    normalized["defaultVariantResourceKey"] = _select_default_variant_key(filtered)
+    if "variantCount" in normalized:
+        normalized["variantCount"] = len(filtered)
+    return normalized
+
+
+# Reject install/uninstall of a format that cannot run on this host.
+def _assert_resource_allowed_on_host(resource_key: str) -> None:
+    normalized = _normalize_text(resource_key)
+    if not normalized:
+        return
+
+    model_ref = normalized[len("ollama:") :].strip() if normalized.lower().startswith("ollama:") else normalized
+    # Family-only keys (no tag) are allowed; the UI should prefer a variant key.
+    if ":" not in model_ref:
+        return
+
+    is_mlx = _is_mlx_model_ref(normalized)
+    wants_mlx = _host_wants_mlx_variants()
+    family = _host_platform_family()
+
+    if wants_mlx and not is_mlx:
+        raise ValueError(
+            f"Model '{model_ref}' is not an MLX build. "
+            "On macOS the downloads catalog only installs MLX variants."
+        )
+    if not wants_mlx and is_mlx:
+        raise ValueError(
+            f"Model '{model_ref}' is an MLX (Apple Silicon) build. "
+            f"On {family} the downloads catalog only installs classic CUDA/Vulkan variants."
+        )
 
 
 # Cache path helpers
@@ -1196,12 +1330,10 @@ def _parse_item_detail(slug: str, html: str) -> dict[str, Any]:
         updated_text,
     )
 
-    # Resolve variants and the preferred default selection
+    # Resolve variants; host platform filtering is applied later so cached details
+    # stay reusable and are filtered at serve time.
     variants = _parse_variant_payloads(soup, slug)
-    default_variant = next((variant["resourceKey"] for variant in variants if variant["resourceKey"].endswith(":latest")), "")
-
-    if not default_variant and variants:
-        default_variant = str(variants[0]["resourceKey"])
+    default_variant = _select_default_variant_key(variants)
 
     # Prefer the rendered readme block because it matches the source page styling
     # Keep markdown as a fallback for pages that do not expose the rendered section
@@ -1262,7 +1394,8 @@ def _sanitize_detail_payload(detail: dict[str, Any]) -> dict[str, Any]:
             if _normalize_filter_key((block or {}).get("id")) != "quick-start"
         ]
 
-    return normalized
+    # Drop MLX or classic variants that cannot run on this host OS.
+    return _apply_platform_variant_filter(normalized)
 
 
 # Load detail payloads with cache fallback.
@@ -1304,6 +1437,7 @@ def _build_install_manifest(resource_key: str) -> dict[str, Any]:
     model_name = _resource_key_to_slug(resource_key)
     if not model_name:
         raise ValueError("Missing resourceKey for resolve_install.")
+    _assert_resource_allowed_on_host(resource_key)
 
     return {
         "resourceKey": f"ollama:{model_name}",
@@ -1328,6 +1462,9 @@ def _build_uninstall_manifest(resource_key: str) -> dict[str, Any]:
     model_name = _resource_key_to_slug(resource_key)
     if not model_name:
         raise ValueError("Missing resourceKey for resolve_uninstall.")
+    # Uninstall is allowed for any previously installed ref, including formats
+    # that are no longer offered for this host (e.g. leftover MLX on Windows).
+    # Only block clearly malformed keys; platform install guard stays on install.
 
     return {
         "resourceKey": f"ollama:{model_name}",
@@ -1392,7 +1529,10 @@ def _handle_resolve_install(category_id: str, resource_key: str) -> dict[str, An
     if category_id != OLLAMA_CATEGORY_ID:
         return _response(success=False, error=f"Unsupported categoryId: {category_id}")
 
-    return _response(install_manifest=_build_install_manifest(resource_key))
+    try:
+        return _response(install_manifest=_build_install_manifest(resource_key))
+    except ValueError as exc:
+        return _response(success=False, error=str(exc))
 
 
 # Handle the resolve_uninstall operation.
@@ -1400,7 +1540,10 @@ def _handle_resolve_uninstall(category_id: str, resource_key: str) -> dict[str, 
     if category_id != OLLAMA_CATEGORY_ID:
         return _response(success=False, error=f"Unsupported categoryId: {category_id}")
 
-    return _response(uninstall_manifest=_build_uninstall_manifest(resource_key))
+    try:
+        return _response(uninstall_manifest=_build_uninstall_manifest(resource_key))
+    except ValueError as exc:
+        return _response(success=False, error=str(exc))
 
 
 # Dispatch helpers
