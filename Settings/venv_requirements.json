@@ -63,7 +63,9 @@
             "id": "mcp-sandbox",
             "path": "Data/venvs/tools/mcp-sandbox",
             "tool": "mcp-sandbox",
-            "packages": []
+            "packages": [
+                "mcp==1.26.0"
+            ]
         }
     ]
 }
