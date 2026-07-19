@@ -156,7 +156,8 @@
     "searchedFor": "已搜索 {query}",
     "noSourcesFor": "未找到 {query} 的来源",
     "searchingFor": "正在搜索 {query}",
-    "badQuery": "无效查询：{query}"
+    "badQuery": "无效查询：{query}",
+    "openFileLocation": "打开文件位置"
   },
   "skills": {
     "title": "技能",
@@ -460,6 +461,7 @@
     "serverTools": "{name}（{count} 个工具）",
     "cancel": "取消",
     "save": "保存",
-    "noServers": "没有 MCP 服务器"
+    "noServers": "没有 MCP 服务器",
+    "reload": "重新加载 MCP 服务器"
   }
 }

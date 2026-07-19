@@ -6,6 +6,7 @@ import { createChatHistoryUi } from '../ui/chat-history-ui.js';
 import { createMessagesUi } from '../ui/messages-ui.js?v=web-code-preview-2';
 import { createModelSelectorUi } from '../ui/model-selector-ui.js';
 import { createParametersUi } from '../ui/parameters-ui.js';
+import { createSettingsSelectUi } from '../ui/settings-select-ui.js';
 import { createSkillsUi } from '../ui/skills-ui.js?v=slash-inline-1';
 import { createToolInspector } from '../ui/tool-inspector.js';
 import { createAppContext } from './app-context.js?v=message-icons-1';
@@ -23,6 +24,9 @@ $(function initChatApp() {
   const attachmentsUi = createAttachmentsUi(context);
   const parametersUi = createParametersUi(context);
   const skillsUi = createSkillsUi(context);
+  // Settings selects (engine / preset / dyn params) share the model-selector look
+  // but stay independent of the model control itself.
+  const settingsSelectUi = createSettingsSelectUi(context);
   const modelSelectorUi = createModelSelectorUi(context);
   const messagesUi = createMessagesUi(context, {
     attachmentUi: attachmentsUi,
@@ -53,7 +57,8 @@ $(function initChatApp() {
     historyUi,
     messagesUi,
     modelSelectorUi,
-    parametersUi
+    parametersUi,
+    settingsSelectUi
   });
 
   // Finalize shared UI setup.
@@ -63,6 +68,8 @@ $(function initChatApp() {
   chatController.wireInput(context.dom.$chatInputConv, context.dom.$sendBtnConv);
   messagesUi.updateSendButtons();
   skillsUi.init();
+  // Catch any selects rendered during engine bootstrap after first paint.
+  settingsSelectUi.scan();
   chatController.refreshContextUsageNow();
   chatController.startContextUsagePolling();
 

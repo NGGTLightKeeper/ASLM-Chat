@@ -146,27 +146,10 @@ def build_host_theme_template_context() -> dict[str, Any]:
     if not isinstance(raw, dict):
         return _empty_context()
 
-    colors = raw.get("colors")
-    if not isinstance(colors, dict):
-        return _empty_context()
-
-    resolved: dict[str, str] = {}
-    for aslm_key, css_var in _ASLM_COLOR_KEY_TO_CSS_VAR.items():
-        val = colors.get(aslm_key)
-        if val is None:
-            continue
-        css_color = normalize_color_to_css(str(val))
-        if css_color is None:
-            continue
-        resolved[css_var] = css_color
-
+    resolved, theme = resolve_host_css_variables()
     if not resolved:
         return _empty_context()
 
-    if "--c-system-teal" in resolved:
-        resolved["--c-system-cyan"] = resolved["--c-system-teal"]
-
-    theme = _effective_theme(raw)
     prefer_light_activity = infer_prefer_light_activity_surfaces(resolved, theme)
 
     declarations = [f"  {var}: {value};" for var, value in resolved.items()]
@@ -276,3 +259,100 @@ def _json_for_script_tag(value: dict[str, Any]) -> str:
         .replace("<", "\\u003c")
         .replace(">", "\\u003e")
     )
+
+
+# Default dark preview tokens used when no host theme snapshot is available.
+_PREVIEW_DOCUMENT_DEFAULTS: Final[dict[str, str]] = {
+    "color_scheme": "dark",
+    "bg": "#1c1c1e",
+    "surface": "#232326",
+    "surface_strong": "#2c2c2e",
+    "border": "#38383a",
+    "text": "#ffffff",
+    "muted": "rgba(235, 235, 245, 0.72)",
+    "link": "#0a84ff",
+}
+
+
+# Resolve host palette colors into CSS variables used by the chat UI.
+def resolve_host_css_variables() -> tuple[dict[str, str], str]:
+    """Return ``(css_var -> color, effective_theme)`` from the host theme snapshot."""
+
+    raw = load_host_theme()
+    if not isinstance(raw, dict):
+        return {}, "dark"
+
+    colors = raw.get("colors")
+    if not isinstance(colors, dict):
+        return {}, _effective_theme(raw)
+
+    resolved: dict[str, str] = {}
+    for aslm_key, css_var in _ASLM_COLOR_KEY_TO_CSS_VAR.items():
+        val = colors.get(aslm_key)
+        if val is None:
+            continue
+        css_color = normalize_color_to_css(str(val))
+        if css_color is None:
+            continue
+        resolved[css_var] = css_color
+
+    if "--c-system-teal" in resolved:
+        resolved["--c-system-cyan"] = resolved["--c-system-teal"]
+
+    return resolved, _effective_theme(raw)
+
+
+# Build CSS tokens for standalone HTML documents (downloads bridge previews, etc.).
+def resolve_preview_document_theme() -> dict[str, str]:
+    """Return themed CSS tokens for offline HTML shells consumed by ASLM.
+
+    Keys: ``color_scheme``, ``bg``, ``surface``, ``surface_strong``, ``border``,
+    ``text``, ``muted``, ``link``, ``fingerprint``.
+    Falls back to the dark ASLM-Chat defaults when no host theme is present.
+    """
+
+    resolved, theme = resolve_host_css_variables()
+    tokens = dict(_PREVIEW_DOCUMENT_DEFAULTS)
+    tokens["color_scheme"] = theme if theme in {"light", "dark"} else "dark"
+
+    if resolved:
+        tokens["bg"] = (
+            resolved.get("--c-bg-surface")
+            or resolved.get("--c-bg")
+            or tokens["bg"]
+        )
+        tokens["surface"] = (
+            resolved.get("--c-bg-elevated")
+            or resolved.get("--c-bg-surface")
+            or tokens["surface"]
+        )
+        tokens["surface_strong"] = (
+            resolved.get("--c-gray-4")
+            or resolved.get("--c-bg-elevated")
+            or tokens["surface_strong"]
+        )
+        tokens["border"] = resolved.get("--c-border") or tokens["border"]
+        tokens["text"] = resolved.get("--c-text") or tokens["text"]
+        tokens["muted"] = (
+            resolved.get("--c-text-muted")
+            or resolved.get("--c-text-dim")
+            or tokens["muted"]
+        )
+        tokens["link"] = (
+            resolved.get("--c-link")
+            or resolved.get("--c-system-blue")
+            or resolved.get("--c-primary")
+            or tokens["link"]
+        )
+
+    # Stable short fingerprint so HTML caches can key off the active theme.
+    identity = json.dumps(
+        {key: tokens[key] for key in sorted(tokens.keys())},
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+    # Local import avoided: hashlib is stdlib and keeps this module free of Services deps.
+    import hashlib
+
+    tokens["fingerprint"] = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+    return tokens

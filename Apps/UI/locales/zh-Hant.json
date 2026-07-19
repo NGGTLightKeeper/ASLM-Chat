@@ -156,7 +156,8 @@
     "searchedFor": "已搜尋 {query}",
     "noSourcesFor": "找不到與 {query} 相關的來源",
     "searchingFor": "正在搜尋 {query}",
-    "badQuery": "查詢無效：{query}"
+    "badQuery": "查詢無效：{query}",
+    "openFileLocation": "開啟檔案位置"
   },
   "skills": {
     "title": "技能",
@@ -460,6 +461,7 @@
     "serverTools": "{name}（{count} 個工具）",
     "cancel": "取消",
     "save": "儲存",
-    "noServers": "沒有 MCP 伺服器"
+    "noServers": "沒有 MCP 伺服器",
+    "reload": "重新載入 MCP 伺服器"
   }
 }

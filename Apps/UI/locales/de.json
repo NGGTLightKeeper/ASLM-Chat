@@ -156,7 +156,8 @@
     "searchedFor": "Gesucht nach {query}",
     "noSourcesFor": "Keine Quellen gefunden für {query}",
     "searchingFor": "Suche nach {query}",
-    "badQuery": "Ungültige Abfrage: {query}"
+    "badQuery": "Ungültige Abfrage: {query}",
+    "openFileLocation": "Dateispeicherort öffnen"
   },
   "skills": {
     "title": "Skills",
@@ -460,6 +461,7 @@
     "serverTools": "{name} ({count} Tools)",
     "cancel": "Abbrechen",
     "save": "Speichern",
-    "noServers": "Keine MCP-Server"
+    "noServers": "Keine MCP-Server",
+    "reload": "MCP-Server neu laden"
   }
 }

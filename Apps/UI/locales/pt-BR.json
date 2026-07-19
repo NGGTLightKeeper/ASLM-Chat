@@ -156,7 +156,8 @@
     "searchedFor": "Pesquisou por {query}",
     "noSourcesFor": "Nenhuma fonte encontrada para {query}",
     "searchingFor": "Pesquisando por {query}",
-    "badQuery": "Consulta inválida: {query}"
+    "badQuery": "Consulta inválida: {query}",
+    "openFileLocation": "Abrir local do arquivo"
   },
   "skills": {
     "title": "Habilidades",
@@ -460,6 +461,7 @@
     "serverTools": "{name} ({count} ferramentas)",
     "cancel": "Cancelar",
     "save": "Salvar",
-    "noServers": "Nenhum servidor MCP"
+    "noServers": "Nenhum servidor MCP",
+    "reload": "Recarregar servidores MCP"
   }
 }

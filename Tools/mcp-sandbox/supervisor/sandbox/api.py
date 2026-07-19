@@ -79,18 +79,25 @@ CORE_TOOLS = [
             "PATHS: workspace files use plain relative paths ('script.py', 'subdir/file.py'); "
             "system/container files use absolute paths ('/etc/hosts', '/tmp/out.txt'). "
             "IMPORTANT: For package managers and long-running build/test commands, set timeout_s "
-            "to at least 300. Default timeout of 60s is only for quick commands."
+            "to at least 300. Default timeout of 60s is only for quick commands. "
+            "The required description argument must summarize the command's intent in the user's language, in 3-4 words maximum."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "command": {"type": "string"},
+                "description": {
+                    "type": "string",
+                    "description": "Describe what the command is trying to do in the user's language, in 3-4 words maximum.",
+                    "minLength": 1,
+                    "maxLength": 80,
+                },
                 "cwd": {"type": "string", "default": "."},
                 "timeout_s": {"type": "integer", "default": DEFAULT_TIMEOUT},
                 "stdin": {"type": "string"},
                 "background": {"type": "string", "enum": ["auto", "always", "never"], "default": "auto"},
             },
-            "required": ["command"],
+            "required": ["command", "description"],
         },
     },
     {

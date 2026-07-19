@@ -901,8 +901,13 @@ export function createSkillsUi(context) {
         });
       }
 
+      // Same chrome as "Attach files": text action row + leading SVG icon.
       const $manage = $('<button type="button" class="composer-menu-action composer-skills-manage" role="menuitem">')
-        .append($('<span class="composer-tool-icon is-skills" aria-hidden="true">'))
+        .attr({
+          title: t('skills.manage'),
+          'aria-label': t('skills.manage')
+        })
+        .append(icons.SKILLS_MANAGE_ICON || '')
         .append($('<span>').text(t('skills.manage')));
       $manage.on('click', function onManageClick(ev) {
         ev.preventDefault();

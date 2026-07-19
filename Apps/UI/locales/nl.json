@@ -156,7 +156,8 @@
     "searchedFor": "Gezocht naar {query}",
     "noSourcesFor": "Geen bronnen gevonden voor {query}",
     "searchingFor": "Zoeken naar {query}",
-    "badQuery": "Ongeldige query: {query}"
+    "badQuery": "Ongeldige query: {query}",
+    "openFileLocation": "Bestandslocatie openen"
   },
   "skills": {
     "title": "Vaardigheden",
@@ -460,6 +461,7 @@
     "serverTools": "{name} ({count} tools)",
     "cancel": "Annuleren",
     "save": "Opslaan",
-    "noServers": "Geen MCP-servers"
+    "noServers": "Geen MCP-servers",
+    "reload": "MCP-servers opnieuw laden"
   }
 }

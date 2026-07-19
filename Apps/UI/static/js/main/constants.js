@@ -572,14 +572,16 @@ export const PARAMETER_DEFINITIONS = {
   // OpenAI-compatible parameters.
   max_completion_tokens: {
     label: 'Max Completion Tokens',
-    type: 'range',
+    // Same stepped token slider as num_ctx / num_predict (not a linear range).
+    type: 'token-range',
     group: 'settings',
     engines: ['openai'],
-    min: 1,
+    min: 128,
     max: 32768,
-    step: 32,
+    step: 128,
     decimals: 0,
-    fallback: 4096
+    fallback: 4096,
+    note: 'Maximum generated tokens.'
   },
   n: {
     label: 'Candidates',

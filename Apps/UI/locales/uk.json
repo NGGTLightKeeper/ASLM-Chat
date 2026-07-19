@@ -156,7 +156,8 @@
     "searchedFor": "Пошук: {query}",
     "noSourcesFor": "Джерел не знайдено для {query}",
     "searchingFor": "Пошук: {query}",
-    "badQuery": "Невірний запит: {query}"
+    "badQuery": "Невірний запит: {query}",
+    "openFileLocation": "Відкрити розташування файлу"
   },
   "skills": {
     "title": "Навички",
@@ -460,6 +461,7 @@
     "serverTools": "{name} ({count} інстр.)",
     "cancel": "Скасувати",
     "save": "Зберегти",
-    "noServers": "Немає серверів MCP"
+    "noServers": "Немає серверів MCP",
+    "reload": "Перезавантажити сервери MCP"
   }
 }

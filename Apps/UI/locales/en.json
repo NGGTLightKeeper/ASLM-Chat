@@ -156,7 +156,8 @@
     "searchedFor": "Searched for {query}",
     "noSourcesFor": "No sources found for {query}",
     "searchingFor": "Searching for {query}",
-    "badQuery": "Bad query: {query}"
+    "badQuery": "Bad query: {query}",
+    "openFileLocation": "Open file location"
   },
   "mcp": {
     "editConfig": "Edit mcp.json",
@@ -164,6 +165,7 @@
     "serverTools": "{name} ({count} tools)",
     "cancel": "Cancel",
     "save": "Save",
+    "reload": "Reload MCP servers",
     "noServers": "No MCP servers"
   },
   "skills": {

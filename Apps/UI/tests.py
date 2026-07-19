@@ -6,11 +6,13 @@ import importlib
 import json
 import io
 import os
+import subprocess
 import tempfile
 import textwrap
 import zipfile
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -36,7 +38,9 @@ from API.openai import (
     generate as generate_openai,
     get_model_settings as get_openai_model_settings,
 )
+from Services import user_mcp_client
 from Settings import settings as project_settings
+from Settings.mcp_json import UserMcpServerEntry
 from Settings import skills as skills_config
 from Apps.Data.models import (
     Chat,
@@ -76,6 +80,7 @@ from Apps.UI.views import (
     _normalize_uploaded_file_ids,
     _parse_active_tool_slugs,
     _resolve_request_engine,
+    _reveal_file_in_file_manager,
     _resolve_history_char_budget,
     _serialize_attachment_record,
     _selected_tools_include_sandbox,
@@ -139,6 +144,136 @@ class ToolRegistryTestMixin:
             encoding="utf-8",
         )
         tool_registry.reset_cache()
+
+
+# Persistent user MCP connection tests.
+class UserMcpPersistentSessionTests(SimpleTestCase):
+    def setUp(self):
+        super().setUp()
+        user_mcp_client.shutdown_all()
+
+    def tearDown(self):
+        user_mcp_client.shutdown_all()
+        super().tearDown()
+
+    @staticmethod
+    def _entry() -> UserMcpServerEntry:
+        return UserMcpServerEntry(
+            config_key="test",
+            server_id="test",
+            display_name="Test MCP",
+            transport="stdio",
+            command="fake-mcp",
+            args=[],
+            env=None,
+            cwd=None,
+            url=None,
+            headers=None,
+        )
+
+    # list_tools and repeated calls must share one initialized transport.
+    def test_reuses_connection_until_shutdown(self):
+        counters = {"entered": 0, "exited": 0, "calls": 0}
+
+        class FakeSession:
+            async def list_tools(self):
+                return SimpleNamespace(
+                    tools=[
+                        SimpleNamespace(
+                            name="echo",
+                            description="Echo input",
+                            inputSchema={"type": "object", "properties": {}},
+                        )
+                    ]
+                )
+
+            async def call_tool(self, name, arguments):
+                counters["calls"] += 1
+                return SimpleNamespace(
+                    isError=False,
+                    structuredContent=None,
+                    content=[SimpleNamespace(text=f"{name}:{arguments['value']}")],
+                )
+
+        @asynccontextmanager
+        async def fake_connect(_entry):
+            counters["entered"] += 1
+            try:
+                yield FakeSession()
+            finally:
+                counters["exited"] += 1
+
+        with patch.object(user_mcp_client, "_connect_session", fake_connect):
+            definitions, error = user_mcp_client.fetch_tool_definitions(self._entry())
+            first = user_mcp_client.call_user_mcp_tool(self._entry(), "echo", {"value": "one"})
+            second = user_mcp_client.call_user_mcp_tool(self._entry(), "echo", {"value": "two"})
+
+            self.assertIsNone(error)
+            self.assertEqual(definitions[0]["mcp_tool_name"], "echo")
+            self.assertEqual(first, "echo:one")
+            self.assertEqual(second, "echo:two")
+            self.assertEqual(counters, {"entered": 1, "exited": 0, "calls": 2})
+
+            user_mcp_client.shutdown_all()
+            self.assertEqual(counters["exited"], 1)
+
+    # A failed transport is discarded so the next invocation reconnects.
+    def test_reconnects_after_transport_failure(self):
+        counters = {"entered": 0}
+
+        class FakeSession:
+            async def call_tool(self, _name, _arguments):
+                if counters["entered"] == 1:
+                    raise ConnectionError("transport stopped")
+                return SimpleNamespace(
+                    isError=False,
+                    structuredContent=None,
+                    content=[SimpleNamespace(text="reconnected")],
+                )
+
+        @asynccontextmanager
+        async def fake_connect(_entry):
+            counters["entered"] += 1
+            yield FakeSession()
+
+        with patch.object(user_mcp_client, "_connect_session", fake_connect):
+            failed = user_mcp_client.call_user_mcp_tool(self._entry(), "echo", {})
+            recovered = user_mcp_client.call_user_mcp_tool(self._entry(), "echo", {})
+
+        self.assertIn("transport stopped", failed)
+        self.assertEqual(recovered, "reconnected")
+        self.assertEqual(counters["entered"], 2)
+
+
+# MCP reload endpoint tests.
+class McpReloadApiTests(SimpleTestCase):
+    @patch("Apps.UI.views._list_tool_servers_cached")
+    @patch("Apps.UI.views._clear_tool_server_cache")
+    @patch.object(tool_registry, "reset_cache")
+    def test_reload_restarts_sessions_and_returns_fresh_servers(
+        self,
+        reset_cache_mock,
+        clear_cache_mock,
+        list_servers_mock,
+    ):
+        servers = [{"id": "custom", "name": "Custom", "user_mcp": True, "tools": []}]
+        list_servers_mock.return_value = servers
+
+        response = self.client.post(
+            reverse("mcp_reload_api"),
+            data=json.dumps({"model": "test-model"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["tool_servers"], servers)
+        reset_cache_mock.assert_called_once_with()
+        clear_cache_mock.assert_called_once_with()
+        list_servers_mock.assert_called_once_with(project_settings.get_llm_engine(), "test-model")
+
+    def test_reload_rejects_non_post_requests(self):
+        response = self.client.get(reverse("mcp_reload_api"))
+        self.assertEqual(response.status_code, 405)
 
 
 # Skills API tests.
@@ -1240,6 +1375,52 @@ class UploadFilesApiTests(SimpleTestCase):
             self.assertEqual(b"".join(response.streaming_content), b"hij")
         finally:
             temp_path.unlink(missing_ok=True)
+
+    # Test reveal endpoint applies path validation before opening the file manager.
+    @patch("Apps.UI.views._reveal_file_in_file_manager")
+    @patch("Apps.UI.views._resolve_shared_file_path")
+    def test_shared_file_reveal_opens_validated_target(self, resolve_mock, reveal_mock):
+        target = Path("C:/sandbox/User/report.svg")
+        resolve_mock.return_value = target
+
+        response = self.client.post(
+            reverse("shared_file_reveal_api"),
+            data=json.dumps({"path": "/workspace/_sandbox/User/report.svg"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True})
+        resolve_mock.assert_called_once_with("/workspace/_sandbox/User/report.svg")
+        reveal_mock.assert_called_once_with(target)
+
+    # Test missing or forbidden shared files are never sent to the file manager.
+    @patch("Apps.UI.views._reveal_file_in_file_manager")
+    @patch("Apps.UI.views._resolve_shared_file_path", side_effect=FileNotFoundError)
+    def test_shared_file_reveal_rejects_invalid_target(self, _resolve_mock, reveal_mock):
+        response = self.client.post(
+            reverse("shared_file_reveal_api"),
+            data=json.dumps({"path": "C:/outside/private.txt"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        reveal_mock.assert_not_called()
+
+    # Test Windows reveal uses Explorer's select-file argument.
+    @patch("Apps.UI.views.subprocess.Popen")
+    def test_reveal_file_manager_selects_file_on_windows(self, popen_mock):
+        target = Path("C:/sandbox/User/report.svg")
+        with patch("Apps.UI.views.sys.platform", "win32"):
+            _reveal_file_in_file_manager(target)
+
+        popen_mock.assert_called_once_with(
+            ["explorer.exe", f"/select,{target}"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
 
     # Test dynamic shared images render inline while the card link remains a download.
     def test_shared_file_dynamic_image_preview_is_inline(self):

@@ -156,7 +156,8 @@
     "searchedFor": "Wyszukano: {query}",
     "noSourcesFor": "Nie znaleziono źródeł dla: {query}",
     "searchingFor": "Wyszukiwanie: {query}",
-    "badQuery": "Nieprawidłowe zapytanie: {query}"
+    "badQuery": "Nieprawidłowe zapytanie: {query}",
+    "openFileLocation": "Otwórz lokalizację pliku"
   },
   "skills": {
     "title": "Umiejętności",
@@ -460,6 +461,7 @@
     "serverTools": "{name} ({count} narzędzi)",
     "cancel": "Anuluj",
     "save": "Zapisz",
-    "noServers": "Brak serwerów MCP"
+    "noServers": "Brak serwerów MCP",
+    "reload": "Przeładuj serwery MCP"
   }
 }

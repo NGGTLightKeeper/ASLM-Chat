@@ -98,7 +98,7 @@ export function createAppContext() {
     SEND_ICON: svgIcon(uiIconPaths.send, 'width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     REMOVE_ATTACHMENT_ICON: svgIcon(uiIconPaths.removeAttachment, 'width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"'),
     COPY_MESSAGE_ICON: svgIcon(uiIconPaths.copy, 'width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"'),
-    REGENERATE_ICON: svgIcon(uiIconPaths.refresh, 'width="14" height="14" viewBox="0 -960 960 960" aria-hidden="true"'),
+    REGENERATE_ICON: svgIcon(uiIconPaths.refresh, 'width="18" height="18" viewBox="0 -960 960 960" aria-hidden="true"'),
     DELETE_MESSAGE_ICON: svgIcon(uiIconPaths.trash, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     COPIED_ICON: svgIcon(uiIconPaths.check, 'width="14" height="14" viewBox="0 -960 960 960" aria-hidden="true"'),
     ARROW_LEFT_ICON: svgIcon(uiIconPaths.arrowLeft, 'width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
@@ -136,7 +136,11 @@ export function createAppContext() {
     CLOSE_ICON: svgIcon(uiIconPaths.removeAttachment, 'width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true"'),
     SKILLS_FOLDER_ICON: svgIcon(uiIconPaths.skillsFolder, 'width="16" height="16" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"'),
     SKILLS_FOLDER_OPEN_ICON: svgIcon(uiIconPaths.skillsFolderOpen, 'width="16" height="16" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"'),
-    SKILLS_FILE_ICON: svgIcon(uiIconPaths.skillsFile, 'width="16" height="16" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"')
+    SKILLS_FILE_ICON: svgIcon(uiIconPaths.skillsFile, 'width="16" height="16" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"'),
+    // Composer flyout action icons (match Attach files sizing).
+    SKILLS_MANAGE_ICON: svgIcon(uiIconPaths.skillsManage, 'width="18" height="18" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"'),
+    MCP_EDIT_ICON: svgIcon(uiIconPaths.mcpEdit, 'width="18" height="18" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"'),
+    MCP_RELOAD_ICON: svgIcon(uiIconPaths.mcpReload, 'width="18" height="18" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"')
   };
 
   // Build the shared action buttons used by assistant and user rows.

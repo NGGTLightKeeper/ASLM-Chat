@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 import re
 import sys
 from dataclasses import dataclass
@@ -189,6 +190,139 @@ def _resource_key_to_slug(resource_key: str) -> str:
     return normalized
 
 
+# Platform / runtime format helpers
+#
+# Ollama publishes classic (CUDA/Vulkan/Metal-via-llama.cpp) tags and macOS MLX
+# tags side-by-side (e.g. gemma4:12b vs gemma4:12b-mlx). The downloads bridge
+# runs on the user machine via ASLM, so filter by local OS:
+#   - Windows / Linux / other → classic tags only (exclude MLX)
+#   - macOS → MLX tags only
+
+# Resolve the host OS family for model-format filtering.
+def _host_platform_family() -> str:
+    system = platform.system().strip().lower()
+    if system == "darwin" or sys.platform == "darwin":
+        return "macos"
+    if system == "windows" or sys.platform.startswith("win"):
+        return "windows"
+    if system == "linux" or sys.platform.startswith("linux"):
+        return "linux"
+    return "other"
+
+
+# Report whether this host should only see MLX model builds.
+def _host_wants_mlx_variants() -> bool:
+    return _host_platform_family() == "macos"
+
+
+# Return True when a model ref/tag denotes an MLX (Apple Silicon) build.
+def _is_mlx_model_ref(value: str | None) -> bool:
+    text = _normalize_text(value).lower()
+    if not text:
+        return False
+    if text.startswith("ollama:"):
+        text = text[len("ollama:") :].strip()
+
+    # Prefer the tag segment when the ref is slug:tag.
+    tag = text.split(":", 1)[1].strip() if ":" in text else text
+    if not tag:
+        return False
+
+    # Common Ollama MLX tags: "12b-mlx", "e2b-mlx", rarely bare "mlx".
+    if tag == "mlx" or tag.endswith("-mlx"):
+        return True
+    # Defensive: mlx as a discrete hyphen segment (foo-mlx-bar).
+    if re.search(r"(^|-)mlx($|-)", tag):
+        return True
+    return False
+
+
+# Return True when a parsed variant payload is an MLX build.
+def _variant_is_mlx(variant: dict[str, Any] | None) -> bool:
+    if not isinstance(variant, dict):
+        return False
+    if _is_mlx_model_ref(str(variant.get("resourceKey") or "")):
+        return True
+    if _is_mlx_model_ref(str(variant.get("title") or "")):
+        return True
+    for tag in variant.get("tags") or []:
+        if str(tag).strip().lower() == "mlx":
+            return True
+    return False
+
+
+# Keep only variants that match the host platform (classic vs MLX).
+def _filter_variants_for_host(variants: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    wants_mlx = _host_wants_mlx_variants()
+    filtered: list[dict[str, Any]] = []
+    for variant in variants or []:
+        if not isinstance(variant, dict):
+            continue
+        is_mlx = _variant_is_mlx(variant)
+        if wants_mlx and not is_mlx:
+            continue
+        if not wants_mlx and is_mlx:
+            continue
+        next_variant = dict(variant)
+        next_variant["sortOrder"] = len(filtered)
+        filtered.append(next_variant)
+    return filtered
+
+
+# Pick the default variant resource key after platform filtering.
+def _select_default_variant_key(variants: list[dict[str, Any]]) -> str:
+    if not variants:
+        return ""
+    for variant in variants:
+        key = str(variant.get("resourceKey") or "")
+        title = str(variant.get("title") or "").strip().lower()
+        if key.endswith(":latest") or title == "latest":
+            return key
+    return str(variants[0].get("resourceKey") or "")
+
+
+# Apply host platform variant filtering to a detail payload in place/copy.
+def _apply_platform_variant_filter(detail: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(detail or {})
+    variants = normalized.get("variants")
+    if not isinstance(variants, list):
+        return normalized
+
+    filtered = _filter_variants_for_host(variants)
+    normalized["variants"] = filtered
+    normalized["defaultVariantResourceKey"] = _select_default_variant_key(filtered)
+    if "variantCount" in normalized:
+        normalized["variantCount"] = len(filtered)
+    return normalized
+
+
+# Reject install/uninstall of a format that cannot run on this host.
+def _assert_resource_allowed_on_host(resource_key: str) -> None:
+    normalized = _normalize_text(resource_key)
+    if not normalized:
+        return
+
+    model_ref = normalized[len("ollama:") :].strip() if normalized.lower().startswith("ollama:") else normalized
+    # Family-only keys (no tag) are allowed; the UI should prefer a variant key.
+    if ":" not in model_ref:
+        return
+
+    is_mlx = _is_mlx_model_ref(normalized)
+    wants_mlx = _host_wants_mlx_variants()
+    family = _host_platform_family()
+
+    if wants_mlx and not is_mlx:
+        raise ValueError(
+            f"Model '{model_ref}' is not an MLX build. "
+            "On macOS the downloads catalog only installs MLX variants."
+        )
+    if not wants_mlx and is_mlx:
+        raise ValueError(
+            f"Model '{model_ref}' is an MLX (Apple Silicon) build. "
+            f"On {family} the downloads catalog only installs classic CUDA/Vulkan variants."
+        )
+
+
 # Cache path helpers
 
 # Resolve the JSON detail cache path for a slug.
@@ -198,11 +332,54 @@ def _detail_cache_path(slug: str) -> Path:
 
 
 # Resolve the HTML detail cache path for a rendered block.
-def _detail_html_cache_path(slug: str, block_id: str, html_document: str) -> Path:
+def _detail_html_cache_path(
+    slug: str,
+    block_id: str,
+    content_digest: str,
+    theme_fingerprint: str,
+) -> Path:
     safe_slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", slug)
     safe_block_id = re.sub(r"[^a-zA-Z0-9._-]+", "_", block_id)
-    digest = hashlib.sha256(html_document.encode("utf-8")).hexdigest()[:16]
-    return DETAIL_HTML_CACHE_DIR / f"{safe_slug}_{safe_block_id}_{digest}.html"
+    safe_theme = re.sub(r"[^a-zA-Z0-9._-]+", "_", theme_fingerprint or "default")[:16]
+    safe_content = re.sub(r"[^a-zA-Z0-9._-]+", "_", content_digest or "content")[:16]
+    return DETAIL_HTML_CACHE_DIR / f"{safe_slug}_{safe_block_id}_{safe_theme}_{safe_content}.html"
+
+
+# Default dark preview shell (matches base ASLM-Chat palette when host theme is absent).
+_DEFAULT_PREVIEW_THEME: dict[str, str] = {
+    "color_scheme": "dark",
+    "bg": "#1c1c1e",
+    "surface": "#232326",
+    "surface_strong": "#2c2c2e",
+    "border": "#38383a",
+    "text": "#ffffff",
+    "muted": "rgba(235, 235, 245, 0.72)",
+    "link": "#0a84ff",
+    "fingerprint": "default-dark",
+}
+
+
+# Load host-theme tokens for standalone preview HTML documents.
+def _resolve_preview_theme() -> dict[str, str]:
+    try:
+        # Reuse the same host palette mapping as the chat UI.
+        from Apps.UI.host_theme_bridge import resolve_preview_document_theme
+
+        tokens = resolve_preview_document_theme()
+        if isinstance(tokens, dict) and tokens.get("bg") and tokens.get("text"):
+            return tokens
+    except Exception:
+        # Bridge must stay available even if the theme module is missing.
+        pass
+    return dict(_DEFAULT_PREVIEW_THEME)
+
+
+# Escape a CSS color/token value for safe interpolation into a style block.
+def _css_token(value: str, fallback: str) -> str:
+    text = str(value or "").strip() or fallback
+    # Preview tokens are always resolved host colors or hardcoded defaults; still
+    # strip characters that could break out of a CSS declaration.
+    return re.sub(r"[^#(),.%a-zA-Z0-9\s_-]", "", text) or fallback
 
 
 # URL helpers
@@ -327,24 +504,49 @@ def _build_default_filter_payloads(search_query: OllamaSearchQuery) -> list[dict
 # HTML rendering helpers
 
 # Build a standalone HTML document for preview blocks.
-def _build_html_document(inner_html: str, page_url: str, title: str) -> str:
+def _build_html_document(
+    inner_html: str,
+    page_url: str,
+    title: str,
+    theme: dict[str, str] | None = None,
+) -> str:
+    tokens = theme or _resolve_preview_theme()
+    defaults = _DEFAULT_PREVIEW_THEME
+    color_scheme = _css_token(tokens.get("color_scheme", ""), defaults["color_scheme"])
+    if color_scheme not in {"light", "dark"}:
+        color_scheme = defaults["color_scheme"]
+    bg = _css_token(tokens.get("bg", ""), defaults["bg"])
+    surface = _css_token(tokens.get("surface", ""), defaults["surface"])
+    surface_strong = _css_token(tokens.get("surface_strong", ""), defaults["surface_strong"])
+    border = _css_token(tokens.get("border", ""), defaults["border"])
+    text = _css_token(tokens.get("text", ""), defaults["text"])
+    muted = _css_token(tokens.get("muted", ""), defaults["muted"])
+    link = _css_token(tokens.get("link", ""), defaults["link"])
+    safe_title = (
+        str(title or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="{color_scheme}">
   <base href="{page_url}">
-  <title>{title}</title>
+  <title>{safe_title}</title>
   <style>
     :root {{
-      color-scheme: dark;
-      --bg: #1c1c1e;
-      --surface: #232326;
-      --surface-strong: #2c2c2e;
-      --border: #38383a;
-      --text: #ffffff;
-      --muted: rgba(235, 235, 245, 0.72);
-      --link: #0a84ff;
+      color-scheme: {color_scheme};
+      --bg: {bg};
+      --surface: {surface};
+      --surface-strong: {surface_strong};
+      --border: {border};
+      --text: {text};
+      --muted: {muted};
+      --link: {link};
     }}
 
     * {{
@@ -506,6 +708,40 @@ def _build_html_document(inner_html: str, page_url: str, title: str) -> str:
 </html>"""
 
 
+# Pull the themed body content back out of a previously written preview HTML file.
+def _extract_preview_inner_html(document: str) -> str:
+    try:
+        soup = _make_soup(document)
+    except Exception:
+        return ""
+    content = soup.select_one("div.content")
+    if content is None:
+        return ""
+    return content.decode_contents()
+
+
+# Write a themed standalone HTML file for one preview block.
+def _write_themed_preview_file(
+    *,
+    slug: str,
+    block_id: str,
+    title: str,
+    inner_html: str,
+    page_url: str,
+    theme: dict[str, str] | None = None,
+) -> str:
+    tokens = theme or _resolve_preview_theme()
+    theme_fingerprint = str(tokens.get("fingerprint") or "default")
+    content_digest = hashlib.sha256(inner_html.encode("utf-8")).hexdigest()[:16]
+    cache_path = _detail_html_cache_path(slug, block_id, content_digest, theme_fingerprint)
+
+    if not cache_path.exists():
+        html_document = _build_html_document(inner_html, page_url, title, tokens)
+        _write_text_file(cache_path, html_document)
+
+    return str(cache_path)
+
+
 # Normalize and cache a rendered HTML block.
 def _create_html_block_file(slug: str, block_id: str, title: str, node_html: str, page_url: str) -> str:
     fragment = _make_soup(node_html)
@@ -530,13 +766,71 @@ def _create_html_block_file(slug: str, block_id: str, title: str, node_html: str
         wrapper = fragment.new_tag("div", attrs={"class": "table-wrap"})
         table.wrap(wrapper)
 
-    html_document = _build_html_document(fragment.decode_contents(), page_url, title)
-    cache_path = _detail_html_cache_path(slug, block_id, html_document)
+    return _write_themed_preview_file(
+        slug=slug,
+        block_id=block_id,
+        title=title,
+        inner_html=fragment.decode_contents(),
+        page_url=page_url,
+    )
 
-    if not cache_path.exists():
-        _write_text_file(cache_path, html_document)
 
-    return str(cache_path)
+# Rebuild html-file preview paths so cached details follow the current host theme.
+def _retheme_detail_html_blocks(detail: dict[str, Any], slug: str) -> dict[str, Any]:
+    blocks = detail.get("blocks")
+    if not isinstance(blocks, list) or not blocks:
+        return detail
+
+    theme = _resolve_preview_theme()
+    theme_fp = str(theme.get("fingerprint") or "default")
+    page_url = _normalize_text(detail.get("homepageUrl")) or _resolve_model_page_url(slug)
+    updated_blocks: list[Any] = []
+
+    for block in blocks:
+        if not isinstance(block, dict):
+            updated_blocks.append(block)
+            continue
+
+        next_block = dict(block)
+        if _normalize_filter_key(next_block.get("format")) != "html-file":
+            updated_blocks.append(next_block)
+            continue
+
+        content_url = _normalize_text(next_block.get("contentUrl"))
+        old_path = Path(content_url) if content_url else None
+        # Already themed for the active host palette.
+        if old_path is not None and theme_fp in old_path.name and old_path.is_file():
+            updated_blocks.append(next_block)
+            continue
+
+        inner_html = ""
+        if old_path is not None and old_path.is_file():
+            try:
+                inner_html = _extract_preview_inner_html(old_path.read_text(encoding="utf-8"))
+            except OSError:
+                inner_html = ""
+        if not inner_html:
+            # Fall back to inline markdown/html content when present.
+            inner_html = str(next_block.get("content") or "").strip()
+
+        if not inner_html:
+            updated_blocks.append(next_block)
+            continue
+
+        block_id = _normalize_text(next_block.get("id")) or "readme"
+        title = _normalize_text(next_block.get("title")) or f"{slug} {block_id}"
+        next_block["contentUrl"] = _write_themed_preview_file(
+            slug=slug,
+            block_id=block_id,
+            title=title,
+            inner_html=inner_html,
+            page_url=page_url,
+            theme=theme,
+        )
+        updated_blocks.append(next_block)
+
+    detail["blocks"] = updated_blocks
+    return detail
 
 
 # Search query helpers
@@ -588,8 +882,79 @@ def _build_search_params(search_query: OllamaSearchQuery) -> list[tuple[str, str
 
 # Search parsing helpers
 
+# Strip a trailing label from a meta group such as "263.3K Pulls".
+def _strip_trailing_label(text: str, labels: tuple[str, ...]) -> str:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return ""
+
+    lower = normalized.lower()
+    for label in labels:
+        suffix = f" {label.lower()}"
+        if lower.endswith(suffix):
+            return normalized[: -len(suffix)].strip()
+        if lower == label.lower():
+            return ""
+    return normalized
+
+
+# Strip a leading label from a meta group such as "Updated 3 weeks ago".
+def _strip_leading_label(text: str, labels: tuple[str, ...]) -> str:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return ""
+
+    lower = normalized.lower()
+    for label in labels:
+        prefix = f"{label.lower()} "
+        if lower.startswith(prefix):
+            return normalized[len(prefix) :].strip()
+        if lower == label.lower():
+            return ""
+    return normalized
+
+
+# Extract pull/tag/updated meta from one Ollama search card (current + legacy markup).
+def _extract_search_card_meta(list_item: Any) -> tuple[str, str, str]:
+    pull_count_text = ""
+    tag_count_text = ""
+    updated_text = ""
+
+    # Current Ollama cards expose labeled icon+text groups without x-test attributes.
+    for group in list_item.select("span.flex.items-center"):
+        group_text = _normalize_text(group.get_text(" ", strip=True))
+        if not group_text:
+            continue
+        lower = group_text.lower()
+
+        if "pull" in lower or "download" in lower:
+            pull_count_text = _strip_trailing_label(group_text, ("pulls", "pull", "downloads", "download"))
+            continue
+        if re.search(r"\btags?\b", lower):
+            tag_count_text = _strip_trailing_label(group_text, ("tags", "tag"))
+            continue
+        if "updated" in lower or re.search(r"\bago\b", lower):
+            updated_text = _strip_leading_label(group_text, ("updated",))
+            if not updated_text:
+                updated_text = group_text
+            continue
+
+    # Legacy x-test selectors kept as a fallback for older cached HTML.
+    if not pull_count_text:
+        node = list_item.select_one("[x-test-pull-count]")
+        pull_count_text = _normalize_text(node.get_text(" ", strip=True) if node else "")
+    if not tag_count_text:
+        node = list_item.select_one("[x-test-tag-count]")
+        tag_count_text = _normalize_text(node.get_text(" ", strip=True) if node else "")
+    if not updated_text:
+        node = list_item.select_one("[x-test-updated]")
+        updated_text = _normalize_text(node.get_text(" ", strip=True) if node else "")
+
+    return pull_count_text, tag_count_text, updated_text
+
+
 # Parse filter payloads from the Ollama search page.
-def _parse_filter_payloads(soup: BeautifulSoup, search_query: OllamaSearchQuery) -> list[dict[str, Any]]:
+def _parse_filter_payloads(soup: Any, search_query: OllamaSearchQuery) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
     active_capabilities = set(search_query.capabilities)
     active_sort = search_query.sort_key or DEFAULT_SORT_KEY
@@ -640,13 +1005,23 @@ def _parse_filter_payloads(soup: BeautifulSoup, search_query: OllamaSearchQuery)
 
 
 # Parse model cards from the Ollama search page.
-def _parse_search_items(soup: BeautifulSoup) -> list[dict[str, Any]]:
+def _parse_search_items(soup: Any) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     seen_slugs: set[str] = set()
 
-    for index, list_item in enumerate(soup.select("li[x-test-model]")):
-        # Resolve the card identity from its main link
-        anchor = list_item.select_one("a[href]")
+    # Current library search uses a plain role=list grid. Keep legacy x-test cards
+    # as a fallback so older cached HTML still parses if present.
+    list_items = soup.select("ul[role='list'] > li")
+    if not list_items:
+        list_items = soup.select("li[x-test-model]")
+    if not list_items:
+        list_items = soup.select("ul.grid > li")
+
+    for index, list_item in enumerate(list_items):
+        # Resolve the card identity from its main library link
+        anchor = list_item.select_one("a[href^='/library/'], a[href*='/library/']")
+        if anchor is None:
+            anchor = list_item.select_one("a[href]")
         if anchor is None:
             continue
 
@@ -657,32 +1032,57 @@ def _parse_search_items(soup: BeautifulSoup) -> list[dict[str, Any]]:
         if href.startswith("/library/"):
             slug = href.removeprefix("/library/").strip("/")
         else:
-            slug = href.removeprefix("/").strip("/")
-
-        # Deduplicate cards because the page can occasionally surface repeats
-        if not slug or slug in seen_slugs:
+            # Ignore non-library links that can appear in the same list shell.
             continue
 
-        # Read the visible card content
-        title_node = list_item.select_one("[x-test-search-response-title]")
-        title = _normalize_text(title_node.get_text(" ", strip=True) if title_node else slug)
+        # Cards are family-level only; skip accidental tag deep-links.
+        if not slug or ":" in slug or slug in seen_slugs:
+            continue
 
-        header_container = anchor.find("div", attrs={"title": True})
-        summary_node = header_container.find("p") if header_container else None
+        # Read the visible card content (new markup first, legacy selectors second).
+        title_node = (
+            list_item.select_one("h2")
+            or list_item.select_one("[x-test-search-response-title]")
+        )
+        title = _normalize_text(title_node.get_text(" ", strip=True) if title_node else "")
+
+        header_container = list_item.select_one("div[title]") or anchor.find("div", attrs={"title": True})
+        if not title and header_container is not None:
+            title = _normalize_text(header_container.get("title"))
+
+        summary_node = None
+        if header_container is not None:
+            summary_node = header_container.find("p")
+        if summary_node is None:
+            summary_node = list_item.select_one("p.max-w-lg")
         summary = _normalize_text(summary_node.get_text(" ", strip=True) if summary_node else "")
 
-        tag_container = anchor.select_one("div.flex.flex-col > div.flex.flex-wrap")
-        tag_values = _deduplicate_preserving_order(
-            [_normalize_text(node.get_text(" ", strip=True)) for node in tag_container.select("span")] if tag_container else []
+        tag_container = (
+            list_item.select_one("div.flex.flex-wrap")
+            or list_item.select_one("div.flex.flex-col > div.flex.flex-wrap")
         )
+        if tag_container is not None:
+            # Prefer direct badge chips; fall back to all spans inside the wrap.
+            badge_nodes = [
+                child for child in tag_container.children
+                if getattr(child, "name", None) == "span"
+            ]
+            if not badge_nodes:
+                badge_nodes = tag_container.select("span")
+            tag_values = _deduplicate_preserving_order(
+                [_normalize_text(node.get_text(" ", strip=True)) for node in badge_nodes]
+            )
+        else:
+            tag_values = []
 
-        pull_count_node = list_item.select_one("[x-test-pull-count]")
-        tag_count_node = list_item.select_one("[x-test-tag-count]")
-        updated_node = list_item.select_one("[x-test-updated]")
+        # Drop labels that are really meta counters, not capability/size chips.
+        tag_values = [
+            value for value in tag_values
+            if value and value.lower() not in {"pulls", "pull", "tags", "tag", "updated", "downloads", "download"}
+        ]
 
-        pull_count_text = _normalize_text(pull_count_node.get_text(" ", strip=True) if pull_count_node else "")
-        tag_count_text = _normalize_text(tag_count_node.get_text(" ", strip=True) if tag_count_node else "")
-        updated_text = _normalize_text(updated_node.get_text(" ", strip=True) if updated_node else "")
+        pull_count_text, tag_count_text, updated_text = _extract_search_card_meta(list_item)
+        variant_count = _parse_int(tag_count_text)
 
         # Build the compact bridge card payload used by the ASLM catalog list
         items.append(
@@ -694,14 +1094,14 @@ def _parse_search_items(soup: BeautifulSoup) -> list[dict[str, Any]]:
                 "summary": summary,
                 "provider": "Ollama",
                 "version": "",
-                "homepageUrl": f"https://ollama.com{href}",
+                "homepageUrl": f"https://ollama.com{href.split('?', 1)[0]}",
                 "detail": _build_detail_line(
                     f"{pull_count_text} Pulls" if pull_count_text else "",
                     f"{tag_count_text} Tags" if tag_count_text else "",
                     updated_text,
                 ),
                 "tags": tag_values,
-                "variantCount": _parse_int(tag_count_text),
+                "variantCount": variant_count,
                 "defaultVariantResourceKey": _variant_resource_key(slug, "latest"),
                 "sortOrder": index,
             }
@@ -736,10 +1136,24 @@ def _load_search_payload(
         # Refresh the cache from the live Ollama search page
         html = _request_text(OLLAMA_SEARCH_URL, _build_search_params(search_query))
         soup = _make_soup(html)
-        filters = _parse_filter_payloads(soup, search_query)
+        filters = _parse_filter_payloads(soup, search_query) or _build_default_filter_payloads(search_query)
         items = _parse_search_items(soup)
-        _write_cache(cache_path, {"items": items, "filters": filters})
-        return items, filters, []
+        warnings: list[str] = []
+        if not items and html:
+            warnings.append(
+                "Ollama search returned no parseable model cards. "
+                "The library page markup may have changed."
+            )
+        # Avoid overwriting a good cache with an empty parse result.
+        if items or not cached:
+            _write_cache(cache_path, {"items": items, "filters": filters})
+        elif cached and not items:
+            return (
+                list(cached.get("items", [])),
+                list(cached.get("filters", [])) or filters,
+                warnings + ["Kept previous cached Ollama search data after empty live parse."],
+            )
+        return items, filters, warnings
     except Exception as exc:
         # Fall back to the previous cache when live refresh fails
         if cached:
@@ -863,6 +1277,42 @@ def _extract_readme_html_file(slug: str, soup: BeautifulSoup, page_url: str) -> 
     )
 
 
+# Extract pull/download and updated labels from a model detail page.
+def _extract_detail_page_meta(soup: Any) -> tuple[str, str]:
+    pull_count_text = ""
+    updated_text = ""
+
+    # Legacy x-test markers (older library pages).
+    pull_count_node = soup.select_one("[x-test-pull-count]")
+    updated_node = soup.select_one("[x-test-updated]")
+    if pull_count_node is not None:
+        pull_count_text = _normalize_text(pull_count_node.get_text(" ", strip=True))
+    if updated_node is not None:
+        updated_text = _normalize_text(updated_node.get_text(" ", strip=True))
+
+    # Current library pages use plain "18.7M Downloads" / "Updated 2 weeks ago" groups.
+    # Prefer leaf span groups; parent p.flex often concatenates both labels.
+    if not pull_count_text or not updated_text:
+        for group in soup.select("span.flex.items-center"):
+            group_text = _normalize_text(group.get_text(" ", strip=True))
+            if not group_text or len(group_text) > 64:
+                continue
+            lower = group_text.lower()
+
+            if not pull_count_text and re.search(r"\b(downloads?|pulls?)\b", lower):
+                pull_count_text = _strip_trailing_label(
+                    group_text,
+                    ("downloads", "download", "pulls", "pull"),
+                )
+                continue
+            if not updated_text and ("updated" in lower or re.search(r"\bago\b", lower)):
+                updated_text = _strip_leading_label(group_text, ("updated",))
+                if not updated_text:
+                    updated_text = group_text
+
+    return pull_count_text, updated_text
+
+
 # Parse full item details from the model page.
 def _parse_item_detail(slug: str, html: str) -> dict[str, Any]:
     soup = _make_soup(html)
@@ -873,19 +1323,17 @@ def _parse_item_detail(slug: str, html: str) -> dict[str, Any]:
     summary_node = soup.select_one("textarea#summary-textarea")
     summary = _normalize_text(summary_node.get_text(" ", strip=True) if summary_node else "")
 
-    pull_count_node = soup.select_one("[x-test-pull-count]")
-    updated_node = soup.select_one("[x-test-updated]")
+    pull_count_text, updated_text = _extract_detail_page_meta(soup)
+    detail = _build_detail_line(
+        f"{pull_count_text} Pulls" if pull_count_text else "",
+        "",
+        updated_text,
+    )
 
-    pull_count_text = _normalize_text(pull_count_node.get_text(" ", strip=True) if pull_count_node else "")
-    updated_text = _normalize_text(updated_node.get_text(" ", strip=True) if updated_node else "")
-    detail = _build_detail_line(f"{pull_count_text} Pulls" if pull_count_text else "", "", updated_text)
-
-    # Resolve variants and the preferred default selection
+    # Resolve variants; host platform filtering is applied later so cached details
+    # stay reusable and are filtered at serve time.
     variants = _parse_variant_payloads(soup, slug)
-    default_variant = next((variant["resourceKey"] for variant in variants if variant["resourceKey"].endswith(":latest")), "")
-
-    if not default_variant and variants:
-        default_variant = str(variants[0]["resourceKey"])
+    default_variant = _select_default_variant_key(variants)
 
     # Prefer the rendered readme block because it matches the source page styling
     # Keep markdown as a fallback for pages that do not expose the rendered section
@@ -946,7 +1394,8 @@ def _sanitize_detail_payload(detail: dict[str, Any]) -> dict[str, Any]:
             if _normalize_filter_key((block or {}).get("id")) != "quick-start"
         ]
 
-    return normalized
+    # Drop MLX or classic variants that cannot run on this host OS.
+    return _apply_platform_variant_filter(normalized)
 
 
 # Load detail payloads with cache fallback.
@@ -961,18 +1410,23 @@ def _load_item_detail(
 
     # Serve sanitized cached details immediately when requested
     if cached and prefer_cached and not force_refresh:
-        return _sanitize_detail_payload(dict(cached)), []
+        detail = _retheme_detail_html_blocks(_sanitize_detail_payload(dict(cached)), slug)
+        return detail, []
 
     try:
         # Refresh the cache from the live model page
-        detail = _sanitize_detail_payload(_parse_item_detail(slug, _request_text(_resolve_model_page_url(slug))))
+        detail = _retheme_detail_html_blocks(
+            _sanitize_detail_payload(_parse_item_detail(slug, _request_text(_resolve_model_page_url(slug)))),
+            slug,
+        )
 
         _write_cache(cache_path, detail)
         return detail, []
     except Exception as exc:
         # Fall back to cached details when refresh fails
         if cached and prefer_cached:
-            return dict(cached), [f"Using cached details for {slug}: {exc}"]
+            detail = _retheme_detail_html_blocks(_sanitize_detail_payload(dict(cached)), slug)
+            return detail, [f"Using cached details for {slug}: {exc}"]
         raise
 
 
@@ -983,6 +1437,7 @@ def _build_install_manifest(resource_key: str) -> dict[str, Any]:
     model_name = _resource_key_to_slug(resource_key)
     if not model_name:
         raise ValueError("Missing resourceKey for resolve_install.")
+    _assert_resource_allowed_on_host(resource_key)
 
     return {
         "resourceKey": f"ollama:{model_name}",
@@ -1007,6 +1462,9 @@ def _build_uninstall_manifest(resource_key: str) -> dict[str, Any]:
     model_name = _resource_key_to_slug(resource_key)
     if not model_name:
         raise ValueError("Missing resourceKey for resolve_uninstall.")
+    # Uninstall is allowed for any previously installed ref, including formats
+    # that are no longer offered for this host (e.g. leftover MLX on Windows).
+    # Only block clearly malformed keys; platform install guard stays on install.
 
     return {
         "resourceKey": f"ollama:{model_name}",
@@ -1071,7 +1529,10 @@ def _handle_resolve_install(category_id: str, resource_key: str) -> dict[str, An
     if category_id != OLLAMA_CATEGORY_ID:
         return _response(success=False, error=f"Unsupported categoryId: {category_id}")
 
-    return _response(install_manifest=_build_install_manifest(resource_key))
+    try:
+        return _response(install_manifest=_build_install_manifest(resource_key))
+    except ValueError as exc:
+        return _response(success=False, error=str(exc))
 
 
 # Handle the resolve_uninstall operation.
@@ -1079,7 +1540,10 @@ def _handle_resolve_uninstall(category_id: str, resource_key: str) -> dict[str, 
     if category_id != OLLAMA_CATEGORY_ID:
         return _response(success=False, error=f"Unsupported categoryId: {category_id}")
 
-    return _response(uninstall_manifest=_build_uninstall_manifest(resource_key))
+    try:
+        return _response(uninstall_manifest=_build_uninstall_manifest(resource_key))
+    except ValueError as exc:
+        return _response(success=False, error=str(exc))
 
 
 # Dispatch helpers

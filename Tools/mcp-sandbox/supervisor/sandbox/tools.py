@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import Context
+from pydantic import Field
 
 from sandbox.api import TOOLS, handle_tool
 
@@ -26,6 +27,20 @@ async def _report_progress(ctx: Context | None, progress: float, message: str) -
         await ctx.report_progress(progress, 100, message)
     except Exception:
         pass
+
+
+# Build a FastMCP annotation that preserves parameter guidance in its public schema.
+def _parameter_annotation(schema: dict[str, Any]) -> Any:
+    field_options: dict[str, Any] = {}
+    if schema.get("description"):
+        field_options["description"] = str(schema["description"])
+    if schema.get("minLength") is not None:
+        field_options["min_length"] = int(schema["minLength"])
+    if schema.get("maxLength") is not None:
+        field_options["max_length"] = int(schema["maxLength"])
+    if not field_options:
+        return Any
+    return Annotated[Any, Field(**field_options)]
 
 
 # Register sandbox tools on a FastMCP instance.
@@ -63,7 +78,8 @@ def register_tools(mcp) -> None:
 
         _tool_impl.__name__ = f"sandbox_{tool_id}"
         _tool_impl.__doc__ = tool_definition["description"]
-        _tool_impl.__annotations__ = {key: Any for key in parameters}
+        parameter_annotations = {key: _parameter_annotation(schema) for key, schema in parameters.items()}
+        _tool_impl.__annotations__ = dict(parameter_annotations)
         _tool_impl.__annotations__["ctx"] = Context | None
         _tool_impl.__annotations__["return"] = dict[str, Any]
         signature_parameters = []
@@ -75,7 +91,7 @@ def register_tools(mcp) -> None:
                     key,
                     inspect.Parameter.KEYWORD_ONLY,
                     default=default,
-                    annotation=Any,
+                    annotation=parameter_annotations[key],
                 )
             )
         signature_parameters.append(

@@ -20,7 +20,7 @@ import { messageDialog } from './dialogs.js';
 // Parameters UI.
 // Create helpers for model controls, tool selection, and option payloads.
 export function createParametersUi(context) {
-  const { dom, state } = context;
+  const { dom, state, icons } = context;
 
   // Tool selection helpers.
   // Normalize one tool server id for Set usage.
@@ -267,9 +267,23 @@ export function createParametersUi(context) {
         });
       }
 
+      // Same chrome as "Attach files": text action row + leading SVG icon.
+      const reloadLabel = t('mcp.reload', null, 'Reload MCP servers');
+      const $reload = $('<button type="button" class="composer-menu-action composer-skills-manage" role="menuitem">')
+        .attr({ title: reloadLabel, 'aria-label': reloadLabel })
+        .append(icons.MCP_RELOAD_ICON || '')
+        .append($('<span>').text(reloadLabel));
+      $reload.on('click', function onReloadMcp(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        reloadUserMcpServers($reload);
+      });
+
+      const editLabel = t('mcp.editConfig', null, 'Edit mcp.json');
       const $manage = $('<button type="button" class="composer-menu-action composer-skills-manage" role="menuitem">')
-        .append($('<span class="composer-tool-icon is-mcp" aria-hidden="true">'))
-        .append($('<span>').text(t('mcp.editConfig')));
+        .attr({ title: editLabel, 'aria-label': editLabel })
+        .append(icons.MCP_EDIT_ICON || '')
+        .append($('<span>').text(editLabel));
       $manage.on('click', function onOpenMcp(ev) {
         ev.preventDefault();
         ev.stopPropagation();
@@ -281,7 +295,7 @@ export function createParametersUi(context) {
       $flyout.on('click', function onFlyoutClick(ev) {
         ev.stopPropagation();
       });
-      $flyout.append($list).append($divider).append($manage);
+      $flyout.append($list).append($divider).append($reload).append($manage);
       $entry.append($trigger).append($flyout);
       $host.append($entry);
     });
@@ -325,6 +339,33 @@ export function createParametersUi(context) {
       `/api/tools/?engine=${encodeURIComponent(engine)}&model=${encodeURIComponent(modelName)}`
     );
     updateAvailableToolServers(data.tool_servers || data.tools || data.servers || []);
+  }
+
+  // Restart persistent user MCP sessions and apply the fresh server inventory.
+  async function reloadUserMcpServers($button) {
+    if ($button && $button.prop('disabled')) {
+      return;
+    }
+
+    const engine = normalizeEngineValue(state.activeEngine || 'ollama-service');
+    const modelName = String(dom.$modelSelector.val() || '').trim();
+    if ($button) {
+      $button.prop('disabled', true).attr('aria-busy', 'true');
+    }
+
+    try {
+      const data = await postJson('/api/mcp_reload/', { engine, model: modelName });
+      updateAvailableToolServers(data.tool_servers || data.tools || data.servers || []);
+    } catch (err) {
+      await messageDialog(
+        t('errors.generic', null, 'Something went wrong'),
+        err && err.message ? err.message : String(err)
+      );
+    } finally {
+      if ($button) {
+        $button.prop('disabled', false).removeAttr('aria-busy');
+      }
+    }
   }
 
   // Reload tool servers after MCP config is saved.
@@ -1212,6 +1253,19 @@ export function createParametersUi(context) {
       }
       if (key === 'num_predict') {
         renderedConfig.max = Math.max(1024, Math.min(32768, data.context_length || renderedConfig.max || 32768));
+        renderedConfig.note = `Maximum generated tokens. Limit: ${renderedConfig.max}.`;
+      }
+      // OpenAI max completion tokens: same stepped token-range UI as num_predict,
+      // with max capped by provider output limit or context window when known.
+      if (key === 'max_completion_tokens') {
+        if (runtimeLimits.output_token_limit) {
+          renderedConfig.max = runtimeLimits.output_token_limit;
+        } else {
+          renderedConfig.max = Math.max(
+            1024,
+            Math.min(32768, data.context_length || renderedConfig.max || 32768)
+          );
+        }
         renderedConfig.note = `Maximum generated tokens. Limit: ${renderedConfig.max}.`;
       }
       if (key === 'max_output_tokens' && runtimeLimits.output_token_limit) {

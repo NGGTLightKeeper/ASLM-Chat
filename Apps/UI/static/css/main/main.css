@@ -662,6 +662,153 @@
   color: var(--text-success);
 }
 
+/* Generic settings-sidebar selects: same chrome as the model selector, but
+   without the search field or capability markers. The native <select> stays
+   in the form for existing change handlers and is visually replaced. */
+.settings-select-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.settings-select-wrap .native-settings-select {
+  position: absolute;
+  inset: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settings-select-trigger {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-tertiary);
+  color: var(--c-text);
+  font-size: var(--font-size-caption-1);
+  line-height: var(--leading-ui);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast), box-shadow var(--t-fast);
+}
+
+.settings-select-trigger:hover:not(:disabled) {
+  border-color: var(--c-gray-2);
+}
+
+.settings-select-trigger:focus-visible,
+.settings-select-trigger.is-open {
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 1px var(--focus-ring);
+  outline: none;
+}
+
+.settings-select-trigger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-select-trigger.setting-control-compact {
+  min-height: 30px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  padding-left: 10px;
+  padding-right: 10px;
+  font-size: var(--font-size-caption-2);
+}
+
+.settings-select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-select-chevron {
+  width: 14px;
+  height: 14px;
+  justify-self: end;
+  background: currentColor;
+  color: var(--c-text-muted);
+  -webkit-mask: url("../../img/ui/chevron-down.svg") center / contain no-repeat;
+  mask: url("../../img/ui/chevron-down.svg") center / contain no-repeat;
+  transition: transform var(--t-fast), color var(--t-fast);
+}
+
+.settings-select-trigger.is-open .settings-select-chevron {
+  color: var(--c-text);
+  transform: rotate(180deg);
+}
+
+.settings-select-popover {
+  position: fixed;
+  z-index: 1200;
+  padding: 6px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-secondary);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--c-black) 34%, transparent);
+}
+
+.settings-select-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 260px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.settings-select-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--c-text);
+  font-size: var(--font-size-caption-1);
+  line-height: var(--leading-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-select-option:hover,
+.settings-select-option.is-highlighted {
+  background: var(--surface-tertiary);
+}
+
+.settings-select-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-select-option.is-selected {
+  color: var(--c-text);
+  font-weight: 600;
+}
+
+.settings-select-option-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-select-empty {
+  padding: 10px 8px;
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-1);
+}
+
 .setting-group {
   display: flex;
   flex-direction: column;
@@ -1048,7 +1195,8 @@
   top: 0;
   z-index: 1300;
   width: max-content;
-  max-width: 240px;
+  /* Cap width and keep the bubble inside the viewport on narrow windows. */
+  max-width: min(240px, calc(100vw - 16px));
   padding: 10px 12px;
   border: 1px solid var(--c-border-strong);
   border-radius: var(--r-md);
@@ -1057,6 +1205,12 @@
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--t-fast);
+  /* .setting-label (and some composer ancestors) set white-space: nowrap.
+     Fixed positioning escapes overflow clipping, but inheritance still applies,
+     so long help text was spilling out of the max-width bubble. */
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .setting-help:hover .setting-help-popover,
@@ -1066,15 +1220,19 @@
 }
 
 .setting-help-desc {
+  margin: 0;
   font-size: var(--font-size-caption-1);
   line-height: var(--leading-ui);
   color: var(--c-text);
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .setting-help-metrics {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  min-width: 0;
 }
 
 .setting-help-desc + .setting-help-metrics {
@@ -1085,11 +1243,13 @@
   display: flex;
   align-items: baseline;
   gap: 6px;
+  min-width: 0;
   font-size: var(--font-size-caption-2);
   line-height: var(--leading-ui);
 }
 
 .setting-help-metric-key {
+  flex: 0 0 auto;
   color: var(--c-text-muted);
 }
 
@@ -1098,8 +1258,10 @@
 }
 
 .setting-help-metric-val {
+  min-width: 0;
   color: var(--c-text);
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 /* Messages area */
@@ -1624,6 +1786,8 @@
 }
 
 .composer-menu-action {
+  display: flex;
+  align-items: center;
   width: 100%;
   min-height: 34px;
   justify-content: flex-start;
@@ -1633,6 +1797,14 @@
   color: var(--c-text-muted);
   font-size: var(--font-size-body-2);
   font-weight: 500;
+  text-align: left;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+
+.composer-menu-action > svg {
+  flex: 0 0 auto;
+  display: block;
+  color: inherit;
 }
 
 .composer-menu-action.attach-btn {
@@ -1642,7 +1814,8 @@
   color: var(--c-text-muted);
 }
 
-.composer-menu-popover .composer-menu-action.attach-btn {
+.composer-menu-popover .composer-menu-action.attach-btn,
+.composer-skills-flyout .composer-menu-action {
   width: 100%;
   min-height: 34px;
   height: auto;
@@ -1657,7 +1830,8 @@
 }
 
 .composer-menu-popover .composer-menu-action:hover,
-.composer-menu-popover .composer-tool-row:hover {
+.composer-menu-popover .composer-tool-row:hover,
+.composer-skills-flyout .composer-menu-action:hover {
   background: var(--surface-tertiary);
   color: var(--c-text);
 }
@@ -2152,7 +2326,7 @@
 }
 
 .context-usage-indicator:hover {
-  background: color-mix(in srgb, var(--c-white) 5%, transparent);
+  background: var(--surface-hover);
   color: var(--c-text);
 }
 
@@ -2171,12 +2345,12 @@
   width: max-content;
   max-width: 230px;
   padding: 9px 11px;
-  border: 1px solid color-mix(in srgb, var(--c-white) 10%, transparent);
+  border: 1px solid var(--c-border-strong);
   border-radius: var(--r-sm);
-  background: #2d2d2f;
+  background: var(--surface-secondary);
   color: var(--c-text);
-  box-shadow: 0 14px 35px rgba(0, 0, 0, 0.35);
-  font-size: 13px;
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--c-black) 34%, transparent);
+  font-size: var(--font-size-caption-1);
   font-weight: 600;
   line-height: var(--leading-ui);
   text-align: center;
@@ -2195,7 +2369,9 @@
   z-index: 61;
   width: 8px;
   height: 8px;
-  background: #2d2d2f;
+  background: var(--surface-secondary);
+  border-right: 1px solid var(--c-border-strong);
+  border-bottom: 1px solid var(--c-border-strong);
   pointer-events: none;
   opacity: 0;
   transform: rotate(45deg) translateY(3px);
@@ -2655,11 +2831,18 @@
 
 .msg-media-play-btn:hover,
 .msg-media-icon-btn:hover,
-.msg-video-center-play:hover,
-.msg-media-download:hover {
+.msg-video-center-play:hover {
   color: var(--activity-on-surface);
   border-color: var(--activity-status-border);
   background: var(--activity-status-bg);
+}
+
+.msg-media-download:hover,
+.msg-media-download:focus-visible {
+  color: var(--activity-on-surface);
+  border-color: transparent;
+  background: transparent;
+  outline: none;
 }
 
 .msg-media-play-btn:disabled,
@@ -2760,7 +2943,7 @@
 .msg-audio-card {
   width: min(100%, 500px);
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 28px;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
@@ -2915,7 +3098,10 @@
 .msg-media-download {
   width: 30px;
   height: 30px;
-  border-radius: var(--r-sm);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   text-decoration: none;
 }
 
@@ -3042,7 +3228,7 @@
 
 .msg-media-info {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr) 34px;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
   padding: 12px 2px 0;
@@ -3111,9 +3297,82 @@
   grid-template-columns: 34px auto minmax(54px, 1fr) auto 34px 34px 34px 34px;
 }
 
+.msg-shared-file-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  justify-self: end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.msg-shared-file-reveal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--activity-on-surface-muted);
+  line-height: 0;
+  cursor: pointer;
+  transition: color var(--t-fast), opacity var(--t-fast);
+}
+
+.msg-shared-file-reveal > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.msg-shared-file-reveal:hover,
+.msg-shared-file-reveal:focus-visible {
+  color: var(--activity-on-surface);
+  outline: none;
+}
+
+.msg-shared-file-reveal.is-busy {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.msg-media-actions .msg-shared-file-reveal,
+.msg-shared-image-actions .msg-shared-file-reveal {
+  width: 30px;
+  height: 30px;
+}
+
+.msg-shared-file-actions .msg-shared-file-download,
+.msg-shared-file-actions .msg-shared-image-download,
+.msg-shared-file-actions .msg-media-download {
+  color: var(--activity-on-surface-muted);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.msg-shared-file-actions .msg-shared-file-download > svg,
+.msg-shared-file-actions .msg-shared-image-download > svg,
+.msg-shared-file-actions .msg-media-download > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.msg-shared-file-actions .msg-shared-file-download:hover,
+.msg-shared-file-actions .msg-shared-image-download:hover,
+.msg-shared-file-actions .msg-media-download:hover,
+.msg-shared-file-actions .msg-media-download:focus-visible {
+  color: var(--activity-on-surface);
+  border-color: transparent;
+  background: transparent;
+  transform: none;
+}
+
 .msg-shared-file-card {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 22px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 10px;
   width: min(100%, 520px);
@@ -3165,8 +3424,10 @@
   color: var(--activity-on-surface-muted);
 }
 
-.msg-shared-file-card:hover .msg-shared-file-download {
+.msg-shared-file-download:hover,
+.msg-shared-file-download:focus-visible {
   color: var(--activity-on-surface);
+  outline: none;
 }
 
 .msg-upload-file-chip {
@@ -3274,7 +3535,7 @@
 .msg-shared-image-footer {
   min-height: 48px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   padding: 8px 10px 8px 12px;
@@ -3310,21 +3571,26 @@
 }
 
 .msg-shared-image-download {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
   justify-self: end;
-  border-radius: var(--r-sm);
-  color: var(--activity-on-surface);
-  background: var(--activity-preview-action-bg);
-  transition: background var(--t-fast), transform var(--t-fast);
+  border: 0;
+  border-radius: 0;
+  color: var(--activity-on-surface-muted);
+  background: transparent;
+  box-shadow: none;
+  transition: color var(--t-fast);
 }
 
-.msg-shared-image-card:hover .msg-shared-image-download {
-  background: var(--activity-preview-action-bg-hover);
-  transform: translateY(-1px);
+.msg-shared-image-download:hover,
+.msg-shared-image-download:focus-visible {
+  color: var(--activity-on-surface);
+  background: transparent;
+  outline: none;
+  transform: none;
 }
 
 .msg-file-name {

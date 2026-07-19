@@ -156,7 +156,8 @@
     "searchedFor": "{query} arandı",
     "noSourcesFor": "{query} için kaynak bulunamadı",
     "searchingFor": "{query} aranıyor",
-    "badQuery": "Geçersiz sorgu: {query}"
+    "badQuery": "Geçersiz sorgu: {query}",
+    "openFileLocation": "Dosya konumunu aç"
   },
   "skills": {
     "title": "Beceriler",
@@ -460,6 +461,7 @@
     "serverTools": "{name} ({count} araç)",
     "cancel": "İptal",
     "save": "Kaydet",
-    "noServers": "MCP sunucusu yok"
+    "noServers": "MCP sunucusu yok",
+    "reload": "MCP sunucularını yeniden yükle"
   }
 }
