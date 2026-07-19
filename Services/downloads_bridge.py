@@ -588,8 +588,79 @@ def _build_search_params(search_query: OllamaSearchQuery) -> list[tuple[str, str
 
 # Search parsing helpers
 
+# Strip a trailing label from a meta group such as "263.3K Pulls".
+def _strip_trailing_label(text: str, labels: tuple[str, ...]) -> str:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return ""
+
+    lower = normalized.lower()
+    for label in labels:
+        suffix = f" {label.lower()}"
+        if lower.endswith(suffix):
+            return normalized[: -len(suffix)].strip()
+        if lower == label.lower():
+            return ""
+    return normalized
+
+
+# Strip a leading label from a meta group such as "Updated 3 weeks ago".
+def _strip_leading_label(text: str, labels: tuple[str, ...]) -> str:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return ""
+
+    lower = normalized.lower()
+    for label in labels:
+        prefix = f"{label.lower()} "
+        if lower.startswith(prefix):
+            return normalized[len(prefix) :].strip()
+        if lower == label.lower():
+            return ""
+    return normalized
+
+
+# Extract pull/tag/updated meta from one Ollama search card (current + legacy markup).
+def _extract_search_card_meta(list_item: Any) -> tuple[str, str, str]:
+    pull_count_text = ""
+    tag_count_text = ""
+    updated_text = ""
+
+    # Current Ollama cards expose labeled icon+text groups without x-test attributes.
+    for group in list_item.select("span.flex.items-center"):
+        group_text = _normalize_text(group.get_text(" ", strip=True))
+        if not group_text:
+            continue
+        lower = group_text.lower()
+
+        if "pull" in lower or "download" in lower:
+            pull_count_text = _strip_trailing_label(group_text, ("pulls", "pull", "downloads", "download"))
+            continue
+        if re.search(r"\btags?\b", lower):
+            tag_count_text = _strip_trailing_label(group_text, ("tags", "tag"))
+            continue
+        if "updated" in lower or re.search(r"\bago\b", lower):
+            updated_text = _strip_leading_label(group_text, ("updated",))
+            if not updated_text:
+                updated_text = group_text
+            continue
+
+    # Legacy x-test selectors kept as a fallback for older cached HTML.
+    if not pull_count_text:
+        node = list_item.select_one("[x-test-pull-count]")
+        pull_count_text = _normalize_text(node.get_text(" ", strip=True) if node else "")
+    if not tag_count_text:
+        node = list_item.select_one("[x-test-tag-count]")
+        tag_count_text = _normalize_text(node.get_text(" ", strip=True) if node else "")
+    if not updated_text:
+        node = list_item.select_one("[x-test-updated]")
+        updated_text = _normalize_text(node.get_text(" ", strip=True) if node else "")
+
+    return pull_count_text, tag_count_text, updated_text
+
+
 # Parse filter payloads from the Ollama search page.
-def _parse_filter_payloads(soup: BeautifulSoup, search_query: OllamaSearchQuery) -> list[dict[str, Any]]:
+def _parse_filter_payloads(soup: Any, search_query: OllamaSearchQuery) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
     active_capabilities = set(search_query.capabilities)
     active_sort = search_query.sort_key or DEFAULT_SORT_KEY
@@ -640,13 +711,23 @@ def _parse_filter_payloads(soup: BeautifulSoup, search_query: OllamaSearchQuery)
 
 
 # Parse model cards from the Ollama search page.
-def _parse_search_items(soup: BeautifulSoup) -> list[dict[str, Any]]:
+def _parse_search_items(soup: Any) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     seen_slugs: set[str] = set()
 
-    for index, list_item in enumerate(soup.select("li[x-test-model]")):
-        # Resolve the card identity from its main link
-        anchor = list_item.select_one("a[href]")
+    # Current library search uses a plain role=list grid. Keep legacy x-test cards
+    # as a fallback so older cached HTML still parses if present.
+    list_items = soup.select("ul[role='list'] > li")
+    if not list_items:
+        list_items = soup.select("li[x-test-model]")
+    if not list_items:
+        list_items = soup.select("ul.grid > li")
+
+    for index, list_item in enumerate(list_items):
+        # Resolve the card identity from its main library link
+        anchor = list_item.select_one("a[href^='/library/'], a[href*='/library/']")
+        if anchor is None:
+            anchor = list_item.select_one("a[href]")
         if anchor is None:
             continue
 
@@ -657,32 +738,57 @@ def _parse_search_items(soup: BeautifulSoup) -> list[dict[str, Any]]:
         if href.startswith("/library/"):
             slug = href.removeprefix("/library/").strip("/")
         else:
-            slug = href.removeprefix("/").strip("/")
-
-        # Deduplicate cards because the page can occasionally surface repeats
-        if not slug or slug in seen_slugs:
+            # Ignore non-library links that can appear in the same list shell.
             continue
 
-        # Read the visible card content
-        title_node = list_item.select_one("[x-test-search-response-title]")
-        title = _normalize_text(title_node.get_text(" ", strip=True) if title_node else slug)
+        # Cards are family-level only; skip accidental tag deep-links.
+        if not slug or ":" in slug or slug in seen_slugs:
+            continue
 
-        header_container = anchor.find("div", attrs={"title": True})
-        summary_node = header_container.find("p") if header_container else None
+        # Read the visible card content (new markup first, legacy selectors second).
+        title_node = (
+            list_item.select_one("h2")
+            or list_item.select_one("[x-test-search-response-title]")
+        )
+        title = _normalize_text(title_node.get_text(" ", strip=True) if title_node else "")
+
+        header_container = list_item.select_one("div[title]") or anchor.find("div", attrs={"title": True})
+        if not title and header_container is not None:
+            title = _normalize_text(header_container.get("title"))
+
+        summary_node = None
+        if header_container is not None:
+            summary_node = header_container.find("p")
+        if summary_node is None:
+            summary_node = list_item.select_one("p.max-w-lg")
         summary = _normalize_text(summary_node.get_text(" ", strip=True) if summary_node else "")
 
-        tag_container = anchor.select_one("div.flex.flex-col > div.flex.flex-wrap")
-        tag_values = _deduplicate_preserving_order(
-            [_normalize_text(node.get_text(" ", strip=True)) for node in tag_container.select("span")] if tag_container else []
+        tag_container = (
+            list_item.select_one("div.flex.flex-wrap")
+            or list_item.select_one("div.flex.flex-col > div.flex.flex-wrap")
         )
+        if tag_container is not None:
+            # Prefer direct badge chips; fall back to all spans inside the wrap.
+            badge_nodes = [
+                child for child in tag_container.children
+                if getattr(child, "name", None) == "span"
+            ]
+            if not badge_nodes:
+                badge_nodes = tag_container.select("span")
+            tag_values = _deduplicate_preserving_order(
+                [_normalize_text(node.get_text(" ", strip=True)) for node in badge_nodes]
+            )
+        else:
+            tag_values = []
 
-        pull_count_node = list_item.select_one("[x-test-pull-count]")
-        tag_count_node = list_item.select_one("[x-test-tag-count]")
-        updated_node = list_item.select_one("[x-test-updated]")
+        # Drop labels that are really meta counters, not capability/size chips.
+        tag_values = [
+            value for value in tag_values
+            if value and value.lower() not in {"pulls", "pull", "tags", "tag", "updated", "downloads", "download"}
+        ]
 
-        pull_count_text = _normalize_text(pull_count_node.get_text(" ", strip=True) if pull_count_node else "")
-        tag_count_text = _normalize_text(tag_count_node.get_text(" ", strip=True) if tag_count_node else "")
-        updated_text = _normalize_text(updated_node.get_text(" ", strip=True) if updated_node else "")
+        pull_count_text, tag_count_text, updated_text = _extract_search_card_meta(list_item)
+        variant_count = _parse_int(tag_count_text)
 
         # Build the compact bridge card payload used by the ASLM catalog list
         items.append(
@@ -694,14 +800,14 @@ def _parse_search_items(soup: BeautifulSoup) -> list[dict[str, Any]]:
                 "summary": summary,
                 "provider": "Ollama",
                 "version": "",
-                "homepageUrl": f"https://ollama.com{href}",
+                "homepageUrl": f"https://ollama.com{href.split('?', 1)[0]}",
                 "detail": _build_detail_line(
                     f"{pull_count_text} Pulls" if pull_count_text else "",
                     f"{tag_count_text} Tags" if tag_count_text else "",
                     updated_text,
                 ),
                 "tags": tag_values,
-                "variantCount": _parse_int(tag_count_text),
+                "variantCount": variant_count,
                 "defaultVariantResourceKey": _variant_resource_key(slug, "latest"),
                 "sortOrder": index,
             }
@@ -736,10 +842,24 @@ def _load_search_payload(
         # Refresh the cache from the live Ollama search page
         html = _request_text(OLLAMA_SEARCH_URL, _build_search_params(search_query))
         soup = _make_soup(html)
-        filters = _parse_filter_payloads(soup, search_query)
+        filters = _parse_filter_payloads(soup, search_query) or _build_default_filter_payloads(search_query)
         items = _parse_search_items(soup)
-        _write_cache(cache_path, {"items": items, "filters": filters})
-        return items, filters, []
+        warnings: list[str] = []
+        if not items and html:
+            warnings.append(
+                "Ollama search returned no parseable model cards. "
+                "The library page markup may have changed."
+            )
+        # Avoid overwriting a good cache with an empty parse result.
+        if items or not cached:
+            _write_cache(cache_path, {"items": items, "filters": filters})
+        elif cached and not items:
+            return (
+                list(cached.get("items", [])),
+                list(cached.get("filters", [])) or filters,
+                warnings + ["Kept previous cached Ollama search data after empty live parse."],
+            )
+        return items, filters, warnings
     except Exception as exc:
         # Fall back to the previous cache when live refresh fails
         if cached:
@@ -863,6 +983,42 @@ def _extract_readme_html_file(slug: str, soup: BeautifulSoup, page_url: str) -> 
     )
 
 
+# Extract pull/download and updated labels from a model detail page.
+def _extract_detail_page_meta(soup: Any) -> tuple[str, str]:
+    pull_count_text = ""
+    updated_text = ""
+
+    # Legacy x-test markers (older library pages).
+    pull_count_node = soup.select_one("[x-test-pull-count]")
+    updated_node = soup.select_one("[x-test-updated]")
+    if pull_count_node is not None:
+        pull_count_text = _normalize_text(pull_count_node.get_text(" ", strip=True))
+    if updated_node is not None:
+        updated_text = _normalize_text(updated_node.get_text(" ", strip=True))
+
+    # Current library pages use plain "18.7M Downloads" / "Updated 2 weeks ago" groups.
+    # Prefer leaf span groups; parent p.flex often concatenates both labels.
+    if not pull_count_text or not updated_text:
+        for group in soup.select("span.flex.items-center"):
+            group_text = _normalize_text(group.get_text(" ", strip=True))
+            if not group_text or len(group_text) > 64:
+                continue
+            lower = group_text.lower()
+
+            if not pull_count_text and re.search(r"\b(downloads?|pulls?)\b", lower):
+                pull_count_text = _strip_trailing_label(
+                    group_text,
+                    ("downloads", "download", "pulls", "pull"),
+                )
+                continue
+            if not updated_text and ("updated" in lower or re.search(r"\bago\b", lower)):
+                updated_text = _strip_leading_label(group_text, ("updated",))
+                if not updated_text:
+                    updated_text = group_text
+
+    return pull_count_text, updated_text
+
+
 # Parse full item details from the model page.
 def _parse_item_detail(slug: str, html: str) -> dict[str, Any]:
     soup = _make_soup(html)
@@ -873,12 +1029,12 @@ def _parse_item_detail(slug: str, html: str) -> dict[str, Any]:
     summary_node = soup.select_one("textarea#summary-textarea")
     summary = _normalize_text(summary_node.get_text(" ", strip=True) if summary_node else "")
 
-    pull_count_node = soup.select_one("[x-test-pull-count]")
-    updated_node = soup.select_one("[x-test-updated]")
-
-    pull_count_text = _normalize_text(pull_count_node.get_text(" ", strip=True) if pull_count_node else "")
-    updated_text = _normalize_text(updated_node.get_text(" ", strip=True) if updated_node else "")
-    detail = _build_detail_line(f"{pull_count_text} Pulls" if pull_count_text else "", "", updated_text)
+    pull_count_text, updated_text = _extract_detail_page_meta(soup)
+    detail = _build_detail_line(
+        f"{pull_count_text} Pulls" if pull_count_text else "",
+        "",
+        updated_text,
+    )
 
     # Resolve variants and the preferred default selection
     variants = _parse_variant_payloads(soup, slug)
