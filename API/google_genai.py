@@ -1494,6 +1494,7 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
 def _build_google_tools(
     tool_server_ids: list[str],
     model_name: str,
+    tool_context: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Return Gemini-compatible tool declarations for one or more servers."""
 
@@ -1669,20 +1670,7 @@ def _strip_tools_from_config(config: dict[str, Any]) -> dict[str, Any]:
 # Serialize one tool invocation so the UI can render it during streaming.
 def _build_tool_event(tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]) -> dict[str, Any]:
     """Serialize one tool invocation so the UI can render it during streaming."""
-
-    alias = tool_call.get("name", "")
-    lookup_entry = tool_lookup.get(alias, {})
-    server_definition = lookup_entry.get("server", {})
-    tool_definition = lookup_entry.get("tool", {})
-
-    return {
-        "alias": alias,
-        "server_id": server_definition.get("id") or "",
-        "server_name": server_definition.get("name") or server_definition.get("id") or "",
-        "tool_id": tool_definition.get("id") or alias,
-        "tool_name": tool_definition.get("name") or alias,
-        "arguments": tool_call.get("arguments") or {},
-    }
+    return tool_registry.build_tool_event(tool_lookup, tool_call)
 
 
 # Build a tool message payload for the shared ASLM transcript.
@@ -2100,7 +2088,7 @@ def _run_tool_loop(
 ):
     """Resolve local tools through Gemini function-calling while keeping ASLM transcript markers."""
 
-    tools, tool_lookup = _build_google_tools(tool_server_ids, model_name)
+    tools, tool_lookup = _build_google_tools(tool_server_ids, model_name, tool_context)
     system_instruction, conversation = _build_google_contents(messages)
     request_config = _build_google_request_config(
         options,
@@ -2158,7 +2146,13 @@ def _run_tool_loop(
                 }
             )
 
-        yield {"transcript_message": assistant_message}
+        tool_calls = tool_registry.prepare_tool_calls(tool_lookup, tool_calls)
+
+        yield {
+            "transcript_message": tool_registry.canonicalize_transcript_tool_calls(
+                assistant_message, tool_calls
+            )
+        }
 
         tool_response_parts: list[dict[str, Any]] = []
         tool_events = [_build_tool_event(tool_lookup, tool_call) for tool_call in tool_calls]
@@ -2174,6 +2168,7 @@ def _run_tool_loop(
                     "model_name": model_name,
                     "tool_alias": tool_call["name"],
                     "tool_arguments": tool_call.get("arguments") or {},
+                    "raw_tool_arguments": tool_call.get("raw_arguments") or {},
                     "tool_call_index": tool_call_index,
                     "tool_round_index": round_index + 1,
                 }
@@ -2185,39 +2180,43 @@ def _run_tool_loop(
                 context=call_context,
             )
 
-            tool_cooldown_error = tool_registry.consume_tool_cooldown(
-                tool_event,
-                tool_call.get("arguments") or {},
-            )
-            if tool_cooldown_error is not None:
-                tool_result = tool_cooldown_error
+            preflight_error = tool_call.get("preflight_error_result")
+            if preflight_error is not None:
+                tool_result = preflight_error
             else:
-                duplicate_error = tool_registry.consume_duplicate_tool_call(
+                tool_cooldown_error = tool_registry.consume_tool_cooldown(
                     tool_event,
                     tool_call.get("arguments") or {},
-                    seen_tool_signatures,
                 )
-                if duplicate_error is not None:
-                    tool_result = duplicate_error
+                if tool_cooldown_error is not None:
+                    tool_result = tool_cooldown_error
                 else:
-                    quota_error = tool_registry.consume_tool_quota(
+                    duplicate_error = tool_registry.consume_duplicate_tool_call(
                         tool_event,
-                        tool_quota_counters,
-                        arguments=tool_call.get("arguments") or {},
+                        tool_call.get("arguments") or {},
+                        seen_tool_signatures,
                     )
-                    if quota_error is not None:
-                        tool_result = quota_error
+                    if duplicate_error is not None:
+                        tool_result = duplicate_error
                     else:
-                        tool_result = tool_registry.call_ollama_tool(
-                            tool_lookup,
-                            tool_call["name"],
-                            tool_call.get("arguments") or {},
-                            context=call_context,
-                        )
-                        tool_registry.remember_tool_cooldown(
+                        quota_error = tool_registry.consume_tool_quota(
                             tool_event,
-                            tool_call.get("arguments") or {},
+                            tool_quota_counters,
+                            arguments=tool_call.get("arguments") or {},
                         )
+                        if quota_error is not None:
+                            tool_result = quota_error
+                        else:
+                            tool_result = tool_registry.call_ollama_tool(
+                                tool_lookup,
+                                tool_call["name"],
+                                tool_call.get("arguments") or {},
+                                context=call_context,
+                            )
+                            tool_registry.remember_tool_cooldown(
+                                tool_event,
+                                tool_call.get("arguments") or {},
+                            )
             if tool_registry.is_blocking_tool_result(tool_result):
                 consecutive_blocked_tool_results += 1
             else:
@@ -2503,4 +2502,3 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
             yield {"transcript_message": assistant_message}
     finally:
         _close_client(client)
-

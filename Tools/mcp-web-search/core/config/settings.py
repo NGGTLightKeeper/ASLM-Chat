@@ -69,6 +69,8 @@ class CacheSection:
 # Year tokens in queries: timelimit (default), strip, or none — see year_hint_* fields.
 @dataclass
 class QuerySection:
+    schema_mode: str = "advanced"  # advanced (default) | legacy
+    ui_display_mode: str = "compiled_query"  # compiled_query (default) | purpose
     year_hint_mode: str = "timelimit"
     year_hint_current: Optional[str] = "m"  # year == this year  → last month
     year_hint_prev: Optional[str] = "y"     # year == last year  → last year
@@ -305,6 +307,14 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             prefetch_max_urls=int(c.get("prefetch_max_urls", 4)),
         ),
         query=QuerySection(
+            schema_mode=_one_of(
+                q.get("schema_mode", "advanced"), {"legacy", "advanced"}, "advanced"
+            ),
+            ui_display_mode=_one_of(
+                q.get("ui_display_mode", "compiled_query"),
+                {"purpose", "compiled_query"},
+                "compiled_query",
+            ),
             year_hint_mode=str(q.get("year_hint_mode", "timelimit")),
             year_hint_current=_optional_string(q.get("year_hint_current", _MISSING), "m"),
             year_hint_prev=_optional_string(q.get("year_hint_prev", _MISSING), "y"),

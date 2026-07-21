@@ -21,6 +21,8 @@ import datetime as _dt
 import re
 from typing import Optional
 
+from core.query.operators import DATE_OPERATOR_PREFIXES
+
 # Timelimit windows, tightest first, for picking the more restrictive of two.
 _TIMELIMIT_ORDER: dict[str, int] = {"d": 0, "w": 1, "m": 2, "y": 3}
 
@@ -36,6 +38,17 @@ _YEAR_ANYWHERE_RE = re.compile(
     rf"\b(?:19|20)\d{{2}}(?:{_YEAR_RANGE_SEPARATOR}(?:19|20)\d{{2}})?\b"
 )
 _ANY_YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
+def _is_date_operator_year(query: str, start: int) -> bool:
+    prefix = query[max(0, start - 7):start].lower()
+    return any(prefix.endswith(operator) for operator in DATE_OPERATOR_PREFIXES)
+
+
+def _query_years(query: str) -> list[str]:
+    return [
+        match.group(1)
+        for match in _ANY_YEAR_RE.finditer(query or "")
+        if not _is_date_operator_year(query, match.start())
+    ]
 
 # Words that mark any year in the query as a freshness hint, not a topic anchor.
 _TRAILING_YEAR_FRESHNESS_HINTS: frozenset[str] = frozenset({
@@ -60,7 +73,7 @@ def stricter_timelimit(a: Optional[str], b: Optional[str]) -> Optional[str]:
 # True when the query anchors to a year before last calendar year (a historical lookup,
 # so freshness windows should not apply).
 def _has_historical_year_anchor(query: str) -> bool:
-    years = _ANY_YEAR_RE.findall(query or "")
+    years = _query_years(query or "")
     if not years:
         return False
     return min(int(y) for y in years) < _dt.date.today().year - 1
@@ -75,7 +88,7 @@ def _year_hint_timelimit(
     has_comma_year = bool(_TRAILING_YEAR_COMMA_RE.search(query))
     if not has_freshness and not has_comma_year:
         return None
-    years = _ANY_YEAR_RE.findall(query)
+    years = _query_years(query)
     if not years:
         return None
     this_year = _dt.date.today().year
@@ -99,7 +112,11 @@ def _strip_trailing_year(query: str) -> str:
         # ("Windows Server 2022 latest CU", "ISO 27001 2022 current") — and must survive into
         # the engine query, or the search loses what it's actually about.
         cutoff = _dt.date.today().year - 1
-        drop_recent = lambda m: "" if int(m.group(0)[:4]) >= cutoff else m.group(0)
+        def drop_recent(match: re.Match[str]) -> str:
+            if _is_date_operator_year(query, match.start()):
+                return match.group(0)
+            return "" if int(match.group(0)[:4]) >= cutoff else match.group(0)
+
         cleaned = " ".join(_YEAR_ANYWHERE_RE.sub(drop_recent, query).split())
         return cleaned if cleaned.strip() else query
     return query

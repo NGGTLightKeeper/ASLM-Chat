@@ -325,6 +325,14 @@ def _academic_paper_dict(paper: Any, *, citation_id: str, rank: int) -> dict[str
 
 # UI metadata block (source chips) the chat bridge surfaces alongside model_context.
 def _build_ui(sources: list[dict[str, Any]]) -> dict[str, Any]:
+    from core.config import load_search_config
+
+    query_config = getattr(load_search_config(), "query", None)
+    display_mode = str(
+        getattr(query_config, "ui_display_mode", "compiled_query") or "compiled_query"
+    ).strip().lower()
+    if display_mode not in {"purpose", "compiled_query"}:
+        display_mode = "compiled_query"
     chips = [
         {
             "rank": s.get("rank"),
@@ -339,6 +347,7 @@ def _build_ui(sources: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "kind": "web_search",
         "status": "done" if chips else "empty",
+        "query_display_mode": display_mode,
         "result_count": len(chips),
         "sources": chips,
     }
@@ -515,6 +524,7 @@ class WebSearchService:
         shopping: bool = False,
         academic: bool = False,
         onion: bool = False,
+        dates_resolved: bool = False,
     ) -> dict[str, Any]:
         profile = EFFORT_PROFILES.get(effort, EFFORT_PROFILES["low"])
         started = time.perf_counter()
@@ -525,7 +535,8 @@ class WebSearchService:
         from core.config import load_search_config
         from core.search.query_dates import resolve_query_dates
 
-        query, timelimit = resolve_query_dates(query, load_search_config().query, timelimit)
+        if not dates_resolved:
+            query, timelimit = resolve_query_dates(query, load_search_config().query, timelimit)
 
         # Region routing (§3.2): explicit region wins; otherwise Cyrillic and
         # friends route to their home region instead of us-en.
@@ -955,6 +966,7 @@ async def run_web_search(
     shopping: bool = False,
     academic: bool = False,
     onion: bool = False,
+    dates_resolved: bool = False,
 ) -> dict[str, Any]:
     from core.cache.hosted_cache import get_hosted_cache
     from core.config import load_search_config
@@ -979,6 +991,7 @@ async def run_web_search(
         payload = await WebSearchService().search(
             query, effort=effort, region=region, safesearch=safesearch,
             timelimit=timelimit, shopping=shopping, academic=academic, onion=True,
+            dates_resolved=dates_resolved,
         )
         payload["cached"] = False
         return payload
@@ -997,6 +1010,7 @@ async def run_web_search(
         payload = await WebSearchService().search(
             query, effort=effort, region=region, safesearch=safesearch,
             timelimit=timelimit, shopping=shopping, academic=academic,
+            dates_resolved=dates_resolved,
         )
         payload["cached"] = False
         empty = not payload.get("sources")
@@ -1042,7 +1056,130 @@ async def run_web_search(
     return payload
 
 
-# Run up to three independent searches concurrently and return one citable payload.
+def _combine_search_results(
+    plans: list[dict[str, Any]],
+    results: list[dict[str, Any]],
+    *,
+    effort: str,
+    schema_mode: str,
+    started: float,
+    legacy_flags: dict[str, bool] | None = None,
+) -> dict[str, Any]:
+    from core.config import load_search_config
+
+    search_cfg = load_search_config().search
+    search_id = _make_search_id()
+    all_sources: list[dict[str, Any]] = []
+    sources_by_query: list[list[dict[str, Any]]] = []
+    next_rank = 1
+
+    for query_index, (plan, result) in enumerate(zip(plans, results), 1):
+        query_sources: list[dict[str, Any]] = []
+        for raw_source in result.get("sources") or []:
+            source = dict(raw_source)
+            source["id"] = _citation_id(search_id, next_rank)
+            source["rank"] = next_rank
+            source["batch_query"] = plan["compiled_query"]
+            source["batch_query_index"] = query_index
+            source["batch_query_purpose"] = plan.get("purpose", "")
+            source["batch_query_vertical"] = plan.get("vertical", "web")
+            source["query_index"] = query_index
+            source["purpose"] = plan.get("purpose", "")
+            source["vertical"] = plan.get("vertical", "web")
+            query_sources.append(source)
+            all_sources.append(source)
+            next_rank += 1
+        sources_by_query.append(query_sources)
+
+    total_budget = int(search_cfg.total_context_budget or 0)
+    query_budget = total_budget // len(plans) if total_budget else 0
+    per_source_chars = int(search_cfg.preview_max_chars or 0)
+    context_sections: list[str] = []
+    for plan, result, query_sources in zip(plans, results, sources_by_query):
+        query = plan["compiled_query"]
+        if query_sources:
+            context_sections.append(_build_model_context(
+                query, query_sources,
+                total_budget=query_budget,
+                per_source_chars=per_source_chars,
+            ))
+        else:
+            context_sections.append(str(result.get("model_context") or f"No results found for: {query}"))
+
+    request_queries = [
+        {
+            "purpose": str(plan.get("purpose") or ""),
+            "vertical": str(plan.get("vertical") or "web"),
+            "compiled_query": str(plan.get("compiled_query") or ""),
+            "operators": dict(plan.get("operators") or {}),
+        }
+        for plan in plans
+    ]
+    search_request = {
+        "schema_mode": schema_mode,
+        "effort": effort,
+        "queries": request_queries,
+    }
+    ui = _build_ui(all_sources)
+    queries_with_sources = sum(bool(sources) for sources in sources_by_query)
+    if queries_with_sources == 0:
+        ui["status"] = "empty"
+    elif queries_with_sources < len(plans):
+        ui["status"] = "partial"
+    else:
+        ui["status"] = "done"
+    ui["query_count"] = len(plans)
+    ui["search_request"] = search_request
+
+    queries = [plan["compiled_query"] for plan in plans]
+    payload: dict[str, Any] = {
+        "query": queries[0] if len(queries) == 1 else queries,
+        "queries": queries,
+        "batch": len(queries) > 1,
+        "search_id": search_id,
+        "search_ids": [result.get("search_id") for result in results if result.get("search_id")],
+        "effort": effort,
+        "search_request": search_request,
+        "languages": list(dict.fromkeys(
+            str(result.get("language") or "") for result in results if result.get("language")
+        )),
+        "regions": list(dict.fromkeys(
+            str(result.get("region") or "") for result in results if result.get("region")
+        )),
+        "engines_used": list(dict.fromkeys(
+            engine for result in results for engine in (result.get("engines_used") or [])
+        )),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+        "cached": all(bool(result.get("cached")) for result in results),
+        "model_context": (
+            f"Batch search results for {len(plans)} queries run concurrently:\n\n"
+            + "\n\n---\n\n".join(context_sections)
+            if len(plans) > 1
+            else context_sections[0]
+        ),
+        "sources": all_sources,
+        "ui": ui,
+        "query_results": [
+            {
+                "index": query_index,
+                "query": plan["compiled_query"],
+                "purpose": plan.get("purpose", ""),
+                "vertical": plan.get("vertical", "web"),
+                "search_id": result.get("search_id"),
+                "source_count": len(query_sources),
+                "blocked": bool(result.get("blocked")),
+                "cached": bool(result.get("cached")),
+            }
+            for query_index, (plan, result, query_sources) in enumerate(
+                zip(plans, results, sources_by_query), 1
+            )
+        ],
+    }
+    payload.update(legacy_flags or {})
+    return payload
+
+
+# Run up to three independent legacy searches concurrently.
 async def run_web_search_batch(
     queries: list[str],
     *,
@@ -1074,89 +1211,45 @@ async def run_web_search_batch(
         for query in queries
     ))
 
-    from core.config import load_search_config
+    vertical = "shopping" if shopping else ("academic" if academic else ("onion" if onion else "web"))
+    plans = [
+        {"purpose": "", "vertical": vertical, "compiled_query": query, "operators": {}}
+        for query in queries
+    ]
+    return _combine_search_results(
+        plans,
+        list(results),
+        effort=effort,
+        schema_mode="legacy",
+        started=started,
+        legacy_flags={"shopping": shopping, "academic": academic, "onion": onion},
+    )
 
-    search_cfg = load_search_config().search
-    batch_search_id = _make_search_id()
-    all_sources: list[dict[str, Any]] = []
-    sources_by_query: list[list[dict[str, Any]]] = []
-    next_rank = 1
 
-    for query_index, (query, result) in enumerate(zip(queries, results), 1):
-        query_sources: list[dict[str, Any]] = []
-        for raw_source in result.get("sources") or []:
-            source = dict(raw_source)
-            source["id"] = _citation_id(batch_search_id, next_rank)
-            source["rank"] = next_rank
-            source["batch_query"] = query
-            source["batch_query_index"] = query_index
-            query_sources.append(source)
-            all_sources.append(source)
-            next_rank += 1
-        sources_by_query.append(query_sources)
+async def run_web_search_plan(search_request: dict[str, Any]) -> dict[str, Any]:
+    """Run a prepared mixed-vertical advanced plan concurrently."""
 
-    total_budget = int(search_cfg.total_context_budget or 0)
-    query_budget = total_budget // len(queries) if total_budget else 0
-    per_source_chars = int(search_cfg.preview_max_chars or 0)
-    context_sections: list[str] = []
-    for query, result, query_sources in zip(queries, results, sources_by_query):
-        if query_sources:
-            context_sections.append(_build_model_context(
-                query, query_sources,
-                total_budget=query_budget,
-                per_source_chars=per_source_chars,
-            ))
-        else:
-            context_sections.append(str(result.get("model_context") or f"No results found for: {query}"))
+    plans = [dict(item) for item in search_request.get("queries", []) if isinstance(item, dict)]
+    effort = str(search_request.get("effort") or "medium")
+    started = time.perf_counter()
 
-    ui = _build_ui(all_sources)
-    queries_with_sources = sum(bool(sources) for sources in sources_by_query)
-    if queries_with_sources == 0:
-        ui["status"] = "empty"
-    elif queries_with_sources < len(queries):
-        ui["status"] = "partial"
-    else:
-        ui["status"] = "done"
-    ui["query_count"] = len(queries)
+    async def run_item(plan: dict[str, Any]) -> dict[str, Any]:
+        vertical = str(plan.get("vertical") or "web")
+        return await run_web_search(
+            str(plan.get("compiled_query") or ""),
+            effort=effort,
+            timelimit=plan.get("timelimit"),
+            shopping=vertical == "shopping",
+            academic=vertical == "academic",
+            onion=vertical == "onion",
+            dates_resolved=True,
+        )
 
-    engines_used = list(dict.fromkeys(
-        engine
-        for result in results
-        for engine in (result.get("engines_used") or [])
-    ))
-    return {
-        "query": list(queries),
-        "queries": list(queries),
-        "batch": True,
-        "search_id": batch_search_id,
-        "search_ids": [result.get("search_id") for result in results if result.get("search_id")],
-        "effort": effort,
-        "shopping": shopping,
-        "academic": academic,
-        "onion": onion,
-        "languages": list(dict.fromkeys(
-            str(result.get("language") or "") for result in results if result.get("language")
-        )),
-        "regions": list(dict.fromkeys(
-            str(result.get("region") or "") for result in results if result.get("region")
-        )),
-        "engines_used": engines_used,
-        "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
-        "cached": all(bool(result.get("cached")) for result in results),
-        "model_context": (
-            f"Batch search results for {len(queries)} queries run concurrently:\n\n"
-            + "\n\n---\n\n".join(context_sections)
-        ),
-        "sources": all_sources,
-        "ui": ui,
-        "query_results": [
-            {
-                "query": query,
-                "search_id": result.get("search_id"),
-                "source_count": len(query_sources),
-                "blocked": bool(result.get("blocked")),
-                "cached": bool(result.get("cached")),
-            }
-            for query, result, query_sources in zip(queries, results, sources_by_query)
-        ],
-    }
+    results = await asyncio.gather(*(run_item(plan) for plan in plans))
+    return _combine_search_results(
+        plans,
+        list(results),
+        effort=effort,
+        schema_mode="advanced",
+        started=started,
+    )

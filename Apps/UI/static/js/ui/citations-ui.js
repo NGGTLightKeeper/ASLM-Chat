@@ -8,17 +8,6 @@ const CITATION_INLINE_NOISE_PATTERN = /[\u034f\u061c\u180e\u200b-\u200f\u202a-\u
 const CITATION_HANDLE_SOURCE = String.raw`(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,16}-\d+)`;
 const CITATION_HANDLE_LIST_SOURCE = String.raw`${CITATION_HANDLE_SOURCE}(?:\s*,\s*${CITATION_HANDLE_SOURCE})*`;
 const CITATION_HANDLE_LIST_PATTERN = new RegExp(String.raw`^\s*${CITATION_HANDLE_LIST_SOURCE}\s*$`, 'i');
-const CITATION_BRACKET_SOURCE = String.raw`\[\s*${CITATION_HANDLE_LIST_SOURCE}\s*\]`;
-const CITATION_GAP_SOURCE = String.raw`[\s\u00a0\u1680\u180e\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*`;
-const CITATION_JUNK_CLASS_SOURCE = String.raw`.,;:!?(){}<>|/\\'"\-\u00ad\u058a\u05be\u1400\u1806\u2010-\u2015\u2053\u207b\u208b\u2212\u2796\u2e17\u2e1a\u2e3a-\u2e3b\u2e40\u2e5d\u30a0\ufe31-\ufe32\ufe58\ufe63\uff0d`;
-const CITATION_LEADING_JUNK_PATTERN = new RegExp(
-  String.raw`([^\s\[(])${CITATION_GAP_SOURCE}[${CITATION_JUNK_CLASS_SOURCE}]+${CITATION_GAP_SOURCE}(?=${CITATION_BRACKET_SOURCE})`,
-  'gi'
-);
-const CITATION_INTER_BLOCK_JUNK_PATTERN = new RegExp(
-  String.raw`(${CITATION_BRACKET_SOURCE})${CITATION_GAP_SOURCE}[${CITATION_JUNK_CLASS_SOURCE}]+${CITATION_GAP_SOURCE}(?=${CITATION_BRACKET_SOURCE})`,
-  'gi'
-);
 const CITATION_ATTACHED_PATTERN = new RegExp(String.raw`([^\s\[(])\[(${CITATION_HANDLE_LIST_SOURCE})\]`, 'gi');
 const CITATION_TITLE_MAX_CHARS = 180;
 const CITATION_PREVIEW_MAX_CHARS = 520;
@@ -90,11 +79,9 @@ export function normalizeCitationBrackets(value) {
     });
 }
 
-// Insert spaces between adjacent citation blocks and attached punctuation.
+// Insert a separator before an attached citation without deleting surrounding prose.
 export function normalizeCitationSpacing(value) {
   return String(value || '')
-    .replace(CITATION_INTER_BLOCK_JUNK_PATTERN, '$1 ')
-    .replace(CITATION_LEADING_JUNK_PATTERN, '$1 ')
     .replace(
       CITATION_ATTACHED_PATTERN,
       '$1 [$2]'

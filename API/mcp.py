@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import copy
 import importlib.util
 import inspect
 import json
@@ -847,6 +848,7 @@ def reset_cache() -> None:
     _SERVER_CACHE = {}
     _SCOPED_REGISTRY_CACHE.clear()
     user_mcp_client.shutdown_all()
+    close_external_workers()
 
 
 # Normalize one optional module directory path.
@@ -1197,6 +1199,7 @@ def _normalize_server_tools(raw_tools: Any, server_id: str) -> list[dict[str, An
                 "name": name,
                 "description": description,
                 "parameters": parameters,
+                "prepares_arguments": bool(raw_tool.get("prepares_arguments")),
             }
         )
 
@@ -1316,6 +1319,8 @@ def _ensure_registry_loaded_for(
     cached = _SCOPED_REGISTRY_CACHE.get(scope_key)
     if cached is not None and cached[0] == signature:
         return cached[1]
+    if cached is not None and cached[0] != signature:
+        close_external_workers()
 
     if resolved_tools_dir == TOOLS_DIR and resolved_module_dir == MODULE_ROOT:
         global _SERVER_CACHE_SIGNATURE, _SERVER_CACHE
@@ -1797,6 +1802,124 @@ def _extract_inline_image_payload(result: Any) -> dict[str, Any] | None:
         "_width": payload.get("width"),
         "_height": payload.get("height"),
     }
+
+def prepare_tool_call(
+    tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]
+) -> dict[str, Any]:
+    """Run an optional argument-only preflight before a tool event is published."""
+
+    prepared_call = dict(tool_call or {})
+    raw_arguments = prepared_call.get("arguments") if isinstance(prepared_call.get("arguments"), dict) else {}
+    prepared_call["raw_arguments"] = raw_arguments
+    lookup_entry = tool_lookup.get(str(prepared_call.get("name") or ""))
+    if not isinstance(lookup_entry, dict):
+        prepared_call["arguments"] = raw_arguments
+        return prepared_call
+    tool_definition = lookup_entry.get("tool") if isinstance(lookup_entry.get("tool"), dict) else {}
+    server_definition = lookup_entry.get("server") if isinstance(lookup_entry.get("server"), dict) else {}
+    if not tool_definition.get("prepares_arguments"):
+        prepared_call["arguments"] = raw_arguments
+        return prepared_call
+
+    try:
+        if not server_definition.get("external"):
+            raise RuntimeError("argument preflight is currently supported only for isolated tools")
+        result = _run_worker(
+            Path(server_definition["server_file"]),
+            "prepare",
+            {"tool_id": tool_definition.get("id"), "arguments": raw_arguments},
+            persistent=True,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("tool preparer returned a non-object response")
+    except Exception as exc:  # noqa: BLE001
+        message = f"Tool preparation failed: {type(exc).__name__}: {exc}"
+        result = {
+            "ok": False,
+            "arguments": {},
+            "tool_ui": {"kind": str(tool_definition.get("id") or "tool"), "status": "error"},
+            "error_result": {
+                "sources": [],
+                "model_context": message,
+                "ui": {"kind": str(tool_definition.get("id") or "tool"), "status": "error"},
+            },
+        }
+
+    prepared_call["arguments"] = result.get("arguments") if isinstance(result.get("arguments"), dict) else {}
+    if isinstance(result.get("tool_ui"), dict):
+        prepared_call["tool_ui"] = result["tool_ui"]
+    if not bool(result.get("ok", True)):
+        prepared_call["preflight_error_result"] = result.get("error_result") or "Tool preparation failed."
+    return prepared_call
+
+
+def prepare_tool_calls(
+    tool_lookup: dict[str, dict[str, Any]], tool_calls: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    return [prepare_tool_call(tool_lookup, tool_call) for tool_call in tool_calls]
+
+
+def build_tool_event(
+    tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the shared canonical tool event used by every model adapter."""
+
+    alias = str(tool_call.get("name") or "")
+    lookup_entry = tool_lookup.get(alias, {})
+    server_definition = lookup_entry.get("server", {})
+    tool_definition = lookup_entry.get("tool", {})
+    event = {
+        "alias": alias,
+        "server_id": server_definition.get("id") or "",
+        "server_name": server_definition.get("name") or server_definition.get("id") or "",
+        "tool_id": tool_definition.get("id") or alias,
+        "tool_name": tool_definition.get("name") or alias,
+        "arguments": tool_call.get("arguments") or {},
+    }
+    if isinstance(tool_call.get("tool_ui"), dict):
+        event["tool_ui"] = tool_call["tool_ui"]
+    return event
+
+
+def canonicalize_transcript_tool_calls(
+    transcript_message: dict[str, Any], tool_calls: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Replace provider tool arguments before the transcript is persisted or published."""
+
+    message = copy.deepcopy(transcript_message or {})
+    raw_calls = message.get("tool_calls")
+    if not isinstance(raw_calls, list):
+        return message
+
+    remaining = list(tool_calls or [])
+    for raw_call in raw_calls:
+        if not isinstance(raw_call, dict):
+            continue
+        function_payload = raw_call.get("function")
+        if not isinstance(function_payload, dict):
+            continue
+        name = str(function_payload.get("name") or "")
+        match_index = next(
+            (
+                index
+                for index, prepared in enumerate(remaining)
+                if str(prepared.get("name") or "") == name
+            ),
+            None,
+        )
+        prepared = remaining.pop(match_index) if match_index is not None else None
+        canonical = prepared.get("arguments") if isinstance(prepared, dict) else {}
+        canonical = canonical if isinstance(canonical, dict) else {}
+        if isinstance(function_payload.get("arguments"), str):
+            function_payload["arguments"] = json.dumps(
+                canonical,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        else:
+            function_payload["arguments"] = canonical
+    return message
+
 
 # Execute one local tool.
 def call_ollama_tool(

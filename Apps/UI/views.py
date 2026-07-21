@@ -2317,6 +2317,8 @@ def _serialize_tool_call_marker(tool_event: dict[str, Any]) -> str:
         "tool_name": str(tool_event.get("tool_name", "") or "").strip(),
         "arguments": tool_event.get("arguments") or {},
     }
+    if isinstance(tool_event.get("tool_ui"), dict):
+        payload["tool_ui"] = tool_event["tool_ui"]
     return f'<tool_call>{json.dumps(payload, ensure_ascii=False)}</tool_call>'
 
 

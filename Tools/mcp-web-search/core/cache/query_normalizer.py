@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from core.query.operators import has_search_operators  # noqa: F401 - compatibility export
+
 
 # Multilingual stopwords stripped before cache-key hashing.
 QUERY_STOPWORDS: frozenset[str] = frozenset({
@@ -54,21 +56,6 @@ COMPOSITE_TOKENS: dict[str, str] = {
     "asp.net": "aspnet",
     ".env": "dotenv",
 }
-
-
-# Search operators that change a query's meaning and must NOT be collapsed by the
-# token-sort cache key. When present, the cache uses the strict order-preserving key so a
-# refined directive query can't collide with a differently-meaning one.
-_OPERATOR_RE = re.compile(
-    r'(?:^|\s)(?:-?site:|filetype:|intitle:|inurl:|before:|after:|")'
-    r'|(?:^|\s)OR(?:\s|$)|(?:^|\s)-\w',
-    re.IGNORECASE,
-)
-
-
-# True when the query carries a meaning-changing search operator.
-def has_search_operators(query: str) -> bool:
-    return bool(_OPERATOR_RE.search(query or ""))
 
 
 # Canonical cache key: lowercase, stopwords removed, terms sorted (order discarded).

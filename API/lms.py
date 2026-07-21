@@ -1051,20 +1051,7 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
 # Build one tool event.
 def _build_tool_event(tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]) -> dict[str, Any]:
     """Serialize one tool invocation so the UI can render it during streaming."""
-
-    alias = tool_call.get("name", "")
-    lookup_entry = tool_lookup.get(alias, {})
-    server_definition = lookup_entry.get("server", {})
-    tool_definition = lookup_entry.get("tool", {})
-
-    return {
-        "alias": alias,
-        "server_id": server_definition.get("id") or "",
-        "server_name": server_definition.get("name") or server_definition.get("id") or "",
-        "tool_id": tool_definition.get("id") or alias,
-        "tool_name": tool_definition.get("name") or alias,
-        "arguments": tool_call.get("arguments") or {},
-    }
+    return tool_registry.build_tool_event(tool_lookup, tool_call)
 
 
 # Build one tool message.
@@ -1561,12 +1548,18 @@ def _run_tool_loop(
                 }
             )
 
+        tool_calls = tool_registry.prepare_tool_calls(tool_lookup, tool_calls)
+
         for tool_call in tool_calls:
             satisfied_server_id = tool_registry.tool_server_id_for_alias(tool_lookup, tool_call["name"])
             if satisfied_server_id:
                 satisfied_tool_server_ids.add(satisfied_server_id)
 
-        yield {"transcript_message": assistant_message}
+        yield {
+            "transcript_message": tool_registry.canonicalize_transcript_tool_calls(
+                assistant_message, tool_calls
+            )
+        }
 
         tool_events = [_build_tool_event(tool_lookup, tool_call) for tool_call in tool_calls]
         for _i, _ev in enumerate(tool_events):
@@ -1581,6 +1574,7 @@ def _run_tool_loop(
                     "model_name": model_name,
                     "tool_alias": tool_call["name"],
                     "tool_arguments": tool_call.get("arguments") or {},
+                    "raw_tool_arguments": tool_call.get("raw_arguments") or {},
                     "tool_call_index": tool_call_index,
                     "tool_round_index": round_index + 1,
                 }
@@ -1592,39 +1586,43 @@ def _run_tool_loop(
                 context=call_context,
             )
 
-            tool_cooldown_error = tool_registry.consume_tool_cooldown(
-                tool_event,
-                tool_call.get("arguments") or {},
-            )
-            if tool_cooldown_error is not None:
-                tool_result = tool_cooldown_error
+            preflight_error = tool_call.get("preflight_error_result")
+            if preflight_error is not None:
+                tool_result = preflight_error
             else:
-                duplicate_error = tool_registry.consume_duplicate_tool_call(
+                tool_cooldown_error = tool_registry.consume_tool_cooldown(
                     tool_event,
                     tool_call.get("arguments") or {},
-                    seen_tool_signatures,
                 )
-                if duplicate_error is not None:
-                    tool_result = duplicate_error
+                if tool_cooldown_error is not None:
+                    tool_result = tool_cooldown_error
                 else:
-                    quota_error = tool_registry.consume_tool_quota(
+                    duplicate_error = tool_registry.consume_duplicate_tool_call(
                         tool_event,
-                        tool_quota_counters,
-                        arguments=tool_call.get("arguments") or {},
+                        tool_call.get("arguments") or {},
+                        seen_tool_signatures,
                     )
-                    if quota_error is not None:
-                        tool_result = quota_error
+                    if duplicate_error is not None:
+                        tool_result = duplicate_error
                     else:
-                        tool_result = tool_registry.call_ollama_tool(
-                            tool_lookup,
-                            tool_call["name"],
-                            tool_call.get("arguments") or {},
-                            context=call_context,
-                        )
-                        tool_registry.remember_tool_cooldown(
+                        quota_error = tool_registry.consume_tool_quota(
                             tool_event,
-                            tool_call.get("arguments") or {},
+                            tool_quota_counters,
+                            arguments=tool_call.get("arguments") or {},
                         )
+                        if quota_error is not None:
+                            tool_result = quota_error
+                        else:
+                            tool_result = tool_registry.call_ollama_tool(
+                                tool_lookup,
+                                tool_call["name"],
+                                tool_call.get("arguments") or {},
+                                context=call_context,
+                            )
+                            tool_registry.remember_tool_cooldown(
+                                tool_event,
+                                tool_call.get("arguments") or {},
+                            )
             if tool_registry.is_blocking_tool_result(tool_result):
                 consecutive_blocked_tool_results += 1
             else:

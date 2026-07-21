@@ -10,15 +10,22 @@ import core.search.web_search as search_module
 from core.cache.query_normalizer import has_search_operators
 from core.extract.scoring import query_terms
 from core.mcp_contract import (
+    LEGACY_WEB_SEARCH_TOOL_DESCRIPTION,
     SEARCH_BATCH_LIMIT,
-    WEB_SEARCH_TOOL_DESCRIPTION,
     build_search_schema,
     coerce_search_queries,
     coerce_search_query,
 )
 
 
-def test_query_schema_accepts_one_string_or_three_query_batch():
+def test_legacy_query_schema_accepts_one_string_or_three_query_batch(monkeypatch):
+    import core.config as config_module
+
+    cfg = type("Cfg", (), {
+        "query": type("Query", (), {"schema_mode": "legacy"})(),
+        "tor": type("Tor", (), {"enabled": False})(),
+    })()
+    monkeypatch.setattr(config_module, "load_search_config", lambda: cfg)
     query_schema = build_search_schema()["properties"]["query"]
     string_schema, batch_schema = query_schema["oneOf"]
 
@@ -40,14 +47,14 @@ def test_query_batch_coercion_caps_and_sanitizes_items():
 
 
 def test_tool_description_documents_batch_and_operator_examples():
-    assert "pass query as an array of strings" in WEB_SEARCH_TOOL_DESCRIPTION
-    assert "site:reddit.com" in WEB_SEARCH_TOOL_DESCRIPTION
-    assert "postgresql OR postgres" in WEB_SEARCH_TOOL_DESCRIPTION
-    assert "-car -automotive" in WEB_SEARCH_TOOL_DESCRIPTION
-    assert "filetype:pdf" in WEB_SEARCH_TOOL_DESCRIPTION
-    assert 'intitle:"release notes"' in WEB_SEARCH_TOOL_DESCRIPTION
-    assert "inurl:issues" in WEB_SEARCH_TOOL_DESCRIPTION
-    assert "after:2026-01-01 before:2026-07-01" in WEB_SEARCH_TOOL_DESCRIPTION
+    assert "pass query as an array of strings" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "site:reddit.com" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "postgresql OR postgres" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "-car -automotive" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "filetype:pdf" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert 'intitle:"release notes"' in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "inurl:issues" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "after:2026-01-01 before:2026-07-01" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
 
 
 def test_advanced_operators_are_recognized_without_polluting_scoring_terms():

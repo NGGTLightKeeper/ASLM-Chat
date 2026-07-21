@@ -28,16 +28,17 @@ from core.logging_setup import setup_logging
 from core.mcp_contract import (
     MCP_SERVER_DESCRIPTION,
     READ_PAGE_TOOL_DESCRIPTION,
-    WEB_SEARCH_TOOL_DESCRIPTION,
+    build_search_description,
     build_search_schema,
     coerce_search_academic,
     coerce_search_effort,
     coerce_search_onion,
     coerce_search_queries,
     coerce_search_shopping,
+    prepare_search_arguments,
 )
 from core.read import run_read_page
-from core.search.web_search import run_web_search, run_web_search_batch
+from core.search.web_search import run_web_search, run_web_search_batch, run_web_search_plan
 from core.search_io_logger import write_search_io_event
 from urllib.parse import urlparse
 
@@ -74,7 +75,7 @@ TOOLS = [
     {
         "id": "web_search",
         "name": "Web Search",
-        "description": WEB_SEARCH_TOOL_DESCRIPTION,
+        "description": build_search_description(),
         # Built from config so the onion opt-in is advertised only while tor.enabled.
         "parameters": build_search_schema(),
     },
@@ -98,6 +99,10 @@ TOOLS = [
     },
 ]
 
+# Optional worker preflight. The API calls this before publishing the tool event so the
+# frontend receives canonical search data without waiting for network I/O.
+TOOL_PREPARERS = {"web_search": prepare_search_arguments}
+
 
 # Return whether this server supports the given engine or model.
 def supports(engine: str | None = None, model_name: str | None = None) -> bool:
@@ -110,13 +115,32 @@ def supports(engine: str | None = None, model_name: str | None = None) -> bool:
 # query, region is routed by language, and safe-search stays moderate — none are model-
 # facing knobs. Arguments are coerced (a model may stringify or wrap them).
 async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
-    queries = coerce_search_queries(args.get("query", ""))
-    query = queries[0] if len(queries) == 1 else list(queries)
-    query_preview = " | ".join(queries)[:320]
-    effort = coerce_search_effort(args)
-    shopping = coerce_search_shopping(args)
-    academic = coerce_search_academic(args)
-    onion = coerce_search_onion(args)  # honored only when tor.enabled (AND-gated in coerce)
+    prepared = prepare_search_arguments(args)
+    if not prepared.get("ok"):
+        return dict(prepared.get("error_result") or {})
+
+    canonical_args = dict(prepared.get("arguments") or {})
+    search_request = dict(prepared.get("search_request") or {})
+    if search_request.get("schema_mode") == "advanced":
+        queries = [
+            str(item.get("compiled_query") or "")
+            for item in search_request.get("queries", [])
+            if isinstance(item, dict)
+        ]
+        query = queries[0] if len(queries) == 1 else list(queries)
+        query_preview = " | ".join(queries)[:320]
+        effort = str(search_request.get("effort") or "medium")
+        shopping = any(item.get("vertical") == "shopping" for item in search_request.get("queries", []))
+        academic = any(item.get("vertical") == "academic" for item in search_request.get("queries", []))
+        onion = any(item.get("vertical") == "onion" for item in search_request.get("queries", []))
+    else:
+        queries = coerce_search_queries(canonical_args.get("query", ""))
+        query = queries[0] if len(queries) == 1 else list(queries)
+        query_preview = " | ".join(queries)[:320]
+        effort = coerce_search_effort(canonical_args)
+        shopping = coerce_search_shopping(canonical_args)
+        academic = coerce_search_academic(canonical_args)
+        onion = coerce_search_onion(canonical_args)
 
     write_search_io_event(
         {
@@ -138,7 +162,9 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
     )
     started = time.perf_counter()
     try:
-        if len(queries) > 1:
+        if search_request.get("schema_mode") == "advanced":
+            result = await run_web_search_plan(search_request)
+        elif len(queries) > 1:
             result = await run_web_search_batch(
                 queries, effort=effort, shopping=shopping, academic=academic, onion=onion,
             )
@@ -150,6 +176,9 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
                 academic=academic,
                 onion=onion,
             )
+            result["search_request"] = search_request
+            result.setdefault("ui", {})["search_request"] = search_request
+            result["ui"]["query_count"] = len(queries)
     except Exception:
         logger.exception("mcp.web_search.failed query_preview=%r", query_preview)
         raise

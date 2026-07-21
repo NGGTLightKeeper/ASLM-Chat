@@ -1101,7 +1101,8 @@ export function createMessagesUi(context, dependencies) {
             toolId: String(parsed.tool_id || '').trim(),
             toolName: String(parsed.tool_name || parsed.tool_display_name || '').trim(),
             arguments: parsed.arguments && typeof parsed.arguments === 'object' ? parsed.arguments : {},
-            result: null
+            result: null,
+            toolUi: parsed.tool_ui && typeof parsed.tool_ui === 'object' ? parsed.tool_ui : null
           };
 
           segments.push(segment);
@@ -1385,10 +1386,49 @@ export function createMessagesUi(context, dependencies) {
       || !!(segment.toolUi && segment.toolUi.compact);
   }
 
-  // Extract the search query string from one tool segment.
+  // Read the backend-normalized request attached during tool preflight or execution.
+  function normalizedSearchRequestFromSegment(segment) {
+    const candidates = [
+      segment && segment.toolUi && segment.toolUi.search_request,
+      segment && segment.structuredContent && segment.structuredContent.search_request,
+      segment && segment.structuredContent && segment.structuredContent.ui
+        && segment.structuredContent.ui.search_request
+    ];
+    return candidates.find(function findRequest(candidate) {
+      return candidate && typeof candidate === 'object' && Array.isArray(candidate.queries);
+    }) || null;
+  }
+
+  // Return one display row per normalized query; legacy raw data is only a fallback.
+  function searchQueryEntriesFromSegment(segment) {
+    const request = normalizedSearchRequestFromSegment(segment);
+    if (request) {
+      return request.queries.map(function normalizePreparedQuery(item) {
+        const query = item && typeof item === 'object' ? item : {};
+        return {
+          query: String(query.compiled_query || '').replace(/\s+/g, ' ').trim(),
+          purpose: String(query.purpose || '').replace(/\s+/g, ' ').trim(),
+          vertical: String(query.vertical || 'web').trim().toLowerCase()
+        };
+      }).filter(function keepPreparedQuery(item) { return !!item.query; });
+    }
+
+    const args = segment && segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    const raw = args.query || args.q || '';
+    if (Array.isArray(raw)) {
+      return raw.map(function normalizeLegacyQuery(value) {
+        return { query: formatSearchQueryValue(value).trim(), purpose: '', vertical: '' };
+      }).filter(function keepLegacyQuery(item) { return !!item.query; });
+    }
+    const query = formatSearchQueryValue(raw).trim();
+    return query ? [{ query, purpose: '', vertical: '' }] : [];
+  }
+
+  // Extract a stable query summary from one tool segment.
   function searchQueryFromSegment(segment) {
-    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
-    return formatSearchQueryValue(args.query || args.q || '').trim();
+    return searchQueryEntriesFromSegment(segment).map(function mapEntry(item) {
+      return item.query;
+    }).join(' | ');
   }
 
   // Append one query fragment without duplicates.
@@ -1743,9 +1783,65 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
+  // Render a canonical request produced by backend preflight without reparsing its schema.
+  function renderPreparedSearchToolCard(segment, toolSegmentIndex, options, entries) {
+    const renderOptions = options || {};
+    const hasResult = segment.result !== null && segment.result !== undefined;
+    const status = segment.toolUi && segment.toolUi.status ? String(segment.toolUi.status) : '';
+    const isRejected = status === 'rejected' || /^INVALID_SEARCH_PLAN:/i.test(String(segment.result || '').trim());
+    const sources = searchSourcesFromSegment(segment);
+    const renderedSources = renderSearchSourcesWithOverflow(sources, 3);
+    const isExpanded = !!renderOptions.expanded;
+    const queryDisplayMode = segment.toolUi
+      && String(segment.toolUi.query_display_mode || '').trim().toLowerCase() === 'purpose'
+      ? 'purpose'
+      : 'compiled_query';
+    const queriesHtml = entries.map(function renderPreparedQuery(entry) {
+      const displayText = queryDisplayMode === 'purpose' && entry.purpose
+        ? entry.purpose
+        : entry.query;
+      const pendingDot = hasResult || isRejected ? '' : '<span class="msg-search-pending-dot"></span>';
+      return `<div class="msg-search-batch-query${isRejected ? ' is-error' : ''}"><span class="msg-search-batch-query-text">${escHtml(displayText)}</span>${pendingDot}</div>`;
+    }).join('');
+    const moreCount = renderedSources.hiddenCount;
+    const moreButtonAttrs = `type="button" data-search-more-count="${moreCount}" aria-expanded="${isExpanded ? 'true' : 'false'}"`;
+    const collapsedMoreHtml = moreCount > 0
+      ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-collapsed" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(`${MORE_LABEL} ${moreCount}`)}</span></button>`
+      : '';
+    const expandedMoreHtml = moreCount > 0
+      ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-expanded" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(HIDE_LABEL)}</span></button>`
+      : '';
+    const iconHtml = status === 'error' || status === 'timeout' || isRejected
+      ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
+      : (icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+    const searchKey = searchSegmentKey(segment, toolSegmentIndex);
+    const searchKeyAttr = searchKey ? ` data-search-key="${escapeAttributeValue(searchKey)}"` : '';
+
+    return `
+      <div class="msg-search-card msg-search-card--batch${hasResult ? ' is-done' : ' is-pending'}${isRejected ? ' is-error' : ''}${isExpanded ? ' is-expanded' : ''}" data-tool-segment-index="${toolSegmentIndex}"${searchKeyAttr}>
+        <div class="msg-search-batch-head">
+          <span class="msg-search-icon msg-search-batch-icon">${iconHtml}</span>
+          <div class="msg-search-batch-queries">${queriesHtml}</div>
+        </div>
+        ${renderedSources.visibleHtml || collapsedMoreHtml ? `<div class="msg-search-chips msg-search-chips--batch">${renderedSources.visibleHtml}${collapsedMoreHtml}</div>` : ''}
+        ${renderedSources.hiddenHtml || expandedMoreHtml ? `<div class="msg-search-extra-chips msg-search-extra-chips--batch">${renderedSources.hiddenHtml}${expandedMoreHtml}</div>` : ''}
+      </div>
+    `;
+  }
+
   // Render one search tool activity card.
   function renderSearchToolCard(segment, toolSegmentIndex, options) {
     const renderOptions = options || {};
+    const normalizedRequest = normalizedSearchRequestFromSegment(segment);
+    const preparedEntries = searchQueryEntriesFromSegment(segment);
+    if (normalizedRequest && preparedEntries.length > 0) {
+      return renderPreparedSearchToolCard(
+        segment,
+        toolSegmentIndex,
+        renderOptions,
+        preparedEntries
+      );
+    }
     const hasResult = segment.result !== null && segment.result !== undefined;
     const compact = segment.toolUi && segment.toolUi.compact && typeof segment.toolUi.compact === 'object'
       ? segment.toolUi.compact
@@ -1818,18 +1914,29 @@ export function createMessagesUi(context, dependencies) {
       return item.segment.result === null || item.segment.result === undefined;
     });
     const hasPending = activePendingIndex !== -1;
-    const queriesHtml = searchItems.map(function renderBatchQuery(item, itemIndex) {
-      const query = searchQueryFromSegment(item.segment);
+    const queriesHtml = searchItems.flatMap(function renderBatchQuery(item, itemIndex) {
+      const entries = searchQueryEntriesFromSegment(item.segment);
       const itemStatus = item.segment.toolUi && item.segment.toolUi.status ? String(item.segment.toolUi.status) : '';
       const itemRejected = itemStatus === 'rejected' || /^BAD_QUERY:/i.test(String(item.segment.result || '').trim());
       const compact = item.segment.toolUi && item.segment.toolUi.compact && typeof item.segment.toolUi.compact === 'object'
         ? item.segment.toolUi.compact
         : null;
-      const labelBase = query || (compact && compact.label ? String(compact.label).replace(/^Searching for\s+/i, '') : 'sources');
-      const label = itemRejected ? `Bad query: ${labelBase}` : labelBase;
-      const activeClass = itemIndex === activePendingIndex ? ' is-active' : '';
-      const activeDot = itemIndex === activePendingIndex ? '<span class="msg-search-pending-dot"></span>' : '';
-      return `<div class="msg-search-batch-query${activeClass}"><span class="msg-search-batch-query-text">${escHtml(label)}</span>${activeDot}</div>`;
+      const displayEntries = entries.length > 0
+        ? entries
+        : [{ query: compact && compact.label ? String(compact.label).replace(/^Searching for\s+/i, '') : 'sources', purpose: '', vertical: '' }];
+      return displayEntries.map(function renderEntry(entry) {
+        const queryDisplayMode = item.segment.toolUi
+          && String(item.segment.toolUi.query_display_mode || '').trim().toLowerCase() === 'purpose'
+          ? 'purpose'
+          : 'compiled_query';
+        const displayText = queryDisplayMode === 'purpose' && entry.purpose
+          ? entry.purpose
+          : entry.query;
+        const label = itemRejected ? `Bad query: ${displayText}` : displayText;
+        const activeClass = itemIndex === activePendingIndex ? ' is-active' : '';
+        const activeDot = itemIndex === activePendingIndex ? '<span class="msg-search-pending-dot"></span>' : '';
+        return `<div class="msg-search-batch-query${activeClass}"><span class="msg-search-batch-query-text">${escHtml(label)}</span>${activeDot}</div>`;
+      });
     }).join('');
     const combinedSources = dedupeSearchSources(searchItems.flatMap(function collectSources(item) {
       return searchSourcesFromSegment(item.segment);

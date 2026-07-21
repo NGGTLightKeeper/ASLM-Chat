@@ -83,6 +83,7 @@ from Apps.UI.views import (
     _reveal_file_in_file_manager,
     _resolve_history_char_budget,
     _serialize_attachment_record,
+    _serialize_tool_call_marker,
     _selected_tools_include_sandbox,
     _stream_chat_response,
     _strip_llm_control_tokens,
@@ -890,6 +891,94 @@ class ToolQuotaTests(SimpleTestCase):
 
         for _index in range(4):
             self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
+
+
+class ToolPreflightTests(SimpleTestCase):
+    def _lookup(self):
+        tool = {
+            "id": "web_search",
+            "alias": "web_search__web_search",
+            "name": "Web Search",
+            "prepares_arguments": True,
+        }
+        server = {
+            "id": "web_search",
+            "name": "Web Search",
+            "external": True,
+            "server_file": Path("Tools/mcp-web-search/mcp-server.py"),
+        }
+        return {"web_search__web_search": {"server": server, "tool": tool}}
+
+    @patch.object(tool_registry, "_run_worker")
+    def test_preflight_replaces_raw_arguments_before_tool_event(self, worker_mock):
+        worker_mock.return_value = {
+            "ok": True,
+            "arguments": {"queries": [{"purpose": "verify", "vertical": "web", "text": "canonical"}]},
+            "tool_ui": {
+                "kind": "web_search",
+                "status": "pending",
+                "search_request": {
+                    "schema_mode": "advanced",
+                    "effort": "medium",
+                    "queries": [{"purpose": "verify", "vertical": "web", "compiled_query": "canonical", "operators": {}}],
+                },
+            },
+        }
+        raw = {"query": "raw model value"}
+        call = tool_registry.prepare_tool_call(
+            self._lookup(),
+            {"name": "web_search__web_search", "arguments": raw},
+        )
+        event = tool_registry.build_tool_event(self._lookup(), call)
+
+        self.assertEqual(call["raw_arguments"], raw)
+        self.assertNotIn("raw model value", json.dumps(event))
+        self.assertEqual(event["arguments"]["queries"][0]["text"], "canonical")
+        self.assertEqual(event["tool_ui"]["search_request"]["queries"][0]["compiled_query"], "canonical")
+        marker = _serialize_tool_call_marker(event)
+        self.assertIn('"tool_ui"', marker)
+        self.assertNotIn("raw model value", marker)
+
+        transcript = tool_registry.canonicalize_transcript_tool_calls(
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "function": {
+                            "name": "web_search__web_search",
+                            "arguments": json.dumps(raw),
+                        },
+                    }
+                ],
+            },
+            [call],
+        )
+        self.assertNotIn("raw model value", json.dumps(transcript))
+        transcript_arguments = transcript["tool_calls"][0]["function"]["arguments"]
+        self.assertEqual(json.loads(transcript_arguments), event["arguments"])
+
+    @patch.object(tool_registry, "_run_worker")
+    def test_rejected_preflight_keeps_structured_error_for_adapter_short_circuit(self, worker_mock):
+        error_result = {
+            "model_context": "INVALID_SEARCH_PLAN: $.queries: required",
+            "sources": [],
+            "ui": {"kind": "web_search", "status": "rejected"},
+        }
+        worker_mock.return_value = {
+            "ok": False,
+            "arguments": {},
+            "tool_ui": error_result["ui"],
+            "error_result": error_result,
+        }
+        call = tool_registry.prepare_tool_call(
+            self._lookup(),
+            {"name": "web_search__web_search", "arguments": {"query": "legacy"}},
+        )
+
+        self.assertEqual(call["arguments"], {})
+        self.assertEqual(call["preflight_error_result"], error_result)
+        self.assertEqual(call["tool_ui"]["status"], "rejected")
 
 # Cover adapter-specific model list formats.
 class ModelNameExtractionTests(SimpleTestCase):
