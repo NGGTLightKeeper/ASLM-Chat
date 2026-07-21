@@ -33,11 +33,11 @@ from core.mcp_contract import (
     coerce_search_academic,
     coerce_search_effort,
     coerce_search_onion,
-    coerce_search_query,
+    coerce_search_queries,
     coerce_search_shopping,
 )
 from core.read import run_read_page
-from core.search.web_search import run_web_search
+from core.search.web_search import run_web_search, run_web_search_batch
 from core.search_io_logger import write_search_io_event
 from urllib.parse import urlparse
 
@@ -110,7 +110,9 @@ def supports(engine: str | None = None, model_name: str | None = None) -> bool:
 # query, region is routed by language, and safe-search stays moderate — none are model-
 # facing knobs. Arguments are coerced (a model may stringify or wrap them).
 async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
-    query = coerce_search_query(args.get("query", ""))
+    queries = coerce_search_queries(args.get("query", ""))
+    query = queries[0] if len(queries) == 1 else list(queries)
+    query_preview = " | ".join(queries)[:320]
     effort = coerce_search_effort(args)
     shopping = coerce_search_shopping(args)
     academic = coerce_search_academic(args)
@@ -122,25 +124,39 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
             "phase": "web_search.request",
             "tool_id": "web_search",
             "query": query,
+            "queries": list(queries),
+            "batch": len(queries) > 1,
             "effort": effort,
             "shopping": shopping,
             "academic": academic,
             "onion": onion,
         }
     )
-    logger.info("mcp.web_search.start effort=%s shopping=%s academic=%s onion=%s query_preview=%r",
-                effort, shopping, academic, onion, query[:160])
+    logger.info(
+        "mcp.web_search.start effort=%s shopping=%s academic=%s onion=%s queries=%d query_preview=%r",
+        effort, shopping, academic, onion, len(queries), query_preview,
+    )
     started = time.perf_counter()
     try:
-        result = await run_web_search(query, effort=effort, shopping=shopping,
-                                      academic=academic, onion=onion)
+        if len(queries) > 1:
+            result = await run_web_search_batch(
+                queries, effort=effort, shopping=shopping, academic=academic, onion=onion,
+            )
+        else:
+            result = await run_web_search(
+                queries[0] if queries else "",
+                effort=effort,
+                shopping=shopping,
+                academic=academic,
+                onion=onion,
+            )
     except Exception:
-        logger.exception("mcp.web_search.failed query_preview=%r", query[:160])
+        logger.exception("mcp.web_search.failed query_preview=%r", query_preview)
         raise
     elapsed = time.perf_counter() - started
     logger.info(
-        "mcp.web_search.done effort=%s sources=%d elapsed=%.3fs",
-        effort, len(result.get("sources", [])), elapsed,
+        "mcp.web_search.done effort=%s queries=%d sources=%d elapsed=%.3fs",
+        effort, len(queries), len(result.get("sources", [])), elapsed,
     )
     write_search_io_event(
         {
@@ -148,6 +164,8 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
             "phase": "web_search.result",
             "tool_id": "web_search",
             "query": query,
+            "queries": list(queries),
+            "batch": len(queries) > 1,
             "result": result,
             "elapsed_seconds": elapsed,
         }

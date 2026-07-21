@@ -1040,3 +1040,123 @@ async def run_web_search(
         get_prefetch_manager().schedule(targets[: cache_cfg.prefetch_max_urls])
 
     return payload
+
+
+# Run up to three independent searches concurrently and return one citable payload.
+async def run_web_search_batch(
+    queries: list[str],
+    *,
+    effort: str = "low",
+    region: str = "",
+    safesearch: str = "moderate",
+    timelimit: str | None = None,
+    shopping: bool = False,
+    academic: bool = False,
+    onion: bool = False,
+) -> dict[str, Any]:
+    if not queries:
+        return await run_web_search(
+            "", effort=effort, region=region, safesearch=safesearch,
+            timelimit=timelimit, shopping=shopping, academic=academic, onion=onion,
+        )
+    if len(queries) == 1:
+        return await run_web_search(
+            queries[0], effort=effort, region=region, safesearch=safesearch,
+            timelimit=timelimit, shopping=shopping, academic=academic, onion=onion,
+        )
+
+    started = time.perf_counter()
+    results = await asyncio.gather(*(
+        run_web_search(
+            query, effort=effort, region=region, safesearch=safesearch,
+            timelimit=timelimit, shopping=shopping, academic=academic, onion=onion,
+        )
+        for query in queries
+    ))
+
+    from core.config import load_search_config
+
+    search_cfg = load_search_config().search
+    batch_search_id = _make_search_id()
+    all_sources: list[dict[str, Any]] = []
+    sources_by_query: list[list[dict[str, Any]]] = []
+    next_rank = 1
+
+    for query_index, (query, result) in enumerate(zip(queries, results), 1):
+        query_sources: list[dict[str, Any]] = []
+        for raw_source in result.get("sources") or []:
+            source = dict(raw_source)
+            source["id"] = _citation_id(batch_search_id, next_rank)
+            source["rank"] = next_rank
+            source["batch_query"] = query
+            source["batch_query_index"] = query_index
+            query_sources.append(source)
+            all_sources.append(source)
+            next_rank += 1
+        sources_by_query.append(query_sources)
+
+    total_budget = int(search_cfg.total_context_budget or 0)
+    query_budget = total_budget // len(queries) if total_budget else 0
+    per_source_chars = int(search_cfg.preview_max_chars or 0)
+    context_sections: list[str] = []
+    for query, result, query_sources in zip(queries, results, sources_by_query):
+        if query_sources:
+            context_sections.append(_build_model_context(
+                query, query_sources,
+                total_budget=query_budget,
+                per_source_chars=per_source_chars,
+            ))
+        else:
+            context_sections.append(str(result.get("model_context") or f"No results found for: {query}"))
+
+    ui = _build_ui(all_sources)
+    queries_with_sources = sum(bool(sources) for sources in sources_by_query)
+    if queries_with_sources == 0:
+        ui["status"] = "empty"
+    elif queries_with_sources < len(queries):
+        ui["status"] = "partial"
+    else:
+        ui["status"] = "done"
+    ui["query_count"] = len(queries)
+
+    engines_used = list(dict.fromkeys(
+        engine
+        for result in results
+        for engine in (result.get("engines_used") or [])
+    ))
+    return {
+        "query": list(queries),
+        "queries": list(queries),
+        "batch": True,
+        "search_id": batch_search_id,
+        "search_ids": [result.get("search_id") for result in results if result.get("search_id")],
+        "effort": effort,
+        "shopping": shopping,
+        "academic": academic,
+        "onion": onion,
+        "languages": list(dict.fromkeys(
+            str(result.get("language") or "") for result in results if result.get("language")
+        )),
+        "regions": list(dict.fromkeys(
+            str(result.get("region") or "") for result in results if result.get("region")
+        )),
+        "engines_used": engines_used,
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+        "cached": all(bool(result.get("cached")) for result in results),
+        "model_context": (
+            f"Batch search results for {len(queries)} queries run concurrently:\n\n"
+            + "\n\n---\n\n".join(context_sections)
+        ),
+        "sources": all_sources,
+        "ui": ui,
+        "query_results": [
+            {
+                "query": query,
+                "search_id": result.get("search_id"),
+                "source_count": len(query_sources),
+                "blocked": bool(result.get("blocked")),
+                "cached": bool(result.get("cached")),
+            }
+            for query, result, query_sources in zip(queries, results, sources_by_query)
+        ],
+    }

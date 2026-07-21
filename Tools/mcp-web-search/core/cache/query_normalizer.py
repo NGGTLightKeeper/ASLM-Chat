@@ -57,10 +57,13 @@ COMPOSITE_TOKENS: dict[str, str] = {
 
 
 # Search operators that change a query's meaning and must NOT be collapsed by the
-# token-sort cache key: site:/-site: restrictions, "exact phrases", OR alternation, and
-# -term exclusions. When present, the cache uses the strict order-preserving key so a
+# token-sort cache key. When present, the cache uses the strict order-preserving key so a
 # refined directive query can't collide with a differently-meaning one.
-_OPERATOR_RE = re.compile(r'(?:^|\s)(?:-?site:|")|(?:^|\s)OR(?:\s|$)|(?:^|\s)-\w')
+_OPERATOR_RE = re.compile(
+    r'(?:^|\s)(?:-?site:|filetype:|intitle:|inurl:|before:|after:|")'
+    r'|(?:^|\s)OR(?:\s|$)|(?:^|\s)-\w',
+    re.IGNORECASE,
+)
 
 
 # True when the query carries a meaning-changing search operator.

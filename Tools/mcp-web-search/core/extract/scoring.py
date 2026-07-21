@@ -17,8 +17,17 @@ def query_terms(query: str) -> list[str]:
         tl = t.lower()
         # Search operators are directives, not content terms: scoring against them only
         # dilutes the score of genuine results (no page contains "site:github.com" verbatim).
-        if tl == "or" or tl.startswith(("site:", "-site:")) or (t.startswith("-") and len(t) > 1):
+        if (
+            tl == "or"
+            or tl.startswith(("site:", "-site:", "filetype:", "before:", "after:"))
+            or (t.startswith("-") and len(t) > 1)
+        ):
             continue
+        # intitle:/inurl: constrain where a useful content term appears; keep the value for
+        # lexical relevance while discarding only the operator prefix.
+        if tl.startswith(("intitle:", "inurl:")):
+            t = t.split(":", 1)[1]
+            tl = t.lower()
         # Composite tokens (e.g. ".NET", "C#") must be substituted before
         # punct-strip so ".NET".strip(…) → "net" false-match doesn't happen.
         if tl in _COMPOSITE_TOKENS:

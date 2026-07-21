@@ -19,6 +19,7 @@ from typing import Any
 _SPACE_RE = re.compile(r"\s+")
 _EFFORT_VALUES = ("low", "medium", "high")
 _EFFORT_ALIASES = {"": "medium", "normal": "medium", "default": "medium", "standard": "medium"}
+SEARCH_BATCH_LIMIT = 3
 
 MCP_SERVER_DESCRIPTION = "Search and page-reading tools."
 
@@ -83,8 +84,30 @@ OPERATORS (ASCII only — never translate):
   -site:domain.com       exclude a domain
   "exact phrase"         force an exact match; counts as one content token
   term1 OR term2         either term
+  -term                  exclude a noisy or ambiguous meaning
+  filetype:pdf           restrict results to a file type
+  intitle:term           require a term or quoted phrase in the page title
+  inurl:term             require a term in the URL
+  before:YYYY-MM-DD      results published before a date
+  after:YYYY-MM-DD       results published after a date
   - "reddit"/"github"/"arxiv" are keywords, not constraints — use site:reddit.com etc.
   - Always quote exact error text: "ModuleNotFoundError: No module named 'x'"
+
+OPERATOR EXAMPLES:
+  Exact phrase or error:  "CUDA out of memory" pytorch
+  Either spelling:        postgresql OR postgres deadlock
+  Remove an ambiguity:    jaguar speed -car -automotive
+  PDF documents:          EU AI Act implementation filetype:pdf
+  Page title:             intitle:"release notes" pytorch 2.3
+  URL text:               kubernetes scheduler inurl:issues
+  Date range:             OpenAI API pricing after:2026-01-01 before:2026-07-01
+  One specific source:    wireguard android battery site:reddit.com
+
+BATCH SEARCH:
+  For 2-3 closely related discovery queries, pass query as an array of strings. They run
+  concurrently and return one combined result. Keep every array item independently short.
+  Example: ["pytorch 2.3 release", "torch.compile python 3.12 site:github.com"]
+  Use a plain string for one query; never pack several queries into one comma-separated string.
 
 LAYERED QUERIES — only when the first result leaves a distinct claim unresolved:
   1. Find the exact name/version:  pytorch 2.3 release
@@ -121,13 +144,22 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "properties": {
         "query": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 220,
+            "oneOf": [
+                {"type": "string", "minLength": 1, "maxLength": 220},
+                {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": SEARCH_BATCH_LIMIT,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 220},
+                },
+            ],
             "description": (
-                "Plain web search query. Keep it short and specific: concrete names, "
+                "One plain web search query, or an array of up to 3 closely related queries "
+                "to run concurrently. Keep each query short and specific: concrete names, "
                 "identifiers, version numbers, exact error text, or explicit constraints. "
-                "Do not write a full sentence, a question, or an SEO-style keyword pile."
+                "Use site:domain.com for a source restriction, not a bare service name. "
+                "Do not write a full sentence, a question, an SEO-style keyword pile, or a "
+                "comma-separated batch."
             ),
         },
         "effort": {
@@ -218,26 +250,42 @@ def sanitize_query(query: str) -> str:
     return _SPACE_RE.sub(" ", text).strip()[:220].strip()
 
 
-# Convert the public query argument (string or {query|raw_query|q|text: ...}) into one
-# provider-ready search string.
-def coerce_search_query(value: Any) -> str:
+# Convert the public query argument into one to three provider-ready search strings.
+def coerce_search_queries(value: Any, *, limit: int = SEARCH_BATCH_LIMIT) -> list[str]:
+    limit = max(1, int(limit or SEARCH_BATCH_LIMIT))
     if isinstance(value, dict):
         plan = value.get("query", value)
-        if isinstance(plan, str):
-            return sanitize_query(plan)
         if isinstance(plan, dict):
             for key in ("raw_query", "q", "text"):
-                if isinstance(plan.get(key), str):
-                    return sanitize_query(plan[key])
-        return ""
+                if key in plan:
+                    return coerce_search_queries(plan[key], limit=limit)
+            return []
+        return coerce_search_queries(plan, limit=limit)
+    if isinstance(value, (list, tuple)):
+        queries: list[str] = []
+        for item in value:
+            query = sanitize_query(item)
+            if query:
+                queries.append(query)
+            if len(queries) >= limit:
+                break
+        return queries
     if isinstance(value, str):
         parsed = _try_parse_json(value)
-        if isinstance(parsed, dict):
-            nested = coerce_search_query(parsed)
+        if isinstance(parsed, (dict, list)):
+            nested = coerce_search_queries(parsed, limit=limit)
             if nested:
                 return nested
-        return sanitize_query(value)
-    return sanitize_query(str(value or ""))
+        query = sanitize_query(value)
+        return [query] if query else []
+    query = sanitize_query(str(value or ""))
+    return [query] if query else []
+
+
+# Backwards-compatible single-query helper for older callers.
+def coerce_search_query(value: Any) -> str:
+    queries = coerce_search_queries(value, limit=1)
+    return queries[0] if queries else ""
 
 
 # Normalize the public effort argument to one of low/medium/high (default medium).
