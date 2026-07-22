@@ -23,7 +23,6 @@
   },
   "query": {
     "schema_mode": "advanced",
-    "ui_display_mode": "compiled_query",
     "year_hint_mode": "timelimit",
     "year_hint_current": "m",
     "year_hint_prev": "y",

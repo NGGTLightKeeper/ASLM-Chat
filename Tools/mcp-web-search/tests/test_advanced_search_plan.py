@@ -19,7 +19,6 @@ def _config(*, mode: str = "advanced", tor: bool = False):
     return SimpleNamespace(
         query=SimpleNamespace(
             schema_mode=mode,
-            ui_display_mode="compiled_query",
             year_hint_mode="timelimit",
             year_hint_current="m",
             year_hint_prev="y",
@@ -31,14 +30,15 @@ def _config(*, mode: str = "advanced", tor: bool = False):
 
 def _plan():
     return {
+        "description": "Convert reference currency",
         "queries": [
             {
-                "purpose": "currency conversion",
                 "vertical": "web",
                 "text": "10000 RUB USD exchange rate",
                 "operators": {
                     "exact_phrases": ["central bank rate"],
-                    "any_terms": ["official", "reference"],
+                    "or_terms": ["official", "reference"],
+                    "or_groups": [["daily", "monthly"], ["published", "released"]],
                     "exclude_terms": ["archive copy"],
                     "site_include": ["www.example.com", "docs.example.org"],
                     "site_exclude": ["old.example.com"],
@@ -59,7 +59,6 @@ def test_config_schema_mode_defaults_and_invalid_values_fall_back_to_advanced(tm
 
     missing = tmp_path / "missing.json"
     assert load_search_config(missing).query.schema_mode == "advanced"
-    assert load_search_config(missing).query.ui_display_mode == "compiled_query"
 
     invalid = tmp_path / "invalid.json"
     invalid.write_text(json.dumps({"query": {"schema_mode": "unknown"}}), encoding="utf-8")
@@ -70,24 +69,28 @@ def test_config_schema_mode_defaults_and_invalid_values_fall_back_to_advanced(tm
     legacy.write_text(json.dumps({"query": {"schema_mode": "legacy"}}), encoding="utf-8")
     assert load_search_config(legacy).query.schema_mode == "legacy"
 
-    purpose = tmp_path / "purpose.json"
-    purpose.write_text(json.dumps({"query": {"ui_display_mode": "purpose"}}), encoding="utf-8")
-    assert load_search_config(purpose).query.ui_display_mode == "purpose"
-
-    invalid_ui = tmp_path / "invalid-ui.json"
-    invalid_ui.write_text(json.dumps({"query": {"ui_display_mode": "both"}}), encoding="utf-8")
-    assert load_search_config(invalid_ui).query.ui_display_mode == "compiled_query"
-
-
 def test_advanced_schema_is_default_and_onion_is_capability_gated(monkeypatch):
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config(tor=False))
     schema = build_search_schema()
     item = schema["properties"]["queries"]["items"]
-    assert schema["required"] == ["queries"]
+    assert schema["required"] == ["description", "queries"]
+    assert schema["properties"]["description"]["maxLength"] == 80
+    assert "Visible activity title" in schema["properties"]["description"]["description"]
+    assert "beginning with an action verb" in schema["properties"]["description"]["description"]
+    assert "make sense without the query text" in schema["properties"]["description"]["description"]
     assert schema["properties"]["queries"]["maxItems"] == 4
-    assert item["required"] == ["purpose", "vertical", "text"]
+    assert item["required"] == ["vertical", "text"]
+    assert "Never include a four-digit calendar year" in item["properties"]["text"]["description"]
+    assert "Required routing from the research plan" in item["properties"]["vertical"]["description"]
+    assert "MUST use shopping" in item["properties"]["vertical"]["description"]
+    assert "MUST use academic" in item["properties"]["vertical"]["description"]
+    assert item["properties"]["operators"]["properties"]["or_groups"]["items"]["minItems"] == 2
+    assert "selected by the research plan" in (
+        item["properties"]["operators"]["properties"]["site_include"]["items"]["description"]
+    )
     assert item["properties"]["vertical"]["enum"] == ["web", "shopping", "academic"]
-    assert "structured plan" in build_search_description()
+    assert "Description is the visible activity title" in build_search_description()
+    assert "Three or four queries are rare" in build_search_description()
 
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config(tor=True))
     assert "onion" in build_search_schema()["properties"]["queries"]["items"]["properties"]["vertical"]["enum"]
@@ -98,6 +101,7 @@ def test_advanced_compiler_covers_every_operator_and_normalizes_stably():
     query = prepared["search_request"]["queries"][0]["compiled_query"]
     assert query == (
         '10000 RUB USD exchange rate "central bank rate" (official OR reference) '
+        '(daily OR monthly) (published OR released) '
         '-"archive copy" (site:example.com OR site:docs.example.org) '
         '-site:old.example.com (filetype:pdf OR filetype:csv) '
         'intitle:"exchange rates" inurl:rates after:2026-07-01 before:2026-07-22'
@@ -106,6 +110,7 @@ def test_advanced_compiler_covers_every_operator_and_normalizes_stably():
         "example.com",
         "docs.example.org",
     ]
+    assert prepared["canonical_arguments"]["description"] == "Convert reference currency"
 
 
 def test_advanced_plan_rejects_legacy_shape_and_is_atomic(monkeypatch):
@@ -115,20 +120,33 @@ def test_advanced_plan_rejects_legacy_shape_and_is_atomic(monkeypatch):
     assert rejected["error_result"]["error"]["code"] == "INVALID_SEARCH_PLAN"
 
     plan = _plan()
-    plan["queries"].append({"purpose": "bad", "vertical": "web", "text": "query site:example.com"})
+    plan["queries"].append({"vertical": "web", "text": "query site:example.com"})
     with pytest.raises(PlanValidationError) as exc:
         prepare_advanced_search(plan, query_config=_config().query)
     assert any(issue["path"].endswith(".text") for issue in exc.value.issues)
 
 
-def test_preflight_advertises_configured_ui_display_mode(monkeypatch):
-    cfg = _config()
-    cfg.query.ui_display_mode = "purpose"
-    monkeypatch.setattr(config_module, "load_search_config", lambda: cfg)
+def test_preflight_advertises_normalized_activity_description(monkeypatch):
+    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
 
     prepared = prepare_search_arguments(_plan())
 
-    assert prepared["tool_ui"]["query_display_mode"] == "purpose"
+    assert prepared["arguments"]["description"] == "Convert reference currency"
+    assert prepared["tool_ui"]["description"] == "Convert reference currency"
+    assert prepared["tool_ui"]["search_request"]["description"] == "Convert reference currency"
+
+
+def test_advanced_plan_rejects_missing_description_and_invalid_or_group():
+    plan = _plan()
+    del plan["description"]
+    plan["queries"][0]["operators"]["or_groups"] = [["only one"]]
+
+    with pytest.raises(PlanValidationError) as exc:
+        prepare_advanced_search(plan, query_config=_config().query)
+
+    paths = {issue["path"] for issue in exc.value.issues}
+    assert "$.description" in paths
+    assert "$.queries[0].operators.or_groups[0]" in paths
 
 
 def test_explicit_date_operators_survive_legacy_year_hint_processing():
@@ -162,12 +180,13 @@ def test_mixed_vertical_plan_runs_concurrently_and_preserves_metadata(monkeypatc
     monkeypatch.setattr(search_module, "run_web_search", fake_search)
     request = {
         "schema_mode": "advanced",
+        "description": "Compare evidence sources",
         "effort": "medium",
         "queries": [
-            {"purpose": "independent evidence", "vertical": "web", "compiled_query": "alpha", "operators": {}, "timelimit": None},
-            {"purpose": "price check", "vertical": "shopping", "compiled_query": "beta", "operators": {}, "timelimit": None},
-            {"purpose": "papers", "vertical": "academic", "compiled_query": "gamma", "operators": {}, "timelimit": None},
-            {"purpose": "verification", "vertical": "web", "compiled_query": "delta", "operators": {}, "timelimit": None},
+            {"vertical": "web", "compiled_query": "alpha", "operators": {}, "timelimit": None},
+            {"vertical": "shopping", "compiled_query": "beta", "operators": {}, "timelimit": None},
+            {"vertical": "academic", "compiled_query": "gamma", "operators": {}, "timelimit": None},
+            {"vertical": "web", "compiled_query": "delta", "operators": {}, "timelimit": None},
         ],
     }
     result = asyncio.run(search_module.run_web_search_plan(request))
@@ -176,11 +195,10 @@ def test_mixed_vertical_plan_runs_concurrently_and_preserves_metadata(monkeypatc
     assert calls[0][1]["shopping"] is False
     assert calls[1][1]["shopping"] is True
     assert calls[2][1]["academic"] is True
-    assert result["ui"]["search_request"]["queries"][1]["purpose"] == "price check"
+    assert result["ui"]["description"] == "Compare evidence sources"
+    assert result["ui"]["search_request"]["description"] == "Compare evidence sources"
     assert result["query_results"][2]["index"] == 3
     assert result["query_results"][2]["vertical"] == "academic"
-    assert result["sources"][0]["batch_query_purpose"] == "independent evidence"
     assert result["sources"][0]["query_index"] == 1
-    assert result["sources"][0]["purpose"] == "independent evidence"
     assert result["sources"][0]["vertical"] == "web"
     assert len({source["id"] for source in result["sources"]}) == 4

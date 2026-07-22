@@ -149,6 +149,7 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
             "tool_id": "web_search",
             "query": query,
             "queries": list(queries),
+            "search_request": search_request,
             "batch": len(queries) > 1,
             "effort": effort,
             "shopping": shopping,

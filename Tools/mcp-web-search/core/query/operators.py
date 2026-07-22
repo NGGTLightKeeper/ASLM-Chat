@@ -8,61 +8,79 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-
-
 @dataclass(frozen=True)
 class SearchOperatorSpec:
     """Schema, validation, compilation, and scoring metadata for one operator field."""
 
     key: str
-    value_kind: Literal["list", "date"]
+    value_kind: Literal["list", "groups", "date"]
     description: str
-    compile_kind: Literal["quoted", "or", "exclude", "prefix", "or_prefix", "date"]
+    compile_kind: Literal[
+        "quoted", "or", "or_groups", "exclude", "prefix", "or_prefix", "date"
+    ]
     prefix: str = ""
     max_items: int = 0
     max_length: int = 0
+    group_max_items: int = 0
     normalizer: Literal["text", "domain", "file_type"] = "text"
     content_value: bool = False
 
 
 SEARCH_OPERATOR_SPECS: tuple[SearchOperatorSpec, ...] = (
     SearchOperatorSpec(
-        "exact_phrases", "list", "Phrases compiled as quoted exact matches.",
+        "exact_phrases", "list",
+        "Fixed names, titles, errors, or quotations that need verbatim matching.",
         "quoted", max_items=4, max_length=120, content_value=True,
     ),
     SearchOperatorSpec(
-        "any_terms", "list", "Alternative terms joined with the ASCII OR operator.",
-        "or", max_items=6, max_length=80, content_value=True,
+        "or_terms", "list",
+        "Interchangeable terms compiled into one explicit OR group, keeping one intent together.",
+        "or", max_items=8, max_length=80, content_value=True,
     ),
     SearchOperatorSpec(
-        "exclude_terms", "list", "Terms or phrases excluded with a leading minus.",
+        "or_groups", "groups",
+        "Independent alternative groups; each inner list becomes (term OR term), and groups are ANDed.",
+        "or_groups", max_items=4, group_max_items=6, max_length=80, content_value=True,
+    ),
+    SearchOperatorSpec(
+        "exclude_terms", "list",
+        "Known ambiguities or noisy meanings excluded with a leading minus.",
         "exclude", prefix="-", max_items=6, max_length=80,
     ),
     SearchOperatorSpec(
-        "site_include", "list", "Fully qualified domains restricted with site:.",
+        "site_include", "list",
+        "Fully qualified domains selected by the research plan and restricted with site:.",
         "or_prefix", prefix="site:", max_items=4, max_length=253, normalizer="domain",
     ),
     SearchOperatorSpec(
-        "site_exclude", "list", "Fully qualified domains excluded with -site:.",
+        "site_exclude", "list",
+        "Known irrelevant fully qualified domains excluded with -site:.",
         "prefix", prefix="-site:", max_items=4, max_length=253, normalizer="domain",
     ),
     SearchOperatorSpec(
-        "file_types", "list", "File extensions restricted with filetype:.",
+        "file_types", "list",
+        "Required document or dataset formats restricted with filetype:.",
         "or_prefix", prefix="filetype:", max_items=3, max_length=12, normalizer="file_type",
     ),
     SearchOperatorSpec(
-        "title_terms", "list", "Terms or phrases required with intitle:.",
+        "title_terms", "list",
+        "Signals for the planned page class required in its title with intitle:.",
         "prefix", prefix="intitle:", max_items=4, max_length=80, content_value=True,
     ),
     SearchOperatorSpec(
-        "url_terms", "list", "Terms required with inurl:.",
+        "url_terms", "list",
+        "Signals for a planned documentation, issue, or section path required with inurl:.",
         "prefix", prefix="inurl:", max_items=4, max_length=80, content_value=True,
     ),
     SearchOperatorSpec(
-        "after", "date", "Lower publication-date bound.", "date", prefix="after:"
+        "after", "date",
+        "Lower publication-date bound, used when the requested answer materially depends on recency.",
+        "date", prefix="after:"
     ),
     SearchOperatorSpec(
-        "before", "date", "Upper publication-date bound.", "date", prefix="before:"
+        "before", "date",
+        "Upper publication-date bound, used when the requested answer needs a real time boundary.",
+        "date", prefix="before:"
     ),
 )
 SEARCH_OPERATOR_BY_KEY = {spec.key: spec for spec in SEARCH_OPERATOR_SPECS}

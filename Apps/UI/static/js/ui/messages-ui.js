@@ -1407,7 +1407,6 @@ export function createMessagesUi(context, dependencies) {
         const query = item && typeof item === 'object' ? item : {};
         return {
           query: String(query.compiled_query || '').replace(/\s+/g, ' ').trim(),
-          purpose: String(query.purpose || '').replace(/\s+/g, ' ').trim(),
           vertical: String(query.vertical || 'web').trim().toLowerCase()
         };
       }).filter(function keepPreparedQuery(item) { return !!item.query; });
@@ -1417,11 +1416,25 @@ export function createMessagesUi(context, dependencies) {
     const raw = args.query || args.q || '';
     if (Array.isArray(raw)) {
       return raw.map(function normalizeLegacyQuery(value) {
-        return { query: formatSearchQueryValue(value).trim(), purpose: '', vertical: '' };
+        return { query: formatSearchQueryValue(value).trim(), vertical: '' };
       }).filter(function keepLegacyQuery(item) { return !!item.query; });
     }
     const query = formatSearchQueryValue(raw).trim();
-    return query ? [{ query, purpose: '', vertical: '' }] : [];
+    return query ? [{ query, vertical: '' }] : [];
+  }
+
+  // Prefer the backend-normalized activity description over raw model arguments.
+  function searchDescriptionFromSegment(segment) {
+    const request = normalizedSearchRequestFromSegment(segment);
+    const toolUi = segment && segment.toolUi && typeof segment.toolUi === 'object'
+      ? segment.toolUi
+      : {};
+    const args = segment && segment.arguments && typeof segment.arguments === 'object'
+      ? segment.arguments
+      : {};
+    return String((request && request.description) || toolUi.description || args.description || '')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   // Extract a stable query summary from one tool segment.
@@ -1792,16 +1805,9 @@ export function createMessagesUi(context, dependencies) {
     const sources = searchSourcesFromSegment(segment);
     const renderedSources = renderSearchSourcesWithOverflow(sources, 3);
     const isExpanded = !!renderOptions.expanded;
-    const queryDisplayMode = segment.toolUi
-      && String(segment.toolUi.query_display_mode || '').trim().toLowerCase() === 'purpose'
-      ? 'purpose'
-      : 'compiled_query';
     const queriesHtml = entries.map(function renderPreparedQuery(entry) {
-      const displayText = queryDisplayMode === 'purpose' && entry.purpose
-        ? entry.purpose
-        : entry.query;
       const pendingDot = hasResult || isRejected ? '' : '<span class="msg-search-pending-dot"></span>';
-      return `<div class="msg-search-batch-query${isRejected ? ' is-error' : ''}"><span class="msg-search-batch-query-text">${escHtml(displayText)}</span>${pendingDot}</div>`;
+      return `<div class="msg-search-batch-query${isRejected ? ' is-error' : ''}"><span class="msg-search-batch-query-text">${escHtml(entry.query)}</span>${pendingDot}</div>`;
     }).join('');
     const moreCount = renderedSources.hiddenCount;
     const moreButtonAttrs = `type="button" data-search-more-count="${moreCount}" aria-expanded="${isExpanded ? 'true' : 'false'}"`;
@@ -1923,16 +1929,9 @@ export function createMessagesUi(context, dependencies) {
         : null;
       const displayEntries = entries.length > 0
         ? entries
-        : [{ query: compact && compact.label ? String(compact.label).replace(/^Searching for\s+/i, '') : 'sources', purpose: '', vertical: '' }];
+        : [{ query: compact && compact.label ? String(compact.label).replace(/^Searching for\s+/i, '') : 'sources', vertical: '' }];
       return displayEntries.map(function renderEntry(entry) {
-        const queryDisplayMode = item.segment.toolUi
-          && String(item.segment.toolUi.query_display_mode || '').trim().toLowerCase() === 'purpose'
-          ? 'purpose'
-          : 'compiled_query';
-        const displayText = queryDisplayMode === 'purpose' && entry.purpose
-          ? entry.purpose
-          : entry.query;
-        const label = itemRejected ? `Bad query: ${displayText}` : displayText;
+        const label = itemRejected ? `Bad query: ${entry.query}` : entry.query;
         const activeClass = itemIndex === activePendingIndex ? ' is-active' : '';
         const activeDot = itemIndex === activePendingIndex ? '<span class="msg-search-pending-dot"></span>' : '';
         return `<div class="msg-search-batch-query${activeClass}"><span class="msg-search-batch-query-text">${escHtml(label)}</span>${activeDot}</div>`;
@@ -4648,7 +4647,8 @@ export function createMessagesUi(context, dependencies) {
   // Handle reasoning tool step title.
   function reasoningToolStepTitle(segment) {
     if (isSearchToolSegment(segment)) {
-      return toolStatusText(segment) === 'Done' ? 'Searched sources' : 'Searching sources';
+      const description = searchDescriptionFromSegment(segment);
+      return description || (toolStatusText(segment) === 'Done' ? 'Searched sources' : 'Searching sources');
     }
     if (isReadPageToolSegment(segment)) {
       return 'Reading source page';

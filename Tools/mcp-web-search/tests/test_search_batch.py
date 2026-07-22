@@ -10,6 +10,7 @@ import core.search.web_search as search_module
 from core.cache.query_normalizer import has_search_operators
 from core.extract.scoring import query_terms
 from core.mcp_contract import (
+    ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION,
     LEGACY_WEB_SEARCH_TOOL_DESCRIPTION,
     SEARCH_BATCH_LIMIT,
     build_search_schema,
@@ -33,6 +34,7 @@ def test_legacy_query_schema_accepts_one_string_or_three_query_batch(monkeypatch
     assert batch_schema["type"] == "array"
     assert batch_schema["maxItems"] == SEARCH_BATCH_LIMIT == 3
     assert batch_schema["items"]["type"] == "string"
+    assert "calendar years are forbidden" in query_schema["description"]
 
 
 def test_query_batch_coercion_caps_and_sanitizes_items():
@@ -46,15 +48,28 @@ def test_query_batch_coercion_caps_and_sanitizes_items():
     assert coerce_search_query(["alpha", "beta"]) == "alpha"
 
 
-def test_tool_description_documents_batch_and_operator_examples():
-    assert "pass query as an array of strings" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
-    assert "site:reddit.com" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+def test_tool_description_documents_rare_batch_and_operator_examples():
+    for description in (
+        LEGACY_WEB_SEARCH_TOOL_DESCRIPTION,
+        ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION,
+    ):
+        normalized = " ".join(description.split())
+        assert "make an internal plan before calling this tool" in normalized
+        assert "answer deliverables, evidence gaps, source classes" in normalized
+        assert "Each call executes the next plan step" in normalized
+        assert "Link count alone is not coverage" in normalized
+    assert "array is exceptional" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "site:docs.example.com" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
     assert "postgresql OR postgres" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
-    assert "-car -automotive" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
     assert "filetype:pdf" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
     assert 'intitle:"release notes"' in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
-    assert "inurl:issues" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
-    assert "after:2026-01-01 before:2026-07-01" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "Date bounds fit requests" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "four-digit calendar years" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "exclusively inside after: or before:" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "medium up to 10" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    legacy_normalized = " ".join(LEGACY_WEB_SEARCH_TOOL_DESCRIPTION.split())
+    assert "shopping=true for product discovery" in legacy_normalized
+    assert "academic=true for papers" in legacy_normalized
 
 
 def test_advanced_operators_are_recognized_without_polluting_scoring_terms():

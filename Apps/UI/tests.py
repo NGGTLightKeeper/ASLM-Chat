@@ -913,14 +913,19 @@ class ToolPreflightTests(SimpleTestCase):
     def test_preflight_replaces_raw_arguments_before_tool_event(self, worker_mock):
         worker_mock.return_value = {
             "ok": True,
-            "arguments": {"queries": [{"purpose": "verify", "vertical": "web", "text": "canonical"}]},
+            "arguments": {
+                "description": "Verify canonical sources",
+                "queries": [{"vertical": "web", "text": "canonical"}],
+            },
             "tool_ui": {
                 "kind": "web_search",
                 "status": "pending",
+                "description": "Verify canonical sources",
                 "search_request": {
                     "schema_mode": "advanced",
+                    "description": "Verify canonical sources",
                     "effort": "medium",
-                    "queries": [{"purpose": "verify", "vertical": "web", "compiled_query": "canonical", "operators": {}}],
+                    "queries": [{"vertical": "web", "compiled_query": "canonical", "operators": {}}],
                 },
             },
         }
@@ -934,6 +939,7 @@ class ToolPreflightTests(SimpleTestCase):
         self.assertEqual(call["raw_arguments"], raw)
         self.assertNotIn("raw model value", json.dumps(event))
         self.assertEqual(event["arguments"]["queries"][0]["text"], "canonical")
+        self.assertEqual(event["tool_ui"]["description"], "Verify canonical sources")
         self.assertEqual(event["tool_ui"]["search_request"]["queries"][0]["compiled_query"], "canonical")
         marker = _serialize_tool_call_marker(event)
         self.assertIn('"tool_ui"', marker)

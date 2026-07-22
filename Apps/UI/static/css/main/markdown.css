@@ -656,7 +656,7 @@
 .msg-reasoning-step--tool .msg-reasoning-step-dot {
   width: 22px;
   height: 22px;
-  margin-top: 1px;
+  margin-top: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -676,13 +676,15 @@
 
 .msg-reasoning-step-title {
   min-width: 0;
+  min-height: 22px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   margin-bottom: 5px;
   color: var(--activity-on-surface);
   font-size: var(--font-size-caption-1);
   font-weight: 650;
+  line-height: 1.25;
 }
 
 .msg-reasoning-step-title:has(> .msg-reasoning-step-status:only-child) {

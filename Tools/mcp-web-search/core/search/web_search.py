@@ -325,14 +325,6 @@ def _academic_paper_dict(paper: Any, *, citation_id: str, rank: int) -> dict[str
 
 # UI metadata block (source chips) the chat bridge surfaces alongside model_context.
 def _build_ui(sources: list[dict[str, Any]]) -> dict[str, Any]:
-    from core.config import load_search_config
-
-    query_config = getattr(load_search_config(), "query", None)
-    display_mode = str(
-        getattr(query_config, "ui_display_mode", "compiled_query") or "compiled_query"
-    ).strip().lower()
-    if display_mode not in {"purpose", "compiled_query"}:
-        display_mode = "compiled_query"
     chips = [
         {
             "rank": s.get("rank"),
@@ -347,7 +339,6 @@ def _build_ui(sources: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "kind": "web_search",
         "status": "done" if chips else "empty",
-        "query_display_mode": display_mode,
         "result_count": len(chips),
         "sources": chips,
     }
@@ -1063,6 +1054,7 @@ def _combine_search_results(
     effort: str,
     schema_mode: str,
     started: float,
+    description: str = "",
     legacy_flags: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
     from core.config import load_search_config
@@ -1081,10 +1073,8 @@ def _combine_search_results(
             source["rank"] = next_rank
             source["batch_query"] = plan["compiled_query"]
             source["batch_query_index"] = query_index
-            source["batch_query_purpose"] = plan.get("purpose", "")
             source["batch_query_vertical"] = plan.get("vertical", "web")
             source["query_index"] = query_index
-            source["purpose"] = plan.get("purpose", "")
             source["vertical"] = plan.get("vertical", "web")
             query_sources.append(source)
             all_sources.append(source)
@@ -1108,7 +1098,6 @@ def _combine_search_results(
 
     request_queries = [
         {
-            "purpose": str(plan.get("purpose") or ""),
             "vertical": str(plan.get("vertical") or "web"),
             "compiled_query": str(plan.get("compiled_query") or ""),
             "operators": dict(plan.get("operators") or {}),
@@ -1120,6 +1109,8 @@ def _combine_search_results(
         "effort": effort,
         "queries": request_queries,
     }
+    if description:
+        search_request["description"] = description
     ui = _build_ui(all_sources)
     queries_with_sources = sum(bool(sources) for sources in sources_by_query)
     if queries_with_sources == 0:
@@ -1130,6 +1121,8 @@ def _combine_search_results(
         ui["status"] = "done"
     ui["query_count"] = len(plans)
     ui["search_request"] = search_request
+    if description:
+        ui["description"] = description
 
     queries = [plan["compiled_query"] for plan in plans]
     payload: dict[str, Any] = {
@@ -1163,7 +1156,6 @@ def _combine_search_results(
             {
                 "index": query_index,
                 "query": plan["compiled_query"],
-                "purpose": plan.get("purpose", ""),
                 "vertical": plan.get("vertical", "web"),
                 "search_id": result.get("search_id"),
                 "source_count": len(query_sources),
@@ -1213,7 +1205,7 @@ async def run_web_search_batch(
 
     vertical = "shopping" if shopping else ("academic" if academic else ("onion" if onion else "web"))
     plans = [
-        {"purpose": "", "vertical": vertical, "compiled_query": query, "operators": {}}
+        {"vertical": vertical, "compiled_query": query, "operators": {}}
         for query in queries
     ]
     return _combine_search_results(
@@ -1252,4 +1244,5 @@ async def run_web_search_plan(search_request: dict[str, Any]) -> dict[str, Any]:
         effort=effort,
         schema_mode="advanced",
         started=started,
+        description=str(search_request.get("description") or ""),
     )

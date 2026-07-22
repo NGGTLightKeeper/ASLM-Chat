@@ -2,12 +2,9 @@
 
 """Model-facing MCP contract for the search tools (ported from the legacy adapter).
 
-Two things the model sees: the parameter SCHEMA and the tool DESCRIPTIONS. Both are
-instructions, not mechanics — the model is told *how to drive* the tool, never how the
-pipeline works internally. The schema is deliberately minimal: the model controls only
-the query, the effort, and the shopping opt-in. Region routing, recency/timelimit (parsed
-from the query), safe-search and engine selection are all decided internally and are not
-model-facing knobs.
+The model sees a config-selected parameter schema and matching tool description. Legacy
+keeps its compact query flags; advanced exposes a typed mixed-vertical plan compiled by
+one backend path. Region routing, safe-search, and engine selection remain internal.
 """
 
 from __future__ import annotations
@@ -33,142 +30,84 @@ MCP_SERVER_DESCRIPTION = "Search and page-reading tools."
 LEGACY_WEB_SEARCH_TOOL_DESCRIPTION = """\
 Ranked web search with optional page-content extraction.
 
-The query is a search-engine directive, not a conversational request. Write it like a
-librarian's search expression: concrete nouns, identifiers, versions, quoted error text,
-and at most one intent term — no prose, no questions, no explanation.
+For every non-atomic research task, make an internal plan before calling this tool. Define
+answer deliverables, evidence gaps, source classes, vertical or controls, query anchors,
+operator purposes, dependencies, and success conditions. Each call executes the next plan
+step; inspect its evidence and update the plan before continuing. Link count alone is not
+coverage when the sources all belong to one class.
 
-EFFORT — pick the LOWEST tier that can answer; escalate on evidence, never by default:
-  effort="low"     Fast discovery. SERP only — no page scraping. Use for quick source
-                   discovery, names, URLs, and rough orientation.
-  effort="medium"  Default and starting point for every new intent. Ranks results and
-                   parses a few top pages into previews. Use first for ordinary cited
-                   answers, comparisons, reviews, and how-tos. Open here unless you
-                   already hold a medium/low result for this exact intent that fell short.
-  effort="high"    GATED RESERVE TIER — not a quality dial. Larger source pool and deeper
-                   parsing, reserved for when normal search has already failed you. Before
-                   a high call is allowed, ALL THREE must hold:
-                     (a) you already ran medium (or low) on this SAME intent earlier in
-                         this response, AND
-                     (b) that result left a specific claim unresolved that you can name in
-                         one sentence, AND
-                     (c) the gap is high-stakes or the task is genuinely exhaustive.
-                   If you cannot name the prior call and the exact unresolved claim, you do
-                   not meet the bar → use medium. NEVER open an intent at high. NEVER make
-                   high your first search. After a high call, do not re-run the same intent
-                   at a lower effort — answer from the evidence collected.
+Write a compact search expression built from concrete entities, identifiers, versions,
+and one intent term. A plain query string is the normal form. An array is exceptional and
+fits 2-3 independently necessary deliverables that support different claims; alternatives
+fit one query through OR. Inspect the first result set before adding a refinement.
 
-ESCALATION BUDGET — high is rationed:
-  You may issue at most 3 high calls per response. Any high call beyond that returns a
-  quota notice instead of results and burns the turn. Treat high as a red button, not a
-  routine. If a high call ever returns a quota / "unavailable" notice, IMMEDIATELY
-  downshift the remaining searches to medium or low — do not re-issue high. Before each
-  high call, confirm you still have budget AND a concrete, nameable reason; if either is
-  missing, run medium.
+Use ASCII operators when they express a real constraint: quoted phrases, OR, -term,
+site:, -site:, filetype:, intitle:, inurl:, after:, and before:. Date bounds fit requests
+whose answer materially depends on a publication window. Keep four-digit calendar years
+out of the query body; a necessary year belongs exclusively inside after: or before:.
+Examples: `postgresql OR postgres deadlock`, `report filetype:pdf`,
+`intitle:"release notes" runtime`, and `api changes site:docs.example.com`.
 
-SUFFICIENCY — before issuing ANY further search (any tier), check whether the evidence
-already in hand answers the request. If it does, stop searching and write the answer. Do
-not open an adjacent sub-topic at high just because it is related — escalate only on a gap
-you can name, and only after medium on that sub-topic has actually fallen short.
+The specialized controls are required routing, not reserve options. Set shopping=true for
+product discovery, budgets, prices, sellers, stock, or availability. Set academic=true for
+papers, citations, DOI records, preprints, peer-reviewed support, or primary scientific
+literature. Use ordinary web search separately for official pages, independent reviews,
+reporting, communities, measurements, and currency references. Start ordinary work at
+medium; low is quick discovery and high is the reserve tier after a lower-effort result
+leaves a concrete high-stakes gap.
 
-SHOPPING:
-  shopping=false   Default. Never runs shopping providers.
-  shopping=true    Use only when the user needs a specific product, its price, where to
-                   buy it, or availability. The query must be only the search subject
-                   (model, spec, SKU, or product phrase) — no questions, no filler. Keep
-                   false for technical meanings such as payload delivery or supply chain.
+Source allowance is per query: low up to 8, medium up to 10, high up to 16 before URL
+deduplication and filtering. One medium query can therefore provide up to 10 source
+records, while three can create up to 30 and consume roughly triple the context.
 
-ACADEMIC:
-  academic=false   Default. Never runs scholarly providers.
-  academic=true    Use when the user needs peer-reviewed papers, preprints, citations, or
-                   primary scientific literature — not popular articles or how-tos. Adds
-                   structured results (title, authors, year, DOI, abstract, PDF) from open
-                   scholarly indexes (OpenAlex, Crossref, Europe PMC, DOAJ, arXiv). The
-                   query should be the topic/title/author/DOI, not a question.
-
-OPERATORS (ASCII only — never translate):
-  site:domain.com        restrict to a domain and its subdomains
-  -site:domain.com       exclude a domain
-  "exact phrase"         force an exact match; counts as one content token
-  term1 OR term2         either term
-  -term                  exclude a noisy or ambiguous meaning
-  filetype:pdf           restrict results to a file type
-  intitle:term           require a term or quoted phrase in the page title
-  inurl:term             require a term in the URL
-  before:YYYY-MM-DD      results published before a date
-  after:YYYY-MM-DD       results published after a date
-  - "reddit"/"github"/"arxiv" are keywords, not constraints — use site:reddit.com etc.
-  - Always quote exact error text: "ModuleNotFoundError: No module named 'x'"
-
-OPERATOR EXAMPLES:
-  Exact phrase or error:  "CUDA out of memory" pytorch
-  Either spelling:        postgresql OR postgres deadlock
-  Remove an ambiguity:    jaguar speed -car -automotive
-  PDF documents:          EU AI Act implementation filetype:pdf
-  Page title:             intitle:"release notes" pytorch 2.3
-  URL text:               kubernetes scheduler inurl:issues
-  Date range:             OpenAI API pricing after:2026-01-01 before:2026-07-01
-  One specific source:    wireguard android battery site:reddit.com
-
-BATCH SEARCH:
-  A plain string is the default. Use an array only for 2-3 independently necessary
-  deliverables, never for synonyms, broad/narrow variants, candidate names, domains,
-  speculative follow-ups, or fallback attempts. If two items would support the same
-  claim, keep only the stronger one. Inspect one result set before issuing a refinement.
-  When those conditions are met, pass query as an array of strings.
-  Every array item has its own source allowance: low returns up to 8 sources per item,
-  medium up to 10, and high up to 16. Thus three medium items can produce up to 30 source
-  records before URL deduplication and filtering. Never batch to inflate source count.
-
-LAYERED QUERIES — only when the first result leaves a distinct claim unresolved:
-  1. Find the exact name/version:  pytorch 2.3 release
-  2. Drill in:  "torch.compile" python 3.12 site:github.com
-  3. Cross-check:  torch.compile site:pytorch.org
-  Stop as soon as the request is answerable; do not run every layer by default.
-
-CITATION:
-  - Cite only with the exact handles returned in the search context.
-  - Place each handle immediately after the sentence it supports.
-  - Cite a source only when its content explicitly confirms the claim.
-  - Never reuse handles from a different query or an earlier call; never invent them.
-  - Parsed content outweighs snippet-only sources.
-
-LANGUAGE: search in English by default; use a local language only for region-specific
-sources or proper names that exist only in that language."""
+Cite the exact handles returned by this call immediately after the supported claim.
+Parsed page content carries more weight than snippets. English is the normal search
+language; regional evidence and local proper names benefit from the matching language."""
 
 
 ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION = """\
 Ranked web search with optional page-content extraction.
 
-Submit a structured plan in queries. Each item is one independently useful search with:
-- purpose: a short human-readable reason for the query;
-- vertical: web, shopping, academic, or onion when that capability is advertised;
-- text: a concise search body without operators;
-- operators: typed search constraints compiled by the backend.
+For every non-atomic research task, make an internal plan before calling this tool. Define
+answer deliverables, evidence gaps, source classes, verticals, query anchors, operator
+purposes, dependencies, and success conditions. Each call executes the next plan step;
+inspect its evidence and update the plan before continuing. Link count alone is not
+coverage when the sources all belong to one class.
 
-One query is the default. Do not batch synonyms, broad/narrow variants of one intent,
-candidate names, domains, speculative follow-ups, or fallback attempts. Use OR for true
-alternatives and inspect the first result set before refining. A batch is justified only
-when the request already has multiple independently necessary deliverables that support
-different claims or require different verticals. If two items would support the same
-sentence, keep only the stronger one. Two queries should cover almost every valid batch;
-three or four are exceptional and require three or four distinct deliverables.
+Description is the visible activity title for the current research step, not a search
+expression. Write a natural 3-4 word phrase in the user's language that begins with an
+action verb and names the evidence goal. It must remain meaningful when the query text is
+hidden. Prefer titles such as "Проверяю независимые тесты", "Сверяю характеристики", or
+"Уточняю цены и наличие". Normally submit exactly one query. A second query is useful when
+the request already contains another independently necessary deliverable that needs a
+different evidence set or vertical. Three or four queries are rare cases with the same
+number of distinct deliverables. Inspect the returned evidence before refining.
 
-Select shopping only for price or availability work; use web for independent sources and
-currency conversion. Source allowances apply to EACH query: low returns up to 8 sources,
-medium up to 10, and high up to 16. A four-item medium batch may therefore produce up to
-40 source records before URL deduplication and filtering, consuming far more context than
-one query. Never batch merely to collect more sources.
+Vertical is a required routing decision for every query, not a reserve option. Any step
+about product discovery, budgets, prices, sellers, stock, or availability must use
+shopping. Any step about papers, citations, DOI records, preprints, peer-reviewed support,
+or primary scientific literature must use academic. Use separate web steps for official
+pages, independent reviews, reporting, community experience, measurements, and currency
+references. A mixed task must include every matching vertical in its research plan.
 
-Operator fields map deterministically to exact phrases, OR alternatives, excluded terms,
-site inclusion/exclusion, file types, title terms, URL terms, and before/after dates. Never
-write those operators inside text and never put several searches into one text value.
+Put a compact search body in text and express constraints through operators. `or_terms`
+builds one alternative group; `or_groups` builds several groups such as `(A OR B) (C OR D)`.
+Exact phrases, exclusions, included or excluded domains, file types, title terms, URL
+terms, and date bounds have dedicated fields. after/before fit cases where the requested
+answer materially depends on recency or a real publication window. Keep four-digit
+calendar years out of text; a necessary year belongs exclusively in after or before.
 
-Use effort=medium first. low is SERP-only discovery. high is a gated reserve tier and may
-be used only after a lower-effort search left a specific high-stakes claim unresolved.
+Use shopping for prices and availability, academic for scholarly literature, and web for
+independent evidence. Start ordinary work at medium; low is quick discovery and high is
+the reserve tier after lower effort leaves a concrete high-stakes gap.
 
-Cite only exact handles returned by this call, immediately after the claim they support.
-Do not reuse handles from earlier calls. Prefer parsed page content over snippets. Search
-in English by default and use a local language only for region-specific sources."""
+Source allowance is per query: low up to 8, medium up to 10, high up to 16 before URL
+deduplication and filtering. One medium query can provide up to 10 source records; four
+can create up to 40 and consume roughly four times the context.
+
+Cite exact handles returned by this call immediately after the supported claim. Parsed
+page content carries more weight than snippets. English is the normal search language;
+regional evidence and local proper names benefit from the matching language."""
 
 # Compatibility export for callers that do not use the config-aware builder.
 WEB_SEARCH_TOOL_DESCRIPTION = ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION
@@ -205,6 +144,8 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
                 "One plain web search query, or an array of up to 3 closely related queries "
                 "to run concurrently. Keep each query short and specific: concrete names, "
                 "identifiers, version numbers, exact error text, or explicit constraints. "
+                "Four-digit calendar years are forbidden as content tokens; place a "
+                "necessary year only inside after: or before:. "
                 "Use site:domain.com for a source restriction, not a bare service name. "
                 "Do not write a full sentence, a question, an SEO-style keyword pile, or a "
                 "comma-separated batch."
@@ -229,21 +170,20 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
             "type": "boolean",
             "default": False,
             "description": (
-                "Enable shopping providers and structured product/price results. Set true "
-                "only when the user needs a specific product, its price, where to buy it, "
-                "or availability; the query must then be only the search subject (model, "
-                "spec, SKU, product phrase). Leave false for all other searches."
+                "Required routing for product discovery, budgets, prices, sellers, stock, "
+                "availability, and purchase options. Set true whenever the evidence gap "
+                "contains any of those needs; keep the query to the product, model, spec, "
+                "SKU, or product phrase. Use a separate ordinary web search for reviews."
             ),
         },
         "academic": {
             "type": "boolean",
             "default": False,
             "description": (
-                "Enable scholarly providers and structured paper results (title, authors, "
-                "year, DOI, abstract, PDF) from open indexes (OpenAlex, Crossref, Europe "
-                "PMC, DOAJ, arXiv). Set true only when the user needs peer-reviewed papers, "
-                "preprints, citations, or primary scientific literature; the query should "
-                "be the topic, title, author, or DOI. Leave false for all other searches."
+                "Required routing for papers, authors, citations, DOI records, preprints, "
+                "peer-reviewed support, scholarly consensus, and primary scientific "
+                "literature. Set true whenever the evidence gap contains any of those "
+                "needs; query by topic, title, author, or DOI."
             ),
         },
     },
@@ -275,19 +215,6 @@ def search_schema_mode() -> str:
     except Exception:  # noqa: BLE001
         mode = "advanced"
     return mode if mode in {"legacy", "advanced"} else "advanced"
-
-
-def search_ui_display_mode() -> str:
-    try:
-        from core.config import load_search_config
-
-        mode = str(
-            getattr(load_search_config().query, "ui_display_mode", "compiled_query")
-            or "compiled_query"
-        ).strip().lower()
-    except Exception:  # noqa: BLE001
-        mode = "compiled_query"
-    return mode if mode in {"purpose", "compiled_query"} else "compiled_query"
 
 
 def build_search_description() -> str:
@@ -433,7 +360,9 @@ def _public_search_request(request: dict[str, Any]) -> dict[str, Any]:
     return public
 
 
-def invalid_search_plan_result(issues: list[dict[str, str]]) -> dict[str, Any]:
+def invalid_search_plan_result(
+    issues: list[dict[str, str]], *, description: str = ""
+) -> dict[str, Any]:
     details = "; ".join(
         f"{issue.get('path', '$')}: {issue.get('message', 'invalid value')}"
         for issue in issues
@@ -446,7 +375,7 @@ def invalid_search_plan_result(issues: list[dict[str, str]]) -> dict[str, Any]:
         "ui": {
             "kind": "web_search",
             "status": "rejected",
-            "query_display_mode": search_ui_display_mode(),
+            "description": sanitize_query(description)[:80],
             "result_count": 0,
             "query_count": 0,
             "error": {"code": "INVALID_SEARCH_PLAN", "issues": issues},
@@ -468,7 +397,13 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
                 tor_enabled=bool(cfg.tor.enabled),
             )
         except PlanValidationError as exc:
-            error_result = invalid_search_plan_result(exc.issues)
+            raw_description = (
+                arguments.get("description", "") if isinstance(arguments, dict) else ""
+            )
+            error_result = invalid_search_plan_result(
+                exc.issues,
+                description=raw_description if isinstance(raw_description, str) else "",
+            )
             return {
                 "ok": False,
                 "arguments": {},
@@ -483,7 +418,7 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
             "tool_ui": {
                 "kind": "web_search",
                 "status": "pending",
-                "query_display_mode": search_ui_display_mode(),
+                "description": request["description"],
                 "query_count": len(request["queries"]),
                 "search_request": request,
             },
@@ -510,7 +445,6 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
         "effort": effort,
         "queries": [
             {
-                "purpose": "",
                 "vertical": vertical,
                 "compiled_query": query,
                 "operators": {},
@@ -525,7 +459,6 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
         "tool_ui": {
             "kind": "web_search",
             "status": "pending",
-            "query_display_mode": search_ui_display_mode(),
             "query_count": len(queries),
             "search_request": request,
         },

@@ -21,11 +21,12 @@ from core.search.query_dates import resolve_query_dates
 ADVANCED_BATCH_LIMIT = 4
 ADVANCED_TEXT_LIMIT = 160
 COMPILED_QUERY_LIMIT = 512
-PURPOSE_LIMIT = 80
+DESCRIPTION_LIMIT = 80
 _EFFORTS = ("low", "medium", "high")
 _BASE_VERTICALS = ("web", "shopping", "academic")
 _OPERATOR_KEYS = tuple(SEARCH_OPERATOR_BY_KEY)
 _LIST_SPECS = tuple(spec for spec in SEARCH_OPERATOR_SPECS if spec.value_kind == "list")
+_GROUP_SPECS = tuple(spec for spec in SEARCH_OPERATOR_SPECS if spec.value_kind == "groups")
 _SPACE_RE = re.compile(r"\s+")
 _DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
@@ -73,6 +74,18 @@ def build_advanced_search_schema(*, tor_enabled: bool = False) -> dict[str, Any]
                 max_items=spec.max_items,
                 max_length=spec.max_length,
             )
+        elif spec.value_kind == "groups":
+            operator_properties[spec.key] = {
+                "type": "array",
+                "maxItems": spec.max_items,
+                "items": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": spec.group_max_items,
+                    "items": _string_schema(spec.description, max_length=spec.max_length),
+                },
+                "description": spec.description,
+            }
         else:
             operator_properties[spec.key] = {
                 "type": "string",
@@ -88,30 +101,45 @@ def build_advanced_search_schema(*, tor_enabled: bool = False) -> dict[str, Any]
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "purpose": _string_schema("Short human-readable reason for this search.", max_length=PURPOSE_LIMIT),
             "vertical": {
                 "type": "string",
                 "enum": verticals,
-                "description": "Per-query source vertical. Use shopping for product price or availability.",
+                "description": (
+                    "Required routing from the research plan. MUST use shopping for product "
+                    "discovery, budgets, prices, sellers, stock, or availability; MUST use "
+                    "academic for papers, citations, DOI records, preprints, peer-reviewed "
+                    "support, or primary scientific literature; use web for official, "
+                    "independent, community, reporting, measurement, and general evidence."
+                ),
             },
             "text": _string_schema(
-                "Concise search body without search operators; put operators in the operators object.",
+                "Core search terms only. Never include a four-digit calendar year; encode "
+                "a necessary time boundary exclusively in operators.after or operators.before.",
                 max_length=ADVANCED_TEXT_LIMIT,
             ),
             "operators": operators,
         },
-        "required": ["purpose", "vertical", "text"],
+        "required": ["vertical", "text"],
     }
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": {
+            "description": _string_schema(
+                "Visible activity title for the current research step, not a query. Write "
+                "a natural 3-4 word phrase in the user's language, beginning with an action "
+                "verb and naming the evidence goal; it must make sense without the query text.",
+                max_length=DESCRIPTION_LIMIT,
+            ),
             "queries": {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": ADVANCED_BATCH_LIMIT,
                 "items": query_item,
-                "description": "One to four independent queries executed concurrently.",
+                "description": (
+                    "Normally one query. Each additional item represents an independently "
+                    "necessary deliverable with its own evidence set or vertical."
+                ),
             },
             "effort": {
                 "type": "string",
@@ -120,7 +148,7 @@ def build_advanced_search_schema(*, tor_enabled: bool = False) -> dict[str, Any]
                 "description": "Shared search effort. Start with medium; high is a gated reserve tier.",
             },
         },
-        "required": ["queries"],
+        "required": ["description", "queries"],
     }
 
 
@@ -201,6 +229,61 @@ def _normalize_date(value: Any, path: str, issues: list[dict[str, str]]) -> str:
     return parsed.isoformat()
 
 
+def _normalize_groups(
+    operators: dict[str, Any], spec: SearchOperatorSpec, path: str,
+    issues: list[dict[str, str]],
+) -> list[list[str]]:
+    value = operators.get(spec.key, [])
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        _issue(issues, path, "must be an array of arrays")
+        return []
+    if len(value) > spec.max_items:
+        _issue(issues, path, f"must contain at most {spec.max_items} groups")
+    output: list[list[str]] = []
+    seen_groups: set[tuple[str, ...]] = set()
+    for group_index, raw_group in enumerate(value[:spec.max_items]):
+        group_path = f"{path}[{group_index}]"
+        if not isinstance(raw_group, list):
+            _issue(issues, group_path, "must be an array")
+            continue
+        if len(raw_group) < 2:
+            _issue(issues, group_path, "must contain at least two alternatives")
+        if len(raw_group) > spec.group_max_items:
+            _issue(
+                issues,
+                group_path,
+                f"must contain at most {spec.group_max_items} alternatives",
+            )
+        group: list[str] = []
+        seen: set[str] = set()
+        for item_index, item in enumerate(raw_group[:spec.group_max_items]):
+            item_path = f"{group_path}[{item_index}]"
+            if not isinstance(item, str):
+                _issue(issues, item_path, "must be a string")
+                continue
+            text = _clean_text(item)
+            if not text:
+                _issue(issues, item_path, "must not be empty")
+                continue
+            if len(text) > spec.max_length:
+                _issue(issues, item_path, f"must be at most {spec.max_length} characters")
+                continue
+            marker = text.casefold()
+            if marker not in seen:
+                seen.add(marker)
+                group.append(text)
+        if len(group) < 2:
+            _issue(issues, group_path, "must contain two distinct alternatives")
+            continue
+        group_marker = tuple(item.casefold() for item in group)
+        if group_marker not in seen_groups:
+            seen_groups.add(group_marker)
+            output.append(group)
+    return output
+
+
 def _quoted(value: str) -> str:
     return f'"{_clean_text(value).replace(chr(34), "")}"'
 
@@ -225,6 +308,8 @@ def _compile_operator(spec: SearchOperatorSpec, value: Any) -> str | list[str]:
         return [_quoted(item) for item in values]
     if spec.compile_kind == "or":
         return _or_group(values, _operator_value)
+    if spec.compile_kind == "or_groups":
+        return [_or_group(group, _operator_value) for group in values]
     if spec.compile_kind == "exclude":
         return [f"{spec.prefix}{_operator_value(item)}" for item in values]
     if spec.compile_kind == "or_prefix":
@@ -254,9 +339,18 @@ def prepare_advanced_search(
     issues: list[dict[str, str]] = []
     if not isinstance(arguments, dict):
         raise PlanValidationError([{"path": "$", "message": "must be an object"}])
-    unknown_root = sorted(set(arguments) - {"queries", "effort"})
+    unknown_root = sorted(set(arguments) - {"description", "queries", "effort"})
     for key in unknown_root:
         _issue(issues, f"$.{key}", "is not allowed in advanced mode")
+
+    raw_description = arguments.get("description")
+    if not isinstance(raw_description, str):
+        _issue(issues, "$.description", "must be a string")
+    description = _clean_text(raw_description) if isinstance(raw_description, str) else ""
+    if not description:
+        _issue(issues, "$.description", "must be a non-empty string")
+    elif len(description) > DESCRIPTION_LIMIT:
+        _issue(issues, "$.description", f"must be at most {DESCRIPTION_LIMIT} characters")
 
     effort_value = arguments.get("effort", "medium")
     if not isinstance(effort_value, str):
@@ -283,25 +377,17 @@ def prepare_advanced_search(
         if not isinstance(raw_query, dict):
             _issue(issues, base_path, "must be an object")
             continue
-        for key in sorted(set(raw_query) - {"purpose", "vertical", "text", "operators"}):
+        for key in sorted(set(raw_query) - {"vertical", "text", "operators"}):
             _issue(issues, f"{base_path}.{key}", "is not allowed")
 
-        raw_purpose = raw_query.get("purpose")
         raw_text = raw_query.get("text")
         raw_vertical = raw_query.get("vertical")
-        if not isinstance(raw_purpose, str):
-            _issue(issues, f"{base_path}.purpose", "must be a string")
         if not isinstance(raw_text, str):
             _issue(issues, f"{base_path}.text", "must be a string")
         if not isinstance(raw_vertical, str):
             _issue(issues, f"{base_path}.vertical", "must be a string")
-        purpose = _clean_text(raw_purpose) if isinstance(raw_purpose, str) else ""
         text = _clean_text(raw_text) if isinstance(raw_text, str) else ""
         vertical = raw_vertical.strip().lower() if isinstance(raw_vertical, str) else ""
-        if not purpose:
-            _issue(issues, f"{base_path}.purpose", "must be a non-empty string")
-        elif len(purpose) > PURPOSE_LIMIT:
-            _issue(issues, f"{base_path}.purpose", f"must be at most {PURPOSE_LIMIT} characters")
         if not text:
             _issue(issues, f"{base_path}.text", "must be a non-empty string")
         elif len(text) > ADVANCED_TEXT_LIMIT:
@@ -328,6 +414,12 @@ def prepare_advanced_search(
             )
             if values:
                 normalized_operators[spec.key] = values
+        for spec in _GROUP_SPECS:
+            groups = _normalize_groups(
+                raw_operators, spec, f"{base_path}.operators.{spec.key}", issues
+            )
+            if groups:
+                normalized_operators[spec.key] = groups
         after = _normalize_date(raw_operators.get("after"), f"{base_path}.operators.after", issues)
         before = _normalize_date(raw_operators.get("before"), f"{base_path}.operators.before", issues)
         if after:
@@ -346,7 +438,6 @@ def prepare_advanced_search(
             )
 
         canonical_item: dict[str, Any] = {
-            "purpose": purpose,
             "vertical": vertical,
             "text": text,
         }
@@ -365,9 +456,14 @@ def prepare_advanced_search(
     if issues:
         raise PlanValidationError(issues)
     return {
-        "canonical_arguments": {"queries": canonical_queries, "effort": effort},
+        "canonical_arguments": {
+            "description": description,
+            "queries": canonical_queries,
+            "effort": effort,
+        },
         "search_request": {
             "schema_mode": "advanced",
+            "description": description,
             "effort": effort,
             "queries": prepared_queries,
         },
