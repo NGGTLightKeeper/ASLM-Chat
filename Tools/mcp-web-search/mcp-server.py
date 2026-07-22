@@ -114,9 +114,7 @@ def supports(engine: str | None = None, model_name: str | None = None) -> bool:
 # The model controls only query/effort/shopping. Recency (timelimit) is parsed from the
 # query, region is routed by language, and safe-search stays moderate — none are model-
 # facing knobs. Arguments are coerced (a model may stringify or wrap them).
-async def _call_web_search(
-    args: dict[str, Any], context: dict[str, Any] | None = None
-) -> dict[str, Any]:
+async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
     prepared = prepare_search_arguments(args)
     if not prepared.get("ok"):
         return dict(prepared.get("error_result") or {})
@@ -131,7 +129,7 @@ async def _call_web_search(
         ]
         query = queries[0] if len(queries) == 1 else list(queries)
         query_preview = " | ".join(queries)[:320]
-        effort = "auto"
+        effort = str(search_request.get("effort") or "medium")
         shopping = any(item.get("vertical") == "shopping" for item in search_request.get("queries", []))
         academic = any(item.get("vertical") == "academic" for item in search_request.get("queries", []))
         onion = any(item.get("vertical") == "onion" for item in search_request.get("queries", []))
@@ -166,7 +164,7 @@ async def _call_web_search(
     started = time.perf_counter()
     try:
         if search_request.get("schema_mode") == "advanced":
-            result = await run_web_search_plan(search_request, context=context)
+            result = await run_web_search_plan(search_request)
         elif len(queries) > 1:
             result = await run_web_search_batch(
                 queries, effort=effort, shopping=shopping, academic=academic, onion=onion,
@@ -336,7 +334,7 @@ async def call_tool(
     args = dict(arguments or {})
     _evict_caches_once()
     if tool_id == "web_search":
-        return await _call_web_search(args, context=context)
+        return await _call_web_search(args)
     if tool_id == "read_page":
         return await _call_read_page(args)
     raise ValueError(f"Unknown tool: {tool_id}")

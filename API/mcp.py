@@ -397,7 +397,7 @@ def _summarize_tool_context(context: dict[str, Any]) -> str:
     """Return a compact summary of the runtime context passed into a tool."""
 
     parts: list[str] = []
-    for key in ("engine", "model_name", "chat_id", "generation_id", "tool_round_index", "tool_call_index"):
+    for key in ("engine", "model_name", "chat_id", "tool_round_index", "tool_call_index"):
         value = context.get(key)
         if value not in {None, ""}:
             parts.append(f"{key}={value}")

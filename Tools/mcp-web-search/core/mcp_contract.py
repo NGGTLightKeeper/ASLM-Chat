@@ -40,8 +40,7 @@ Write a compact search expression built from concrete entities, identifiers, ver
 and one intent term. A plain query string is the normal form. An array is exceptional and
 fits exactly two independently necessary deliverables that support different claims;
 alternatives fit one query through OR. Never submit more than two queries in one call.
-Inspect the first result set before adding a refinement. High effort is strictly
-single-query: if an array is supplied, only its first item is executed.
+Inspect the first result set before adding a refinement.
 
 Use ASCII operators when they express a real constraint: quoted phrases, OR, -term,
 site:, -site:, filetype:, intitle:, inurl:, after:, and before:. Date bounds fit requests
@@ -81,11 +80,9 @@ expression. Write a natural 3-4 word phrase in the user's language that begins w
 action verb and names the evidence goal. It must remain meaningful when the query text is
 hidden. Prefer titles such as "Проверяю независимые тесты", "Сверяю характеристики", or
 "Уточняю цены и наличие". Normally submit exactly one query. A second query is allowed only
-when it is independently necessary; the same rule applies to every additional item and
-each needs a different evidence set or vertical. Submit up to four in priority order.
-The router chooses search breadth automatically. Rapid repeated batching accumulates a
-sticky throttle and can execute only the first items; do not immediately retry dropped
-items because recovery requires idle time or a new answer generation.
+when the request already contains another independently necessary deliverable that needs a
+different evidence set or vertical. Never submit more than two queries in one call; execute
+later evidence gaps sequentially after inspecting the returned evidence.
 
 Vertical is a required routing decision for every query, not a reserve option. Any step
 about product discovery, budgets, prices, sellers, stock, or availability must use
@@ -102,8 +99,12 @@ answer materially depends on recency or a real publication window. Keep four-dig
 calendar years out of text; a necessary year belongs exclusively in after or before.
 
 Use shopping for prices and availability, academic for scholarly literature, and web for
-independent evidence. Search depth, API coverage, scraping, parsing, and browser use are
-selected automatically from batch size, recent pressure, provider health, and reserves.
+independent evidence. Start ordinary work at medium; low is quick discovery and high is
+the reserve tier after lower effort leaves a concrete high-stakes gap.
+
+Source allowance is per query: low up to 8, medium up to 10, high up to 16 before URL
+deduplication and filtering. One medium query can provide up to 10 source records; two
+can create up to 20 and consume roughly twice the context.
 
 Cite exact handles returned by this call immediately after the supported claim. Parsed
 page content carries more weight than snippets. English is the normal search language;
@@ -426,10 +427,8 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
 
     args = arguments if isinstance(arguments, dict) else {}
     queries = coerce_search_queries(args.get("query", ""))
-    effort = coerce_search_effort(args)
-    if effort == "high" and len(queries) > 1:
-        queries = queries[:1]
     canonical_query: str | list[str] = queries[0] if len(queries) == 1 else queries
+    effort = coerce_search_effort(args)
     shopping = coerce_search_shopping(args)
     academic = coerce_search_academic(args)
     onion = coerce_search_onion(args)

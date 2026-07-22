@@ -3004,10 +3004,6 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(b''.join(response.streaming_content), b'Done')
         self.assertEqual(mock_generate.call_args.kwargs["tool_server_ids"], ["time_suite"])
         self.assertEqual(mock_generate.call_args.kwargs["tool_context"]["engine"], "ollama-service")
-        self.assertEqual(
-            mock_generate.call_args.kwargs["tool_context"]["generation_id"],
-            response["X-Generation-ID"],
-        )
         self.assertEqual(Chat.objects.first().active_tool_slug, '["time_suite"]')
 
     # Test chat API rejects unknown tool server.
@@ -3695,7 +3691,6 @@ class GenerateApiTests(ToolRegistryTestMixin, TestCase):
         kwargs = mock_generate.call_args.kwargs
         self.assertEqual(kwargs["tool_server_ids"], ["time_suite"])
         self.assertEqual(kwargs["tool_context"]["chat_id"], "tool-session")
-        self.assertEqual(kwargs["tool_context"]["generation_id"], response["X-Generation-ID"])
 
     @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")

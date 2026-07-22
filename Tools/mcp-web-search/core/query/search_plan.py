@@ -18,10 +18,11 @@ from core.query.operators import (
 from core.search.query_dates import resolve_query_dates
 
 
-ADVANCED_BATCH_LIMIT = 4
+ADVANCED_BATCH_LIMIT = 2
 ADVANCED_TEXT_LIMIT = 160
 COMPILED_QUERY_LIMIT = 512
 DESCRIPTION_LIMIT = 80
+_EFFORTS = ("low", "medium", "high")
 _BASE_VERTICALS = ("web", "shopping", "academic")
 _OPERATOR_KEYS = tuple(SEARCH_OPERATOR_BY_KEY)
 _LIST_SPECS = tuple(spec for spec in SEARCH_OPERATOR_SPECS if spec.value_kind == "list")
@@ -136,11 +137,17 @@ def build_advanced_search_schema(*, tor_enabled: bool = False) -> dict[str, Any]
                 "maxItems": ADVANCED_BATCH_LIMIT,
                 "items": query_item,
                 "description": (
-                    "One to four independently necessary queries. Order is priority order: "
-                    "rapid repeated batching can trigger sticky automatic throttling, in "
-                    "which case only the first queries are executed. Inspect the result "
-                    "before retrying a dropped or refined query."
+                    "Normally one query. A second item is allowed only for an independently "
+                    "necessary deliverable with its own evidence set or vertical. Never put "
+                    "more than two queries in one call; run later gaps sequentially after "
+                    "inspecting this result."
                 ),
+            },
+            "effort": {
+                "type": "string",
+                "enum": list(_EFFORTS),
+                "default": "medium",
+                "description": "Shared search effort. Start with medium; high is a gated reserve tier.",
             },
         },
         "required": ["description", "queries"],
@@ -334,7 +341,7 @@ def prepare_advanced_search(
     issues: list[dict[str, str]] = []
     if not isinstance(arguments, dict):
         raise PlanValidationError([{"path": "$", "message": "must be an object"}])
-    unknown_root = sorted(set(arguments) - {"description", "queries"})
+    unknown_root = sorted(set(arguments) - {"description", "queries", "effort"})
     for key in unknown_root:
         _issue(issues, f"$.{key}", "is not allowed in advanced mode")
 
@@ -346,6 +353,14 @@ def prepare_advanced_search(
         _issue(issues, "$.description", "must be a non-empty string")
     elif len(description) > DESCRIPTION_LIMIT:
         _issue(issues, "$.description", f"must be at most {DESCRIPTION_LIMIT} characters")
+
+    effort_value = arguments.get("effort", "medium")
+    if not isinstance(effort_value, str):
+        _issue(issues, "$.effort", "must be a string")
+    effort = str(effort_value or "").strip().lower()
+    if effort not in _EFFORTS:
+        _issue(issues, "$.effort", "must be one of low, medium, high")
+        effort = "medium"
 
     raw_queries = arguments.get("queries")
     if not isinstance(raw_queries, list):
@@ -446,10 +461,12 @@ def prepare_advanced_search(
         "canonical_arguments": {
             "description": description,
             "queries": canonical_queries,
+            "effort": effort,
         },
         "search_request": {
             "schema_mode": "advanced",
             "description": description,
+            "effort": effort,
             "queries": prepared_queries,
         },
     }

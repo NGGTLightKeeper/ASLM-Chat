@@ -9,9 +9,8 @@ page text is pre-populated into SourceCache under the read_page cache key BEFORE
 source event is emitted — so when the orchestrator later parses that URL, read_page gets
 a cache hit and runs the normal extraction/compaction pipeline with no network fetch.
 
-With no API keys configured it yields nothing and the search stays pure scrape. Automatic
-routing treats configured hosted providers as the non-throttled first-wave API layer;
-legacy effort profiles retain their historical supplement behavior.
+Hosted is strictly a supplement: with no API keys configured it yields nothing and the
+search stays pure scrape.
 """
 
 from __future__ import annotations

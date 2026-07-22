@@ -96,70 +96,6 @@ async def _merge_streams(*streams):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def _routed_event_stream(
-    query: str,
-    *,
-    primary_engines: tuple[type, ...],
-    reserve_engines: tuple[type, ...],
-    hosted_stream,
-    region: str,
-    safesearch: str,
-    timelimit: str | None,
-    deadline: float,
-    tracker=None,
-):
-    """Run the first wave, then promote cold scraper reserves only after failure."""
-
-    streams = []
-    if primary_engines:
-        primary_api = SerpApi(
-            transport=_get_transport(8.0),
-            timeout_seconds=8.0,
-            source_limit=_SOURCE_LIMIT,
-            engines=primary_engines,
-        )
-        streams.append(primary_api.search_stream(
-            query, region=region, safesearch=safesearch, timelimit=timelimit,
-            deadline_seconds=deadline,
-        ))
-    if hosted_stream is not None:
-        streams.append(hosted_stream)
-
-    failed_primary = 0
-    hosted_sources = 0
-    if streams:
-        first_wave = streams[0] if len(streams) == 1 else _merge_streams(*streams)
-        async for event in first_wave:
-            if event.get("type") == "source" and str(event.get("engine", "")).startswith("hosted:"):
-                hosted_sources += 1
-            if event.get("type") == "engine":
-                payload = event.get("payload") or {}
-                engine = str(payload.get("engine") or "")
-                if not engine.startswith("hosted:") and payload.get("status") not in {"success", "partial"}:
-                    failed_primary += 1
-            yield event
-
-    emergency = not primary_engines and hosted_sources == 0
-    promotions = len(reserve_engines) if emergency else min(failed_primary, len(reserve_engines))
-    for parser in reserve_engines[:promotions]:
-        if tracker is not None and not tracker.allow(parser.name):
-            continue
-        reserve_api = SerpApi(
-            transport=_get_transport(8.0), timeout_seconds=8.0,
-            source_limit=_SOURCE_LIMIT, engines=(parser,),
-        )
-        productive = False
-        async for event in reserve_api.search_stream(
-            query, region=region, safesearch=safesearch, timelimit=timelimit,
-            deadline_seconds=deadline,
-        ):
-            if event.get("type") == "engine":
-                productive = (event.get("payload") or {}).get("status") in {"success", "partial"}
-            yield event
-        if emergency and productive:
-            break
-
-
 # Whether a source may be parsed inline during a search, or should stay snippet-only.
 # Two reasons to skip: a read_page-only custom-domain handler (reddit/x/ebay/youtube —
 # browser/slow APIs), or a domain the runtime store has learned is too slow to parse.
@@ -514,8 +450,6 @@ class WebSearchService:
         # Injectable for tests; default import is deferred so SERP-only paths
         # never pay for the read service's heavy imports.
         self._read_page = read_page
-        self._browser_remaining = 0
-        self._browser_lock = asyncio.Lock()
 
     # Resolve the page reader lazily.
     def _reader(self):
@@ -531,12 +465,6 @@ class WebSearchService:
         self, source: _Source, profile: EffortProfile, *, query: str = ""
     ) -> None:
         started = time.perf_counter()
-        allow_browser = False
-        if profile.allow_browser:
-            async with self._browser_lock:
-                if self._browser_remaining > 0:
-                    self._browser_remaining -= 1
-                    allow_browser = True
         try:
             async with asyncio.timeout(profile.parse_timeout):
                 markdown = await self._reader()(
@@ -546,7 +474,7 @@ class WebSearchService:
                     focus=query,
                     # Only the high profile may escalate blocked or weak pages to the
                     # warm browser; low/medium remain cheap and HTTP-only.
-                    allow_browser=allow_browser,
+                    allow_browser=profile.allow_browser,
                 )
             source.parsed_markdown = markdown or ""
             source.parsed_ok = bool(markdown) and not markdown.startswith("Error:")
@@ -563,19 +491,17 @@ class WebSearchService:
     # Build the hosted supplement stream when API keys are configured; None otherwise
     # (no keys → pure scrape, baseline unchanged). Imports are deferred so the SERP-only
     # and key-less paths never pay for httpx provider code.
-    def _hosted_stream(self, query: str, *, region: str, deadline: float, providers=None):
+    def _hosted_stream(self, query: str, *, region: str, deadline: float):
         try:
             from core.search.hosted_providers import available_providers
             from core.search.hosted_stream import hosted_search_stream
         except Exception as exc:  # noqa: BLE001 — hosted layer is optional
             logger.debug("hosted layer unavailable: %s", exc)
             return None
-        providers = available_providers() if providers is None else list(providers)
-        if not providers:
+        if not available_providers():
             return None
         return hosted_search_stream(
             query, region=region, max_results=_HOSTED_MAX_RESULTS, deadline_seconds=deadline,
-            providers=providers,
         )
 
     # Run one full search. Returns the aggregated, ranked payload.
@@ -591,18 +517,8 @@ class WebSearchService:
         academic: bool = False,
         onion: bool = False,
         dates_resolved: bool = False,
-        profile_override: EffortProfile | None = None,
-        engines_override: tuple[type, ...] | None = None,
-        reserve_engines: tuple[type, ...] = (),
-        hosted_providers=None,
-        automatic: bool = False,
     ) -> dict[str, Any]:
-        profile = profile_override or EFFORT_PROFILES.get(effort, EFFORT_PROFILES["low"])
-        self._browser_remaining = (
-            1 if automatic and profile.allow_browser
-            else profile.parse_budget if profile.allow_browser
-            else 0
-        )
+        profile = EFFORT_PROFILES.get(effort, EFFORT_PROFILES["low"])
         started = time.perf_counter()
 
         # Fold the query's own date intent in: a trailing/comma year or freshness word
@@ -620,11 +536,18 @@ class WebSearchService:
         if not region:
             region = {"ru": "ru-ru", "de": "de-de"}.get(language, "us-en")
 
-        engines = list(engines_override) if engines_override is not None else select_engines(profile.name, self._tracker)
+        engines = select_engines(profile.name, self._tracker)
         logger.info(
             "web_search.start effort=%s region=%s language=%s engines=%s query=%r",
             profile.name, region, language, [e.name for e in engines], query[:160],
         )
+        api = SerpApi(
+            transport=_get_transport(8.0),
+            timeout_seconds=8.0,
+            source_limit=_SOURCE_LIMIT,
+            engines=tuple(engines),
+        )
+
         # Learned domain trust: one snapshot per search (single DB read), so triage
         # itself stays I/O-free. A missing/failed store degrades to a neutral session.
         try:
@@ -666,25 +589,17 @@ class WebSearchService:
 
             parse_tasks[url] = asyncio.create_task(run(), name=f"parse:{source.host}")
 
-        # Hosted providers join the same triage. Automatic routing always dispatches its
-        # healthy APIs; legacy retains the old parse-tier gate (low pays no hosted credits).
-        hosted = None
-        if automatic or profile.parse_budget:
-            hosted = self._hosted_stream(
-                query, region=region, deadline=profile.deadline * 0.8,
-                providers=hosted_providers,
-            )
-        event_stream = _routed_event_stream(
-            query,
-            primary_engines=tuple(engines),
-            reserve_engines=tuple(reserve_engines),
-            hosted_stream=hosted,
-            region=region,
-            safesearch=safesearch,
-            timelimit=timelimit,
-            deadline=profile.deadline * 0.8,
-            tracker=self._tracker,
+        # Baseline scrape stream; hosted providers (content + SERP) join the same triage
+        # as a supplement when keys exist. Hosted is gated to effort tiers that parse
+        # (low stays SERP-only and pays no hosted credits).
+        event_stream = api.search_stream(
+            query, region=region, safesearch=safesearch, timelimit=timelimit,
+            deadline_seconds=profile.deadline * 0.8,
         )
+        if profile.parse_budget:
+            hosted = self._hosted_stream(query, region=region, deadline=profile.deadline * 0.8)
+            if hosted is not None:
+                event_stream = _merge_streams(event_stream, hosted)
 
         # Fold a triage re-score of an already-seen source (a consensus vote, or a full
         # revisit that may also improve the positional view) back into its live state.
@@ -922,13 +837,8 @@ class WebSearchService:
         try:
             from core.fetch.shopping import search_shopping
 
-            vertical_effort = (
-                "high" if profile.parse_budget >= 6
-                else "medium" if profile.parse_budget >= 2
-                else "low"
-            )
             result = await search_shopping(
-                query, effort=vertical_effort, limit=profile.max_results, language=language
+                query, effort=profile.name, limit=profile.max_results, language=language
             )
         except Exception:  # noqa: BLE001 — shopping is supplemental; never fail the search
             logger.warning("shopping search failed for %r", query[:160], exc_info=True)
@@ -950,13 +860,8 @@ class WebSearchService:
         try:
             from core.fetch.academic import search_academic
 
-            vertical_effort = (
-                "high" if profile.parse_budget >= 6
-                else "medium" if profile.parse_budget >= 2
-                else "low"
-            )
             result = await search_academic(
-                query, effort=vertical_effort, limit=profile.max_results
+                query, effort=profile.name, limit=profile.max_results
             )
         except Exception:  # noqa: BLE001 — academic is supplemental; never fail the search
             logger.warning("academic search failed for %r", query[:160], exc_info=True)
@@ -1054,11 +959,6 @@ async def run_web_search(
     academic: bool = False,
     onion: bool = False,
     dates_resolved: bool = False,
-    profile_override: EffortProfile | None = None,
-    engines_override: tuple[type, ...] | None = None,
-    reserve_engines: tuple[type, ...] = (),
-    hosted_providers=None,
-    automatic: bool = False,
 ) -> dict[str, Any]:
     from core.cache.hosted_cache import get_hosted_cache
     from core.config import load_search_config
@@ -1070,9 +970,8 @@ async def run_web_search(
     tracker = get_recent_tracker()
     cache = get_hosted_cache()
     # shopping/academic are part of the cache/repeat key: vertical and plain runs differ.
-    effective_effort = profile_override.name if profile_override is not None else effort
     key_args = dict(region=region, safesearch=safesearch, timelimit=timelimit,
-                    effort=effective_effort, shopping=shopping, academic=academic)
+                    effort=effort, shopping=shopping, academic=academic)
     qkey = tracker.query_key(query, **key_args)
 
     # An onion run is an explicit, rare, slow opt-in whose source set differs — bypass the
@@ -1084,9 +983,7 @@ async def run_web_search(
         payload = await WebSearchService().search(
             query, effort=effort, region=region, safesearch=safesearch,
             timelimit=timelimit, shopping=shopping, academic=academic, onion=True,
-            dates_resolved=dates_resolved, profile_override=profile_override,
-            engines_override=engines_override, reserve_engines=reserve_engines,
-            hosted_providers=hosted_providers, automatic=automatic,
+            dates_resolved=dates_resolved,
         )
         payload["cached"] = False
         return payload
@@ -1105,9 +1002,7 @@ async def run_web_search(
         payload = await WebSearchService().search(
             query, effort=effort, region=region, safesearch=safesearch,
             timelimit=timelimit, shopping=shopping, academic=academic,
-            dates_resolved=dates_resolved, profile_override=profile_override,
-            engines_override=engines_override, reserve_engines=reserve_engines,
-            hosted_providers=hosted_providers, automatic=automatic,
+            dates_resolved=dates_resolved,
         )
         payload["cached"] = False
         empty = not payload.get("sources")
@@ -1162,7 +1057,6 @@ def _combine_search_results(
     started: float,
     description: str = "",
     legacy_flags: dict[str, bool] | None = None,
-    routing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from core.config import load_search_config
 
@@ -1211,9 +1105,11 @@ def _combine_search_results(
         }
         for plan in plans
     ]
-    search_request = {"schema_mode": schema_mode, "queries": request_queries}
-    if schema_mode == "legacy":
-        search_request["effort"] = effort
+    search_request = {
+        "schema_mode": schema_mode,
+        "effort": effort,
+        "queries": request_queries,
+    }
     if description:
         search_request["description"] = description
     ui = _build_ui(all_sources)
@@ -1230,32 +1126,13 @@ def _combine_search_results(
         ui["description"] = description
 
     queries = [plan["compiled_query"] for plan in plans]
-    model_context = (
-        f"Batch search results for {len(plans)} queries run concurrently:\n\n"
-        + "\n\n---\n\n".join(context_sections)
-        if len(plans) > 1
-        else context_sections[0]
-    )
-    if routing:
-        dropped = list(routing.get("dropped_query_indices") or [])
-        notice = (
-            f"Search routing: executed {routing.get('executed_queries', len(plans))}/"
-            f"{routing.get('requested_queries', len(plans))} queries; "
-            f"throttle={routing.get('throttle', 'normal')}."
-        )
-        if dropped:
-            notice += f" Dropped priority positions: {', '.join(map(str, dropped))}."
-        if routing.get("recovery_seconds"):
-            notice += f" Next recovery step requires {routing['recovery_seconds']:.0f}s idle."
-        model_context = notice + "\n\n" + model_context
-
     payload: dict[str, Any] = {
         "query": queries[0] if len(queries) == 1 else queries,
         "queries": queries,
         "batch": len(queries) > 1,
         "search_id": search_id,
         "search_ids": [result.get("search_id") for result in results if result.get("search_id")],
-        **({"effort": effort} if schema_mode == "legacy" else {}),
+        "effort": effort,
         "search_request": search_request,
         "languages": list(dict.fromkeys(
             str(result.get("language") or "") for result in results if result.get("language")
@@ -1268,7 +1145,12 @@ def _combine_search_results(
         )),
         "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
         "cached": all(bool(result.get("cached")) for result in results),
-        "model_context": model_context,
+        "model_context": (
+            f"Batch search results for {len(plans)} queries run concurrently:\n\n"
+            + "\n\n---\n\n".join(context_sections)
+            if len(plans) > 1
+            else context_sections[0]
+        ),
         "sources": all_sources,
         "ui": ui,
         "query_results": [
@@ -1286,9 +1168,6 @@ def _combine_search_results(
             )
         ],
     }
-    if routing:
-        payload["routing"] = routing
-        ui["routing"] = routing
     payload.update(legacy_flags or {})
     return payload
 
@@ -1340,77 +1219,15 @@ async def run_web_search_batch(
     )
 
 
-async def run_web_search_plan(
-    search_request: dict[str, Any], *, context: dict[str, Any] | None = None
-) -> dict[str, Any]:
+async def run_web_search_plan(search_request: dict[str, Any]) -> dict[str, Any]:
     """Run a prepared mixed-vertical advanced plan concurrently."""
 
-    requested_plans = [
-        dict(item) for item in search_request.get("queries", []) if isinstance(item, dict)
-    ]
-    from core.config import load_search_config
-    from core.search.hosted_providers import available_providers
-    from core.search.router import (
-        ProviderDescriptor,
-        SCRAPER_BY_NAME,
-        get_search_pressure_controller,
-        routing_scope,
-    )
-
-    cfg = load_search_config()
-    tracker = get_health_tracker()
-    providers = [
-        provider for provider in available_providers()
-        if tracker.allow(f"hosted:{provider.name}")
-    ]
-    descriptors = [
-        ProviderDescriptor(
-            name=provider.name,
-            kind="api",
-            family=provider.provider_family,
-            priority=100,
-        )
-        for provider in providers
-    ]
-    decision = get_search_pressure_controller().decide(
-        requested_plans,
-        scope=routing_scope(context),
-        api_providers=descriptors,
-        tracker=tracker,
-        enabled_scrapers=cfg.engines.as_map(),
-        cfg=cfg.routing,
-    )
-    plans = requested_plans[:decision.admitted_count]
-    effort = "auto"
+    plans = [dict(item) for item in search_request.get("queries", []) if isinstance(item, dict)]
+    effort = str(search_request.get("effort") or "medium")
     started = time.perf_counter()
 
-    async def run_item(index: int, plan: dict[str, Any]) -> dict[str, Any]:
+    async def run_item(plan: dict[str, Any]) -> dict[str, Any]:
         vertical = str(plan.get("vertical") or "web")
-        parse_budget = decision.parse_budgets[index]
-        deadline = 22.0 if decision.level == 0 and decision.admitted_count == 1 else (
-            10.0 if decision.level <= 1 else 8.0
-        )
-        profile = EffortProfile(
-            name=f"auto:{decision.level_name.lower()}",
-            parse_budget=parse_budget,
-            parse_concurrency=min(4, max(1, parse_budget)) if parse_budget else 0,
-            parse_reserve=1 if parse_budget > 1 else 0,
-            parse_timeout=8.0 if parse_budget else 0.0,
-            parse_max_chars=20_000 if decision.browser_permits else 8_000,
-            deadline=deadline,
-            max_results=decision.max_results_per_query,
-            allow_browser=bool(decision.browser_permits and index == 0),
-        )
-        primary = tuple(
-            SCRAPER_BY_NAME[name]
-            for name in decision.primary_by_query[index]
-            if name in SCRAPER_BY_NAME
-        )
-        reserve = tuple(
-            SCRAPER_BY_NAME[name]
-            for name in decision.reserve_scrapers
-            if name in SCRAPER_BY_NAME
-        )
         return await run_web_search(
             str(plan.get("compiled_query") or ""),
             effort=effort,
@@ -1419,14 +1236,9 @@ async def run_web_search_plan(
             academic=vertical == "academic",
             onion=vertical == "onion",
             dates_resolved=True,
-            profile_override=profile,
-            engines_override=primary,
-            reserve_engines=reserve,
-            hosted_providers=providers,
-            automatic=True,
         )
 
-    results = await asyncio.gather(*(run_item(index, plan) for index, plan in enumerate(plans)))
+    results = await asyncio.gather(*(run_item(plan) for plan in plans))
     return _combine_search_results(
         plans,
         list(results),
@@ -1434,5 +1246,4 @@ async def run_web_search_plan(
         schema_mode="advanced",
         started=started,
         description=str(search_request.get("description") or ""),
-        routing=decision.as_dict(),
     )
