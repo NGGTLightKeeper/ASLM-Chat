@@ -69,7 +69,7 @@ def test_firecrawl_content_mode_returns_markdown(monkeypatch):
 
     out = asyncio.run(go())
     assert out[0].content == "# Heading\n\nbody text"
-    assert out[0].provider_family == "firecrawl"
+    assert out[0].provider_family == "google"
 
 
 def test_firecrawl_default_serp_mode_skips_scrape(monkeypatch):

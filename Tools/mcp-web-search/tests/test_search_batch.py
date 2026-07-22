@@ -16,6 +16,7 @@ from core.mcp_contract import (
     build_search_schema,
     coerce_search_queries,
     coerce_search_query,
+    prepare_search_arguments,
 )
 
 
@@ -45,6 +46,24 @@ def test_query_batch_coercion_caps_and_sanitizes_items():
     assert coerce_search_queries('["alpha", "beta"]') == ["alpha", "beta"]
     assert coerce_search_queries({"query": ["alpha", "beta"]}) == ["alpha", "beta"]
     assert coerce_search_query(["alpha", "beta"]) == "alpha"
+
+
+def test_legacy_high_executes_only_the_first_batch_item(monkeypatch):
+    import core.config as config_module
+
+    cfg = type("Cfg", (), {
+        "query": type("Query", (), {"schema_mode": "legacy"})(),
+        "tor": type("Tor", (), {"enabled": False})(),
+    })()
+    monkeypatch.setattr(config_module, "load_search_config", lambda: cfg)
+    prepared = prepare_search_arguments({
+        "query": ["priority query", "must be dropped"],
+        "effort": "high",
+    })
+    assert prepared["arguments"]["query"] == "priority query"
+    assert [item["compiled_query"] for item in prepared["search_request"]["queries"]] == [
+        "priority query"
+    ]
 
 
 def test_tool_description_documents_rare_batch_and_operator_examples():

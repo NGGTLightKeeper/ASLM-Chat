@@ -4453,6 +4453,9 @@ def _stream_chat_response(
     current_user_message_id: int | str | None = None,
     persist_messages: bool = True,
 ):
+    tool_context = generate_kwargs.get("tool_context")
+    if isinstance(tool_context, dict):
+        tool_context["generation_id"] = str(generation_id)
     visible_parts: list[str] = []
     thinking_parts: list[str] = []
     transcript_entries: list[dict[str, Any]] = []

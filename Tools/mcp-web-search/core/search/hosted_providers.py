@@ -9,8 +9,8 @@ content-bearing providers (Tavily advanced, Firecrawl) carry the full page text 
 `HostedResult.content`. That text is pre-populated into SourceCache by `hosted_stream`
 so the shared read_page extraction/compaction pipeline runs on it without a re-fetch.
 
-`provider_family` drives consensus voting: SerpApi serves Google's index, so it votes
-with the Google scrape parser; Tavily/Firecrawl/Brave are their own families.
+`provider_family` drives consensus voting: SerpApi and Firecrawl serve Google's index,
+so they vote with Google/Startpage; Tavily and Brave retain their own families.
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ class TavilyClient:
 # --- Firecrawl: POST /v1/search with scrapeOptions → markdown (full page text) ----
 class FirecrawlClient:
     name = "firecrawl"
-    provider_family = "firecrawl"
+    provider_family = "google"
     returns_content = True
     BASE_URL = "https://api.firecrawl.dev/v1/search"
 

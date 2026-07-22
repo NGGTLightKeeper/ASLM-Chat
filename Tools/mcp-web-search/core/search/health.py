@@ -131,6 +131,21 @@ class EngineHealthTracker:
             return False
         return health.state == BreakerState.CLOSED
 
+    def can_attempt(self, engine: str) -> bool:
+        """Pure check for whether a later ``allow`` call could admit this engine."""
+
+        health = self._engines.get(engine)
+        if health is None:
+            return True
+        now = self._clock()
+        if now < health.paced_until:
+            return False
+        if health.state == BreakerState.CLOSED:
+            return True
+        if health.state == BreakerState.OPEN:
+            return now >= health.open_until
+        return not health.probe_inflight or (now - health.probe_started) > PROBE_TIMEOUT
+
     # The circuit-breaker half of allow(): CLOSED passes, OPEN waits then probes once.
     def _breaker_admits(self, health: EngineHealth, now: float) -> bool:
         if health.state == BreakerState.CLOSED:

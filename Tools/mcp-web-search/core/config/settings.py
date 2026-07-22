@@ -76,6 +76,25 @@ class QuerySection:
     year_hint_older: Optional[str] = None  # year < last year  → no restriction
 
 
+@dataclass
+class RoutingSection:
+    """Automatic advanced-search routing and pressure policy."""
+
+    pressure_thresholds: list[float] = field(default_factory=lambda: [6.0, 12.0, 20.0, 30.0])
+    batch_caps: list[int] = field(default_factory=lambda: [4, 3, 2, 1, 1])
+    scraper_factors: list[float] = field(default_factory=lambda: [1.0, 0.8, 0.6, 0.4, 0.0])
+    api_relief_factors: list[float] = field(
+        default_factory=lambda: [1.0, 0.85, 0.70, 0.60, 0.50]
+    )
+    idle_recovery_seconds: float = 5.0
+    state_ttl_seconds: float = 60.0
+    reserve_api_threshold: int = 2
+    reserve_low: int = 1
+    reserve_high: int = 2
+    parse_budgets: list[int] = field(default_factory=lambda: [8, 5, 3, 1, 0])
+    max_results: list[int] = field(default_factory=lambda: [14, 12, 10, 8, 8])
+
+
 # Warm-browser layer (cloakbrowser daemon). browser_fallback controls where the
 # browser is allowed as a fallback; the backend is always the warm chromium daemon.
 @dataclass
@@ -191,6 +210,7 @@ class SearchConfig:
     extraction: ExtractionSection = field(default_factory=ExtractionSection)
     cache: CacheSection = field(default_factory=CacheSection)
     query: QuerySection = field(default_factory=QuerySection)
+    routing: RoutingSection = field(default_factory=RoutingSection)
     browser: BrowserSection = field(default_factory=BrowserSection)
     tor: TorSection = field(default_factory=TorSection)
     hosted_api: HostedApiSection = field(default_factory=HostedApiSection)
@@ -242,6 +262,20 @@ def _optional_string(value: object, default: Optional[str]) -> Optional[str]:
     return str(value)
 
 
+def _number_list(value: object, default: list, *, cast, minimum: float = 0.0) -> list:
+    """Load a fixed-width numeric policy vector, falling back atomically on bad input."""
+
+    if not isinstance(value, list) or len(value) != len(default):
+        return list(default)
+    try:
+        parsed = [cast(item) for item in value]
+    except (TypeError, ValueError):
+        return list(default)
+    if any(item < minimum for item in parsed):
+        return list(default)
+    return parsed
+
+
 # Load search_config.json and cache a SearchConfig singleton (custom path for tests only).
 def load_search_config(path: Path | None = None) -> SearchConfig:
     global _cached_config
@@ -264,6 +298,7 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
     e = raw.get("extraction", {})
     c = raw.get("cache", {})
     q = raw.get("query", {})
+    r = raw.get("routing", {})
     b = raw.get("browser", {})
     t = raw.get("tor", {})
     h = raw.get("hosted_api", {})
@@ -313,6 +348,27 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
             year_hint_current=_optional_string(q.get("year_hint_current", _MISSING), "m"),
             year_hint_prev=_optional_string(q.get("year_hint_prev", _MISSING), "y"),
             year_hint_older=_optional_string(q.get("year_hint_older", _MISSING), None),
+        ),
+        routing=RoutingSection(
+            pressure_thresholds=_number_list(
+                r.get("pressure_thresholds"), [6.0, 12.0, 20.0, 30.0], cast=float
+            ),
+            batch_caps=_number_list(r.get("batch_caps"), [4, 3, 2, 1, 1], cast=int, minimum=1),
+            scraper_factors=_number_list(
+                r.get("scraper_factors"), [1.0, 0.8, 0.6, 0.4, 0.0], cast=float
+            ),
+            api_relief_factors=_number_list(
+                r.get("api_relief_factors"), [1.0, 0.85, 0.70, 0.60, 0.50], cast=float
+            ),
+            idle_recovery_seconds=max(0.1, float(r.get("idle_recovery_seconds", 5.0))),
+            state_ttl_seconds=max(20.0, float(r.get("state_ttl_seconds", 60.0))),
+            reserve_api_threshold=max(1, int(r.get("reserve_api_threshold", 2))),
+            reserve_low=max(0, int(r.get("reserve_low", 1))),
+            reserve_high=max(0, int(r.get("reserve_high", 2))),
+            parse_budgets=_number_list(r.get("parse_budgets"), [8, 5, 3, 1, 0], cast=int),
+            max_results=_number_list(
+                r.get("max_results"), [14, 12, 10, 8, 8], cast=int, minimum=1
+            ),
         ),
         browser=BrowserSection(
             browser_fallback=_one_of(

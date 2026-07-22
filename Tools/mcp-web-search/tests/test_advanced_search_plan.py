@@ -10,6 +10,7 @@ import pytest
 
 import core.config as config_module
 import core.search.web_search as search_module
+from core.config.settings import EnginesSection, RoutingSection
 from core.mcp_contract import build_search_description, build_search_schema, prepare_search_arguments
 from core.query.search_plan import PlanValidationError, prepare_advanced_search
 from core.search.query_dates import resolve_query_dates
@@ -25,6 +26,8 @@ def _config(*, mode: str = "advanced", tor: bool = False):
             year_hint_older=None,
         ),
         tor=SimpleNamespace(enabled=tor),
+        routing=RoutingSection(),
+        engines=EnginesSection(),
     )
 
 
@@ -50,7 +53,6 @@ def _plan():
                 },
             }
         ],
-        "effort": "medium",
     }
 
 
@@ -78,7 +80,8 @@ def test_advanced_schema_is_default_and_onion_is_capability_gated(monkeypatch):
     assert "Visible activity title" in schema["properties"]["description"]["description"]
     assert "beginning with an action verb" in schema["properties"]["description"]["description"]
     assert "make sense without the query text" in schema["properties"]["description"]["description"]
-    assert schema["properties"]["queries"]["maxItems"] == 2
+    assert schema["properties"]["queries"]["maxItems"] == 4
+    assert "effort" not in schema["properties"]
     assert item["required"] == ["vertical", "text"]
     assert "Never include a four-digit calendar year" in item["properties"]["text"]["description"]
     assert "Required routing from the research plan" in item["properties"]["vertical"]["description"]
@@ -90,7 +93,7 @@ def test_advanced_schema_is_default_and_onion_is_capability_gated(monkeypatch):
     )
     assert item["properties"]["vertical"]["enum"] == ["web", "shopping", "academic"]
     assert "Description is the visible activity title" in build_search_description()
-    assert "Never submit more than two queries" in build_search_description()
+    assert "Submit up to four in priority order" in build_search_description()
 
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config(tor=True))
     assert "onion" in build_search_schema()["properties"]["queries"]["items"]["properties"]["vertical"]["enum"]
@@ -149,12 +152,15 @@ def test_advanced_plan_rejects_missing_description_and_invalid_or_group():
     assert "$.queries[0].operators.or_groups[0]" in paths
 
 
-def test_advanced_plan_rejects_third_query_atomically():
+def test_advanced_plan_accepts_four_and_rejects_fifth_atomically():
     plan = _plan()
     plan["queries"].extend([
         {"vertical": "shopping", "text": "second intent", "operators": {}},
         {"vertical": "academic", "text": "third intent", "operators": {}},
+        {"vertical": "web", "text": "fourth intent", "operators": {}},
     ])
+    assert len(prepare_advanced_search(plan, query_config=_config().query)["search_request"]["queries"]) == 4
+    plan["queries"].append({"vertical": "web", "text": "fifth intent", "operators": {}})
 
     with pytest.raises(PlanValidationError) as exc:
         prepare_advanced_search(plan, query_config=_config().query)
@@ -194,7 +200,6 @@ def test_mixed_vertical_plan_runs_concurrently_and_preserves_metadata(monkeypatc
     request = {
         "schema_mode": "advanced",
         "description": "Compare evidence sources",
-        "effort": "medium",
         "queries": [
             {"vertical": "web", "compiled_query": "alpha", "operators": {}, "timelimit": None},
             {"vertical": "shopping", "compiled_query": "beta", "operators": {}, "timelimit": None},
