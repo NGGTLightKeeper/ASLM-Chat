@@ -78,8 +78,8 @@ coverage when the sources all belong to one class.
 Description is the visible activity title for the current research step, not a search
 expression. Write a natural 3-4 word phrase in the user's language that begins with an
 action verb and names the evidence goal. It must remain meaningful when the query text is
-hidden. Prefer titles such as "Проверяю независимые тесты", "Сверяю характеристики", or
-"Уточняю цены и наличие". Normally submit exactly one query. A second query is allowed only
+hidden. Prefer titles such as "Checking independent tests", "Comparing specifications", or
+"Confirming prices and availability". Normally submit exactly one query. A second query is allowed only
 when the request already contains another independently necessary deliverable that needs a
 different evidence set or vertical. Never submit more than two queries in one call; execute
 later evidence gaps sequentially after inspecting the returned evidence.
