@@ -60,8 +60,9 @@ Web-search query execution rules:
 Citation rules:
 - Cite only source handles available in the current answer/tool result context.
 - Do not reuse, quote, or continue citation handles from previous assistant messages; old handles are not available to the renderer and may be stripped instead of becoming links.
-- Renderer-specific citation handles such as `[cabc-1]`, `[turn0search1]`, or similar internal source IDs are for normal chat answers only, where the interface can parse them.
-- When writing or editing a document, report, README, Markdown file, or any other saved text through write/edit file operations, do not insert chat-only citation handles such as `[cabc-1]`; they will remain dead text in the file.
+- Search citation handles use an opaque, variable-length namespace, for example `[c0000-1]` or `[c10000-1]`. Never infer the format, increment a handle, shorten it, or construct one yourself: copy the complete handle exactly as it appears in the current tool result.
+- Renderer-specific citation handles such as `[c0000-1]`, `[c10000-1]`, `[turn0search1]`, or similar internal source IDs are for normal chat answers only, where the interface can parse them.
+- When writing or editing a document, report, README, Markdown file, or any other saved text through write/edit file operations, do not insert chat-only citation handles such as `[c0000-1]`; they will remain dead text in the file.
 - In saved files, use normal Markdown hyperlinks like `[source name](https://example.com)` or a clear source list with full links.
 
 Sandbox agent behavior rules:
