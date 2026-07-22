@@ -2,10 +2,13 @@
 
 import { escHtml, escapeAttributeValue } from '../main/utils.js';
 
-const CITATION_ID_PATTERN = /^(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,16}-\d+)$/;
-const CITATION_SCAN_PATTERN = /\b(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,16}-\d+)\b/gi;
 const CITATION_INLINE_NOISE_PATTERN = /[\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g;
-const CITATION_HANDLE_SOURCE = String.raw`(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,16}-\d+)`;
+// Keep legacy three-character search namespaces while accepting the backend's unbounded
+// monotonic namespace. One shared source keeps validation, scanning, and rendering aligned.
+const SEARCH_CITATION_HANDLE_SOURCE = String.raw`c[a-z0-9]{3,}-\d+`;
+const CITATION_HANDLE_SOURCE = String.raw`(?:S\d+|source-(?:[a-z0-9]+-)?\d+|${SEARCH_CITATION_HANDLE_SOURCE})`;
+const CITATION_ID_PATTERN = new RegExp(String.raw`^${CITATION_HANDLE_SOURCE}$`, 'i');
+const CITATION_SCAN_PATTERN = new RegExp(String.raw`\b${CITATION_HANDLE_SOURCE}\b`, 'gi');
 const CITATION_HANDLE_LIST_SOURCE = String.raw`${CITATION_HANDLE_SOURCE}(?:\s*,\s*${CITATION_HANDLE_SOURCE})*`;
 const CITATION_HANDLE_LIST_PATTERN = new RegExp(String.raw`^\s*${CITATION_HANDLE_LIST_SOURCE}\s*$`, 'i');
 const CITATION_ATTACHED_PATTERN = new RegExp(String.raw`([^\s\[(])\[(${CITATION_HANDLE_LIST_SOURCE})\]`, 'gi');

@@ -752,13 +752,25 @@ def _normalize_cooldown_value(value: Any) -> Any:
     return canonical
 
 
+# Resolve the conversation boundary for cooldown bookkeeping.
+def _tool_cooldown_scope(context: dict[str, Any] | None) -> str:
+    chat_id = str((context or {}).get("chat_id") or "").strip().lower()
+    return f"chat:{chat_id}" if chat_id else "chat:<unknown>"
+
+
 # Build cooldown keys for one search or read_page tool invocation.
-def _tool_cooldown_keys(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> list[tuple[str, str]]:
+def _tool_cooldown_keys(
+    tool_event: dict[str, Any] | None,
+    arguments: dict[str, Any] | None,
+    *,
+    context: dict[str, Any] | None = None,
+) -> list[tuple[str, str]]:
     tool_id = _quota_tool_id(tool_event)
+    scope = _tool_cooldown_scope(context)
     if tool_id == "read_page":
         urls = [_normalize_read_page_url(url) for url in _read_page_urls(arguments)]
         return [
-            (f"{tool_id}:url:{url}", url)
+            (f"{scope}:{tool_id}:url:{url}", url)
             for url in dict.fromkeys(url for url in urls if url)
         ]
     if tool_id == "web_search":
@@ -768,7 +780,7 @@ def _tool_cooldown_keys(tool_event: dict[str, Any] | None, arguments: dict[str, 
         except TypeError:
             key = str(canonical)
         label = _preview_jsonish(canonical, limit=220)
-        return [(f"{tool_id}:args:{key}", label)] if key and key != "{}" else []
+        return [(f"{scope}:{tool_id}:args:{key}", label)] if key and key != "{}" else []
     return []
 
 
@@ -789,11 +801,16 @@ def _tool_cooldown_message(tool_id: str, entries: list[tuple[str, int]]) -> str:
 
 
 # Block repeated search/read-page calls within a short cooldown window.
-def consume_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> str | None:
+def consume_tool_cooldown(
+    tool_event: dict[str, Any] | None,
+    arguments: dict[str, Any] | None,
+    *,
+    context: dict[str, Any] | None = None,
+) -> str | None:
     """Block repeated search/read-page calls within a short cooldown window."""
 
     tool_id = _quota_tool_id(tool_event)
-    entries = _tool_cooldown_keys(tool_event, arguments)
+    entries = _tool_cooldown_keys(tool_event, arguments, context=context)
     if not tool_id or not entries:
         return None
 
@@ -815,10 +832,15 @@ def consume_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str
 
 
 # Mark search/read-page calls as recently used.
-def remember_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> None:
+def remember_tool_cooldown(
+    tool_event: dict[str, Any] | None,
+    arguments: dict[str, Any] | None,
+    *,
+    context: dict[str, Any] | None = None,
+) -> None:
     """Mark search/read-page calls as recently used."""
 
-    entries = _tool_cooldown_keys(tool_event, arguments)
+    entries = _tool_cooldown_keys(tool_event, arguments, context=context)
     if not entries:
         return
     expires_at = time.monotonic() + _TOOL_COOLDOWN_SECONDS
@@ -828,13 +850,23 @@ def remember_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[st
 
 
 # Delegate read_page cooldown checks to the shared tool cooldown helper.
-def consume_read_page_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> str | None:
-    return consume_tool_cooldown(tool_event, arguments)
+def consume_read_page_cooldown(
+    tool_event: dict[str, Any] | None,
+    arguments: dict[str, Any] | None,
+    *,
+    context: dict[str, Any] | None = None,
+) -> str | None:
+    return consume_tool_cooldown(tool_event, arguments, context=context)
 
 
 # Delegate read_page cooldown bookkeeping to the shared tool cooldown helper.
-def remember_read_page_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> None:
-    remember_tool_cooldown(tool_event, arguments)
+def remember_read_page_cooldown(
+    tool_event: dict[str, Any] | None,
+    arguments: dict[str, Any] | None,
+    *,
+    context: dict[str, Any] | None = None,
+) -> None:
+    remember_tool_cooldown(tool_event, arguments, context=context)
 
 
 # Manage the server discovery cache.

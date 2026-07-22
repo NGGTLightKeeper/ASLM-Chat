@@ -635,6 +635,7 @@ def _run_tool_loop(
                 tool_cooldown_error = tool_registry.consume_tool_cooldown(
                     tool_event,
                     tool_call.get("arguments") or {},
+                    context=call_context,
                 )
                 if tool_cooldown_error is not None:
                     tool_result = tool_cooldown_error
@@ -664,6 +665,7 @@ def _run_tool_loop(
                             tool_registry.remember_tool_cooldown(
                                 tool_event,
                                 tool_call.get("arguments") or {},
+                                context=call_context,
                             )
             if tool_registry.is_blocking_tool_result(tool_result):
                 consecutive_blocked_tool_results += 1

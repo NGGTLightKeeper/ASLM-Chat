@@ -28,6 +28,9 @@
     "year_hint_prev": "y",
     "year_hint_older": null
   },
+  "browser": {
+    "browser_fallback": "full"
+  },
   "tor": {
     "enabled": false
   },

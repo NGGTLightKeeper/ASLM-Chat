@@ -24,14 +24,24 @@ from core.search.quality import (
 )
 from core.search.triage import TriageAction, TriageSession
 from core.search.web_search import (
-    EFFORT_PROFILES,
-    WebSearchService,
+    _citation_id,
     _inline_parse_allowed,
+    _make_search_id,
     select_engines,
 )
 
 
 # --- quality -----------------------------------------------------------------
+
+
+def test_search_ids_are_linear_and_citation_namespace_is_not_truncated():
+    first = _make_search_id()
+    second = _make_search_id()
+
+    assert int(second.removeprefix("srch_"), 16) == int(first.removeprefix("srch_"), 16) + 1
+    assert len(first.removeprefix("srch_")) >= 4
+    assert _citation_id("srch_0abc", 3) == "c0abc-3"
+    assert _citation_id("srch_10000", 1) == "c10000-1"
 
 def test_hub_penalty_flags_category_pages():
     assert hub_penalty("https://site.com/category/news/", "All news", "") >= 0.5
@@ -546,12 +556,46 @@ def test_web_search_passes_query_as_focus_to_reader(monkeypatch):
 
     async def capturing_reader(url, *, timeout=0, max_chars=0, focus="", allow_browser=True):
         captured["focus"] = focus
+        captured["allow_browser"] = allow_browser
         return f"# parsed {url}"
 
     service = ws.WebSearchService(tracker=EngineHealthTracker(clock=_Clock()), read_page=capturing_reader)
     asyncio.run(service.search("attention mechanism", effort="medium"))
 
     assert captured["focus"] == "attention mechanism"  # query is the compaction focus
+    assert captured["allow_browser"] is False
+
+
+def test_web_search_high_allows_browser_escalation(monkeypatch):
+    import core.search.web_search as ws
+
+    _FakeSerpApi.events = [
+        {
+            "type": "source", "engine": "google", "provider_family": "google", "rank": 1,
+            "url": {"url": "https://good.com/p", "host": "good.com"},
+            "serp": {"title": "T", "snippet": "a detailed snippet about the topic at hand",
+                     "fetch_ms": 1, "parse_ms": 1},
+        },
+        {
+            "type": "engine", "engine": "google",
+            "payload": {"engine": "google", "provider_family": "google", "status": "success",
+                        "fetch_ms": 1.0, "sources": [{"url": "https://good.com/p"}]},
+        },
+    ]
+    monkeypatch.setattr(ws, "SerpApi", _FakeSerpApi)
+    monkeypatch.setattr(ws, "_get_transport", lambda *_: None)
+    captured: dict = {}
+
+    async def capturing_reader(url, *, timeout=0, max_chars=0, focus="", allow_browser=False):
+        captured["allow_browser"] = allow_browser
+        return f"# parsed {url}"
+
+    service = ws.WebSearchService(
+        tracker=EngineHealthTracker(clock=_Clock()), read_page=capturing_reader
+    )
+    asyncio.run(service.search("attention mechanism", effort="high"))
+
+    assert captured["allow_browser"] is True
 
 
 def test_web_search_hosted_consensus_merges_not_overwrites(monkeypatch):

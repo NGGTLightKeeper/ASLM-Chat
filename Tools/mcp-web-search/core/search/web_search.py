@@ -22,9 +22,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import itertools
 import logging
 import re
-import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -170,8 +170,7 @@ def _infer_pdf_url(url: str) -> str:
 #   low    — SERP-only. Pure HTTP, NO page parse, no browser, no model. Sub-2s.
 #   medium — HTTP page parsing only (no browser, no model). Hard-bounded to ~6-8s total:
 #            tight per-page parse cap and a short overall deadline.
-#   high   — deeper HTTP parse + limited warm-browser escalation. The browser allowance
-#            is declared here; its wiring (read/service warm-browser) lands separately.
+#   high   — deeper HTTP parse + limited warm-browser escalation.
 #
 # parse_budget=0 means SERP-only. parse_timeout is the hard per-page cap (6s ceiling —
 # a wide search cannot afford a slow page; slow domains are left snippet-only anyway).
@@ -185,7 +184,7 @@ class EffortProfile:
     parse_max_chars: int
     deadline: float  # hard cap for the whole search
     max_results: int  # sources returned after ranking
-    allow_browser: bool  # high only: limited warm-browser escalation (HTTP-only until wired)
+    allow_browser: bool  # high only: limited warm-browser escalation
 
 
 EFFORT_PROFILES: dict[str, EffortProfile] = {
@@ -195,18 +194,21 @@ EFFORT_PROFILES: dict[str, EffortProfile] = {
 }
 
 
+# Process-local monotonic namespace. Four hex digits provide 65,536 compact IDs; the
+# representation grows instead of wrapping once that range is exhausted.
+_SEARCH_ID_SEQUENCE = itertools.count()
+
+
 # Opaque per-search id; seeds the citation handles the model is told to cite with.
 def _make_search_id() -> str:
-    return f"srch_{secrets.token_hex(4)}"
+    return f"srch_{next(_SEARCH_ID_SEQUENCE):04x}"
 
 
-# Stable citation handle for a source's rank within a search. Byte-for-byte the legacy
-# format ("c<3-char-namespace>-<rank>", e.g. "cab1-3") so the model — tuned to that shape
-# — keeps citing correctly. search_id is "srch_<hex>"; the "srch" prefix is dropped and
-# the next 3 alphanumerics form the namespace.
+# Stable citation handle for a source's rank within a search. New searches use at least a
+# four-character namespace; a longer monotonic search id is never truncated or wrapped.
 def _citation_id(search_id: str, rank: int) -> str:
     compact = re.sub(r"[^a-z0-9]+", "", (search_id or "").lower()).removeprefix("srch")
-    namespace = (compact[:3] or "src").ljust(3, "0")
+    namespace = (compact or "src").ljust(4, "0")
     return f"c{namespace}-{rank}"
 
 
@@ -470,10 +472,9 @@ class WebSearchService:
                     timeout=profile.parse_timeout,
                     max_chars=profile.parse_max_chars,
                     focus=query,
-                    # Search stays HTTP-only: the warm browser is exclusive to the
-                    # read_page tool. Flip to profile.allow_browser to let high effort
-                    # escalate to the warm daemon (it autostarts) within parse_timeout.
-                    allow_browser=False,
+                    # Only the high profile may escalate blocked or weak pages to the
+                    # warm browser; low/medium remain cheap and HTTP-only.
+                    allow_browser=profile.allow_browser,
                 )
             source.parsed_markdown = markdown or ""
             source.parsed_ok = bool(markdown) and not markdown.startswith("Error:")

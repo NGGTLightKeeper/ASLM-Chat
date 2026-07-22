@@ -893,6 +893,45 @@ class ToolQuotaTests(SimpleTestCase):
             self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
 
 
+class ToolCooldownTests(SimpleTestCase):
+    def setUp(self):
+        tool_registry._TOOL_COOLDOWNS.clear()
+
+    def tearDown(self):
+        tool_registry._TOOL_COOLDOWNS.clear()
+
+    # Identical tool arguments in separate chats must not share a cooldown.
+    def test_web_search_cooldown_is_scoped_by_chat_id(self):
+        tool_event = {"tool_id": "web_search", "tool_name": "Web search"}
+        arguments = {"query": "same query", "effort": "medium"}
+        first_chat = {"chat_id": "chat-a"}
+        second_chat = {"chat_id": "chat-b"}
+
+        tool_registry.remember_tool_cooldown(tool_event, arguments, context=first_chat)
+
+        self.assertIsNotNone(
+            tool_registry.consume_tool_cooldown(tool_event, arguments, context=first_chat)
+        )
+        self.assertIsNone(
+            tool_registry.consume_tool_cooldown(tool_event, arguments, context=second_chat)
+        )
+
+    # The scope applies to page reads as well as searches.
+    def test_read_page_cooldown_is_scoped_by_chat_id(self):
+        tool_event = {"tool_id": "read_page", "tool_name": "Read page"}
+        arguments = {"url": "https://example.com/page"}
+
+        tool_registry.remember_tool_cooldown(
+            tool_event, arguments, context={"chat_id": "chat-a"}
+        )
+
+        self.assertIsNone(
+            tool_registry.consume_tool_cooldown(
+                tool_event, arguments, context={"chat_id": "chat-b"}
+            )
+        )
+
+
 class ToolPreflightTests(SimpleTestCase):
     def _lookup(self):
         tool = {

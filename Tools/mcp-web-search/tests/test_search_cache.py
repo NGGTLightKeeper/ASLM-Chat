@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import hashlib
 
 from core.cache.hosted_cache import HostedSearchCache
 from core.search.recent_tracker import RecentSearchTracker
@@ -30,9 +31,28 @@ def test_hosted_cache_key_is_param_sensitive(tmp_path):
 
 def test_hosted_cache_normalizes_query(tmp_path):
     cache = HostedSearchCache(str(tmp_path / "h.db"))
-    cache.set("the python asyncio", {"hit": True}, effort="low")
-    # Stopwords/order are normalized away → same key.
+    cache.set("  Python   asyncio  ", {"hit": True}, effort="low")
+    # Harmless case and whitespace differences still share a key.
     assert cache.get("python asyncio", effort="low") == {"hit": True}
+
+
+def test_hosted_cache_preserves_semantic_particles_and_word_order(tmp_path):
+    cache = HostedSearchCache(str(tmp_path / "meaning.db"))
+    cache.set("allow telemetry", {"query": "positive"}, effort="low")
+    cache.set("alpha OR beta", {"query": "or"}, effort="low")
+    cache.set("dog bites man", {"query": "first-order"}, effort="low")
+
+    assert cache.get("not allow telemetry", effort="low") is None
+    assert cache.get("alpha NOT beta", effort="low") is None
+    assert cache.get("alpha AND beta", effort="low") is None
+    assert cache.get("man bites dog", effort="low") is None
+
+
+def test_hosted_cache_key_version_does_not_reuse_legacy_entries():
+    legacy_raw = "alpha beta||moderate||low|0|0"
+    legacy_key = hashlib.sha256(legacy_raw.encode()).hexdigest()
+
+    assert HostedSearchCache.make_key("alpha beta", effort="low") != legacy_key
 
 
 def test_hosted_cache_expiry(tmp_path):
@@ -112,6 +132,6 @@ def test_operator_queries_get_distinct_cache_keys(tmp_path):
     assert cache.get('python "exact"', effort="low") is None
     # The exact same operator query still hits.
     assert cache.get("python site:github.com", effort="low") is not None
-    # Plain paraphrases still share an entry (token-sort key).
+    # Word order is semantic even without explicit operators.
     cache.set("python asyncio guide", {"sources": [{"url": "https://b"}]}, effort="low")
-    assert cache.get("guide asyncio python", effort="low") is not None
+    assert cache.get("guide asyncio python", effort="low") is None
