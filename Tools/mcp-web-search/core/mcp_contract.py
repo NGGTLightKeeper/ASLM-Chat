@@ -22,7 +22,7 @@ from core.query.search_plan import (
 _SPACE_RE = re.compile(r"\s+")
 _EFFORT_VALUES = ("low", "medium", "high")
 _EFFORT_ALIASES = {"": "medium", "normal": "medium", "default": "medium", "standard": "medium"}
-SEARCH_BATCH_LIMIT = 3
+SEARCH_BATCH_LIMIT = 2
 
 MCP_SERVER_DESCRIPTION = "Search and page-reading tools."
 
@@ -38,8 +38,9 @@ coverage when the sources all belong to one class.
 
 Write a compact search expression built from concrete entities, identifiers, versions,
 and one intent term. A plain query string is the normal form. An array is exceptional and
-fits 2-3 independently necessary deliverables that support different claims; alternatives
-fit one query through OR. Inspect the first result set before adding a refinement.
+fits exactly two independently necessary deliverables that support different claims;
+alternatives fit one query through OR. Never submit more than two queries in one call.
+Inspect the first result set before adding a refinement.
 
 Use ASCII operators when they express a real constraint: quoted phrases, OR, -term,
 site:, -site:, filetype:, intitle:, inurl:, after:, and before:. Date bounds fit requests
@@ -58,7 +59,7 @@ leaves a concrete high-stakes gap.
 
 Source allowance is per query: low up to 8, medium up to 10, high up to 16 before URL
 deduplication and filtering. One medium query can therefore provide up to 10 source
-records, while three can create up to 30 and consume roughly triple the context.
+records, while two can create up to 20 and consume roughly twice the context.
 
 Cite the exact handles returned by this call immediately after the supported claim.
 Parsed page content carries more weight than snippets. English is the normal search
@@ -78,10 +79,10 @@ Description is the visible activity title for the current research step, not a s
 expression. Write a natural 3-4 word phrase in the user's language that begins with an
 action verb and names the evidence goal. It must remain meaningful when the query text is
 hidden. Prefer titles such as "Проверяю независимые тесты", "Сверяю характеристики", or
-"Уточняю цены и наличие". Normally submit exactly one query. A second query is useful when
-the request already contains another independently necessary deliverable that needs a
-different evidence set or vertical. Three or four queries are rare cases with the same
-number of distinct deliverables. Inspect the returned evidence before refining.
+"Уточняю цены и наличие". Normally submit exactly one query. A second query is allowed only
+when the request already contains another independently necessary deliverable that needs a
+different evidence set or vertical. Never submit more than two queries in one call; execute
+later evidence gaps sequentially after inspecting the returned evidence.
 
 Vertical is a required routing decision for every query, not a reserve option. Any step
 about product discovery, budgets, prices, sellers, stock, or availability must use
@@ -102,8 +103,8 @@ independent evidence. Start ordinary work at medium; low is quick discovery and 
 the reserve tier after lower effort leaves a concrete high-stakes gap.
 
 Source allowance is per query: low up to 8, medium up to 10, high up to 16 before URL
-deduplication and filtering. One medium query can provide up to 10 source records; four
-can create up to 40 and consume roughly four times the context.
+deduplication and filtering. One medium query can provide up to 10 source records; two
+can create up to 20 and consume roughly twice the context.
 
 Cite exact handles returned by this call immediately after the supported claim. Parsed
 page content carries more weight than snippets. English is the normal search language;
@@ -141,7 +142,7 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
                 },
             ],
             "description": (
-                "One plain web search query, or an array of up to 3 closely related queries "
+                "One plain web search query, or an array of at most 2 independently necessary queries "
                 "to run concurrently. Keep each query short and specific: concrete names, "
                 "identifiers, version numbers, exact error text, or explicit constraints. "
                 "Four-digit calendar years are forbidden as content tokens; place a "
@@ -261,7 +262,7 @@ def sanitize_query(query: str) -> str:
     return _SPACE_RE.sub(" ", text).strip()[:220].strip()
 
 
-# Convert the public query argument into one to three provider-ready search strings.
+# Convert the public query argument into one or two provider-ready search strings.
 def coerce_search_queries(value: Any, *, limit: int = SEARCH_BATCH_LIMIT) -> list[str]:
     limit = max(1, int(limit or SEARCH_BATCH_LIMIT))
     if isinstance(value, dict):

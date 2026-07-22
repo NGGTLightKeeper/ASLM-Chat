@@ -18,7 +18,7 @@ from core.query.operators import (
 from core.search.query_dates import resolve_query_dates
 
 
-ADVANCED_BATCH_LIMIT = 4
+ADVANCED_BATCH_LIMIT = 2
 ADVANCED_TEXT_LIMIT = 160
 COMPILED_QUERY_LIMIT = 512
 DESCRIPTION_LIMIT = 80
@@ -137,8 +137,10 @@ def build_advanced_search_schema(*, tor_enabled: bool = False) -> dict[str, Any]
                 "maxItems": ADVANCED_BATCH_LIMIT,
                 "items": query_item,
                 "description": (
-                    "Normally one query. Each additional item represents an independently "
-                    "necessary deliverable with its own evidence set or vertical."
+                    "Normally one query. A second item is allowed only for an independently "
+                    "necessary deliverable with its own evidence set or vertical. Never put "
+                    "more than two queries in one call; run later gaps sequentially after "
+                    "inspecting this result."
                 ),
             },
             "effort": {

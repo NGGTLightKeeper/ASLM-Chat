@@ -78,7 +78,7 @@ def test_advanced_schema_is_default_and_onion_is_capability_gated(monkeypatch):
     assert "Visible activity title" in schema["properties"]["description"]["description"]
     assert "beginning with an action verb" in schema["properties"]["description"]["description"]
     assert "make sense without the query text" in schema["properties"]["description"]["description"]
-    assert schema["properties"]["queries"]["maxItems"] == 4
+    assert schema["properties"]["queries"]["maxItems"] == 2
     assert item["required"] == ["vertical", "text"]
     assert "Never include a four-digit calendar year" in item["properties"]["text"]["description"]
     assert "Required routing from the research plan" in item["properties"]["vertical"]["description"]
@@ -90,7 +90,7 @@ def test_advanced_schema_is_default_and_onion_is_capability_gated(monkeypatch):
     )
     assert item["properties"]["vertical"]["enum"] == ["web", "shopping", "academic"]
     assert "Description is the visible activity title" in build_search_description()
-    assert "Three or four queries are rare" in build_search_description()
+    assert "Never submit more than two queries" in build_search_description()
 
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config(tor=True))
     assert "onion" in build_search_schema()["properties"]["queries"]["items"]["properties"]["vertical"]["enum"]
@@ -149,6 +149,19 @@ def test_advanced_plan_rejects_missing_description_and_invalid_or_group():
     assert "$.queries[0].operators.or_groups[0]" in paths
 
 
+def test_advanced_plan_rejects_third_query_atomically():
+    plan = _plan()
+    plan["queries"].extend([
+        {"vertical": "shopping", "text": "second intent", "operators": {}},
+        {"vertical": "academic", "text": "third intent", "operators": {}},
+    ])
+
+    with pytest.raises(PlanValidationError) as exc:
+        prepare_advanced_search(plan, query_config=_config().query)
+
+    assert {issue["path"] for issue in exc.value.issues} == {"$.queries"}
+
+
 def test_explicit_date_operators_survive_legacy_year_hint_processing():
     query = "latest pricing after:2026-01-01 before:2026-07-01"
     clean, _timelimit = resolve_query_dates(query, _config().query)
@@ -185,20 +198,17 @@ def test_mixed_vertical_plan_runs_concurrently_and_preserves_metadata(monkeypatc
         "queries": [
             {"vertical": "web", "compiled_query": "alpha", "operators": {}, "timelimit": None},
             {"vertical": "shopping", "compiled_query": "beta", "operators": {}, "timelimit": None},
-            {"vertical": "academic", "compiled_query": "gamma", "operators": {}, "timelimit": None},
-            {"vertical": "web", "compiled_query": "delta", "operators": {}, "timelimit": None},
         ],
     }
     result = asyncio.run(search_module.run_web_search_plan(request))
 
-    assert max_active == 4
+    assert max_active == 2
     assert calls[0][1]["shopping"] is False
     assert calls[1][1]["shopping"] is True
-    assert calls[2][1]["academic"] is True
     assert result["ui"]["description"] == "Compare evidence sources"
     assert result["ui"]["search_request"]["description"] == "Compare evidence sources"
-    assert result["query_results"][2]["index"] == 3
-    assert result["query_results"][2]["vertical"] == "academic"
+    assert result["query_results"][1]["index"] == 2
+    assert result["query_results"][1]["vertical"] == "shopping"
     assert result["sources"][0]["query_index"] == 1
     assert result["sources"][0]["vertical"] == "web"
-    assert len({source["id"] for source in result["sources"]}) == 4
+    assert len({source["id"] for source in result["sources"]}) == 2

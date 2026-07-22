@@ -19,7 +19,7 @@ from core.mcp_contract import (
 )
 
 
-def test_legacy_query_schema_accepts_one_string_or_three_query_batch(monkeypatch):
+def test_legacy_query_schema_accepts_one_string_or_two_query_batch(monkeypatch):
     import core.config as config_module
 
     cfg = type("Cfg", (), {
@@ -32,7 +32,7 @@ def test_legacy_query_schema_accepts_one_string_or_three_query_batch(monkeypatch
 
     assert string_schema["type"] == "string"
     assert batch_schema["type"] == "array"
-    assert batch_schema["maxItems"] == SEARCH_BATCH_LIMIT == 3
+    assert batch_schema["maxItems"] == SEARCH_BATCH_LIMIT == 2
     assert batch_schema["items"]["type"] == "string"
     assert "calendar years are forbidden" in query_schema["description"]
 
@@ -41,7 +41,6 @@ def test_query_batch_coercion_caps_and_sanitizes_items():
     assert coerce_search_queries(["  first   query  ", "", "second", "third", "fourth"]) == [
         "first query",
         "second",
-        "third",
     ]
     assert coerce_search_queries('["alpha", "beta"]') == ["alpha", "beta"]
     assert coerce_search_queries({"query": ["alpha", "beta"]}) == ["alpha", "beta"]

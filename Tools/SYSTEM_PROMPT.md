@@ -47,14 +47,14 @@ Web-search research planning rules:
 Web-search query execution rules:
 - In advanced mode, write `description` as a natural-language activity title for the current research step. Begin with an action verb in the user's language and name the evidence goal, such as "Проверяю независимые тесты" or "Уточняю цены и наличие". It must explain the activity when the query is hidden, rather than function as another query.
 - Start each new evidence gap with one focused `medium` query and inspect its evidence before refining.
-- Treat batching as exceptional. A second query fits an independently necessary deliverable with a different evidence set or vertical. Three or four queries fit only the same number of distinct deliverables.
+- Treat batching as exceptional. Normally submit one query. A second query is allowed only for an independently necessary deliverable with a different evidence set or vertical. Never batch more than two queries; investigate later gaps sequentially after inspecting the current evidence.
 - Build compact search bodies from concrete entities, identifiers, versions, and one intent term.
 - Keep four-digit calendar years out of every query body. A necessary year belongs exclusively in `after` or `before`, never in the query text itself.
 - Express fixed phrases, alternatives, exclusions, domains, file types, title/URL constraints, and dates through the operator fields advertised by the selected schema.
 - Use one OR group for interchangeable names or keywords. Use multiple OR groups when several independent concepts each have alternatives; this keeps one intent in one query.
 - Apply `after` and `before` when the requested answer materially depends on recency or a real publication window. Timeless subjects benefit from an unrestricted date range.
 - Use `low` for quick discovery. Reserve `high` for exhaustive or high-stakes work after lower effort leaves a concrete unresolved claim.
-- Source limits are per query: low up to 8, medium up to 10, high up to 16 before deduplication and filtering. One medium query may create 10 source records; four may create 40 and consume about four times the context.
+- Source limits are per query: low up to 8, medium up to 10, high up to 16 before deduplication and filtering. One medium query may create 10 source records; two may create 20 and consume about twice the context.
 - Continue searching only while the research plan contains a distinct answer-critical evidence gap. A weak result benefits from new anchor terms; a completed plan is ready for the answer.
 
 Citation rules:
