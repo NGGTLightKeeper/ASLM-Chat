@@ -66,6 +66,13 @@ export function createMessagesUi(context, dependencies) {
     edit: ['content', 'new_str', 'old_str'],
     write: ['content']
   };
+  const REASONING_TAG_PAIRS = [
+    { start: '<think>', end: '</think>' },
+    { start: '<thinking>', end: '</thinking>' },
+    { start: '<reasoning>', end: '</reasoning>' },
+    { start: '<analysis>', end: '</analysis>' }
+  ];
+  const REASONING_BOUNDARY_PUNCTUATION_PATTERN = /\p{P}/u;
   const STREAMING_ACTIVITY_MARKERS = [
     '<tool_call>',
     '</tool_call>',
@@ -83,6 +90,41 @@ export function createMessagesUi(context, dependencies) {
     '</analysis>'
   ];
   let mermaidRenderSeq = 0;
+
+  // A real reasoning tag begins at a text boundary, not in the middle of prose.
+  function isReasoningStartBoundary(value, tagIndex) {
+    const source = String(value || '');
+    let cursor = Number(tagIndex) - 1;
+    while (cursor >= 0 && /[ \t\f\v]/.test(source.charAt(cursor))) {
+      cursor -= 1;
+    }
+    if (cursor < 0) {
+      return true;
+    }
+    const previous = source.charAt(cursor);
+    return previous === '\n'
+      || previous === '\r'
+      || previous === '>'
+      || REASONING_BOUNDARY_PUNCTUATION_PATTERN.test(previous);
+  }
+
+  // Find the next opening tag that is positioned like a control block.
+  function findNextReasoningStart(value, fromIndex) {
+    const source = String(value || '');
+    const lowerSource = source.toLowerCase();
+    let best = null;
+
+    REASONING_TAG_PAIRS.forEach(function checkPair(pair) {
+      let pos = lowerSource.indexOf(pair.start, fromIndex);
+      while (pos !== -1 && !isReasoningStartBoundary(source, pos)) {
+        pos = lowerSource.indexOf(pair.start, pos + pair.start.length);
+      }
+      if (pos !== -1 && (!best || pos < best.pos)) {
+        best = { pos, kind: 'thought', pair };
+      }
+    });
+    return best;
+  }
 
   // Composer state.
   // Sync both send buttons with the current generation and attachment state.
@@ -990,12 +1032,6 @@ export function createMessagesUi(context, dependencies) {
     const lowerSource = source.toLowerCase();
     const segments = [];
     const toolSegmentByAlias = {};
-    const reasoningTagPairs = [
-      { start: '<think>', end: '</think>' },
-      { start: '<thinking>', end: '</thinking>' },
-      { start: '<reasoning>', end: '</reasoning>' },
-      { start: '<analysis>', end: '</analysis>' }
-    ];
     let cursor = 0;
 
     // Strip control tokens that should never reach the visible transcript.
@@ -1021,22 +1057,8 @@ export function createMessagesUi(context, dependencies) {
       segments.push({ type: 'text', content: sanitizedValue.trim() });
     }
 
-    function findNextReasoningStart(fromIndex) {
-      let best = null;
-      reasoningTagPairs.forEach(function checkPair(pair) {
-        const pos = lowerSource.indexOf(pair.start, fromIndex);
-        if (pos === -1) {
-          return;
-        }
-        if (!best || pos < best.pos) {
-          best = { pos, kind: 'thought', pair };
-        }
-      });
-      return best;
-    }
-
     while (cursor < source.length) {
-      const reasoningStart = findNextReasoningStart(cursor);
+      const reasoningStart = findNextReasoningStart(source, cursor);
       const toolCallStart = lowerSource.indexOf('<tool_call>', cursor);
       const toolResultStart = lowerSource.indexOf('<tool_result>', cursor);
       const compressionStart = lowerSource.indexOf('<context_compression>', cursor);
@@ -4697,7 +4719,7 @@ export function createMessagesUi(context, dependencies) {
 
   // Report whether  reasoning marker.
   function hasReasoningMarker(rawText) {
-    return /<\/?(?:think|thinking|reasoning|analysis)>/i.test(String(rawText || ''));
+    return !!findNextReasoningStart(rawText, 0);
   }
 
   // Handle should use reasoning shell.

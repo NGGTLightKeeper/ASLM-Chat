@@ -114,6 +114,58 @@ class FakeGoogleError(Exception):
         super().__init__(f"{code} {status}. {self.details}")
 
 
+# Keep literal inline reasoning tags visible while preserving real control blocks.
+class ReasoningTextParserBoundaryTests(SimpleTestCase):
+    PARSER_MODULES = ("API.openai", "API.lms", "API.google_genai")
+
+    def _parsers(self):
+        for module_name in self.PARSER_MODULES:
+            module = importlib.import_module(module_name)
+            yield module_name, module._ReasoningTextParser()
+
+    def test_inline_quoted_reasoning_block_stays_visible(self):
+        source = "The token <think>quoted text</think> stays visible."
+
+        for module_name, parser in self._parsers():
+            with self.subTest(module=module_name):
+                thinking, visible = parser.feed(source)
+                self.assertEqual(thinking, "")
+                self.assertEqual(visible, source)
+
+    def test_inline_tag_boundary_survives_stream_chunking(self):
+        for module_name, parser in self._parsers():
+            with self.subTest(module=module_name):
+                first_thinking, first_visible = parser.feed("The token <thi")
+                second_thinking, second_visible = parser.feed("nk>quoted</think> stays visible.")
+                self.assertEqual(first_thinking + second_thinking, "")
+                self.assertEqual(
+                    first_visible + second_visible,
+                    "The token <think>quoted</think> stays visible.",
+                )
+
+    def test_reasoning_block_after_clear_separator_is_parsed(self):
+        for module_name, parser in self._parsers():
+            with self.subTest(module=module_name):
+                source = "Preface:\n  <think>plan</think>Answer"
+                thinking, visible = parser.feed(source)
+                self.assertEqual(thinking, "plan")
+                self.assertEqual(visible, "Preface:\n  Answer")
+
+        for prefix in ("Preface: ", 'Preface: "'):
+            for module_name, parser in self._parsers():
+                with self.subTest(module=module_name, prefix=prefix):
+                    thinking, visible = parser.feed(f"{prefix}<think>plan</think>Answer")
+                    self.assertEqual(thinking, "plan")
+                    self.assertEqual(visible, f"{prefix}Answer")
+
+    def test_reasoning_block_at_response_start_is_parsed(self):
+        for module_name, parser in self._parsers():
+            with self.subTest(module=module_name):
+                thinking, visible = parser.feed("<think>plan</think>Answer")
+                self.assertEqual(thinking, "plan")
+                self.assertEqual(visible, "Answer")
+
+
 # Shared test helpers.
 
 # Patch the local tools directory for endpoint tests.

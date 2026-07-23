@@ -9,6 +9,7 @@ import logging
 import re
 import threading
 import time
+import unicodedata
 from urllib.parse import urlsplit, urlunsplit
 from typing import Any
 
@@ -1715,18 +1716,43 @@ class _ReasoningTextParser:
         self._end_tags = [end for _start, end in tag_pairs]
         self._in_reasoning = False
         self._pending = ""
+        self._visible_boundary_char: str | None = None
 
     # Find next tag.
-    @staticmethod
-    def _find_next_tag(source: str, tags: list[str]) -> tuple[int, str] | None:
+    def _find_next_tag(self, source: str, tags: list[str]) -> tuple[int, str] | None:
         next_match: tuple[int, str] | None = None
         for tag in tags:
-            index = source.find(tag)
+            search_from = 0
+            index = source.find(tag, search_from)
+            while (
+                index != -1
+                and not self._in_reasoning
+                and not self._is_reasoning_start_boundary(source, index)
+            ):
+                search_from = index + len(tag)
+                index = source.find(tag, search_from)
             if index == -1:
                 continue
             if next_match is None or index < next_match[0]:
                 next_match = (index, tag)
         return next_match
+
+    # Accept opening tags only at the start of text or after a clear separator.
+    def _is_reasoning_start_boundary(self, source: str, tag_index: int) -> bool:
+        cursor = tag_index - 1
+        while cursor >= 0 and source[cursor] in " \t\f\v":
+            cursor -= 1
+        previous = source[cursor] if cursor >= 0 else self._visible_boundary_char
+        if previous is None:
+            return True
+        return previous in "\r\n>" or unicodedata.category(previous).startswith("P")
+
+    # Remember the last non-horizontal-whitespace visible character across chunks.
+    def _remember_visible_text(self, value: str) -> None:
+        for character in reversed(str(value or "")):
+            if character not in " \t\f\v":
+                self._visible_boundary_char = character
+                return
 
     # Split possible tag prefix.
     @staticmethod
@@ -1765,6 +1791,7 @@ class _ReasoningTextParser:
                     thinking_parts.append(visible)
                 else:
                     content_parts.append(visible)
+                    self._remember_visible_text(visible)
                 self._pending = pending
                 break
 
@@ -1775,6 +1802,7 @@ class _ReasoningTextParser:
                     thinking_parts.append(chunk)
                 else:
                     content_parts.append(chunk)
+                    self._remember_visible_text(chunk)
             source = source[index + len(tag):]
             self._in_reasoning = not self._in_reasoning
 
@@ -1790,6 +1818,7 @@ class _ReasoningTextParser:
             return "", ""
         if self._in_reasoning:
             return pending, ""
+        self._remember_visible_text(pending)
         return "", pending
 
 
