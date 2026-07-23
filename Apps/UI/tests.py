@@ -1025,6 +1025,128 @@ class ToolPreflightTests(SimpleTestCase):
         self.assertEqual(call["preflight_error_result"], error_result)
         self.assertEqual(call["tool_ui"]["status"], "rejected")
 
+    @patch.object(tool_registry, "_run_worker")
+    def test_parallel_advanced_search_calls_are_preflighted_as_one_batch(self, worker_mock):
+        def prepare_batch(_server_file, _operation, payload, persistent=False):
+            self.assertTrue(persistent)
+            arguments = payload["arguments"]
+            self.assertEqual(
+                [query["text"] for query in arguments["queries"]],
+                ["first query", "second query"],
+            )
+            return {
+                "ok": True,
+                "arguments": arguments,
+                "tool_ui": {
+                    "kind": "web_search",
+                    "status": "pending",
+                    "query_count": 2,
+                },
+            }
+
+        worker_mock.side_effect = prepare_batch
+        calls = [
+            {
+                "id": "call-1",
+                "name": "web_search__web_search",
+                "arguments": {
+                    "description": "Check first source",
+                    "queries": [{"vertical": "web", "text": "first query"}],
+                    "effort": "medium",
+                },
+            },
+            {
+                "id": "call-2",
+                "name": "web_search__web_search",
+                "arguments": {
+                    "description": "Check second source",
+                    "queries": [{"vertical": "web", "text": "second query"}],
+                    "effort": "medium",
+                },
+            },
+        ]
+
+        prepared = tool_registry.prepare_tool_calls(self._lookup(), calls)
+
+        self.assertEqual(len(prepared), 1)
+        self.assertEqual(prepared[0]["id"], "call-1")
+        self.assertEqual(prepared[0]["parallel_batch_size"], 2)
+        self.assertEqual([call["id"] for call in prepared[0]["absorbed_tool_calls"]], ["call-2"])
+        worker_mock.assert_called_once()
+
+    @patch.object(tool_registry, "_run_worker")
+    def test_parallel_search_batch_over_server_limit_is_one_atomic_rejection(self, worker_mock):
+        def reject_oversized_batch(_server_file, _operation, payload, persistent=False):
+            self.assertTrue(persistent)
+            query_count = len(payload["arguments"]["queries"])
+            self.assertEqual(query_count, 4)
+            error_result = {
+                "error": {
+                    "code": "INVALID_SEARCH_PLAN",
+                    "issues": [{"path": "$.queries", "message": "must contain at most 2 items"}],
+                },
+                "sources": [],
+                "model_context": "INVALID_SEARCH_PLAN: $.queries: must contain at most 2 items",
+                "ui": {"kind": "web_search", "status": "rejected", "query_count": 0},
+            }
+            return {
+                "ok": False,
+                "arguments": {},
+                "tool_ui": error_result["ui"],
+                "error_result": error_result,
+            }
+
+        worker_mock.side_effect = reject_oversized_batch
+        calls = [
+            {
+                "id": f"call-{index}",
+                "name": "web_search__web_search",
+                "arguments": {
+                    "description": f"Check source {index}",
+                    "queries": [{"vertical": "web", "text": f"query {index}"}],
+                    "effort": "medium",
+                },
+            }
+            for index in range(1, 5)
+        ]
+
+        prepared = tool_registry.prepare_tool_calls(self._lookup(), calls)
+
+        self.assertEqual(len(prepared), 1)
+        self.assertEqual(prepared[0]["tool_ui"]["status"], "rejected")
+        self.assertIn("4 parallel web_search calls", prepared[0]["preflight_error_result"]["model_context"])
+        self.assertIn("must contain at most 2 items", prepared[0]["preflight_error_result"]["model_context"])
+        worker_mock.assert_called_once()
+
+        transcript = tool_registry.canonicalize_transcript_tool_calls(
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": call["id"],
+                        "function": {
+                            "name": call["name"],
+                            "arguments": json.dumps(call["arguments"]),
+                        },
+                    }
+                    for call in calls
+                ],
+                "google_parts": [
+                    {
+                        "function_call": {
+                            "name": call["name"],
+                            "args": call["arguments"],
+                        },
+                        "thought_signature": f"signature-{call['id']}",
+                    }
+                    for call in calls
+                ],
+            },
+            prepared,
+        )
+        self.assertEqual([call["id"] for call in transcript["tool_calls"]], ["call-1"])
+        self.assertEqual(len(transcript["google_parts"]), 1)
+
 # Cover adapter-specific model list formats.
 class ModelNameExtractionTests(SimpleTestCase):
     # Test extracts name from string.

@@ -1878,17 +1878,175 @@ def prepare_tool_call(
         }
 
     prepared_call["arguments"] = result.get("arguments") if isinstance(result.get("arguments"), dict) else {}
+    parallel_batch_size = int(prepared_call.get("parallel_batch_size", 0) or 0)
     if isinstance(result.get("tool_ui"), dict):
-        prepared_call["tool_ui"] = result["tool_ui"]
+        prepared_call["tool_ui"] = copy.deepcopy(result["tool_ui"])
+        if parallel_batch_size > 1:
+            prepared_call["tool_ui"]["collapsed_parallel_calls"] = parallel_batch_size
     if not bool(result.get("ok", True)):
-        prepared_call["preflight_error_result"] = result.get("error_result") or "Tool preparation failed."
+        error_result = copy.deepcopy(result.get("error_result") or "Tool preparation failed.")
+        if parallel_batch_size > 1 and isinstance(error_result, dict):
+            existing_context = str(error_result.get("model_context") or "").strip()
+            prefix = (
+                f"PARALLEL_SEARCH_BATCH_REJECTED: {parallel_batch_size} parallel web_search calls "
+                "were collapsed into one atomic batch before execution. "
+            )
+            error_result["model_context"] = prefix + existing_context
+            if isinstance(error_result.get("ui"), dict):
+                error_result["ui"]["collapsed_parallel_calls"] = parallel_batch_size
+        prepared_call["preflight_error_result"] = error_result
     return prepared_call
+
+
+def _tool_definition_id(
+    tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]
+) -> str:
+    lookup_entry = tool_lookup.get(str((tool_call or {}).get("name") or ""))
+    if not isinstance(lookup_entry, dict):
+        return ""
+    tool_definition = lookup_entry.get("tool")
+    if not isinstance(tool_definition, dict):
+        return ""
+    return str(tool_definition.get("id") or "").strip()
+
+
+def _normalized_batch_effort(arguments: dict[str, Any]) -> str:
+    return str(arguments.get("effort") or "medium").strip().lower()
+
+
+def _normalized_batch_bool(arguments: dict[str, Any], key: str) -> bool:
+    value = arguments.get(key, False)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _web_search_call_mode(arguments: dict[str, Any]) -> str:
+    if isinstance(arguments.get("queries"), list):
+        return "advanced"
+    if "query" in arguments:
+        return "legacy"
+    return ""
+
+
+def _rejected_parallel_search_call(
+    tool_call: dict[str, Any], *, message: str, call_count: int
+) -> dict[str, Any]:
+    rejected = dict(tool_call)
+    rejected["arguments"] = {}
+    rejected["tool_ui"] = {
+        "kind": "web_search",
+        "status": "rejected",
+        "result_count": 0,
+        "query_count": call_count,
+        "collapsed_parallel_calls": call_count,
+        "error": {"code": "INCOMPATIBLE_PARALLEL_SEARCH_BATCH"},
+    }
+    rejected["preflight_error_result"] = {
+        "error": {"code": "INCOMPATIBLE_PARALLEL_SEARCH_BATCH"},
+        "sources": [],
+        "model_context": f"INCOMPATIBLE_PARALLEL_SEARCH_BATCH: {message}",
+        "ui": dict(rejected["tool_ui"]),
+    }
+    return rejected
+
+
+def _merge_parallel_web_search_calls(tool_calls: list[dict[str, Any]]) -> dict[str, Any]:
+    first = dict(tool_calls[0])
+    first["absorbed_tool_calls"] = [dict(call) for call in tool_calls[1:]]
+    first["parallel_batch_size"] = len(tool_calls)
+
+    raw_arguments = [
+        dict(call.get("arguments") or {})
+        if isinstance(call.get("arguments"), dict)
+        else {}
+        for call in tool_calls
+    ]
+    modes = {_web_search_call_mode(arguments) for arguments in raw_arguments}
+    if len(modes) != 1 or not modes or "" in modes:
+        first["raw_arguments"] = raw_arguments
+        return _rejected_parallel_search_call(
+            first,
+            message="parallel web_search calls must all use the same advanced or legacy argument shape",
+            call_count=len(tool_calls),
+        )
+
+    efforts = {_normalized_batch_effort(arguments) for arguments in raw_arguments}
+    if len(efforts) != 1:
+        first["raw_arguments"] = raw_arguments
+        return _rejected_parallel_search_call(
+            first,
+            message="parallel web_search calls must use the same effort before they can be batched",
+            call_count=len(tool_calls),
+        )
+
+    mode = next(iter(modes))
+    merged_arguments = copy.deepcopy(raw_arguments[0])
+    if mode == "advanced":
+        merged_arguments["queries"] = [
+            copy.deepcopy(query)
+            for arguments in raw_arguments
+            for query in arguments.get("queries", [])
+        ]
+    else:
+        routing_keys = ("shopping", "academic", "onion")
+        for key in routing_keys:
+            values = {_normalized_batch_bool(arguments, key) for arguments in raw_arguments}
+            if len(values) != 1:
+                first["raw_arguments"] = raw_arguments
+                return _rejected_parallel_search_call(
+                    first,
+                    message=f"parallel legacy web_search calls must use the same {key} routing value",
+                    call_count=len(tool_calls),
+                )
+        merged_queries: list[Any] = []
+        for arguments in raw_arguments:
+            value = arguments.get("query")
+            if isinstance(value, list):
+                merged_queries.extend(copy.deepcopy(value))
+            else:
+                merged_queries.append(copy.deepcopy(value))
+        merged_arguments["query"] = merged_queries
+
+    first["arguments"] = merged_arguments
+    return first
+
+
+def _coalesce_parallel_web_search_calls(
+    tool_lookup: dict[str, dict[str, Any]], tool_calls: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for tool_call in tool_calls:
+        if _tool_definition_id(tool_lookup, tool_call) != "web_search":
+            continue
+        alias = str(tool_call.get("name") or "")
+        groups.setdefault(alias, []).append(tool_call)
+
+    emitted_aliases: set[str] = set()
+    output: list[dict[str, Any]] = []
+    for tool_call in tool_calls:
+        alias = str(tool_call.get("name") or "")
+        group = groups.get(alias, [])
+        if len(group) < 2:
+            output.append(tool_call)
+            continue
+        if alias in emitted_aliases:
+            continue
+        emitted_aliases.add(alias)
+        output.append(_merge_parallel_web_search_calls(group))
+    return output
 
 
 def prepare_tool_calls(
     tool_lookup: dict[str, dict[str, Any]], tool_calls: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    return [prepare_tool_call(tool_lookup, tool_call) for tool_call in tool_calls]
+    coalesced = _coalesce_parallel_web_search_calls(tool_lookup, list(tool_calls or []))
+    return [
+        tool_call
+        if tool_call.get("preflight_error_result") is not None
+        else prepare_tool_call(tool_lookup, tool_call)
+        for tool_call in coalesced
+    ]
 
 
 def build_tool_event(
@@ -1924,6 +2082,7 @@ def canonicalize_transcript_tool_calls(
         return message
 
     remaining = list(tool_calls or [])
+    canonical_calls: list[dict[str, Any]] = []
     for raw_call in raw_calls:
         if not isinstance(raw_call, dict):
             continue
@@ -1931,16 +2090,29 @@ def canonicalize_transcript_tool_calls(
         if not isinstance(function_payload, dict):
             continue
         name = str(function_payload.get("name") or "")
+        raw_id = str(raw_call.get("id") or "")
         match_index = next(
             (
                 index
                 for index, prepared in enumerate(remaining)
-                if str(prepared.get("name") or "") == name
+                if (
+                    (
+                        bool(raw_id)
+                        and bool(str(prepared.get("id") or ""))
+                        and str(prepared.get("id") or "") == raw_id
+                    )
+                    or (
+                        (not raw_id or not str(prepared.get("id") or ""))
+                        and str(prepared.get("name") or "") == name
+                    )
+                )
             ),
             None,
         )
-        prepared = remaining.pop(match_index) if match_index is not None else None
-        canonical = prepared.get("arguments") if isinstance(prepared, dict) else {}
+        if match_index is None:
+            continue
+        prepared = remaining.pop(match_index)
+        canonical = prepared.get("arguments")
         canonical = canonical if isinstance(canonical, dict) else {}
         if isinstance(function_payload.get("arguments"), str):
             function_payload["arguments"] = json.dumps(
@@ -1950,6 +2122,27 @@ def canonicalize_transcript_tool_calls(
             )
         else:
             function_payload["arguments"] = canonical
+        canonical_calls.append(raw_call)
+    message["tool_calls"] = canonical_calls
+
+    google_parts = message.get("google_parts")
+    if isinstance(google_parts, list):
+        remaining_names = [str(call.get("name") or "") for call in tool_calls or []]
+        filtered_parts: list[Any] = []
+        for raw_part in google_parts:
+            if not isinstance(raw_part, dict) or not isinstance(raw_part.get("function_call"), dict):
+                filtered_parts.append(raw_part)
+                continue
+            function_name = str(raw_part["function_call"].get("name") or "")
+            try:
+                name_index = remaining_names.index(function_name)
+            except ValueError:
+                continue
+            remaining_names.pop(name_index)
+            # Keep the provider-native signed function-call part byte-for-byte apart
+            # from the surrounding deepcopy. Gemini may reject altered signed parts.
+            filtered_parts.append(raw_part)
+        message["google_parts"] = filtered_parts
     return message
 
 

@@ -16,6 +16,7 @@ from core.mcp_contract import (
     build_search_schema,
     coerce_search_queries,
     coerce_search_query,
+    prepare_search_arguments,
 )
 
 
@@ -45,6 +46,24 @@ def test_query_batch_coercion_caps_and_sanitizes_items():
     assert coerce_search_queries('["alpha", "beta"]') == ["alpha", "beta"]
     assert coerce_search_queries({"query": ["alpha", "beta"]}) == ["alpha", "beta"]
     assert coerce_search_query(["alpha", "beta"]) == "alpha"
+
+
+def test_legacy_preflight_rejects_oversized_batch_instead_of_truncating(monkeypatch):
+    import core.config as config_module
+
+    cfg = type("Cfg", (), {
+        "query": type("Query", (), {"schema_mode": "legacy"})(),
+        "tor": type("Tor", (), {"enabled": False})(),
+    })()
+    monkeypatch.setattr(config_module, "load_search_config", lambda: cfg)
+
+    prepared = prepare_search_arguments({"query": ["alpha", "beta", "gamma"]})
+
+    assert prepared["ok"] is False
+    assert prepared["error_result"]["error"]["code"] == "INVALID_SEARCH_PLAN"
+    assert prepared["error_result"]["error"]["issues"] == [
+        {"path": "$.query", "message": "must contain at most 2 items"}
+    ]
 
 
 def test_tool_description_documents_rare_batch_and_operator_examples():

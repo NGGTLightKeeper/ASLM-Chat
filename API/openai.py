@@ -1770,11 +1770,11 @@ def _run_tool_loop(
             if satisfied_server_id:
                 satisfied_tool_server_ids.add(satisfied_server_id)
 
-        yield {
-            "transcript_message": tool_registry.canonicalize_transcript_tool_calls(
-                assistant_message, tool_calls
-            )
-        }
+        canonical_assistant_message = tool_registry.canonicalize_transcript_tool_calls(
+            assistant_message, tool_calls
+        )
+        conversation[-1] = canonical_assistant_message
+        yield {"transcript_message": canonical_assistant_message}
 
         tool_events = [_build_tool_event(tool_lookup, tool_call) for tool_call in tool_calls]
         for _i, _ev in enumerate(tool_events):

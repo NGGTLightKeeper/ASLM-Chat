@@ -2121,12 +2121,11 @@ def _run_tool_loop(
             _stream_google_round(client, model_name, conversation, request_config, stream=stream)
         )
 
-        assistant_content = _assistant_message_to_content(assistant_message)
-        if assistant_content is not None:
-            conversation.append(assistant_content)
-
         raw_tool_calls = assistant_message.get("tool_calls") or []
         if not raw_tool_calls:
+            assistant_content = _assistant_message_to_content(assistant_message)
+            if assistant_content is not None:
+                conversation.append(assistant_content)
             yield {"transcript_message": assistant_message}
             return
 
@@ -2148,11 +2147,13 @@ def _run_tool_loop(
 
         tool_calls = tool_registry.prepare_tool_calls(tool_lookup, tool_calls)
 
-        yield {
-            "transcript_message": tool_registry.canonicalize_transcript_tool_calls(
-                assistant_message, tool_calls
-            )
-        }
+        canonical_assistant_message = tool_registry.canonicalize_transcript_tool_calls(
+            assistant_message, tool_calls
+        )
+        assistant_content = _assistant_message_to_content(canonical_assistant_message)
+        if assistant_content is not None:
+            conversation.append(assistant_content)
+        yield {"transcript_message": canonical_assistant_message}
 
         tool_response_parts: list[dict[str, Any]] = []
         tool_events = [_build_tool_event(tool_lookup, tool_call) for tool_call in tool_calls]

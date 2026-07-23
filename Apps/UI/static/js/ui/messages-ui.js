@@ -3,12 +3,14 @@
 import { postJson } from '../main/api.js';
 import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
 import {
+  addCitationSource,
   addSegmentCitationSources,
   addSegmentsCitationSources,
   createCitationRegistry,
   decorateCitationsInHtml as decorateCitationHandlesInHtml,
   normalizeCitationBrackets as normalizeCitationHandleBrackets,
-  normalizeCitationSpacing as normalizeCitationHandleSpacing
+  normalizeCitationSpacing as normalizeCitationHandleSpacing,
+  replaceCitationHandlesWithSourceUrls
 } from './citations-ui.js';
 import { bindCitationPreviewCards } from './citation-preview-ui.js';
 import { messageDialog } from './dialogs.js';
@@ -6183,8 +6185,20 @@ export function createMessagesUi(context, dependencies) {
   // Copy the visible message content to the clipboard.
   function copyMessage($button) {
     const $btn = $button || $();
-    const $bubble = $btn.closest('.msg-body').find('.msg-bubble');
-    const text = $bubble.attr('data-copy') || $bubble.attr('data-raw') || $bubble.text();
+    const $messageBody = $btn.closest('.msg-body');
+    const $bubble = $messageBody.find('.msg-bubble');
+    const rawText = $bubble.attr('data-copy') || $bubble.attr('data-raw') || $bubble.text();
+    const citationRegistry = createCitationRegistry();
+
+    // The rendered chips are the source of truth for citations visible in this message.
+    $messageBody.find('.msg-citation-chip[data-citation-id][href]').each(function registerRenderedCitation() {
+      addCitationSource(citationRegistry, {
+        id: this.getAttribute('data-citation-id'),
+        url: this.getAttribute('href')
+      });
+    });
+
+    const text = replaceCitationHandlesWithSourceUrls(rawText, citationRegistry);
 
     // Swap the icon briefly to confirm the copy action.
     function onCopied() {

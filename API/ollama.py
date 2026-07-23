@@ -563,11 +563,11 @@ def _run_tool_loop(
         tool_calls = [tool_call for tool_call in tool_calls if tool_call]
         tool_calls = tool_registry.prepare_tool_calls(tool_lookup, tool_calls)
 
-        yield {
-            "transcript_message": tool_registry.canonicalize_transcript_tool_calls(
-                assistant_message, tool_calls
-            )
-        }
+        canonical_assistant_message = tool_registry.canonicalize_transcript_tool_calls(
+            assistant_message, tool_calls
+        )
+        conversation[-1] = canonical_assistant_message
+        yield {"transcript_message": canonical_assistant_message}
 
         if not tool_calls:
             if _is_debug_logging_enabled():

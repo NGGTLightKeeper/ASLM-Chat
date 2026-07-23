@@ -294,6 +294,25 @@ def coerce_search_queries(value: Any, *, limit: int = SEARCH_BATCH_LIMIT) -> lis
     return [query] if query else []
 
 
+def _search_query_item_count(value: Any) -> int:
+    if isinstance(value, dict):
+        plan = value.get("query", value)
+        if isinstance(plan, dict):
+            for key in ("raw_query", "q", "text"):
+                if key in plan:
+                    return _search_query_item_count(plan[key])
+            return 0
+        return _search_query_item_count(plan)
+    if isinstance(value, (list, tuple)):
+        return len(value)
+    if isinstance(value, str):
+        parsed = _try_parse_json(value)
+        if isinstance(parsed, (dict, list)):
+            return _search_query_item_count(parsed)
+        return 1 if value.strip() else 0
+    return 1 if value is not None and str(value).strip() else 0
+
+
 # Backwards-compatible single-query helper for older callers.
 def coerce_search_query(value: Any) -> str:
     queries = coerce_search_queries(value, limit=1)
@@ -426,7 +445,24 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
         }
 
     args = arguments if isinstance(arguments, dict) else {}
-    queries = coerce_search_queries(args.get("query", ""))
+    raw_query = args.get("query", "")
+    query_count = _search_query_item_count(raw_query)
+    if query_count > SEARCH_BATCH_LIMIT:
+        error_result = invalid_search_plan_result(
+            [
+                {
+                    "path": "$.query",
+                    "message": f"must contain at most {SEARCH_BATCH_LIMIT} items",
+                }
+            ]
+        )
+        return {
+            "ok": False,
+            "arguments": {},
+            "tool_ui": error_result["ui"],
+            "error_result": error_result,
+        }
+    queries = coerce_search_queries(raw_query)
     canonical_query: str | list[str] = queries[0] if len(queries) == 1 else queries
     effort = coerce_search_effort(args)
     shopping = coerce_search_shopping(args)

@@ -364,6 +364,33 @@ export function addSegmentsCitationSources(citationRegistry, segments) {
   return citationRegistry;
 }
 
+// Replace registered citation handles with their direct source URLs for plain-text export.
+export function replaceCitationHandlesWithSourceUrls(value, citationRegistry) {
+  const text = normalizeCitationSpacing(normalizeCitationBrackets(value));
+  const bracketPattern = /\[\s*([^\]]+)\s*\]/gi;
+
+  return text.replace(bracketPattern, function replaceCitationGroup(match, body) {
+    const normalizedBody = normalizeCitationHandleGlyphs(body);
+    if (!CITATION_HANDLE_LIST_PATTERN.test(normalizedBody)) {
+      return match;
+    }
+
+    let replaced = false;
+    const links = normalizedBody.split(',').map(function resolveCitationUrl(candidate) {
+      const id = normalizeCitationId(candidate);
+      const source = citationSourceForId(citationRegistry, id);
+      const url = safeExternalUrl(source && source.url);
+      if (!url) {
+        return `[${id}]`;
+      }
+      replaced = true;
+      return url;
+    });
+
+    return replaced ? links.join(' ') : match;
+  });
+}
+
 
 // Citation chip rendering.
 // Collect known citation ids referenced in one text fragment.
