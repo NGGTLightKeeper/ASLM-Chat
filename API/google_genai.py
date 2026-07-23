@@ -1504,6 +1504,7 @@ def _build_google_tools(
         engine="google-genai",
         model_name=model_name,
         tool_source_map=tool_context.get("tool_source_map") if isinstance(tool_context, dict) else None,
+        allowed_tool_aliases=tool_context.get("allowed_tool_aliases") if isinstance(tool_context, dict) else None,
     )
     if not openai_tools:
         return [], tool_lookup
@@ -2141,8 +2142,12 @@ def _run_tool_loop(
     tool_quota_counters: dict[str, int] = {}
     seen_tool_signatures: set[str] = set()
     consecutive_blocked_tool_results = 0
+    required_tool_server_ids = tool_registry.required_tool_server_ids_from_context(tool_context, tool_lookup)
+    satisfied_tool_server_ids: set[str] = set()
+    required_nudges_left = tool_registry.MAX_REQUIRED_TOOL_NUDGES if required_tool_server_ids else 0
 
-    for round_index in range(MAX_TOOL_ROUNDS):
+    max_tool_rounds = tool_registry.tool_round_limit_from_context(tool_context, MAX_TOOL_ROUNDS)
+    for round_index in range(max_tool_rounds):
         # Re-apply learned preferences each round because earlier failures may
         # have updated the runtime capability cache.
         request_config = _apply_learned_request_preferences(model_name, request_config)
@@ -2156,6 +2161,25 @@ def _run_tool_loop(
             if assistant_content is not None:
                 conversation.append(assistant_content)
             yield {"transcript_message": assistant_message}
+            unmet_tool_server_ids = [
+                server_id for server_id in required_tool_server_ids
+                if server_id not in satisfied_tool_server_ids
+            ]
+            if unmet_tool_server_ids and required_nudges_left > 0:
+                required_nudges_left -= 1
+                conversation.append(
+                    {
+                        "role": "user",
+                        "parts": [
+                            {
+                                "text": tool_registry.required_tools_reminder_prompt(
+                                    unmet_tool_server_ids, tool_lookup
+                                )
+                            }
+                        ],
+                    }
+                )
+                continue
             return
 
         tool_calls: list[dict[str, Any]] = []
@@ -2175,6 +2199,12 @@ def _run_tool_loop(
             )
 
         tool_calls = tool_registry.prepare_tool_calls(tool_lookup, tool_calls)
+        tool_calls = tool_registry.limit_tool_calls_from_context(tool_context, tool_calls, tool_lookup)
+
+        for tool_call in tool_calls:
+            satisfied_server_id = tool_registry.tool_server_id_for_alias(tool_lookup, tool_call["name"])
+            if satisfied_server_id:
+                satisfied_tool_server_ids.add(satisfied_server_id)
 
         canonical_assistant_message = tool_registry.canonicalize_transcript_tool_calls(
             assistant_message, tool_calls
@@ -2238,7 +2268,7 @@ def _run_tool_loop(
                         if quota_error is not None:
                             tool_result = quota_error
                         else:
-                            tool_result = tool_registry.call_ollama_tool(
+                            tool_result = yield from tool_registry.stream_ollama_tool(
                                 tool_lookup,
                                 tool_call["name"],
                                 tool_call.get("arguments") or {},
@@ -2296,6 +2326,10 @@ def _run_tool_loop(
             )
             yield {"transcript_message": assistant_message}
             return
+
+        conversation = tool_registry.maybe_compact_tool_conversation(
+            tool_context, conversation, provider_format="google"
+        )
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
 

@@ -15,6 +15,7 @@ for _p in (_ROOT / "supervisor", _ROOT / "src"):
 # and API.mcp read them as module attributes from this entry module.
 from sandbox.api import MCP_SERVER, TOOL_HANDLERS, TOOLS, handle_tool  # noqa: F401
 from sandbox.config import IN_CONTAINER
+from sandbox.temporal import run_temporal_bash
 
 # When imported host-side (e.g. by ASLM's tool_worker), wire bash execution
 # through docker instead of trying to run /bin/bash natively on the host.
@@ -48,6 +49,12 @@ def call_tool(
     arguments: dict[str, Any] | None,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if (
+        tool_id == "bash"
+        and isinstance(context, dict)
+        and isinstance(context.get("temporal_sandbox"), dict)
+    ):
+        return run_temporal_bash(arguments or {}, context)
     return handle_tool(tool_id, arguments or {}, context or {})
 
 

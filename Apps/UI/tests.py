@@ -84,10 +84,34 @@ from Apps.UI.views import (
     _resolve_history_char_budget,
     _serialize_attachment_record,
     _serialize_tool_call_marker,
+    _serialize_tool_activity_marker,
     _selected_tools_include_sandbox,
     _stream_chat_response,
     _strip_llm_control_tokens,
 )
+
+
+class ToolActivityStreamTests(SimpleTestCase):
+    def test_activity_marker_keeps_structured_realtime_event(self):
+        activity = {
+            "alias": "deep_research__research",
+            "server_id": "deep_research",
+            "tool_id": "research",
+            "event": {
+                "sequence": 7,
+                "phase": "research",
+                "iteration": 2,
+                "type": "model_output_delta",
+                "data": {"channel": "reasoning", "content": "Checking sources"},
+            },
+        }
+
+        marker = _serialize_tool_activity_marker(activity)
+
+        self.assertTrue(marker.startswith("<tool_activity>"))
+        self.assertTrue(marker.endswith("</tool_activity>"))
+        payload = json.loads(marker.removeprefix("<tool_activity>").removesuffix("</tool_activity>"))
+        self.assertEqual(payload, activity)
 
 
 # Small structured error helper for Google GenAI adapter tests.

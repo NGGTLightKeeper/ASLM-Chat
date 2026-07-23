@@ -2338,6 +2338,11 @@ def _serialize_tool_result_marker(
     return f'<tool_result>{json.dumps(payload, ensure_ascii=False)}</tool_result>'
 
 
+# Encode one realtime tool activity event for the frontend event timeline.
+def _serialize_tool_activity_marker(activity: dict[str, Any]) -> str:
+    return f'<tool_activity>{json.dumps(activity, ensure_ascii=False)}</tool_activity>'
+
+
 # Encode a context-compression boundary without pretending it is a model tool.
 def _serialize_context_compression_marker(compression_event: dict[str, Any]) -> str:
     payload = {
@@ -4619,6 +4624,13 @@ def _stream_chat_response(
         llm_api.prepare_runtime(engine)
         response_iterator = llm_api.generate(**generate_kwargs)
         for chunk in response_iterator:
+            if isinstance(chunk, dict) and isinstance(chunk.get("tool_progress"), dict):
+                if is_thinking:
+                    is_thinking = False
+                    yield "\n</think>\n"
+                yield _serialize_tool_activity_marker(chunk["tool_progress"])
+                continue
+
             # Save assistant/tool transcript entries that are not meant
             # to be rendered directly as plain chat text.
             if isinstance(chunk, dict) and chunk.get("transcript_message"):

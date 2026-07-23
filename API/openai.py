@@ -1697,6 +1697,7 @@ def _run_tool_loop(
         engine="openai",
         model_name=model_name,
         tool_source_map=tool_context.get("tool_source_map") if isinstance(tool_context, dict) else None,
+        allowed_tool_aliases=tool_context.get("allowed_tool_aliases") if isinstance(tool_context, dict) else None,
     )
 
     if not tools:
@@ -1724,7 +1725,8 @@ def _run_tool_loop(
     # right after a supervisor nudge so the model can still finish normally.
     enforce_required_tools_this_round = True
 
-    for round_index in range(MAX_TOOL_ROUNDS):
+    max_tool_rounds = tool_registry.tool_round_limit_from_context(tool_context, MAX_TOOL_ROUNDS)
+    for round_index in range(max_tool_rounds):
         round_forced_tool_name = ""
         round_requires_tool_call = False
         if enforce_required_tools_this_round:
@@ -1793,6 +1795,7 @@ def _run_tool_loop(
             )
 
         tool_calls = tool_registry.prepare_tool_calls(tool_lookup, tool_calls)
+        tool_calls = tool_registry.limit_tool_calls_from_context(tool_context, tool_calls, tool_lookup)
 
         for tool_call in tool_calls:
             satisfied_server_id = tool_registry.tool_server_id_for_alias(tool_lookup, tool_call["name"])
@@ -1858,7 +1861,7 @@ def _run_tool_loop(
                         if quota_error is not None:
                             tool_result = quota_error
                         else:
-                            tool_result = tool_registry.call_ollama_tool(
+                            tool_result = yield from tool_registry.stream_ollama_tool(
                                 tool_lookup,
                                 tool_call["name"],
                                 tool_call.get("arguments") or {},
@@ -1915,6 +1918,10 @@ def _run_tool_loop(
             )
             yield {"transcript_message": assistant_message}
             return
+
+        conversation = tool_registry.maybe_compact_tool_conversation(
+            tool_context, conversation, provider_format="standard"
+        )
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
 

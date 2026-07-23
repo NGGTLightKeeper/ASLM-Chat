@@ -221,6 +221,7 @@ pytest-cache-files-*/
 Tools/zip/
 Tools/user_files/
 Tools/model_runtime_metadata.json
+Tools/mcp-deep-research/logs/
 
 # Tools/mcp-sandbox
 Tools/mcp-sandbox/tests/.test_workspace/

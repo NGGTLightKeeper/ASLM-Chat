@@ -70,12 +70,16 @@ def iter_venv_configs() -> list[dict[str, Any]]:
         packages_no_deps = raw_item.get("packagesNoDeps", [])
         if not isinstance(packages_no_deps, list):
             packages_no_deps = []
+        tools = raw_item.get("tools", [])
+        if not isinstance(tools, list):
+            tools = []
 
         venvs.append(
             {
                 "id": venv_id,
                 "path": relative_path,
                 "tool": str(raw_item.get("tool", "") or "").strip(),
+                "tools": [str(tool).strip() for tool in tools if str(tool).strip()],
                 "packages": [str(package).strip() for package in packages if str(package).strip()],
                 "packages_no_deps": [
                     str(package).strip() for package in packages_no_deps if str(package).strip()
@@ -99,7 +103,7 @@ def get_venv_config(venv_id: str) -> dict[str, Any] | None:
 def get_tool_venv_id(tool_dir_name: str) -> str:
     normalized_name = str(tool_dir_name or "").strip()
     for config in iter_venv_configs():
-        if config.get("tool") == normalized_name:
+        if config.get("tool") == normalized_name or normalized_name in config.get("tools", []):
             return str(config["id"])
     return ""
 

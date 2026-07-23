@@ -78,6 +78,8 @@ export function createMessagesUi(context, dependencies) {
     '</tool_call>',
     '<tool_result>',
     '</tool_result>',
+    '<tool_activity>',
+    '</tool_activity>',
     '<context_compression>',
     '</context_compression>',
     '<think>',
@@ -830,6 +832,7 @@ export function createMessagesUi(context, dependencies) {
     return findOpenActivityMarker(rawText, [
       { open: '<tool_call>', close: '</tool_call>' },
       { open: '<tool_result>', close: '</tool_result>' },
+      { open: '<tool_activity>', close: '</tool_activity>' },
       { open: '<context_compression>', close: '</context_compression>' }
     ]);
   }
@@ -1061,11 +1064,13 @@ export function createMessagesUi(context, dependencies) {
       const reasoningStart = findNextReasoningStart(source, cursor);
       const toolCallStart = lowerSource.indexOf('<tool_call>', cursor);
       const toolResultStart = lowerSource.indexOf('<tool_result>', cursor);
+      const toolActivityStart = lowerSource.indexOf('<tool_activity>', cursor);
       const compressionStart = lowerSource.indexOf('<context_compression>', cursor);
       const candidates = [
         reasoningStart,
         toolCallStart !== -1 ? { pos: toolCallStart, kind: 'tool' } : null,
         toolResultStart !== -1 ? { pos: toolResultStart, kind: 'result' } : null,
+        toolActivityStart !== -1 ? { pos: toolActivityStart, kind: 'activity' } : null,
         compressionStart !== -1 ? { pos: compressionStart, kind: 'compression' } : null
       ].filter(Boolean);
 
@@ -1172,6 +1177,26 @@ export function createMessagesUi(context, dependencies) {
         }
 
         cursor = compressionEnd + closeTag.length;
+        continue;
+      }
+
+      if (next.kind === 'activity') {
+        const openTag = '<tool_activity>';
+        const closeTag = '</tool_activity>';
+        const activityEnd = lowerSource.indexOf(closeTag, next.pos + openTag.length);
+        if (activityEnd === -1) {
+          break;
+        }
+
+        const payload = source.substring(next.pos + openTag.length, activityEnd);
+        try {
+          const parsed = JSON.parse(payload);
+          segments.push({ type: 'tool_activity', event: parsed });
+        } catch (_error) {
+          // Ignore malformed activity payloads.
+        }
+
+        cursor = activityEnd + closeTag.length;
         continue;
       }
 
@@ -1408,6 +1433,18 @@ export function createMessagesUi(context, dependencies) {
       || alias.endsWith('__web_search')
       || alias.endsWith('__web_search_rich')
       || !!(segment.toolUi && segment.toolUi.compact);
+  }
+
+  // Source-bearing orchestrator tools (for example Deep Research) must feed
+  // the same citation registry even though they are not rendered as search cards.
+  function hasCitationSources(segment) {
+    return !!(
+      segment
+      && segment.type === 'tool'
+      && searchSourcesFromSegment(segment).some(function hasCitableSource(source) {
+        return !!String((source && (source.id || source.url)) || '').trim();
+      })
+    );
   }
 
   // Read the backend-normalized request attached during tool preflight or execution.
@@ -1750,8 +1787,8 @@ export function createMessagesUi(context, dependencies) {
   function addAllSearchSourcesToCitationRegistry(registry, segments) {
     addSegmentsCitationSources(
       registry,
-      (Array.isArray(segments) ? segments : []).filter(function onlySearchToolSegment(segment) {
-        return segment && segment.type === 'tool' && isSearchToolSegment(segment);
+      (Array.isArray(segments) ? segments : []).filter(function onlySourceBearingToolSegment(segment) {
+        return hasCitationSources(segment);
       })
     );
   }
@@ -5297,6 +5334,9 @@ export function createMessagesUi(context, dependencies) {
         if (hideTextSegments || index >= lastActivitySegmentIndex || !segment) {
           return lastIndex;
         }
+        if (segment.type === 'tool_activity') {
+          return lastIndex;
+        }
         return segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending'
           ? lastIndex
           : index;
@@ -5331,6 +5371,10 @@ export function createMessagesUi(context, dependencies) {
           return;
         }
 
+        if (segment.type === 'tool_activity') {
+          return;
+        }
+
         if (segment.type === 'thought') {
           reasoningItems.push(segment);
           return;
@@ -5343,7 +5387,7 @@ export function createMessagesUi(context, dependencies) {
 
         if (segment.type === 'tool') {
           const currentToolIndex = activeToolSegmentIndex;
-          if (isSearchToolSegment(segment)) {
+          if (hasCitationSources(segment)) {
             addSearchSourcesToCitationRegistry(citationRegistry, segment);
           }
           reasoningItems.push({
@@ -5367,6 +5411,10 @@ export function createMessagesUi(context, dependencies) {
       for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
         const segment = segments[segmentIndex];
         if (!segment) {
+          continue;
+        }
+
+        if (segment.type === 'tool_activity') {
           continue;
         }
 
@@ -5408,6 +5456,9 @@ export function createMessagesUi(context, dependencies) {
       setExpandedWriteIndices($msgRow, expandedWrites);
       setExpandedEditIndices($msgRow, expandedEdits);
       $msgRow.data('toolSegments', toolSegments);
+      $msgRow.data('toolActivityEvents', segments
+        .filter(function onlyToolActivity(segment) { return segment && segment.type === 'tool_activity'; })
+        .map(function activityEvent(segment) { return segment.event; }));
       if (renderOptions.streaming !== true) {
         hydrateMermaidDiagrams($stream);
       }
@@ -5436,6 +5487,10 @@ export function createMessagesUi(context, dependencies) {
 
     for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
       const segment = segments[segmentIndex];
+
+      if (segment && segment.type === 'tool_activity') {
+        continue;
+      }
 
       if (segment && segment.type === 'browser_portal') {
         pushBlock(segment.key || `browser-portal-${segmentIndex}`, segment.html);
@@ -5467,7 +5522,7 @@ export function createMessagesUi(context, dependencies) {
               continue;
             }
             const currentToolIndex = toolSegmentIndex;
-            if (isSearchToolSegment(groupSegment)) {
+            if (hasCitationSources(groupSegment)) {
               addSearchSourcesToCitationRegistry(citationRegistry, groupSegment);
             }
             groupItems.push({
@@ -5535,6 +5590,9 @@ export function createMessagesUi(context, dependencies) {
     setExpandedWriteIndices($msgRow, expandedWrites);
     setExpandedEditIndices($msgRow, expandedEdits);
     $msgRow.data('toolSegments', toolSegments);
+    $msgRow.data('toolActivityEvents', segments
+      .filter(function onlyToolActivity(segment) { return segment && segment.type === 'tool_activity'; })
+      .map(function activityEvent(segment) { return segment.event; }));
     if (renderOptions.streaming !== true) {
       hydrateMermaidDiagrams($stream);
     }

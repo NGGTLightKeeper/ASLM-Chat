@@ -4,6 +4,9 @@
         {
             "id": "server",
             "path": "Data/venvs/server",
+            "tools": [
+                "mcp-deep-research"
+            ],
             "packages": [
                 "argon2-cffi==25.1.0",
                 "beautifulsoup4==4.12.3",

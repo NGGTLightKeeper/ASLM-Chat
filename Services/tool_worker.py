@@ -8,6 +8,7 @@ import importlib.util
 import inspect
 import json
 import re
+import socket
 import sys
 import threading
 from pathlib import Path
@@ -24,6 +25,42 @@ SERVER_METADATA_NAMES = ("MCP_SERVER", "SERVER")
 TOOL_HANDLER_NAMES = ("TOOL_HANDLERS", "TOOL_EXECUTORS")
 TOOL_PREPARER_NAMES = ("TOOL_PREPARERS", "TOOL_ARGUMENT_PREPARERS")
 WORKER_HEARTBEAT_SECONDS = 5.0
+
+
+class WorkerEventEmitter:
+    """Send structured realtime tool events over a dedicated local socket."""
+
+    def __init__(self, config: dict[str, Any] | None) -> None:
+        config = config if isinstance(config, dict) else {}
+        self.host = str(config.get("host") or "127.0.0.1")
+        self.port = int(config.get("port") or 0)
+        self.token = str(config.get("token") or "")
+        self.connection: socket.socket | None = None
+        self.lock = threading.Lock()
+        self.disabled = not (self.host == "127.0.0.1" and self.port > 0 and self.token)
+
+    def emit(self, event: dict[str, Any]) -> None:
+        if self.disabled or not isinstance(event, dict):
+            return
+        envelope = json.dumps(
+            {"token": self.token, "event": _to_jsonable(event)},
+            ensure_ascii=False,
+        ).encode("utf-8") + b"\n"
+        with self.lock:
+            try:
+                if self.connection is None:
+                    self.connection = socket.create_connection((self.host, self.port), timeout=3)
+                self.connection.sendall(envelope)
+            except (OSError, ValueError):
+                self.close()
+                self.disabled = True
+
+    def close(self) -> None:
+        connection = self.connection
+        self.connection = None
+        if connection is not None:
+            with contextlib.suppress(OSError):
+                connection.close()
 
 
 # Run async tool handlers on one persistent background event loop.
@@ -129,6 +166,8 @@ def _server_metadata(module: ModuleType, folder_name: str) -> dict[str, Any]:
     }
     if raw_server.get("requires_docker"):
         metadata["requires_docker"] = True
+    if raw_server.get("fresh_process_per_call"):
+        metadata["fresh_process_per_call"] = True
     return metadata
 
 
@@ -291,21 +330,27 @@ def call(server_file: Path, payload: dict[str, Any]) -> Any:
     module = _load_module(server_file)
     tool_id = _slugify(str(payload.get("tool_id") or ""))
     arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
-    context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+    context = dict(payload.get("context")) if isinstance(payload.get("context"), dict) else {}
+    event_emitter = WorkerEventEmitter(context.pop("_event_channel", None))
+    if not event_emitter.disabled:
+        context["event_callback"] = event_emitter.emit
 
-    handlers = _tool_handlers(module)
-    handler = handlers.get(tool_id)
-    if handler is not None:
-        signature = inspect.signature(handler)
-        if len(signature.parameters) <= 1:
-            return _execute_callable(handler, arguments)
-        return _execute_callable(handler, arguments, context)
+    try:
+        handlers = _tool_handlers(module)
+        handler = handlers.get(tool_id)
+        if handler is not None:
+            signature = inspect.signature(handler)
+            if len(signature.parameters) <= 1:
+                return _execute_callable(handler, arguments)
+            return _execute_callable(handler, arguments, context)
 
-    dispatcher = _server_callable(module)
-    if dispatcher is None:
-        raise ValueError(f"No handler registered for tool '{tool_id}'.")
+        dispatcher = _server_callable(module)
+        if dispatcher is None:
+            raise ValueError(f"No handler registered for tool '{tool_id}'.")
 
-    return _dispatch_server_callable(dispatcher, tool_id, arguments, context)
+        return _dispatch_server_callable(dispatcher, tool_id, arguments, context)
+    finally:
+        event_emitter.close()
 
 
 def prepare(server_file: Path, payload: dict[str, Any]) -> dict[str, Any]:

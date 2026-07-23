@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import contextlib
 import copy
 import importlib.util
 import inspect
@@ -11,13 +12,15 @@ import json
 import logging
 import os
 import re
+import secrets
+import socket
 import subprocess
 import sys
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Queue
 from types import ModuleType
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -318,6 +321,68 @@ class ExternalWorkerSession:
                     pass
 
 
+class ToolEventSocketChannel:
+    """Receive structured worker events without multiplexing them onto stdout."""
+
+    def __init__(self, callback) -> None:
+        self.callback = callback
+        self.token = secrets.token_urlsafe(24)
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server.bind(("127.0.0.1", 0))
+        self.server.listen(2)
+        self.server.settimeout(0.2)
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(
+            target=self._serve,
+            name="aslm-tool-event-channel",
+            daemon=True,
+        )
+        self.thread.start()
+
+    @property
+    def config(self) -> dict[str, Any]:
+        return {
+            "host": "127.0.0.1",
+            "port": int(self.server.getsockname()[1]),
+            "token": self.token,
+        }
+
+    def _serve(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                connection, _address = self.server.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            with connection:
+                stream = connection.makefile("r", encoding="utf-8", errors="replace")
+                with stream:
+                    for raw_line in stream:
+                        if self.stop_event.is_set():
+                            return
+                        try:
+                            envelope = json.loads(raw_line)
+                        except json.JSONDecodeError:
+                            continue
+                        if not isinstance(envelope, dict) or envelope.get("token") != self.token:
+                            continue
+                        event = envelope.get("event")
+                        if not isinstance(event, dict):
+                            continue
+                        try:
+                            self.callback(event)
+                        except Exception as exc:  # noqa: BLE001 - observers cannot break tools
+                            logger.warning("Tool event callback failed: %s", exc)
+
+    def close(self) -> None:
+        self.stop_event.set()
+        with contextlib.suppress(OSError):
+            self.server.close()
+        self.thread.join(timeout=1)
+
+
 # Print one shared runtime event.
 def _print_runtime_event(message: str) -> None:
     """Emit one console-visible runtime event."""
@@ -581,6 +646,146 @@ def forced_final_prompt_after_tool_blocks() -> str:
 
 # How many times the tool loop re-prompts a model that ignored user-required tools.
 MAX_REQUIRED_TOOL_NUDGES = 2
+
+
+# Read an optional per-session tool-loop limit without exceeding the adapter cap.
+def tool_round_limit_from_context(
+    tool_context: dict[str, Any] | None,
+    adapter_limit: int,
+) -> int:
+    """Return a bounded number of model/tool rounds for this generation."""
+
+    raw_limit = tool_context.get("max_tool_rounds") if isinstance(tool_context, dict) else None
+    try:
+        requested_limit = int(raw_limit)
+    except (TypeError, ValueError):
+        requested_limit = adapter_limit
+    return min(max(1, requested_limit), max(1, int(adapter_limit)))
+
+
+# Bound one assistant turn's parallel calls before its transcript is canonicalized.
+def limit_tool_calls_from_context(
+    tool_context: dict[str, Any] | None,
+    tool_calls: list[dict[str, Any]],
+    tool_lookup: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Apply optional global and per-server parallel call limits."""
+
+    raw_limit = tool_context.get("max_parallel_tool_calls") if isinstance(tool_context, dict) else None
+    try:
+        global_limit = max(1, int(raw_limit)) if raw_limit not in (None, "") else None
+    except (TypeError, ValueError):
+        global_limit = None
+
+    raw_server_limits = (
+        tool_context.get("max_parallel_tool_calls_by_server")
+        if isinstance(tool_context, dict)
+        else None
+    )
+    server_limits: dict[str, int] = {}
+    if isinstance(raw_server_limits, dict):
+        for raw_server_id, raw_server_limit in raw_server_limits.items():
+            try:
+                server_limits[str(raw_server_id).strip()] = max(1, int(raw_server_limit))
+            except (TypeError, ValueError):
+                continue
+
+    limited = tool_calls[:global_limit] if global_limit is not None else list(tool_calls)
+    if not server_limits:
+        return limited
+
+    server_counts: dict[str, int] = {}
+    output: list[dict[str, Any]] = []
+    for tool_call in limited:
+        alias = str(tool_call.get("name") or "")
+        server_id = tool_server_id_for_alias(tool_lookup, alias)
+        server_limit = server_limits.get(server_id)
+        if server_limit is not None and server_counts.get(server_id, 0) >= server_limit:
+            continue
+        output.append(tool_call)
+        if server_limit is not None:
+            server_counts[server_id] = server_counts.get(server_id, 0) + 1
+    return output
+
+
+def _conversation_char_count(conversation: list[dict[str, Any]]) -> int:
+    try:
+        return len(json.dumps(conversation, ensure_ascii=False, default=str))
+    except (TypeError, ValueError):
+        return sum(len(str(message)) for message in conversation)
+
+
+def _message_contains_tool_call(message: dict[str, Any], provider_format: str) -> bool:
+    if message.get("tool_calls"):
+        return True
+    if provider_format != "google":
+        return False
+    parts = message.get("parts") if isinstance(message.get("parts"), list) else []
+    return any(isinstance(part, dict) and isinstance(part.get("function_call"), dict) for part in parts)
+
+
+def maybe_compact_tool_conversation(
+    tool_context: dict[str, Any] | None,
+    conversation: list[dict[str, Any]],
+    *,
+    provider_format: str = "standard",
+) -> list[dict[str, Any]]:
+    """Compact completed tool history while retaining the newest provider-native tool pair."""
+
+    if not isinstance(tool_context, dict):
+        return conversation
+    compactor = tool_context.get("conversation_compactor")
+    if not callable(compactor):
+        return conversation
+    try:
+        trigger_chars = max(1, int(tool_context.get("compression_trigger_chars") or 0))
+    except (TypeError, ValueError):
+        return conversation
+    if trigger_chars <= 0 or _conversation_char_count(conversation) < trigger_chars:
+        return conversation
+
+    try:
+        prefix_count = max(0, int(tool_context.get("compression_prefix_messages") or 0))
+    except (TypeError, ValueError):
+        prefix_count = 0
+    prefix_count = min(prefix_count, len(conversation))
+    while (
+        prefix_count > 0
+        and isinstance(conversation[prefix_count - 1], dict)
+        and _message_contains_tool_call(conversation[prefix_count - 1], provider_format)
+    ):
+        prefix_count -= 1
+
+    keep_from = len(conversation)
+    for index in range(len(conversation) - 1, prefix_count - 1, -1):
+        message = conversation[index]
+        if isinstance(message, dict) and _message_contains_tool_call(message, provider_format):
+            keep_from = index
+            break
+    if keep_from <= prefix_count:
+        return conversation
+
+    compacted_span = [dict(message) for message in conversation[prefix_count:keep_from]]
+    if not compacted_span:
+        return conversation
+    try:
+        summary = str(compactor(compacted_span, provider_format=provider_format) or "").strip()
+    except Exception as exc:  # noqa: BLE001 - compression must not break the active tool loop
+        logger.warning("Tool conversation compression failed: %s", exc)
+        return conversation
+    if not summary:
+        return conversation
+
+    memory_text = "[deep research memory]\n" + summary
+    if provider_format == "google":
+        memory_message = {"role": "user", "parts": [{"text": memory_text}]}
+    else:
+        memory_message = {"role": "user", "content": memory_text}
+    return [
+        *conversation[:prefix_count],
+        memory_message,
+        *conversation[keep_from:],
+    ]
 
 
 # Resolve the owning tool-server id for one public tool alias.
@@ -847,6 +1052,16 @@ def remember_tool_cooldown(
     with _TOOL_COOLDOWN_LOCK:
         for key, _label in entries:
             _TOOL_COOLDOWNS[key] = expires_at
+
+
+def clear_tool_runtime_scope(context: dict[str, Any] | None) -> None:
+    """Remove in-memory tool bookkeeping owned by one isolated conversation."""
+
+    scope_prefix = f"{_tool_cooldown_scope(context)}:"
+    with _TOOL_COOLDOWN_LOCK:
+        scoped_keys = [key for key in _TOOL_COOLDOWNS if key.startswith(scope_prefix)]
+        for key in scoped_keys:
+            _TOOL_COOLDOWNS.pop(key, None)
 
 
 # Delegate read_page cooldown checks to the shared tool cooldown helper.
@@ -1144,6 +1359,7 @@ def _load_external_server(server_file: Path) -> dict[str, Any]:
         "name": str(description.get("name") or server_file.parent.name).strip() or server_file.parent.name,
         "description": str(description.get("description") or "").strip(),
         "requires_docker": bool(description.get("requires_docker")),
+        "fresh_process_per_call": bool(description.get("fresh_process_per_call")),
         "tools": tools,
         "module": None,
         "supports": None,
@@ -1519,6 +1735,7 @@ def build_ollama_tools(
     model_name: str | None = None,
     *,
     tool_source_map: dict[str, dict[str, Any]] | None = None,
+    allowed_tool_aliases: list[str] | set[str] | tuple[str, ...] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Return Ollama-compatible tool payloads for one or more selected servers."""
 
@@ -1529,6 +1746,11 @@ def build_ollama_tools(
 
     tools: list[dict[str, Any]] = []
     tool_lookup: dict[str, dict[str, Any]] = {}
+    allowed_aliases = {
+        str(alias).strip()
+        for alias in (allowed_tool_aliases or [])
+        if str(alias).strip()
+    }
 
     for server_id in server_ids:
         server_definition = get_server(
@@ -1542,6 +1764,8 @@ def build_ollama_tools(
 
         for tool_definition in server_definition["tools"]:
             alias = tool_definition["alias"]
+            if allowed_aliases and alias not in allowed_aliases:
+                continue
             # Tool aliases are global in the conversation, so skip duplicates
             # when multiple selected servers resolve to the same public alias.
             if alias in tool_lookup:
@@ -1860,7 +2084,7 @@ def prepare_tool_call(
             Path(server_definition["server_file"]),
             "prepare",
             {"tool_id": tool_definition.get("id"), "arguments": raw_arguments},
-            persistent=True,
+            persistent=not bool(server_definition.get("fresh_process_per_call")),
         )
         if not isinstance(result, dict):
             raise RuntimeError("tool preparer returned a non-object response")
@@ -2152,6 +2376,7 @@ def call_ollama_tool(
     alias: str,
     arguments: dict[str, Any] | None,
     context: dict[str, Any] | None = None,
+    event_callback=None,
 ) -> str | dict:
     """Execute a local tool and serialize its result for Ollama.
 
@@ -2219,6 +2444,9 @@ def call_ollama_tool(
 
         if server_definition.get("external"):
             worker_context = json.loads(json.dumps(call_context, ensure_ascii=False, default=str))
+            event_channel = ToolEventSocketChannel(event_callback) if callable(event_callback) else None
+            if event_channel is not None:
+                worker_context["_event_channel"] = event_channel.config
             worker_payload = {
                 "tool_id": tool_definition["id"],
                 "arguments": call_arguments,
@@ -2226,25 +2454,29 @@ def call_ollama_tool(
             }
             server_file = Path(server_definition["server_file"])
             try:
-                result = _run_worker(
-                    server_file,
-                    "call",
-                    worker_payload,
-                    persistent=True,
-                )
-            except RuntimeError as worker_exc:
-                if "Tool worker stopped" not in str(worker_exc):
-                    raise
-                logger.warning(
-                    "Persistent tool worker stopped for %s; retrying call in one-shot mode.",
-                    server_file,
-                )
-                result = _run_worker(
-                    server_file,
-                    "call",
-                    worker_payload,
-                    persistent=False,
-                )
+                try:
+                    result = _run_worker(
+                        server_file,
+                        "call",
+                        worker_payload,
+                        persistent=not bool(server_definition.get("fresh_process_per_call")),
+                    )
+                except RuntimeError as worker_exc:
+                    if "Tool worker stopped" not in str(worker_exc):
+                        raise
+                    logger.warning(
+                        "Persistent tool worker stopped for %s; retrying call in one-shot mode.",
+                        server_file,
+                    )
+                    result = _run_worker(
+                        server_file,
+                        "call",
+                        worker_payload,
+                        persistent=False,
+                    )
+            finally:
+                if event_channel is not None:
+                    event_channel.close()
         else:
             handler = server_definition["tool_handlers"].get(tool_definition["id"])
             if handler is None:
@@ -2310,3 +2542,119 @@ def call_ollama_tool(
             f"error={exc}"
         )
         return f"Tool execution failed: {exc}"
+
+
+TOOL_EVENT_BATCH_INTERVAL_SECONDS = 3.0
+TOOL_EVENT_BATCH_MAX_EVENTS = 64
+TOOL_EVENT_BATCH_MAX_BYTES = 64 * 1024
+
+
+def stream_ollama_tool(
+    tool_lookup: dict[str, dict[str, Any]],
+    alias: str,
+    arguments: dict[str, Any] | None,
+    context: dict[str, Any] | None = None,
+):
+    """Yield realtime activity events and return the final tool result.
+
+    Tool execution runs on a background thread so adapters can immediately
+    forward side-channel events while the normal worker response is pending.
+    """
+
+    updates: Queue[dict[str, Any]] = Queue()
+    finished = threading.Event()
+    outcome: dict[str, Any] = {}
+    lookup_entry = tool_lookup.get(alias) or {}
+    server_definition = lookup_entry.get("server") or {}
+    tool_definition = lookup_entry.get("tool") or {}
+
+    def execute() -> None:
+        try:
+            outcome["result"] = call_ollama_tool(
+                tool_lookup,
+                alias,
+                arguments,
+                context=context,
+                event_callback=updates.put,
+            )
+        except BaseException as exc:  # noqa: BLE001 - re-raised on generator thread
+            outcome["error"] = exc
+        finally:
+            finished.set()
+
+    thread = threading.Thread(
+        target=execute,
+        name=f"aslm-tool-stream-{alias}",
+        daemon=True,
+    )
+    thread.start()
+
+    batch: list[dict[str, Any]] = []
+    batch_bytes = 0
+    batch_started_at: float | None = None
+
+    def progress_batch(events: list[dict[str, Any]]) -> dict[str, Any]:
+        first_sequence = events[0].get("sequence") if events else None
+        last_sequence = events[-1].get("sequence") if events else None
+        return {
+            "tool_progress": {
+                "alias": alias,
+                "server_id": server_definition.get("id"),
+                "tool_id": tool_definition.get("id"),
+                "event": {
+                    "type": "event_batch",
+                    "count": len(events),
+                    "first_sequence": first_sequence,
+                    "last_sequence": last_sequence,
+                    "events": events,
+                },
+            }
+        }
+
+    while not finished.is_set() or not updates.empty() or batch:
+        now = time.monotonic()
+        timeout = 0.05
+        if batch_started_at is not None:
+            timeout = min(
+                timeout,
+                max(0.0, TOOL_EVENT_BATCH_INTERVAL_SECONDS - (now - batch_started_at)),
+            )
+        try:
+            event = updates.get(timeout=timeout)
+        except Empty:
+            event = None
+
+        if event is not None:
+            event_bytes = len(
+                json.dumps(event, ensure_ascii=False, default=str).encode("utf-8")
+            )
+            if batch and batch_bytes + event_bytes > TOOL_EVENT_BATCH_MAX_BYTES:
+                yield progress_batch(batch)
+                batch = []
+                batch_bytes = 0
+                batch_started_at = None
+            if not batch:
+                batch_started_at = time.monotonic()
+            batch.append(event)
+            batch_bytes += event_bytes
+
+        now = time.monotonic()
+        should_flush = bool(batch) and (
+            len(batch) >= TOOL_EVENT_BATCH_MAX_EVENTS
+            or batch_bytes >= TOOL_EVENT_BATCH_MAX_BYTES
+            or (
+                batch_started_at is not None
+                and now - batch_started_at >= TOOL_EVENT_BATCH_INTERVAL_SECONDS
+            )
+            or (finished.is_set() and updates.empty())
+        )
+        if should_flush:
+            yield progress_batch(batch)
+            batch = []
+            batch_bytes = 0
+            batch_started_at = None
+
+    thread.join(timeout=1)
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("result")
