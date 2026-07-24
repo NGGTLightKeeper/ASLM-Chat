@@ -203,12 +203,17 @@ class OrchestrationTests(unittest.TestCase):
             ["web_search__web_search", "web_search__read_page"],
         )
 
-        self.assertEqual(result["report"], "Verified report [c0042-1]")
+        self.assertEqual(
+            result["report"],
+            "Verified report [Primary source](https://example.com/source)",
+        )
         self.assertEqual(
             result["model_context"],
-            "Verified report [c0042-1](https://example.com/source)",
+            "Verified report [Primary source](https://example.com/source)",
         )
-        self.assertEqual(result["sources"], [source])
+        self.assertEqual(result["sources"][0]["id"], "c11111111-1")
+        self.assertEqual(result["sources"][0]["citation_aliases"], ["c0042-1"])
+        self.assertEqual(result["sources"][0]["url"], source["url"])
         self.assertEqual(result["ui"]["result_count"], 1)
         self.assertEqual(result["ui"]["status"], "completed")
         self.assertEqual(result["ui"]["queries_used"], 1)

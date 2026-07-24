@@ -17,7 +17,7 @@
     <link rel="stylesheet" href="{% static 'css/main/main.css' %}" />
     <link rel="stylesheet" href="{% static 'css/main/markdown.css' %}" />
     <link rel="stylesheet" href="{% static 'css/main/browser-portal.css' %}" />
-    <link rel="stylesheet" href="{% static 'css/main/deep-research.css' %}?v={{ static_cache_version }}" />
+    <link rel="stylesheet" href="{% static 'css/main/deep-research.css' %}" />
     {% if host_theme_available %}
     <style id="aslm-host-theme">{{ host_theme_css_variables|safe }}</style>
     {% endif %}
@@ -25,6 +25,7 @@
     <script type="application/json" id="aslmHostLocaleData">{{ host_locale_json|safe }}</script>
     <link rel="stylesheet" href="{% static 'css/vendor/katex.min.css' %}" />
     {% block extra_css %}{% endblock %}
+    <script type="importmap">{% static_import_map %}</script>
 </head>
 
 <body data-preload-chat="{{ preload_chat_id|default:'' }}" data-llm-engine="{{ llm_engine|default:'' }}">
@@ -88,10 +89,10 @@
   "send": "{% static 'img/ui/send.svg' %}",
   "addMenu": "{% static 'img/ui/add-2.svg' %}",
   "removeAttachment": "{% static 'img/ui/x.svg' %}",
-  "copy": "{% static 'img/ui/copy.svg' %}?v={{ static_cache_version }}",
-  "refresh": "{% static 'img/ui/refresh.svg' %}?v={{ static_cache_version }}",
+  "copy": "{% static 'img/ui/copy.svg' %}",
+  "refresh": "{% static 'img/ui/refresh.svg' %}",
   "trash": "{% static 'img/ui/trash.svg' %}",
-  "check": "{% static 'img/ui/check.svg' %}?v={{ static_cache_version }}",
+  "check": "{% static 'img/ui/check.svg' %}",
   "arrowLeft": "{% static 'img/ui/arrow-left.svg' %}",
   "chatBubble": "{% static 'img/ui/chat-bubble.svg' %}",
   "eye": "{% static 'img/ui/eye.svg' %}",
@@ -99,7 +100,7 @@
   "webSearch": "{% static 'img/ui/web-search.svg' %}",
   "webSearchError": "{% static 'img/ui/web-search-error.svg' %}",
   "toolBash": "{% static 'img/ui/tools/bash.svg' %}",
-  "toolCode": "{% static 'img/ui/tools/code.svg' %}?v={{ static_cache_version }}",
+  "toolCode": "{% static 'img/ui/tools/code.svg' %}",
   "toolTerminal": "{% static 'img/ui/tools/terminal.svg' %}",
   "toolMakeFile": "{% static 'img/ui/tools/make_file.svg' %}",
   "toolEditFile": "{% static 'img/ui/tools/edit_file.svg' %}",

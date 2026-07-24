@@ -183,6 +183,105 @@ class ResearchV2Tests(unittest.TestCase):
         self.assertIn("result", outcome)
         return outcome["result"]
 
+    def _assert_counted_phase_resume_advances(
+        self,
+        *,
+        session_id: str,
+        phase: str,
+    ) -> None:
+        orchestrator.control.create_session(session_id, topic="Investigate the test claim")
+        orchestrator.control.update_state(
+            session_id,
+            status="running",
+            phase=phase,
+            plan="Verify the claim",
+            plan_version=1,
+            checklist=[{"id": "s1", "title": "Verify the claim", "status": "active"}],
+            iteration=1,
+            # Iteration 1 already charged its maximum batch before entering either
+            # tested phase.  Recovery must not charge another batch as iteration 1.
+            queries_used=orchestrator.MAX_QUERIES_PER_ITERATION,
+            query_budget=orchestrator.MAX_QUERIES_PER_ITERATION * 2,
+            seen_queries=["first counted query", "second counted query"],
+            active_queries=[
+                {"text": "first counted query", "vertical": "web"},
+                {"text": "second counted query", "vertical": "web"},
+            ] if phase == "search" else [],
+            initial_candidates=[],
+        )
+        outputs = iter(
+            [
+                (
+                    '{"assessment":"More evidence is required.","gaps":["primary source"],'
+                    '"updates":[],"complete":false,"candidates":['
+                    '{"text":"third query","vertical":"web","purpose":"verify"},'
+                    '{"text":"fourth query","vertical":"web","purpose":"corroborate"}]}'
+                ),
+                (
+                    '{"queries":['
+                    '{"text":"third query","vertical":"web","purpose":"verify"},'
+                    '{"text":"fourth query","vertical":"web","purpose":"corroborate"}]}'
+                ),
+                (
+                    '{"assessment":"The claim is now verified.","gaps":[],'
+                    '"updates":[{"id":"s1","status":"done"}],'
+                    '"complete":true,"candidates":[]}'
+                ),
+                "Verified final report [c1000-1]",
+            ]
+        )
+        with (
+            mock.patch.object(
+                orchestrator.llm_api,
+                "generate",
+                side_effect=lambda *_args, **_kwargs: _generation(next(outputs)),
+            ) as generate,
+            mock.patch.object(
+                orchestrator.tool_registry,
+                "call_ollama_tool",
+                return_value=_source_result(),
+            ) as call_tool,
+        ):
+            result = self._run(session_id, auto_approve=False, max_rounds=2)
+
+        web_calls = [
+            call
+            for call in call_tool.call_args_list
+            if call.args[1] == "web_search__web_search"
+        ]
+        self.assertEqual(len(web_calls), 1)
+        self.assertTrue(
+            all(
+                len(call.args[2]["queries"]) <= orchestrator.MAX_QUERIES_PER_ITERATION
+                for call in web_calls
+            )
+        )
+        self.assertEqual(
+            result["ui"]["queries_used"],
+            orchestrator.MAX_QUERIES_PER_ITERATION * 2,
+        )
+        self.assertEqual(
+            [
+                event["iteration"]
+                for event in result["ui"]["events"]
+                if event.get("type") == "search_started"
+            ],
+            [2],
+        )
+        self.assertNotEqual(generate.call_args_list[0].args[2][0]["content"], orchestrator.PLAN_PROMPT)
+
+    def test_resume_from_inflight_search_does_not_replay_batch_in_same_iteration(self) -> None:
+        self._assert_counted_phase_resume_advances(
+            session_id="deep-research:10000000000000000000000000000031",
+            phase="search",
+        )
+
+    def test_resume_from_reading_completed_starts_the_next_iteration(self) -> None:
+        self._assert_counted_phase_resume_advances(
+            session_id="deep-research:10000000000000000000000000000032",
+            phase="reading_completed",
+        )
+
     def test_tolerant_json_and_plain_text_plan_fallback(self) -> None:
         parsed = orchestrator._extract_json_object(
             "Model preface that should be ignored.\n"
@@ -202,6 +301,78 @@ class ResearchV2Tests(unittest.TestCase):
             ["Verify the primary record", "Compare an independent source"],
         )
         self.assertTrue(all(item["status"] == "pending" for item in fallback))
+
+    def test_completed_checklist_item_never_regresses_during_later_reflection(self) -> None:
+        checklist = [
+            {
+                "id": "s1",
+                "title": "Find primary evidence",
+                "status": "done",
+                "note": "Primary record verified",
+            },
+            {"id": "s2", "title": "Verify an independent source", "status": "active"},
+            {"id": "s3", "title": "Resolve contradictions", "status": "pending"},
+        ]
+
+        updated = orchestrator._apply_updates(
+            checklist,
+            [
+                {"id": "s1", "status": "pending", "note": "stale partial audit"},
+                {"id": "s2", "status": "active"},
+                {"id": "s3", "status": "active"},
+            ],
+        )
+
+        self.assertEqual(updated[0]["status"], "done")
+        self.assertEqual(updated[0]["note"], "Primary record verified")
+        self.assertEqual(updated[1]["status"], "pending")
+        self.assertEqual(updated[2]["status"], "active")
+        self.assertEqual(orchestrator._current_checklist_item_id(updated), "s3")
+
+    def test_unchanged_completed_item_survives_plan_reload_but_renamed_item_does_not(self) -> None:
+        previous = [
+            {
+                "id": "s1",
+                "title": "Find primary evidence",
+                "status": "done",
+                "note": "Primary record found",
+            }
+        ]
+
+        recovered = orchestrator._merge_checklist_progress(
+            previous,
+            [{"id": "s1", "title": "Find primary evidence", "status": "pending"}],
+        )
+        revised = orchestrator._merge_checklist_progress(
+            previous,
+            [{"id": "s1", "title": "Find contradictory evidence", "status": "pending"}],
+        )
+
+        self.assertEqual(recovered[0]["status"], "done")
+        self.assertEqual(recovered[0]["note"], "Primary record found")
+        self.assertEqual(revised[0]["status"], "pending")
+
+    def test_durable_checkpoint_cannot_reset_completed_item_after_worker_restart(self) -> None:
+        session_id = "deep-research:10000000000000000000000000000021"
+        orchestrator.control.create_session(session_id, topic="Investigate the test claim")
+        orchestrator.control.update_state(
+            session_id,
+            checklist=[
+                {"id": "s1", "title": "Find primary evidence", "status": "done"},
+                {"id": "s2", "title": "Compare sources", "status": "pending"},
+            ],
+        )
+
+        recovered = orchestrator.control.update_state(
+            session_id,
+            checklist=[
+                {"id": "s1", "title": "Find primary evidence", "status": "pending"},
+                {"id": "s2", "title": "Compare sources", "status": "active"},
+            ],
+        )
+
+        self.assertEqual(recovered["checklist"][0]["status"], "done")
+        self.assertEqual(recovered["checklist"][1]["status"], "active")
 
     def test_unavailable_model_fails_before_search_without_fallback(self) -> None:
         session_id = "deep-research:10000000000000000000000000000008"
@@ -376,7 +547,186 @@ class ResearchV2Tests(unittest.TestCase):
 
         self.assertEqual(len(sources), 1)
         self.assertEqual(sources[0]["citation_aliases"], ["c0002-7"])
-        self.assertIn("[c0002-7](https://www.example.com/page)", linked)
+        self.assertIn("[First](https://www.example.com/page)", linked)
+
+    def test_restart_restores_evidence_and_never_reuses_raw_worker_citations(self) -> None:
+        session_id = "deep-research:deadbeef000000000000000000000001"
+        stable_one = "cdeadbeef-1"
+        stable_two = "cdeadbeef-2"
+        checklist = [{"id": "s1", "title": "Verify both sources", "status": "active"}]
+        old_source = {
+            "id": stable_one,
+            "citation_aliases": ["c0000-1"],
+            "title": "Original source",
+            "url": "https://example.com/original",
+        }
+        orchestrator.control.create_session(session_id, topic="Investigate the test claim")
+        orchestrator.control.update_state(
+            session_id,
+            status="running",
+            phase="checkpoint",
+            plan="Verify both sources",
+            plan_version=1,
+            checklist=checklist,
+            queries_used=1,
+            query_budget=4,
+            iteration=1,
+            sources=[old_source],
+            evidence_entries=[
+                {
+                    "iteration": 1,
+                    "kind": "search",
+                    "model_context": f"Original evidence [{stable_one}]",
+                }
+            ],
+            seen_queries=["original evidence"],
+            seen_urls=["https://example.com/original"],
+            citation_next=2,
+            initial_candidates=[],
+            latest_assessment="The second source is still missing.",
+            latest_gaps=["second source"],
+            last_sequence=10,
+        )
+
+        outputs = iter(
+            [
+                (
+                    '{"assessment":"The second source is still missing.",'
+                    '"gaps":["second source"],"updates":[],"complete":false,'
+                    '"candidates":[{"text":"second source evidence","vertical":"web",'
+                    '"purpose":"fill the remaining gap"}]}'
+                ),
+                (
+                    '{"queries":[{"text":"second source evidence","vertical":"web",'
+                    '"purpose":"fill the remaining gap"}]}'
+                ),
+                (
+                    '{"assessment":"Both sources are verified.","gaps":[],'
+                    '"updates":[{"id":"s1","status":"done"}],"complete":true,'
+                    '"candidates":[]}'
+                ),
+                f"Original claim [{stable_one}]. New claim [{stable_two}].",
+            ]
+        )
+        generate = self.enterContext(
+            mock.patch.object(
+                orchestrator.llm_api,
+                "generate",
+                side_effect=lambda *_args, **_kwargs: _generation(next(outputs)),
+            )
+        )
+
+        new_source = {
+            # Simulate a restarted web-search process: its local counter begins at
+            # c0000-1 again, but this URL is not the old source.
+            "id": "c0000-1",
+            "title": "New source",
+            "url": "https://example.org/new",
+        }
+
+        def fake_tool(_lookup, alias, _arguments, context=None):
+            del context
+            if alias == "web_search__web_search":
+                return {
+                    "_tool_result_structured": {
+                        "model_context": "New evidence [c0000-1]",
+                        "sources": [new_source],
+                    }
+                }
+            return {
+                "_tool_result_structured": {
+                    "model_context": "Full new-source page.",
+                    "sources": [{"title": "New source", "url": "https://example.org/new"}],
+                }
+            }
+
+        call_tool = self.enterContext(
+            mock.patch.object(
+                orchestrator.tool_registry,
+                "call_ollama_tool",
+                side_effect=fake_tool,
+            )
+        )
+
+        result = self._run(session_id, auto_approve=False, max_rounds=2)
+
+        self.assertEqual(
+            generate.call_args_list[0].args[2][0]["content"],
+            orchestrator.REFLECTION_PROMPT,
+        )
+        self.assertNotIn(orchestrator.PLAN_PROMPT, [
+            call.args[2][0]["content"] for call in generate.call_args_list
+        ])
+        self.assertEqual([source["id"] for source in result["sources"]], [stable_one, stable_two])
+        self.assertEqual(result["sources"][1]["citation_aliases"], ["c0000-1"])
+        self.assertIn("[Original source](https://example.com/original)", result["report"])
+        self.assertIn("[New source](https://example.org/new)", result["report"])
+        self.assertNotIn(f"[{stable_one}]", result["report"])
+        self.assertEqual([item["id"] for item in result["citations"]], [stable_one, stable_two])
+
+        terminal_state = orchestrator.control.read_state(session_id)
+        self.assertEqual(terminal_state["citation_next"], 3)
+        self.assertEqual(len(terminal_state["evidence_entries"]), 3)
+        self.assertIn(stable_one, terminal_state["evidence_entries"][0]["model_context"])
+        self.assertIn(stable_two, terminal_state["evidence_entries"][1]["model_context"])
+        self.assertIn("[New source](https://example.org/new)", terminal_state["report"])
+
+        # A retry after the worker died post-completion replays the durable result and
+        # must not invoke planning, search, or synthesis again.
+        generate.reset_mock()
+        call_tool.reset_mock()
+        replayed = self._run(session_id, auto_approve=False, max_rounds=2)
+        self.assertEqual(replayed["report"], result["report"])
+        self.assertEqual(replayed["citations"], result["citations"])
+        generate.assert_not_called()
+        call_tool.assert_not_called()
+
+    def test_legacy_terminal_snapshot_is_atomically_migrated_for_ui_polling(self) -> None:
+        session_id = "deep-research:facefeed000000000000000000000001"
+        legacy_source = {
+            "id": "c0000-1",
+            "title": "Legacy primary source",
+            "url": "https://legacy.example/report",
+        }
+        orchestrator.control.create_session(session_id, topic="Investigate the test claim")
+        orchestrator.control.update_state(
+            session_id,
+            status="completed",
+            phase="completed",
+            plan="Verify the legacy source",
+            plan_version=1,
+            checklist=[{"id": "s1", "title": "Verify source", "status": "done"}],
+            report="Verified legacy claim [c0000-1].",
+            model_context="Verified legacy claim [c0000-1].",
+            sources=[legacy_source],
+            source_count=1,
+            queries_used=1,
+            query_budget=4,
+            iteration=1,
+        )
+        generate = self.enterContext(mock.patch.object(orchestrator.llm_api, "generate"))
+        call_tool = self.enterContext(
+            mock.patch.object(orchestrator.tool_registry, "call_ollama_tool")
+        )
+
+        result = self._run(session_id, auto_approve=False, max_rounds=2)
+        migrated = orchestrator.control.read_state(session_id)
+
+        expected_report = (
+            "Verified legacy claim "
+            "[Legacy primary source](https://legacy.example/report)."
+        )
+        self.assertEqual(result["report"], expected_report)
+        self.assertEqual(migrated["status"], "completed")
+        self.assertEqual(migrated["phase"], "completed")
+        self.assertEqual(migrated["report"], expected_report)
+        self.assertEqual(migrated["model_context"], expected_report)
+        self.assertEqual(migrated["sources"][0]["id"], "cfacefeed-1")
+        self.assertEqual(migrated["sources"][0]["citation_aliases"], ["c0000-1"])
+        self.assertEqual(migrated["citations"][0]["id"], "cfacefeed-1")
+        self.assertEqual(migrated["citation_next"], 2)
+        generate.assert_not_called()
+        call_tool.assert_not_called()
 
     def test_cancel_command_stops_a_run_waiting_for_approval(self) -> None:
         session_id = "deep-research:10000000000000000000000000000003"

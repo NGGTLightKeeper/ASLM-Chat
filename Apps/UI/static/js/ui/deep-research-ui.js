@@ -17,6 +17,38 @@ const PRIVATE_EVENT_TYPES = new Set([
   'reasoning_delta',
   'thinking_delta'
 ]);
+const PLAN_MUTATING_EVENT_TYPES = new Set([
+  'session_started',
+  'planning_started',
+  'plan_started',
+  'planning_completed',
+  'plan_ready',
+  'approval_required',
+  'approval_requested',
+  'awaiting_approval',
+  'plan_revision_proposed',
+  'plan_approved',
+  'approval_granted',
+  'research_approved',
+  'plan_revised',
+  'plan_updated',
+  'revision_applied',
+  'research_started',
+  'execution_started',
+  'checklist_updated',
+  'plan_checklist_updated',
+  'plan_item_updated',
+  'checklist_item_updated',
+  'task_updated',
+  'plan_item_started',
+  'checklist_item_started',
+  'task_started',
+  'plan_item_completed',
+  'checklist_item_completed',
+  'task_completed',
+  'reflection_completed',
+  'query_plan_ready'
+]);
 
 function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -31,6 +63,69 @@ function compactText(value, limit) {
     return text;
   }
   return `${text.slice(0, Math.max(1, maxLength - 1)).trimEnd()}\u2026`;
+}
+
+function normalizedInlineText(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Keep public reasoning readable without cutting a completed sentence in half.
+// If the first sentence is unusually long, allow a modest overflow before
+// falling back to a word boundary.
+function sentenceAwarePreview(value, limit) {
+  const text = normalizedInlineText(value);
+  const targetLength = Math.max(96, Number(limit) || 280);
+  if (text.length <= targetLength) {
+    return { text, truncated: false };
+  }
+
+  const hardLength = Math.min(text.length, targetLength + 220);
+  const sentencePattern = /[.!?\u2026]+(?:["'\u2019\u201d)\]]+)?(?=\s|$)/g;
+  let match;
+  let boundaryBeforeTarget = 0;
+  let boundaryAfterTarget = 0;
+  while ((match = sentencePattern.exec(text)) !== null) {
+    const boundary = match.index + match[0].length;
+    if (boundary <= targetLength) {
+      boundaryBeforeTarget = boundary;
+      continue;
+    }
+    if (boundary <= hardLength) {
+      boundaryAfterTarget = boundary;
+    }
+    break;
+  }
+
+  const sentenceBoundary = boundaryBeforeTarget >= Math.min(96, Math.floor(targetLength * 0.4))
+    ? boundaryBeforeTarget
+    : boundaryAfterTarget;
+  if (sentenceBoundary > 0) {
+    return {
+      text: text.slice(0, sentenceBoundary).trimEnd(),
+      truncated: sentenceBoundary < text.length
+    };
+  }
+
+  const candidate = text.slice(0, targetLength + 1);
+  const wordBoundary = candidate.lastIndexOf(' ');
+  const end = wordBoundary >= Math.floor(targetLength * 0.65) ? wordBoundary : targetLength;
+  return {
+    text: `${text.slice(0, end).trimEnd()}\u2026`,
+    truncated: true
+  };
+}
+
+function boundedActivityDetail(value) {
+  const text = normalizedInlineText(value);
+  if (text.length <= 2400) {
+    return text;
+  }
+  const bounded = sentenceAwarePreview(text, 2180);
+  return bounded.truncated && !bounded.text.endsWith('\u2026')
+    ? `${bounded.text} \u2026`
+    : bounded.text;
 }
 
 function normalizedType(value) {
@@ -203,13 +298,30 @@ function normalizeChecklistItem(item, index, previousItems) {
     420
   ) || `Step ${index + 1}`;
   const id = String(safeItem.id || safeItem.item_id || safeItem.key || `step-${index + 1}`).trim();
-  const previous = (Array.isArray(previousItems) ? previousItems : []).find(function matchPrevious(candidate) {
-    return candidate && (candidate.id === id || candidate.title === title);
+  const previousCandidates = Array.isArray(previousItems) ? previousItems : [];
+  const normalizedTitle = title.replace(/\s+/g, ' ').trim().toLowerCase();
+  const titleMatches = previousCandidates.filter(function matchPreviousTitle(candidate) {
+    const candidateTitle = String(candidate && candidate.title || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    return candidateTitle && candidateTitle === normalizedTitle;
   });
+  const idMatch = previousCandidates.find(function matchPreviousId(candidate) {
+    return candidate && candidate.id === id;
+  });
+  const idMatchTitle = String(idMatch && idMatch.title || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  // Generated ids such as s1 are positional and are routinely reused after a
+  // plan revision. Only inherit completion when the goal itself is unchanged;
+  // an ambiguous duplicate title or a renamed replacement must start hollow.
+  const previous = idMatch && idMatchTitle === normalizedTitle
+    ? idMatch
+    : (titleMatches.length === 1 ? titleMatches[0] : null);
+  const incomingStatus = normalizedStatus(
+    safeItem.status || safeItem.state || (previous && previous.status),
+    'pending'
+  );
   return {
     id,
     title,
-    status: normalizedStatus(safeItem.status || safeItem.state || (previous && previous.status), 'pending'),
+    status: previous && checklistStatus(previous.status) === 'done' ? 'done' : incomingStatus,
     note: compactText(safeItem.note || safeItem.detail || safeItem.summary || (previous && previous.note), 260)
   };
 }
@@ -311,13 +423,30 @@ function sourceCountFrom(value) {
     data.result_count
   ];
   for (let index = 0; index < candidates.length; index += 1) {
-    const numeric = Number(candidates[index]);
+    const candidate = candidates[index];
+    if (candidate === null || candidate === undefined || String(candidate).trim() === '') {
+      continue;
+    }
+    const numeric = Number(candidate);
     if (Number.isFinite(numeric) && numeric >= 0) {
       return Math.floor(numeric);
     }
   }
   const sources = payload.sources || data.sources || structured.sources;
   return Array.isArray(sources) ? sources.length : null;
+}
+
+function sourcesFrom(value) {
+  const payload = asObject(value);
+  const data = asObject(payload.data);
+  const structured = asObject(payload.structured_content || payload.structuredContent);
+  const candidates = [payload.sources, data.sources, structured.sources];
+  const sources = candidates.find(Array.isArray) || [];
+  return sources.filter(function keepSource(source) {
+    return source && typeof source === 'object';
+  }).map(function copySource(source) {
+    return { ...source };
+  });
 }
 
 function flattenActivityPayload(payload, inherited) {
@@ -373,7 +502,7 @@ function statusLabel(status) {
 
 function checklistStatus(value) {
   const normalized = normalizedStatus(value, 'pending');
-  if (normalized === 'completed' || normalized === 'done') {
+  if (normalized === 'completed' || normalized === 'done' || normalized === 'skipped') {
     return 'done';
   }
   return 'pending';
@@ -400,21 +529,28 @@ function statusCanStop(status) {
 }
 
 function stateCanApprove(state) {
+  if (normalizedType(state.pendingAction) === 'stop') {
+    return false;
+  }
   return typeof state.canApprove === 'boolean'
     ? state.canApprove
     : statusCanApprove(state.status);
 }
 
 function stateCanEdit(state) {
+  if (normalizedType(state.pendingAction) === 'stop') {
+    return false;
+  }
   return typeof state.canEdit === 'boolean'
     ? state.canEdit
     : statusCanEdit(state.status);
 }
 
 function stateCanStop(state) {
-  return typeof state.canStop === 'boolean'
-    ? state.canStop
-    : statusCanStop(state.status);
+  if (normalizedType(state.pendingAction) === 'stop' || !statusCanStop(state.status)) {
+    return false;
+  }
+  return typeof state.canStop === 'boolean' ? state.canStop : true;
 }
 
 function pendingActionLabel(action) {
@@ -454,6 +590,7 @@ function createEmptyState(key) {
     iteration: 0,
     report: '',
     sources: [],
+    searches: [],
     lastSequence: 0,
     activity: [],
     seenEvents: new Set(),
@@ -474,11 +611,21 @@ function createEmptyState(key) {
 // Reduce the tool's nested activity stream into one stable public progress card.
 export function createDeepResearchUi(context, dependencies) {
   const { toolInspector } = dependencies;
+  const icons = asObject(context && context.icons);
   const states = new Map();
   const aliasToKey = new Map();
   const sessionToKey = new Map();
   const pollTimers = new Map();
   const pollsInFlight = new Set();
+  let renderCanonicalSearch = null;
+  let renderCanonicalReport = null;
+
+  function setCanonicalRenderers(renderers) {
+    const safeRenderers = asObject(renderers);
+    renderCanonicalSearch = typeof safeRenderers.search === 'function' ? safeRenderers.search : null;
+    renderCanonicalReport = typeof safeRenderers.report === 'function' ? safeRenderers.report : null;
+    syncOpenInspector();
+  }
 
   function ensureState(key) {
     const normalizedKey = String(key || '').trim() || `research-local-${states.size + 1}`;
@@ -585,14 +732,15 @@ export function createDeepResearchUi(context, dependencies) {
     if (topic) {
       state.topic = String(topic).trim();
     }
-    if (!mergeOptions.skipPlan) {
+    const version = planVersionFrom(safeSnapshot);
+    const planSnapshotIsCurrent = version === null || version >= state.planVersion;
+    if (!mergeOptions.skipPlan && planSnapshotIsCurrent) {
       mergePlan(
         state,
         safeSnapshot.plan,
         safeSnapshot.checklist || safeSnapshot.items || asObject(safeSnapshot.plan).items
       );
     }
-    const version = planVersionFrom(safeSnapshot);
     if (version !== null) {
       state.planVersion = Math.max(state.planVersion, version);
     }
@@ -612,38 +760,36 @@ export function createDeepResearchUi(context, dependencies) {
     if (Number.isFinite(iteration) && iteration >= 0) {
       state.iteration = Math.max(state.iteration, Math.floor(iteration));
     }
-    if (safeSnapshot.current_item_id || safeSnapshot.currentItemId) {
+    if (planSnapshotIsCurrent && (safeSnapshot.current_item_id || safeSnapshot.currentItemId)) {
       state.currentItemId = String(safeSnapshot.current_item_id || safeSnapshot.currentItemId);
     }
-    if ((safeSnapshot.latest_action || safeSnapshot.latestAction) && !mergeOptions.skipLatestAction) {
+    if (planSnapshotIsCurrent && (safeSnapshot.latest_action || safeSnapshot.latestAction) && !mergeOptions.skipLatestAction) {
       state.latestAction = compactText(safeSnapshot.latest_action || safeSnapshot.latestAction, 320);
     }
-    if (typeof safeSnapshot.can_approve === 'boolean' || typeof safeSnapshot.canApprove === 'boolean') {
+    if (planSnapshotIsCurrent && (typeof safeSnapshot.can_approve === 'boolean' || typeof safeSnapshot.canApprove === 'boolean')) {
       state.canApprove = Boolean(safeSnapshot.can_approve ?? safeSnapshot.canApprove);
     }
-    if (typeof safeSnapshot.can_edit === 'boolean' || typeof safeSnapshot.canEdit === 'boolean') {
+    if (planSnapshotIsCurrent && (typeof safeSnapshot.can_edit === 'boolean' || typeof safeSnapshot.canEdit === 'boolean')) {
       state.canEdit = Boolean(safeSnapshot.can_edit ?? safeSnapshot.canEdit);
     }
-    if (typeof safeSnapshot.can_stop === 'boolean' || typeof safeSnapshot.canStop === 'boolean') {
+    if (planSnapshotIsCurrent && (typeof safeSnapshot.can_stop === 'boolean' || typeof safeSnapshot.canStop === 'boolean')) {
       state.canStop = Boolean(safeSnapshot.can_stop ?? safeSnapshot.canStop);
     }
     const snapshotError = safeSnapshot.error || safeSnapshot.public_error || safeSnapshot.publicError;
-    if (snapshotError) {
+    if (planSnapshotIsCurrent && snapshotError) {
       state.error = compactText(snapshotError, 520);
     }
     const snapshotReport = safeSnapshot.report || safeSnapshot.model_context || safeSnapshot.modelContext;
-    if (snapshotReport) {
+    if (planSnapshotIsCurrent && snapshotReport) {
       state.report = String(snapshotReport).trim();
     }
     if (Array.isArray(safeSnapshot.sources)) {
-      state.sources = safeSnapshot.sources.filter(function validSource(source) {
-        return source && typeof source === 'object';
-      }).slice(0, 50);
+      state.sources = mergeSearchSources(state.sources, safeSnapshot.sources).slice(0, 50);
     }
-    if (safeSnapshot.phase && !mergeOptions.skipPhase) {
+    if (planSnapshotIsCurrent && safeSnapshot.phase && !mergeOptions.skipPhase) {
       state.phase = normalizedType(safeSnapshot.phase);
     }
-    if (safeSnapshot.status && !mergeOptions.skipStatus) {
+    if (planSnapshotIsCurrent && safeSnapshot.status && !mergeOptions.skipStatus) {
       const snapshotPhase = normalizedType(safeSnapshot.phase);
       const baseStatus = normalizedStatus(safeSnapshot.status, state.status);
       const nextStatus = baseStatus === 'running' && snapshotPhase === 'reflection'
@@ -715,12 +861,96 @@ export function createDeepResearchUi(context, dependencies) {
       key,
       kind: normalizedType(kind) || 'progress',
       title: compactText(title, 240),
-      detail: compactText(detail, 520),
+      detail: boundedActivityDetail(detail),
       status: normalizedType(status) || 'done',
       timestamp
     });
     if (state.activity.length > MAX_ACTIVITY_ITEMS) {
       state.activity.splice(0, state.activity.length - MAX_ACTIVITY_ITEMS);
+    }
+  }
+
+  function searchIteration(event) {
+    const safeEvent = asObject(event);
+    const data = asObject(safeEvent.data);
+    const numeric = Number(safeEvent.iteration ?? data.iteration);
+    return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 0;
+  }
+
+  function searchQueryKey(queries) {
+    return (Array.isArray(queries) ? queries : [])
+      .map(function normalizeQuery(query) {
+        return String(query || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      })
+      .filter(Boolean)
+      .join('\u241f');
+  }
+
+  function mergeSearchSources(existing, incoming) {
+    const merged = [];
+    const seen = new Set();
+    [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(incoming) ? incoming : [])]
+      .forEach(function appendSource(source) {
+        if (!source || typeof source !== 'object') {
+          return;
+        }
+        const key = String(
+          source.url || source.link || source.href || source.source_id || source.id
+          || source.domain || source.display_domain || ''
+        ).trim().toLowerCase();
+        if (!key || seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+        merged.push({ ...source });
+      });
+    return merged;
+  }
+
+  function upsertSearch(state, event, queries, status, sources) {
+    const safeQueries = (Array.isArray(queries) ? queries : [])
+      .map(function cleanQuery(query) { return compactText(query, 360); })
+      .filter(Boolean);
+    const iteration = searchIteration(event);
+    const queryKey = searchQueryKey(safeQueries);
+    let search = iteration
+      ? state.searches.find(function matchIteration(candidate) {
+        return candidate.iteration === iteration;
+      })
+      : null;
+    if (!search && queryKey) {
+      search = state.searches.find(function matchQueries(candidate) {
+        return candidate.queryKey === queryKey;
+      });
+    }
+    if (!search && normalizedType(status) !== 'running') {
+      search = [...state.searches].reverse().find(function latestPending(candidate) {
+        return candidate.status === 'running';
+      });
+    }
+    if (!search) {
+      const sequence = Number(asObject(event).sequence);
+      search = {
+        key: iteration
+          ? `iteration-${iteration}`
+          : (queryKey ? `query-${queryKey}` : `search-${Number.isFinite(sequence) ? sequence : state.searches.length + 1}`),
+        iteration,
+        queries: [],
+        queryKey: '',
+        sources: [],
+        status: 'running',
+        timestamp: String(asObject(event).timestamp || '')
+      };
+      state.searches.push(search);
+    }
+    if (safeQueries.length) {
+      search.queries = safeQueries;
+      search.queryKey = queryKey;
+    }
+    search.status = normalizedType(status) || search.status;
+    search.sources = mergeSearchSources(search.sources, sources);
+    if (state.searches.length > 24) {
+      state.searches.splice(0, state.searches.length - 24);
     }
   }
 
@@ -799,13 +1029,12 @@ export function createDeepResearchUi(context, dependencies) {
 
   function publicSummary(data) {
     const safeData = asObject(data);
-    return compactText(
+    return boundedActivityDetail(
       safeData.public_summary
       || safeData.publicSummary
       || safeData.summary
       || safeData.status_message
-      || '',
-      520
+      || ''
     );
   }
 
@@ -833,6 +1062,7 @@ export function createDeepResearchUi(context, dependencies) {
       mergeSnapshot(state, nestedState, { skipEvents: true });
     }
     const version = planVersionFrom(safeEvent);
+    const stalePlanEvent = version !== null && version < state.planVersion;
     if (version !== null) {
       state.planVersion = Math.max(state.planVersion, version);
     }
@@ -848,6 +1078,9 @@ export function createDeepResearchUi(context, dependencies) {
     }
 
     if (PRIVATE_EVENT_TYPES.has(type)) {
+      return;
+    }
+    if (stalePlanEvent && PLAN_MUTATING_EVENT_TYPES.has(type)) {
       return;
     }
 
@@ -1003,7 +1236,12 @@ export function createDeepResearchUi(context, dependencies) {
 
     if (['plan_item_started', 'checklist_item_started', 'task_started'].includes(type)) {
       updateChecklistItem(state, data, 'active');
-      const activeItem = state.items.find(function findActive(item) { return item.id === state.currentItemId; });
+      const activeIndex = state.items.findIndex(function findActiveIndex(item) {
+        const candidate = asObject(data.item);
+        const id = String(data.id || data.item_id || candidate.id || candidate.item_id || state.currentItemId || '').trim();
+        return id && item.id === id;
+      });
+      const activeItem = activeIndex >= 0 ? state.items[activeIndex] : null;
       state.latestAction = activeItem ? activeItem.title : (publicSummary(data) || 'Working on the next plan step');
       appendActivity(state, safeEvent, 'step', 'Started plan step', activeItem ? activeItem.title : '', 'running');
       return;
@@ -1079,6 +1317,7 @@ export function createDeepResearchUi(context, dependencies) {
       if (action.kind === 'search') {
         const selectedQueryCount = queryStringsFrom(data).length;
         state.queriesUsed += Math.max(1, selectedQueryCount);
+        upsertSearch(state, safeEvent, actionQueries, 'running', []);
       }
       appendActivity(state, safeEvent, action.kind, action.title, action.detail, 'running');
       return;
@@ -1103,6 +1342,10 @@ export function createDeepResearchUi(context, dependencies) {
       if (count !== null) {
         state.sourceCount = Math.max(state.sourceCount, count);
       }
+      const isSearchResult = toolKind.includes('search') || type === 'search_completed';
+      if (isSearchResult) {
+        upsertSearch(state, safeEvent, searchQueries, 'done', sourcesFrom(data));
+      }
       state.status = 'reflecting';
       state.phase = 'reflection';
       state.latestAction = t('research.reflecting', null, 'Reviewing evidence and refining the next queries');
@@ -1110,15 +1353,14 @@ export function createDeepResearchUi(context, dependencies) {
         ? `${title}: \u201c${searchQueries[0]}\u201d`
         : title;
       const searchDetail = [
-        searchQueries.slice(1).join(' \u00b7 '),
-        count !== null ? `${count} sources available` : ''
+        searchQueries.slice(1).join(' \u00b7 ')
       ].filter(Boolean).join(' \u2014 ');
       appendActivity(
         state,
         safeEvent,
-        toolKind.includes('search') || type === 'search_completed' ? 'search' : 'tool',
-        toolKind.includes('search') || type === 'search_completed' ? searchTitle : title,
-        toolKind.includes('search') || type === 'search_completed' ? searchDetail : (count !== null ? `${count} sources available` : ''),
+        isSearchResult ? 'search' : 'tool',
+        isSearchResult ? searchTitle : title,
+        isSearchResult ? searchDetail : '',
         'done'
       );
       return;
@@ -1136,7 +1378,7 @@ export function createDeepResearchUi(context, dependencies) {
         safeEvent,
         'checkpoint',
         state.latestAction,
-        state.sourceCount ? `${state.sourceCount} sources collected` : '',
+        '',
         'done'
       );
       return;
@@ -1163,7 +1405,7 @@ export function createDeepResearchUi(context, dependencies) {
       state.status = 'synthesizing';
       state.phase = 'synthesis';
       state.latestAction = t('research.finalizingReport', null, 'Finalizing the report');
-      appendActivity(state, safeEvent, 'report', 'Report completed', state.sourceCount ? `${state.sourceCount} sources` : '', 'done');
+      appendActivity(state, safeEvent, 'report', 'Report completed', '', 'done');
       return;
     }
 
@@ -1224,7 +1466,7 @@ export function createDeepResearchUi(context, dependencies) {
       state.latestAction = state.status === 'partial'
         ? t('research.completedPartial', null, 'Research completed with limitations')
         : t('research.completed', null, 'Research completed');
-      appendActivity(state, safeEvent, 'done', state.latestAction, state.sourceCount ? `${state.sourceCount} sources` : '', 'done');
+      appendActivity(state, safeEvent, 'done', state.latestAction, '', 'done');
       return;
     }
 
@@ -1279,7 +1521,7 @@ export function createDeepResearchUi(context, dependencies) {
     syncOpenInspector();
   }
 
-  function renderChecklist(items, limit, compact) {
+  function renderChecklist(items, limit, compact, forceComplete) {
     const safeItems = Array.isArray(items) ? items : [];
     const visibleItems = Number.isFinite(Number(limit)) ? safeItems.slice(0, Number(limit)) : safeItems;
     if (!visibleItems.length) {
@@ -1290,8 +1532,18 @@ export function createDeepResearchUi(context, dependencies) {
         </div>
       `;
     }
-    const rows = visibleItems.map(function renderItem(item) {
-      const status = checklistStatus(item.status);
+    let lastDoneIndex = forceComplete ? safeItems.length - 1 : -1;
+    if (!forceComplete) {
+      safeItems.forEach(function findLastDone(item, index) {
+        if (item && checklistStatus(item.status) === 'done') {
+          lastDoneIndex = index;
+        }
+      });
+    }
+    const rows = visibleItems.map(function renderItem(item, index) {
+      // The plan is ordered visually: if a later goal is complete, earlier
+      // circles render filled as well, without mutating the evidence state.
+      const status = index <= lastDoneIndex ? 'done' : 'pending';
       return `
         <li class="deep-research-check-item is-${escapeAttributeValue(status)}" data-plan-item-id="${escapeAttributeValue(item.id)}">
           <span class="deep-research-check-mark" aria-hidden="true"></span>
@@ -1342,9 +1594,13 @@ export function createDeepResearchUi(context, dependencies) {
     const activityLabel = active
       ? statusLabel(state.status)
       : (state.latestAction || statusLabel(state.status));
+    const sourceCountLabel = state.sourceCount > 0
+      ? `${state.sourceCount} ${state.sourceCount === 1 ? 'source' : 'sources'}`
+      : '';
     const activityControl = `
       <button type="button" class="deep-research-card-activity" data-deep-research-action="open" data-research-key="${key}">
         <span class="deep-research-card-activity-label">${escHtml(activityLabel)}</span>
+        ${sourceCountLabel ? `<span class="deep-research-card-source-count">${escHtml(sourceCountLabel)}</span>` : ''}
       </button>
     `;
     const ariaLabel = `${t('research.title', null, 'Deep Research')}. ${statusLabel(state.status)}. ${state.topic || state.latestAction}`;
@@ -1353,7 +1609,7 @@ export function createDeepResearchUi(context, dependencies) {
         <div class="deep-research-card-head">
           <h3 class="deep-research-card-topic">${escHtml(compactText(topic, 220))}</h3>
         </div>
-        <div class="deep-research-card-plan">${renderChecklist(state.items, MAX_CARD_ITEMS, true)}</div>
+        <div class="deep-research-card-plan">${renderChecklist(state.items, MAX_CARD_ITEMS, true, normalizedStatus(state.status) === 'completed')}</div>
         ${!awaitingApproval ? `<div class="deep-research-card-run-row">${activityControl}${active && state.sessionId ? `<button type="button" class="deep-research-stop-button" data-deep-research-action="stop" data-research-key="${key}" aria-label="${escapeAttributeValue(t('research.stop', null, 'Stop research'))}"${state.pendingAction ? ' disabled aria-disabled="true"' : ''}><span aria-hidden="true"></span></button>` : ''}</div>` : ''}
         ${state.error && !statusIsTerminal(state.status) ? `<div class="deep-research-inline-error" role="alert">${escHtml(state.error)}</div>` : ''}
         ${pending || cardActions ? `<div class="deep-research-card-actions">${pending}${cardActions}</div>` : ''}
@@ -1365,6 +1621,35 @@ export function createDeepResearchUi(context, dependencies) {
     return renderCardFromState(stateForSegment(segment), toolSegmentIndex);
   }
 
+  function syntheticSearchSegment(search) {
+    const safeSearch = asObject(search);
+    const queries = Array.isArray(safeSearch.queries) ? safeSearch.queries.filter(Boolean) : [];
+    const displayQueries = queries.length
+      ? queries
+      : [t('research.searchingSources', null, 'Searching sources')];
+    const done = safeSearch.status !== 'running';
+    return {
+      type: 'tool',
+      alias: `deep_research__web_search__${safeSearch.key || 'search'}`,
+      serverId: 'web_search',
+      serverName: 'Web Search',
+      toolId: 'web_search',
+      toolName: 'Web Search',
+      arguments: { query: displayQueries },
+      result: done ? '{}' : null,
+      structuredContent: { sources: Array.isArray(safeSearch.sources) ? safeSearch.sources : [] },
+      toolUi: {
+        kind: 'search',
+        status: safeSearch.status === 'failed' ? 'error' : (done ? 'done' : 'running'),
+        search_request: {
+          queries: displayQueries.map(function preparedQuery(query) {
+            return { compiled_query: query, vertical: 'web' };
+          })
+        }
+      }
+    };
+  }
+
   function activityTimeLabel(value) {
     if (!value) {
       return '';
@@ -1374,41 +1659,150 @@ export function createDeepResearchUi(context, dependencies) {
       return '';
     }
     try {
-      return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(date);
+      return new Intl.DateTimeFormat(undefined, {
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(date);
     } catch (_error) {
       return '';
     }
   }
 
-  function renderActivityLog(state) {
-    if (!state.activity.length) {
-      return `<div class="deep-research-activity-empty">${escHtml(t('research.activityPending', null, 'Public research actions will appear here.'))}</div>`;
+  function renderActivityDetail(item) {
+    if (!item.detail) {
+      return '';
     }
-    return `<ol class="deep-research-activity-list">${state.activity.map(function renderActivity(item) {
-      const time = activityTimeLabel(item.timestamp);
-      return `
-        <li class="deep-research-activity-item is-${escapeAttributeValue(item.kind)} is-${escapeAttributeValue(item.status)}">
-          <span class="deep-research-activity-marker" aria-hidden="true"></span>
-          <span class="deep-research-activity-copy">
-            <span class="deep-research-activity-title">${escHtml(item.title)}</span>
-            ${item.detail ? `<span class="deep-research-activity-detail">${escHtml(item.detail)}</span>` : ''}
-          </span>
-          ${time ? `<time class="deep-research-activity-time">${escHtml(time)}</time>` : ''}
-        </li>
-      `;
-    }).join('')}</ol>`;
+    const preview = sentenceAwarePreview(item.detail, 280);
+    const displayText = preview.truncated && !preview.text.endsWith('\u2026')
+      ? `${preview.text} \u2026`
+      : preview.text;
+    return `<div class="msg-reasoning-text deep-research-timeline-detail">${escHtml(displayText)}</div>`;
+  }
+
+  function timelineEntries(state) {
+    const entries = [];
+    const collapsiblePhaseKinds = new Set(['plan', 'approval', 'reflection', 'report', 'stop']);
+    let searchIndex = 0;
+    (Array.isArray(state.activity) ? state.activity : []).forEach(function addActivity(item) {
+      if (!item) {
+        return;
+      }
+      if (item.kind === 'checkpoint' || (item.kind === 'tool' && !item.detail)) {
+        return;
+      }
+      if (item.kind === 'search') {
+        const previous = entries[entries.length - 1];
+        if (previous && previous.type === 'search') {
+          // search_started/search_completed describe one canonical web call.
+          previous.item = item;
+          return;
+        }
+        entries.push({
+          type: 'search',
+          item,
+          search: state.searches[searchIndex] || null,
+          searchIndex
+        });
+        searchIndex += 1;
+        return;
+      }
+
+      const identity = [item.kind, item.title, item.detail].join('\u241f');
+      const previous = entries[entries.length - 1];
+      if (
+        previous
+        && previous.type === 'activity'
+        && collapsiblePhaseKinds.has(item.kind)
+        && previous.item.kind === item.kind
+      ) {
+        // CoT shows the latest public summary for one uninterrupted phase,
+        // rather than separate "started" and "completed" notifications.
+        previous.item = item;
+        previous.identity = identity;
+        return;
+      }
+      if (previous && previous.type === 'activity' && previous.identity === identity) {
+        // Backend aliases can emit the same public milestone more than once.
+        previous.item = item;
+        return;
+      }
+      entries.push({ type: 'activity', item, identity });
+    });
+
+    while (searchIndex < state.searches.length) {
+      entries.push({
+        type: 'search',
+        item: null,
+        search: state.searches[searchIndex],
+        searchIndex
+      });
+      searchIndex += 1;
+    }
+    return entries;
+  }
+
+  function renderActivityStep(item) {
+    const time = activityTimeLabel(item.timestamp);
+    return `
+      <div class="msg-reasoning-step deep-research-activity-step is-${escapeAttributeValue(item.kind)} is-${escapeAttributeValue(item.status)}" data-research-activity-key="${escapeAttributeValue(item.key)}">
+        <span class="msg-reasoning-step-dot" aria-hidden="true"></span>
+        <div class="msg-reasoning-step-body">
+          <div class="msg-reasoning-step-title">
+            <span>${escHtml(item.title)}</span>
+            ${time ? `<time class="msg-reasoning-step-status deep-research-timeline-time">${escHtml(time)}</time>` : ''}
+          </div>
+          ${renderActivityDetail(item)}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderSearchStep(entry) {
+    if (!entry.search || !renderCanonicalSearch) {
+      return entry.item ? renderActivityStep(entry.item) : '';
+    }
+    const searchIcon = icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON || '';
+    return `
+      <div class="msg-reasoning-step msg-reasoning-step--tool deep-research-activity-step is-search is-${escapeAttributeValue(entry.search.status || 'done')}">
+        <span class="msg-reasoning-step-dot" aria-hidden="true">${searchIcon}</span>
+        <div class="msg-reasoning-step-body">
+          ${renderCanonicalSearch(syntheticSearchSegment(entry.search), entry.searchIndex, {})}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderActivityTimeline(state) {
+    const entries = timelineEntries(state);
+    if (!entries.length) {
+      return `<div class="deep-research-timeline-empty">${escHtml(t('research.activityPending', null, 'Research activity will appear here.'))}</div>`;
+    }
+    return `<div class="deep-research-timeline">${entries.map(function renderTimelineEntry(entry) {
+      return entry.type === 'search'
+        ? renderSearchStep(entry)
+        : renderActivityStep(entry.item);
+    }).join('')}</div>`;
+  }
+
+  function renderRecoveredReport(state) {
+    if (!state.report || !renderCanonicalReport) {
+      return '';
+    }
+    const reportHtml = renderCanonicalReport(state.report, state.sources);
+    return `
+      <details class="deep-research-report-disclosure">
+        <summary>${escHtml(t('research.report', null, 'Research report'))}</summary>
+        <div class="deep-research-recovered-report markdown-body">${reportHtml}</div>
+      </details>
+    `;
   }
 
   function inspectorBody(state) {
     return `
       <div class="deep-research-inspector-view">
-        <section class="deep-research-inspector-section" aria-labelledby="deepResearchActivityHeading">
-          <div class="deep-research-section-head">
-            <h3 id="deepResearchActivityHeading">${escHtml(t('research.activity', null, 'Public activity'))}</h3>
-          </div>
-          ${renderActivityLog(state)}
-        </section>
-        ${state.report ? `<section class="deep-research-inspector-section" aria-labelledby="deepResearchReportHeading"><div class="deep-research-section-head"><h3 id="deepResearchReportHeading">${escHtml(t('research.report', null, 'Research report'))}</h3></div><div class="deep-research-recovered-report">${escHtml(state.report)}</div></section>` : ''}
+        <div class="deep-research-inspector-current">${escHtml(statusLabel(state.status))}</div>
+        ${renderActivityTimeline(state)}
+        ${renderRecoveredReport(state)}
         ${state.error ? `<div class="deep-research-inspector-error" role="alert">${escHtml(state.error)}</div>` : ''}
       </div>
     `;
@@ -1598,9 +1992,27 @@ export function createDeepResearchUi(context, dependencies) {
       stop: 'cancel'
     };
     const action = actionMap[uiAction] || uiAction;
+    const previousControlState = action === 'cancel'
+      ? {
+        status: state.status,
+        phase: state.phase,
+        canApprove: state.canApprove,
+        canEdit: state.canEdit,
+        canStop: state.canStop,
+        latestAction: state.latestAction
+      }
+      : null;
     state.pendingAction = uiAction;
     state.controlHoldUntil = Date.now() + 2500;
     state.error = '';
+    if (action === 'cancel') {
+      state.status = 'stopping';
+      state.phase = 'stopping';
+      state.canApprove = false;
+      state.canEdit = false;
+      state.canStop = false;
+      state.latestAction = t('research.stopping', null, 'Stopping research safely');
+    }
     refreshRenderedCards(state);
 
     const payload = {
@@ -1655,8 +2067,16 @@ export function createDeepResearchUi(context, dependencies) {
     } catch (error) {
       const data = asObject(error && error.data);
       const snapshot = responseSnapshot(data);
-      if (Object.keys(snapshot).length) {
+      const hasAuthoritativeSnapshot = Object.keys(snapshot).length > 0;
+      if (hasAuthoritativeSnapshot) {
         mergeSnapshot(state, snapshot, { forceStatus: true });
+      } else if (previousControlState) {
+        state.status = previousControlState.status;
+        state.phase = previousControlState.phase;
+        state.canApprove = previousControlState.canApprove;
+        state.canEdit = previousControlState.canEdit;
+        state.canStop = previousControlState.canStop;
+        state.latestAction = previousControlState.latestAction;
       }
       state.error = compactText(
         data.error || (error && error.message) || t('errors.generic', null, 'Something went wrong'),
@@ -1704,6 +2124,7 @@ export function createDeepResearchUi(context, dependencies) {
     openSegment,
     renderCard,
     saveEdit,
+    setCanonicalRenderers,
     syncOpenInspector
   };
 }

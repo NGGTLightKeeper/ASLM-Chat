@@ -2366,6 +2366,31 @@ class StaticCacheVersionTests(SimpleTestCase):
         ).render(Context({}))
         self.assertEqual(rendered, f"/static/css/main/main.css?v={STATIC_CACHE_VERSION}")
 
+    # Verify every local ES module is mapped to the same backend-generated key.
+    def test_static_import_map_versions_the_complete_module_graph(self):
+        import json
+
+        from Apps.UI import STATIC_CACHE_VERSION
+        from django.template import Context, Template
+
+        rendered = Template(
+            "{% load i18n_tags %}{% static_import_map %}"
+        ).render(Context({}))
+        imports = json.loads(rendered)["imports"]
+
+        self.assertGreater(len(imports), 20)
+        self.assertEqual(
+            imports["/static/js/ui/deep-research-ui.js"],
+            f"/static/js/ui/deep-research-ui.js?v={STATIC_CACHE_VERSION}",
+        )
+        self.assertEqual(
+            imports["/static/js/main/api.js"],
+            f"/static/js/main/api.js?v={STATIC_CACHE_VERSION}",
+        )
+        self.assertTrue(
+            all(target == f"{source}?v={STATIC_CACHE_VERSION}" for source, target in imports.items())
+        )
+
 # Verify that the main page uses the configured engine and local server helpers.
 class MainViewTests(ToolRegistryTestMixin, TestCase):
     # Test main view includes runtime settings and local servers.
@@ -2399,10 +2424,18 @@ class MainViewTests(ToolRegistryTestMixin, TestCase):
             }],
         )
         self.assertContains(response, 'id="group-load"')
-        self.assertNotContains(response, 'type="importmap"')
+        self.assertContains(response, 'type="importmap"')
+        self.assertRegex(
+            response.content.decode("utf-8"),
+            r'"/static/js/ui/deep-research-ui\.js":"/static/js/ui/deep-research-ui\.js\?v=\d{14}"',
+        )
         self.assertRegex(
             response.content.decode("utf-8"),
             r"/static/js/main/main\.js\?v=\d{14}",
+        )
+        self.assertNotRegex(
+            response.content.decode("utf-8"),
+            r"/static/[^\"']+\?v=\d{14}\?v=",
         )
         self.assertNotContains(response, "cdn.jsdelivr.net")
         self.assertContains(response, "/static/css/vendor/katex.min.css?v=")

@@ -5858,6 +5858,21 @@ def deep_research_control_api(request):
             expected_plan_version=expected_plan_version,
         )
         if action == "cancel" and result.get("accepted") and not result.get("terminal"):
+            # Persist the user's intent before waiting for the worker to reach a
+            # cooperative cancellation point. This keeps the Stop control gone
+            # across polls and page reloads instead of briefly reviving it from
+            # the last running snapshot.
+            stopping_state = deep_research_control.update_state(
+                session_id,
+                status="stopping",
+                phase="stopping",
+                latest_action="Stopping research safely",
+                can_approve=False,
+                can_edit=False,
+                can_stop=False,
+                stop_requested_at=time.time(),
+            )
+            result = {**result, "state": stopping_state}
             # The durable command remains the cooperative cancellation path.
             # When this Django process also owns the active tool worker, stop
             # that exact process immediately so a hung provider/read cannot

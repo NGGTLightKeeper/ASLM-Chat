@@ -6743,6 +6743,29 @@ export function createMessagesUi(context, dependencies) {
     configureMermaid();
   }
 
+  // Let Deep Research reuse the exact web-search and Markdown/citation renderers
+  // instead of maintaining visually divergent copies in its inspector.
+  if (deepResearchUi && typeof deepResearchUi.setCanonicalRenderers === 'function') {
+    deepResearchUi.setCanonicalRenderers({
+      search(segment, index, options) {
+        return renderSearchToolCard(segment, index, options);
+      },
+      report(report, sources) {
+        const citationRegistry = createCitationRegistry();
+        (Array.isArray(sources) ? sources : []).forEach(function registerResearchSource(source, index) {
+          addCitationSource(citationRegistry, source, index + 1);
+          const aliases = source && (
+            source.citation_aliases || source.citationAliases || source.aliases
+          );
+          (Array.isArray(aliases) ? aliases : []).forEach(function registerResearchAlias(alias) {
+            addCitationSource(citationRegistry, { ...source, id: alias }, index + 1);
+          });
+        });
+        return renderMarkdownSegment(report, citationRegistry);
+      }
+    });
+  }
+
   bindReasoningDrawerResize();
   bindAttachmentMediaEvents();
   bindCitationPreviewCards(document);

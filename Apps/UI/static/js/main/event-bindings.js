@@ -14,7 +14,9 @@ export function bindEventHandlers(context, dependencies) {
   } = dependencies;
   const { dom, state } = context;
   const rightSidebarStorageKey = 'aslm.settingsSidebarCollapsed';
-  const $activityRoots = dom.$messagesInner.add($('#reasoningDrawerBody'));
+  const $activityRoots = dom.$messagesInner
+    .add($('#reasoningDrawerBody'))
+    .add(dom.$toolInspectorModal);
 
   // Layout helpers.
   // Collapse or expand the right settings sidebar and optionally persist state.
