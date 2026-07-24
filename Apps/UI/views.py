@@ -96,6 +96,7 @@ from Apps.UI.upload_storage import (
 )
 from Settings import mcp_json, settings
 from Settings import skills as skills_config
+from Tools import deep_research_control
 
 logger = logging.getLogger(__name__)
 
@@ -2161,6 +2162,9 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
     if not transcript_entries:
         return []
 
+    def canonical_alias(value: Any) -> str:
+        return re.sub(r"__\d+$", "", str(value or "").strip())
+
     # Index tool results by alias while preserving order. Some runtimes can
     # emit repeated aliases (for example "sandbox__share_file__0" for several
     # different files in one answer), so a simple dict overwrite would keep
@@ -2175,9 +2179,49 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
                     "content": str(entry.get("content") or ""),
                     "toolUi": entry.get("tool_ui") if isinstance(entry.get("tool_ui"), dict) else None,
                     "structuredContent": entry.get("structured_content") if isinstance(entry.get("structured_content"), dict) else None,
+                    "entry": entry,
                 })
 
+    def pop_tool_result(alias: str) -> tuple[str, dict[str, Any] | None]:
+        queue = tool_results.get(alias) or []
+        if queue:
+            return alias, queue.pop(0)
+        normalized = canonical_alias(alias)
+        for candidate_alias, candidate_queue in tool_results.items():
+            if candidate_queue and canonical_alias(candidate_alias) == normalized:
+                return candidate_alias, candidate_queue.pop(0)
+        return alias, None
+
+    def split_alias(alias: str) -> tuple[str, str]:
+        normalized = canonical_alias(alias)
+        if "__" not in normalized:
+            return "", normalized
+        return tuple(normalized.split("__", 1))  # type: ignore[return-value]
+
+    def pending_deep_research_ui(alias: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
+        server_id, tool_id = split_alias(alias)
+        if server_id != "deep_research" and tool_id != "deep_research":
+            return None
+        try:
+            rounds = min(10, max(2, int(arguments.get("max_rounds") or 6)))
+        except (TypeError, ValueError):
+            rounds = 6
+        return {
+            "kind": "deep_research",
+            "status": "planning",
+            "topic": str(arguments.get("topic") or "").strip(),
+            "session_id": str(arguments.get("session_id") or "").strip(),
+            "plan_version": 0,
+            "checklist": [],
+            "queries_used": 0,
+            "query_budget": rounds * 2,
+            "can_approve": False,
+            "can_edit": False,
+            "can_stop": True,
+        }
+
     segments: list[dict[str, Any]] = []
+    consumed_result_entries: dict[str, int] = {}
     for entry in transcript_entries:
         if entry["role"] == "assistant":
             thinking = str(entry.get("thinking", "") or "").strip()
@@ -2186,9 +2230,64 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
                 segments.append({"type": "thought", "content": thinking})
             if content:
                 segments.append({"type": "text", "content": content})
+            for raw_call in entry.get("tool_calls") if isinstance(entry.get("tool_calls"), list) else []:
+                if not isinstance(raw_call, dict):
+                    continue
+                function_payload = raw_call.get("function")
+                if not isinstance(function_payload, dict):
+                    continue
+                alias = str(function_payload.get("name") or "").strip()
+                if not alias:
+                    continue
+                raw_arguments = function_payload.get("arguments")
+                if isinstance(raw_arguments, str):
+                    try:
+                        decoded_arguments = json.loads(raw_arguments)
+                    except json.JSONDecodeError:
+                        decoded_arguments = {}
+                    arguments = decoded_arguments if isinstance(decoded_arguments, dict) else {}
+                else:
+                    arguments = raw_arguments if isinstance(raw_arguments, dict) else {}
+                result_alias, result_payload = pop_tool_result(alias)
+                server_id, tool_id = split_alias(alias)
+                result_entry = result_payload.get("entry") if isinstance(result_payload, dict) else {}
+                segment = {
+                    "type": "tool",
+                    "alias": result_alias or alias,
+                    "serverId": str(result_entry.get("server_id") or server_id),
+                    "serverName": str(result_entry.get("server_name") or server_id.replace("_", " ").title()),
+                    "toolId": str(result_entry.get("tool_id") or tool_id),
+                    "toolName": str(
+                        result_entry.get("tool_display_name")
+                        or result_entry.get("tool_name")
+                        or tool_id.replace("_", " ").title()
+                    ),
+                    "arguments": arguments,
+                    "result": result_payload.get("content") if isinstance(result_payload, dict) else None,
+                }
+                tool_ui = result_payload.get("toolUi") if isinstance(result_payload, dict) else None
+                if not isinstance(tool_ui, dict):
+                    tool_ui = pending_deep_research_ui(alias, arguments)
+                if isinstance(tool_ui, dict):
+                    segment["toolUi"] = tool_ui
+                structured_content = (
+                    result_payload.get("structuredContent") if isinstance(result_payload, dict) else None
+                )
+                if isinstance(structured_content, dict):
+                    segment["structuredContent"] = structured_content
+                segments.append(segment)
+                if result_payload is not None:
+                    normalized_result_alias = canonical_alias(result_alias)
+                    consumed_result_entries[normalized_result_alias] = (
+                        consumed_result_entries.get(normalized_result_alias, 0) + 1
+                    )
             continue
 
         seg_alias = str(entry.get("alias") or entry.get("tool_id", entry.get("name", "")) or "")
+        normalized_seg_alias = canonical_alias(seg_alias)
+        if consumed_result_entries.get(normalized_seg_alias, 0) > 0:
+            consumed_result_entries[normalized_seg_alias] -= 1
+            continue
         payload_queue = tool_results.get(seg_alias) or []
         if payload_queue:
             result_payload = payload_queue.pop(0)
@@ -4616,6 +4715,9 @@ def _stream_chat_response(
             _active_generation_id_by_engine[str(engine)] = str(generation_id or "")
             if tracking_id:
                 _active_generation_id_by_chat_id[tracking_id] = str(generation_id or "")
+        tool_context = generate_kwargs.get("tool_context")
+        if isinstance(tool_context, dict):
+            tool_context["generation_id"] = str(generation_id or "")
         if isinstance(compression_event, dict):
             transcript_entries.append(compression_event)
             persist_stream_snapshot(force=True)
@@ -5684,10 +5786,127 @@ def abort_generation_api(request):
                 active_id = str(_active_generation_id_by_engine.get(str(engine)) or "")
             if not active_id or active_id != generation_id:
                 return JsonResponse({"ok": True, "ignored": True, "reason": "generation_mismatch"})
-        llm_api.abort_generation(engine)
+        llm_api.abort_generation(engine, generation_id=generation_id or None)
         return JsonResponse({"ok": True})
     except Exception as exc:
         logger.exception("Failed to abort generation")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Read or control one durable Deep Research session.
+def deep_research_control_api(request):
+    """Approve, revise, stop, or inspect an isolated Deep Research run."""
+
+    try:
+        if request.method == "GET":
+            session_id = str(request.GET.get("session_id") or "").strip()
+            if not session_id:
+                return JsonResponse({"error": "Missing session_id."}, status=400)
+            state = deep_research_control.read_state(session_id)
+            if not state:
+                return JsonResponse({"error": "Deep research session was not found."}, status=404)
+            return JsonResponse({"ok": True, "state": state})
+
+        if request.method != "POST":
+            return JsonResponse({"error": "Invalid request method"}, status=405)
+
+        data = _read_json_request_body(request)
+        session_id = str(data.get("session_id") or "").strip()
+        action = str(data.get("action") or "").strip().lower()
+        if not session_id:
+            return JsonResponse({"error": "Missing session_id."}, status=400)
+        if action not in {"approve", "revise", "cancel"}:
+            return JsonResponse({"error": "Unsupported deep research action."}, status=400)
+
+        current_state = deep_research_control.read_state(session_id)
+        if not current_state:
+            return JsonResponse({"error": "Deep research session was not found."}, status=404)
+        if action == "approve" and current_state.get("can_approve") is False:
+            return JsonResponse(
+                {"error": "This research plan is not awaiting approval.", "state": current_state},
+                status=409,
+            )
+        if action == "revise" and current_state.get("can_edit") is False:
+            return JsonResponse(
+                {"error": "This research plan can no longer be edited.", "state": current_state},
+                status=409,
+            )
+
+        expected_version = data.get("expected_plan_version")
+        if expected_version in (None, ""):
+            expected_plan_version = None
+        else:
+            try:
+                expected_plan_version = int(expected_version)
+            except (TypeError, ValueError):
+                return JsonResponse({"error": "expected_plan_version must be an integer."}, status=400)
+
+        payload: dict[str, Any] = {}
+        if action in {"approve", "revise"} and data.get("plan") is not None:
+            plan = str(data.get("plan") or "").strip()
+            if len(plan) > 20_000:
+                return JsonResponse({"error": "Research plan is too long."}, status=400)
+            if action == "revise" and not plan:
+                return JsonResponse({"error": "A revised plan cannot be empty."}, status=400)
+            if plan:
+                payload["plan"] = plan
+
+        result = deep_research_control.submit_command(
+            session_id,
+            action,
+            payload=payload,
+            expected_plan_version=expected_plan_version,
+        )
+        if action == "cancel" and result.get("accepted") and not result.get("terminal"):
+            # The durable command remains the cooperative cancellation path.
+            # When this Django process also owns the active tool worker, stop
+            # that exact process immediately so a hung provider/read cannot
+            # leave the card in "Stopping" until its network timeout.
+            interrupted = tool_registry.abort_active_research(session_id)
+            if interrupted:
+                cancelled_at = time.time()
+                terminal_state = deep_research_control.update_state(
+                    session_id,
+                    status="cancelled",
+                    phase="cancelled",
+                    latest_action="Research stopped by user",
+                    can_approve=False,
+                    can_edit=False,
+                    can_stop=False,
+                    cancelled_at=cancelled_at,
+                    completed_at=cancelled_at,
+                )
+                result = {
+                    **result,
+                    "terminal": True,
+                    "state": terminal_state,
+                    "interrupted_active_tools": interrupted,
+                }
+        return JsonResponse({"ok": True, **result}, status=202)
+    except deep_research_control.InvalidResearchSession as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except FileNotFoundError as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except RuntimeError as exc:
+        if str(exc) == "STALE_PLAN_VERSION":
+            state = deep_research_control.read_state(
+                str(request.GET.get("session_id") or "")
+                if request.method == "GET"
+                else str(data.get("session_id") or "")
+            )
+            return JsonResponse(
+                {"error": "The research plan changed. Review the latest revision.", "state": state},
+                status=409,
+            )
+        if str(exc) == "ACTION_NOT_AVAILABLE":
+            state = deep_research_control.read_state(str(data.get("session_id") or ""))
+            return JsonResponse(
+                {"error": "That research action is no longer available.", "state": state},
+                status=409,
+            )
+        raise
+    except Exception as exc:
+        logger.exception("Failed to control Deep Research")
         return JsonResponse({"error": str(exc)}, status=500)
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import io
@@ -9,6 +10,7 @@ import os
 import subprocess
 import tempfile
 import textwrap
+import threading
 import zipfile
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -22,6 +24,7 @@ from django.urls import reverse
 from API import google_genai as google_genai_api
 from API import llm_api
 from API import mcp as tool_registry
+from API import ollama as ollama_api
 from API.google_genai import (
     generate as generate_google_genai,
     get_model_settings as get_google_genai_model_settings,
@@ -320,6 +323,38 @@ class UserMcpPersistentSessionTests(SimpleTestCase):
         self.assertIn("transport stopped", failed)
         self.assertEqual(recovered, "reconnected")
         self.assertEqual(counters["entered"], 2)
+
+    def test_cancel_entry_stops_active_call(self):
+        started = threading.Event()
+        exited = threading.Event()
+        result = {}
+
+        class FakeSession:
+            async def call_tool(self, _name, _arguments):
+                started.set()
+                await asyncio.Event().wait()
+
+        @asynccontextmanager
+        async def fake_connect(_entry):
+            try:
+                yield FakeSession()
+            finally:
+                exited.set()
+
+        def invoke() -> None:
+            result["value"] = user_mcp_client.call_user_mcp_tool(self._entry(), "echo", {})
+
+        with patch.object(user_mcp_client, "_connect_session", fake_connect):
+            caller = threading.Thread(target=invoke, daemon=True)
+            caller.start()
+            self.assertTrue(started.wait(timeout=1))
+
+            user_mcp_client.cancel_entry(self._entry())
+            caller.join(timeout=1)
+
+        self.assertFalse(caller.is_alive())
+        self.assertTrue(exited.is_set())
+        self.assertIn("closed", result.get("value", "").lower())
 
 
 # MCP reload endpoint tests.
@@ -940,6 +975,393 @@ class SkillsSandboxDispatchTests(SimpleTestCase):
 
         sync_mock.assert_called_once()
         self.assertIn("x.txt", str(result))
+
+
+class ToolCancellationTests(SimpleTestCase):
+    def tearDown(self):
+        tool_registry.abort_active_tools()
+        with tool_registry._ACTIVE_TOOL_EXECUTIONS_LOCK:
+            tool_registry._ACTIVE_TOOL_EXECUTIONS.clear()
+
+    def test_abort_active_tools_only_cancels_matching_generation(self):
+        first = tool_registry.ActiveToolExecution("generation-a")
+        second = tool_registry.ActiveToolExecution("generation-b")
+        first_callback = Mock()
+        second_callback = Mock()
+        first.set_cancel_callback(first_callback)
+        second.set_cancel_callback(second_callback)
+        tool_registry._register_active_tool(first)
+        tool_registry._register_active_tool(second)
+
+        cancelled_count = tool_registry.abort_active_tools("generation-a")
+
+        self.assertEqual(cancelled_count, 1)
+        self.assertTrue(first.cancelled.is_set())
+        self.assertFalse(second.cancelled.is_set())
+        first_callback.assert_called_once_with()
+        second_callback.assert_not_called()
+
+    def test_abort_active_research_only_cancels_matching_session(self):
+        first = tool_registry.ActiveToolExecution(
+            "generation-a",
+            research_session_id="deep-research:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        second = tool_registry.ActiveToolExecution(
+            "generation-a",
+            research_session_id="deep-research:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        unrelated = tool_registry.ActiveToolExecution("generation-a")
+        first_callback = Mock()
+        second_callback = Mock()
+        unrelated_callback = Mock()
+        first.set_cancel_callback(first_callback)
+        second.set_cancel_callback(second_callback)
+        unrelated.set_cancel_callback(unrelated_callback)
+        tool_registry._register_active_tool(first)
+        tool_registry._register_active_tool(second)
+        tool_registry._register_active_tool(unrelated)
+
+        cancelled_count = tool_registry.abort_active_research(
+            "deep-research:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
+
+        self.assertEqual(cancelled_count, 1)
+        self.assertTrue(first.cancelled.is_set())
+        self.assertFalse(second.cancelled.is_set())
+        self.assertFalse(unrelated.cancelled.is_set())
+        first_callback.assert_called_once_with()
+        second_callback.assert_not_called()
+        unrelated_callback.assert_not_called()
+
+    def test_streamed_in_process_tool_receives_cancel_event_and_stops(self):
+        started = threading.Event()
+        stopped = threading.Event()
+
+        def blocking_handler(_arguments, context):
+            started.set()
+            context["cancel_event"].wait(timeout=2)
+            stopped.set()
+            return "finished"
+
+        tool = {
+            "id": "wait",
+            "alias": "local__wait",
+            "name": "Wait",
+            "description": "",
+        }
+        server = {
+            "id": "local",
+            "name": "Local",
+            "external": False,
+            "server_file": Path("Tools/local/mcp-server.py"),
+            "tool_handlers": {"wait": blocking_handler},
+            "server_callable": None,
+        }
+        lookup = {"local__wait": {"server": server, "tool": tool}}
+        outcome = {}
+
+        def consume() -> None:
+            stream = tool_registry.stream_ollama_tool(
+                lookup,
+                "local__wait",
+                {},
+                context={"generation_id": "generation-a"},
+            )
+            try:
+                while True:
+                    next(stream)
+            except StopIteration as exc:
+                outcome["result"] = exc.value
+
+        consumer = threading.Thread(target=consume, daemon=True)
+        consumer.start()
+        self.assertTrue(started.wait(timeout=1))
+
+        self.assertEqual(tool_registry.abort_active_tools("generation-a"), 1)
+        consumer.join(timeout=1)
+
+        self.assertFalse(consumer.is_alive())
+        self.assertTrue(stopped.wait(timeout=1))
+        self.assertTrue(tool_registry.is_tool_execution_cancelled(outcome.get("result")))
+
+    def test_research_stop_maps_interrupted_worker_error_to_cancelled_result(self):
+        session_id = "deep-research:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        started = threading.Event()
+        outcome = {}
+
+        def interrupted_call(*_args, **kwargs):
+            cancellation = kwargs["cancellation"]
+            started.set()
+            cancellation.cancelled.wait(timeout=2)
+            raise RuntimeError("worker process was terminated")
+
+        def consume() -> None:
+            with patch.object(tool_registry, "call_ollama_tool", side_effect=interrupted_call):
+                stream = tool_registry.stream_ollama_tool(
+                    {},
+                    "deep_research__deep_research",
+                    {"session_id": session_id},
+                    context={"generation_id": "generation-a"},
+                )
+                try:
+                    while True:
+                        next(stream)
+                except StopIteration as exc:
+                    outcome["result"] = exc.value
+
+        consumer = threading.Thread(target=consume, daemon=True)
+        consumer.start()
+        self.assertTrue(started.wait(timeout=1))
+
+        self.assertEqual(tool_registry.abort_active_research(session_id), 1)
+        consumer.join(timeout=1)
+
+        self.assertFalse(consumer.is_alive())
+        self.assertTrue(tool_registry.is_tool_execution_cancelled(outcome.get("result")))
+
+    def test_research_worker_monitors_durable_stop_while_provider_is_blocked(self):
+        session_id = "deep-research:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        provider_started = threading.Event()
+        stop_requested = threading.Event()
+        cancellation_checkpointed = threading.Event()
+        outcome = {}
+
+        def blocked_provider(*_args, **kwargs):
+            cancellation = kwargs["cancellation"]
+            provider_started.set()
+            cancellation.cancelled.wait(timeout=2)
+            raise RuntimeError("blocked provider interrupted")
+
+        def consume() -> None:
+            def checkpoint_cancelled(*_args, **_kwargs):
+                cancellation_checkpointed.set()
+                return {}
+
+            with (
+                patch.object(tool_registry, "call_ollama_tool", side_effect=blocked_provider),
+                patch(
+                    "Tools.deep_research_control.latest_cancel_requested",
+                    side_effect=lambda _session_id: stop_requested.is_set(),
+                ),
+                patch(
+                    "Tools.deep_research_control.update_state",
+                    side_effect=checkpoint_cancelled,
+                ),
+            ):
+                stream = tool_registry.stream_ollama_tool(
+                    {},
+                    "deep_research__deep_research",
+                    {"session_id": session_id},
+                    context={"generation_id": "generation-a"},
+                )
+                try:
+                    while True:
+                        next(stream)
+                except StopIteration as exc:
+                    outcome["result"] = exc.value
+
+        consumer = threading.Thread(target=consume, daemon=True)
+        consumer.start()
+        self.assertTrue(provider_started.wait(timeout=1))
+
+        stop_requested.set()
+        consumer.join(timeout=2)
+
+        self.assertFalse(consumer.is_alive())
+        self.assertTrue(cancellation_checkpointed.wait(timeout=1))
+        self.assertTrue(tool_registry.is_tool_execution_cancelled(outcome.get("result")))
+
+    def test_ollama_cancellation_forces_the_next_round_to_run_without_tools(self):
+        ollama_api._abort_event.clear()
+        self.addCleanup(ollama_api._abort_event.clear)
+        round_tools = []
+        round_prompts = []
+        round_results = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "function": {
+                        "name": "deep_research__deep_research",
+                        "arguments": {"topic": "Test"},
+                    }
+                }],
+            },
+            {"role": "assistant", "content": "Stopped as requested."},
+        ]
+
+        def fake_stream_round(_client, _model, conversation, _kwargs, *, tools=None):
+            round_tools.append(tools)
+            round_prompts.append(str(conversation[-1].get("content") or ""))
+            result = round_results[len(round_tools) - 1]
+
+            def stream():
+                if False:
+                    yield {}
+                return result
+
+            return stream()
+
+        def cancelled_tool_stream(*_args, **_kwargs):
+            if False:
+                yield {}
+            return tool_registry.TOOL_EXECUTION_CANCELLED
+
+        event = {
+            "alias": "deep_research__deep_research__0",
+            "server_id": "deep-research",
+            "server_name": "Deep Research",
+            "tool_id": "deep_research",
+            "tool_name": "Deep Research",
+            "arguments": {"topic": "Test"},
+        }
+        with (
+            patch.object(ollama_api, "_stream_round", side_effect=fake_stream_round),
+            patch.object(
+                tool_registry,
+                "build_ollama_tools",
+                return_value=([{"type": "function"}], {}),
+            ),
+            patch.object(tool_registry, "prepare_tool_calls", side_effect=lambda _lookup, calls: calls),
+            patch.object(
+                tool_registry,
+                "limit_tool_calls_from_context",
+                side_effect=lambda _context, calls, _lookup: calls,
+            ),
+            patch.object(ollama_api, "_build_tool_event", return_value=event),
+            patch.object(tool_registry, "stream_ollama_tool", side_effect=cancelled_tool_stream),
+        ):
+            list(
+                ollama_api._run_tool_loop(
+                    SimpleNamespace(),
+                    "gemma-test",
+                    [{"role": "user", "content": "Research this"}],
+                    {},
+                    ["deep-research"],
+                    {},
+                )
+            )
+
+        self.assertIsNotNone(round_tools[0])
+        self.assertIsNone(round_tools[1])
+        self.assertIn("Do not call any tool again", round_prompts[1])
+
+    def test_main_chat_abort_does_not_start_a_cancellation_acknowledgement_round(self):
+        ollama_api._abort_event.set()
+        self.addCleanup(ollama_api._abort_event.clear)
+        round_count = 0
+
+        def fake_stream_round(_client, _model, _conversation, _kwargs, *, tools=None):
+            nonlocal round_count
+            round_count += 1
+            if round_count > 1:
+                raise AssertionError("main abort must not start another provider request")
+
+            def stream():
+                if False:
+                    yield {}
+                return {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "function": {
+                            "name": "deep_research__deep_research",
+                            "arguments": {"topic": "Test"},
+                        }
+                    }],
+                }
+
+            return stream()
+
+        def cancelled_tool_stream(*_args, **_kwargs):
+            if False:
+                yield {}
+            return tool_registry.TOOL_EXECUTION_CANCELLED
+
+        event = {
+            "alias": "deep_research__deep_research__0",
+            "server_id": "deep-research",
+            "server_name": "Deep Research",
+            "tool_id": "deep_research",
+            "tool_name": "Deep Research",
+            "arguments": {"topic": "Test"},
+        }
+        with (
+            patch.object(ollama_api, "_stream_round", side_effect=fake_stream_round),
+            patch.object(
+                tool_registry,
+                "build_ollama_tools",
+                return_value=([{"type": "function"}], {}),
+            ),
+            patch.object(tool_registry, "prepare_tool_calls", side_effect=lambda _lookup, calls: calls),
+            patch.object(
+                tool_registry,
+                "limit_tool_calls_from_context",
+                side_effect=lambda _context, calls, _lookup: calls,
+            ),
+            patch.object(ollama_api, "_build_tool_event", return_value=event),
+            patch.object(tool_registry, "stream_ollama_tool", side_effect=cancelled_tool_stream),
+        ):
+            list(
+                ollama_api._run_tool_loop(
+                    SimpleNamespace(),
+                    "gemma-test",
+                    [{"role": "user", "content": "Research this"}],
+                    {},
+                    ["deep-research"],
+                    {},
+                )
+            )
+
+        self.assertEqual(round_count, 1)
+
+    def test_cancelled_persistent_worker_is_not_restarted(self):
+        cancellation = tool_registry.ActiveToolExecution("generation-a")
+        session = tool_registry.ExternalWorkerSession(Path("Tools/example/mcp-server.py"), Path("python"))
+        session.process = SimpleNamespace(stdin=Mock(), stdout=Mock())
+
+        def cancelled_read(_timeout):
+            cancellation.cancelled.set()
+            return ""
+
+        with (
+            patch.object(session, "_start") as start_mock,
+            patch.object(session, "_read_response_line", side_effect=cancelled_read),
+            patch.object(session, "close") as close_mock,
+        ):
+            with self.assertRaises(tool_registry.ToolExecutionCancelled):
+                session.request("call", {}, timeout_s=1, cancellation=cancellation)
+
+        start_mock.assert_called_once_with()
+        close_mock.assert_called_once_with()
+
+    def test_cancelled_during_persistent_worker_start_is_closed_before_request(self):
+        cancellation = tool_registry.ActiveToolExecution("generation-a")
+        session = tool_registry.ExternalWorkerSession(Path("Tools/example/mcp-server.py"), Path("python"))
+
+        def cancel_during_start():
+            cancellation.cancelled.set()
+
+        with (
+            patch.object(session, "_start", side_effect=cancel_during_start) as start_mock,
+            patch.object(session, "close") as close_mock,
+        ):
+            with self.assertRaises(tool_registry.ToolExecutionCancelled):
+                session.request("call", {}, timeout_s=1, cancellation=cancellation)
+
+        start_mock.assert_called_once_with()
+        close_mock.assert_called_once_with()
+
+    @patch("API.llm_api.tool_registry.abort_active_tools")
+    @patch("API.llm_api._get_engine_module")
+    def test_llm_abort_forwards_generation_id_to_tools(self, get_module, abort_tools):
+        adapter = SimpleNamespace(abort_generation=Mock())
+        get_module.return_value = adapter
+
+        llm_api.abort_generation("ollama-service", generation_id="generation-a")
+
+        abort_tools.assert_called_once_with("generation-a")
+        adapter.abort_generation.assert_called_once_with()
 
 
 # Cover per-response tool quota guardrails.
@@ -2891,6 +3313,17 @@ class ViewFormattingTests(SimpleTestCase):
         self.assertEqual(extras["structured_content"]["file"]["render"]["type"], "image")
         self.assertIn("/api/shared-file/download/?", extras["structured_content"]["file"]["download_url"])
         self.assertEqual(extras["tool_ui"]["kind"], "shared_file")
+
+    def test_cancelled_tool_result_is_stable_and_tells_model_not_to_retry(self):
+        model_text, extras = tool_registry.split_tool_result_payload(
+            tool_registry.TOOL_EXECUTION_CANCELLED
+        )
+
+        self.assertTrue(model_text.startswith("TOOL_EXECUTION_CANCELLED:"))
+        self.assertIn("Do not retry", model_text)
+        self.assertNotIn("object at 0x", model_text)
+        self.assertEqual(extras["tool_ui"]["status"], "cancelled")
+        self.assertTrue(tool_registry.is_blocking_tool_result(tool_registry.TOOL_EXECUTION_CANCELLED))
 
     # Test repeated tool aliases preserve all shared files in activity segments.
     def test_build_activity_segments_keeps_repeated_share_file_aliases(self):

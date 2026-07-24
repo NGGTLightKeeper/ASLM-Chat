@@ -23,7 +23,7 @@ let markedStrikethroughDoubleTildeOnlyInstalled = false;
 // Message UI.
 // Create helpers for rendering messages, activity timelines, and message actions.
 export function createMessagesUi(context, dependencies) {
-  const { attachmentUi, browserPortalUi, toolInspector } = dependencies;
+  const { attachmentUi, browserPortalUi, deepResearchUi, toolInspector } = dependencies;
   const { dom, icons, state } = context;
   const MORE_LABEL = t('messages.more', {}, 'More');
   const HIDE_LABEL = t('messages.hide', {}, 'Hide');
@@ -4532,6 +4532,9 @@ export function createMessagesUi(context, dependencies) {
 
   // Handle tool display name.
   function toolDisplayName(segment) {
+    if (deepResearchUi && deepResearchUi.isDeepResearchSegment(segment)) {
+      return 'Deep Research';
+    }
     if (isSearchToolSegment(segment)) {
       return 'Search';
     }
@@ -4678,6 +4681,9 @@ export function createMessagesUi(context, dependencies) {
       return '';
     }
 
+    if (deepResearchUi && deepResearchUi.isDeepResearchSegment(segment)) {
+      return deepResearchUi.renderCard(segment, toolIndex);
+    }
     if (isSearchToolSegment(segment)) {
       return renderSearchToolCard(segment, toolIndex, { compactLabel: true, hideIcon: false, expanded: !!item.expanded });
     }
@@ -4933,14 +4939,15 @@ export function createMessagesUi(context, dependencies) {
         const status = toolStatusText(segment || {});
         const iconHtml = toolIconHtml(segment || {});
         const hideStepTitle = isWriteToolSegment(segment || {}) || isEditToolSegment(segment || {});
+        const isDeepResearch = !!(deepResearchUi && deepResearchUi.isDeepResearchSegment(segment || {}));
         return `
-          <div class="msg-reasoning-step msg-reasoning-step--tool${toolStatusClass(segment || {})}">
-            <div class="msg-reasoning-step-dot" aria-hidden="true">${iconHtml}</div>
+          <div class="msg-reasoning-step msg-reasoning-step--tool${toolStatusClass(segment || {})}${isDeepResearch ? ' is-deep-research' : ''}">
+            ${isDeepResearch ? '' : `<div class="msg-reasoning-step-dot" aria-hidden="true">${iconHtml}</div>`}
             <div class="msg-reasoning-step-body">
-              <div class="msg-reasoning-step-title">
+              ${isDeepResearch ? '' : `<div class="msg-reasoning-step-title">
                 ${hideStepTitle ? '' : `<span>${escHtml(title)}</span>`}
                 <span class="msg-reasoning-step-status">${escHtml(status)}</span>
-              </div>
+              </div>`}
               ${renderReasoningToolItem(item)}
             </div>
           </div>
@@ -4999,6 +5006,12 @@ export function createMessagesUi(context, dependencies) {
       : null;
     if (searchKey) {
       return 'search:' + searchKey;
+    }
+    const researchKey = el.classList.contains('msg-deep-research-card')
+      ? el.getAttribute('data-research-key')
+      : null;
+    if (researchKey) {
+      return 'research:' + researchKey;
     }
     const writeIdx = el.getAttribute('data-write-segment-index');
     if (writeIdx !== null) {
@@ -5249,6 +5262,9 @@ export function createMessagesUi(context, dependencies) {
         return !(segment && segment.type === 'thought');
       });
     }
+    if (deepResearchUi && typeof deepResearchUi.ingestTimeline === 'function') {
+      deepResearchUi.ingestTimeline(renderSegments);
+    }
     const forceReasoningShell = shouldUseReasoningShell(
       $msgRow,
       renderSegments,
@@ -5294,6 +5310,17 @@ export function createMessagesUi(context, dependencies) {
     addAllSearchSourcesToCitationRegistry(citationRegistry, segments);
     const toolSegments = segments.filter(function onlyToolSegments(segment) {
       return segment.type === 'tool';
+    });
+    const standaloneDeepResearchCards = [];
+    let standaloneToolIndex = 0;
+    segments.forEach(function collectStandaloneResearchCard(segment) {
+      if (!segment || segment.type !== 'tool') {
+        return;
+      }
+      if (deepResearchUi && deepResearchUi.isDeepResearchSegment(segment)) {
+        standaloneDeepResearchCards.push(deepResearchUi.renderCard(segment, standaloneToolIndex));
+      }
+      standaloneToolIndex += 1;
     });
     const lastToolSegmentIndex = segments.reduce(function findLastToolIndex(lastIndex, segment, index) {
       return segment && segment.type === 'tool' ? index : lastIndex;
@@ -5390,6 +5417,10 @@ export function createMessagesUi(context, dependencies) {
           if (hasCitationSources(segment)) {
             addSearchSourcesToCitationRegistry(citationRegistry, segment);
           }
+          if (deepResearchUi && deepResearchUi.isDeepResearchSegment(segment)) {
+            activeToolSegmentIndex += 1;
+            return;
+          }
           reasoningItems.push({
             type: 'tool',
             segment,
@@ -5404,6 +5435,14 @@ export function createMessagesUi(context, dependencies) {
         }
       });
 
+      // Deep Research is a first-class chat artifact. Keep it outside the
+      // collapsible Thought/Reasoning shell regardless of model output order.
+      if (standaloneDeepResearchCards.length) {
+        pushBlock(
+          'deep-research-pinned',
+          `<div class="msg-tool-only-group msg-tool-only-group--deep-research">${standaloneDeepResearchCards.join('')}</div>`
+        );
+      }
       if (reasoningItems.length > 0 && reasoningAnchorTextIndex === -1 && !isStreamingTextAfterReasoning) {
         pushBlock('reasoning-active', renderActiveReasoningBlock());
       }
@@ -5485,6 +5524,13 @@ export function createMessagesUi(context, dependencies) {
       return;
     }
 
+    if (standaloneDeepResearchCards.length) {
+      pushBlock(
+        'deep-research-pinned',
+        `<div class="msg-tool-only-group msg-tool-only-group--deep-research">${standaloneDeepResearchCards.join('')}</div>`
+      );
+    }
+
     for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
       const segment = segments[segmentIndex];
 
@@ -5522,6 +5568,11 @@ export function createMessagesUi(context, dependencies) {
               continue;
             }
             const currentToolIndex = toolSegmentIndex;
+            if (deepResearchUi && deepResearchUi.isDeepResearchSegment(groupSegment)) {
+              toolSegmentIndex += 1;
+              segmentIndex += 1;
+              continue;
+            }
             if (hasCitationSources(groupSegment)) {
               addSearchSourcesToCitationRegistry(citationRegistry, groupSegment);
             }
@@ -5541,6 +5592,9 @@ export function createMessagesUi(context, dependencies) {
         }
 
         segmentIndex -= 1;
+        if (!groupItems.length) {
+          continue;
+        }
         if (
           groupItems.some(function hasToolItem(item) {
             return item && (item.type === 'tool' || item.type === 'tool_pending');
@@ -5852,6 +5906,10 @@ export function createMessagesUi(context, dependencies) {
 
     const segment = toolSegments[index];
     if (segment) {
+      if (deepResearchUi && deepResearchUi.isDeepResearchSegment(segment)) {
+        deepResearchUi.openSegment(segment);
+        return;
+      }
       toolInspector.open(segment);
     }
   }

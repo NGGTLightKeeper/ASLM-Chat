@@ -6,6 +6,7 @@ export function bindEventHandlers(context, dependencies) {
   const {
     attachmentsUi,
     chatController,
+    deepResearchUi,
     engineManager,
     historyUi,
     messagesUi,
@@ -252,12 +253,57 @@ export function bindEventHandlers(context, dependencies) {
 
   $activityRoots.on('click', [
     '.msg-tool-call-card[data-tool-segment-index]',
-    '.msg-reasoning-tool-row[data-tool-segment-index]'
+    '.msg-reasoning-tool-row[data-tool-segment-index]',
+    '.msg-deep-research-card[data-tool-segment-index]'
   ].join(', '), function onToolCardClick(event) {
-    if ($(event.target).closest('.msg-search-chip, .msg-write-card, .msg-edit-card, a, button').length) {
+    if ($(event.target).closest('.msg-search-chip, .msg-write-card, .msg-edit-card, a, button, textarea').length) {
       return;
     }
     messagesUi.openToolInspectorFromCard($(this));
+  });
+
+  $activityRoots.on('keydown', '.msg-deep-research-card[data-tool-segment-index]', function onResearchCardKeyDown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    if ($(event.target).is('button, textarea, input')) {
+      return;
+    }
+    event.preventDefault();
+    messagesUi.openToolInspectorFromCard($(this));
+  });
+
+  // Deep Research controls live both on the compact card and in the inspector.
+  $(document).on('click', '[data-deep-research-action]', function onResearchActionClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    deepResearchUi.handleAction($(this)).catch(function onResearchControlError(error) {
+      console.error('Deep Research control failed:', error);
+    });
+  });
+
+  $(document).on('click', '[data-deep-research-editor-action]', function onResearchEditorActionClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const action = String($(this).attr('data-deep-research-editor-action') || '');
+    if (action === 'cancel') {
+      deepResearchUi.cancelEdit();
+      return;
+    }
+    if (action === 'save') {
+      deepResearchUi.saveEdit().catch(function onResearchPlanSaveError(error) {
+        console.error('Failed to save Deep Research plan:', error);
+      });
+    }
+  });
+
+  $(document).on('keydown', '.deep-research-plan-textarea', function onResearchEditorKeyDown(event) {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      deepResearchUi.saveEdit().catch(function onResearchPlanShortcutError(error) {
+        console.error('Failed to save Deep Research plan:', error);
+      });
+    }
   });
 
   $activityRoots.on('click', '.msg-write-card[data-write-segment-index]', function onWriteCardClick() {

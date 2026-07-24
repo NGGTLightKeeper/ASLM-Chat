@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from API import llm_api, mcp as tool_registry
+from Tools import deep_research_control as research_control
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +24,7 @@ for _sandbox_path in (SANDBOX_ROOT / "supervisor", SANDBOX_ROOT / "src"):
         sys.path.insert(0, str(_sandbox_path))
 
 from sandbox.temporal import temporal_sandbox
+from research_orchestrator import run_deep_research_v2
 
 
 RUNTIME_METADATA_FILE = PROJECT_ROOT / "Tools" / "model_runtime_metadata.json"
@@ -505,208 +507,31 @@ def run_deep_research(
     metadata_path: Path = RUNTIME_METADATA_FILE,
     logs_dir: Path = LOGS_DIR,
 ) -> dict[str, Any]:
-    """Plan and execute one isolated research session using the caller's model."""
-
-    topic = str(arguments.get("topic") or "").strip()
-    if not topic:
-        raise ValueError("Deep research requires a non-empty topic.")
-    instructions = str(arguments.get("instructions") or "").strip()
-    max_rounds = _coerce_max_rounds(arguments.get("max_rounds"))
-    runtime = resolve_runtime_model(context, metadata_path=metadata_path)
-    engine = runtime["engine"]
-    model = runtime["model"]
-    generation_options = _generation_options(runtime)
-    request_text = topic if not instructions else f"{topic}\n\nAdditional instructions:\n{instructions}"
-    session_id = f"deep-research:{uuid.uuid4().hex}"
-    caller = context if isinstance(context, Mapping) else {}
-    event_logger = ResearchEventLogger(
-        session_id,
-        callback=caller.get("event_callback"),
-        logs_dir=logs_dir,
-    )
-    sandbox_spec: dict[str, str] | None = None
-    inner_context: dict[str, Any] | None = None
-    runtime_scope_cleaned = False
+    """Run the deterministic v2 state machine with the caller's selected model."""
 
     try:
-        event_logger.emit(
-            "session_started",
-            phase="session",
-            iteration=0,
-            data={
-                "topic": topic,
-                "instructions": instructions,
-                "engine": engine,
-                "model": model,
-                "max_rounds": max_rounds,
-                "fresh_process": True,
-                "allowed_tool_aliases": list(ALLOWED_TOOL_ALIASES),
-                "compression_trigger_chars": _compression_trigger_chars(runtime),
-            },
-        )
-        event_logger.emit("planning_started", phase="planning")
-        plan_result = llm_api.generate(
-            engine,
-            model,
-            [
-                {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
-                {"role": "user", "content": request_text},
-            ],
-            **generation_options,
-        )
-        plan, _unused_sources = _collect_generation(
-            plan_result,
-            event_logger=event_logger,
-            phase="planning",
-        )
-        if not plan:
-            plan = (
-                "Identify the answer-critical claims; discover authoritative sources with one focused "
-                "query; inspect the strongest pages; verify important claims independently; synthesize "
-                "the answer with exact citation handles and explicit limitations."
-            )
-        event_logger.emit(
-            "planning_completed",
-            phase="planning",
-            data={"plan": plan},
-        )
-
-        try:
-            with temporal_sandbox() as sandbox_spec:
-                event_logger.emit(
-                    "sandbox_allocated",
-                    phase="sandbox",
-                    data=sandbox_spec,
-                    iteration=0,
+        runtime = resolve_runtime_model(context, metadata_path=metadata_path)
+    except Exception as exc:
+        session_id = str(arguments.get("session_id") or "").strip()
+        if session_id:
+            try:
+                research_control.update_state(
+                    session_id,
+                    status="failed",
+                    phase="failed",
+                    latest_action="The selected research model could not be initialized",
+                    error=f"{type(exc).__name__}: {str(exc)[:300]}",
+                    can_approve=False,
+                    can_edit=False,
+                    can_stop=False,
                 )
-                inner_context = {
-                    "chat_id": session_id,
-                    "engine": engine,
-                    "model_name": model,
-                    "module_dir": str(PROJECT_ROOT),
-                    "project_dir": str(PROJECT_ROOT),
-                    "selected_tool_server_ids": ["web_search", "sandbox"],
-                    "sandbox_enabled": True,
-                    "temporal_sandbox": sandbox_spec,
-                    "allowed_tool_aliases": list(ALLOWED_TOOL_ALIASES),
-                    "required_tool_server_ids": ["web_search"],
-                    "forced_tool_name": "web_search__web_search",
-                    "max_parallel_tool_calls_by_server": {"web_search": 2},
-                    "max_tool_rounds": max_rounds,
-                    "conversation_compactor": _research_compactor(runtime, event_logger),
-                    "compression_trigger_chars": _compression_trigger_chars(runtime),
-                    "compression_prefix_messages": 4,
-                    "deep_research": True,
-                }
-                event_logger.emit(
-                    "research_started",
-                    phase="research",
-                    data={"plan": plan},
-                )
-                research_result = llm_api.generate(
-                    engine,
-                    model,
-                    [
-                        {"role": "system", "content": RESEARCH_SYSTEM_PROMPT},
-                        {"role": "user", "content": f"Original research request:\n{request_text}"},
-                        {"role": "assistant", "content": f"Initial research plan:\n{plan}"},
-                        {
-                            "role": "user",
-                            "content": (
-                                "Execute this plan now. Reassess it after every search batch, improve the "
-                                "next queries from the evidence, and return the complete cited report."
-                            ),
-                        },
-                    ],
-                    tool_server_ids=["web_search", "sandbox"],
-                    tool_context=inner_context,
-                    **generation_options,
-                )
-                report, sources = _collect_generation(
-                    research_result,
-                    event_logger=event_logger,
-                    phase="research",
-                )
-        finally:
-            if sandbox_spec is not None:
-                workspace = Path(sandbox_spec["host_workspace"])
-                event_logger.emit(
-                    "sandbox_cleanup_completed",
-                    phase="sandbox",
-                    iteration=0,
-                    data={
-                        "container_name": sandbox_spec["container_name"],
-                        "host_workspace": str(workspace),
-                        "container_removed": True,
-                        "workspace_removed": not workspace.exists(),
-                    },
-                )
-
-        if inner_context is not None:
-            tool_registry.clear_tool_runtime_scope(inner_context)
-            runtime_scope_cleaned = True
-            event_logger.emit(
-                "runtime_scope_cleanup_completed",
-                phase="session",
-                iteration=0,
-                data={"chat_id": session_id},
-            )
-
-        if not report:
-            report = "Deep research ended without a final report."
-        parent_model_context = replace_citation_handles_with_markdown_links(report, sources)
-        event_logger.emit(
-            "report_completed",
-            phase="research",
-            data={"report": report, "source_count": len(sources), "sources": sources},
-        )
-        event_logger.emit(
-            "session_completed",
-            phase="session",
-            iteration=0,
-            data={"status": "done" if report and sources else "partial"},
-        )
-        return {
-            "model_context": parent_model_context,
-            "report": report,
-            "plan": plan,
-            "sources": sources,
-            "event_log": {
-                "schema_version": event_logger.schema_version,
-                "path": str(event_logger.path),
-                "event_count": event_logger.sequence,
-            },
-            "ui": {
-                "kind": "deep_research",
-                "status": "done" if report and sources else "partial",
-                "result_count": len(sources),
-                "sources": sources,
-                "engine": engine,
-                "model": model,
-                "session_id": session_id,
-                "plan": plan,
-                "event_log": {
-                    "schema_version": event_logger.schema_version,
-                    "path": str(event_logger.path),
-                    "event_count": event_logger.sequence,
-                },
-            },
-        }
-    except BaseException as exc:
-        event_logger.emit(
-            "session_failed",
-            phase="session",
-            iteration=0,
-            data={"error_type": type(exc).__name__, "message": str(exc)},
-        )
+            except (OSError, ValueError):
+                pass
         raise
-    finally:
-        if inner_context is not None and not runtime_scope_cleaned:
-            tool_registry.clear_tool_runtime_scope(inner_context)
-            event_logger.emit(
-                "runtime_scope_cleanup_completed",
-                phase="session",
-                iteration=0,
-                data={"chat_id": session_id, "during_error_cleanup": True},
-            )
-        event_logger.close()
+    return run_deep_research_v2(
+        arguments,
+        context,
+        runtime=runtime,
+        generation_options=_generation_options(runtime),
+        logs_dir=logs_dir,
+    )

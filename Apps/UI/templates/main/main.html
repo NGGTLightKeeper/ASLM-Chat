@@ -324,18 +324,18 @@
 <div id="floating-media-root"></div>
 
 {# Tool execution inspector. #}
-<div class="tool-inspector-overlay" id="toolInspectorModal">
-    <div class="tool-inspector-panel">
+<div class="tool-inspector-overlay" id="toolInspectorModal" aria-hidden="true">
+    <div class="tool-inspector-panel" role="dialog" aria-modal="true" aria-labelledby="toolInspectorTitle" tabindex="-1">
         <div class="tool-inspector-header">
             <div class="tool-inspector-header-left">
-                <span class="tool-inspector-title"></span>
+                <span class="tool-inspector-title" id="toolInspectorTitle"></span>
                 <span class="tool-inspector-server"></span>
             </div>
-            <button class="tool-inspector-close" id="toolInspectorClose" aria-label="{% t "toolInspector.close" %}">
+            <button class="tool-inspector-close" id="toolInspectorClose" type="button" aria-label="{% t "toolInspector.close" %}">
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/x.svg' %}#icon"></use></svg>
             </button>
         </div>
-        <div class="tool-inspector-body">
+        <div class="tool-inspector-body tool-inspector-generic-body">
             <div class="tool-inspector-section">
                 <div class="tool-inspector-section-label">{% t "toolInspector.in" %}</div>
                 <pre class="tool-inspector-in tool-inspector-pre"></pre>
@@ -343,6 +343,23 @@
             <div class="tool-inspector-section">
                 <div class="tool-inspector-section-label">{% t "toolInspector.out" %}</div>
                 <pre class="tool-inspector-out tool-inspector-pre"></pre>
+            </div>
+        </div>
+        <div class="tool-inspector-research" style="display:none;">
+            <div class="tool-inspector-research-main">
+                <div class="tool-inspector-research-body" aria-live="polite"></div>
+                <div class="tool-inspector-research-error" role="alert" style="display:none;"></div>
+                <div class="tool-inspector-research-footer"></div>
+            </div>
+            <div class="deep-research-plan-editor" style="display:none;">
+                <label class="deep-research-plan-editor-label" for="deepResearchPlanTextarea">Edit research plan</label>
+                <p class="deep-research-plan-editor-help">Keep the plan focused. Use one checklist item per line.</p>
+                <textarea class="deep-research-plan-textarea" id="deepResearchPlanTextarea" spellcheck="true"></textarea>
+                <div class="tool-inspector-research-error" role="alert" style="display:none;"></div>
+                <div class="deep-research-plan-editor-actions">
+                    <button type="button" class="deep-research-btn deep-research-btn--secondary" data-deep-research-editor-action="cancel">Cancel</button>
+                    <button type="button" class="deep-research-btn deep-research-btn--primary" data-deep-research-editor-action="save">Save changes</button>
+                </div>
             </div>
         </div>
     </div>
@@ -355,5 +372,5 @@
 {{ runtime_settings|json_script:"runtimeSettingsData" }}
 {{ engine_options|json_script:"engineOptionsData" }}
 {{ available_tool_servers|json_script:"availableToolServersData" }}
-<script type="module" src="{% static 'js/main/main.js' %}"></script>
+<script type="module" src="{% static 'js/main/main.js' %}?v={{ static_cache_version }}"></script>
 {% endblock %}

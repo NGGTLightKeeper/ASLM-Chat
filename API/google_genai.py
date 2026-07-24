@@ -2220,6 +2220,7 @@ def _run_tool_loop(
             _ev["alias"] = f"{_ev['alias']}__{_i}"
         yield {"tool_events": tool_events}
 
+        cancelled_tool_result_seen = False
         for tool_call_index, (tool_call, tool_event) in enumerate(zip(tool_calls, tool_events), start=1):
             call_context = dict(tool_context or {})
             call_context.update(
@@ -2279,6 +2280,10 @@ def _run_tool_loop(
                                 tool_call.get("arguments") or {},
                                 context=call_context,
                             )
+            cancelled_tool_result_seen = (
+                cancelled_tool_result_seen
+                or tool_registry.is_tool_execution_cancelled(tool_result)
+            )
             if tool_registry.is_blocking_tool_result(tool_result):
                 consecutive_blocked_tool_results += 1
             else:
@@ -2313,11 +2318,19 @@ def _run_tool_loop(
             conversation.append({"role": "user", "parts": tool_response_parts})
 
         # Force one final answer when repeated guardrail tool results stall progress.
-        if consecutive_blocked_tool_results >= 2:
+        if cancelled_tool_result_seen and _abort_event.is_set():
+            return
+        if cancelled_tool_result_seen or consecutive_blocked_tool_results >= 2:
             conversation.append(
                 {
                     "role": "user",
-                    "parts": [{"text": tool_registry.forced_final_prompt_after_tool_blocks()}],
+                    "parts": [{
+                        "text": (
+                            tool_registry.forced_final_prompt_after_tool_cancellation()
+                            if cancelled_tool_result_seen
+                            else tool_registry.forced_final_prompt_after_tool_blocks()
+                        )
+                    }],
                 }
             )
             final_config = _strip_tools_from_config(request_config)

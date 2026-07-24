@@ -83,9 +83,30 @@ class RuntimeModelTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "does not support tool calling"):
             deep_research.resolve_runtime_model({}, metadata_path=Path(metadata.name))
 
+    def test_runtime_resolution_failure_marks_prepared_session_failed(self):
+        session_id = "deep-research:20000000000000000000000000000001"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                mock.patch.object(deep_research.research_control, "STATE_ROOT", root / "state"),
+                mock.patch.object(deep_research.research_control, "COMMAND_ROOT", root / "commands"),
+            ):
+                deep_research.research_control.create_session(session_id, topic="Test")
+
+                with self.assertRaises(RuntimeError):
+                    deep_research.run_deep_research(
+                        {"topic": "Test", "session_id": session_id},
+                        {},
+                        metadata_path=root / "missing-runtime.json",
+                    )
+
+                state = deep_research.research_control.read_state(session_id)
+                self.assertEqual(state["status"], "failed")
+                self.assertFalse(state["can_stop"])
+
 
 class OrchestrationTests(unittest.TestCase):
-    def test_plan_and_research_are_separate_generations_with_restricted_tools(self):
+    def test_state_machine_reflects_selects_searches_and_synthesizes_without_model_tools(self):
         metadata = _metadata_file(
             {
                 "active": {"engine": "openai", "model": "research-model"},
@@ -104,58 +125,83 @@ class OrchestrationTests(unittest.TestCase):
             "url": "https://example.com/source",
             "title": "Primary source",
         }
-        plan_chunks = iter([{"message": {"role": "assistant", "content": "Plan with first queries"}}])
-        research_chunks = iter(
-            [
-                {"tool_result": {"structured_content": {"sources": [source]}}},
-                {"tool_result": {"structured_content": {"sources": [source]}}},
-                {
-                    "transcript_message": {
-                        "role": "assistant",
-                        "content": "Verified report [c0042-1]",
-                    }
-                },
-            ]
-        )
+        model_outputs = [
+            '{"summary":"Verify the claim","steps":[{"id":"s1","title":"Find primary evidence"}],'
+            '"candidates":[{"text":"claim primary evidence","vertical":"web","purpose":"primary source"}]}',
+            '{"assessment":"Primary evidence is missing.","gaps":["primary source"],'
+            '"updates":[{"id":"s1","status":"active"}],"complete":false,'
+            '"candidates":[{"text":"claim primary evidence","vertical":"web","purpose":"primary source"}]}',
+            '{"queries":[{"text":"claim primary evidence","vertical":"web","purpose":"best direct query"}]}',
+            '{"assessment":"The primary evidence is verified.","gaps":[],'
+            '"updates":[{"id":"s1","status":"done"}],"complete":true,"candidates":[]}',
+            '{"assessment":"Final audit confirms the primary evidence.","gaps":[],'
+            '"updates":[{"id":"s1","status":"done"}],"complete":true,"candidates":[]}',
+            "Verified report [c0042-1]",
+        ]
+        generation_chunks = [
+            iter([{"message": {"role": "assistant", "content": output}}])
+            for output in model_outputs
+        ]
 
         event_log_dir = tempfile.TemporaryDirectory()
         self.addCleanup(event_log_dir.cleanup)
         streamed_events: list[dict] = []
-        with mock.patch.object(
-            deep_research.llm_api,
-            "generate",
-            side_effect=[plan_chunks, research_chunks],
-        ) as generate:
+        control_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(control_dir.cleanup)
+
+        def fake_tool(_lookup, alias, _arguments, context=None):
+            del context
+            if alias == "web_search__web_search":
+                return {
+                    "_tool_result_structured": {
+                        "model_context": "Primary evidence [c0042-1]",
+                        "sources": [source],
+                    }
+                }
+            return {
+                "_tool_result_structured": {
+                    "model_context": "Full primary source [c0042-1]",
+                    "sources": [source],
+                }
+            }
+
+        from research_orchestrator import control as research_control
+
+        with (
+            mock.patch.object(deep_research.llm_api, "generate", side_effect=generation_chunks) as generate,
+            mock.patch.object(tool_registry, "build_ollama_tools", return_value=([], {"web_search__web_search": {}, "web_search__read_page": {}})),
+            mock.patch.object(tool_registry, "call_ollama_tool", side_effect=fake_tool) as call_tool,
+            mock.patch.object(tool_registry, "clear_tool_runtime_scope"),
+            mock.patch.object(research_control, "STATE_ROOT", Path(control_dir.name) / "state"),
+            mock.patch.object(research_control, "COMMAND_ROOT", Path(control_dir.name) / "commands"),
+        ):
             result = deep_research.run_deep_research(
-                {"topic": "Investigate the claim", "max_rounds": 9},
+                {
+                    "topic": "Investigate the claim",
+                    "max_rounds": 2,
+                    "session_id": "deep-research:11111111111111111111111111111111",
+                },
                 {
                     "engine": "openai",
                     "model_name": "research-model",
                     "chat_id": "outer",
                     "event_callback": streamed_events.append,
+                    "auto_approve": True,
                 },
                 metadata_path=Path(metadata.name),
                 logs_dir=Path(event_log_dir.name),
             )
 
-        self.assertEqual(generate.call_count, 2)
-        planning_call, research_call = generate.call_args_list
-        self.assertEqual(planning_call.args[:2], ("openai", "research-model"))
-        self.assertNotIn("tool_server_ids", planning_call.kwargs)
-        self.assertTrue(planning_call.kwargs["think"])
-        self.assertEqual(planning_call.kwargs["think_level"], "high")
-
-        self.assertEqual(research_call.kwargs["tool_server_ids"], ["web_search", "sandbox"])
-        inner_context = research_call.kwargs["tool_context"]
-        self.assertNotEqual(inner_context["chat_id"], "outer")
-        self.assertEqual(inner_context["max_parallel_tool_calls_by_server"], {"web_search": 2})
-        self.assertEqual(inner_context["max_tool_rounds"], 9)
-        self.assertTrue(callable(inner_context["conversation_compactor"]))
-        self.assertGreater(inner_context["compression_trigger_chars"], 0)
-        self.assertIn("container_name", inner_context["temporal_sandbox"])
-        self.assertFalse(Path(inner_context["temporal_sandbox"]["host_workspace"]).exists())
-        self.assertEqual(set(inner_context["allowed_tool_aliases"]), set(deep_research.ALLOWED_TOOL_ALIASES))
-        self.assertIn("Plan with first queries", research_call.args[2][2]["content"])
+        self.assertEqual(generate.call_count, 6)
+        for generation_call in generate.call_args_list:
+            self.assertEqual(generation_call.args[:2], ("openai", "research-model"))
+            self.assertNotIn("tool_server_ids", generation_call.kwargs)
+            self.assertTrue(generation_call.kwargs["think"])
+            self.assertEqual(generation_call.kwargs["think_level"], "high")
+        self.assertEqual(
+            [call.args[1] for call in call_tool.call_args_list],
+            ["web_search__web_search", "web_search__read_page"],
+        )
 
         self.assertEqual(result["report"], "Verified report [c0042-1]")
         self.assertEqual(
@@ -164,6 +210,8 @@ class OrchestrationTests(unittest.TestCase):
         )
         self.assertEqual(result["sources"], [source])
         self.assertEqual(result["ui"]["result_count"], 1)
+        self.assertEqual(result["ui"]["status"], "completed")
+        self.assertEqual(result["ui"]["queries_used"], 1)
         event_log_path = Path(result["event_log"]["path"])
         self.assertTrue(event_log_path.is_file())
         persisted_events = [
@@ -177,10 +225,13 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(streamed_events, persisted_events)
         event_types = {event["type"] for event in persisted_events}
         self.assertIn("planning_started", event_types)
-        self.assertIn("model_output_delta", event_types)
-        self.assertIn("tool_result", event_types)
-        self.assertIn("sandbox_cleanup_completed", event_types)
+        self.assertIn("approval_required", event_types)
+        self.assertIn("reflection_completed", event_types)
+        self.assertIn("queries_selected", event_types)
+        self.assertIn("search_completed", event_types)
+        self.assertIn("synthesis_started", event_types)
         self.assertIn("session_completed", event_types)
+        self.assertNotIn("model_output_delta", event_types)
 
     def test_parent_model_context_resolves_grouped_citations_to_links(self):
         result = deep_research.replace_citation_handles_with_markdown_links(
@@ -261,8 +312,15 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(received[0]["data"]["content"], "live")
 
     def test_stream_tool_yields_activity_before_returning_result(self):
-        def fake_call(_lookup, _alias, _arguments, context=None, event_callback=None):
-            del context
+        def fake_call(
+            _lookup,
+            _alias,
+            _arguments,
+            context=None,
+            event_callback=None,
+            cancellation=None,
+        ):
+            del context, cancellation
             event_callback({"type": "first"})
             event_callback({"type": "second"})
             return "finished"
@@ -291,8 +349,15 @@ class OrchestrationTests(unittest.TestCase):
     def test_stream_tool_flushes_full_batches_without_waiting_for_completion(self):
         release_tool = threading.Event()
 
-        def fake_call(_lookup, _alias, _arguments, context=None, event_callback=None):
-            del context
+        def fake_call(
+            _lookup,
+            _alias,
+            _arguments,
+            context=None,
+            event_callback=None,
+            cancellation=None,
+        ):
+            del context, cancellation
             event_callback({"sequence": 1, "type": "first"})
             event_callback({"sequence": 2, "type": "second"})
             event_callback({"sequence": 3, "type": "third"})
@@ -364,9 +429,11 @@ class ContractTests(unittest.TestCase):
         )
         self.assertTrue(prepared["ok"])
         self.assertEqual(prepared["arguments"]["topic"], "A topic")
-        self.assertEqual(prepared["arguments"]["max_rounds"], 24)
+        self.assertEqual(prepared["arguments"]["max_rounds"], 10)
         self.assertEqual(prepared["arguments"]["timeout_s"], 3600)
-        self.assertEqual(prepared["tool_ui"]["status"], "running")
+        self.assertEqual(prepared["tool_ui"]["status"], "planning")
+        self.assertRegex(prepared["arguments"]["session_id"], r"^deep-research:[a-f0-9]{32}$")
+        self.assertEqual(prepared["tool_ui"]["query_budget"], 20)
 
     def test_registry_filters_every_non_research_tool(self):
         server = {

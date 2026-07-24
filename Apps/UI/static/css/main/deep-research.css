@@ -1,0 +1,654 @@
+/* Deep Research: neutral plan card and right-side activity inspector. */
+
+.msg-tool-only-group--deep-research {
+  width: min(100%, 680px);
+  max-width: 680px;
+  align-self: flex-start;
+}
+
+/* The research plan is its own chat artifact, not part of Thought/Reasoning. */
+.msg.assistant:has(.msg-deep-research-card) .msg-activity-stream {
+  gap: 9px;
+  padding: 0;
+  background: transparent;
+}
+
+.msg.assistant:has(.msg-deep-research-card) .msg-activity-block[data-activity-key="reasoning-active"] {
+  max-width: 680px;
+}
+
+.msg.assistant:has(.msg-deep-research-card) .msg-avatar {
+  border: 1px solid #3a3a3a;
+  background: #2c2c2c;
+  color: #fff;
+}
+
+.msg-deep-research-card {
+  --c-text: #fff;
+  --c-text-muted: rgba(255, 255, 255, 0.6);
+  --c-text-dim: rgba(255, 255, 255, 0.32);
+  --c-border: #2e2e2e;
+  --c-border-strong: #3a3a3a;
+  --surface-primary: #111;
+  --surface-secondary: #1c1c1c;
+  --surface-tertiary: #2c2c2c;
+  width: 100%;
+  max-width: 680px;
+  padding: 16px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: 16px;
+  background: var(--surface-secondary);
+  color: var(--c-text);
+  cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast), transform var(--t-fast);
+}
+
+.msg-deep-research-card:hover {
+  border-color: var(--c-text-dim);
+  background: color-mix(in srgb, var(--surface-secondary) 82%, var(--c-text) 3%);
+}
+
+.msg-deep-research-card:active {
+  transform: translateY(1px);
+}
+
+.msg-deep-research-card:focus-visible,
+.deep-research-btn:focus-visible,
+.deep-research-link-btn:focus-visible,
+.deep-research-card-activity:focus-visible,
+.deep-research-stop-button:focus-visible {
+  outline: 2px solid var(--c-text);
+  outline-offset: 2px;
+}
+
+.deep-research-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+}
+
+.deep-research-card-topic {
+  min-width: 0;
+  margin: 0;
+  color: var(--c-text);
+  font-size: var(--font-size-body-1);
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.deep-research-card-plan {
+  margin-top: 15px;
+}
+
+.deep-research-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.deep-research-checklist.is-compact {
+  gap: 11px;
+}
+
+.deep-research-check-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  min-width: 0;
+  color: var(--c-text);
+  font-size: var(--font-size-body-2);
+  line-height: 1.42;
+}
+
+.deep-research-check-mark {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+  border: 1px solid var(--c-text-dim);
+  border-radius: 50%;
+  background: transparent;
+}
+
+.deep-research-check-item.is-done .deep-research-check-mark {
+  border-color: var(--c-text);
+  background: var(--c-text);
+}
+
+.deep-research-check-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.deep-research-check-title,
+.deep-research-check-note {
+  overflow-wrap: anywhere;
+}
+
+.deep-research-check-note,
+.deep-research-check-more {
+  color: var(--c-text-dim);
+  font-size: var(--font-size-caption-2);
+}
+
+.deep-research-check-more {
+  padding-left: 29px;
+}
+
+.deep-research-plan-empty {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 28px;
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-1);
+}
+
+.deep-research-spinner {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  display: inline-block;
+  border: 2px solid var(--c-border-strong);
+  border-top-color: var(--c-text);
+  border-radius: 50%;
+  animation: deep-research-spin 0.85s linear infinite;
+}
+
+.deep-research-card-run-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.deep-research-card-activity {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--c-text-muted);
+  font: inherit;
+  font-size: var(--font-size-caption-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.deep-research-card-activity:hover {
+  color: var(--c-text);
+}
+
+.deep-research-card-activity-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deep-research-stop-button {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--c-border-strong);
+  border-radius: 50%;
+  background: var(--surface-tertiary);
+  color: var(--c-text);
+  cursor: pointer;
+}
+
+.deep-research-stop-button > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.deep-research-stop-button:hover:not(:disabled) {
+  border-color: var(--c-text-muted);
+  background: var(--surface-primary);
+}
+
+.deep-research-card-actions,
+.deep-research-inspector-actions,
+.deep-research-plan-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.deep-research-card-actions {
+  margin-top: 18px;
+}
+
+.deep-research-card-actions .is-edit-action {
+  margin-right: auto;
+}
+
+.deep-research-card-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: auto;
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-2);
+}
+
+.deep-research-btn,
+.deep-research-link-btn {
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.deep-research-btn {
+  min-height: 34px;
+  padding: 7px 13px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--c-text);
+  font-size: var(--font-size-caption-1);
+  font-weight: 500;
+  line-height: 1.2;
+  transition: background var(--t-fast), border-color var(--t-fast), opacity var(--t-fast);
+}
+
+.deep-research-btn:hover:not(:disabled) {
+  border-color: var(--c-text-muted);
+  background: var(--surface-tertiary);
+}
+
+.deep-research-btn:disabled,
+.deep-research-stop-button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.deep-research-btn--primary {
+  border-color: var(--c-text);
+  background: var(--c-text);
+  color: var(--surface-primary);
+}
+
+.deep-research-btn--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--c-text) 88%, var(--surface-primary));
+}
+
+.deep-research-btn--danger {
+  border-style: solid;
+  background: transparent;
+  color: var(--c-text);
+}
+
+.deep-research-btn.is-compact {
+  min-height: 32px;
+  padding: 6px 11px;
+}
+
+.deep-research-link-btn {
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-1);
+}
+
+.deep-research-link-btn:hover {
+  color: var(--c-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.deep-research-inline-error,
+.deep-research-inspector-error,
+.tool-inspector-research-error {
+  color: var(--c-text);
+  font-size: var(--font-size-caption-1);
+}
+
+.deep-research-inline-error {
+  margin-top: 11px;
+  padding-left: 10px;
+  border-left: 2px solid var(--c-text);
+}
+
+/* Right-side working-model window. */
+.tool-inspector-overlay.is-deep-research {
+  align-items: stretch;
+  justify-content: flex-end;
+  background: color-mix(in srgb, #000 46%, transparent);
+}
+
+.tool-inspector-overlay.is-deep-research .tool-inspector-panel {
+  --c-text: #fff;
+  --c-text-muted: rgba(255, 255, 255, 0.6);
+  --c-text-dim: rgba(255, 255, 255, 0.32);
+  --c-border: #2e2e2e;
+  --c-border-strong: #3a3a3a;
+  --surface-primary: #111;
+  --surface-secondary: #1c1c1c;
+  --surface-tertiary: #2c2c2c;
+  width: min(440px, 94vw);
+  height: 100%;
+  max-height: none;
+  border-width: 0 0 0 1px;
+  border-radius: 0;
+  background: var(--surface-primary);
+  box-shadow: -14px 0 36px color-mix(in srgb, #000 32%, transparent);
+  animation: deep-research-inspector-in 180ms ease-out both;
+}
+
+.tool-inspector-overlay.is-deep-research .tool-inspector-header {
+  min-height: 0;
+  padding: 18px 16px 10px;
+  border-bottom: 0;
+  background: transparent;
+}
+
+.tool-inspector-overlay.is-deep-research .tool-inspector-header-left {
+  min-width: 0;
+}
+
+.tool-inspector-overlay.is-deep-research .tool-inspector-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-inspector-overlay.is-deep-research .tool-inspector-server {
+  display: none;
+}
+
+.tool-inspector-panel:focus {
+  outline: none;
+}
+
+.tool-inspector-research {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.tool-inspector-research-main {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-inspector-research-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.deep-research-inspector-section {
+  padding: 10px 16px 17px;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.deep-research-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.deep-research-section-head h3 {
+  margin: 0;
+  color: var(--c-text);
+  font-size: var(--font-size-body-2);
+  font-weight: 500;
+}
+
+.deep-research-section-head > span {
+  color: var(--c-text-dim);
+  font-size: var(--font-size-caption-2);
+}
+
+.deep-research-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.deep-research-activity-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr) auto;
+  gap: 9px;
+  padding: 8px 0;
+}
+
+.deep-research-activity-item:not(:last-child)::before {
+  position: absolute;
+  top: 22px;
+  bottom: -6px;
+  left: 7px;
+  width: 1px;
+  background: var(--c-border-strong);
+  content: "";
+}
+
+.deep-research-activity-marker {
+  width: 9px;
+  height: 9px;
+  margin: 5px 0 0 3px;
+  border: 1px solid var(--c-text-muted);
+  border-radius: 50%;
+  background: var(--surface-primary);
+  z-index: 1;
+}
+
+.deep-research-activity-item.is-running .deep-research-activity-marker {
+  background: var(--c-text);
+  animation: deep-research-pulse 1.4s ease-in-out infinite;
+}
+
+.deep-research-activity-item.is-done .deep-research-activity-marker {
+  background: var(--c-text-muted);
+}
+
+.deep-research-activity-item.is-failed .deep-research-activity-marker,
+.deep-research-activity-item.is-error .deep-research-activity-marker {
+  border-style: double;
+  border-width: 3px;
+}
+
+.deep-research-activity-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.deep-research-activity-title {
+  color: var(--c-text);
+  font-size: var(--font-size-caption-1);
+  line-height: 1.4;
+}
+
+.deep-research-activity-detail,
+.deep-research-activity-time,
+.deep-research-activity-empty {
+  color: var(--c-text-dim);
+  font-size: var(--font-size-caption-2);
+}
+
+.deep-research-activity-detail {
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.deep-research-activity-item.is-search .deep-research-activity-detail {
+  color: var(--c-text);
+}
+
+.deep-research-activity-time {
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.deep-research-activity-empty {
+  padding: 18px 0;
+  text-align: center;
+}
+
+.deep-research-recovered-report {
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-1);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.tool-inspector-research-error,
+.deep-research-inspector-error {
+  margin: 0 16px 14px;
+  padding: 10px 11px;
+  border: 1px dashed var(--c-text-muted);
+  border-radius: 9px;
+  background: transparent;
+}
+
+.tool-inspector-research-footer {
+  flex: 0 0 auto;
+  padding: 12px 16px;
+  border-top: 1px solid var(--c-border);
+  background: var(--surface-primary);
+}
+
+.deep-research-inspector-actions .is-edit-action {
+  margin-right: auto;
+}
+
+.deep-research-plan-editor {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 16px;
+}
+
+.deep-research-plan-editor-label {
+  color: var(--c-text);
+  font-size: var(--font-size-body-1);
+  font-weight: 500;
+}
+
+.deep-research-plan-editor-help {
+  margin: 6px 0 12px;
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-1);
+}
+
+.deep-research-plan-textarea {
+  width: 100%;
+  min-height: 260px;
+  flex: 1;
+  resize: none;
+  padding: 12px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: 10px;
+  background: var(--surface-secondary);
+  color: var(--c-text);
+  font: inherit;
+  font-size: var(--font-size-body-2);
+  line-height: 1.55;
+  outline: none;
+}
+
+.deep-research-plan-textarea:focus {
+  border-color: var(--c-text);
+  box-shadow: 0 0 0 2px var(--c-border-strong);
+}
+
+.deep-research-plan-editor-actions {
+  margin-top: 12px;
+}
+
+body.is-tool-inspector-open {
+  overflow: hidden;
+}
+
+@keyframes deep-research-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes deep-research-pulse {
+  0%, 100% { opacity: 0.42; }
+  50% { opacity: 1; }
+}
+
+@keyframes deep-research-inspector-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@media (max-width: 700px) {
+  .tool-inspector-overlay.is-deep-research {
+    align-items: flex-end;
+  }
+
+  .tool-inspector-overlay.is-deep-research .tool-inspector-panel {
+    width: 100%;
+    height: min(88vh, 820px);
+    border-width: 1px 0 0;
+    border-radius: 16px 16px 0 0;
+    animation-name: deep-research-sheet-in;
+  }
+
+  .deep-research-card-actions {
+    align-items: stretch;
+  }
+
+  .deep-research-card-actions .deep-research-btn {
+    flex: 1 1 auto;
+  }
+
+  .deep-research-card-actions .is-edit-action {
+    flex-basis: 100%;
+    margin-right: 0;
+  }
+
+}
+
+@keyframes deep-research-sheet-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deep-research-spinner,
+  .deep-research-activity-marker,
+  .tool-inspector-overlay.is-deep-research .tool-inspector-panel {
+    animation: none !important;
+  }
+}

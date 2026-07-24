@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import secrets
+import signal
 import socket
 import subprocess
 import sys
@@ -56,6 +57,8 @@ _SEARCH_IO_LOG_PATH = TOOLS_DIR / "mcp-web-search" / "logs" / "model_search_io.j
 _TOOL_COOLDOWN_SECONDS = 30.0
 _TOOL_COOLDOWN_LOCK = threading.Lock()
 _TOOL_COOLDOWNS: dict[str, float] = {}
+_ACTIVE_TOOL_EXECUTIONS_LOCK = threading.Lock()
+_ACTIVE_TOOL_EXECUTIONS: set["ActiveToolExecution"] = set()
 TOOL_CALL_QUOTAS = {
     "web_search": 15,
     "read_page": 10,
@@ -67,6 +70,103 @@ TOOL_BLOCK_FINAL_PROMPT = (
     "present in the conversation and answer the user now. If the collected evidence is "
     "insufficient for a claim, say that clearly instead of searching again."
 )
+TOOL_CANCEL_FINAL_PROMPT = (
+    "The user stopped the active tool call. Do not call any tool again in this response "
+    "and do not restart the cancelled work under a new session. Briefly acknowledge the stop "
+    "or answer only from evidence already present in the conversation."
+)
+
+
+class ToolExecutionCancelled(Exception):
+    """Raised inside a tool runner after its owning generation is stopped."""
+
+
+TOOL_EXECUTION_CANCELLED = object()
+
+
+class ActiveToolExecution:
+    """Track and cancel one in-flight tool invocation."""
+
+    def __init__(self, generation_id: str = "", *, research_session_id: str = "") -> None:
+        self.generation_id = str(generation_id or "")
+        self.research_session_id = str(research_session_id or "").strip()
+        self.cancelled = threading.Event()
+        self._lock = threading.Lock()
+        self._cancel_callback = None
+
+    def set_cancel_callback(self, callback) -> None:
+        call_immediately = False
+        with self._lock:
+            if self.cancelled.is_set():
+                call_immediately = True
+            else:
+                self._cancel_callback = callback
+        if call_immediately and callable(callback):
+            callback()
+
+    def clear_cancel_callback(self) -> None:
+        with self._lock:
+            self._cancel_callback = None
+
+    def cancel(self) -> None:
+        with self._lock:
+            if self.cancelled.is_set():
+                return
+            self.cancelled.set()
+            callback = self._cancel_callback
+        if callable(callback):
+            try:
+                callback()
+            except Exception as exc:  # noqa: BLE001 - cancellation remains best effort
+                logger.warning("Failed to stop active tool resource: %s", exc)
+
+
+def _register_active_tool(execution: ActiveToolExecution) -> None:
+    with _ACTIVE_TOOL_EXECUTIONS_LOCK:
+        _ACTIVE_TOOL_EXECUTIONS.add(execution)
+
+
+def _unregister_active_tool(execution: ActiveToolExecution) -> None:
+    with _ACTIVE_TOOL_EXECUTIONS_LOCK:
+        _ACTIVE_TOOL_EXECUTIONS.discard(execution)
+
+
+def abort_active_tools(generation_id: str | None = None) -> int:
+    """Cancel tool invocations owned by one generation, or all when omitted."""
+
+    requested_id = str(generation_id or "")
+    with _ACTIVE_TOOL_EXECUTIONS_LOCK:
+        executions = [
+            execution
+            for execution in _ACTIVE_TOOL_EXECUTIONS
+            if not requested_id or execution.generation_id == requested_id
+        ]
+    for execution in executions:
+        execution.cancel()
+    return len(executions)
+
+
+def abort_active_research(session_id: str) -> int:
+    """Cancel only the active tool invocation for one Deep Research session."""
+
+    requested_id = str(session_id or "").strip()
+    if not requested_id:
+        return 0
+    with _ACTIVE_TOOL_EXECUTIONS_LOCK:
+        executions = [
+            execution
+            for execution in _ACTIVE_TOOL_EXECUTIONS
+            if execution.research_session_id == requested_id
+        ]
+    for execution in executions:
+        execution.cancel()
+    return len(executions)
+
+
+def is_tool_execution_cancelled(result: Any) -> bool:
+    """Return whether a streamed tool call ended because generation was stopped."""
+
+    return result is TOOL_EXECUTION_CANCELLED
 
 
 # Run async tool handlers on one persistent event loop.
@@ -109,11 +209,23 @@ class AsyncCallableRunner:
             self._ready.wait()
 
     # Run one coroutine on the shared loop and wait for its result.
-    def run(self, coro: Any, *, timeout: float | None = None) -> Any:
+    def run(
+        self,
+        coro: Any,
+        *,
+        timeout: float | None = None,
+        cancellation: ActiveToolExecution | None = None,
+    ) -> Any:
         self.ensure_started()
         assert self._loop is not None
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=timeout)
+        if cancellation is not None:
+            cancellation.set_cancel_callback(future.cancel)
+        try:
+            return future.result(timeout=timeout)
+        finally:
+            if cancellation is not None:
+                cancellation.clear_cancel_callback()
 
     # Stop the background loop and join its thread.
     def close(self) -> None:
@@ -187,6 +299,7 @@ class ExternalWorkerSession:
             cwd=str(self.server_file.parent),
             env=_venv_subprocess_env(self.python_path),
             bufsize=1,
+            **_tool_process_group_kwargs(),
         )
 
     # Send one JSON request to the worker and return its result envelope.
@@ -196,6 +309,7 @@ class ExternalWorkerSession:
         payload: dict[str, Any] | None = None,
         *,
         timeout_s: float | None = None,
+        cancellation: ActiveToolExecution | None = None,
     ) -> Any:
         """Send one request to the worker process and return its result."""
 
@@ -208,7 +322,15 @@ class ExternalWorkerSession:
             raw_response = ""
             last_error: Exception | None = None
             for attempt in range(2):
+                if cancellation is not None and cancellation.cancelled.is_set():
+                    raise ToolExecutionCancelled()
                 self._start()
+                # Cancellation may arrive while a new persistent worker is
+                # spawning.  Do not let that worker survive long enough to
+                # receive the request or be mistaken for a retry candidate.
+                if cancellation is not None and cancellation.cancelled.is_set():
+                    self.close()
+                    raise ToolExecutionCancelled()
                 assert self.process is not None
                 assert self.process.stdin is not None
                 assert self.process.stdout is not None
@@ -230,6 +352,8 @@ class ExternalWorkerSession:
                     break
 
                 self.close()
+                if cancellation is not None and cancellation.cancelled.is_set():
+                    raise ToolExecutionCancelled()
                 if attempt == 0:
                     logger.warning("Tool worker stopped before response; restarting once for %s", self.server_file)
                     continue
@@ -307,11 +431,7 @@ class ExternalWorkerSession:
 
         try:
             if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    process.kill()
+                _terminate_tool_process(process)
         finally:
             for stream in (process.stdin, process.stdout, process.stderr):
                 try:
@@ -319,6 +439,52 @@ class ExternalWorkerSession:
                         stream.close()
                 except Exception:
                     pass
+
+
+def _tool_process_group_kwargs() -> dict[str, Any]:
+    """Start tool workers in a group that can be terminated with descendants."""
+
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def _terminate_tool_process(process: subprocess.Popen[Any]) -> None:
+    """Terminate a tool worker and any child processes it launched."""
+
+    if process.poll() is not None:
+        return
+
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=3,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            pass
+
+    try:
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        if os.name != "nt":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+        else:
+            process.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=1)
 
 
 class ToolEventSocketChannel:
@@ -626,6 +792,8 @@ def consume_tool_quota(
 def is_blocking_tool_result(result: Any) -> bool:
     """Return whether a tool result is a guardrail/block message, not fresh evidence."""
 
+    if is_tool_execution_cancelled(result):
+        return True
     text = str(result or "").strip()
     return text.startswith(
         (
@@ -633,6 +801,7 @@ def is_blocking_tool_result(result: Any) -> bool:
             "Duplicate web_search blocked:",
             "Duplicate read_page blocked:",
             "Tool quota exceeded:",
+            "TOOL_EXECUTION_CANCELLED:",
         )
     )
 
@@ -642,6 +811,12 @@ def forced_final_prompt_after_tool_blocks() -> str:
     """Return the instruction used when the tool loop must stop retrying tools."""
 
     return TOOL_BLOCK_FINAL_PROMPT
+
+
+def forced_final_prompt_after_tool_cancellation() -> str:
+    """Return the instruction for the immediate tool-free round after a user stop."""
+
+    return TOOL_CANCEL_FINAL_PROMPT
 
 
 # How many times the tool loop re-prompts a model that ignored user-required tools.
@@ -1291,36 +1466,58 @@ def _run_worker(
     payload: dict[str, Any] | None = None,
     *,
     persistent: bool = False,
+    cancellation: ActiveToolExecution | None = None,
 ) -> Any:
     """Run a tool worker operation and return its result payload."""
 
     if persistent:
-        return _get_worker_session(server_file).request(
-            operation,
-            payload,
-            timeout_s=_worker_timeout_seconds(operation, payload),
-        )
+        session = _get_worker_session(server_file)
+        if cancellation is not None:
+            cancellation.set_cancel_callback(session.close)
+        try:
+            return session.request(
+                operation,
+                payload,
+                timeout_s=_worker_timeout_seconds(operation, payload),
+                cancellation=cancellation,
+            )
+        finally:
+            if cancellation is not None:
+                cancellation.clear_cancel_callback()
 
     python_path = _get_worker_python(server_file)
     if python_path is None:
         raise RuntimeError(f"No isolated Python environment is available for {server_file.parent.name}.")
 
     request_payload = json.dumps(payload or {}, ensure_ascii=False)
-    result = subprocess.run(
+    process = subprocess.Popen(
         [str(python_path), str(WORKER_FILE), operation, str(server_file)],
-        input=request_payload,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
         cwd=str(server_file.parent),
         env=_venv_subprocess_env(python_path),
-        check=False,
-        timeout=_worker_timeout_seconds(operation, payload),
+        **_tool_process_group_kwargs(),
     )
+    if cancellation is not None:
+        cancellation.set_cancel_callback(lambda: _terminate_tool_process(process))
+    try:
+        stdout, stderr = process.communicate(
+            input=request_payload,
+            timeout=_worker_timeout_seconds(operation, payload),
+        )
+    except subprocess.TimeoutExpired:
+        _terminate_tool_process(process)
+        raise
+    finally:
+        if cancellation is not None:
+            cancellation.clear_cancel_callback()
 
-    stdout = (result.stdout or "").strip()
-    stderr = (result.stderr or "").strip()
+    stdout = (stdout or "").strip()
+    stderr = (stderr or "").strip()
     if not stdout:
         raise RuntimeError(stderr or f"Tool worker returned no output for {server_file}.")
 
@@ -1822,11 +2019,18 @@ def _run_sync_callable(callable_fn, *args: Any) -> Any:
     return callable_fn(*args)
 
 # Execute one callable safely.
-def _execute_callable(callable_fn, *args: Any) -> Any:
+def _execute_callable(
+    callable_fn,
+    *args: Any,
+    cancellation: ActiveToolExecution | None = None,
+) -> Any:
     """Execute sync and async callables behind one shared helper."""
 
     if inspect.iscoroutinefunction(callable_fn):
-        return _get_async_callable_runner().run(_run_async_callable(callable_fn, *args))
+        return _get_async_callable_runner().run(
+            _run_async_callable(callable_fn, *args),
+            cancellation=cancellation,
+        )
 
     return _run_sync_callable(callable_fn, *args)
 
@@ -1836,6 +2040,7 @@ def _dispatch_server_callable(
     tool_id: str,
     arguments: dict[str, Any],
     context: dict[str, Any],
+    cancellation: ActiveToolExecution | None = None,
 ) -> Any:
     """Call a generic server dispatcher with a tolerant signature strategy."""
 
@@ -1844,16 +2049,16 @@ def _dispatch_server_callable(
     # Accept older dispatchers that still use positional signatures instead of
     # the newer ``(tool_id, arguments, context)`` convention.
     if len(parameter_names) <= 1:
-        return _execute_callable(callable_fn, arguments)
+        return _execute_callable(callable_fn, arguments, cancellation=cancellation)
 
     if len(parameter_names) == 2:
         first_name = parameter_names[0].lower()
         if first_name in {"tool_id", "tool", "name", "tool_name"}:
-            return _execute_callable(callable_fn, tool_id, arguments)
+            return _execute_callable(callable_fn, tool_id, arguments, cancellation=cancellation)
 
-        return _execute_callable(callable_fn, arguments, context)
+        return _execute_callable(callable_fn, arguments, context, cancellation=cancellation)
 
-    return _execute_callable(callable_fn, tool_id, arguments, context)
+    return _execute_callable(callable_fn, tool_id, arguments, context, cancellation=cancellation)
 
 
 # Serialize tool results.
@@ -1966,6 +2171,25 @@ def _extract_structured_tool_result(result: Any) -> dict[str, Any] | None:
 # Split one tool result into model-visible text and UI-only metadata.
 def split_tool_result_payload(content: Any) -> tuple[str, dict[str, Any]]:
     """Split one tool result into model-visible text and UI-only metadata."""
+
+    if is_tool_execution_cancelled(content):
+        model_context = (
+            "TOOL_EXECUTION_CANCELLED: The user stopped this tool call. "
+            "Do not retry it unless the user explicitly asks you to start again."
+        )
+        structured = {
+            "model_context": model_context,
+            "sources": [],
+            "ui": {
+                "kind": "tool_execution",
+                "status": "cancelled",
+                "cancelled": True,
+            },
+        }
+        return model_context, {
+            "structured_content": structured,
+            "tool_ui": structured["ui"],
+        }
 
     if isinstance(content, dict) and "_image_b64" in content:
         return f"[Image: {content.get('_path', 'image')}]", _image_tool_result_extras(content)
@@ -2377,6 +2601,7 @@ def call_ollama_tool(
     arguments: dict[str, Any] | None,
     context: dict[str, Any] | None = None,
     event_callback=None,
+    cancellation: ActiveToolExecution | None = None,
 ) -> str | dict:
     """Execute a local tool and serialize its result for Ollama.
 
@@ -2430,7 +2655,13 @@ def call_ollama_tool(
             mcp_tool_name = str(tool_definition.get("mcp_tool_name") or tool_definition["id"] or "").strip()
             if not mcp_tool_name:
                 return "Tool execution failed: missing MCP tool name"
-            result = user_mcp_client.call_user_mcp_tool(entry, mcp_tool_name, call_arguments)
+            if cancellation is not None:
+                cancellation.set_cancel_callback(lambda: user_mcp_client.cancel_entry(entry))
+            try:
+                result = user_mcp_client.call_user_mcp_tool(entry, mcp_tool_name, call_arguments)
+            finally:
+                if cancellation is not None:
+                    cancellation.clear_cancel_callback()
             if _is_debug_logging_enabled():
                 _print_runtime_event(
                     "Tool completed: "
@@ -2460,9 +2691,13 @@ def call_ollama_tool(
                         "call",
                         worker_payload,
                         persistent=not bool(server_definition.get("fresh_process_per_call")),
+                        cancellation=cancellation,
                     )
                 except RuntimeError as worker_exc:
-                    if "Tool worker stopped" not in str(worker_exc):
+                    if (
+                        "Tool worker stopped" not in str(worker_exc)
+                        or (cancellation is not None and cancellation.cancelled.is_set())
+                    ):
                         raise
                     logger.warning(
                         "Persistent tool worker stopped for %s; retrying call in one-shot mode.",
@@ -2473,11 +2708,14 @@ def call_ollama_tool(
                         "call",
                         worker_payload,
                         persistent=False,
+                        cancellation=cancellation,
                     )
             finally:
                 if event_channel is not None:
                     event_channel.close()
         else:
+            if cancellation is not None:
+                call_context["cancel_event"] = cancellation.cancelled
             handler = server_definition["tool_handlers"].get(tool_definition["id"])
             if handler is None:
                 handler = server_definition["tool_handlers"].get(tool_definition["alias"])
@@ -2487,15 +2725,21 @@ def call_ollama_tool(
             if handler is not None:
                 signature = inspect.signature(handler)
                 if len(signature.parameters) <= 1:
-                    result = _execute_callable(handler, call_arguments)
+                    result = _execute_callable(handler, call_arguments, cancellation=cancellation)
                 else:
-                    result = _execute_callable(handler, call_arguments, call_context)
+                    result = _execute_callable(
+                        handler,
+                        call_arguments,
+                        call_context,
+                        cancellation=cancellation,
+                    )
             elif server_definition["server_callable"] is not None:
                 result = _dispatch_server_callable(
                     server_definition["server_callable"],
                     tool_definition["id"],
                     call_arguments,
                     call_context,
+                    cancellation=cancellation,
                 )
             else:
                 return f"Tool execution failed: no handler registered for {tool_definition['id']}"
@@ -2567,6 +2811,16 @@ def stream_ollama_tool(
     lookup_entry = tool_lookup.get(alias) or {}
     server_definition = lookup_entry.get("server") or {}
     tool_definition = lookup_entry.get("tool") or {}
+    call_context = dict(context or {})
+    call_arguments = arguments if isinstance(arguments, dict) else {}
+    research_session_id = str(call_arguments.get("session_id") or "").strip()
+    if not research_session_id.startswith("deep-research:"):
+        research_session_id = ""
+    execution = ActiveToolExecution(
+        str(call_context.get("generation_id") or ""),
+        research_session_id=research_session_id,
+    )
+    _register_active_tool(execution)
 
     def execute() -> None:
         try:
@@ -2574,12 +2828,19 @@ def stream_ollama_tool(
                 tool_lookup,
                 alias,
                 arguments,
-                context=context,
+                context=call_context,
                 event_callback=updates.put,
+                cancellation=execution,
             )
+            if execution.cancelled.is_set():
+                outcome["result"] = TOOL_EXECUTION_CANCELLED
         except BaseException as exc:  # noqa: BLE001 - re-raised on generator thread
-            outcome["error"] = exc
+            if execution.cancelled.is_set():
+                outcome["result"] = TOOL_EXECUTION_CANCELLED
+            else:
+                outcome["error"] = exc
         finally:
+            _unregister_active_tool(execution)
             finished.set()
 
     thread = threading.Thread(
@@ -2588,6 +2849,41 @@ def stream_ollama_tool(
         daemon=True,
     )
     thread.start()
+
+    if research_session_id:
+        def watch_research_stop() -> None:
+            """Bridge the durable UI command to a blocking provider/tool call."""
+
+            try:
+                from Tools import deep_research_control
+            except Exception as exc:  # pragma: no cover - project import guard
+                logger.warning("Could not start Deep Research stop monitor: %s", exc)
+                return
+            while not finished.wait(0.25):
+                try:
+                    if deep_research_control.latest_cancel_requested(research_session_id):
+                        execution.cancel()
+                        cancelled_at = time.time()
+                        deep_research_control.update_state(
+                            research_session_id,
+                            status="cancelled",
+                            phase="cancelled",
+                            latest_action="Research stopped by user",
+                            can_approve=False,
+                            can_edit=False,
+                            can_stop=False,
+                            cancelled_at=cancelled_at,
+                            completed_at=cancelled_at,
+                        )
+                        return
+                except Exception as exc:  # noqa: BLE001 - transient state reads are retried
+                    logger.debug("Deep Research stop monitor could not read state: %s", exc)
+
+        threading.Thread(
+            target=watch_research_stop,
+            name=f"aslm-research-stop-{research_session_id.rsplit(':', 1)[-1][:8]}",
+            daemon=True,
+        ).start()
 
     batch: list[dict[str, Any]] = []
     batch_bytes = 0

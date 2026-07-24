@@ -332,6 +332,25 @@ class _PersistentMcpSessionManager:
                 return_exceptions=True,
             )
 
+    async def _cancel_entry_async(self, entry: UserMcpServerEntry) -> None:
+        connection = self._connections.pop(_entry_cache_key(entry), None)
+        if connection is not None:
+            await connection.close()
+
+    def cancel_entry(self, entry: UserMcpServerEntry) -> None:
+        """Close the active transport for one configured MCP server."""
+
+        loop = self._loop
+        thread = self._thread
+        if loop is None or thread is None or not thread.is_alive():
+            return
+        future = asyncio.run_coroutine_threadsafe(self._cancel_entry_async(entry), loop)
+        try:
+            future.result(timeout=LIST_TOOLS_TIMEOUT + MANAGER_TIMEOUT_BUFFER)
+        except FutureTimeoutError:
+            future.cancel()
+            logger.warning("Timed out while cancelling user MCP server %s", entry.server_id)
+
     def shutdown_all(self) -> None:
         loop = self._loop
         thread = self._thread
@@ -364,6 +383,11 @@ _session_manager = _PersistentMcpSessionManager()
 # Close every cached MCP transport while keeping the manager available for reuse.
 def shutdown_all() -> None:
     _session_manager.shutdown_all()
+
+
+# Stop one in-flight user MCP call and discard its cached connection.
+def cancel_entry(entry: UserMcpServerEntry) -> None:
+    _session_manager.cancel_entry(entry)
 
 
 atexit.register(_session_manager.close)
