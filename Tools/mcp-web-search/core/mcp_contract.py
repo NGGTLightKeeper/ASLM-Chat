@@ -42,6 +42,12 @@ fits exactly two independently necessary deliverables that support different cla
 alternatives fit one query through OR. Never submit more than two queries in one call.
 Inspect the first result set before adding a refinement.
 
+Use the least constrained query that can identify the target. Stacking near-synonyms,
+several exact phrases, broad OR groups, and site/date restrictions can hide valid results
+even from Google. Every operator must remove a known ambiguity or enforce an answer-critical
+boundary. After an empty or weak result, simplify first: remove redundant words, phrases,
+and alternatives while retaining only essential constraints; do not respond by adding more.
+
 Use ASCII operators when they express a real constraint: quoted phrases, OR, -term,
 site:, -site:, filetype:, intitle:, inurl:, after:, and before:. Date bounds fit requests
 whose answer materially depends on a publication window. Keep four-digit calendar years
@@ -97,6 +103,12 @@ Exact phrases, exclusions, included or excluded domains, file types, title terms
 terms, and date bounds have dedicated fields. after/before fit cases where the requested
 answer materially depends on recency or a real publication window. Keep four-digit
 calendar years out of text; a necessary year belongs exclusively in after or before.
+
+Use the least constrained query that can identify the target. Stacking near-synonyms,
+several exact phrases, broad OR groups, and site/date restrictions can hide valid results
+even from Google. Every operator must remove a known ambiguity or enforce an answer-critical
+boundary. After an empty or weak result, simplify first: remove redundant words, phrases,
+and alternatives while retaining only essential constraints; do not respond by adding more.
 
 Use shopping for prices and availability, academic for scholarly literature, and web for
 independent evidence. Start ordinary work at medium; low is quick discovery and high is

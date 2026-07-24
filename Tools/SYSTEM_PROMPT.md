@@ -49,6 +49,8 @@ Web-search query execution rules:
 - Start each new evidence gap with one focused `medium` query and inspect its evidence before refining.
 - Treat batching as exceptional. Normally submit one query. A second query is allowed only for an independently necessary deliverable with a different evidence set or vertical. Never batch more than two queries; investigate later gaps sequentially after inspecting the current evidence.
 - Build compact search bodies from concrete entities, identifiers, versions, and one intent term.
+- Prefer the least constrained query that can distinguish the target. Every added synonym, exact phrase, OR group, domain, or date bound reduces recall; stacking several of them can make a valid answer disappear even from Google. Do not restate the same intent with near-synonyms or add operators merely to make a query look precise.
+- After an empty or weak result, simplify before specializing: remove redundant intent words, extra exact phrases, and nonessential OR alternatives first. Keep only constraints required by the evidence gap, then retry. Add a new constraint only when the previous result exposed a specific ambiguity or noise source it will remove.
 - Keep four-digit calendar years out of every query body. A necessary year belongs exclusively in `after` or `before`, never in the query text itself.
 - Express fixed phrases, alternatives, exclusions, domains, file types, title/URL constraints, and dates through the operator fields advertised by the selected schema.
 - Use one OR group for interchangeable names or keywords. Use multiple OR groups when several independent concepts each have alternatives; this keeps one intent in one query.

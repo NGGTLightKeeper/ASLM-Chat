@@ -196,8 +196,14 @@ def test_mixed_vertical_plan_runs_concurrently_and_preserves_metadata(monkeypatc
         "description": "Compare evidence sources",
         "effort": "medium",
         "queries": [
-            {"vertical": "web", "compiled_query": "alpha", "operators": {}, "timelimit": None},
-            {"vertical": "shopping", "compiled_query": "beta", "operators": {}, "timelimit": None},
+            {
+                "vertical": "web", "text": "alpha", "compiled_query": "alpha after:2026-07-01",
+                "operators": {"after": "2026-07-01"}, "timelimit": None,
+            },
+            {
+                "vertical": "shopping", "text": "beta", "compiled_query": "beta",
+                "operators": {}, "timelimit": None,
+            },
         ],
     }
     result = asyncio.run(search_module.run_web_search_plan(request))
@@ -205,6 +211,8 @@ def test_mixed_vertical_plan_runs_concurrently_and_preserves_metadata(monkeypatc
     assert max_active == 2
     assert calls[0][1]["shopping"] is False
     assert calls[1][1]["shopping"] is True
+    assert calls[0][1]["query_text"] == "alpha"
+    assert calls[0][1]["operators"] == {"after": "2026-07-01"}
     assert result["ui"]["description"] == "Compare evidence sources"
     assert result["ui"]["search_request"]["description"] == "Compare evidence sources"
     assert result["query_results"][1]["index"] == 2

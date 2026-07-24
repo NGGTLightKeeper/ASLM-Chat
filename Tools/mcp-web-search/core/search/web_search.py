@@ -491,7 +491,16 @@ class WebSearchService:
     # Build the hosted supplement stream when API keys are configured; None otherwise
     # (no keys → pure scrape, baseline unchanged). Imports are deferred so the SERP-only
     # and key-less paths never pay for httpx provider code.
-    def _hosted_stream(self, query: str, *, region: str, deadline: float):
+    def _hosted_stream(
+        self,
+        query: str,
+        *,
+        region: str,
+        deadline: float,
+        query_text: str = "",
+        operators: dict[str, Any] | None = None,
+        timelimit: str | None = None,
+    ):
         try:
             from core.search.hosted_providers import available_providers
             from core.search.hosted_stream import hosted_search_stream
@@ -501,7 +510,13 @@ class WebSearchService:
         if not available_providers():
             return None
         return hosted_search_stream(
-            query, region=region, max_results=_HOSTED_MAX_RESULTS, deadline_seconds=deadline,
+            query,
+            region=region,
+            max_results=_HOSTED_MAX_RESULTS,
+            deadline_seconds=deadline,
+            query_text=query_text,
+            operators=operators,
+            timelimit=timelimit,
         )
 
     # Run one full search. Returns the aggregated, ranked payload.
@@ -517,6 +532,8 @@ class WebSearchService:
         academic: bool = False,
         onion: bool = False,
         dates_resolved: bool = False,
+        query_text: str = "",
+        operators: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         profile = EFFORT_PROFILES.get(effort, EFFORT_PROFILES["low"])
         started = time.perf_counter()
@@ -537,6 +554,18 @@ class WebSearchService:
             region = {"ru": "ru-ru", "de": "de-de"}.get(language, "us-en")
 
         engines = select_engines(profile.name, self._tracker)
+        from core.query.provider_compiler import compile_provider_query
+
+        provider_queries = {
+            engine.name: compile_provider_query(
+                query_text or query,
+                operators,
+                engine.name,
+                fallback_query=query,
+                timelimit=timelimit,
+            )
+            for engine in engines
+        }
         logger.info(
             "web_search.start effort=%s region=%s language=%s engines=%s query=%r",
             profile.name, region, language, [e.name for e in engines], query[:160],
@@ -594,10 +623,22 @@ class WebSearchService:
         # (low stays SERP-only and pays no hosted credits).
         event_stream = api.search_stream(
             query, region=region, safesearch=safesearch, timelimit=timelimit,
+            engine_queries={name: item.query for name, item in provider_queries.items()},
+            engine_timelimits={name: item.timelimit for name, item in provider_queries.items()},
+            engine_omitted_operators={
+                name: item.omitted_operators for name, item in provider_queries.items()
+            },
             deadline_seconds=profile.deadline * 0.8,
         )
         if profile.parse_budget:
-            hosted = self._hosted_stream(query, region=region, deadline=profile.deadline * 0.8)
+            hosted = self._hosted_stream(
+                query,
+                region=region,
+                deadline=profile.deadline * 0.8,
+                query_text=query_text,
+                operators=operators,
+                timelimit=timelimit,
+            )
             if hosted is not None:
                 event_stream = _merge_streams(event_stream, hosted)
 
@@ -821,6 +862,14 @@ class WebSearchService:
             "language": language,
             "region": region,
             "engines_used": [engine.name for engine in engines],
+            "provider_queries": {
+                name: {
+                    "query": item.query,
+                    "timelimit": item.timelimit,
+                    "omitted_operators": list(item.omitted_operators),
+                }
+                for name, item in provider_queries.items()
+            },
             "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
             "model_context": model_context,
             "sources": source_dicts,
@@ -959,6 +1008,8 @@ async def run_web_search(
     academic: bool = False,
     onion: bool = False,
     dates_resolved: bool = False,
+    query_text: str = "",
+    operators: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from core.cache.hosted_cache import get_hosted_cache
     from core.config import load_search_config
@@ -984,6 +1035,7 @@ async def run_web_search(
             query, effort=effort, region=region, safesearch=safesearch,
             timelimit=timelimit, shopping=shopping, academic=academic, onion=True,
             dates_resolved=dates_resolved,
+            query_text=query_text, operators=operators,
         )
         payload["cached"] = False
         return payload
@@ -1003,6 +1055,7 @@ async def run_web_search(
             query, effort=effort, region=region, safesearch=safesearch,
             timelimit=timelimit, shopping=shopping, academic=academic,
             dates_resolved=dates_resolved,
+            query_text=query_text, operators=operators,
         )
         payload["cached"] = False
         empty = not payload.get("sources")
@@ -1236,6 +1289,8 @@ async def run_web_search_plan(search_request: dict[str, Any]) -> dict[str, Any]:
             academic=vertical == "academic",
             onion=vertical == "onion",
             dates_resolved=True,
+            query_text=str(plan.get("text") or ""),
+            operators=dict(plan.get("operators") or {}),
         )
 
     results = await asyncio.gather(*(run_item(plan) for plan in plans))
