@@ -469,6 +469,9 @@ export function createChatController(context, dependencies) {
       if (request.toolServerIds && request.toolServerIds.length > 0) {
         payload.tool_server_ids = request.toolServerIds;
       }
+      if (!isRegenerate && request.deepResearch === true) {
+        payload.deep_research = true;
+      }
       if (!isRegenerate) {
         const attachmentPayloads = await buildAttachmentPayloads(request.attachments);
         if (attachmentPayloads.length > 0) {
@@ -765,6 +768,7 @@ export function createChatController(context, dependencies) {
   // Snapshot the current UI state into one queued chat request.
   function buildQueuedRequest(text, attachmentsToSend) {
     const options = parametersUi.collectOptionsPayload();
+    const deepResearch = state.deepResearchEnabled === true;
 
     return {
       id: `queued-${++state.queuedMessageCounter}`,
@@ -775,7 +779,8 @@ export function createChatController(context, dependencies) {
       systemPrompt: dom.$systemPrompt.val(),
       options,
       reasoningModeEnabled: requestWantsReasoning(options),
-      toolServerIds: state.toolState.supported ? parametersUi.getSelectedToolServerIds() : [],
+      toolServerIds: !deepResearch && state.toolState.supported ? parametersUi.getSelectedToolServerIds() : [],
+      deepResearch,
       chatId: state.currentChatId
     };
   }
@@ -1044,7 +1049,7 @@ export function createChatController(context, dependencies) {
   // Convert one tool or MCP server into a slash palette entry.
   function buildSlashToolEntry(server, section) {
     const serverId = String(server && server.id || '').trim();
-    if (!serverId) {
+    if (!serverId || serverId.toLowerCase() === 'deep_research') {
       return null;
     }
     const unavailableReason = slashToolUnavailableReason(server);

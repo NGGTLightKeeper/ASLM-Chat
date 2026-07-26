@@ -41,6 +41,7 @@
                                     <button class="composer-menu-btn" id="composerMenuBtn" type="button" title="{% t "composer.menu" %}" aria-label="{% t "composer.menu" %}" aria-expanded="false" aria-controls="composerMenuPopover">
                                         <svg width="18" height="18" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"><use href="{% static 'img/ui/add-2.svg' %}#icon"></use></svg>
                                     </button>
+                                    <div class="composer-mode-pills" aria-live="polite"></div>
                                     <div class="composer-menu-popover" id="composerMenuPopover" role="menu" aria-label="{% t "composer.menu" %}" style="display:none;">
                                         <button class="composer-menu-action attach-btn" id="attachBtn" type="button" style="display:none;" role="menuitem" title="{% t "composer.attachFiles" %}" aria-label="{% t "composer.attachFiles" %}">
                                             <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/paperclip.svg' %}#icon"></use></svg>
@@ -93,6 +94,7 @@
                         <button class="composer-menu-btn" id="composerMenuBtnConv" type="button" title="{% t "composer.menu" %}" aria-label="{% t "composer.menu" %}" aria-expanded="false" aria-controls="composerMenuPopoverConv">
                             <svg width="18" height="18" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"><use href="{% static 'img/ui/add-2.svg' %}#icon"></use></svg>
                         </button>
+                        <div class="composer-mode-pills" aria-live="polite"></div>
                         <div class="composer-menu-popover" id="composerMenuPopoverConv" role="menu" aria-label="{% t "composer.menu" %}" style="display:none;">
                             <button class="composer-menu-action attach-btn" id="attachBtnConv" type="button" style="display:none;" role="menuitem" title="{% t "composer.attachFiles" %}" aria-label="{% t "composer.attachFiles" %}">
                                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/paperclip.svg' %}#icon"></use></svg>
@@ -331,6 +333,7 @@
                 <span class="tool-inspector-title" id="toolInspectorTitle"></span>
                 <span class="tool-inspector-server"></span>
             </div>
+            <div class="tool-inspector-research-tools"></div>
             <button class="tool-inspector-close" id="toolInspectorClose" type="button" aria-label="{% t "toolInspector.close" %}">
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/x.svg' %}#icon"></use></svg>
             </button>

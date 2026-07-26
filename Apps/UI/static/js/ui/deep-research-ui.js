@@ -1,10 +1,11 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
-import { getJson, postJson } from '../main/api.js';
+import { getCsrfToken, getJson, postJson } from '../main/api.js';
 import { t } from '../main/i18n.js';
 import { escHtml, escapeAttributeValue } from '../main/utils.js';
 
 const CONTROL_ENDPOINT = '/api/deep-research/control/';
+const EXPORT_ENDPOINT = '/api/deep-research/export/';
 const MAX_ACTIVITY_ITEMS = 160;
 const MAX_CARD_ITEMS = 6;
 const ACTIVE_POLL_INTERVAL_MS = 1600;
@@ -619,11 +620,13 @@ export function createDeepResearchUi(context, dependencies) {
   const pollsInFlight = new Set();
   let renderCanonicalSearch = null;
   let renderCanonicalReport = null;
+  let hydrateCanonicalReport = null;
 
   function setCanonicalRenderers(renderers) {
     const safeRenderers = asObject(renderers);
     renderCanonicalSearch = typeof safeRenderers.search === 'function' ? safeRenderers.search : null;
     renderCanonicalReport = typeof safeRenderers.report === 'function' ? safeRenderers.report : null;
+    hydrateCanonicalReport = typeof safeRenderers.hydrate === 'function' ? safeRenderers.hydrate : null;
     syncOpenInspector();
   }
 
@@ -1580,6 +1583,33 @@ export function createDeepResearchUi(context, dependencies) {
     return buttons.join('');
   }
 
+  function renderDownloadMenu(state, compact) {
+    if (!state.sessionId || !state.report) {
+      return '';
+    }
+    const key = escapeAttributeValue(state.key);
+    const downloadIcon = icons.DOWNLOAD_FILE_ICON || `
+      <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>`;
+    return `
+      <details class="deep-research-download-menu${compact ? ' is-compact' : ''}">
+        <summary aria-label="${escapeAttributeValue(t('common.download', null, 'Download'))}" title="${escapeAttributeValue(t('common.download', null, 'Download'))}">${downloadIcon}</summary>
+        <div class="deep-research-download-popover" role="menu">
+          <button type="button" role="menuitem" data-deep-research-action="download" data-research-format="md" data-research-key="${key}">Markdown (.md)</button>
+          <button type="button" role="menuitem" data-deep-research-action="download" data-research-format="pdf" data-research-key="${key}">PDF (.pdf)</button>
+          <button type="button" role="menuitem" data-deep-research-action="download" data-research-format="docx" data-research-key="${key}">Word (.docx)</button>
+        </div>
+      </details>
+    `;
+  }
+
+  function renderReportHtml(state) {
+    return state.report && renderCanonicalReport
+      ? renderCanonicalReport(state.report, state.sources)
+      : '';
+  }
+
   function renderCardFromState(state, toolSegmentIndex) {
     const key = escapeAttributeValue(state.key);
     const sessionAttr = state.sessionId ? ` data-research-session-id="${escapeAttributeValue(state.sessionId)}"` : '';
@@ -1604,6 +1634,20 @@ export function createDeepResearchUi(context, dependencies) {
       </button>
     `;
     const ariaLabel = `${t('research.title', null, 'Deep Research')}. ${statusLabel(state.status)}. ${state.topic || state.latestAction}`;
+    const reportHtml = renderReportHtml(state);
+    if (reportHtml && statusIsTerminal(state.status)) {
+      return `
+        <section class="msg-deep-research-card deep-research-report-card is-${escapeAttributeValue(stateCssClass(state.status))}" data-research-key="${key}"${sessionAttr}${indexAttr} role="group" tabindex="0" aria-label="${escapeAttributeValue(ariaLabel)}">
+          <div class="deep-research-report-card-head">
+            <h3 class="deep-research-card-topic">${escHtml(compactText(topic, 220))}</h3>
+            ${renderDownloadMenu(state, true)}
+          </div>
+          <div class="deep-research-report-preview" data-deep-research-action="open-report" data-research-key="${key}" role="button" tabindex="0" aria-label="Open full research report">
+            <span class="markdown-body">${reportHtml}</span>
+          </div>
+        </section>
+      `;
+    }
     return `
       <section class="msg-deep-research-card is-${escapeAttributeValue(stateCssClass(state.status))}${state.pendingAction ? ' is-busy' : ''}" data-research-key="${key}"${sessionAttr}${indexAttr} role="group" tabindex="0" aria-label="${escapeAttributeValue(ariaLabel)}" aria-busy="${state.pendingAction ? 'true' : 'false'}">
         <div class="deep-research-card-head">
@@ -1784,28 +1828,40 @@ export function createDeepResearchUi(context, dependencies) {
     }).join('')}</div>`;
   }
 
-  function renderRecoveredReport(state) {
-    if (!state.report || !renderCanonicalReport) {
-      return '';
-    }
-    const reportHtml = renderCanonicalReport(state.report, state.sources);
-    return `
-      <details class="deep-research-report-disclosure">
-        <summary>${escHtml(t('research.report', null, 'Research report'))}</summary>
-        <div class="deep-research-recovered-report markdown-body">${reportHtml}</div>
-      </details>
-    `;
-  }
-
-  function inspectorBody(state) {
+  function activityInspectorBody(state) {
     return `
       <div class="deep-research-inspector-view">
         <div class="deep-research-inspector-current">${escHtml(statusLabel(state.status))}</div>
         ${renderActivityTimeline(state)}
-        ${renderRecoveredReport(state)}
         ${state.error ? `<div class="deep-research-inspector-error" role="alert">${escHtml(state.error)}</div>` : ''}
       </div>
     `;
+  }
+
+  function reportInspectorBody(state) {
+    const reportHtml = renderReportHtml(state);
+    return reportHtml
+      ? `<article class="deep-research-full-report markdown-body">${reportHtml}</article>`
+      : activityInspectorBody(state);
+  }
+
+  function inspectorBody(state, viewMode) {
+    return viewMode === 'report' && state.report
+      ? reportInspectorBody(state)
+      : activityInspectorBody(state);
+  }
+
+  function inspectorToolbar(state, viewMode) {
+    const controls = [renderDownloadMenu(state, true)];
+    if (state.report && viewMode === 'report') {
+      const label = t('research.openActivity', null, 'Open research activity');
+      controls.push(`
+        <button type="button" class="deep-research-activity-toggle" data-deep-research-action="open-activity" data-research-key="${escapeAttributeValue(state.key)}" aria-label="${escapeAttributeValue(label)}" title="${escapeAttributeValue(label)}">
+          <span class="deep-research-activity-toggle-icon" aria-hidden="true"><span></span><span></span><span></span></span>
+        </button>
+      `);
+    }
+    return controls.join('');
   }
 
   function inspectorFooter(state) {
@@ -1815,13 +1871,28 @@ export function createDeepResearchUi(context, dependencies) {
       : '';
   }
 
-  function openState(state, edit) {
+  function hydrateInspectorReport() {
+    if (!hydrateCanonicalReport) {
+      return;
+    }
+    window.requestAnimationFrame(function hydrateResearchInspector() {
+      hydrateCanonicalReport(document.querySelector('#toolInspectorModal .tool-inspector-research-body'));
+    });
+  }
+
+  function openState(state, edit, requestedView) {
+    const viewMode = requestedView === 'activity' || requestedView === 'report'
+      ? requestedView
+      : (state.report && statusIsTerminal(state.status) ? 'report' : 'activity');
     toolInspector.openResearch({
       key: state.key,
       title: compactText(state.topic || t('research.title', null, 'Deep Research'), 90),
-      bodyHtml: inspectorBody(state),
+      viewMode,
+      toolbarHtml: inspectorToolbar(state, viewMode),
+      bodyHtml: inspectorBody(state, viewMode),
       footerHtml: inspectorFooter(state)
     });
+    hydrateInspectorReport();
     if (edit) {
       beginEdit(state.key);
     }
@@ -1832,10 +1903,10 @@ export function createDeepResearchUi(context, dependencies) {
     openState(stateForSegment(segment), edit === true);
   }
 
-  function openByKey(key, edit) {
+  function openByKey(key, edit, requestedView) {
     const state = states.get(String(key || '').trim());
     if (state) {
-      openState(state, edit === true);
+      openState(state, edit === true, requestedView);
     }
   }
 
@@ -1848,12 +1919,16 @@ export function createDeepResearchUi(context, dependencies) {
     if (!state) {
       return;
     }
+    const viewMode = toolInspector.getOpenResearchView ? toolInspector.getOpenResearchView() : 'activity';
     toolInspector.updateResearch({
       key: state.key,
       title: compactText(state.topic || t('research.title', null, 'Deep Research'), 90),
-      bodyHtml: inspectorBody(state),
+      viewMode,
+      toolbarHtml: inspectorToolbar(state, viewMode),
+      bodyHtml: inspectorBody(state, viewMode),
       footerHtml: inspectorFooter(state)
     });
+    hydrateInspectorReport();
   }
 
   function refreshRenderedCards(state) {
@@ -1862,7 +1937,25 @@ export function createDeepResearchUi(context, dependencies) {
       const index = parseInt(card.getAttribute('data-tool-segment-index') || '-1', 10);
       const replacement = $(renderCardFromState(state, Number.isInteger(index) && index >= 0 ? index : undefined))[0];
       if (replacement && card.parentNode) {
+        // An unchanged polling snapshot must leave the live node alone. Apart
+        // from avoiding needless work, this keeps focus and running CSS
+        // animations stable instead of restarting them every poll interval.
+        if (card.isEqualNode(replacement)) {
+          return;
+        }
+        const focusedAction = card.contains(document.activeElement)
+          ? String(document.activeElement.getAttribute('data-deep-research-action') || '').trim()
+          : '';
         card.parentNode.replaceChild(replacement, card);
+        if (focusedAction) {
+          const nextFocus = Array.from(replacement.querySelectorAll('[data-deep-research-action]'))
+            .find(function matchFocusedAction(element) {
+              return String(element.getAttribute('data-deep-research-action') || '').trim() === focusedAction;
+            });
+          if (nextFocus && typeof nextFocus.focus === 'function') {
+            nextFocus.focus({ preventScroll: true });
+          }
+        }
       }
     });
     syncOpenInspector();
@@ -2091,6 +2184,61 @@ export function createDeepResearchUi(context, dependencies) {
     }
   }
 
+  async function downloadReport(state, format, $button) {
+    if (!state || !state.sessionId || !state.report) {
+      return;
+    }
+    const safeFormat = ['md', 'pdf', 'docx'].includes(String(format || '').toLowerCase())
+      ? String(format).toLowerCase()
+      : 'md';
+    if ($button && $button.length) {
+      $button.prop('disabled', true).attr('aria-busy', 'true');
+    }
+    try {
+      const response = await fetch(EXPORT_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCsrfToken()
+        },
+        body: JSON.stringify({
+          session_id: state.sessionId,
+          format: safeFormat,
+          title: state.topic,
+          report: state.report
+        })
+      });
+      if (!response.ok) {
+        let message = `Export failed (${response.status})`;
+        try {
+          const errorPayload = await response.json();
+          message = errorPayload.error || message;
+        } catch (_error) {}
+        throw new Error(message);
+      }
+      const blob = await response.blob();
+      const disposition = String(response.headers.get('Content-Disposition') || '');
+      const matchedName = disposition.match(/filename="?([^";]+)"?/i);
+      const fallbackName = `research.${safeFormat}`;
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = matchedName ? matchedName[1] : fallbackName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(function revokeResearchDownload() {
+        URL.revokeObjectURL(link.href);
+      }, 1000);
+      if ($button) {
+        $button.closest('details').removeAttr('open');
+      }
+    } finally {
+      if ($button && $button.length) {
+        $button.prop('disabled', false).removeAttr('aria-busy');
+      }
+    }
+  }
+
   function handleAction($button) {
     const button = $button && $button.jquery ? $button : $($button);
     const key = String(button.attr('data-research-key') || '').trim();
@@ -2098,13 +2246,21 @@ export function createDeepResearchUi(context, dependencies) {
     if (!key || !action) {
       return Promise.resolve();
     }
-    if (action === 'open') {
-      openByKey(key, false);
+    if (action === 'open' || action === 'open-report') {
+      openByKey(key, false, action === 'open-report' ? 'report' : undefined);
+      return Promise.resolve();
+    }
+    if (action === 'open-activity') {
+      openByKey(key, false, 'activity');
       return Promise.resolve();
     }
     if (action === 'edit') {
       beginEdit(key);
       return Promise.resolve();
+    }
+    if (action === 'download') {
+      const state = states.get(key);
+      return downloadReport(state, button.attr('data-research-format'), button);
     }
     return submitControl(key, action);
   }

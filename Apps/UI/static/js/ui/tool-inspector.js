@@ -5,16 +5,117 @@
 export function createToolInspector(context) {
   const { dom } = context;
   let openResearchKey = '';
+  let openResearchView = 'activity';
   let previouslyFocused = null;
+  let renderedResearchBodyHtml = null;
+  let renderedResearchFooterHtml = null;
+
+  // Capture UI-only state that is not represented by the research snapshot.
+  // Polling may change the timeline markup, but it must not collapse controls
+  // the user opened or jump the inspector back to the top.
+  function captureResearchBodyState($body) {
+    const body = $body.get(0);
+    if (!body) {
+      return null;
+    }
+    const details = [];
+    $body.find('details').each(function captureDetails(index) {
+      details.push({ index, open: this.open === true });
+    });
+    const expandedSearches = [];
+    $body.find('.msg-search-card').each(function captureSearch(index) {
+      if (this.classList.contains('is-expanded')) {
+        const key = String(this.getAttribute('data-search-key') || '').trim();
+        const toolIndex = String(this.getAttribute('data-tool-segment-index') || '').trim();
+        expandedSearches.push({ key, toolIndex, index });
+      }
+    });
+    const distanceFromBottom = body.scrollHeight - body.clientHeight - body.scrollTop;
+    return {
+      details,
+      expandedSearches,
+      scrollTop: body.scrollTop,
+      wasNearBottom: distanceFromBottom <= 24
+    };
+  }
+
+  // Restore disclosure/search expansion and scrolling after a meaningful
+  // timeline update. CSS uses the is-expanded class for the source-chip tray.
+  function restoreResearchBodyState($body, state) {
+    const body = $body.get(0);
+    if (!body || !state) {
+      return;
+    }
+    const detailNodes = $body.find('details').get();
+    state.details.forEach(function restoreDetails(item) {
+      if (detailNodes[item.index]) {
+        detailNodes[item.index].open = item.open;
+      }
+    });
+    const searchNodes = $body.find('.msg-search-card').get();
+    state.expandedSearches.forEach(function restoreSearch(item) {
+      let search = null;
+      if (item.key) {
+        search = searchNodes.find(function matchSearchKey(node) {
+          return String(node.getAttribute('data-search-key') || '').trim() === item.key;
+        });
+      }
+      if (!search && item.toolIndex) {
+        search = searchNodes.find(function matchToolIndex(node) {
+          return String(node.getAttribute('data-tool-segment-index') || '').trim() === item.toolIndex;
+        });
+      }
+      search = search || searchNodes[item.index];
+      if (search) {
+        search.classList.add('is-expanded');
+        search.querySelectorAll('.msg-search-chip--more').forEach(function expandMoreButton(button) {
+          button.setAttribute('aria-expanded', 'true');
+        });
+      }
+    });
+    body.scrollTop = state.wasNearBottom
+      ? Math.max(0, body.scrollHeight - body.clientHeight)
+      : state.scrollTop;
+  }
+
+  // Avoid replacing live DOM for identical polling snapshots. Replacing it
+  // restarts animations and destroys browser-managed interaction state.
+  function updateResearchHtml($target, html, kind) {
+    const nextHtml = String(html || '');
+    const previousHtml = kind === 'body' ? renderedResearchBodyHtml : renderedResearchFooterHtml;
+    if (previousHtml === nextHtml) {
+      return;
+    }
+    const bodyState = kind === 'body' ? captureResearchBodyState($target) : null;
+    $target.html(nextHtml);
+    if (kind === 'body') {
+      renderedResearchBodyHtml = nextHtml;
+      restoreResearchBodyState($target, bodyState);
+    } else {
+      renderedResearchFooterHtml = nextHtml;
+    }
+  }
 
   // Toggle the modal into generic-tool or Deep Research mode.
   function setMode(mode) {
     const researchMode = mode === 'research';
     dom.$toolInspectorModal
       .toggleClass('is-deep-research', researchMode)
+      .toggleClass('is-deep-research-report', researchMode && openResearchView === 'report')
       .attr('data-inspector-mode', researchMode ? 'research' : 'tool');
+    if (!researchMode) {
+      dom.$toolInspectorModal.removeAttr('data-research-view');
+    }
     dom.$toolInspectorModal.find('.tool-inspector-generic-body').toggle(!researchMode);
     dom.$toolInspectorModal.find('.tool-inspector-research').toggle(researchMode);
+    dom.$toolInspectorModal.find('.tool-inspector-research-tools').toggle(researchMode);
+  }
+
+  function setResearchView(viewMode) {
+    openResearchView = viewMode === 'report' ? 'report' : 'activity';
+    dom.$toolInspectorModal
+      .toggleClass('is-deep-research-report', openResearchView === 'report')
+      .attr('data-research-view', openResearchView);
   }
 
   // Present the overlay and move keyboard focus into the dialog.
@@ -34,11 +135,14 @@ export function createToolInspector(context) {
   // Close the inspector modal.
   function close() {
     dom.$toolInspectorModal
-      .removeClass('open is-deep-research')
+      .removeClass('open is-deep-research is-deep-research-report')
       .attr('aria-hidden', 'true')
-      .removeAttr('data-inspector-mode');
+      .removeAttr('data-inspector-mode data-research-view');
     $('body').removeClass('is-tool-inspector-open');
     openResearchKey = '';
+    openResearchView = 'activity';
+    renderedResearchBodyHtml = null;
+    renderedResearchFooterHtml = null;
     setResearchEditing(false);
     if (previouslyFocused && document.contains(previouslyFocused) && typeof previouslyFocused.focus === 'function') {
       previouslyFocused.focus();
@@ -73,11 +177,15 @@ export function createToolInspector(context) {
     const view = payload || {};
     openResearchKey = String(view.key || '').trim();
     setMode('research');
+    setResearchView(view.viewMode);
     setResearchEditing(false);
     dom.$toolInspectorModal.find('.tool-inspector-title').text(view.title || 'Deep Research');
     dom.$toolInspectorModal.find('.tool-inspector-server').text(view.server || '');
-    dom.$toolInspectorModal.find('.tool-inspector-research-body').html(view.bodyHtml || '');
-    dom.$toolInspectorModal.find('.tool-inspector-research-footer').html(view.footerHtml || '');
+    dom.$toolInspectorModal.find('.tool-inspector-research-tools').html(view.toolbarHtml || '');
+    renderedResearchBodyHtml = String(view.bodyHtml || '');
+    renderedResearchFooterHtml = String(view.footerHtml || '');
+    dom.$toolInspectorModal.find('.tool-inspector-research-body').html(renderedResearchBodyHtml);
+    dom.$toolInspectorModal.find('.tool-inspector-research-footer').html(renderedResearchFooterHtml);
     dom.$toolInspectorModal.find('.tool-inspector-research-error').empty().hide();
     show();
   }
@@ -94,11 +202,25 @@ export function createToolInspector(context) {
     if (view.server !== undefined) {
       dom.$toolInspectorModal.find('.tool-inspector-server').text(view.server || '');
     }
+    if (view.viewMode !== undefined) {
+      setResearchView(view.viewMode);
+    }
+    if (view.toolbarHtml !== undefined) {
+      dom.$toolInspectorModal.find('.tool-inspector-research-tools').html(view.toolbarHtml || '');
+    }
     if (view.bodyHtml !== undefined) {
-      dom.$toolInspectorModal.find('.tool-inspector-research-body').html(view.bodyHtml || '');
+      updateResearchHtml(
+        dom.$toolInspectorModal.find('.tool-inspector-research-body'),
+        view.bodyHtml,
+        'body'
+      );
     }
     if (view.footerHtml !== undefined) {
-      dom.$toolInspectorModal.find('.tool-inspector-research-footer').html(view.footerHtml || '');
+      updateResearchHtml(
+        dom.$toolInspectorModal.find('.tool-inspector-research-footer'),
+        view.footerHtml,
+        'footer'
+      );
     }
   }
 
@@ -135,6 +257,10 @@ export function createToolInspector(context) {
     return openResearchKey;
   }
 
+  function getOpenResearchView() {
+    return openResearchView;
+  }
+
   function isResearchEditing() {
     return dom.$toolInspectorModal.find('.tool-inspector-research').hasClass('is-editing');
   }
@@ -166,6 +292,7 @@ export function createToolInspector(context) {
     bindGlobalEvents,
     close,
     getOpenResearchKey,
+    getOpenResearchView,
     getResearchEditorValue,
     isResearchEditing,
     open,

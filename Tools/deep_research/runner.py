@@ -14,7 +14,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from API import llm_api, mcp as tool_registry
-from Tools import deep_research_control as research_control
+from . import control as research_control
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -24,11 +24,11 @@ for _sandbox_path in (SANDBOX_ROOT / "supervisor", SANDBOX_ROOT / "src"):
         sys.path.insert(0, str(_sandbox_path))
 
 from sandbox.temporal import temporal_sandbox
-from research_orchestrator import run_deep_research_v2
+from .orchestrator import run_deep_research_v2
 
 
 RUNTIME_METADATA_FILE = PROJECT_ROOT / "Tools" / "model_runtime_metadata.json"
-LOGS_DIR = Path(__file__).resolve().parent / "logs"
+LOGS_DIR = research_control.CONTROL_ROOT / "logs"
 ALLOWED_TOOL_ALIASES = (
     "web_search__web_search",
     "web_search__read_page",
@@ -74,7 +74,13 @@ Citation discipline:
 - Cite only evidence actually returned during this isolated session.
 - The final response must contain the researched answer, not a diary of tool calls or hidden chain
   of thought. Answer in the language of the original request. It may briefly summarize methodology
-  or limitations when useful."""
+  or limitations when useful.
+
+Report presentation:
+- Write structured Markdown with clear sections and comparison tables when they improve scanning.
+- Use valid LaTeX delimiters for equations, quantitative models, or scientific notation when useful.
+- Use a valid fenced ```mermaid diagram for processes, architectures, timelines, or relationships
+  that are materially clearer visually. Do not add decorative diagrams with no analytical value."""
 
 RESEARCH_COMPRESSION_SYSTEM_PROMPT = """Compress completed deep-research history into durable
 research memory. Return only these Markdown sections: Research Goal, Plan State, Verified Claims,

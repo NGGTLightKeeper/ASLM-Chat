@@ -29,11 +29,6 @@
   transition: border-color var(--t-fast), background var(--t-fast), transform var(--t-fast);
 }
 
-.msg-deep-research-card:hover {
-  border-color: var(--c-text-dim);
-  background: color-mix(in srgb, var(--surface-secondary) 82%, var(--c-text) 3%);
-}
-
 .msg-deep-research-card:active {
   transform: translateY(1px);
 }
@@ -53,6 +48,152 @@
   justify-content: space-between;
   gap: 14px;
   min-width: 0;
+}
+
+.deep-research-report-card {
+  padding: 0;
+  overflow: visible;
+}
+
+.deep-research-report-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 13px 10px;
+}
+
+.deep-research-report-card-head .deep-research-card-topic {
+  flex: 1;
+}
+
+.deep-research-report-preview {
+  position: relative;
+  width: 100%;
+  height: 330px;
+  display: block;
+  overflow: hidden;
+  padding: 22px 44px 42px;
+  border: 0;
+  border-radius: 0 0 16px 16px;
+  background: var(--surface-secondary);
+  color: var(--c-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.deep-research-report-preview > .markdown-body {
+  display: block;
+  font-size: 12px;
+  line-height: 1.48;
+  pointer-events: none;
+}
+
+.deep-research-report-preview::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 90px;
+  background: linear-gradient(transparent, var(--surface-secondary));
+  pointer-events: none;
+}
+
+.deep-research-report-preview:focus-visible {
+  outline: 2px solid var(--c-text);
+  outline-offset: -2px;
+}
+
+.deep-research-download-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.deep-research-download-menu > summary {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  list-style: none;
+}
+
+.deep-research-download-menu > summary::-webkit-details-marker { display: none; }
+
+.deep-research-download-menu > summary:hover {
+  background: var(--surface-tertiary);
+  color: var(--c-text);
+}
+
+.deep-research-activity-toggle {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--c-text-muted);
+  cursor: pointer;
+}
+
+.deep-research-activity-toggle:hover,
+.deep-research-activity-toggle:focus-visible {
+  background: var(--surface-tertiary);
+  color: var(--c-text);
+}
+
+.deep-research-activity-toggle-icon {
+  width: 16px;
+  display: grid;
+  gap: 3px;
+}
+
+.deep-research-activity-toggle-icon > span {
+  height: 1.5px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.deep-research-activity-toggle-icon > span:nth-child(2) {
+  width: 12px;
+}
+
+.deep-research-download-popover {
+  position: absolute;
+  z-index: 90;
+  top: calc(100% + 7px);
+  right: 0;
+  width: 190px;
+  padding: 6px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: 10px;
+  background: var(--surface-secondary);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--c-black) 34%, transparent);
+}
+
+.deep-research-download-popover button {
+  width: 100%;
+  display: block;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--c-text);
+  font: inherit;
+  font-size: var(--font-size-caption-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.deep-research-download-popover button:hover {
+  background: var(--surface-tertiary);
 }
 
 .deep-research-card-topic {
@@ -365,6 +506,60 @@
   display: none;
 }
 
+.tool-inspector-research-tools {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.tool-inspector-overlay.is-deep-research .tool-inspector-research-tools {
+  display: flex;
+}
+
+.tool-inspector-overlay.is-deep-research-report {
+  align-items: stretch;
+  justify-content: stretch;
+  background: var(--surface-primary);
+}
+
+.tool-inspector-overlay.is-deep-research-report .tool-inspector-panel {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  animation: none;
+}
+
+.tool-inspector-overlay.is-deep-research-report .tool-inspector-header {
+  min-height: 54px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.tool-inspector-overlay.is-deep-research-report .tool-inspector-close {
+  order: -1;
+}
+
+.tool-inspector-overlay.is-deep-research-report .tool-inspector-header-left {
+  max-width: min(62vw, 760px);
+}
+
+.tool-inspector-overlay.is-deep-research-report .tool-inspector-research-body {
+  background: var(--surface-primary);
+}
+
+.deep-research-full-report {
+  width: min(100% - 40px, 760px);
+  margin: 0 auto;
+  padding: 54px 0 96px;
+  color: var(--c-text);
+  font-size: var(--font-size-body-2);
+  line-height: var(--leading-reading);
+}
+
 .tool-inspector-panel:focus {
   outline: none;
 }
@@ -452,34 +647,6 @@
   padding: 10px 0 18px 28px;
   color: var(--c-text-dim);
   font-size: var(--font-size-caption-2);
-}
-
-.deep-research-report-disclosure {
-  margin-top: 20px;
-  padding-top: 14px;
-  border-top: 1px solid var(--c-border);
-}
-
-.deep-research-report-disclosure > summary {
-  color: var(--c-text-muted);
-  font-size: var(--font-size-caption-1);
-  cursor: pointer;
-}
-
-.deep-research-report-disclosure[open] > summary {
-  margin-bottom: 14px;
-  color: var(--c-text);
-}
-
-.deep-research-recovered-report {
-  color: var(--c-text);
-  font-size: var(--font-size-body-2);
-  line-height: var(--leading-reading);
-  overflow-wrap: anywhere;
-}
-
-.deep-research-recovered-report > .markdown-body {
-  color: inherit;
 }
 
 .tool-inspector-research-error,
@@ -576,6 +743,24 @@ body.is-tool-inspector-open {
     border-width: 1px 0 0;
     border-radius: 16px 16px 0 0;
     animation-name: deep-research-sheet-in;
+  }
+
+  .tool-inspector-overlay.is-deep-research-report .tool-inspector-panel {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+    animation: none;
+  }
+
+  .deep-research-report-preview {
+    height: 280px;
+    padding: 18px 20px 36px;
+  }
+
+  .deep-research-full-report {
+    width: min(100% - 28px, 760px);
+    padding-top: 34px;
   }
 
   .deep-research-card-actions {

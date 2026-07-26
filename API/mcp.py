@@ -75,6 +75,7 @@ TOOL_CANCEL_FINAL_PROMPT = (
     "and do not restart the cancelled work under a new session. Briefly acknowledge the stop "
     "or answer only from evidence already present in the conversation."
 )
+NON_MODEL_TOOL_SERVER_IDS = {"deep_research"}
 
 
 class ToolExecutionCancelled(Exception):
@@ -1859,7 +1860,8 @@ def list_servers(
     return [
         _serialize_server(server_definition)
         for server_definition in registry.values()
-        if _server_is_supported(server_definition, engine, model_name)
+        if server_definition.get("id") not in NON_MODEL_TOOL_SERVER_IDS
+        and _server_is_supported(server_definition, engine, model_name)
     ]
 
 # Get one matching server.
@@ -1875,7 +1877,7 @@ def get_server(
     """Return one discovered server when it is available in the current context."""
 
     normalized_id = _slugify(str(server_id or ""))
-    if not normalized_id:
+    if not normalized_id or normalized_id in NON_MODEL_TOOL_SERVER_IDS:
         return None
 
     source = (tool_source_map or {}).get(normalized_id) or {}
@@ -2855,7 +2857,7 @@ def stream_ollama_tool(
             """Bridge the durable UI command to a blocking provider/tool call."""
 
             try:
-                from Tools import deep_research_control
+                from Tools.deep_research import control as deep_research_control
             except Exception as exc:  # pragma: no cover - project import guard
                 logger.warning("Could not start Deep Research stop monitor: %s", exc)
                 return

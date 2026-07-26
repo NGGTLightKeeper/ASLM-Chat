@@ -1,17 +1,360 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import tempfile
 import time
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+from zipfile import ZipFile
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 
-from Tools import deep_research_control as control
+from Tools.deep_research import control, orchestrator
 from Apps.UI import views
+
+
+class DeepResearchDirectStreamTests(SimpleTestCase):
+    def test_artifact_and_planning_card_have_no_hover_highlight(self) -> None:
+        source = Path("Apps/UI/static/css/main/deep-research.css").read_text(encoding="utf-8")
+        self.assertNotIn(".msg-deep-research-card:hover", source)
+        self.assertNotIn(".deep-research-report-preview:hover", source)
+        self.assertIn(".deep-research-card-activity:hover", source)
+
+    def test_model_stage_forwards_attached_media(self) -> None:
+        events = mock.Mock()
+        with mock.patch.object(
+            orchestrator.llm_api,
+            "generate",
+            return_value=[{"message": {"content": "OK"}}],
+        ) as generate:
+            result = orchestrator._run_model_stage(
+                engine="openai",
+                model="test-model",
+                system_prompt="System",
+                user_prompt="Research attachments",
+                generation_options={},
+                session_id="deep-research:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                events=events,
+                phase="planning",
+                iteration=0,
+                plan_version=0,
+                request_message={
+                    "role": "user",
+                    "content": "Source context",
+                    "media": [{"kind": "audio", "mime_type": "audio/mpeg", "data": "ZmFrZQ=="}],
+                },
+            )
+
+        outbound_user = generate.call_args.args[2][1]
+        self.assertEqual(result, "OK")
+        self.assertEqual(outbound_user["content"], "Research attachments")
+        self.assertEqual(outbound_user["media"][0]["kind"], "audio")
+
+    def test_attachment_only_request_builds_topic_and_multimodal_context(self) -> None:
+        pasted_text = base64.b64encode(b"Compare these attached materials").decode("ascii")
+        image_data = base64.b64encode(b"fake-image").decode("ascii")
+
+        topic, request_message = views._build_deep_research_request_message(
+            "",
+            [
+                {
+                    "kind": "file",
+                    "name": "Pasted text",
+                    "mime_type": "text/plain",
+                    "size_bytes": 32,
+                    "data": pasted_text,
+                },
+                {
+                    "kind": "image",
+                    "name": "screenshot.png",
+                    "mime_type": "image/png",
+                    "size_bytes": 10,
+                    "data": image_data,
+                },
+            ],
+            [],
+            engine="openai",
+            model_info_payload={"supports_vision": True},
+        )
+
+        self.assertIn("Pasted text", topic)
+        self.assertIn("screenshot.png", topic)
+        self.assertIn("Compare these attached materials", request_message["content"])
+        self.assertEqual(request_message["images"], [image_data])
+
+    def test_report_preview_is_not_a_button_containing_mermaid_controls(self) -> None:
+        source = Path("Apps/UI/static/js/ui/deep-research-ui.js").read_text(encoding="utf-8")
+        self.assertIn('<div class="deep-research-report-preview"', source)
+        self.assertNotIn('<button type="button" class="deep-research-report-preview"', source)
+
+    def test_direct_stream_persists_report_context_and_system_ready_text(self) -> None:
+        assistant = SimpleNamespace(content="", llm_transcript=[], save=mock.Mock())
+        chat = SimpleNamespace(id="11111111-1111-1111-1111-111111111111", pk="chat-pk")
+        prepared = {
+            "arguments": {
+                "topic": "Test direct research",
+                "session_id": "deep-research:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "max_rounds": 6,
+            },
+            "tool_ui": {"kind": "deep_research", "status": "planning"},
+        }
+        result = {
+            "model_context": "Report [source](https://example.com)",
+            "report": "Report [source](https://example.com)",
+            "sources": [{"id": "c1", "url": "https://example.com"}],
+            "ui": {"kind": "deep_research", "status": "completed"},
+        }
+
+        with (
+            mock.patch.object(views.deep_research_service, "run_research", return_value=result) as run_research,
+            mock.patch.object(views.Chat.objects, "filter") as filter_chat,
+        ):
+            streamed = "".join(
+                views._stream_deep_research_response(
+                    chat=chat,
+                    assistant_message_record=assistant,
+                    prepared_research=prepared,
+                    engine="openai",
+                    model_name="test-model",
+                    request_message={"role": "user", "content": "Attached context", "images": ["aW1hZ2U="]},
+                )
+            )
+
+        self.assertIn("<tool_call>", streamed)
+        self.assertIn("<tool_result>", streamed)
+        self.assertTrue(streamed.endswith("Your research is ready"))
+        self.assertEqual(assistant.content, "Your research is ready")
+        self.assertEqual(assistant.llm_transcript[1]["content"], result["model_context"])
+        self.assertEqual(assistant.llm_transcript[2]["content"], "Your research is ready")
+        self.assertEqual(assistant.save.call_count, 2)
+        self.assertEqual(filter_chat.call_count, 2)
+        filter_chat.assert_called_with(pk="chat-pk")
+        run_context = run_research.call_args.args[1]
+        self.assertEqual(run_context["request_message"]["content"], "Attached context")
+
+
+class DeepResearchAttachmentChatApiTests(TestCase):
+    def test_attachment_only_chat_starts_research_with_file_context(self) -> None:
+        prepared = {
+            "arguments": {
+                "topic": "Research the user-provided attachments: screenshot.png, Pasted text.",
+                "session_id": "deep-research:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "max_rounds": 6,
+            },
+            "tool_ui": {"kind": "deep_research", "status": "planning"},
+        }
+        result = {
+            "model_context": "Report",
+            "report": "Report",
+            "sources": [],
+            "ui": {"kind": "deep_research", "status": "completed"},
+        }
+        image_data = base64.b64encode(b"fake-image").decode("ascii")
+        pasted_data = base64.b64encode(b"Compare the attached materials").decode("ascii")
+
+        with (
+            mock.patch.object(views, "_resolve_request_engine_or_response", return_value=("openai", None)),
+            mock.patch.object(
+                views,
+                "_build_model_info_payload",
+                return_value={
+                    "supports_vision": True,
+                    "supports_audio_input": False,
+                    "supports_video_input": False,
+                    "supports_tool_calling": False,
+                    "defaults": {},
+                    "runtime_limits": {},
+                },
+            ),
+            mock.patch.object(views, "_sync_runtime_model_metadata"),
+            mock.patch.object(views.deep_research_service, "prepare_research", return_value=prepared) as prepare,
+            mock.patch.object(views.deep_research_service, "run_research", return_value=result) as run,
+        ):
+            response = self.client.post(
+                "/api/chat/",
+                data=json.dumps(
+                    {
+                        "message": "",
+                        "model": "test-model",
+                        "deep_research": True,
+                        "attachments": [
+                            {
+                                "kind": "image",
+                                "name": "screenshot.png",
+                                "mime_type": "image/png",
+                                "data": image_data,
+                            },
+                            {
+                                "kind": "file",
+                                "name": "Pasted text",
+                                "mime_type": "text/plain",
+                                "data": pasted_data,
+                            },
+                        ],
+                    }
+                ),
+                content_type="application/json",
+            )
+            streamed = b"".join(response.streaming_content).decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Your research is ready", streamed)
+        topic = prepare.call_args.args[0]
+        self.assertIn("screenshot.png", topic)
+        self.assertIn("Pasted text", topic)
+        request_message = run.call_args.args[1]["request_message"]
+        self.assertIn("Compare the attached materials", request_message["content"])
+        self.assertEqual(request_message["images"], [image_data])
+
+
+class DeepResearchExportApiTests(SimpleTestCase):
+    RICH_REPORT = """# Architecture report
+
+## Decision
+
+Use **modular services** with the latency model $T = T_{network} + T_{compute}$.
+
+$$R = \\frac{requests}{second}$$
+
+| Component | Decision | Evidence |
+| --- | --- | --- |
+| Gateway | Stateless | [Primary source](https://example.com/source) |
+
+```mermaid
+flowchart LR
+    Client --> Gateway
+    Gateway --> Service
+```
+"""
+
+    def setUp(self) -> None:
+        self.control_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.control_directory.cleanup)
+        root = Path(self.control_directory.name)
+        self.enterContext(mock.patch.object(control, "STATE_ROOT", root / "state"))
+        self.enterContext(mock.patch.object(control, "COMMAND_ROOT", root / "commands"))
+        self.session_id = control.new_session_id()
+        control.create_session(self.session_id, topic="Export report")
+        control.update_state(
+            self.session_id,
+            status="completed",
+            report="# Result\nClaim [c0001-1](https://example.com/source)",
+            model_context="# Result\nClaim [c0001-1](https://example.com/source)",
+        )
+
+    def export(self, export_format: str):
+        return self.client.post(
+            "/api/deep-research/export/",
+            data=json.dumps({"session_id": self.session_id, "format": export_format}),
+            content_type="application/json",
+        )
+
+    def test_markdown_export_keeps_resolved_citation_link(self) -> None:
+        response = self.export("md")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"https://example.com/source", response.content)
+        self.assertIn(".md", response["Content-Disposition"])
+
+    def test_markdown_export_uses_transcript_fallback_after_snapshot_retention(self) -> None:
+        control._state_path(self.session_id).unlink()
+
+        response = self.client.post(
+            "/api/deep-research/export/",
+            data=json.dumps(
+                {
+                    "session_id": self.session_id,
+                    "format": "md",
+                    "title": "Recovered report",
+                    "report": "# Recovered\nClaim [source](https://example.com/recovered)",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"https://example.com/recovered", response.content)
+        self.assertIn("Recovered-report.md", response["Content-Disposition"])
+
+    def test_docx_export_contains_clickable_external_relationship(self) -> None:
+        response = self.export("docx")
+        self.assertEqual(response.status_code, 200)
+        with ZipFile(BytesIO(response.content)) as archive:
+            relationships = archive.read("word/_rels/document.xml.rels").decode("utf-8")
+        self.assertIn("https://example.com/source", relationships)
+        self.assertIn('TargetMode="External"', relationships)
+
+    def test_pdf_export_returns_pdf_document(self) -> None:
+        response = self.export("pdf")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.content.startswith(b"%PDF-"))
+
+    def test_docx_renders_markdown_math_and_mermaid(self) -> None:
+        control.update_state(
+            self.session_id,
+            report=self.RICH_REPORT,
+            model_context=self.RICH_REPORT,
+        )
+
+        response = self.export("docx")
+
+        self.assertEqual(response.status_code, 200)
+        with ZipFile(BytesIO(response.content)) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+            styles_xml = archive.read("word/styles.xml")
+            media = [name for name in archive.namelist() if name.startswith("word/media/")]
+            from PIL import Image
+            diagram_bytes = archive.read(media[0]) if media else b""
+            diagram_size = Image.open(BytesIO(diagram_bytes)).size if diagram_bytes else (0, 0)
+        self.assertIn("<w:tbl", document_xml)
+        self.assertIn("<m:oMath", document_xml)
+        self.assertNotIn("**modular services**", document_xml)
+        self.assertNotIn("0563C1", document_xml)
+        from xml.etree import ElementTree
+        namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        styles_root = ElementTree.fromstring(styles_xml)
+        title_style = styles_root.find(".//w:style[@w:styleId='Title']", namespace)
+        self.assertIsNotNone(title_style)
+        self.assertIsNone(title_style.find("./w:pPr/w:pBdr", namespace))
+        self.assertEqual(title_style.find("./w:rPr/w:color", namespace).get(f"{{{namespace['w']}}}val"), "000000")
+        self.assertTrue(media)
+        self.assertGreaterEqual(diagram_size[0], 800)
+        with Image.open(BytesIO(diagram_bytes)).convert("RGB") as diagram:
+            red, green, blue = diagram.split()
+            from PIL import ImageChops
+            self.assertIsNone(ImageChops.difference(red, green).getbbox())
+            self.assertIsNone(ImageChops.difference(red, blue).getbbox())
+
+    def test_pdf_renders_report_pages_and_keeps_links(self) -> None:
+        control.update_state(
+            self.session_id,
+            report=self.RICH_REPORT,
+            model_context=self.RICH_REPORT,
+        )
+
+        response = self.export("pdf")
+
+        self.assertEqual(response.status_code, 200)
+        import fitz
+        document = fitz.open(stream=response.content, filetype="pdf")
+        try:
+            rendered_text = "\n".join(page.get_text() for page in document)
+            links = [link for page in document for link in page.get_links()]
+            sample = document[0].get_pixmap(colorspace=fitz.csRGB, alpha=False)
+        finally:
+            document.close()
+        self.assertIn("Component", rendered_text)
+        self.assertIn("Gateway", rendered_text)
+        self.assertNotIn("| --- |", rendered_text)
+        self.assertTrue(any(link.get("uri") == "https://example.com/source" for link in links))
+        from PIL import Image, ImageChops
+        rendered_page = Image.frombytes("RGB", (sample.width, sample.height), sample.samples)
+        red, green, blue = rendered_page.split()
+        self.assertIsNone(ImageChops.difference(red, green).getbbox())
+        self.assertIsNone(ImageChops.difference(red, blue).getbbox())
 
 
 class DeepResearchControlApiTests(SimpleTestCase):

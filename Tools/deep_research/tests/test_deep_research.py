@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import sys
@@ -12,12 +11,11 @@ from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SERVER_ROOT = PROJECT_ROOT / "Tools" / "mcp-deep-research"
-for path in (PROJECT_ROOT, SERVER_ROOT):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-import deep_research
+from Tools.deep_research import runner as deep_research
+from Tools.deep_research import service
 from API import mcp as tool_registry
 from Services import venv_manager
 from Services.tool_worker import WorkerEventEmitter
@@ -29,14 +27,6 @@ def _metadata_file(payload: dict) -> tempfile.NamedTemporaryFile:
     json.dump(payload, handle)
     handle.close()
     return handle
-
-
-def _load_server_module():
-    spec = importlib.util.spec_from_file_location("deep_research_test_server", SERVER_ROOT / "mcp-server.py")
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 class RuntimeModelTests(unittest.TestCase):
@@ -125,6 +115,18 @@ class OrchestrationTests(unittest.TestCase):
             "url": "https://example.com/source",
             "title": "Primary source",
         }
+        search_sources = [
+            source,
+            *[
+                {
+                    "id": f"c0042-{index}",
+                    "url": f"https://example.com/source-{index}",
+                    "title": f"Search source {index}",
+                    "domain": "example.com",
+                }
+                for index in range(2, 19)
+            ],
+        ]
         model_outputs = [
             '{"summary":"Verify the claim","steps":[{"id":"s1","title":"Find primary evidence"}],'
             '"candidates":[{"text":"claim primary evidence","vertical":"web","purpose":"primary source"}]}',
@@ -155,7 +157,7 @@ class OrchestrationTests(unittest.TestCase):
                 return {
                     "_tool_result_structured": {
                         "model_context": "Primary evidence [c0042-1]",
-                        "sources": [source],
+                        "sources": search_sources,
                     }
                 }
             return {
@@ -165,7 +167,7 @@ class OrchestrationTests(unittest.TestCase):
                 }
             }
 
-        from research_orchestrator import control as research_control
+        from Tools.deep_research.orchestrator import control as research_control
 
         with (
             mock.patch.object(deep_research.llm_api, "generate", side_effect=generation_chunks) as generate,
@@ -214,7 +216,7 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(result["sources"][0]["id"], "c11111111-1")
         self.assertEqual(result["sources"][0]["citation_aliases"], ["c0042-1"])
         self.assertEqual(result["sources"][0]["url"], source["url"])
-        self.assertEqual(result["ui"]["result_count"], 1)
+        self.assertEqual(result["ui"]["result_count"], 18)
         self.assertEqual(result["ui"]["status"], "completed")
         self.assertEqual(result["ui"]["queries_used"], 1)
         event_log_path = Path(result["event_log"]["path"])
@@ -237,6 +239,11 @@ class OrchestrationTests(unittest.TestCase):
         self.assertIn("synthesis_started", event_types)
         self.assertIn("session_completed", event_types)
         self.assertNotIn("model_output_delta", event_types)
+        search_completed = next(
+            event for event in persisted_events if event["type"] == "search_completed"
+        )
+        self.assertEqual(search_completed["data"]["source_count"], 18)
+        self.assertEqual(len(search_completed["data"]["sources"]), 18)
 
     def test_parent_model_context_resolves_grouped_citations_to_links(self):
         result = deep_research.replace_citation_handles_with_markdown_links(
@@ -397,42 +404,15 @@ class OrchestrationTests(unittest.TestCase):
 
 
 class ContractTests(unittest.TestCase):
-    def test_server_requires_a_fresh_worker_process_for_every_session(self):
-        server = _load_server_module()
-        self.assertTrue(server.MCP_SERVER["fresh_process_per_call"])
-
-    def test_fresh_process_server_is_never_called_through_persistent_worker(self):
-        lookup = {
-            "deep_research__deep_research": {
-                "server": {
-                    "id": "deep_research",
-                    "name": "Deep Research",
-                    "external": True,
-                    "fresh_process_per_call": True,
-                    "server_file": SERVER_ROOT / "mcp-server.py",
-                },
-                "tool": {
-                    "id": "deep_research",
-                    "name": "Deep Research",
-                    "alias": "deep_research__deep_research",
-                },
-            }
-        }
-        with mock.patch.object(tool_registry, "_run_worker", return_value={"report": "ok"}) as run:
-            tool_registry.call_ollama_tool(
-                lookup,
-                "deep_research__deep_research",
-                {"topic": "fresh"},
+    def test_application_service_canonicalizes_long_running_call(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            service.control, "STATE_ROOT", Path(directory) / "state"
+        ), mock.patch.object(
+            service.control, "COMMAND_ROOT", Path(directory) / "commands"
+        ):
+            prepared = service.prepare_research(
+                "  A topic  ", instructions=" concise ", max_rounds=999
             )
-
-        self.assertFalse(run.call_args.kwargs["persistent"])
-
-    def test_preparer_canonicalizes_long_running_call(self):
-        server = _load_server_module()
-        prepared = server.prepare_deep_research(
-            {"topic": "  A topic  ", "instructions": " concise ", "max_rounds": 999}
-        )
-        self.assertTrue(prepared["ok"])
         self.assertEqual(prepared["arguments"]["topic"], "A topic")
         self.assertEqual(prepared["arguments"]["max_rounds"], 10)
         self.assertEqual(prepared["arguments"]["timeout_s"], 3600)

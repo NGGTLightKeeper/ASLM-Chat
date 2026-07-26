@@ -96,7 +96,9 @@ from Apps.UI.upload_storage import (
 )
 from Settings import mcp_json, settings
 from Settings import skills as skills_config
-from Tools import deep_research_control
+from Tools.deep_research import control as deep_research_control
+from Tools.deep_research import export as research_export
+from Tools.deep_research import service as deep_research_service
 
 logger = logging.getLogger(__name__)
 
@@ -910,6 +912,16 @@ FAVICON_ROOT_FALLBACKS = (
     "/apple-touch-icon-precomposed.png",
 )
 UPLOADED_FILE_CONTEXT_ENTRY_TYPE = "uploaded_file_context"
+UPLOADED_JSON_CONTEXT_MAX_BYTES = 8 * 1024 * 1024
+UPLOADED_MEDIA_CONTEXT_MAX_BYTES = 20 * 1024 * 1024
+JSON_UPLOAD_MIME_TYPES = {
+    "application/geo+json",
+    "application/json",
+    "application/ld+json",
+    "application/vnd.api+json",
+    "application/x-ndjson",
+}
+JSON_UPLOAD_SUFFIXES = {".geojson", ".json", ".jsonl", ".ndjson"}
 
 CONTEXT_WINDOW_KEYS = (
     "num_ctx",
@@ -1109,10 +1121,20 @@ def _list_tool_servers_cached(engine: str, model_name: str | None = None) -> lis
         if cached is not None:
             cached_at, servers = cached
             if now - cached_at <= MODEL_LIST_CACHE_TTL_SECONDS:
-                return _stamp_docker_availability(_clone_metadata_payload(servers))
+                return _stamp_docker_availability([
+                    server
+                    for server in _clone_metadata_payload(servers)
+                    if str(server.get("id") or "").strip().lower() != "deep_research"
+                ])
             _tool_server_cache.pop(cache_key, None)
 
-    servers = tool_registry.list_servers(engine, model_name)
+    # Deep Research has its own chat protocol and must never be offered to the
+    # model (or slash/MCP menus) as a selectable tool server.
+    servers = [
+        server
+        for server in tool_registry.list_servers(engine, model_name)
+        if str(server.get("id") or "").strip().lower() != "deep_research"
+    ]
     with _metadata_cache_lock:
         _tool_server_cache[cache_key] = (time.monotonic(), _clone_metadata_payload(servers))
     return _stamp_docker_availability(_clone_metadata_payload(servers))
@@ -1732,28 +1754,151 @@ def _build_uploaded_file_prompt_block(manifest: dict[str, Any]) -> str:
     if table_preview:
         lines.append(f"Table preview:\n{table_preview}")
 
+    json_content = manifest.get("json_content")
+    if isinstance(json_content, str):
+        lines.append(f"JSON content:\n```json\n{json_content}\n```")
+        if manifest.get("json_content_truncated"):
+            lines.append("JSON content was truncated to the model-context size limit.")
+
     text_preview = str(manifest.get("text_preview") or "").strip()
-    if text_preview:
+    if text_preview and not isinstance(json_content, str):
         lines.append(f"Text preview:\n{text_preview}")
-    elif not sandbox_path:
+    elif manifest.get("media_context_attached"):
+        lines.append("Media content is attached as a native multimodal input.")
+    elif not isinstance(json_content, str) and not sandbox_path:
         lines.append("Readable content is not available for this model request.")
 
     lines.append("[/Uploaded file]")
     return "\n".join(lines)
 
 
+# Return media kinds accepted by the selected model, based on normalized adapter metadata.
+def _supported_model_media_kinds(
+    engine: str,
+    model_info_payload: dict[str, Any] | None,
+) -> set[str]:
+    payload = model_info_payload if isinstance(model_info_payload, dict) else {}
+    supported: set[str] = set()
+    if bool(payload.get("supports_vision", False)):
+        supported.add("image")
+    if bool(payload.get("supports_audio_input", False)):
+        supported.add("audio")
+    if bool(payload.get("supports_video_input", False)):
+        supported.add("video")
+
+    # Ollama and LM Studio currently expose image handles only. Never infer
+    # audio/video support for them from a broad "multimodal" label.
+    if settings.is_ollama_engine(engine) or settings.normalize_engine_name(engine) == "lms":
+        supported.intersection_update({"image"})
+    return supported
+
+
+# Return the uploaded file bytes without exposing the host path in model text.
+def _read_uploaded_context_bytes(manifest: dict[str, Any], *, max_bytes: int) -> tuple[bytes, bool]:
+    file_id = str(manifest.get("file_id") or "").strip()
+    storage_manifest = load_upload_manifest(file_id) if file_id else None
+    source_manifest = storage_manifest or manifest
+    try:
+        target = resolve_uploaded_file_host_path(source_manifest)
+        with target.open("rb") as handle:
+            payload = handle.read(max_bytes + 1)
+    except (FileNotFoundError, OSError, ValueError):
+        return b"", False
+    return payload[:max_bytes], len(payload) > max_bytes
+
+
+# Decode JSON-family uploads for direct text context instead of a short manifest preview.
+def _uploaded_json_context(manifest: dict[str, Any]) -> tuple[str | None, bool]:
+    name = str(manifest.get("name") or "").strip()
+    mime = str(manifest.get("mime") or "").split(";", 1)[0].strip().lower()
+    if mime not in JSON_UPLOAD_MIME_TYPES and Path(name).suffix.lower() not in JSON_UPLOAD_SUFFIXES:
+        return None, False
+
+    raw_bytes, truncated = _read_uploaded_context_bytes(
+        manifest,
+        max_bytes=UPLOADED_JSON_CONTEXT_MAX_BYTES,
+    )
+    if not raw_bytes:
+        return None, truncated
+    for encoding in ("utf-8", "utf-8-sig", "cp1251"):
+        try:
+            return raw_bytes.decode(encoding).strip(), truncated
+        except UnicodeDecodeError:
+            continue
+    return raw_bytes.decode("utf-8", errors="replace").strip(), truncated
+
+
+# Build one inline media part only when the selected model supports its modality.
+def _uploaded_media_context(
+    manifest: dict[str, Any],
+    supported_media_kinds: set[str],
+) -> dict[str, Any] | None:
+    mime = str(manifest.get("mime") or "application/octet-stream").split(";", 1)[0].strip().lower()
+    kind = next((candidate for candidate in ("image", "audio", "video") if mime.startswith(f"{candidate}/")), "")
+    if not kind or kind not in supported_media_kinds:
+        return None
+
+    raw_bytes, truncated = _read_uploaded_context_bytes(
+        manifest,
+        max_bytes=UPLOADED_MEDIA_CONTEXT_MAX_BYTES,
+    )
+    if not raw_bytes or truncated:
+        return None
+    return {
+        "kind": kind,
+        "name": str(manifest.get("name") or f"uploaded-{kind}"),
+        "mime_type": mime,
+        "data": base64.b64encode(raw_bytes).decode("ascii"),
+    }
+
+
 # Attach uploaded file manifests to the current user entry.
 def _apply_uploaded_file_manifests_to_llm_entry(
     entry: dict[str, Any],
     manifests: list[dict[str, Any]],
+    *,
+    supported_media_kinds: set[str] | None = None,
 ) -> dict[str, Any]:
-    blocks = [_build_uploaded_file_prompt_block(manifest) for manifest in manifests if manifest]
+    allowed_media = set(supported_media_kinds or set())
+    hydrated_manifests: list[dict[str, Any]] = []
+    media_parts: list[dict[str, Any]] = []
+    for manifest in manifests:
+        if not manifest:
+            continue
+        hydrated = dict(manifest)
+        json_content, json_truncated = _uploaded_json_context(hydrated)
+        if json_content is not None:
+            hydrated["json_content"] = json_content
+            hydrated["json_content_truncated"] = json_truncated
+        media_part = _uploaded_media_context(hydrated, allowed_media)
+        if media_part:
+            hydrated["media_context_attached"] = True
+            media_parts.append(media_part)
+        hydrated_manifests.append(hydrated)
+
+    blocks = [_build_uploaded_file_prompt_block(manifest) for manifest in hydrated_manifests]
     if not blocks:
         return entry
 
     content = str(entry.get("content") or "").strip()
     upload_context = "\n\n".join(blocks)
     entry["content"] = f"{content}\n\n{upload_context}".strip() if content else upload_context
+
+    for media_part in media_parts:
+        if media_part["kind"] == "image":
+            images = entry.setdefault("images", [])
+            image_mime_types = entry.setdefault("image_mime_types", [])
+            if media_part["data"] not in images:
+                images.append(media_part["data"])
+                image_mime_types.append(media_part["mime_type"])
+            continue
+        media = entry.setdefault("media", [])
+        if not any(
+            item.get("data") == media_part["data"] and item.get("mime_type") == media_part["mime_type"]
+            for item in media
+            if isinstance(item, dict)
+        ):
+            media.append(media_part)
     return entry
 
 
@@ -2075,6 +2220,7 @@ def _build_llm_entries_from_request_message(
     message: dict[str, Any],
     *,
     sandbox_enabled: bool = False,
+    supported_media_kinds: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     role = str(message.get("role") or "").strip().lower()
     if role == "assistant":
@@ -2095,7 +2241,11 @@ def _build_llm_entries_from_request_message(
             _normalize_uploaded_file_ids(message),
             sandbox_enabled=sandbox_enabled,
         )
-        payload = _apply_uploaded_file_manifests_to_llm_entry(payload, upload_manifests or [])
+        payload = _apply_uploaded_file_manifests_to_llm_entry(
+            payload,
+            upload_manifests or [],
+            supported_media_kinds=supported_media_kinds,
+        )
         if not str(payload.get("content") or "").strip() and not attachments and not upload_manifests:
             return []
         return [payload]
@@ -2111,13 +2261,19 @@ def _build_llm_entries_from_request_message(
 
 
 # Build LLM history entries
-def _build_llm_history_entries(message: Message, *, sandbox_enabled: bool = False) -> list[dict[str, Any]]:
+def _build_llm_history_entries(
+    message: Message,
+    *,
+    sandbox_enabled: bool = False,
+    supported_media_kinds: set[str] | None = None,
+) -> list[dict[str, Any]]:
     if message.role != "assistant":
         payload = {"role": message.role, "content": message.content}
         payload = _apply_attachments_to_llm_entry(payload, _get_message_attachments(message))
         payload = _apply_uploaded_file_manifests_to_llm_entry(
             payload,
             _load_message_upload_manifests(message, sandbox_enabled=sandbox_enabled),
+            supported_media_kinds=supported_media_kinds,
         )
         return [payload]
 
@@ -2605,6 +2761,8 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
         supports_think_toggle = True
 
     supports_vision = "vision" in normalized_capabilities
+    supports_audio_input = bool(normalized_capabilities & {"audio", "audio_input", "input_audio"})
+    supports_video_input = bool(normalized_capabilities & {"video", "video_input", "input_video"})
     supports_tool_calling = _ollama_metadata_supports_tool_calling(capabilities, template_str)
 
     # Runtime limits are used by the frontend controls.
@@ -2622,6 +2780,8 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
         "think_param_name": think_param_name,
         "think_level_param_name": think_level_param_name,
         "supports_vision": supports_vision,
+        "supports_audio_input": supports_audio_input,
+        "supports_video_input": supports_video_input,
         "supports_tool_calling": supports_tool_calling,
         "supports_files": False,
         "runtime_limits": {
@@ -2659,6 +2819,8 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
             "think_level_param_name": "think_level",
             "think_level_options": [],
             "supports_vision": False,
+            "supports_audio_input": False,
+            "supports_video_input": False,
             "supports_tool_calling": False,
             "supports_files": False,
             "runtime_limits": {},
@@ -2704,6 +2866,14 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
         "think_level_options": think_level_options,
         "supported_parameters": settings_data.get("supported_parameters", []) if isinstance(settings_data.get("supported_parameters", []), list) else [],
         "supports_vision": "vision" in normalized_capabilities or bool(settings_data.get("supports_vision", False)),
+        "supports_audio_input": bool(
+            settings_data.get("supports_audio_input", False)
+            or normalized_capabilities & {"audio", "audio_input", "input_audio"}
+        ),
+        "supports_video_input": bool(
+            settings_data.get("supports_video_input", False)
+            or normalized_capabilities & {"video", "video_input", "input_video"}
+        ),
         "supports_tool_calling": bool(settings_data.get("supports_tool_calling", False)),
         "supports_files": bool(settings_data.get("supports_files", False)),
         "runtime_limits": settings_data.get("runtime_limits", {}) if isinstance(settings_data.get("runtime_limits", {}), dict) else {},
@@ -2863,6 +3033,8 @@ def _build_inference_info_payload(
             ),
             "supports_think_level": bool(model_info_payload.get("supports_think_level", False)),
             "supports_vision": bool(model_info_payload.get("supports_vision", False)),
+            "supports_audio_input": bool(model_info_payload.get("supports_audio_input", False)),
+            "supports_video_input": bool(model_info_payload.get("supports_video_input", False)),
             "supports_tool_calling": bool(model_info_payload.get("supports_tool_calling", False)),
             "supports_files": bool(model_info_payload.get("supports_files", False)),
         },
@@ -3237,6 +3409,10 @@ def _estimate_llm_entry_chars(entry: dict[str, Any]) -> int:
 
     images = entry.get("images") if isinstance(entry.get("images"), list) else []
     cost += len(images) * 4096
+    media = entry.get("media") if isinstance(entry.get("media"), list) else []
+    for item in media:
+        if isinstance(item, dict):
+            cost += max(4096, len(str(item.get("data") or "")) // 4)
     return cost
 
 
@@ -3833,6 +4009,7 @@ def _build_chat_history(
     sandbox_enabled: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     llm_messages: list[dict[str, Any]] = []
+    supported_media_kinds = _supported_model_media_kinds(engine, model_info_payload)
     if system_prompt:
         llm_messages.append({"role": "system", "content": system_prompt})
 
@@ -3877,7 +4054,11 @@ def _build_chat_history(
         if upload_manifests is not None
         else _load_message_upload_manifests(user_message_record, sandbox_enabled=sandbox_enabled)
     )
-    current_entry = _apply_uploaded_file_manifests_to_llm_entry(current_entry, current_upload_manifests or [])
+    current_entry = _apply_uploaded_file_manifests_to_llm_entry(
+        current_entry,
+        current_upload_manifests or [],
+        supported_media_kinds=supported_media_kinds,
+    )
 
     used_history_chars = len(str(system_prompt or "")) + _estimate_llm_entry_chars(current_entry)
     selected_history: list[list[dict[str, Any]]] = []
@@ -3889,7 +4070,11 @@ def _build_chat_history(
         .order_by("-created_at", "-id")[:LLM_HISTORY_MAX_MESSAGES]
     ))
     for index, historical_message in enumerate(history_records):
-        entries = _build_llm_history_entries(historical_message, sandbox_enabled=sandbox_enabled)
+        entries = _build_llm_history_entries(
+            historical_message,
+            sandbox_enabled=sandbox_enabled,
+            supported_media_kinds=supported_media_kinds,
+        )
         if not entries:
             continue
 
@@ -4285,10 +4470,16 @@ def _build_current_user_llm_entry(
     user_message: str,
     attachments: list[dict[str, Any]],
     upload_manifests: list[dict[str, Any]],
+    *,
+    supported_media_kinds: set[str] | None = None,
 ) -> dict[str, Any]:
     current_entry: dict[str, Any] = {"role": "user", "content": user_message}
     current_entry = _apply_attachments_to_llm_entry(current_entry, attachments)
-    current_entry = _apply_uploaded_file_manifests_to_llm_entry(current_entry, upload_manifests or [])
+    current_entry = _apply_uploaded_file_manifests_to_llm_entry(
+        current_entry,
+        upload_manifests or [],
+        supported_media_kinds=supported_media_kinds,
+    )
     return current_entry
 
 
@@ -4305,6 +4496,7 @@ def _build_generate_llm_messages(
     sandbox_enabled: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     llm_messages: list[dict[str, Any]] = []
+    supported_media_kinds = _supported_model_media_kinds(engine, model_info_payload)
     if system_prompt:
         llm_messages.append({"role": "system", "content": system_prompt})
 
@@ -4349,7 +4541,11 @@ def _build_generate_llm_messages(
     history_newest_first = list(reversed(history_records))
 
     for index, historical_message in enumerate(history_newest_first):
-        entries = _build_llm_entries_from_request_message(historical_message, sandbox_enabled=sandbox_enabled)
+        entries = _build_llm_entries_from_request_message(
+            historical_message,
+            sandbox_enabled=sandbox_enabled,
+            supported_media_kinds=supported_media_kinds,
+        )
         if not entries:
             continue
 
@@ -5103,6 +5299,10 @@ def generate_api(request):
             command_plan.message,
             prepared.attachments,
             prepared.upload_manifests,
+            supported_media_kinds=_supported_model_media_kinds(
+                prepared.engine,
+                prepared.model_info_payload,
+            ),
         )
         llm_messages, compression_event = _build_generate_llm_messages(
             history_messages,
@@ -5162,6 +5362,148 @@ def generate_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Build a non-empty Deep Research topic and preserve attached model context.
+def _build_deep_research_request_message(
+    user_message: str,
+    attachments: list[dict[str, Any]],
+    upload_manifests: list[dict[str, Any]],
+    *,
+    engine: str,
+    model_info_payload: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any]]:
+    attachment_names = [
+        str(item.get("name") or "").strip()
+        for item in [*(attachments or []), *(upload_manifests or [])]
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    ]
+    attachment_names = list(dict.fromkeys(attachment_names))
+    topic = str(user_message or "").strip()
+    if not topic:
+        listed_names = ", ".join(attachment_names[:6])
+        topic = (
+            f"Research the user-provided attachments: {listed_names}."
+            if listed_names
+            else "Research the user-provided attachments."
+        )
+
+    request_message: dict[str, Any] = {"role": "user", "content": topic}
+    request_message = _apply_attachments_to_llm_entry(request_message, attachments or [])
+    request_message = _apply_uploaded_file_manifests_to_llm_entry(
+        request_message,
+        upload_manifests or [],
+        supported_media_kinds=_supported_model_media_kinds(engine, model_info_payload),
+    )
+    return topic, request_message
+
+
+# Stream a first-class Deep Research run without routing the request through the
+# parent model's tool-selection loop.
+def _stream_deep_research_response(
+    *,
+    chat: Chat,
+    assistant_message_record: Message,
+    prepared_research: dict[str, Any],
+    engine: str,
+    model_name: str,
+    request_message: dict[str, Any] | None = None,
+):
+    arguments = dict(prepared_research.get("arguments") or {})
+    initial_ui = dict(prepared_research.get("tool_ui") or {})
+    alias = "research__deep_research"
+    call_id = f"research-{uuid.uuid4().hex}"
+    call_entry = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {"name": alias, "arguments": arguments},
+            }
+        ],
+    }
+    # Persist the pending artifact before the blocking orchestrator begins so a
+    # reload can reconstruct the card and continue polling the durable session.
+    assistant_message_record.llm_transcript = [call_entry]
+    assistant_message_record.save(update_fields=["llm_transcript"])
+    Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
+    yield _serialize_tool_call_marker(
+        {
+            "alias": alias,
+            "server_id": "research",
+            "server_name": "Deep Research",
+            "tool_id": "deep_research",
+            "tool_name": "Deep Research",
+            "arguments": arguments,
+            "tool_ui": initial_ui,
+        }
+    )
+
+    result: dict[str, Any]
+    try:
+        result = deep_research_service.run_research(
+            arguments,
+            {
+                "chat_id": str(chat.id),
+                "engine": engine,
+                "model_name": model_name,
+                "request_message": dict(request_message or {}),
+            },
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Deep Research returned an invalid result.")
+    except Exception as exc:
+        logger.exception("First-class Deep Research failed")
+        session_id = str(arguments.get("session_id") or "")
+        snapshot = deep_research_control.read_state(session_id) if session_id else {}
+        public_error = str((snapshot or {}).get("error") or exc).strip()
+        result = {
+            "model_context": public_error,
+            "report": "",
+            "sources": [],
+            "ui": {
+                **initial_ui,
+                **(snapshot if isinstance(snapshot, dict) else {}),
+                "kind": "deep_research",
+                "status": "failed",
+                "error": public_error,
+                "can_approve": False,
+                "can_edit": False,
+                "can_stop": False,
+            },
+        }
+
+    tool_ui = result.get("ui") if isinstance(result.get("ui"), dict) else initial_ui
+    model_context = str(result.get("model_context") or result.get("report") or "").strip()
+    tool_entry = {
+        "role": "tool",
+        "tool_call_id": call_id,
+        "alias": alias,
+        "server_id": "research",
+        "server_name": "Deep Research",
+        "tool_id": "deep_research",
+        "tool_name": "Deep Research",
+        "content": model_context,
+        "structured_content": result,
+        "tool_ui": tool_ui,
+    }
+    yield _serialize_tool_result_marker(
+        alias,
+        model_context,
+        tool_ui=tool_ui,
+        structured_content=result,
+    )
+
+    status = str(tool_ui.get("status") or "").strip().lower()
+    ready_text = "Your research is ready" if status in {"completed", "partial"} else "Research could not be completed"
+    visible_entry = {"role": "assistant", "content": ready_text}
+    assistant_message_record.content = ready_text
+    assistant_message_record.llm_transcript = [call_entry, tool_entry, visible_entry]
+    assistant_message_record.save(update_fields=["content", "llm_transcript"])
+    Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
+    yield f"\n{ready_text}"
+
+
 # Handle a chat generation request.
 def chat_api(request):
     if request.method != "POST":
@@ -5177,18 +5519,24 @@ def chat_api(request):
         chat_id = data.get("chat_id", "")
         attachments = _normalize_request_attachments(data)
         uploaded_file_ids = _normalize_uploaded_file_ids(data)
+        deep_research_requested = data.get("deep_research") is True
         engine, engine_error = _resolve_request_engine_or_response(request, data)
         if engine_error is not None:
             return engine_error
         raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
         if isinstance(raw_tool_ids, str):
             raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
-        tool_server_ids = [str(s).strip() for s in raw_tool_ids if str(s).strip()]
+        tool_server_ids = [
+            str(s).strip()
+            for s in raw_tool_ids
+            if str(s).strip() and str(s).strip().lower() != "deep_research"
+        ]
         command_plan = _parse_chat_command_plan(
             user_message,
             tool_server_ids,
             is_known_tool_id=lambda tool_id: (
-                tool_registry.get_server(tool_id, engine=engine, model_name=model_name) is not None
+                str(tool_id or "").strip().lower() != "deep_research"
+                and tool_registry.get_server(tool_id, engine=engine, model_name=model_name) is not None
             ),
         )
         # The stored message keeps the raw slash commands the user typed; the model
@@ -5411,6 +5759,42 @@ def chat_api(request):
             content="",
             llm_transcript=[],
         )
+
+        if deep_research_requested:
+            current_attachments = _get_message_attachments(user_message_record)
+            research_topic, research_request_message = _build_deep_research_request_message(
+                llm_user_message or user_message,
+                current_attachments,
+                upload_manifests or [],
+                engine=engine,
+                model_info_payload=model_info_payload,
+            )
+            prepared_research = deep_research_service.prepare_research(
+                research_topic,
+                instructions=str(data.get("deep_research_instructions") or ""),
+                max_rounds=data.get("deep_research_max_rounds") or 6,
+            )
+            generation_id = uuid.uuid4().hex
+            response = StreamingHttpResponse(
+                _stream_deep_research_response(
+                    chat=chat,
+                    assistant_message_record=assistant_message_record,
+                    prepared_research=prepared_research,
+                    engine=engine,
+                    model_name=model_name,
+                    request_message=research_request_message,
+                ),
+                content_type="text/plain; charset=utf-8",
+            )
+            response["X-Chat-ID"] = str(chat.id)
+            response["X-LLM-Engine"] = engine
+            response["X-User-Message-ID"] = str(user_message_record.id)
+            response["X-Assistant-Message-ID"] = str(assistant_message_record.id)
+            response["X-Generation-ID"] = generation_id
+            response["X-Deep-Research-Session-ID"] = str(
+                prepared_research.get("arguments", {}).get("session_id") or ""
+            )
+            return response
 
         # Rebuild the message history expected by the selected backend.
         llm_messages, compression_event = _build_chat_history(
@@ -5790,6 +6174,50 @@ def abort_generation_api(request):
         return JsonResponse({"ok": True})
     except Exception as exc:
         logger.exception("Failed to abort generation")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Download a completed Deep Research report in a portable format. The durable
+# report already contains resolved Markdown links for every citation handle.
+def deep_research_export_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+    try:
+        data = _read_json_request_body(request)
+        session_id = str(data.get("session_id") or "").strip()
+        export_format = str(data.get("format") or "md").strip().lower()
+        if export_format not in {"md", "pdf", "docx"}:
+            return JsonResponse({"error": "Unsupported research export format."}, status=400)
+        snapshot = deep_research_control.read_state(session_id)
+        fallback_report = str(data.get("report") or "").strip()
+        # Older chats can retain a complete report in their transcript after
+        # the retention policy removes the durable control snapshot.
+        report = str(
+            (snapshot or {}).get("report")
+            or (snapshot or {}).get("model_context")
+            or fallback_report
+        ).strip()
+        if not report:
+            return JsonResponse({"error": "The research report is not ready yet."}, status=409)
+        title = str((snapshot or {}).get("topic") or data.get("title") or "Research report").strip()
+        if export_format == "md":
+            payload = research_export.markdown_bytes(report)
+            content_type = "text/markdown; charset=utf-8"
+        elif export_format == "docx":
+            payload = research_export.docx_bytes(report, title)
+            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            payload = research_export.pdf_bytes(report, title)
+            content_type = "application/pdf"
+        response = HttpResponse(payload, content_type=content_type)
+        response["Content-Disposition"] = (
+            f'attachment; filename="{research_export.safe_filename(title, export_format)}"'
+        )
+        return response
+    except deep_research_control.InvalidResearchSession as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Failed to export Deep Research report")
         return JsonResponse({"error": str(exc)}, status=500)
 
 

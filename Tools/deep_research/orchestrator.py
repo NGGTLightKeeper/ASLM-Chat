@@ -20,7 +20,7 @@ from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
 from API import llm_api, mcp as tool_registry
-from Tools import deep_research_control as control
+from . import control
 
 
 ALLOWED_SEARCH_ALIASES = (
@@ -31,6 +31,10 @@ MAX_QUERIES_PER_ITERATION = 2
 MAX_PLAN_ITEMS = 7
 MAX_QUERY_CANDIDATES = 6
 MAX_PUBLIC_EVENTS = 160
+# Medium web search returns up to ten results for each of the two queries in a
+# batch. Keep that complete normal result set in the public event so the UI's
+# own 3 + More overflow control can expose every source that was found.
+MAX_PUBLIC_SEARCH_SOURCES = 20
 MODEL_EVIDENCE_CHARS = 48_000
 MODEL_ENTRY_CHARS = 9_000
 
@@ -60,7 +64,12 @@ REPORT_PROMPT = """Write the final self-contained research report in the user's 
 Use only the supplied evidence. Put the exact opaque citation handle (for example [c0001-2])
 immediately after each supported claim; never invent or alter handles. Address every requested
 deliverable, distinguish evidence from inference, and state unresolved gaps or disagreements.
-Return the report itself, not JSON and not a diary of the research process."""
+Return the report itself, not JSON and not a diary of the research process.
+
+Format the report as structured Markdown. Use LaTeX for equations or quantitative reasoning when
+it improves precision. Use valid fenced Mermaid diagrams for processes, architectures, timelines,
+or relationships when a diagram materially improves understanding. Keep diagrams evidence-based
+and syntactically valid; do not add them merely as decoration."""
 
 
 class ResearchCancelled(Exception):
@@ -383,6 +392,7 @@ def _run_model_stage(
     phase: str,
     iteration: int,
     plan_version: int,
+    request_message: Mapping[str, Any] | None = None,
 ) -> str:
     events.emit(
         "model_stage_started",
@@ -392,12 +402,18 @@ def _run_model_stage(
         data={"stage": phase},
     )
     try:
+        user_message: dict[str, Any] = {"role": "user", "content": user_prompt}
+        if isinstance(request_message, Mapping):
+            for key in ("images", "image_mime_types", "media"):
+                value = request_message.get(key)
+                if isinstance(value, list) and value:
+                    user_message[key] = list(value)
         result = llm_api.generate(
             engine,
             model,
             [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                user_message,
             ],
             **dict(generation_options),
         )
@@ -1270,7 +1286,6 @@ def run_deep_research_v2(
     if not topic:
         raise ValueError("Deep research requires a non-empty topic.")
     instructions = str(arguments.get("instructions") or "").strip()
-    request_text = topic if not instructions else f"{topic}\n\nAdditional instructions:\n{instructions}"
     try:
         max_iterations = min(10, max(2, int(arguments.get("max_rounds") or 6)))
     except (TypeError, ValueError):
@@ -1279,6 +1294,11 @@ def run_deep_research_v2(
     engine = str(runtime["engine"])
     model = str(runtime["model"])
     caller = context if isinstance(context, Mapping) else {}
+    request_message = caller.get("request_message") if isinstance(caller.get("request_message"), Mapping) else {}
+    request_content = str(request_message.get("content") or "").strip()
+    request_text = request_content or topic
+    if instructions:
+        request_text = f"{request_text}\n\nAdditional instructions:\n{instructions}"
     try:
         approval_timeout_s = float(
             arguments.get("approval_timeout_s") or caller.get("approval_timeout_s") or 900
@@ -1526,6 +1546,7 @@ def run_deep_research_v2(
                 phase="planning",
                 iteration=0,
                 plan_version=0,
+                request_message=request_message,
             )
             parsed_plan = _extract_json_object(raw_plan)
             planned_checklist = _normalize_checklist(parsed_plan.get("steps"), raw_plan)
@@ -1670,6 +1691,7 @@ def run_deep_research_v2(
                 phase="reflection",
                 iteration=iteration,
                 plan_version=plan_version,
+                request_message=request_message,
             )
             reflection = _extract_json_object(raw_reflection)
             latest_assessment = str(reflection.get("assessment") or "").strip()[:1600]
@@ -1726,6 +1748,7 @@ def run_deep_research_v2(
                 phase="query_selection",
                 iteration=iteration,
                 plan_version=plan_version,
+                request_message=request_message,
             )
             parsed_selection = _extract_json_object(raw_selection)
             selected = _normalize_candidates(
@@ -1821,7 +1844,10 @@ def run_deep_research_v2(
                     "queries": unique_selected,
                     "new_source_count": added_sources,
                     "source_count": len(sources_by_key),
-                    "sources": [_safe_source_preview(source) for source in search_sources[:6]],
+                    "sources": [
+                        _safe_source_preview(source)
+                        for source in search_sources[:MAX_PUBLIC_SEARCH_SOURCES]
+                    ],
                 },
             )
             # Persist immediately after the external tool returns.  A browser/LLM process
@@ -1984,6 +2010,7 @@ def run_deep_research_v2(
             phase="final_reflection",
             iteration=iteration,
             plan_version=plan_version,
+            request_message=request_message,
         )
         final_reflection = _extract_json_object(raw_final_reflection)
         final_assessment = str(final_reflection.get("assessment") or "").strip()[:1600]
@@ -2035,6 +2062,7 @@ def run_deep_research_v2(
             phase="synthesis",
             iteration=iteration,
             plan_version=plan_version,
+            request_message=request_message,
         )
         synthesis_succeeded = bool(str(report or "").strip())
         if not synthesis_succeeded:

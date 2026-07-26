@@ -25,6 +25,7 @@ from API import google_genai as google_genai_api
 from API import llm_api
 from API import mcp as tool_registry
 from API import ollama as ollama_api
+from API import openai as openai_api
 from API.google_genai import (
     generate as generate_google_genai,
     get_model_settings as get_google_genai_model_settings,
@@ -69,6 +70,7 @@ from Apps.UI.views import (
     _build_model_info_payload,
     _build_uploaded_file_context_entry,
     _build_uploaded_file_prompt_block,
+    _apply_uploaded_file_manifests_to_llm_entry,
     _clear_model_metadata_caches,
     _chat_is_first_user_turn,
     _compose_system_prompt,
@@ -1140,11 +1142,11 @@ class ToolCancellationTests(SimpleTestCase):
             with (
                 patch.object(tool_registry, "call_ollama_tool", side_effect=blocked_provider),
                 patch(
-                    "Tools.deep_research_control.latest_cancel_requested",
+                    "Tools.deep_research.control.latest_cancel_requested",
                     side_effect=lambda _session_id: stop_requested.is_set(),
                 ),
                 patch(
-                    "Tools.deep_research_control.update_state",
+                    "Tools.deep_research.control.update_state",
                     side_effect=checkpoint_cancelled,
                 ),
             ):
@@ -2254,6 +2256,45 @@ class UploadFilesApiTests(SimpleTestCase):
         self.assertTrue(with_sandbox["sandbox_path"].startswith(f"/workspace/_sandbox/User/{with_sandbox['sha256']}/"))
         self.assertIn("sandbox", with_sandbox["recommended_tools"])
 
+    # JSON uploads are sent as complete text context rather than a short preview.
+    def test_uploaded_json_is_added_to_model_context(self):
+        json_payload = json.dumps({"items": list(range(8000)), "tail": "context-tail"})
+        upload = SimpleUploadedFile("payload.json", json_payload.encode("utf-8"), content_type="application/json")
+        response = self.client.post(reverse("uploads_api"), {"files": [upload]})
+        file_id = response.json()["files"][0]["file_id"]
+        manifest = _load_model_upload_manifests([file_id], sandbox_enabled=False)[0]
+
+        entry = _apply_uploaded_file_manifests_to_llm_entry(
+            {"role": "user", "content": "Inspect this JSON"},
+            [manifest],
+        )
+
+        self.assertIn("JSON content:\n```json", entry["content"])
+        self.assertIn('"tail": "context-tail"', entry["content"])
+        self.assertNotIn("Text preview:", entry["content"])
+
+    # Uploaded media bytes are attached only for model-supported modalities.
+    def test_uploaded_media_is_gated_by_model_capabilities(self):
+        upload = SimpleUploadedFile("voice.mp3", b"fake-mp3-bytes", content_type="audio/mpeg")
+        response = self.client.post(reverse("uploads_api"), {"files": [upload]})
+        file_id = response.json()["files"][0]["file_id"]
+        manifest = _load_model_upload_manifests([file_id], sandbox_enabled=False)[0]
+
+        unsupported_entry = _apply_uploaded_file_manifests_to_llm_entry(
+            {"role": "user", "content": "Listen"},
+            [manifest],
+            supported_media_kinds={"image"},
+        )
+        supported_entry = _apply_uploaded_file_manifests_to_llm_entry(
+            {"role": "user", "content": "Listen"},
+            [manifest],
+            supported_media_kinds={"audio"},
+        )
+
+        self.assertNotIn("media", unsupported_entry)
+        self.assertEqual(supported_entry["media"][0]["kind"], "audio")
+        self.assertEqual(supported_entry["media"][0]["data"], "ZmFrZS1tcDMtYnl0ZXM=")
+
     # Test the private prompt block only includes sandbox path when allowed.
     def test_uploaded_file_prompt_block_hides_disabled_sandbox_path(self):
         manifest = {
@@ -2607,6 +2648,28 @@ class OpenAiOptionMappingTests(SimpleTestCase):
 
 # Cover extended OpenAI-compatible capability parsing and reasoning output.
 class OpenAiAdapterTests(SimpleTestCase):
+    # OpenAI-compatible messages encode supported audio as native input_audio.
+    def test_openai_messages_include_audio_media_part(self):
+        payload = openai_api._build_openai_messages(
+            [
+                {
+                    "role": "user",
+                    "content": "Transcribe",
+                    "media": [
+                        {
+                            "kind": "audio",
+                            "name": "voice.mp3",
+                            "mime_type": "audio/mpeg",
+                            "data": "ZmFrZQ==",
+                        }
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(payload[0]["content"][1]["type"], "input_audio")
+        self.assertEqual(payload[0]["content"][1]["input_audio"]["format"], "mp3")
+
     # Test get model settings reads OpenAI capabilities and reasoning.
     @patch("API.openai._get_client")
     # Verify get model settings reads openai capabilities and reasoning.
@@ -2666,7 +2729,7 @@ class OpenAiAdapterTests(SimpleTestCase):
                     "vision": True,
                     "tool_calling": True,
                     "reasoning": True,
-                    "input_modalities": ["text", "image"],
+                    "input_modalities": ["text", "image", "audio", "video"],
                 }
             ]
         )
@@ -2680,6 +2743,8 @@ class OpenAiAdapterTests(SimpleTestCase):
 
         self.assertTrue(payload["supports_tool_calling"])
         self.assertTrue(payload["supports_vision"])
+        self.assertTrue(payload["supports_audio_input"])
+        self.assertTrue(payload["supports_video_input"])
         self.assertTrue(payload["supports_thinking"])
         self.assertTrue(payload["supports_think_level"])
         self.assertFalse(payload["supports_think_toggle"])
@@ -2782,6 +2847,28 @@ class GoogleGenAiAdapterTests(SimpleTestCase):
     def tearDown(self):
         google_genai_api._reset_runtime_caches()
         super().tearDown()
+
+    # Gemini receives supported audio/video as inline_data content parts.
+    def test_google_contents_include_media_inline_data(self):
+        _system_instruction, contents = google_genai_api._build_google_contents(
+            [
+                {
+                    "role": "user",
+                    "content": "Describe",
+                    "media": [
+                        {
+                            "kind": "video",
+                            "name": "clip.mp4",
+                            "mime_type": "video/mp4",
+                            "data": "ZmFrZQ==",
+                        }
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(contents[0]["parts"][1]["inline_data"]["data"], b"fake")
+        self.assertEqual(contents[0]["parts"][1]["inline_data"]["mime_type"], "video/mp4")
 
     # Test Gemini function-call replay preserves thought signatures.
     def test_function_call_history_preserves_thought_signature(self):
@@ -3018,6 +3105,9 @@ class GoogleGenAiAdapterTests(SimpleTestCase):
         self.assertTrue(payload["supports_thinking"])
         self.assertTrue(payload["supports_think_toggle"])
         self.assertFalse(payload["supports_think_level"])
+        self.assertTrue(payload["supports_vision"])
+        self.assertTrue(payload["supports_audio_input"])
+        self.assertTrue(payload["supports_video_input"])
         self.assertEqual(payload["think_level_options"], [])
         self.assertTrue(payload["defaults"]["include_thoughts"])
         self.assertEqual(payload["defaults"]["max_output_tokens"], 8192)
@@ -4425,6 +4515,14 @@ class OllamaDesiredStateTests(SimpleTestCase):
         ollama_service = importlib.import_module("Services.ollama-service")
         state = ollama_service._get_desired_state("ollama-service")
         self.assertTrue(state.should_run)
+
+    def test_service_never_persists_runtime_output_in_module_settings(self):
+        ollama_service = importlib.import_module("Services.ollama-service")
+        source = Path(ollama_service.__file__).read_text(encoding="utf-8")
+
+        self.assertFalse(hasattr(ollama_service, "LOG_FILE"))
+        self.assertNotIn("ollama-service.log", source)
+        self.assertIn("stdout=subprocess.PIPE", source)
 
 
 # Verify request-level engine resolution.

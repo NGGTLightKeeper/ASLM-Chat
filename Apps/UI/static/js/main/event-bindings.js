@@ -258,7 +258,7 @@ export function bindEventHandlers(context, dependencies) {
     '.msg-reasoning-tool-row[data-tool-segment-index]',
     '.msg-deep-research-card[data-tool-segment-index]'
   ].join(', '), function onToolCardClick(event) {
-    if ($(event.target).closest('.msg-search-chip, .msg-write-card, .msg-edit-card, a, button, textarea').length) {
+    if ($(event.target).closest('.msg-search-chip, .msg-write-card, .msg-edit-card, a, button, textarea, details, summary').length) {
       return;
     }
     messagesUi.openToolInspectorFromCard($(this));
@@ -282,6 +282,21 @@ export function bindEventHandlers(context, dependencies) {
     deepResearchUi.handleAction($(this)).catch(function onResearchControlError(error) {
       console.error('Deep Research control failed:', error);
     });
+  });
+
+  $(document).on('keydown', '.deep-research-report-preview[data-deep-research-action="open-report"]', function onResearchReportPreviewKeyDown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    deepResearchUi.handleAction($(this)).catch(function onResearchReportOpenError(error) {
+      console.error('Failed to open Deep Research report:', error);
+    });
+  });
+
+  $(document).on('click', '.deep-research-download-menu', function keepResearchDownloadMenuOpen(event) {
+    event.stopPropagation();
   });
 
   $(document).on('click', '[data-deep-research-editor-action]', function onResearchEditorActionClick(event) {

@@ -37,7 +37,9 @@ export function createParametersUi(context) {
 
   // Replace the available tool server list and prune invalid selections.
   function updateAvailableToolServers(tools) {
-    const all = Array.isArray(tools) ? tools.slice() : [];
+    const all = (Array.isArray(tools) ? tools.slice() : []).filter(function hideResearchTool(server) {
+      return normalizeToolServerId(server && server.id).toLowerCase() !== 'deep_research';
+    });
     state.availableToolServers = all.filter(function filterBundled(server) {
       return !server || !server.user_mcp;
     });
@@ -78,7 +80,9 @@ export function createParametersUi(context) {
         .map(function normalizeId(id) {
           return normalizeToolServerId(id);
         })
-        .filter(Boolean)
+        .filter(function keepSelectableTool(id) {
+          return Boolean(id) && id.toLowerCase() !== 'deep_research';
+        })
     );
 
     renderToolControls();
@@ -146,6 +150,23 @@ export function createParametersUi(context) {
   // Render bundled tool server checkboxes into one target.
   function renderToolServerList($target, hasToolSupport) {
     $target.empty();
+
+    const $research = $('<button type="button" class="composer-tool-row composer-deep-research-row" role="menuitem">')
+      .attr('aria-pressed', state.deepResearchEnabled ? 'true' : 'false');
+    const $researchName = $('<span class="tool-server-name">').text('Deep Research');
+    $research.append($researchName);
+    $research.on('click', function toggleDeepResearch(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      state.deepResearchEnabled = !state.deepResearchEnabled;
+      renderToolControls();
+      dom.$composerMenuPopover.add(dom.$composerMenuPopoverConv).hide();
+      dom.$composerMenuBtn.add(dom.$composerMenuBtnConv)
+        .removeClass('is-open')
+        .attr('aria-expanded', 'false');
+    });
+    $target.append($research);
+
     if (!hasToolSupport) {
       return;
     }
@@ -188,6 +209,28 @@ export function createParametersUi(context) {
     });
   }
 
+  // Keep the first-class mode visible beside the plus button. The pill is the
+  // sole selected-state affordance and clicking it turns the mode off.
+  function renderDeepResearchPills() {
+    dom.$composerModePills.each(function renderPill() {
+      const $host = $(this).empty();
+      if (!state.deepResearchEnabled) {
+        return;
+      }
+      const $pill = $('<button type="button" class="composer-mode-pill composer-deep-research-pill">')
+        .attr({ 'aria-label': 'Disable Deep Research', title: 'Disable Deep Research' })
+        .append($('<span>').text('Deep Research'))
+        .append($('<span class="composer-mode-pill-dismiss" aria-hidden="true">').text('\u00d7'));
+      $pill.on('click', function disableDeepResearch(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        state.deepResearchEnabled = false;
+        renderToolControls();
+      });
+      $host.append($pill);
+    });
+  }
+
   // Rebuild the tool server checkbox list from the current state.
   function renderToolControls() {
     const hasToolSupport = state.toolState.supported
@@ -196,7 +239,7 @@ export function createParametersUi(context) {
 
     dom.$groupTools.hide();
     dom.$dividerTools.hide();
-    dom.$composerToolMenus.toggle(hasToolSupport);
+    dom.$composerToolMenus.show();
 
     const $content = dom.$groupTools.find('.settings-section-content');
     $content.empty();
@@ -204,6 +247,7 @@ export function createParametersUi(context) {
       renderToolServerList($(this), hasToolSupport);
     });
 
+    renderDeepResearchPills();
     renderMcpControls();
   }
 

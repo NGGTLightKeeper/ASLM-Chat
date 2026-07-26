@@ -1006,6 +1006,7 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
         content = message.get("content", "") or ""
         images = message.get("images") or []
         image_mime_types = message.get("image_mime_types") or []
+        media = message.get("media") if isinstance(message.get("media"), list) else []
 
         if role == "tool":
             payload.append(
@@ -1017,7 +1018,7 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
             )
             continue
 
-        if images:
+        if images or media:
             content_parts: list[dict[str, Any]] = []
             if content:
                 content_parts.append({"type": "text", "text": content})
@@ -1029,6 +1030,34 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:{image_mime_type};base64,{image_base64}"},
+                    }
+                )
+            for media_item in media:
+                if not isinstance(media_item, dict):
+                    continue
+                media_data = str(media_item.get("data") or "").strip()
+                mime_type = str(media_item.get("mime_type") or "application/octet-stream").lower()
+                media_kind = str(media_item.get("kind") or "").lower()
+                if not media_data:
+                    continue
+                if media_kind == "audio" and mime_type in {"audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"}:
+                    content_parts.append(
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": media_data,
+                                "format": "mp3" if mime_type in {"audio/mpeg", "audio/mp3"} else "wav",
+                            },
+                        }
+                    )
+                    continue
+                content_parts.append(
+                    {
+                        "type": "file",
+                        "file": {
+                            "filename": str(media_item.get("name") or f"uploaded-{media_kind or 'media'}"),
+                            "file_data": f"data:{mime_type};base64,{media_data}",
+                        },
                     }
                 )
             entry: dict[str, Any] = {"role": role, "content": content_parts}

@@ -6762,6 +6762,10 @@ export function createMessagesUi(context, dependencies) {
           });
         });
         return renderMarkdownSegment(report, citationRegistry);
+      },
+      hydrate(root) {
+        const $root = root ? $(root) : dom.$messagesInner;
+        hydrateMermaidDiagrams($root);
       }
     });
   }

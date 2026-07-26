@@ -63,6 +63,8 @@ VISION_CAPABILITY_NAMES = {
     "multimodal_input",
     "supports_vision",
 }
+AUDIO_INPUT_CAPABILITY_NAMES = {"audio", "audio_input", "input_audio", "supports_audio_input"}
+VIDEO_INPUT_CAPABILITY_NAMES = {"video", "video_input", "input_video", "supports_video_input"}
 REASONING_CAPABILITY_NAMES = {
     "think",
     "thinking",
@@ -1236,6 +1238,7 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
         content = message.get("content", "") or ""
         images = message.get("images") or []
         image_mime_types = message.get("image_mime_types") or []
+        media = message.get("media") if isinstance(message.get("media"), list) else []
 
         if role == "tool":
             payload.append(
@@ -1247,7 +1250,7 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
             )
             continue
 
-        if images:
+        if images or media:
             content_parts: list[dict[str, Any]] = []
             if content:
                 content_parts.append({"type": "text", "text": content})
@@ -1260,6 +1263,35 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:{image_mime_type};base64,{image_base64}"},
+                    }
+                )
+
+            for media_item in media:
+                if not isinstance(media_item, dict):
+                    continue
+                media_data = str(media_item.get("data") or "").strip()
+                mime_type = str(media_item.get("mime_type") or "application/octet-stream").lower()
+                media_kind = str(media_item.get("kind") or "").lower()
+                if not media_data:
+                    continue
+                if media_kind == "audio" and mime_type in {"audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"}:
+                    content_parts.append(
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": media_data,
+                                "format": "mp3" if mime_type in {"audio/mpeg", "audio/mp3"} else "wav",
+                            },
+                        }
+                    )
+                    continue
+                content_parts.append(
+                    {
+                        "type": "file",
+                        "file": {
+                            "filename": str(media_item.get("name") or f"uploaded-{media_kind or 'media'}"),
+                            "file_data": f"data:{mime_type};base64,{media_data}",
+                        },
                     }
                 )
 
@@ -2004,6 +2036,8 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
 
         explicit_tool_support = _extract_feature_flag(raw_model, TOOL_CAPABILITY_NAMES)
         explicit_vision_support = _extract_feature_flag(raw_model, VISION_CAPABILITY_NAMES)
+        explicit_audio_input_support = _extract_feature_flag(raw_model, AUDIO_INPUT_CAPABILITY_NAMES)
+        explicit_video_input_support = _extract_feature_flag(raw_model, VIDEO_INPUT_CAPABILITY_NAMES)
         explicit_reasoning_support = _extract_feature_flag(raw_model, REASONING_CAPABILITY_NAMES)
 
         # Capability inference combines explicit booleans, capability tokens,
@@ -2019,6 +2053,14 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
         supports_vision = (
             bool(explicit_vision_support)
             or bool(capability_tokens & VISION_CAPABILITY_NAMES)
+        )
+        supports_audio_input = (
+            bool(explicit_audio_input_support)
+            or bool(capability_tokens & AUDIO_INPUT_CAPABILITY_NAMES)
+        )
+        supports_video_input = (
+            bool(explicit_video_input_support)
+            or bool(capability_tokens & VIDEO_INPUT_CAPABILITY_NAMES)
         )
         if supports_tool_calling:
             supported_parameter_names.update({"tools", "tool_choice"})
@@ -2053,6 +2095,10 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
         capabilities: list[str] = []
         if supports_vision:
             capabilities.append("vision")
+        if supports_audio_input:
+            capabilities.append("audio_input")
+        if supports_video_input:
+            capabilities.append("video_input")
         if supports_tool_calling:
             capabilities.append("tools")
         if supports_thinking:
@@ -2071,6 +2117,8 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
             "think_level_param_name": think_level_param_name,
             "think_level_options": reasoning_level_options,
             "supports_vision": supports_vision,
+            "supports_audio_input": supports_audio_input,
+            "supports_video_input": supports_video_input,
             "supports_tool_calling": supports_tool_calling,
             # ASLM-Chat file attachments are serialized into universal text context.
             "supports_files": True,

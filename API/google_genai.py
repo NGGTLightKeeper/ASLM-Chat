@@ -65,6 +65,8 @@ VISION_CAPABILITY_NAMES = {
     "multimodal_input",
     "supports_vision",
 }
+AUDIO_INPUT_CAPABILITY_NAMES = {"audio", "audio_input", "input_audio", "supports_audio_input"}
+VIDEO_INPUT_CAPABILITY_NAMES = {"video", "video_input", "input_video", "supports_video_input"}
 REASONING_CAPABILITY_NAMES = {
     "think",
     "thinking",
@@ -914,9 +916,16 @@ def _build_model_capability_snapshot(
     cached_capabilities = _get_cached_model_capabilities(model_name)
     capability_tokens = _collect_capability_tokens(raw_model)
     supported_actions = _extract_supported_actions(raw_model)
+    normalized_model_name = str(model_name or raw_model.get("name") or "").strip().lower()
+    known_gemini_multimodal = (
+        "gemini-" in normalized_model_name
+        and not any(marker in normalized_model_name for marker in ("embedding", "imagen", "veo"))
+    )
 
     explicit_tool_support = _extract_feature_flag(raw_model, TOOL_CAPABILITY_NAMES)
     explicit_vision_support = _extract_feature_flag(raw_model, VISION_CAPABILITY_NAMES)
+    explicit_audio_input_support = _extract_feature_flag(raw_model, AUDIO_INPUT_CAPABILITY_NAMES)
+    explicit_video_input_support = _extract_feature_flag(raw_model, VIDEO_INPUT_CAPABILITY_NAMES)
     explicit_reasoning_support = _extract_feature_flag(raw_model, REASONING_CAPABILITY_NAMES)
     explicit_reasoning_level_options = _extract_reasoning_level_options(raw_model)
 
@@ -953,7 +962,28 @@ def _build_model_capability_snapshot(
                 and (
                     bool(capability_tokens & VISION_CAPABILITY_NAMES)
                     or "multimodal" in capability_tokens
+                    or known_gemini_multimodal
                 )
+            )
+        )
+
+    supports_audio_input = cached_capabilities.get("supports_audio_input")
+    if not isinstance(supports_audio_input, bool):
+        supports_audio_input = (
+            bool(explicit_audio_input_support)
+            if explicit_audio_input_support is not None
+            else bool(capability_tokens & AUDIO_INPUT_CAPABILITY_NAMES) or (
+                supports_generate_content and known_gemini_multimodal
+            )
+        )
+
+    supports_video_input = cached_capabilities.get("supports_video_input")
+    if not isinstance(supports_video_input, bool):
+        supports_video_input = (
+            bool(explicit_video_input_support)
+            if explicit_video_input_support is not None
+            else bool(capability_tokens & VIDEO_INPUT_CAPABILITY_NAMES) or (
+                supports_generate_content and known_gemini_multimodal
             )
         )
 
@@ -995,6 +1025,8 @@ def _build_model_capability_snapshot(
         "supports_generate_content": bool(supports_generate_content),
         "supports_tool_calling": bool(supports_tool_calling),
         "supports_vision": bool(supports_vision),
+        "supports_audio_input": bool(supports_audio_input),
+        "supports_video_input": bool(supports_video_input),
         "supports_thinking": bool(supports_thinking),
         "supports_think_toggle": bool(supports_think_toggle),
         "supports_think_level": bool(supports_think_level),
@@ -1393,6 +1425,7 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
         content = str(raw_content or "") if not isinstance(raw_content, (list, dict)) else ""
         images = [str(item) for item in (message.get("images") or []) if str(item).strip()]
         image_mime_types = message.get("image_mime_types") or []
+        media = message.get("media") if isinstance(message.get("media"), list) else []
 
         if role == "system":
             if content:
@@ -1457,6 +1490,23 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
                         "inline_data": {
                             "data": image_bytes,
                             "mime_type": mime_type,
+                        }
+                    }
+                )
+
+        for media_item in media:
+            if not isinstance(media_item, dict):
+                continue
+            media_data = str(media_item.get("data") or "").strip()
+            if not media_data:
+                continue
+            media_bytes = _decode_image_bytes(media_data)
+            if media_bytes:
+                parts.append(
+                    {
+                        "inline_data": {
+                            "data": media_bytes,
+                            "mime_type": str(media_item.get("mime_type") or "application/octet-stream"),
                         }
                     }
                 )
@@ -2471,6 +2521,10 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
     capabilities: list[str] = []
     if capability_snapshot["supports_vision"]:
         capabilities.append("vision")
+    if capability_snapshot["supports_audio_input"]:
+        capabilities.append("audio_input")
+    if capability_snapshot["supports_video_input"]:
+        capabilities.append("video_input")
     if capability_snapshot["supports_tool_calling"]:
         capabilities.append("tools")
     if capability_snapshot["supports_thinking"]:
@@ -2493,6 +2547,8 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
         "think_level_param_name": "thinking_level",
         "think_level_options": list(capability_snapshot["think_level_options"]),
         "supports_vision": capability_snapshot["supports_vision"],
+        "supports_audio_input": capability_snapshot["supports_audio_input"],
+        "supports_video_input": capability_snapshot["supports_video_input"],
         "supports_tool_calling": capability_snapshot["supports_tool_calling"],
         # ASLM-Chat file attachments are serialized into universal text context.
         "supports_files": True,

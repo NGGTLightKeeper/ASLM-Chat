@@ -1,9 +1,9 @@
 """Durable, process-safe control snapshots for Deep Research sessions.
 
-The Deep Research MCP tool runs in a fresh worker process while the UI API runs in
-the Django process.  Small atomic JSON files give both processes a shared approval,
-revision, cancellation, and progress channel without keeping an in-memory registry
-that would disappear on reload.
+The research runner and the UI API can execute in different processes. Small
+atomic JSON files give them a shared approval, revision, cancellation, and
+progress channel without relying on an in-memory registry that disappears on
+reload.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LEGACY_CONTROL_ROOT = PROJECT_ROOT / "Data" / "deep_research"
 
 
