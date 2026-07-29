@@ -411,6 +411,16 @@ function queryStringsFrom(value) {
   return queries.slice(0, 4);
 }
 
+function readUrlStringsFrom(value) {
+  const rawValues = Array.isArray(value) ? value : [value];
+  return rawValues.flatMap(function normalizeReadUrl(rawValue) {
+    return String(rawValue === null || rawValue === undefined ? '' : rawValue)
+      .split(/\s*(?:\u00b7|,|\n)\s*(?=https?:\/\/)/i)
+      .map(function trimReadUrl(url) { return url.trim(); })
+      .filter(function validReadUrl(url) { return /^https?:\/\//i.test(url); });
+  });
+}
+
 function sourceCountFrom(value) {
   const payload = asObject(value);
   const data = asObject(payload.data);
@@ -1005,8 +1015,16 @@ export function createDeepResearchUi(context, dependencies) {
         latest: queries.length ? `Searching: ${queries.join(' \u00b7 ')}` : 'Searching sources'
       };
     }
-    if (toolId.includes('read_page') || toolId.includes('read_url')) {
-      const url = queries[0] || compactText(args.url || args.urls, 300);
+    if (
+      toolId.includes('read_page')
+      || toolId.includes('read_url')
+      || toolId.includes('reading_started')
+      || toolId.includes('source_read_started')
+    ) {
+      const readUrls = readUrlStringsFrom(
+        args.url || args.urls || safeData.url || safeData.urls
+      );
+      const url = queries[0] || compactText(readUrls.join(' \u00b7 '), 600);
       return {
         kind: 'read',
         title: t('research.readingSource', null, 'Reading a source'),
@@ -1337,9 +1355,10 @@ export function createDeepResearchUi(context, dependencies) {
       const count = sourceCountFrom(data);
       const completedQueries = queryStringsFrom(data);
       const searchQueries = completedQueries.length ? completedQueries : state.activeQueries;
-      const title = toolKind.includes('read_page')
+      const isReadResult = toolKind.includes('read_page')
         || type === 'source_read_completed'
-        || type === 'reading_completed'
+        || type === 'reading_completed';
+      const title = isReadResult
         ? 'Source read'
         : (toolKind.includes('search') || type === 'search_completed' ? 'Search completed' : 'Research action completed');
       if (count !== null) {
@@ -1358,12 +1377,16 @@ export function createDeepResearchUi(context, dependencies) {
       const searchDetail = [
         searchQueries.slice(1).join(' \u00b7 ')
       ].filter(Boolean).join(' \u2014 ');
+      const readUrls = readUrlStringsFrom(data.urls || data.url);
+      const previousActivity = state.activity[state.activity.length - 1];
+      const readDetail = readUrls.join(' \u00b7 ')
+        || (previousActivity && previousActivity.kind === 'read' ? previousActivity.detail : '');
       appendActivity(
         state,
         safeEvent,
-        isSearchResult ? 'search' : 'tool',
+        isSearchResult ? 'search' : (isReadResult ? 'read' : 'tool'),
         isSearchResult ? searchTitle : title,
-        isSearchResult ? searchDetail : '',
+        isSearchResult ? searchDetail : (isReadResult ? readDetail : ''),
         'done'
       );
       return;
@@ -1716,6 +1739,23 @@ export function createDeepResearchUi(context, dependencies) {
     if (!item.detail) {
       return '';
     }
+    if (item.kind === 'read') {
+      const readUrls = readUrlStringsFrom(item.detail);
+      if (readUrls.length) {
+        return `
+          <div class="deep-research-read-links">
+            ${readUrls.map(function renderReadUrl(url) {
+              return `
+                <div class="deep-research-read-link">
+                  <span class="deep-research-read-link-dot" aria-hidden="true"></span>
+                  <span class="deep-research-read-link-text">${escHtml(url)}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }
+    }
     const preview = sentenceAwarePreview(item.detail, 280);
     const displayText = preview.truncated && !preview.text.endsWith('\u2026')
       ? `${preview.text} \u2026`
@@ -1725,7 +1765,7 @@ export function createDeepResearchUi(context, dependencies) {
 
   function timelineEntries(state) {
     const entries = [];
-    const collapsiblePhaseKinds = new Set(['plan', 'approval', 'reflection', 'report', 'stop']);
+    const collapsiblePhaseKinds = new Set(['plan', 'approval', 'reflection', 'read', 'report', 'stop']);
     let searchIndex = 0;
     (Array.isArray(state.activity) ? state.activity : []).forEach(function addActivity(item) {
       if (!item) {
@@ -1787,9 +1827,18 @@ export function createDeepResearchUi(context, dependencies) {
 
   function renderActivityStep(item) {
     const time = activityTimeLabel(item.timestamp);
+    let iconHtml = '';
+    if (item.kind === 'read') {
+      iconHtml = icons.WEB_SEARCH_ICON || icons.TOOL_SEARCH_ICON || icons.GLOBE_ICON || '';
+    } else if (item.kind === 'search') {
+      iconHtml = icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON || '';
+    } else if (item.kind === 'analysis') {
+      iconHtml = icons.TOOL_CODE_EXEC_ICON || icons.TOOL_BASH_ICON || '';
+    }
+    const toolClass = iconHtml ? ' msg-reasoning-step--tool' : '';
     return `
-      <div class="msg-reasoning-step deep-research-activity-step is-${escapeAttributeValue(item.kind)} is-${escapeAttributeValue(item.status)}" data-research-activity-key="${escapeAttributeValue(item.key)}">
-        <span class="msg-reasoning-step-dot" aria-hidden="true"></span>
+      <div class="msg-reasoning-step${toolClass} deep-research-activity-step is-${escapeAttributeValue(item.kind)} is-${escapeAttributeValue(item.status)}" data-research-activity-key="${escapeAttributeValue(item.key)}">
+        <span class="msg-reasoning-step-dot" aria-hidden="true">${iconHtml}</span>
         <div class="msg-reasoning-step-body">
           <div class="msg-reasoning-step-title">
             <span>${escHtml(item.title)}</span>

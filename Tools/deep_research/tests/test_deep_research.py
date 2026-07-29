@@ -236,6 +236,8 @@ class OrchestrationTests(unittest.TestCase):
         self.assertIn("reflection_completed", event_types)
         self.assertIn("queries_selected", event_types)
         self.assertIn("search_completed", event_types)
+        self.assertIn("reading_started", event_types)
+        self.assertIn("reading_completed", event_types)
         self.assertIn("synthesis_started", event_types)
         self.assertIn("session_completed", event_types)
         self.assertNotIn("model_output_delta", event_types)
@@ -244,6 +246,17 @@ class OrchestrationTests(unittest.TestCase):
         )
         self.assertEqual(search_completed["data"]["source_count"], 18)
         self.assertEqual(len(search_completed["data"]["sources"]), 18)
+        reading_started = next(
+            event for event in persisted_events if event["type"] == "reading_started"
+        )
+        self.assertEqual(reading_started["data"]["tool_id"], "read_page")
+        expected_read_urls = [source["url"], search_sources[1]["url"]]
+        self.assertEqual(reading_started["data"]["urls"], expected_read_urls)
+        reading_completed = next(
+            event for event in persisted_events if event["type"] == "reading_completed"
+        )
+        self.assertEqual(reading_completed["data"]["tool_id"], "read_page")
+        self.assertEqual(reading_completed["data"]["urls"], expected_read_urls)
 
     def test_parent_model_context_resolves_grouped_citations_to_links(self):
         result = deep_research.replace_citation_handles_with_markdown_links(
@@ -414,11 +427,11 @@ class ContractTests(unittest.TestCase):
                 "  A topic  ", instructions=" concise ", max_rounds=999
             )
         self.assertEqual(prepared["arguments"]["topic"], "A topic")
-        self.assertEqual(prepared["arguments"]["max_rounds"], 10)
+        self.assertEqual(prepared["arguments"]["max_rounds"], 25)
         self.assertEqual(prepared["arguments"]["timeout_s"], 3600)
         self.assertEqual(prepared["tool_ui"]["status"], "planning")
         self.assertRegex(prepared["arguments"]["session_id"], r"^deep-research:[a-f0-9]{32}$")
-        self.assertEqual(prepared["tool_ui"]["query_budget"], 20)
+        self.assertEqual(prepared["tool_ui"]["query_budget"], 50)
 
     def test_registry_filters_every_non_research_tool(self):
         server = {

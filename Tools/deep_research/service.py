@@ -27,7 +27,7 @@ def prepare_research(topic: str, *, instructions: str = "", max_rounds: int = 6)
     if not clean_topic:
         raise ValueError("Deep research requires a non-empty topic.")
     try:
-        rounds = min(10, max(2, int(max_rounds or 6)))
+        rounds = min(25, max(2, int(max_rounds or 6)))
     except (TypeError, ValueError):
         rounds = 6
 

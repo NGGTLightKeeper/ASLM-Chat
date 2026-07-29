@@ -800,7 +800,7 @@ class ResearchV2Tests(unittest.TestCase):
         self.assertFalse(approved)
         self.assertEqual(events.events[-1]["type"], "command_rejected")
 
-    def test_malformed_model_and_tool_outputs_do_not_crash_the_run(self) -> None:
+    def test_malformed_model_outputs_do_not_trigger_fallback_search(self) -> None:
         session_id = "deep-research:10000000000000000000000000000004"
         malformed_outputs = iter(
             [
@@ -835,10 +835,14 @@ class ResearchV2Tests(unittest.TestCase):
         self.assertTrue(result["report"])
         self.assertEqual(len(result["checklist"]), 5)
         self.assertEqual(generate.call_count, 7)
-        self.assertGreaterEqual(call_tool.call_count, 1)
-        for call in call_tool.call_args_list:
-            if call.args[1] == "web_search__web_search":
-                self.assertLessEqual(len(call.args[2]["queries"]), 2)
+        call_tool.assert_not_called()
+        selected_queries = [
+            query
+            for event in result["ui"]["events"]
+            if event.get("type") == "queries_selected"
+            for query in event.get("data", {}).get("queries", [])
+        ]
+        self.assertFalse(selected_queries)
 
     def test_query_selection_is_capped_and_synthesis_is_separate_no_tools_call(self) -> None:
         session_id = "deep-research:10000000000000000000000000000005"

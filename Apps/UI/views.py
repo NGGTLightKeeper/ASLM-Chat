@@ -2359,7 +2359,7 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
         if server_id != "deep_research" and tool_id != "deep_research":
             return None
         try:
-            rounds = min(10, max(2, int(arguments.get("max_rounds") or 6)))
+            rounds = min(25, max(2, int(arguments.get("max_rounds") or 6)))
         except (TypeError, ValueError):
             rounds = 6
         return {

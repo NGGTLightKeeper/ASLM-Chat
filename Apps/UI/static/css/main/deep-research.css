@@ -632,15 +632,73 @@
   overflow-wrap: anywhere;
 }
 
+.deep-research-read-links {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.deep-research-read-link {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  color: var(--c-text);
+  font-size: var(--font-size-caption-1);
+  line-height: 1.45;
+}
+
+.deep-research-read-link-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  transform: translateY(-1px);
+}
+
+.deep-research-read-link-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .deep-research-timeline .msg-reasoning-step-body > .msg-search-card {
   width: 100%;
   max-width: 100%;
+  padding-left: 0;
 }
 
 .deep-research-timeline .msg-search-batch-query-text,
 .deep-research-timeline .msg-search-label {
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+/* The timeline already carries the Web Search globe. Remove the duplicate
+   icon column and give every query the same white bullet treatment as URLs. */
+.deep-research-timeline .msg-search-batch-head {
+  display: block;
+}
+
+.deep-research-timeline .msg-search-batch-icon {
+  display: none;
+}
+
+.deep-research-timeline .msg-search-batch-query {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 8px;
+}
+
+.deep-research-timeline .msg-search-batch-query::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--c-text);
+  transform: translateY(-1px);
 }
 
 .deep-research-timeline-empty {

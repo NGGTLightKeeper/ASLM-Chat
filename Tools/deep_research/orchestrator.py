@@ -312,27 +312,6 @@ def _normalize_candidates(raw: Any, *, limit: int = MAX_QUERY_CANDIDATES) -> lis
     return output
 
 
-def _fallback_candidates(topic: str, checklist: list[dict[str, Any]], iteration: int) -> list[dict[str, str]]:
-    pending = next(
-        (item for item in checklist if item.get("status") not in {"done", "skipped"}),
-        checklist[-1] if checklist else {"title": topic},
-    )
-    goal = str(pending.get("title") or topic).strip()
-    base = _normalize_query_text(topic)
-    return [
-        {
-            "text": _normalize_query_text(f"{base} {goal}"),
-            "vertical": "web",
-            "purpose": f"Fallback query for unresolved plan item in iteration {iteration}",
-        },
-        {
-            "text": _normalize_query_text(f"{base} official documentation evidence"),
-            "vertical": "web",
-            "purpose": "Find an authoritative source class",
-        },
-    ]
-
-
 def _plan_text(summary: str, checklist: list[dict[str, Any]]) -> str:
     header = str(summary or "Research the request through verifiable evidence.").strip()
     lines = [header, "", *[f"- [ ] {item['title']}" for item in checklist]]
@@ -1287,7 +1266,7 @@ def run_deep_research_v2(
         raise ValueError("Deep research requires a non-empty topic.")
     instructions = str(arguments.get("instructions") or "").strip()
     try:
-        max_iterations = min(10, max(2, int(arguments.get("max_rounds") or 6)))
+        max_iterations = min(25, max(2, int(arguments.get("max_rounds") or 6)))
     except (TypeError, ValueError):
         max_iterations = 6
     query_budget = max_iterations * MAX_QUERIES_PER_ITERATION
@@ -1703,8 +1682,6 @@ def run_deep_research_v2(
             candidates = _normalize_candidates(reflection.get("candidates"))
             if not candidates and iteration == 1:
                 candidates = initial_candidates
-            if not candidates:
-                candidates = _fallback_candidates(topic, checklist, iteration)
             complete = _strict_bool(reflection.get("complete")) and bool(sources_by_key)
             events.emit(
                 "reflection_completed",
@@ -1763,13 +1740,6 @@ def run_deep_research_v2(
                 if signature and signature not in seen_queries:
                     seen_queries.add(signature)
                     unique_selected.append(query)
-            if not unique_selected:
-                for fallback in _fallback_candidates(topic, checklist, iteration):
-                    signature = _query_signature(fallback.get("text"))
-                    if signature and signature not in seen_queries:
-                        seen_queries.add(signature)
-                        unique_selected.append(fallback)
-                        break
             if not unique_selected:
                 no_new_evidence_rounds += 1
                 if no_new_evidence_rounds >= 2:
@@ -1871,7 +1841,7 @@ def run_deep_research_v2(
                     phase="reading",
                     iteration=iteration,
                     plan_version=plan_version,
-                    data={"urls": read_urls},
+                    data={"tool_id": "read_page", "urls": read_urls},
                 )
                 try:
                     read_result = tool_registry.call_ollama_tool(
@@ -1916,7 +1886,12 @@ def run_deep_research_v2(
                     phase="reading",
                     iteration=iteration,
                     plan_version=plan_version,
-                    data={"url_count": len(read_urls), "new_source_count": len(read_sources)},
+                    data={
+                        "tool_id": "read_page",
+                        "urls": read_urls,
+                        "url_count": len(read_urls),
+                        "new_source_count": len(read_sources),
+                    },
                 )
                 checkpoint(
                     status="running",
