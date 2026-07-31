@@ -347,6 +347,12 @@ export function bindEventHandlers(context, dependencies) {
     messagesUi.toggleEditCard($(this));
   });
 
+  $activityRoots.on('click', '.msg-sandbox-toggle', function onSandboxToggleClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    messagesUi.toggleSandboxCard($(this));
+  });
+
   $activityRoots.on('click', '.msg-compression-context-btn', function onCompressionContextClick(event) {
     event.preventDefault();
     event.stopPropagation();

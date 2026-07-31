@@ -1421,6 +1421,36 @@ export function createMessagesUi(context, dependencies) {
   }
 
 
+  // Read the set of expanded sandbox cards for one row.
+  function getExpandedSandboxIndices($msgRow) {
+    const rawValue = String($msgRow.attr('data-expanded-sandboxes') || '').trim();
+    if (!rawValue) {
+      return new Set();
+    }
+
+    return new Set(
+      rawValue
+        .split(',')
+        .map(function toNumber(value) { return parseInt(value, 10); })
+        .filter(function isValid(value) { return Number.isInteger(value) && value >= 0; })
+    );
+  }
+
+  // Persist expanded sandbox cards back to the row element.
+  function setExpandedSandboxIndices($msgRow, expandedIndices) {
+    const normalized = Array.from(expandedIndices)
+      .filter(function isValid(value) { return Number.isInteger(value) && value >= 0; })
+      .sort(function sortValues(left, right) { return left - right; });
+
+    if (normalized.length === 0) {
+      $msgRow.removeAttr('data-expanded-sandboxes');
+      return;
+    }
+
+    $msgRow.attr('data-expanded-sandboxes', normalized.join(','));
+  }
+
+
   // Activity timeline rendering.
   // Render thoughts, tool calls, and visible text into the assistant timeline.
 
@@ -3610,6 +3640,12 @@ export function createMessagesUi(context, dependencies) {
     return reasoningToolDetail(segment);
   }
 
+  // Return the complete model-provided description for a compact sandbox call.
+  function sandboxDescription(segment) {
+    const args = segment && segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    return String(args.description || '').trim().replace(/\s+/g, ' ');
+  }
+
   // Handle sandbox language.
   function sandboxLanguage(segment) {
     const identity = toolIdentityText(segment);
@@ -3725,6 +3761,23 @@ export function createMessagesUi(context, dependencies) {
         </div>
         ${renderSandboxStreamBlock('stdin', inputText, 'is-stdin', language)}
         ${stdoutHtml || stderrHtml ? `${stdoutHtml}${stderrHtml}` : renderSandboxStreamBlock('stdout', 'No output.', 'is-stdout is-empty', 'plaintext')}
+      </div>
+    `;
+  }
+
+  // Render a sandbox call as a clean, collapsed line outside reasoning mode.
+  function renderCollapsedSandboxToolBlock(segment, toolSegmentIndex, isExpanded) {
+    const description = sandboxDescription(segment) || 'Sandbox';
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-sandbox-segment-index="${toolSegmentIndex}"` : '';
+    return `
+      <div class="msg-sandbox-collapsible${isExpanded ? ' is-expanded' : ''}"${dataIndex}>
+        <button type="button" class="msg-sandbox-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}">
+          <span class="msg-sandbox-toggle-label">${escHtml(description)}</span>
+          <span class="msg-sandbox-toggle-chevron" aria-hidden="true">&gt;</span>
+        </button>
+        <div class="msg-sandbox-collapsible-content"${isExpanded ? '' : ' hidden'}>
+          ${renderSandboxToolBlock(segment, toolSegmentIndex)}
+        </div>
       </div>
     `;
   }
@@ -4904,6 +4957,11 @@ export function createMessagesUi(context, dependencies) {
           return '';
         }
         if (item.type === 'tool') {
+          const segment = item && item.segment ? item.segment : item;
+          const toolIndex = item && Number.isInteger(item.toolIndex) ? item.toolIndex : undefined;
+          if (isSandboxToolSegment(segment) && !isImageViewToolSegment(segment)) {
+            return renderCollapsedSandboxToolBlock(segment, toolIndex, !!item.expanded);
+          }
           return renderReasoningToolItem(item);
         }
         if (item.type === 'tool_pending') {
@@ -5287,6 +5345,7 @@ export function createMessagesUi(context, dependencies) {
         $msgRow.removeData('expandedSearchKeys');
         $msgRow.removeAttr('data-expanded-writes');
         $msgRow.removeAttr('data-expanded-edits');
+        $msgRow.removeAttr('data-expanded-sandboxes');
         $msgRow.removeData('toolSegments');
         return;
       }
@@ -5304,6 +5363,7 @@ export function createMessagesUi(context, dependencies) {
     const expandedSearchKeys = getExpandedSearchKeys($msgRow);
     const expandedWrites = getExpandedWriteIndices($msgRow);
     const expandedEdits = getExpandedEditIndices($msgRow);
+    const expandedSandboxes = getExpandedSandboxIndices($msgRow);
     let thoughtIndex = -1;
     let toolSegmentIndex = 0;
     const citationRegistry = createCitationRegistry();
@@ -5584,7 +5644,9 @@ export function createMessagesUi(context, dependencies) {
                 ? expandedSearches.has(currentToolIndex)
                 : (isWriteToolSegment(groupSegment)
                   ? expandedWrites.has(currentToolIndex)
-                  : (isEditToolSegment(groupSegment) ? expandedEdits.has(currentToolIndex) : false))
+                  : (isEditToolSegment(groupSegment)
+                    ? expandedEdits.has(currentToolIndex)
+                    : (isSandboxToolSegment(groupSegment) ? expandedSandboxes.has(currentToolIndex) : false)))
             });
             toolSegmentIndex += 1;
           }
@@ -5643,6 +5705,7 @@ export function createMessagesUi(context, dependencies) {
     setExpandedSearchKeys($msgRow, expandedSearchKeys);
     setExpandedWriteIndices($msgRow, expandedWrites);
     setExpandedEditIndices($msgRow, expandedEdits);
+    setExpandedSandboxIndices($msgRow, expandedSandboxes);
     $msgRow.data('toolSegments', toolSegments);
     $msgRow.data('toolActivityEvents', segments
       .filter(function onlyToolActivity(segment) { return segment && segment.type === 'tool_activity'; })
@@ -6000,6 +6063,28 @@ export function createMessagesUi(context, dependencies) {
         morphDomChildren($preview[0], $newPreview[0]);
       }
     }
+  }
+
+  // Expand or collapse one compact sandbox call.
+  function toggleSandboxCard($toggle) {
+    const $wrapper = $toggle.closest('.msg-sandbox-collapsible');
+    const $row = sourceMessageRowForActivityCard($wrapper);
+    const cardIndex = parseInt($wrapper.attr('data-sandbox-segment-index') || '-1', 10);
+    const expandedSandboxes = getExpandedSandboxIndices($row);
+    const willExpand = !$wrapper.hasClass('is-expanded');
+
+    if (Number.isInteger(cardIndex) && cardIndex >= 0) {
+      if (willExpand) {
+        expandedSandboxes.add(cardIndex);
+      } else {
+        expandedSandboxes.delete(cardIndex);
+      }
+      setExpandedSandboxIndices($row, expandedSandboxes);
+    }
+
+    $wrapper.toggleClass('is-expanded', willExpand);
+    $toggle.attr('aria-expanded', willExpand ? 'true' : 'false');
+    $wrapper.find('.msg-sandbox-collapsible-content').first().prop('hidden', !willExpand);
   }
 
   // Expand or collapse one compression context card.
@@ -6792,6 +6877,7 @@ export function createMessagesUi(context, dependencies) {
     setQueuedMessageState,
     toggleSearchSources,
     toggleEditCard,
+    toggleSandboxCard,
     toggleCompressionContext,
     toggleWriteCard,
     startWritePreviewPan,

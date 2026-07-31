@@ -884,6 +884,78 @@
   padding: 10px;
 }
 
+/* Compact sandbox disclosure used when reasoning is disabled. */
+.msg-sandbox-collapsible {
+  width: min(100%, 900px);
+  min-width: 0;
+}
+
+.msg-sandbox-toggle {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 0;
+  padding: 1px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--c-text-dim);
+  font: inherit;
+  font-size: var(--font-size-body-2);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  transition: color var(--t-fast), opacity var(--t-fast);
+}
+
+.msg-sandbox-toggle:hover,
+.msg-sandbox-toggle:focus-visible,
+.msg-sandbox-collapsible.is-expanded > .msg-sandbox-toggle {
+  color: var(--c-text);
+}
+
+.msg-sandbox-toggle:focus,
+.msg-sandbox-toggle:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.msg-sandbox-toggle-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg-sandbox-toggle-chevron {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  color: inherit;
+  line-height: 1;
+  transform: rotate(0deg);
+  transform-origin: center;
+  transition: transform var(--t-fast);
+}
+
+.msg-sandbox-collapsible.is-expanded .msg-sandbox-toggle-chevron {
+  transform: rotate(90deg);
+}
+
+.msg-sandbox-collapsible-content {
+  margin-top: 8px;
+}
+
+.msg-sandbox-collapsible-content[hidden] {
+  display: none !important;
+}
+
+.msg-sandbox-collapsible-content > .msg-sandbox-card {
+  width: 100%;
+  max-width: 100%;
+}
+
 .msg-sandbox-head {
   min-width: 0;
   display: grid;
