@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from camoufox import DefaultAddons
 from camoufox.async_api import AsyncCamoufox
 from mcp.types import TextContent
 from playwright.async_api import Browser, BrowserContext, Page
@@ -40,6 +41,16 @@ DOWNLOADS_DIR = _config.DOWNLOADS_DIR
 MAX_A11Y_DEPTH = _config.MAX_A11Y_DEPTH
 MAX_ELEMENTS = _config.MAX_ELEMENTS
 MAX_MAIN_INTERACTIVE = _config.MAX_MAIN_INTERACTIVE
+
+
+# Build deterministic Camoufox launch settings. The bundled uBlock addon is
+# optional and can be left half-extracted by an interrupted download.
+def _camoufox_launch_options() -> dict[str, Any]:
+    return {
+        "headless": BROWSER_HEADLESS,
+        "window": (BROWSER_WIDTH, BROWSER_HEIGHT),
+        "exclude_addons": [DefaultAddons.UBO],
+    }
 
 
 # Keep one dedicated event loop alive for all browser operations.
@@ -1115,10 +1126,7 @@ class BrowserState:
         log.info("Launching camoufox browser (Firefox stealth, headless=%s)...", BROWSER_HEADLESS)
 
         try:
-            self._camoufox_cm = AsyncCamoufox(
-                headless=BROWSER_HEADLESS,
-                window=(BROWSER_WIDTH, BROWSER_HEIGHT),
-            )
+            self._camoufox_cm = AsyncCamoufox(**_camoufox_launch_options())
             browser = await self._camoufox_cm.__aenter__()
             self.browser = browser
 
@@ -1525,5 +1533,3 @@ async def _click_by_role_and_name(ref: str):
         f"Could not click element ref='{ref}' (role={role}, name='{name}'). "
         f"All click strategies failed. Last error: {last_err}"
     )
-
-

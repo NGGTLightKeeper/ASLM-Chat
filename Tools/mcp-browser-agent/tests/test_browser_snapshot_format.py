@@ -6,12 +6,21 @@ import pytest
 
 from browser import (
     _build_parsed_state,
+    _camoufox_launch_options,
     _filter_snapshot_controls,
     _format_control_line,
     _format_parsed_controls,
     _is_noise_element,
     is_browser_closed_error,
 )
+
+
+@pytest.mark.unit
+def test_camoufox_launch_excludes_optional_default_addon() -> None:
+    options = _camoufox_launch_options()
+
+    assert options["exclude_addons"]
+    assert options["exclude_addons"][0].name == "UBO"
 
 
 # _is_noise_element — hide empty footer links outside main content.

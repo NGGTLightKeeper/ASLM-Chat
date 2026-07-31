@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from browser_process import BrowserProcessManager, _json_safe_context
@@ -22,6 +24,31 @@ def test_json_safe_context_strips_mcp_session() -> None:
     assert safe["engine"] == "ollama-service"
     assert "module_dir" in safe
     assert "project_dir" in safe
+
+
+@pytest.mark.unit
+def test_json_safe_context_drops_methods_and_runtime_objects_recursively() -> None:
+    class RuntimeObject:
+        def callback(self) -> None:
+            return None
+
+    runtime = RuntimeObject()
+    safe = _json_safe_context(
+        {
+            "callback": runtime.callback,
+            "cancel_event": runtime,
+            "nested": {
+                "label": "browser",
+                "callback": runtime.callback,
+                "items": ["kept", runtime.callback, runtime],
+            },
+        }
+    )
+
+    assert "callback" not in safe
+    assert "cancel_event" not in safe
+    assert safe["nested"] == {"label": "browser", "items": ["kept"]}
+    assert json.loads(json.dumps(safe)) == safe
 
 
 # BrowserProcessManager._worker_response_is_retryable — transient vs permanent errors.

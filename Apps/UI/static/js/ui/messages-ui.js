@@ -37,6 +37,12 @@ export function createMessagesUi(context, dependencies) {
   const SANDBOX_INPUT_PREVIEW_CHARS = 12000;
   const REASONING_CHUNK_TARGET_CHARS = 132;
   const REASONING_CHUNK_MAX_CHARS = 168;
+  const REASONING_LABEL_CHANGE_DELAY_MS = 2000;
+  const REASONING_LABEL_MAX_TYPING_DURATION_MS = 700;
+  const REASONING_LABEL_MAX_CHARACTER_DELAY_MS = 26;
+  const REASONING_LABEL_MIN_CHARACTER_DELAY_MS = 10;
+  const REASONING_LABEL_MIN_CHARS = 12;
+  const REASONING_LABEL_MAX_CHARS = 140;
   const DOWNLOAD_FILE_ICON = icons.DOWNLOAD_FILE_ICON || '';
   const SHARED_FILE_FOLDER_ICON = icons.SKILLS_FOLDER_ICON || '';
   const OPEN_FILE_LOCATION_LABEL = t('messages.openFileLocation', null, 'Open file location');
@@ -4801,9 +4807,164 @@ export function createMessagesUi(context, dependencies) {
     return toolDisplayName(segment);
   }
 
-  // Handle reasoning toggle label.
-  function reasoningToggleLabel() {
-    return 'Thought';
+  // Return a short action description explicitly supplied for a tool call.
+  function reasoningToolActionDescription(segment) {
+    if (isSearchToolSegment(segment)) {
+      return searchDescriptionFromSegment(segment);
+    }
+
+    const toolUi = segment && segment.toolUi && typeof segment.toolUi === 'object' ? segment.toolUi : {};
+    const compact = toolUi.compact && typeof toolUi.compact === 'object' ? toolUi.compact : {};
+    const structured = segment && segment.structuredContent && typeof segment.structuredContent === 'object'
+      ? segment.structuredContent
+      : {};
+    const structuredUi = structured.ui && typeof structured.ui === 'object' ? structured.ui : {};
+    const args = segment && segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    return String(
+      toolUi.description
+      || compact.description
+      || structured.description
+      || structuredUi.description
+      || args.description
+      || ''
+    ).replace(/\s+/g, ' ').trim();
+  }
+
+  // Browser-agent activity has its own portal and must not drive the Thought label.
+  function isIgnoredReasoningActivity(segment) {
+    return !!(
+      segment
+      && (
+        segment.type === 'browser_portal'
+        || (browserPortalUi
+          && typeof browserPortalUi.isBrowserToolSegment === 'function'
+          && browserPortalUi.isBrowserToolSegment(segment))
+      )
+    );
+  }
+
+  // Pick the latest complete clause so the label changes at punctuation, not per token.
+  function reasoningThoughtExcerpt(content) {
+    const text = String(content || '').replace(/\s+/g, ' ').trim();
+    if (!text) {
+      return '';
+    }
+
+    const clauses = text.match(/[^.!?,\u2026;:\n]+[.!?,\u2026;:]+(?:["'»”\)\]]+)?/g) || [];
+    const readableClauses = clauses.map(function normalizeReasoningClause(clause) {
+      return String(clause || '').trim();
+    }).filter(function keepReadableReasoningClause(clause) {
+      return clause.length >= REASONING_LABEL_MIN_CHARS && clause.length <= REASONING_LABEL_MAX_CHARS;
+    });
+    return readableClauses.length
+      ? normalizeReasoningPreviewPunctuation(readableClauses[readableClauses.length - 1])
+      : '';
+  }
+
+  // Replace sentence-ending punctuation with one calm preview ellipsis while
+  // preserving any closing quote or bracket after it.
+  function normalizeReasoningPreviewPunctuation(label) {
+    return String(label || '').trim().replace(/[.!?,\u2026;:]+(["'»”\)\]]*)$/u, '\u2026$1');
+  }
+
+  // Gather sources belonging to the currently displayed search or read activity.
+  function reasoningActivitySources(items, activeSegment, activeItemIndex) {
+    const isSearchActivity = isSearchToolSegment(activeSegment);
+    const isReadActivity = isReadPageToolSegment(activeSegment);
+    if (!isSearchActivity && !isReadActivity) {
+      return [];
+    }
+
+    const sources = [];
+    (Array.isArray(items) ? items.slice(0, activeItemIndex + 1) : []).forEach(function collectActivitySources(item) {
+      const segment = item && item.segment ? item.segment : item;
+      if (!segment || isIgnoredReasoningActivity(segment)) {
+        return;
+      }
+      if (isSearchActivity && isSearchToolSegment(segment)) {
+        sources.push(...searchSourcesFromSegment(segment));
+      } else if (isReadActivity && isReadPageToolSegment(segment)) {
+        sources.push(...readPageSourcesFromSegment(segment));
+      }
+    });
+
+    return dedupeSearchSources(sources.map(function normalizeActivitySource(source, index) {
+      return normalizeSearchSourceItem(source, index + 1);
+    }).filter(Boolean));
+  }
+
+  // Build the live Thought label and optional source stack.
+  function reasoningTogglePresentation(items, options) {
+    const renderOptions = options || {};
+    const safeItems = Array.isArray(items) ? items : [];
+    if (renderOptions.streaming !== true || renderOptions.reasoningComplete === true) {
+      return { label: 'Thought', sources: [], dynamic: false };
+    }
+
+    for (let index = safeItems.length - 1; index >= 0; index -= 1) {
+      const item = safeItems[index];
+      if (!item) {
+        continue;
+      }
+      if (item.type === 'thought') {
+        const excerpt = reasoningThoughtExcerpt(item.content);
+        if (excerpt) {
+          return { label: excerpt, sources: [], dynamic: true };
+        }
+        continue;
+      }
+      if (item.type === 'tool_pending') {
+        return { label: 'Preparing tool call', sources: [], dynamic: true };
+      }
+      if (item.type !== 'tool') {
+        continue;
+      }
+
+      const segment = item.segment || item;
+      if (isIgnoredReasoningActivity(segment)) {
+        continue;
+      }
+      const sources = reasoningActivitySources(safeItems, segment, index);
+      const description = normalizeReasoningPreviewPunctuation(reasoningToolActionDescription(segment));
+      let label = description;
+      if (!label && isReadPageToolSegment(segment)) {
+        label = sources.length > 1 ? `Reading ${sources.length} sources` : 'Reading source';
+      }
+      if (!label) {
+        label = reasoningToolStepTitle(segment);
+      }
+      return { label: label || 'Using tool', sources, dynamic: true };
+    }
+
+    return { label: 'Thinking', sources: [], dynamic: true };
+  }
+
+  // Render up to three overlapping source favicons and a leading overflow count.
+  function renderReasoningSourceStack(sources) {
+    const safeSources = Array.isArray(sources) ? sources : [];
+    if (!safeSources.length) {
+      return '';
+    }
+
+    const visibleSources = safeSources.slice(0, 3);
+    const overflowCount = Math.max(0, safeSources.length - visibleSources.length);
+    const avatarsHtml = visibleSources.map(function renderReasoningSource(source) {
+      const domain = String(source.display_domain || source.domain || source.url || '').trim();
+      const faviconUrl = sourceFaviconUrl(source);
+      const fallbackLetter = (domain.charAt(0) || '?').toUpperCase();
+      const imgHtml = faviconUrl
+        ? `<img class="msg-reasoning-source-favicon" src="${escapeAttributeValue(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
+        : '';
+      const fallbackStyle = domainAccentStyle(domain, faviconUrl ? 'display:none;' : '');
+      return `<span class="msg-reasoning-source" title="${escapeAttributeValue(domain)}">${imgHtml}<span class="msg-reasoning-source-fallback" style="${escapeAttributeValue(fallbackStyle)}">${escHtml(fallbackLetter)}</span></span>`;
+    }).join('');
+
+    return `
+      <span class="msg-reasoning-sources" aria-label="${safeSources.length} sources">
+        ${overflowCount > 0 ? `<span class="msg-reasoning-source-overflow">+${overflowCount}</span>` : ''}
+        <span class="msg-reasoning-source-stack has-${visibleSources.length}">${avatarsHtml}</span>
+      </span>
+    `;
   }
 
   // Report whether  thought segments.
@@ -4934,9 +5095,12 @@ export function createMessagesUi(context, dependencies) {
   }
 
   // Render reasoning group.
-  function renderReasoningGroup(items, thoughtIndex, isExpanded, toggleLabel, options) {
+  function renderReasoningGroup(items, thoughtIndex, isExpanded, togglePresentation, options) {
     const safeItems = Array.isArray(items) ? items : [];
     const groupOptions = options || {};
+    const presentation = togglePresentation && typeof togglePresentation === 'object'
+      ? togglePresentation
+      : { label: String(togglePresentation || 'Thought'), sources: [], dynamic: false };
     const thoughtCount = safeItems.filter(function countThoughts(item) { return item && item.type === 'thought'; }).length;
     const toolCount = safeItems.filter(function countTools(item) {
       return item && (item.type === 'tool' || item.type === 'tool_pending');
@@ -5024,8 +5188,9 @@ export function createMessagesUi(context, dependencies) {
     return `
       <div class="msg-thoughts-wrapper msg-reasoning-wrapper${isExpanded ? ' expanded' : ''}" data-thought-index="${thoughtIndex}">
         <button type="button" class="msg-thoughts-toggle msg-reasoning-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}">
-          <span class="msg-reasoning-title">${escHtml(toggleLabel || 'Thought')}</span>
-          ${summaryParts.length ? `<span class="msg-reasoning-summary">${escHtml(summaryParts.join(' · '))}</span>` : ''}
+          ${renderReasoningSourceStack(presentation.sources)}
+          <span class="msg-reasoning-title" data-reasoning-label="${escapeAttributeValue(presentation.label || 'Thought')}" title="${escapeAttributeValue(presentation.label || 'Thought')}">${escHtml(presentation.label || 'Thought')}</span>
+          ${!presentation.dynamic && summaryParts.length ? `<span class="msg-reasoning-summary">${escHtml(summaryParts.join(' · '))}</span>` : ''}
         </button>
         <div class="msg-thoughts-content msg-reasoning-content" style="display:${isExpanded ? 'block' : 'none'};">${contentHtml}</div>
       </div>
@@ -5293,6 +5458,143 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Keep live reasoning labels stable across stream morphs and reveal each new
+  // status with a short typewriter animation after a readable pause.
+  function stopReasoningLabelAnimator($msgRow) {
+    const state = $msgRow.data('reasoningLabelAnimator');
+    if (!state) {
+      return;
+    }
+    if (state.typingTimer) {
+      clearTimeout(state.typingTimer);
+    }
+    if (state.delayTimer) {
+      clearTimeout(state.delayTimer);
+    }
+    $msgRow.removeData('reasoningLabelAnimator');
+  }
+
+  function updateReasoningLabelElement($msgRow, state) {
+    const titleEl = $msgRow.find('.msg-reasoning-title[data-reasoning-label]').first()[0];
+    if (!titleEl) {
+      return false;
+    }
+    titleEl.textContent = state.currentText || '\u00a0';
+    titleEl.classList.toggle('is-typing', !!state.typing);
+    return true;
+  }
+
+  function scheduleReasoningLabel($msgRow, state, immediate) {
+    if (state.typing || !state.queuedLabel) {
+      return;
+    }
+    if (state.delayTimer) {
+      clearTimeout(state.delayTimer);
+      state.delayTimer = null;
+    }
+
+    const elapsed = state.lastCompletedAt ? Date.now() - state.lastCompletedAt : REASONING_LABEL_CHANGE_DELAY_MS;
+    const waitMs = immediate ? 0 : Math.max(0, REASONING_LABEL_CHANGE_DELAY_MS - elapsed);
+    state.delayTimer = setTimeout(function beginReasoningLabelTyping() {
+      state.delayTimer = null;
+      const nextLabel = state.queuedLabel;
+      if (!nextLabel) {
+        return;
+      }
+
+      state.queuedLabel = '';
+      state.activeLabel = nextLabel;
+      state.currentText = '';
+      state.typing = true;
+      const characters = Array.from(nextLabel);
+      let characterIndex = 0;
+      const reduceMotion = typeof window !== 'undefined'
+        && typeof window.matchMedia === 'function'
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const characterDelay = reduceMotion
+        ? 0
+        : Math.min(
+          REASONING_LABEL_MAX_CHARACTER_DELAY_MS,
+          Math.max(
+            REASONING_LABEL_MIN_CHARACTER_DELAY_MS,
+            Math.floor(REASONING_LABEL_MAX_TYPING_DURATION_MS / Math.max(1, characters.length))
+          )
+        );
+
+      function typeNextCharacter() {
+        if (!$msgRow[0] || (typeof document !== 'undefined' && !document.documentElement.contains($msgRow[0]))) {
+          stopReasoningLabelAnimator($msgRow);
+          return;
+        }
+        if (reduceMotion) {
+          characterIndex = characters.length;
+        } else {
+          characterIndex += 1;
+        }
+        state.currentText = characters.slice(0, characterIndex).join('');
+        updateReasoningLabelElement($msgRow, state);
+
+        if (characterIndex < characters.length) {
+          state.typingTimer = setTimeout(typeNextCharacter, characterDelay);
+          return;
+        }
+
+        state.typingTimer = null;
+        state.typing = false;
+        state.lastCompletedAt = Date.now();
+        updateReasoningLabelElement($msgRow, state);
+        scheduleReasoningLabel($msgRow, state, false);
+      }
+
+      updateReasoningLabelElement($msgRow, state);
+      state.typingTimer = setTimeout(typeNextCharacter, reduceMotion ? 0 : characterDelay);
+    }, waitMs);
+  }
+
+  function syncReasoningLabelAnimator($msgRow, streaming) {
+    const $title = $msgRow.find('.msg-reasoning-title[data-reasoning-label]').first();
+    if (!$title.length) {
+      stopReasoningLabelAnimator($msgRow);
+      return;
+    }
+
+    const desiredLabel = String($title.attr('data-reasoning-label') || 'Thought');
+    let animator = $msgRow.data('reasoningLabelAnimator');
+    if (streaming !== true && !animator) {
+      $title.text(desiredLabel).removeClass('is-typing');
+      return;
+    }
+
+    if (!animator) {
+      animator = {
+        activeLabel: '',
+        queuedLabel: desiredLabel,
+        currentText: '',
+        typing: false,
+        typingTimer: null,
+        delayTimer: null,
+        lastCompletedAt: 0
+      };
+      $msgRow.data('reasoningLabelAnimator', animator);
+      updateReasoningLabelElement($msgRow, animator);
+      scheduleReasoningLabel($msgRow, animator, true);
+      return;
+    }
+
+    updateReasoningLabelElement($msgRow, animator);
+    if (desiredLabel === animator.activeLabel) {
+      animator.queuedLabel = '';
+      if (animator.delayTimer) {
+        clearTimeout(animator.delayTimer);
+        animator.delayTimer = null;
+      }
+      return;
+    }
+
+    animator.queuedLabel = desiredLabel;
+    scheduleReasoningLabel($msgRow, animator, false);
+  }
+
   // Render activity timeline.
   function renderActivityTimeline($msgRow, segments, options) {
     const renderOptions = options || {};
@@ -5337,6 +5639,7 @@ export function createMessagesUi(context, dependencies) {
 
     if (renderSegments.length === 0) {
       if (!renderOptions.pendingTool) {
+        stopReasoningLabelAnimator($msgRow);
         $stream.hide().empty();
         $bubble.html('');
         $msgRow.removeAttr('data-expanded-thoughts');
@@ -5386,8 +5689,6 @@ export function createMessagesUi(context, dependencies) {
       return segment && segment.type === 'tool' ? index : lastIndex;
     }, -1);
     let reasoningGroupIndex = -1;
-    const thoughtToggleLabel = reasoningToggleLabel($msgRow);
-
     const blocks = [];
     function pushBlock(key, html) {
       if (!html || !String(html).trim()) {
@@ -5444,7 +5745,10 @@ export function createMessagesUi(context, dependencies) {
           reasoningItems,
           0,
           expandedThoughts.has(0),
-          thoughtToggleLabel,
+          reasoningTogglePresentation(reasoningItems, {
+            streaming: renderOptions.streaming === true,
+            reasoningComplete: isStreamingTextAfterReasoning
+          }),
           { forceWrapper: true }
         );
       }
@@ -5503,7 +5807,7 @@ export function createMessagesUi(context, dependencies) {
           `<div class="msg-tool-only-group msg-tool-only-group--deep-research">${standaloneDeepResearchCards.join('')}</div>`
         );
       }
-      if (reasoningItems.length > 0 && reasoningAnchorTextIndex === -1 && !isStreamingTextAfterReasoning) {
+      if (reasoningItems.length > 0 && reasoningAnchorTextIndex === -1) {
         pushBlock('reasoning-active', renderActiveReasoningBlock());
       }
 
@@ -5523,7 +5827,7 @@ export function createMessagesUi(context, dependencies) {
 
         if (segment.type === 'browser_portal') {
           pushBlock(segment.key || `browser-portal-${segmentIndex}`, segment.html);
-          if (segmentIndex === reasoningAnchorTextIndex && reasoningItems.length > 0 && !isStreamingTextAfterReasoning) {
+          if (segmentIndex === reasoningAnchorTextIndex && reasoningItems.length > 0) {
             pushBlock('reasoning-active', renderActiveReasoningBlock());
           }
           continue;
@@ -5533,7 +5837,7 @@ export function createMessagesUi(context, dependencies) {
           pushTextSegmentBlock(segment, segmentIndex);
         }
 
-        if (segmentIndex === reasoningAnchorTextIndex && reasoningItems.length > 0 && !isStreamingTextAfterReasoning) {
+        if (segmentIndex === reasoningAnchorTextIndex && reasoningItems.length > 0) {
           pushBlock('reasoning-active', renderActiveReasoningBlock());
         }
       }
@@ -5548,6 +5852,7 @@ export function createMessagesUi(context, dependencies) {
 
       $bubble.empty();
       applyActivityBlocks($stream, blocks);
+      syncReasoningLabelAnimator($msgRow, renderOptions.streaming === true);
       $stream.css('display', 'flex');
       setExpandedThoughtIndices($msgRow, expandedThoughts);
       setExpandedSearchIndices($msgRow, expandedSearches);
@@ -5577,7 +5882,7 @@ export function createMessagesUi(context, dependencies) {
           $nextActiveWrapper.addClass('is-active');
           $nextActiveWrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'true');
           syncReasoningDrawerFromWrapper($nextActiveWrapper);
-        } else if (!isStreamingTextAfterReasoning) {
+        } else {
           closeReasoningDrawer();
         }
       }
@@ -5670,7 +5975,10 @@ export function createMessagesUi(context, dependencies) {
               groupItems,
               reasoningGroupIndex,
               expandedThoughts.has(reasoningGroupIndex),
-              thoughtToggleLabel,
+              reasoningTogglePresentation(groupItems, {
+                streaming: renderOptions.streaming === true,
+                reasoningComplete: false
+              }),
               { forceWrapper: forceReasoningShell }
             )
           );
@@ -5699,6 +6007,7 @@ export function createMessagesUi(context, dependencies) {
 
     $bubble.empty();
     applyActivityBlocks($stream, blocks);
+    syncReasoningLabelAnimator($msgRow, renderOptions.streaming === true);
     $stream.css('display', 'flex');
     setExpandedThoughtIndices($msgRow, expandedThoughts);
     setExpandedSearchIndices($msgRow, expandedSearches);
