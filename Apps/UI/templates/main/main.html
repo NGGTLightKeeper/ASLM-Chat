@@ -158,6 +158,21 @@
     </div>
     <div class="reasoning-drawer-backdrop" id="reasoningDrawerBackdrop"></div>
 
+    {# Sources side drawer. #}
+    <div class="reasoning-drawer sources-drawer" id="sourcesDrawer" aria-label="{% t "sources.panel" %}" role="dialog" aria-modal="false">
+        <div class="reasoning-drawer-header">
+            <div class="reasoning-drawer-header-left">
+                <span class="reasoning-drawer-title">{% t "sources.title" %}</span>
+                <span class="reasoning-drawer-summary" id="sourcesDrawerCount"></span>
+            </div>
+            <button class="reasoning-drawer-close" id="sourcesDrawerClose" type="button" aria-label="{% t "sources.closePanel" %}">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/x.svg' %}#icon"></use></svg>
+            </button>
+        </div>
+        <div class="reasoning-drawer-body sources-drawer-body" id="sourcesDrawerBody"></div>
+    </div>
+    <div class="reasoning-drawer-backdrop" id="sourcesDrawerBackdrop"></div>
+
     <aside class="sidebar sidebar-right" id="sidebarRight">
         <div class="sidebar-header">
             <span class="logo-name">{% t "settings.modelSettings" %}</span>

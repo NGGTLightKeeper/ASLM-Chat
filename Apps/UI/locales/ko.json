@@ -44,6 +44,11 @@
     "title": "추론",
     "closePanel": "추론 패널 닫기"
   },
+  "sources": {
+    "panel": "출처 패널",
+    "title": "출처",
+    "closePanel": "출처 패널 닫기"
+  },
   "settings": {
     "modelSettings": "모델 설정",
     "collapse": "설정 접기",

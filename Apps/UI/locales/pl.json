@@ -44,6 +44,11 @@
     "title": "Rozumowanie",
     "closePanel": "Zamknij panel rozumowania"
   },
+  "sources": {
+    "panel": "Panel źródeł",
+    "title": "Źródła",
+    "closePanel": "Zamknij panel źródeł"
+  },
   "settings": {
     "modelSettings": "Ustawienia modelu",
     "collapse": "Zwiń ustawienia",

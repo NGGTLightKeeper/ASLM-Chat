@@ -44,6 +44,11 @@
     "title": "Penalaran",
     "closePanel": "Tutup panel penalaran"
   },
+  "sources": {
+    "panel": "Panel sumber",
+    "title": "Sumber",
+    "closePanel": "Tutup panel sumber"
+  },
   "settings": {
     "modelSettings": "Pengaturan Model",
     "collapse": "Tutup pengaturan",

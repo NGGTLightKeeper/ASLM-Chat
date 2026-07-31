@@ -44,6 +44,11 @@
     "title": "推理",
     "closePanel": "关闭推理面板"
   },
+  "sources": {
+    "panel": "来源面板",
+    "title": "来源",
+    "closePanel": "关闭来源面板"
+  },
   "settings": {
     "modelSettings": "模型设置",
     "collapse": "收起设置",

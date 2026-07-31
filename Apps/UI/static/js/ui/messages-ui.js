@@ -1873,6 +1873,90 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Collect every source attached to one assistant response, including direct
+  // search results and citation blocks embedded in tool output.
+  function messageSourcesFromSegments(segments, citationRegistry) {
+    const safeSegments = Array.isArray(segments) ? segments : [];
+    const directSources = [];
+    safeSegments.forEach(function collectMessageSource(segment) {
+      if (!segment || segment.type !== 'tool') {
+        return;
+      }
+      directSources.push(...searchSourcesFromSegment(segment));
+      if (isReadPageToolSegment(segment)) {
+        directSources.push(...readPageSourcesFromSegment(segment));
+      }
+    });
+
+    const messageSourceRegistry = createCitationRegistry();
+    addSegmentsCitationSources(
+      messageSourceRegistry,
+      safeSegments.filter(function onlyToolSourceSegments(segment) {
+        return segment && segment.type === 'tool';
+      })
+    );
+    const registeredSources = [
+      ...(citationRegistry && typeof citationRegistry === 'object' ? Object.values(citationRegistry) : []),
+      ...Object.values(messageSourceRegistry)
+    ];
+    return dedupeSearchSources(
+      [...directSources, ...registeredSources]
+        .map(function normalizeMessageSource(source, index) {
+          return normalizeSearchSourceItem(source, index + 1);
+        })
+        .filter(Boolean)
+    );
+  }
+
+  // Render the compact favicon stack shown inside the Sources action button.
+  function renderMessageSourcesButtonContents(sources) {
+    const label = t('sources.title', null, 'Sources');
+    const iconsHtml = (Array.isArray(sources) ? sources : []).slice(0, 2).map(function renderButtonSource(source) {
+      const domain = String(source.display_domain || source.domain || source.url || '').trim();
+      const faviconUrl = sourceFaviconUrl(source);
+      const fallbackLetter = (domain.charAt(0) || '?').toUpperCase();
+      const imgHtml = faviconUrl
+        ? `<img class="msg-sources-btn-favicon" src="${escapeAttributeValue(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
+        : '';
+      const fallbackStyle = domainAccentStyle(domain, faviconUrl ? 'display:none;' : '');
+      return `<span class="msg-sources-btn-icon">${imgHtml}<span class="msg-sources-btn-fallback" style="${escapeAttributeValue(fallbackStyle)}">${escHtml(fallbackLetter)}</span></span>`;
+    }).join('');
+
+    return `<span class="msg-sources-btn-icons" aria-hidden="true">${iconsHtml || icons.GLOBE_ICON}</span><span class="msg-sources-btn-label">${escHtml(label)}</span>`;
+  }
+
+  // Refresh one row's Sources action after timeline rendering or after the
+  // action bar is attached at the end of a streamed response.
+  function syncMessageSourcesButton($msgRow) {
+    if (!$msgRow || !$msgRow.length) {
+      return;
+    }
+    const sources = $msgRow.data('messageSources') || [];
+    const hasSources = Array.isArray(sources) && sources.length > 0;
+    const $button = $msgRow.find('.msg-sources-btn').first();
+    if ($button.length) {
+      const label = t('sources.title', null, 'Sources');
+      $button
+        .prop('hidden', !hasSources)
+        .attr('title', label)
+        .attr('aria-label', label)
+        .html(hasSources ? renderMessageSourcesButtonContents(sources) : '');
+    }
+
+    if ($activeSourcesMessageRow && $activeSourcesMessageRow[0] === $msgRow[0]) {
+      if (hasSources) {
+        syncSourcesDrawer($msgRow);
+      } else {
+        closeSourcesDrawer();
+      }
+    }
+  }
+
+  function setMessageSources($msgRow, sources) {
+    $msgRow.data('messageSources', Array.isArray(sources) ? sources : []);
+    syncMessageSourcesButton($msgRow);
+  }
+
   // Render source chips with a More overflow control.
   function renderSearchSourcesWithOverflow(sources, maxVisible) {
     const items = Array.isArray(sources) ? sources : [];
@@ -5640,6 +5724,7 @@ export function createMessagesUi(context, dependencies) {
     if (renderSegments.length === 0) {
       if (!renderOptions.pendingTool) {
         stopReasoningLabelAnimator($msgRow);
+        setMessageSources($msgRow, []);
         $stream.hide().empty();
         $bubble.html('');
         $msgRow.removeAttr('data-expanded-thoughts');
@@ -5671,6 +5756,7 @@ export function createMessagesUi(context, dependencies) {
     let toolSegmentIndex = 0;
     const citationRegistry = createCitationRegistry();
     addAllSearchSourcesToCitationRegistry(citationRegistry, segments);
+    setMessageSources($msgRow, messageSourcesFromSegments(segments, citationRegistry));
     const toolSegments = segments.filter(function onlyToolSegments(segment) {
       return segment.type === 'tool';
     });
@@ -6928,6 +7014,7 @@ export function createMessagesUi(context, dependencies) {
   let $activeReasoningWrapper = null;
   let $activeReasoningMessageRow = null;
   let $activeReasoningIndex = '';
+  let $activeSourcesMessageRow = null;
   const REASONING_DRAWER_DEFAULT_WIDTH = 340;
   const REASONING_DRAWER_MIN_WIDTH = 300;
   const REASONING_DRAWER_MAX_WIDTH = 720;
@@ -6998,6 +7085,7 @@ export function createMessagesUi(context, dependencies) {
       return;
     }
 
+    closeSourcesDrawer();
     resetReasoningDrawerWidth();
 
     // Deactivate previously active pill.
@@ -7044,6 +7132,112 @@ export function createMessagesUi(context, dependencies) {
     setTimeout(function clearDrawerBody() {
       if (!$drawer.hasClass('is-open')) {
         $('#reasoningDrawerBody').empty().removeData('toolSegments').removeData('messageRow');
+      }
+    }, 250);
+  }
+
+  // Return only safe HTTP(S) links for clickable source cards.
+  function safeMessageSourceUrl(value) {
+    try {
+      const parsed = new URL(String(value || '').trim(), window.location.href);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  // Render one source as a compact domain/title/preview card.
+  function renderSourcesDrawerItem(source) {
+    const safeSource = source && typeof source === 'object' ? source : {};
+    const domain = String(safeSource.display_domain || safeSource.domain || safeSource.url || '').trim();
+    if (!domain) {
+      return '';
+    }
+
+    const url = safeMessageSourceUrl(safeSource.url || safeSource.link || safeSource.href || '');
+    const title = String(safeSource.title || domain).replace(/\s+/g, ' ').trim();
+    const preview = String(
+      safeSource.preview
+      || safeSource.snippet
+      || safeSource.summary
+      || safeSource.content
+      || safeSource.text
+      || ''
+    ).replace(/\s+/g, ' ').trim();
+    const date = String(safeSource.date || safeSource.published_date || safeSource.published_at || '').trim();
+    const faviconUrl = sourceFaviconUrl(safeSource);
+    const fallbackLetter = (domain.charAt(0) || '?').toUpperCase();
+    const imgHtml = faviconUrl
+      ? `<img class="sources-drawer-favicon" src="${escapeAttributeValue(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
+      : '';
+    const fallbackStyle = domainAccentStyle(domain, faviconUrl ? 'display:none;' : '');
+    const tagName = url ? 'a' : 'div';
+    const linkAttrs = url ? ` href="${escapeAttributeValue(url)}" target="_blank" rel="noopener noreferrer"` : '';
+    const previewText = [date, preview].filter(Boolean).join(date && preview ? ' — ' : '');
+
+    return `
+      <${tagName} class="sources-drawer-item"${linkAttrs}>
+        <div class="sources-drawer-domain-row">
+          ${imgHtml}<span class="sources-drawer-fallback" style="${escapeAttributeValue(fallbackStyle)}">${escHtml(fallbackLetter)}</span>
+          <span class="sources-drawer-domain">${escHtml(domain)}</span>
+        </div>
+        <div class="sources-drawer-item-title">${escHtml(title)}</div>
+        ${previewText ? `<div class="sources-drawer-item-preview">${escHtml(previewText)}</div>` : ''}
+      </${tagName}>
+    `;
+  }
+
+  // Keep an open Sources drawer synchronized with its response row.
+  function syncSourcesDrawer($msgRow) {
+    const $drawer = $('#sourcesDrawer');
+    const $body = $('#sourcesDrawerBody');
+    if (!$drawer.hasClass('is-open') || !$body.length || !$msgRow || !$msgRow.length) {
+      return;
+    }
+    const sources = $msgRow.data('messageSources') || [];
+    const safeSources = Array.isArray(sources) ? sources : [];
+    $('#sourcesDrawerCount').text(`· ${safeSources.length}`);
+    $body.html(safeSources.map(renderSourcesDrawerItem).join(''));
+  }
+
+  // Open or toggle the Sources drawer for one assistant response.
+  function openSourcesDrawer($button) {
+    const $msgRow = $button && $button.length ? $button.closest('.msg.assistant') : $();
+    const sources = $msgRow.data('messageSources') || [];
+    const $drawer = $('#sourcesDrawer');
+    if (!$msgRow.length || !Array.isArray(sources) || !sources.length || !$drawer.length) {
+      return;
+    }
+
+    if ($activeSourcesMessageRow && $activeSourcesMessageRow[0] === $msgRow[0] && $drawer.hasClass('is-open')) {
+      closeSourcesDrawer();
+      return;
+    }
+
+    closeReasoningDrawer();
+    if ($activeSourcesMessageRow) {
+      $activeSourcesMessageRow.find('.msg-sources-btn').removeClass('is-active').attr('aria-expanded', 'false');
+    }
+    $activeSourcesMessageRow = $msgRow;
+    $msgRow.find('.msg-sources-btn').addClass('is-active').attr('aria-expanded', 'true');
+    $drawer.addClass('is-open');
+    $('#sourcesDrawerBackdrop').addClass('is-visible');
+    syncSourcesDrawer($msgRow);
+  }
+
+  // Close the Sources drawer and clear its active action button.
+  function closeSourcesDrawer() {
+    const $drawer = $('#sourcesDrawer');
+    $drawer.removeClass('is-open');
+    $('#sourcesDrawerBackdrop').removeClass('is-visible');
+    if ($activeSourcesMessageRow) {
+      $activeSourcesMessageRow.find('.msg-sources-btn').removeClass('is-active').attr('aria-expanded', 'false');
+    }
+    $activeSourcesMessageRow = null;
+    setTimeout(function clearSourcesDrawerBody() {
+      if (!$drawer.hasClass('is-open')) {
+        $('#sourcesDrawerBody').empty();
+        $('#sourcesDrawerCount').empty();
       }
     }, 250);
   }
@@ -7192,6 +7386,9 @@ export function createMessagesUi(context, dependencies) {
     startWritePreviewPan,
     toggleThoughtSection,
     closeReasoningDrawer,
+    openSourcesDrawer,
+    closeSourcesDrawer,
+    syncMessageSourcesButton,
     updateRegenButtons,
     updateSendButtons
   };

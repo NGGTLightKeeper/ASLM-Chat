@@ -44,6 +44,11 @@
     "title": "推論",
     "closePanel": "推論パネルを閉じる"
   },
+  "sources": {
+    "panel": "ソースパネル",
+    "title": "ソース",
+    "closePanel": "ソースパネルを閉じる"
+  },
   "settings": {
     "modelSettings": "モデル設定",
     "collapse": "設定を折りたたむ",

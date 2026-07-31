@@ -44,6 +44,11 @@
     "title": "Razonamiento",
     "closePanel": "Cerrar panel de razonamiento"
   },
+  "sources": {
+    "panel": "Panel de fuentes",
+    "title": "Fuentes",
+    "closePanel": "Cerrar panel de fuentes"
+  },
   "settings": {
     "modelSettings": "Configuración del modelo",
     "collapse": "Contraer configuración",

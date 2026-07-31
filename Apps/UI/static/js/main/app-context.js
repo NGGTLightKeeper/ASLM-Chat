@@ -1,8 +1,8 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { normalizeEngineValue } from '../engines/engine-registry.js';
-import { initI18n } from './i18n.js';
-import { parseJsonScript } from './utils.js';
+import { initI18n, t } from './i18n.js';
+import { escHtml, escapeAttributeValue, parseJsonScript } from './utils.js';
 
 initI18n();
 
@@ -146,10 +146,16 @@ export function createAppContext() {
 
   // Build the shared action buttons used by assistant and user rows.
   icons.buildMessageActionsHtml = function buildMessageActionsHtml() {
+    const sourcesLabel = t('sources.title', null, 'Sources');
+    const sourcesLabelAttr = escapeAttributeValue(sourcesLabel);
     return `<div class="msg-actions">
       <button class="msg-action-btn msg-copy-btn" title="Copy" aria-label="Copy message">${icons.COPY_MESSAGE_ICON}</button>
       <button class="msg-action-btn msg-regen-btn" title="Regenerate" aria-label="Regenerate response">${icons.REGENERATE_ICON}</button>
       <button class="msg-action-btn msg-delete-btn" title="Delete" aria-label="Delete message">${icons.DELETE_MESSAGE_ICON}</button>
+      <button class="msg-action-btn msg-sources-btn" type="button" title="${sourcesLabelAttr}" aria-label="${sourcesLabelAttr}" aria-expanded="false" hidden>
+        <span class="msg-sources-btn-icons" aria-hidden="true">${icons.GLOBE_ICON}</span>
+        <span class="msg-sources-btn-label">${escHtml(sourcesLabel)}</span>
+      </button>
     </div>`;
   };
 

@@ -44,6 +44,11 @@
     "title": "Denkprozess",
     "closePanel": "Denkbereich schließen"
   },
+  "sources": {
+    "panel": "Quellenbereich",
+    "title": "Quellen",
+    "closePanel": "Quellenbereich schließen"
+  },
   "settings": {
     "modelSettings": "Modelleinstellungen",
     "collapse": "Einstellungen einklappen",

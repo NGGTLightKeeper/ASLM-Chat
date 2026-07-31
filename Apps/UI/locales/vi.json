@@ -44,6 +44,11 @@
     "title": "Suy luận",
     "closePanel": "Đóng bảng suy luận"
   },
+  "sources": {
+    "panel": "Bảng nguồn",
+    "title": "Nguồn",
+    "closePanel": "Đóng bảng nguồn"
+  },
   "settings": {
     "modelSettings": "Cài đặt mô hình",
     "collapse": "Thu gọn cài đặt",

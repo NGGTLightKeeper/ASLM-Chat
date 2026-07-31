@@ -133,6 +133,12 @@ export function bindEventHandlers(context, dependencies) {
     messagesUi.copyMessage($(this));
   });
 
+  dom.$messagesInner.on('click', '.msg-sources-btn', function onSourcesClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    messagesUi.openSourcesDrawer($(this));
+  });
+
   $activityRoots.on('click', '.md-code-copy-btn', function onMarkdownCodeCopyClick(event) {
     event.preventDefault();
     event.stopPropagation();
@@ -385,8 +391,17 @@ export function bindEventHandlers(context, dependencies) {
     messagesUi.closeReasoningDrawer();
   });
 
+  $(document).on('click', '#sourcesDrawerClose, #sourcesDrawerBackdrop', function onSourcesDrawerClose() {
+    messagesUi.closeSourcesDrawer();
+  });
+
   $(document).on('keydown', function onReasoningDrawerKeydown(event) {
-    if (event.key === 'Escape' && $('#reasoningDrawer').hasClass('is-open')) {
+    if (event.key !== 'Escape') {
+      return;
+    }
+    if ($('#sourcesDrawer').hasClass('is-open')) {
+      messagesUi.closeSourcesDrawer();
+    } else if ($('#reasoningDrawer').hasClass('is-open')) {
       messagesUi.closeReasoningDrawer();
     }
   });

@@ -44,6 +44,11 @@
     "title": "Reasoning",
     "closePanel": "Close reasoning panel"
   },
+  "sources": {
+    "panel": "Sources panel",
+    "title": "Sources",
+    "closePanel": "Close sources panel"
+  },
   "settings": {
     "modelSettings": "Model Settings",
     "collapse": "Collapse settings",

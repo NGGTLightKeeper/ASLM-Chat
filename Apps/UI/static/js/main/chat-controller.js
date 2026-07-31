@@ -705,6 +705,7 @@ export function createChatController(context, dependencies) {
       if ($assistantRow.find('.msg-actions').length === 0) {
         $assistantRow.find('.msg-body').append(context.icons.buildMessageActionsHtml());
       }
+      messagesUi.syncMessageSourcesButton($assistantRow);
 
       messagesUi.updateRegenButtons();
       state.isChatGenerating = false;

@@ -44,6 +44,11 @@
     "title": "الاستدلال",
     "closePanel": "إغلاق لوحة الاستدلال"
   },
+  "sources": {
+    "panel": "لوحة المصادر",
+    "title": "المصادر",
+    "closePanel": "إغلاق لوحة المصادر"
+  },
   "settings": {
     "modelSettings": "إعدادات النموذج",
     "collapse": "طي الإعدادات",

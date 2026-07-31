@@ -44,6 +44,11 @@
     "title": "तर्क",
     "closePanel": "तर्क पैनल बंद करें"
   },
+  "sources": {
+    "panel": "स्रोत पैनल",
+    "title": "स्रोत",
+    "closePanel": "स्रोत पैनल बंद करें"
+  },
   "settings": {
     "modelSettings": "मॉडल सेटिंग्स",
     "collapse": "सेटिंग्स संक्षिप्त करें",

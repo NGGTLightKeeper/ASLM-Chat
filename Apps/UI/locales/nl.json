@@ -44,6 +44,11 @@
     "title": "Redeneren",
     "closePanel": "Redeneerpaneel sluiten"
   },
+  "sources": {
+    "panel": "Bronnenpaneel",
+    "title": "Bronnen",
+    "closePanel": "Bronnenpaneel sluiten"
+  },
   "settings": {
     "modelSettings": "Modelinstellingen",
     "collapse": "Instellingen inklappen",
