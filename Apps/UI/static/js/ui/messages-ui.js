@@ -1,7 +1,7 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { postJson } from '../main/api.js';
-import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
+import { escHtml, escapeAttributeValue, markdownToPlainText, timeNow } from '../main/utils.js';
 import {
   addCitationSource,
   addSegmentCitationSources,
@@ -4929,7 +4929,7 @@ export function createMessagesUi(context, dependencies) {
 
   // Pick the latest complete clause so the label changes at punctuation, not per token.
   function reasoningThoughtExcerpt(content) {
-    const text = String(content || '').replace(/\s+/g, ' ').trim();
+    const text = markdownToPlainText(content);
     if (!text) {
       return '';
     }
@@ -4948,7 +4948,7 @@ export function createMessagesUi(context, dependencies) {
   // Replace sentence-ending punctuation with one calm preview ellipsis while
   // preserving any closing quote or bracket after it.
   function normalizeReasoningPreviewPunctuation(label) {
-    return String(label || '').trim().replace(/[.!?,\u2026;:]+(["'»”\)\]]*)$/u, '\u2026$1');
+    return markdownToPlainText(label).replace(/[.!?,\u2026;:]+(["'»”\)\]]*)$/u, '\u2026$1');
   }
 
   // Gather sources belonging to the currently displayed search or read activity.

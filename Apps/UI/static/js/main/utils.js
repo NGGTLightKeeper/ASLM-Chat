@@ -133,6 +133,28 @@ export function escapeTextareaValue(str) {
     .replace(/>/g, '&gt;');
 }
 
+// Reduce Markdown to readable plain text for compact one-line previews.
+export function markdownToPlainText(value) {
+  return String(value || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/^\s{0,3}(?:[-*_]\s*){3,}$/gm, ' ')
+    .replace(/```[^\n]*\n?([\s\S]*?)```/g, '$1')
+    .replace(/`([^`\n]+)`/g, '$1')
+    .replace(/!\[([^\]]*)\]\((?:\\.|[^)])*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\((?:\\.|[^)])*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1')
+    .replace(/^\s{0,3}(?:(?:#{1,6}|>|[-+*]|\d+[.)])\s+)+/gm, '')
+    .replace(/^\s*\[[ xX]\]\s+/gm, '')
+    .replace(/<https?:\/\/([^>]+)>/gi, '$1')
+    .replace(/<\/?[^>]+>/g, ' ')
+    .replace(/(\*\*|__|~~)(.*?)\1/g, '$2')
+    .replace(/(^|[^\w])([*_])(?=\S)(.*?\S)\2(?=$|[^\w])/g, '$1$3')
+    .replace(/\\([\\`*_\[\]{}()#+\-.!>|~])/g, '$1')
+    .replace(/\s*\|\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 
 // Nested object helpers.
 // Read one nested value by dot-separated path.
