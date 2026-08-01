@@ -12,6 +12,7 @@ from core.extract.scoring import query_terms
 from core.mcp_contract import (
     ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION,
     LEGACY_WEB_SEARCH_TOOL_DESCRIPTION,
+    LEGACY_BATCH_LIMIT,
     SEARCH_BATCH_LIMIT,
     build_search_schema,
     coerce_search_queries,
@@ -20,7 +21,7 @@ from core.mcp_contract import (
 )
 
 
-def test_legacy_query_schema_accepts_one_string_or_two_query_batch(monkeypatch):
+def test_legacy_query_schema_advertises_largest_vertical_batch(monkeypatch):
     import core.config as config_module
 
     cfg = type("Cfg", (), {
@@ -33,7 +34,8 @@ def test_legacy_query_schema_accepts_one_string_or_two_query_batch(monkeypatch):
 
     assert string_schema["type"] == "string"
     assert batch_schema["type"] == "array"
-    assert batch_schema["maxItems"] == SEARCH_BATCH_LIMIT == 2
+    assert SEARCH_BATCH_LIMIT == 2
+    assert batch_schema["maxItems"] == LEGACY_BATCH_LIMIT == 8
     assert batch_schema["items"]["type"] == "string"
     assert "calendar years are forbidden" in query_schema["description"]
 
@@ -62,7 +64,39 @@ def test_legacy_preflight_rejects_oversized_batch_instead_of_truncating(monkeypa
     assert prepared["ok"] is False
     assert prepared["error_result"]["error"]["code"] == "INVALID_SEARCH_PLAN"
     assert prepared["error_result"]["error"]["issues"] == [
-        {"path": "$.query", "message": "must contain at most 2 items"}
+        {"path": "$.query", "message": "web permits at most 2 queries per call"}
+    ]
+
+
+def test_legacy_preflight_uses_specialized_vertical_quotas(monkeypatch):
+    import core.config as config_module
+
+    cfg = type("Cfg", (), {
+        "query": type("Query", (), {"schema_mode": "legacy"})(),
+        "tor": type("Tor", (), {"enabled": False})(),
+    })()
+    monkeypatch.setattr(config_module, "load_search_config", lambda: cfg)
+
+    shopping = prepare_search_arguments({
+        "query": [f"product {index}" for index in range(4)],
+        "shopping": True,
+    })
+    academic = prepare_search_arguments({
+        "query": [f"paper {index}" for index in range(8)],
+        "academic": True,
+    })
+    too_many_shopping = prepare_search_arguments({
+        "query": [f"product {index}" for index in range(5)],
+        "shopping": True,
+    })
+
+    assert shopping["ok"] is True
+    assert len(shopping["search_request"]["queries"]) == 4
+    assert academic["ok"] is True
+    assert len(academic["search_request"]["queries"]) == 8
+    assert too_many_shopping["ok"] is False
+    assert too_many_shopping["error_result"]["error"]["issues"] == [
+        {"path": "$.query", "message": "shopping permits at most 4 queries per call"}
     ]
 
 
@@ -76,7 +110,8 @@ def test_tool_description_documents_rare_batch_and_operator_examples():
         assert "answer deliverables, evidence gaps, source classes" in normalized
         assert "Each call executes the next plan step" in normalized
         assert "Link count alone is not coverage" in normalized
-    assert "array is exceptional" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "Arrays are reserved" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "4 shopping queries, and 8 academic queries" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
     assert "site:docs.example.com" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
     assert "postgresql OR postgres" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
     assert "filetype:pdf" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION

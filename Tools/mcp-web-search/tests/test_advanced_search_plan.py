@@ -78,7 +78,7 @@ def test_advanced_schema_is_default_and_onion_is_capability_gated(monkeypatch):
     assert "Visible activity title" in schema["properties"]["description"]["description"]
     assert "beginning with an action verb" in schema["properties"]["description"]["description"]
     assert "make sense without the query text" in schema["properties"]["description"]["description"]
-    assert schema["properties"]["queries"]["maxItems"] == 2
+    assert schema["properties"]["queries"]["maxItems"] == 14
     assert item["required"] == ["vertical", "text"]
     assert "Never include a four-digit calendar year" in item["properties"]["text"]["description"]
     assert "Required routing from the research plan" in item["properties"]["vertical"]["description"]
@@ -90,7 +90,8 @@ def test_advanced_schema_is_default_and_onion_is_capability_gated(monkeypatch):
     )
     assert item["properties"]["vertical"]["enum"] == ["web", "shopping", "academic"]
     assert "Description is the visible activity title" in build_search_description()
-    assert "Never submit more than two queries" in build_search_description()
+    description = build_search_description()
+    assert "2 web queries, 4 shopping queries, and 8 academic queries" in description
 
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config(tor=True))
     assert "onion" in build_search_schema()["properties"]["queries"]["items"]["properties"]["vertical"]["enum"]
@@ -149,17 +150,72 @@ def test_advanced_plan_rejects_missing_description_and_invalid_or_group():
     assert "$.queries[0].operators.or_groups[0]" in paths
 
 
-def test_advanced_plan_rejects_third_query_atomically():
+def test_advanced_plan_enforces_per_vertical_quotas_atomically():
     plan = _plan()
-    plan["queries"].extend([
-        {"vertical": "shopping", "text": "second intent", "operators": {}},
-        {"vertical": "academic", "text": "third intent", "operators": {}},
-    ])
+    plan["queries"].extend(
+        {"vertical": "web", "text": f"web intent {index}", "operators": {}}
+        for index in range(2, 4)
+    )
 
     with pytest.raises(PlanValidationError) as exc:
         prepare_advanced_search(plan, query_config=_config().query)
 
-    assert {issue["path"] for issue in exc.value.issues} == {"$.queries"}
+    assert exc.value.issues == [
+        {
+            "path": "$.queries[2].vertical",
+            "message": "web permits at most 2 queries per call",
+        }
+    ]
+
+
+def test_advanced_plan_accepts_full_per_vertical_quotas():
+    plan = {
+        "description": "Compare products and studies",
+        "queries": [
+            *(
+                {"vertical": "web", "text": f"web evidence {index}", "operators": {}}
+                for index in range(2)
+            ),
+            *(
+                {"vertical": "shopping", "text": f"product {index}", "operators": {}}
+                for index in range(4)
+            ),
+            *(
+                {"vertical": "academic", "text": f"study topic {index}", "operators": {}}
+                for index in range(8)
+            ),
+        ],
+        "effort": "medium",
+    }
+
+    prepared = prepare_advanced_search(plan, query_config=_config().query)
+
+    assert len(prepared["search_request"]["queries"]) == 14
+    assert sum(q["vertical"] == "web" for q in prepared["search_request"]["queries"]) == 2
+    assert sum(q["vertical"] == "shopping" for q in prepared["search_request"]["queries"]) == 4
+    assert sum(q["vertical"] == "academic" for q in prepared["search_request"]["queries"]) == 8
+
+
+@pytest.mark.parametrize(("vertical", "limit"), [("shopping", 4), ("academic", 8)])
+def test_advanced_plan_rejects_specialized_vertical_over_quota(vertical, limit):
+    plan = {
+        "description": "Check specialized evidence",
+        "queries": [
+            {"vertical": vertical, "text": f"target {index}", "operators": {}}
+            for index in range(limit + 1)
+        ],
+        "effort": "medium",
+    }
+
+    with pytest.raises(PlanValidationError) as exc:
+        prepare_advanced_search(plan, query_config=_config().query)
+
+    assert exc.value.issues == [
+        {
+            "path": f"$.queries[{limit}].vertical",
+            "message": f"{vertical} permits at most {limit} queries per call",
+        }
+    ]
 
 
 def test_explicit_date_operators_survive_legacy_year_hint_processing():

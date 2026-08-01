@@ -15,6 +15,7 @@ from typing import Any
 
 from core.query.search_plan import (
     PlanValidationError,
+    VERTICAL_QUERY_LIMITS,
     build_advanced_search_schema,
     prepare_advanced_search,
 )
@@ -22,7 +23,10 @@ from core.query.search_plan import (
 _SPACE_RE = re.compile(r"\s+")
 _EFFORT_VALUES = ("low", "medium", "high")
 _EFFORT_ALIASES = {"": "medium", "normal": "medium", "default": "medium", "standard": "medium"}
-SEARCH_BATCH_LIMIT = 2
+SEARCH_BATCH_LIMIT = VERTICAL_QUERY_LIMITS["web"]
+LEGACY_BATCH_LIMIT = max(
+    VERTICAL_QUERY_LIMITS[vertical] for vertical in ("web", "shopping", "academic")
+)
 
 MCP_SERVER_DESCRIPTION = "Search and page-reading tools."
 
@@ -37,10 +41,10 @@ step; inspect its evidence and update the plan before continuing. Link count alo
 coverage when the sources all belong to one class.
 
 Write a compact search expression built from concrete entities, identifiers, versions,
-and one intent term. A plain query string is the normal form. An array is exceptional and
-fits exactly two independently necessary deliverables that support different claims;
-alternatives fit one query through OR. Never submit more than two queries in one call.
-Inspect the first result set before adding a refinement.
+and one intent term. A plain query string is the normal form. Arrays are reserved for
+independently necessary deliverables with distinct evidence targets. Per-call ceilings are
+2 ordinary web queries, 4 shopping queries, and 8 academic queries; alternatives for one
+claim fit one query through OR. These are ceilings, not targets.
 
 Use the least constrained query that can identify the target. Stacking near-synonyms,
 several exact phrases, broad OR groups, and site/date restrictions can hide valid results
@@ -64,8 +68,8 @@ medium; low is quick discovery and high is the reserve tier after a lower-effort
 leaves a concrete high-stakes gap.
 
 Source allowance is per query: low up to 8, medium up to 10, high up to 16 before URL
-deduplication and filtering. One medium query can therefore provide up to 10 source
-records, while two can create up to 20 and consume roughly twice the context.
+deduplication and filtering. Context cost scales with every query: four medium shopping
+queries can create up to 40 source records and eight academic queries up to 80.
 
 Cite the exact handles returned by this call immediately after the supported claim.
 Parsed page content carries more weight than snippets. English is the normal search
@@ -85,10 +89,10 @@ Description is the visible activity title for the current research step, not a s
 expression. Write a natural 3-4 word phrase in the user's language that begins with an
 action verb and names the evidence goal. It must remain meaningful when the query text is
 hidden. Prefer titles such as "Checking independent tests", "Comparing specifications", or
-"Confirming prices and availability". Normally submit exactly one query. A second query is allowed only
-when the request already contains another independently necessary deliverable that needs a
-different evidence set or vertical. Never submit more than two queries in one call; execute
-later evidence gaps sequentially after inspecting the returned evidence.
+"Confirming prices and availability". Normally submit exactly one query. Per-call ceilings
+are 2 web queries, 4 shopping queries, and 8 academic queries. Additional items must serve
+independently necessary deliverables with distinct evidence targets; the ceilings are not
+targets. A mixed plan may use each matching vertical up to its own ceiling.
 
 Vertical is a required routing decision for every query, not a reserve option. Any step
 about product discovery, budgets, prices, sellers, stock, or availability must use
@@ -115,8 +119,8 @@ independent evidence. Start ordinary work at medium; low is quick discovery and 
 the reserve tier after lower effort leaves a concrete high-stakes gap.
 
 Source allowance is per query: low up to 8, medium up to 10, high up to 16 before URL
-deduplication and filtering. One medium query can provide up to 10 source records; two
-can create up to 20 and consume roughly twice the context.
+deduplication and filtering. Context cost scales with every query: four medium shopping
+queries can create up to 40 source records and eight academic queries up to 80.
 
 Cite exact handles returned by this call immediately after the supported claim. Parsed
 page content carries more weight than snippets. English is the normal search language;
@@ -149,13 +153,14 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
                 {
                     "type": "array",
                     "minItems": 1,
-                    "maxItems": SEARCH_BATCH_LIMIT,
+                    "maxItems": LEGACY_BATCH_LIMIT,
                     "items": {"type": "string", "minLength": 1, "maxLength": 220},
                 },
             ],
             "description": (
-                "One plain web search query, or an array of at most 2 independently necessary queries "
-                "to run concurrently. Keep each query short and specific: concrete names, "
+                "One plain search query, or an array of independently necessary queries to run "
+                "concurrently. Per-call ceilings are 2 web, 4 shopping, and 8 academic queries. "
+                "Keep each query short and specific: concrete names, "
                 "identifiers, version numbers, exact error text, or explicit constraints. "
                 "Four-digit calendar years are forbidden as content tokens; place a "
                 "necessary year only inside after: or before:. "
@@ -274,7 +279,7 @@ def sanitize_query(query: str) -> str:
     return _SPACE_RE.sub(" ", text).strip()[:220].strip()
 
 
-# Convert the public query argument into one or two provider-ready search strings.
+# Convert the public query argument into provider-ready search strings up to the supplied limit.
 def coerce_search_queries(value: Any, *, limit: int = SEARCH_BATCH_LIMIT) -> list[str]:
     limit = max(1, int(limit or SEARCH_BATCH_LIMIT))
     if isinstance(value, dict):
@@ -458,13 +463,18 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
 
     args = arguments if isinstance(arguments, dict) else {}
     raw_query = args.get("query", "")
+    shopping = coerce_search_shopping(args)
+    academic = coerce_search_academic(args)
+    onion = coerce_search_onion(args)
+    vertical = "shopping" if shopping else ("academic" if academic else ("onion" if onion else "web"))
+    query_limit = VERTICAL_QUERY_LIMITS[vertical]
     query_count = _search_query_item_count(raw_query)
-    if query_count > SEARCH_BATCH_LIMIT:
+    if query_count > query_limit:
         error_result = invalid_search_plan_result(
             [
                 {
                     "path": "$.query",
-                    "message": f"must contain at most {SEARCH_BATCH_LIMIT} items",
+                    "message": f"{vertical} permits at most {query_limit} queries per call",
                 }
             ]
         )
@@ -474,12 +484,9 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
             "tool_ui": error_result["ui"],
             "error_result": error_result,
         }
-    queries = coerce_search_queries(raw_query)
+    queries = coerce_search_queries(raw_query, limit=query_limit)
     canonical_query: str | list[str] = queries[0] if len(queries) == 1 else queries
     effort = coerce_search_effort(args)
-    shopping = coerce_search_shopping(args)
-    academic = coerce_search_academic(args)
-    onion = coerce_search_onion(args)
     canonical: dict[str, Any] = {
         "query": canonical_query,
         "effort": effort,
@@ -488,7 +495,6 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
     }
     if onion:
         canonical["onion"] = True
-    vertical = "shopping" if shopping else ("academic" if academic else ("onion" if onion else "web"))
     request = {
         "schema_mode": "legacy",
         "effort": effort,

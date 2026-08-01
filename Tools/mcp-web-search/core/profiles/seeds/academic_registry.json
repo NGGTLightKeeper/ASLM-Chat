@@ -13,10 +13,10 @@
       "pattern": "arxiv.org",
       "tier": "friendly",
       "method": "http",
-      "rps": 1.0,
-      "burst": 3,
-      "json_api_hint": "http://export.arxiv.org/api/query",
-      "notes": "Extremely open and friendly. Trafilatura extracts preprint titles, authors, and abstracts perfectly from HTML. JSON/XML (Atom) API is also available."
+      "rps": 0.3333333333,
+      "burst": 1,
+      "json_api_hint": "https://export.arxiv.org/api/query",
+      "notes": "Official Atom metadata API. Terms require at most one request every three seconds and a single connection; all callers share a process-wide gate."
     },
     {
       "pattern": "pubmed.ncbi.nlm.nih.gov",

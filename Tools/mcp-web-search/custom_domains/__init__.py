@@ -19,6 +19,7 @@ from custom_domains.base import (
     PageResult,
 )
 from custom_domains.amazon import HANDLER as _amazon
+from custom_domains.arxiv import HANDLER as _arxiv
 from custom_domains.dns_shop import HANDLER as _dns_shop
 from custom_domains.ebay import HANDLER as _ebay
 from custom_domains.github import HANDLER as _github
@@ -30,6 +31,7 @@ from custom_domains.x import HANDLER as _x
 from custom_domains.youtube import HANDLER as _youtube
 
 HANDLERS: list[DomainHandler] = [
+    _arxiv,
     _github,
     _wikipedia,
     _reddit,

@@ -14,9 +14,10 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from typing import Any
 
 import httpx
+
+from core.fetch.arxiv_api import arxiv_api_slot
 
 from .health import get_provider_health
 from .models import AcademicPaper, AcademicProviderAttempt, AcademicSearchResult
@@ -168,7 +169,11 @@ class AcademicSearchEngine:
                       "api_key": key, "output": "json", "hl": "en"}
         started = time.perf_counter()
         try:
-            resp = await client.get(url, params=params, headers=provider.headers())
+            if provider.name == "arxiv":
+                async with arxiv_api_slot():
+                    resp = await client.get(url, params=params, headers=provider.headers())
+            else:
+                resp = await client.get(url, params=params, headers=provider.headers())
             elapsed = int((time.perf_counter() - started) * 1000)
             if resp.status_code != 200:
                 health.record(provider.name, ok=False, status_code=resp.status_code)

@@ -18,7 +18,15 @@ from core.query.operators import (
 from core.search.query_dates import resolve_query_dates
 
 
-ADVANCED_BATCH_LIMIT = 2
+VERTICAL_QUERY_LIMITS = {
+    "web": 2,
+    "shopping": 4,
+    "academic": 8,
+    "onion": 2,
+}
+ADVANCED_BATCH_LIMIT = sum(
+    VERTICAL_QUERY_LIMITS[vertical] for vertical in ("web", "shopping", "academic")
+)
 ADVANCED_TEXT_LIMIT = 160
 COMPILED_QUERY_LIMIT = 512
 DESCRIPTION_LIMIT = 80
@@ -66,6 +74,9 @@ def _list_schema(description: str, *, max_items: int, max_length: int) -> dict[s
 
 def build_advanced_search_schema(*, tor_enabled: bool = False) -> dict[str, Any]:
     verticals = [*_BASE_VERTICALS, *(("onion",) if tor_enabled else ())]
+    batch_limit = ADVANCED_BATCH_LIMIT + (
+        VERTICAL_QUERY_LIMITS["onion"] if tor_enabled else 0
+    )
     operator_properties: dict[str, Any] = {}
     for spec in SEARCH_OPERATOR_SPECS:
         if spec.value_kind == "list":
@@ -134,13 +145,13 @@ def build_advanced_search_schema(*, tor_enabled: bool = False) -> dict[str, Any]
             "queries": {
                 "type": "array",
                 "minItems": 1,
-                "maxItems": ADVANCED_BATCH_LIMIT,
+                "maxItems": batch_limit,
                 "items": query_item,
                 "description": (
-                    "Normally one query. A second item is allowed only for an independently "
-                    "necessary deliverable with its own evidence set or vertical. Never put "
-                    "more than two queries in one call; run later gaps sequentially after "
-                    "inspecting this result."
+                    "Normally one query. Per-call ceilings are 2 web, 4 shopping, and 8 "
+                    "academic queries; when available, onion is limited to 2. Use additional "
+                    "items only for independently necessary deliverables with distinct "
+                    "evidence targets. These are ceilings, not targets."
                 ),
             },
             "effort": {
@@ -362,19 +373,23 @@ def prepare_advanced_search(
         _issue(issues, "$.effort", "must be one of low, medium, high")
         effort = "medium"
 
+    batch_limit = ADVANCED_BATCH_LIMIT + (
+        VERTICAL_QUERY_LIMITS["onion"] if tor_enabled else 0
+    )
     raw_queries = arguments.get("queries")
     if not isinstance(raw_queries, list):
         _issue(issues, "$.queries", "must be an array")
         raw_queries = []
     elif not raw_queries:
         _issue(issues, "$.queries", "must contain at least one item")
-    elif len(raw_queries) > ADVANCED_BATCH_LIMIT:
-        _issue(issues, "$.queries", f"must contain at most {ADVANCED_BATCH_LIMIT} items")
+    elif len(raw_queries) > batch_limit:
+        _issue(issues, "$.queries", f"must contain at most {batch_limit} items")
 
     allowed_verticals = {*_BASE_VERTICALS, *({"onion"} if tor_enabled else set())}
+    vertical_counts = {vertical: 0 for vertical in allowed_verticals}
     canonical_queries: list[dict[str, Any]] = []
     prepared_queries: list[dict[str, Any]] = []
-    for index, raw_query in enumerate(raw_queries[:ADVANCED_BATCH_LIMIT]):
+    for index, raw_query in enumerate(raw_queries[:batch_limit]):
         base_path = f"$.queries[{index}]"
         if not isinstance(raw_query, dict):
             _issue(issues, base_path, "must be an object")
@@ -399,6 +414,15 @@ def prepare_advanced_search(
         if vertical not in allowed_verticals:
             allowed = ", ".join(sorted(allowed_verticals))
             _issue(issues, f"{base_path}.vertical", f"must be one of {allowed}")
+        else:
+            vertical_counts[vertical] += 1
+            vertical_limit = VERTICAL_QUERY_LIMITS[vertical]
+            if vertical_counts[vertical] > vertical_limit:
+                _issue(
+                    issues,
+                    f"{base_path}.vertical",
+                    f"{vertical} permits at most {vertical_limit} queries per call",
+                )
 
         raw_operators = raw_query.get("operators", {})
         if raw_operators in (None, ""):
