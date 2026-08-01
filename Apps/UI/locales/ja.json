@@ -32,7 +32,7 @@
     "tools": "ツール",
     "other": "その他",
     "reasoningEffort": "推論の深さ",
-    "intelligence": "思考",
+    "effort": "推論強度",
     "off": "オフ",
     "sendMessage": "メッセージを送信",
     "queueMessage": "メッセージをキューに追加",
@@ -109,6 +109,8 @@
   },
   "think": {
     "off": "オフ",
+    "instant": "即時",
+    "thinking": "思考",
     "low": "低",
     "medium": "中",
     "high": "高",

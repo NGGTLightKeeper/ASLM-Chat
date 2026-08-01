@@ -32,7 +32,7 @@
     "tools": "도구",
     "other": "기타",
     "reasoningEffort": "추론 강도",
-    "intelligence": "사고",
+    "effort": "추론 강도",
     "off": "끔",
     "sendMessage": "메시지 보내기",
     "queueMessage": "메시지 대기열에 추가",
@@ -109,6 +109,8 @@
   },
   "think": {
     "off": "끔",
+    "instant": "즉시",
+    "thinking": "사고",
     "low": "낮음",
     "medium": "보통",
     "high": "높음",

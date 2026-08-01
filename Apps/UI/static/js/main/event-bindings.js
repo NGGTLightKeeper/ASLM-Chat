@@ -133,6 +133,19 @@ export function bindEventHandlers(context, dependencies) {
     messagesUi.copyMessage($(this));
   });
 
+  dom.$messagesInner.on('click', '.msg-branch-btn', function onBranchClick() {
+    chatController.branchFromMessage($(this).closest('.msg'));
+  });
+
+  dom.$messagesInner.on('click', '.msg-edit-btn', function onEditMessageClick() {
+    chatController.editUserMessage($(this).closest('.msg'));
+  });
+
+  dom.$messagesInner.on('click', '.msg-branch-link', function onBranchLinkClick(event) {
+    event.preventDefault();
+    chatController.loadChat($(this).attr('data-chat-link'), true);
+  });
+
   dom.$messagesInner.on('click', '.msg-sources-btn', function onSourcesClick(event) {
     event.preventDefault();
     event.stopPropagation();
@@ -733,6 +746,10 @@ export function bindEventHandlers(context, dependencies) {
 
   $('#chatRenameBtn').on('click', function onRenameClick() {
     chatController.renameActiveMenuChat();
+  });
+
+  $('#chatDownloadBtn').on('click', function onDownloadChatClick() {
+    chatController.downloadActiveMenuChat();
   });
 
   $('#chatDeleteBtn').on('click', function onDeleteChatClick() {

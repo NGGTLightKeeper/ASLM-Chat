@@ -32,7 +32,7 @@
     "tools": "Інструменти",
     "other": "Інше",
     "reasoningEffort": "Глибина міркувань",
-    "intelligence": "Мислення",
+    "effort": "Зусилля",
     "off": "Вимк.",
     "sendMessage": "Надіслати",
     "queueMessage": "Поставити в чергу",
@@ -109,6 +109,8 @@
   },
   "think": {
     "off": "Вимк.",
+    "instant": "Миттєво",
+    "thinking": "Міркування",
     "low": "Низька",
     "medium": "Середня",
     "high": "Висока",

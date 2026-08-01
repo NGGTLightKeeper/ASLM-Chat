@@ -32,7 +32,7 @@
     "tools": "الأدوات",
     "other": "أخرى",
     "reasoningEffort": "جهد الاستدلال",
-    "intelligence": "التفكير",
+    "effort": "الجهد",
     "off": "إيقاف",
     "sendMessage": "إرسال الرسالة",
     "queueMessage": "إدراج الرسالة في الطابور",
@@ -109,6 +109,8 @@
   },
   "think": {
     "off": "إيقاف",
+    "instant": "فوري",
+    "thinking": "تفكير",
     "low": "منخفض",
     "medium": "متوسط",
     "high": "مرتفع",

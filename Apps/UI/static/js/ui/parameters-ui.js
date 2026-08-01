@@ -1139,8 +1139,8 @@ export function createParametersUi(context) {
 
     function labelForThinkOption(normalizedValue) {
       const labels = {
-        off: 'Off',
-        on: 'On',
+        off: t('think.instant', null, 'Instant'),
+        on: t('think.thinking', null, 'Thinking'),
         minimal: 'Minimal',
         low: 'Low',
         medium: 'Medium',
@@ -1178,7 +1178,7 @@ export function createParametersUi(context) {
           'aria-expanded': 'false'
         })
         .empty()
-        .append($('<span class="think-toggle-label">').text('Off'))
+        .append($('<span class="think-toggle-label">').text(t('think.instant', null, 'Instant')))
         .append(
           $('<svg class="think-toggle-chevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">')
             .append($('<path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round">'))
@@ -1187,7 +1187,7 @@ export function createParametersUi(context) {
       if (!$menu.length) {
         $menu = $('<div class="think-level-menu" role="menu" aria-label="Reasoning effort" style="display:none;">');
       }
-      $menu.empty().append($('<div class="think-level-menu-title">').text(t('composer.intelligence')));
+      $menu.empty().append($('<div class="think-level-menu-title">').text(t('composer.effort', null, 'Effort')));
 
       normalizedOptions.forEach(function appendOption(optionValue) {
         const normalizedValue = String(optionValue || '').trim().toLowerCase();
@@ -1221,7 +1221,7 @@ export function createParametersUi(context) {
     if ($matchingButton.length) {
       return $matchingButton.find('.think-level-btn-label').text() || $matchingButton.text().trim();
     }
-    return normalizedValue || 'Off';
+    return normalizedValue || t('think.instant', null, 'Instant');
   }
 
   // Update think toggles and think-level selectors for both composers.

@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
 
+from django.db import transaction
 from django.http import FileResponse, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
 from django.views.generic import TemplateView
@@ -75,6 +76,7 @@ from Apps.Data.google_genai_presets import (
 )
 from Apps.Data.models import (
     Chat,
+    ChatBranch,
     GoogleGenAiPreset,
     LmsPreset,
     Message,
@@ -84,6 +86,7 @@ from Apps.Data.models import (
     OllamaPreset,
     OpenAiPreset,
 )
+from Apps.UI.chat_export import archive_filename, build_chat_archive
 from Apps.UI import STATIC_CACHE_VERSION
 from Apps.UI.host_theme_bridge import build_host_theme_template_context
 from Apps.UI.host_locale_bridge import build_host_locale_template_context
@@ -6401,6 +6404,127 @@ def delete_message_api(request, message_id):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Replace one user message and discard the now-stale continuation.
+def edit_message_api(request, message_id):
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        content = str(data.get("content", ""))
+        with transaction.atomic():
+            message = Message.objects.select_related("chat").get(id=message_id)
+            if message.role != "user":
+                return JsonResponse({"error": "Only user messages can be edited"}, status=400)
+            if not content.strip() and not message.attachments.exists() and not message.images.exists():
+                return JsonResponse({"error": "Message content is required"}, status=400)
+
+            later_ids = list(
+                message.chat.messages.filter(
+                    created_at__gt=message.created_at,
+                ).values_list("id", flat=True)
+            )
+            # IDs are a stable tie-breaker for records created in the same timestamp tick.
+            later_ids.extend(
+                message.chat.messages.filter(created_at=message.created_at, id__gt=message.id)
+                .values_list("id", flat=True)
+            )
+            if later_ids:
+                Message.objects.filter(id__in=set(later_ids)).delete()
+            message.content = content
+            message.save(update_fields=["content"])
+            Chat.objects.filter(id=message.chat_id).update(updated_at=timezone.now())
+
+        return JsonResponse({"ok": True, "message": _serialize_message(message), "deleted_message_ids": later_ids})
+    except Message.DoesNotExist:
+        return JsonResponse({"error": "Message not found"}, status=404)
+    except Exception as exc:
+        logger.exception("Failed to edit message %s", message_id)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Clone one conversation through a selected message and link both sides.
+def branch_message_api(request, message_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        with transaction.atomic():
+            source_message = Message.objects.select_related("chat").get(id=message_id)
+            source_chat = source_message.chat
+            source_messages = list(
+                source_chat.messages.filter(created_at__lt=source_message.created_at)
+                .prefetch_related("attachments", "images")
+            )
+            source_messages.extend(
+                source_chat.messages.filter(created_at=source_message.created_at, id__lte=source_message.id)
+                .prefetch_related("attachments", "images")
+            )
+            source_messages.sort(key=lambda item: (item.created_at, item.id))
+
+            child_title = f"Branch: {source_chat.title}"[:255]
+            child_chat = Chat.objects.create(
+                title=child_title,
+                active_tool_slug=source_chat.active_tool_slug,
+            )
+            cloned_by_source_id: dict[int, Message] = {}
+            for original in source_messages:
+                cloned = Message.objects.create(
+                    chat=child_chat,
+                    role=original.role,
+                    content=original.content,
+                    llm_transcript=copy.deepcopy(original.llm_transcript),
+                )
+                Message.objects.filter(id=cloned.id).update(created_at=original.created_at)
+                cloned.created_at = original.created_at
+                cloned_by_source_id[original.id] = cloned
+
+                MessageAttachment.objects.bulk_create([
+                    MessageAttachment(
+                        message=cloned,
+                        kind=attachment.kind,
+                        name=attachment.name,
+                        mime_type=attachment.mime_type,
+                        data=attachment.data,
+                        size_bytes=attachment.size_bytes,
+                        extracted_text=attachment.extracted_text,
+                        extracted_text_ready=attachment.extracted_text_ready,
+                        order=attachment.order,
+                    )
+                    for attachment in original.attachments.all()
+                ])
+                MessageImage.objects.bulk_create([
+                    MessageImage(
+                        message=cloned,
+                        mime_type=image.mime_type,
+                        data=image.data,
+                        order=image.order,
+                    )
+                    for image in original.images.all()
+                ])
+
+            child_message = cloned_by_source_id[source_message.id]
+            ChatBranch.objects.create(
+                source_chat=source_chat,
+                source_message=source_message,
+                child_chat=child_chat,
+                child_message=child_message,
+            )
+
+        return JsonResponse({
+            "ok": True,
+            "chat_id": str(child_chat.id),
+            "title": child_chat.title,
+            "source_chat_id": str(source_chat.id),
+            "source_chat_title": source_chat.title,
+        }, status=201)
+    except Message.DoesNotExist:
+        return JsonResponse({"error": "Message not found"}, status=404)
+    except Exception as exc:
+        logger.exception("Failed to branch from message %s", message_id)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
 # Delete the last assistant reply for regeneration.
 def delete_last_assistant_api(request, chat_id):
     if request.method != "DELETE":
@@ -6628,6 +6752,23 @@ def delete_chat_api(request, chat_id):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Download a lossless portable archive of one entire chat.
+def export_chat_api(request, chat_id):
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        chat = Chat.objects.get(id=chat_id)
+        response = HttpResponse(build_chat_archive(chat), content_type="application/zip")
+        response["Content-Disposition"] = f'attachment; filename="{archive_filename(chat)}"'
+        return response
+    except Chat.DoesNotExist:
+        return JsonResponse({"error": "Chat not found"}, status=404)
+    except Exception as exc:
+        logger.exception("Failed to export chat %s", chat_id)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
 # Load persisted messages for a chat thread.
 def load_chat_api(request, chat_id):
     if request.method != "GET":
@@ -6635,8 +6776,28 @@ def load_chat_api(request, chat_id):
 
     try:
         chat = Chat.objects.get(id=chat_id)
-        messages = chat.messages.all().prefetch_related("attachments", "images")
-        payload = [_serialize_message(message, include_attachment_data=False) for message in messages]
+        messages = chat.messages.order_by("created_at", "id").prefetch_related("attachments", "images")
+        message_records = list(messages)
+        payload = [_serialize_message(message, include_attachment_data=False) for message in message_records]
+        payload_by_id = {item["id"]: item for item in payload}
+
+        for branch in chat.outgoing_branches.select_related("child_chat").all():
+            if branch.source_message_id in payload_by_id:
+                payload_by_id[branch.source_message_id].setdefault("branch_links", []).append({
+                    "direction": "to_branch",
+                    "chat_id": str(branch.child_chat_id),
+                    "title": branch.child_chat.title,
+                })
+        try:
+            incoming_branch = chat.incoming_branch
+        except ChatBranch.DoesNotExist:
+            incoming_branch = None
+        if incoming_branch and incoming_branch.child_message_id in payload_by_id:
+            payload_by_id[incoming_branch.child_message_id].setdefault("branch_links", []).append({
+                "direction": "to_origin",
+                "chat_id": str(incoming_branch.source_chat_id),
+                "title": incoming_branch.source_chat.title,
+            })
         active_tool_server_ids = _parse_active_tool_slugs(chat.active_tool_slug)
         return JsonResponse({
             "chat_id": str(chat.id),

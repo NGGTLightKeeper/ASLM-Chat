@@ -32,7 +32,7 @@
     "tools": "Araçlar",
     "other": "Diğer",
     "reasoningEffort": "Akıl yürütme düzeyi",
-    "intelligence": "Düşünme",
+    "effort": "Çaba",
     "off": "Kapalı",
     "sendMessage": "Mesaj Gönder",
     "queueMessage": "Mesajı kuyruğa al",
@@ -109,6 +109,8 @@
   },
   "think": {
     "off": "Kapalı",
+    "instant": "Anında",
+    "thinking": "Düşünme",
     "low": "Düşük",
     "medium": "Orta",
     "high": "Yüksek",

@@ -32,7 +32,7 @@
     "tools": "उपकरण",
     "other": "अन्य",
     "reasoningEffort": "तर्क प्रयास",
-    "intelligence": "सोच",
+    "effort": "प्रयास",
     "off": "बंद",
     "sendMessage": "संदेश भेजें",
     "queueMessage": "संदेश कतार में डालें",
@@ -109,6 +109,8 @@
   },
   "think": {
     "off": "बंद",
+    "instant": "त्वरित",
+    "thinking": "चिंतन",
     "low": "कम",
     "medium": "मध्यम",
     "high": "उच्च",

@@ -26,7 +26,10 @@ urlpatterns = [
     path("api/shared-file/download/", views.shared_file_download_api, name="shared_file_download_api"),
     path("api/shared-file/reveal/", views.shared_file_reveal_api, name="shared_file_reveal_api"),
     path("api/message/<int:message_id>/delete/", views.delete_message_api, name="delete_message_api"),
+    path("api/message/<int:message_id>/edit/", views.edit_message_api, name="edit_message_api"),
+    path("api/message/<int:message_id>/branch/", views.branch_message_api, name="branch_message_api"),
     path("api/chat/<uuid:chat_id>/rename/", views.rename_chat_api, name="rename_chat_api"),
+    path("api/chat/<uuid:chat_id>/export/", views.export_chat_api, name="export_chat_api"),
     path("api/chat/<uuid:chat_id>/delete/", views.delete_chat_api, name="delete_chat_api"),
 
     # Model discovery APIs.

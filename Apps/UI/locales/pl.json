@@ -32,7 +32,7 @@
     "tools": "Narzędzia",
     "other": "Inne",
     "reasoningEffort": "Nakład rozumowania",
-    "intelligence": "Myślenie",
+    "effort": "Wysiłek",
     "off": "Wył.",
     "sendMessage": "Wyślij wiadomość",
     "queueMessage": "Dodaj do kolejki",
@@ -109,6 +109,8 @@
   },
   "think": {
     "off": "Wył.",
+    "instant": "Natychmiast",
+    "thinking": "Myślenie",
     "low": "Niski",
     "medium": "Średni",
     "high": "Wysoki",

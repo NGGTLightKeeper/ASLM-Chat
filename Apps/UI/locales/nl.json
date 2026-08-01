@@ -32,7 +32,7 @@
     "tools": "Hulpmiddelen",
     "other": "Overig",
     "reasoningEffort": "Redeneerinspanning",
-    "intelligence": "Denken",
+    "effort": "Inspanning",
     "off": "Uit",
     "sendMessage": "Bericht verzenden",
     "queueMessage": "Bericht in wachtrij",
@@ -109,6 +109,8 @@
   },
   "think": {
     "off": "Uit",
+    "instant": "Direct",
+    "thinking": "Nadenken",
     "low": "Laag",
     "medium": "Gemiddeld",
     "high": "Hoog",

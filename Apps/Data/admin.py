@@ -2,7 +2,7 @@
 
 from django.contrib import admin
 
-from Apps.Data.models import Chat, Message, MessageImage, OllamaPreset
+from Apps.Data.models import Chat, ChatBranch, Message, MessageImage, OllamaPreset
 
 
 # Register chat records in the admin.
@@ -18,6 +18,12 @@ class MessageAdmin(admin.ModelAdmin):
     list_display = ("chat", "role", "created_at")
     list_filter = ("role",)
     search_fields = ("content",)
+
+
+@admin.register(ChatBranch)
+class ChatBranchAdmin(admin.ModelAdmin):
+    list_display = ("source_chat", "source_message", "child_chat", "child_message", "created_at")
+    search_fields = ("source_chat__title", "child_chat__title")
 
 
 # Register legacy stored images in the admin.

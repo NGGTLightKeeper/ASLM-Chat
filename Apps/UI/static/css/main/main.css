@@ -3940,6 +3940,40 @@
   justify-content: flex-end;
 }
 
+.msg-branch-divider {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(24px, 1fr) auto minmax(24px, 1fr);
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 14px 0 4px;
+  color: var(--c-text-muted);
+  font-size: var(--font-size-caption-2);
+}
+
+.msg-branch-divider > span {
+  height: 1px;
+  background: var(--c-border);
+}
+
+.msg-branch-divider > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 12px;
+}
+
+.msg-branch-link {
+  color: var(--c-text-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.msg-branch-link:hover {
+  color: var(--c-text);
+}
+
 .msg-delete-btn:hover {
   color: var(--c-error);
   background: color-mix(in srgb, var(--c-error) 12%, transparent);

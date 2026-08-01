@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21">
+  <g id="icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" transform="rotate(90 10.5 10.5)">
+    <g transform="matrix(-1 0 0 1 17.335 3)">
+      <path d="m12.835 5.5v-5h-5"/>
+      <path d="m12.835.5-6 6v8"/>
+      <path d="m4.835 4.5-4-4"/>
+    </g>
+  </g>
+</svg>

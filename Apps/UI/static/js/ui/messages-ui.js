@@ -6615,6 +6615,16 @@ export function createMessagesUi(context, dependencies) {
     const messageKey = viewOptions.messageKey || '';
     const messageId = viewOptions.messageId || '';
 
+    const branchLinks = Array.isArray(viewOptions.branchLinks) ? viewOptions.branchLinks : [];
+    const branchLinksHtml = branchLinks.map(function renderBranchLink(link) {
+      const direction = link && link.direction === 'to_origin' ? 'to_origin' : 'to_branch';
+      const title = String(link && link.title || 'Chat');
+      const label = direction === 'to_origin'
+        ? t('messages.branchedFrom', { title }, `Branched from ${title}`)
+        : t('messages.openBranch', { title }, `Branch: ${title}`);
+      return `<a class="msg-branch-link" href="/chat/${escapeAttributeValue(link.chat_id || '')}/" data-chat-link="${escapeAttributeValue(link.chat_id || '')}">${escHtml(label)}</a>`;
+    }).join('');
+
     let attachmentsHtml = '';
 
     const normalizedActivitySegments = Array.isArray(viewOptions.activitySegments)
@@ -6655,8 +6665,9 @@ export function createMessagesUi(context, dependencies) {
           </div>
           ${!isUser ? '<div class="msg-activity-stream" style="display:none;"></div>' : ''}
           <div class="msg-bubble${userBubbleAttachmentClass}">${attachmentsHtml}</div>
-          ${icons.buildMessageActionsHtml()}
+          ${icons.buildMessageActionsHtml(isUser)}
         </div>
+        ${branchLinksHtml ? `<div class="msg-branch-divider"><span></span><div>${branchLinksHtml}</div><span></span></div>` : ''}
       </div>
     `);
 

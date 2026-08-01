@@ -32,7 +32,7 @@
     "tools": "Công cụ",
     "other": "Khác",
     "reasoningEffort": "Mức suy luận",
-    "intelligence": "Suy nghĩ",
+    "effort": "Nỗ lực",
     "off": "Tắt",
     "sendMessage": "Gửi tin nhắn",
     "queueMessage": "Xếp hàng tin nhắn",
@@ -109,6 +109,8 @@
   },
   "think": {
     "off": "Tắt",
+    "instant": "Tức thì",
+    "thinking": "Suy luận",
     "low": "Thấp",
     "medium": "Trung bình",
     "high": "Cao",

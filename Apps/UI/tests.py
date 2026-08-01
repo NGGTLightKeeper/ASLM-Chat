@@ -48,6 +48,7 @@ from Settings.mcp_json import UserMcpServerEntry
 from Settings import skills as skills_config
 from Apps.Data.models import (
     Chat,
+    ChatBranch,
     LmsPreset,
     Message,
     MessageAttachment,
@@ -5014,6 +5015,112 @@ class ToolApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(Message.objects.filter(id=first.id).exists())
         self.assertTrue(Message.objects.filter(id=second.id).exists())
+
+    # A branch is a lossless copy through the selected turn with links on both sides.
+    def test_branch_message_api_copies_history_and_exposes_bidirectional_markers(self):
+        chat = Chat.objects.create(title="Original", active_tool_slug='["sandbox"]')
+        first = Message.objects.create(chat=chat, role="user", content="First")
+        MessageAttachment.objects.create(
+            message=first,
+            kind=MessageAttachmentKind.IMAGE,
+            name="image.png",
+            mime_type="image/png",
+            data="aW1hZ2U=",
+            size_bytes=5,
+        )
+        target = Message.objects.create(
+            chat=chat,
+            role="assistant",
+            content="Answer",
+            llm_transcript=[{"role": "assistant", "thinking": "Full thought", "content": "Answer"}],
+        )
+        Message.objects.create(chat=chat, role="user", content="Must not be copied")
+
+        response = self.client.post(reverse("branch_message_api", args=[target.id]), data="{}", content_type="application/json")
+
+        self.assertEqual(response.status_code, 201)
+        child = Chat.objects.get(id=response.json()["chat_id"])
+        self.assertEqual(child.active_tool_slug, '["sandbox"]')
+        copied = list(child.messages.order_by("created_at", "id"))
+        self.assertEqual([item.content for item in copied], ["First", "Answer"])
+        self.assertEqual(copied[1].llm_transcript[0]["thinking"], "Full thought")
+        self.assertEqual(copied[0].attachments.get().data, "aW1hZ2U=")
+        branch = ChatBranch.objects.get(child_chat=child)
+        self.assertEqual(branch.source_message_id, target.id)
+        self.assertEqual(branch.child_message_id, copied[1].id)
+
+        source_payload = self.client.get(reverse("load_chat_api", args=[chat.id])).json()
+        child_payload = self.client.get(reverse("load_chat_api", args=[child.id])).json()
+        source_target = next(item for item in source_payload["messages"] if item["id"] == target.id)
+        child_target = next(item for item in child_payload["messages"] if item["id"] == copied[1].id)
+        self.assertEqual(source_target["branch_links"][0]["direction"], "to_branch")
+        self.assertEqual(source_target["branch_links"][0]["chat_id"], str(child.id))
+        self.assertEqual(child_target["branch_links"][0]["direction"], "to_origin")
+        self.assertEqual(child_target["branch_links"][0]["chat_id"], str(chat.id))
+
+    # Editing a user message invalidates every later turn while keeping attachments.
+    def test_edit_message_api_replaces_user_text_and_truncates_continuation(self):
+        chat = Chat.objects.create(title="Chat")
+        target = Message.objects.create(chat=chat, role="user", content="Old text")
+        attachment = MessageAttachment.objects.create(
+            message=target,
+            kind=MessageAttachmentKind.FILE,
+            name="note.txt",
+            mime_type="text/plain",
+            data="bm90ZQ==",
+            size_bytes=4,
+        )
+        stale = Message.objects.create(chat=chat, role="assistant", content="Stale answer")
+
+        response = self.client.patch(
+            reverse("edit_message_api", args=[target.id]),
+            data=json.dumps({"content": "New\ntext"}),
+            content_type="application/json",
+        )
+
+        target.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(target.content, "New\ntext")
+        self.assertFalse(Message.objects.filter(id=stale.id).exists())
+        self.assertTrue(MessageAttachment.objects.filter(id=attachment.id).exists())
+
+    # The archive contains readable linked Markdown, full transcript JSON and binary assets.
+    def test_export_chat_api_returns_lossless_zip(self):
+        chat = Chat.objects.create(title="Export test")
+        message = Message.objects.create(
+            chat=chat,
+            role="assistant",
+            content="Supported claim [cabc-1]",
+            llm_transcript=[
+                {"role": "assistant", "thinking": "Do not shorten", "content": "Supported claim [cabc-1]"},
+                {
+                    "role": "tool",
+                    "content": "result",
+                    "structured_content": {"sources": [{"id": "cabc-1", "url": "https://example.com/source"}]},
+                },
+            ],
+        )
+        MessageAttachment.objects.create(
+            message=message,
+            kind=MessageAttachmentKind.IMAGE,
+            name="chart.png",
+            mime_type="image/png",
+            data="cG5nLWJ5dGVz",
+            size_bytes=9,
+        )
+
+        response = self.client.get(reverse("export_chat_api", args=[chat.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/zip")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            self.assertEqual(set(archive.namelist()), {"chat.md", "chat.json", "attachments/chart.png"})
+            markdown = archive.read("chat.md").decode("utf-8")
+            payload = json.loads(archive.read("chat.json"))
+            self.assertIn("[CABC-1](https://example.com/source)", markdown)
+            self.assertIn('"thinking": "Do not shorten"', markdown)
+            self.assertEqual(payload["messages"][0]["llm_transcript"][0]["thinking"], "Do not shorten")
+            self.assertEqual(archive.read("attachments/chart.png"), b"png-bytes")
 
     # Test rename chat API trims and persists the title.
     def test_rename_chat_api_updates_title(self):

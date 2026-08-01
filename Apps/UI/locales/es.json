@@ -32,7 +32,7 @@
     "tools": "Herramientas",
     "other": "Otro",
     "reasoningEffort": "Esfuerzo de razonamiento",
-    "intelligence": "Pensamiento",
+    "effort": "Esfuerzo",
     "off": "Desactivado",
     "sendMessage": "Enviar mensaje",
     "queueMessage": "Encolar mensaje",
@@ -109,6 +109,8 @@
   },
   "think": {
     "off": "Desactivado",
+    "instant": "Instantáneo",
+    "thinking": "Razonamiento",
     "low": "Bajo",
     "medium": "Medio",
     "high": "Alto",
