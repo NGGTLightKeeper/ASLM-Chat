@@ -476,8 +476,12 @@ class WebSearchService:
                     # warm browser; low/medium remain cheap and HTTP-only.
                     allow_browser=profile.allow_browser,
                 )
-            source.parsed_markdown = markdown or ""
             source.parsed_ok = bool(markdown) and not markdown.startswith("Error:")
+            # A terminal domain handler may intentionally reject a page (for example,
+            # Telegram group roots have no public HTTP message feed).  Keep the SERP
+            # snippet as the preview instead of serialising the parser's diagnostic as
+            # if it were useful source content.
+            source.parsed_markdown = (markdown or "") if source.parsed_ok else ""
         except (TimeoutError, asyncio.CancelledError):
             source.parsed_markdown = ""
             source.parsed_ok = False

@@ -4859,6 +4859,22 @@
   white-space: pre-wrap;
 }
 
+.msg-stream-reveal-tail {
+  animation-duration: 150ms;
+  animation-delay: var(--stream-reveal-delay, 0ms);
+  animation-timing-function: cubic-bezier(0.16, 0.82, 0.24, 1);
+  animation-fill-mode: both;
+  will-change: opacity;
+}
+
+.msg-stream-reveal-tail--even {
+  animation-name: msg-stream-reveal-tail-in-even;
+}
+
+.msg-stream-reveal-tail--odd {
+  animation-name: msg-stream-reveal-tail-in-odd;
+}
+
 .typing-indicator {
   display: flex;
   gap: 4px;
@@ -4906,8 +4922,29 @@
   }
 }
 
+@keyframes msg-stream-reveal-tail-in-even {
+  from {
+    opacity: var(--stream-reveal-start-opacity, 0.28);
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes msg-stream-reveal-tail-in-odd {
+  from {
+    opacity: var(--stream-reveal-start-opacity, 0.28);
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .msg-stream-text.is-live {
+  .msg-stream-text.is-live,
+  .msg-stream-reveal-tail {
     animation: none !important;
   }
 }

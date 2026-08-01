@@ -30,6 +30,11 @@ export function createMessagesUi(context, dependencies) {
   const SEARCH_BATCH_FIRST_CALL_HOLD_MS = 0;
   const SEARCH_BATCH_MULTI_CALL_SETTLE_MS = 0;
   const PRE_TOOL_TEXT_HOLD_MS = 0;
+  const STREAM_TEXT_REVEAL_INITIAL_DELAY_MS = 180;
+  const STREAM_TEXT_REVEAL_CHARACTER_MS = 7;
+  const STREAM_TEXT_REVEAL_FINAL_CHARACTER_MS = 3;
+  const STREAM_TEXT_REVEAL_FRAME_MS = 28;
+  const STREAM_TEXT_REVEAL_TAIL_CHARS = 18;
   const WRITE_PREVIEW_COLLAPSED_LINES = 4;
   const WRITE_PREVIEW_EXPANDED_LINES = 80;
   const EDIT_PREVIEW_COLLAPSED_ROWS = 4;
@@ -4919,7 +4924,8 @@ export function createMessagesUi(context, dependencies) {
     return !!(
       segment
       && (
-        segment.type === 'browser_portal'
+        isSharedFileToolSegment(segment)
+        || segment.type === 'browser_portal'
         || (browserPortalUi
           && typeof browserPortalUi.isBrowserToolSegment === 'function'
           && browserPortalUi.isBrowserToolSegment(segment))
@@ -5300,6 +5306,65 @@ export function createMessagesUi(context, dependencies) {
       key: safeKey,
       html: `<div class="msg-activity-block" data-activity-key="${escapeAttributeValue(safeKey)}">${innerHtml}</div>`
     };
+  }
+
+  // Wrap only the freshly revealed text nodes after markdown has been parsed.
+  // This keeps markdown structure intact while giving the advancing edge a
+  // soft gradient instead of flashing a whole new network chunk at once.
+  function decorateStreamingRevealTail(html, tailCharacterCount, revealFrame) {
+    const count = Math.max(0, Math.floor(Number(tailCharacterCount) || 0));
+    if (!count || typeof document === 'undefined') {
+      return html;
+    }
+
+    const template = document.createElement('template');
+    template.innerHTML = String(html || '');
+    const walker = document.createTreeWalker(template.content, 4);
+    const textNodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      if (node.nodeValue && node.nodeValue.trim()) {
+        textNodes.push(node);
+      }
+      node = walker.nextNode();
+    }
+
+    let remaining = count;
+    let processedFromEnd = 0;
+    for (let index = textNodes.length - 1; index >= 0 && remaining > 0; index -= 1) {
+      const textNode = textNodes[index];
+      const value = String(textNode.nodeValue || '');
+      const take = Math.min(remaining, Array.from(value).length);
+      if (!take) {
+        continue;
+      }
+
+      const characters = Array.from(value);
+      const prefix = characters.slice(0, characters.length - take).join('');
+      const tail = characters.slice(characters.length - take).join('');
+      const fragment = document.createDocumentFragment();
+      if (prefix) {
+        fragment.appendChild(document.createTextNode(prefix));
+      }
+      const tailCharacters = Array.from(tail);
+      tailCharacters.forEach(function wrapCleanRevealCharacter(character, characterIndex) {
+        const distanceFromEnd = processedFromEnd + (tailCharacters.length - characterIndex - 1);
+        const gradientProgress = count > 1 ? Math.min(1, distanceFromEnd / (count - 1)) : 1;
+        const startOpacity = 0.28 + (gradientProgress * 0.68);
+        const delayMs = Math.max(0, Math.round((count - distanceFromEnd - 1) * 2));
+        const span = document.createElement('span');
+        span.className = `msg-stream-reveal-tail msg-stream-reveal-tail--${Number(revealFrame) % 2 === 0 ? 'even' : 'odd'}`;
+        span.style.setProperty('--stream-reveal-start-opacity', startOpacity.toFixed(2));
+        span.style.setProperty('--stream-reveal-delay', `${delayMs}ms`);
+        span.textContent = character;
+        fragment.appendChild(span);
+      });
+      textNode.parentNode.replaceChild(fragment, textNode);
+      processedFromEnd += take;
+      remaining -= take;
+    }
+
+    return template.innerHTML;
   }
 
   // Return a stable identity key for an element so the morpher can match it
@@ -5684,7 +5749,7 @@ export function createMessagesUi(context, dependencies) {
     const renderOptions = options || {};
     const useMarkdown = renderOptions.markdown !== false;
     const hideTextSegments = renderOptions.hideTextSegments === true;
-    const suppressSharedFileToolRows = renderOptions.reasoningMode !== true;
+    const suppressSharedFileToolRows = true;
     const $stream = $msgRow.find('.msg-activity-stream');
     const $bubble = $msgRow.find('.msg-bubble');
     rememberLoadedSandboxImages($msgRow);
@@ -5785,11 +5850,19 @@ export function createMessagesUi(context, dependencies) {
 
     function pushTextSegmentBlock(segment, segmentIndex) {
       const liveClass = renderOptions.streaming === true ? ' is-live' : '';
+      const revealTailChars = Number(segment && segment.streamRevealTailChars) || 0;
+      const revealingClass = revealTailChars > 0 ? ' is-revealing' : '';
+      const renderedText = useMarkdown
+        ? renderMarkdownSegment(segment.content, citationRegistry)
+        : renderPlainTextSegment(segment.content);
+      const visibleText = revealTailChars > 0
+        ? decorateStreamingRevealTail(renderedText, revealTailChars, segment.streamRevealFrame)
+        : renderedText;
       pushBlock(
         `text-${segmentIndex}`,
         `
-        <div class="msg-stream-text${liveClass}">
-          <div class="markdown-body${useMarkdown ? '' : ' is-streaming'}">${useMarkdown ? renderMarkdownSegment(segment.content, citationRegistry) : renderPlainTextSegment(segment.content)}</div>
+        <div class="msg-stream-text${liveClass}${revealingClass}">
+          <div class="markdown-body${useMarkdown ? '' : ' is-streaming'}">${visibleText}</div>
         </div>
       `
       );
@@ -5801,6 +5874,7 @@ export function createMessagesUi(context, dependencies) {
       const lastActivitySegmentIndex = segments.reduce(function findLastActivityIndex(lastIndex, segment, index) {
         return segment
           && (segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending')
+          && !isIgnoredReasoningActivity(segment)
           ? index
           : lastIndex;
       }, -1);
@@ -5864,6 +5938,10 @@ export function createMessagesUi(context, dependencies) {
 
         if (segment.type === 'tool') {
           const currentToolIndex = activeToolSegmentIndex;
+          if (isSharedFileToolSegment(segment)) {
+            activeToolSegmentIndex += 1;
+            return;
+          }
           if (hasCitationSources(segment)) {
             addSearchSourcesToCitationRegistry(citationRegistry, segment);
           }
@@ -6259,13 +6337,268 @@ export function createMessagesUi(context, dependencies) {
     return true;
   }
 
+  // Return the text segments that belong to the streamed reasoning/tool
+  // sequence. Text before the first activity is ordinary answer text and must
+  // not suddenly become buffered if a reasoning marker appears later.
+  function streamingRevealTextKeys($msgRow, segments) {
+    const keys = new Set();
+    let sawReasoningActivity = !!$msgRow.data('sawReasoning');
+    (Array.isArray(segments) ? segments : []).forEach(function collectRevealKey(segment, index) {
+      if (!segment) {
+        return;
+      }
+      if (
+        segment.type === 'thought'
+        || segment.type === 'tool_pending'
+        || (segment.type === 'tool' && !isIgnoredReasoningActivity(segment))
+      ) {
+        sawReasoningActivity = true;
+        return;
+      }
+      if (sawReasoningActivity && segment.type === 'text') {
+        keys.add(`text-${index}`);
+      }
+    });
+    return keys;
+  }
+
+  // Advance all buffered text cursors. The normal cadence is a little faster
+  // than the Thought-label preview; final catch-up is bounded so actions do not
+  // remain in a streaming state after the network response has closed.
+  function advanceStreamingTextRevealState(revealState, now) {
+    let pending = false;
+    revealState.entries.forEach(function advanceEntry(entry) {
+      const targetCharacters = Array.from(entry.target || '');
+      const lag = Math.max(0, targetCharacters.length - entry.visibleLength);
+      entry.revealedNow = 0;
+      if (!lag) {
+        entry.lastAdvancedAt = now;
+        return;
+      }
+
+      if (now < entry.readyAt) {
+        pending = true;
+        return;
+      }
+
+      const interval = revealState.finalizing
+        ? STREAM_TEXT_REVEAL_FINAL_CHARACTER_MS
+        : STREAM_TEXT_REVEAL_CHARACTER_MS;
+      const elapsedFrom = Math.max(entry.lastAdvancedAt || entry.readyAt, entry.readyAt);
+      const elapsed = Math.max(0, now - elapsedFrom);
+      entry.credit = (entry.credit || 0) + (elapsed / interval);
+      let revealCount = Math.floor(entry.credit);
+      if (revealState.finalizing) {
+        revealCount = Math.max(revealCount, Math.ceil(lag / 10));
+      }
+      revealCount = Math.min(lag, revealCount);
+      entry.lastAdvancedAt = now;
+      if (!revealCount) {
+        pending = true;
+        return;
+      }
+
+      entry.credit = Math.max(0, entry.credit - revealCount);
+      entry.visibleLength += revealCount;
+      entry.revealedNow = revealCount;
+      entry.revealFrame = (entry.revealFrame || 0) + 1;
+      if (entry.visibleLength < targetCharacters.length) {
+        pending = true;
+      }
+    });
+    return pending || Array.from(revealState.entries.values()).some(function hasRemainingText(entry) {
+      return entry.visibleLength < Array.from(entry.target || '').length;
+    });
+  }
+
+  // Build one display snapshot while retaining the complete segment list for
+  // layout. Empty buffered text blocks already occupy their correct ordering,
+  // allowing the reasoning toggle to move before the first character appears.
+  function streamingTextRevealSnapshot(revealState) {
+    return revealState.segments.map(function revealSegment(segment, index) {
+      if (!segment || segment.type !== 'text') {
+        return segment;
+      }
+      const entry = revealState.entries.get(`text-${index}`);
+      if (!entry) {
+        return segment;
+      }
+      const characters = Array.from(entry.target || '');
+      return {
+        ...segment,
+        content: characters.slice(0, entry.visibleLength).join(''),
+        streamRevealTailChars: Math.min(STREAM_TEXT_REVEAL_TAIL_CHARS, entry.revealedNow || 0),
+        streamRevealFrame: entry.revealFrame || 0
+      };
+    });
+  }
+
+  function clearStreamingTextReveal($msgRow) {
+    const revealState = $msgRow.data('streamingTextRevealState');
+    if (revealState && revealState.timer) {
+      window.clearTimeout(revealState.timer);
+    }
+    $msgRow.removeData('streamingTextRevealState');
+  }
+
+  function renderMessageHtmlNow($msgRow, rawText, parsed) {
+    clearStreamingTextReveal($msgRow);
+    const safeParsed = parsed || parseMessageTimeline(rawText);
+    renderActivityTimeline($msgRow, safeParsed.segments, { rawText });
+    $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', safeParsed.visibleText);
+  }
+
+  // Paint the next buffered frame without waiting for another network chunk.
+  function scheduleStreamingTextRevealFrame($msgRow) {
+    const revealState = $msgRow.data('streamingTextRevealState');
+    if (!revealState || revealState.timer) {
+      return;
+    }
+    const hasPendingText = Array.from(revealState.entries.values()).some(function hasPendingEntry(entry) {
+      return entry.visibleLength < Array.from(entry.target || '').length;
+    });
+    if (!hasPendingText) {
+      return;
+    }
+
+    revealState.timer = window.setTimeout(function renderStreamingTextRevealFrame() {
+      const currentState = $msgRow.data('streamingTextRevealState');
+      if (!currentState || currentState !== revealState) {
+        return;
+      }
+      currentState.timer = null;
+      if (!$msgRow[0] || (typeof document !== 'undefined' && !document.documentElement.contains($msgRow[0]))) {
+        clearStreamingTextReveal($msgRow);
+        return;
+      }
+
+      const messagesArea = dom.$messagesArea && dom.$messagesArea[0];
+      const shouldFollowReveal = !!messagesArea
+        && messagesArea.scrollHeight - messagesArea.clientHeight <= messagesArea.scrollTop + 50;
+      const pending = advanceStreamingTextRevealState(currentState, Date.now());
+      renderActivityTimeline($msgRow, streamingTextRevealSnapshot(currentState), {
+        rawText: currentState.rawText,
+        streaming: true
+      });
+      $msgRow.find('.msg-bubble')
+        .attr('data-raw', currentState.rawText)
+        .attr('data-copy', currentState.visibleText);
+      if (shouldFollowReveal) {
+        scrollBottom();
+      }
+
+      if (!pending && currentState.finalizing) {
+        renderMessageHtmlNow(
+          $msgRow,
+          currentState.rawText,
+          { segments: currentState.segments, visibleText: currentState.visibleText }
+        );
+        return;
+      }
+      scheduleStreamingTextRevealFrame($msgRow);
+    }, STREAM_TEXT_REVEAL_FRAME_MS);
+  }
+
+  // Update targets from the latest parse and return the currently revealed
+  // segment snapshot. Structural tool changes are applied immediately.
+  function bufferStreamingTextSegments($msgRow, parsed, rawText, finalizing) {
+    const reduceMotion = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) {
+      clearStreamingTextReveal($msgRow);
+      return null;
+    }
+    const revealKeys = streamingRevealTextKeys($msgRow, parsed.segments);
+    let revealState = $msgRow.data('streamingTextRevealState');
+    if (!revealState && !revealKeys.size) {
+      return null;
+    }
+    if (!revealState) {
+      revealState = {
+        entries: new Map(),
+        segments: [],
+        rawText: '',
+        visibleText: '',
+        finalizing: false,
+        timer: null
+      };
+      $msgRow.data('streamingTextRevealState', revealState);
+    }
+
+    const now = Date.now();
+    const activeKeys = new Set();
+    parsed.segments.forEach(function updateRevealTarget(segment, index) {
+      const key = `text-${index}`;
+      if (!segment || segment.type !== 'text' || !revealKeys.has(key)) {
+        return;
+      }
+      activeKeys.add(key);
+      const target = String(segment.content || '');
+      const targetLength = Array.from(target).length;
+      let entry = revealState.entries.get(key);
+      if (!entry) {
+        entry = {
+          target,
+          visibleLength: 0,
+          revealedNow: 0,
+          readyAt: now + STREAM_TEXT_REVEAL_INITIAL_DELAY_MS,
+          lastAdvancedAt: now + STREAM_TEXT_REVEAL_INITIAL_DELAY_MS,
+          credit: 0,
+          revealFrame: 0
+        };
+        revealState.entries.set(key, entry);
+        return;
+      }
+
+      const oldTarget = String(entry.target || '');
+      if (!target.startsWith(oldTarget)) {
+        entry.visibleLength = Math.min(entry.visibleLength, targetLength);
+      }
+      entry.target = target;
+      entry.visibleLength = Math.min(entry.visibleLength, targetLength);
+      entry.revealedNow = 0;
+    });
+    Array.from(revealState.entries.keys()).forEach(function removeStaleEntry(key) {
+      if (!activeKeys.has(key)) {
+        revealState.entries.delete(key);
+      }
+    });
+
+    revealState.segments = parsed.segments;
+    revealState.rawText = rawText;
+    revealState.visibleText = parsed.visibleText;
+    revealState.finalizing = revealState.finalizing || finalizing === true;
+    advanceStreamingTextRevealState(revealState, now);
+    scheduleStreamingTextRevealFrame($msgRow);
+    return streamingTextRevealSnapshot(revealState);
+  }
+
   // Parse and render one assistant transcript string.
   function renderMessageHtml($msgRow, rawText) {
     clearSearchBatchHold($msgRow);
     clearPreToolTextHold($msgRow);
     const parsed = parseMessageTimeline(rawText);
-    renderActivityTimeline($msgRow, parsed.segments, { rawText });
-    $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
+    const revealState = $msgRow.data('streamingTextRevealState');
+    if (revealState) {
+      const displaySegments = bufferStreamingTextSegments($msgRow, parsed, rawText, true);
+      const activeRevealState = $msgRow.data('streamingTextRevealState');
+      if (!activeRevealState) {
+        renderMessageHtmlNow($msgRow, rawText, parsed);
+        return;
+      }
+      const hasPendingText = Array.from(activeRevealState.entries.values()).some(function hasPendingEntry(entry) {
+        return entry.visibleLength < Array.from(entry.target || '').length;
+      });
+      if (!hasPendingText) {
+        renderMessageHtmlNow($msgRow, rawText, parsed);
+        return;
+      }
+      renderActivityTimeline($msgRow, displaySegments || parsed.segments, { rawText, streaming: true });
+      $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
+      return;
+    }
+    renderMessageHtmlNow($msgRow, rawText, parsed);
   }
 
   // Parse and render one assistant transcript during active streaming.
@@ -6281,7 +6614,8 @@ export function createMessagesUi(context, dependencies) {
     if (hasPendingToolPayload) {
       clearSearchBatchHold($msgRow);
       clearPreToolTextHold($msgRow);
-      renderActivityTimeline($msgRow, parsed.segments, {
+      const displaySegments = bufferStreamingTextSegments($msgRow, parsed, renderRawText, false);
+      renderActivityTimeline($msgRow, displaySegments || parsed.segments, {
         markdown: false,
         pendingTool: true,
         rawText: renderRawText,
@@ -6303,7 +6637,8 @@ export function createMessagesUi(context, dependencies) {
       return;
     }
 
-    renderActivityTimeline($msgRow, parsed.segments, { rawText: renderRawText, streaming: true });
+    const displaySegments = bufferStreamingTextSegments($msgRow, parsed, renderRawText, false);
+    renderActivityTimeline($msgRow, displaySegments || parsed.segments, { rawText: renderRawText, streaming: true });
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
 
