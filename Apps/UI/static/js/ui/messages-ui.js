@@ -42,12 +42,46 @@ export function createMessagesUi(context, dependencies) {
   const SANDBOX_INPUT_PREVIEW_CHARS = 12000;
   const REASONING_CHUNK_TARGET_CHARS = 132;
   const REASONING_CHUNK_MAX_CHARS = 168;
-  const REASONING_LABEL_CHANGE_DELAY_MS = 2000;
+  const REASONING_LABEL_CHANGE_DELAY_MS = 1400;
   const REASONING_LABEL_MAX_TYPING_DURATION_MS = 700;
   const REASONING_LABEL_MAX_CHARACTER_DELAY_MS = 26;
   const REASONING_LABEL_MIN_CHARACTER_DELAY_MS = 10;
+  const REASONING_LABEL_TYPING_SPEED_MULTIPLIER = 1.4;
+  const REASONING_LABEL_DELETE_SPEED_MULTIPLIER = 3.3;
   const REASONING_LABEL_MIN_CHARS = 12;
+  const REASONING_LABEL_MIN_WORDS = 3;
   const REASONING_LABEL_MAX_CHARS = 140;
+  const REASONING_PREVIEW_BRACKET_PAIRS = {
+    '(': ')',
+    '[': ']',
+    '{': '}',
+    '\uFF08': '\uFF09',
+    '\uFF3B': '\uFF3D',
+    '\uFF5B': '\uFF5D',
+    '\u3010': '\u3011',
+    '\u3014': '\u3015',
+    '\u3016': '\u3017',
+    '\u27E6': '\u27E7'
+  };
+  const REASONING_PREVIEW_QUOTE_PAIRS = {
+    '"': '"',
+    '\u00AB': '\u00BB',
+    '\u201C': '\u201D',
+    '\u201E': '\u201C',
+    '\u2018': '\u2019'
+  };
+  const REASONING_PREVIEW_NAMED_CITATION_HANDLE_SOURCE = String.raw`(?:s\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3,}-\d+)`;
+  const REASONING_PREVIEW_BRACKETED_CITATION_HANDLE_SOURCE = String.raw`(?:\d{4,}-\d+|${REASONING_PREVIEW_NAMED_CITATION_HANDLE_SOURCE})`;
+  const REASONING_PREVIEW_BRACKETED_CITATION_PATTERN = new RegExp(
+    String.raw`[\[\u3010\uFF3B\u3014\u3016\u27E6]\s*${REASONING_PREVIEW_BRACKETED_CITATION_HANDLE_SOURCE}(?:\s*,\s*${REASONING_PREVIEW_BRACKETED_CITATION_HANDLE_SOURCE})*\s*[\]\u3011\uFF3D\u3015\u3017\u27E7]`,
+    'gi'
+  );
+  const REASONING_PREVIEW_INTERNAL_MARKER_PATTERN = new RegExp(
+    String.raw`\b(?:source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3,}-\d+|turn\d+(?:search|fetch|view|open|click|image|news)\d+)\b`,
+    'gi'
+  );
+  const REASONING_PREVIEW_PRIVATE_MARKER_PATTERN = /\uE200[^\uE201]*(?:\uE201|$)/g;
+  const REASONING_PREVIEW_INVISIBLE_PATTERN = /[\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g;
   const DOWNLOAD_FILE_ICON = icons.DOWNLOAD_FILE_ICON || '';
   const SHARED_FILE_FOLDER_ICON = icons.SKILLS_FOLDER_ICON || '';
   const OPEN_FILE_LOCATION_LABEL = t('messages.openFileLocation', null, 'Open file location');
@@ -4933,9 +4967,74 @@ export function createMessagesUi(context, dependencies) {
     );
   }
 
+  // Remove parenthetical/service-only details from the compact live label.
+  // Quoted prose remains readable, including bracket characters inside quotes.
+  function stripReasoningPreviewBracketedText(value) {
+    const output = [];
+    const expectedClosers = [];
+    const closingBrackets = new Set(Object.values(REASONING_PREVIEW_BRACKET_PAIRS));
+    let activeQuoteCloser = '';
+
+    Array.from(String(value || '')).forEach(function filterReasoningPreviewCharacter(character) {
+      if (activeQuoteCloser) {
+        output.push(character);
+        if (character === activeQuoteCloser) {
+          activeQuoteCloser = '';
+        }
+        return;
+      }
+
+      if (!expectedClosers.length && REASONING_PREVIEW_QUOTE_PAIRS[character]) {
+        activeQuoteCloser = REASONING_PREVIEW_QUOTE_PAIRS[character];
+        output.push(character);
+        return;
+      }
+
+      const bracketCloser = REASONING_PREVIEW_BRACKET_PAIRS[character];
+      if (bracketCloser) {
+        if (!expectedClosers.length && output.length && !/\s/u.test(output[output.length - 1])) {
+          output.push(' ');
+        }
+        expectedClosers.push(bracketCloser);
+        return;
+      }
+
+      if (expectedClosers.length) {
+        const matchingCloserIndex = expectedClosers.lastIndexOf(character);
+        if (matchingCloserIndex >= 0) {
+          expectedClosers.length = matchingCloserIndex;
+        }
+        return;
+      }
+
+      if (!closingBrackets.has(character)) {
+        output.push(character);
+      }
+    });
+
+    return output.join('');
+  }
+
+  function sanitizeReasoningPreviewText(value) {
+    const plainText = markdownToPlainText(value)
+      .replace(REASONING_PREVIEW_PRIVATE_MARKER_PATTERN, ' ')
+      .replace(REASONING_PREVIEW_BRACKETED_CITATION_PATTERN, ' ')
+      .replace(REASONING_PREVIEW_INTERNAL_MARKER_PATTERN, ' ')
+      .replace(REASONING_PREVIEW_INVISIBLE_PATTERN, ' ');
+    return stripReasoningPreviewBracketedText(plainText)
+      .replace(/\s+([,.;:!?\u2026])/gu, '$1')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function reasoningPreviewWordCount(value) {
+    const words = String(value || '').match(/\p{L}[\p{L}\p{M}]*(?:[-'\u2019][\p{L}\p{M}]+)*/gu);
+    return words ? words.length : 0;
+  }
+
   // Pick the latest complete clause so the label changes at punctuation, not per token.
   function reasoningThoughtExcerpt(content) {
-    const text = markdownToPlainText(content);
+    const text = sanitizeReasoningPreviewText(content);
     if (!text) {
       return '';
     }
@@ -4944,7 +5043,9 @@ export function createMessagesUi(context, dependencies) {
     const readableClauses = clauses.map(function normalizeReasoningClause(clause) {
       return String(clause || '').trim();
     }).filter(function keepReadableReasoningClause(clause) {
-      return clause.length >= REASONING_LABEL_MIN_CHARS && clause.length <= REASONING_LABEL_MAX_CHARS;
+      return clause.length >= REASONING_LABEL_MIN_CHARS
+        && clause.length <= REASONING_LABEL_MAX_CHARS
+        && reasoningPreviewWordCount(clause) >= REASONING_LABEL_MIN_WORDS;
     });
     return readableClauses.length
       ? normalizeReasoningPreviewPunctuation(readableClauses[readableClauses.length - 1])
@@ -4954,7 +5055,7 @@ export function createMessagesUi(context, dependencies) {
   // Replace sentence-ending punctuation with one calm preview ellipsis while
   // preserving any closing quote or bracket after it.
   function normalizeReasoningPreviewPunctuation(label) {
-    return markdownToPlainText(label).replace(/[.!?,\u2026;:]+(["'»”\)\]]*)$/u, '\u2026$1');
+    return sanitizeReasoningPreviewText(label).replace(/[.!?,\u2026;:]+(["'»”\)\]]*)$/u, '\u2026$1');
   }
 
   // Gather sources belonging to the currently displayed search or read activity.
@@ -5607,8 +5708,8 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
-  // Keep live reasoning labels stable across stream morphs and reveal each new
-  // status with a short typewriter animation after a readable pause.
+  // Keep live reasoning labels stable across stream morphs. Each status is
+  // typed in, held briefly, then erased before the next status is typed.
   function stopReasoningLabelAnimator($msgRow) {
     const state = $msgRow.data('reasoningLabelAnimator');
     if (!state) {
@@ -5630,11 +5731,78 @@ export function createMessagesUi(context, dependencies) {
     }
     titleEl.textContent = state.currentText || '\u00a0';
     titleEl.classList.toggle('is-typing', !!state.typing);
+    titleEl.classList.toggle('is-deleting', !!state.deleting);
     return true;
   }
 
+  function prefersReducedReasoningLabelMotion() {
+    return typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
+  function reasoningLabelCharacterDelay(characterCount, reduceMotion) {
+    if (reduceMotion) {
+      return 0;
+    }
+    const baseDelay = Math.min(
+      REASONING_LABEL_MAX_CHARACTER_DELAY_MS,
+      Math.max(
+        REASONING_LABEL_MIN_CHARACTER_DELAY_MS,
+        Math.floor(REASONING_LABEL_MAX_TYPING_DURATION_MS / Math.max(1, characterCount))
+      )
+    );
+    return baseDelay / REASONING_LABEL_TYPING_SPEED_MULTIPLIER;
+  }
+
+  function beginReasoningLabelTyping($msgRow, state, nextLabel, reduceMotion, options) {
+    const typingOptions = options || {};
+    if (typingOptions.preserveActiveLabel !== true) {
+      state.activeLabel = nextLabel;
+    }
+    state.currentText = '';
+    state.deleting = false;
+    state.typing = true;
+    state.holdCurrentLabel = typingOptions.holdAfterTyping === true;
+    const characters = Array.from(nextLabel);
+    let characterIndex = 0;
+    const characterDelay = reasoningLabelCharacterDelay(characters.length, reduceMotion);
+    state.characterDelay = characterDelay;
+
+    function typeNextCharacter() {
+      if (!$msgRow[0] || (typeof document !== 'undefined' && !document.documentElement.contains($msgRow[0]))) {
+        stopReasoningLabelAnimator($msgRow);
+        return;
+      }
+      if (reduceMotion) {
+        characterIndex = characters.length;
+      } else {
+        characterIndex += 1;
+      }
+      state.currentText = characters.slice(0, characterIndex).join('');
+      updateReasoningLabelElement($msgRow, state);
+
+      if (characterIndex < characters.length) {
+        state.typingTimer = setTimeout(typeNextCharacter, characterDelay);
+        return;
+      }
+
+      state.typingTimer = null;
+      state.typing = false;
+      state.lastCompletedAt = Date.now();
+      updateReasoningLabelElement($msgRow, state);
+      scheduleReasoningLabel($msgRow, state, false);
+    }
+
+    updateReasoningLabelElement($msgRow, state);
+    state.typingTimer = setTimeout(typeNextCharacter, reduceMotion ? 0 : characterDelay);
+  }
+
   function scheduleReasoningLabel($msgRow, state, immediate) {
-    if (state.typing || !state.queuedLabel) {
+    const canDeleteCurrentLabel = state.streaming === true
+      && !!state.currentText
+      && state.holdCurrentLabel !== true;
+    if (state.typing || state.deleting || (!state.queuedLabel && !canDeleteCurrentLabel)) {
       return;
     }
     if (state.delayTimer) {
@@ -5642,61 +5810,69 @@ export function createMessagesUi(context, dependencies) {
       state.delayTimer = null;
     }
 
+    const reduceMotion = prefersReducedReasoningLabelMotion();
+    const currentCharacters = Array.from(state.currentText || '');
+    const typingDelay = state.characterDelay
+      || reasoningLabelCharacterDelay(currentCharacters.length, reduceMotion);
+    const deletionDelay = reduceMotion
+      ? 0
+      : Math.max(1, typingDelay / REASONING_LABEL_DELETE_SPEED_MULTIPLIER);
+    const deletionDuration = currentCharacters.length * deletionDelay;
     const elapsed = state.lastCompletedAt ? Date.now() - state.lastCompletedAt : REASONING_LABEL_CHANGE_DELAY_MS;
-    const waitMs = immediate ? 0 : Math.max(0, REASONING_LABEL_CHANGE_DELAY_MS - elapsed);
-    state.delayTimer = setTimeout(function beginReasoningLabelTyping() {
+    // Count deletion inside the hold so it does not make the transition longer.
+    const waitMs = immediate
+      ? 0
+      : Math.max(0, REASONING_LABEL_CHANGE_DELAY_MS - elapsed - deletionDuration);
+    state.delayTimer = setTimeout(function beginReasoningLabelTransition() {
       state.delayTimer = null;
-      const nextLabel = state.queuedLabel;
-      if (!nextLabel) {
+      if (!state.queuedLabel && (!state.streaming || !state.currentText)) {
         return;
       }
 
-      state.queuedLabel = '';
-      state.activeLabel = nextLabel;
-      state.currentText = '';
-      state.typing = true;
-      const characters = Array.from(nextLabel);
-      let characterIndex = 0;
-      const reduceMotion = typeof window !== 'undefined'
-        && typeof window.matchMedia === 'function'
-        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      const characterDelay = reduceMotion
-        ? 0
-        : Math.min(
-          REASONING_LABEL_MAX_CHARACTER_DELAY_MS,
-          Math.max(
-            REASONING_LABEL_MIN_CHARACTER_DELAY_MS,
-            Math.floor(REASONING_LABEL_MAX_TYPING_DURATION_MS / Math.max(1, characters.length))
-          )
-        );
-
-      function typeNextCharacter() {
+      let remainingCharacters = Array.from(state.currentText || '');
+      function deleteNextCharacter() {
         if (!$msgRow[0] || (typeof document !== 'undefined' && !document.documentElement.contains($msgRow[0]))) {
           stopReasoningLabelAnimator($msgRow);
           return;
         }
         if (reduceMotion) {
-          characterIndex = characters.length;
+          remainingCharacters = [];
         } else {
-          characterIndex += 1;
+          remainingCharacters.pop();
         }
-        state.currentText = characters.slice(0, characterIndex).join('');
+        state.currentText = remainingCharacters.join('');
         updateReasoningLabelElement($msgRow, state);
 
-        if (characterIndex < characters.length) {
-          state.typingTimer = setTimeout(typeNextCharacter, characterDelay);
+        if (remainingCharacters.length > 0) {
+          state.typingTimer = setTimeout(deleteNextCharacter, deletionDelay);
           return;
         }
 
         state.typingTimer = null;
-        state.typing = false;
-        state.lastCompletedAt = Date.now();
+        state.deleting = false;
         updateReasoningLabelElement($msgRow, state);
-        scheduleReasoningLabel($msgRow, state, false);
+        const nextLabel = state.queuedLabel;
+        state.queuedLabel = '';
+        if (nextLabel) {
+          beginReasoningLabelTyping($msgRow, state, nextLabel, reduceMotion);
+        } else if (state.streaming) {
+          // Never leave the compact reasoning header blank while waiting for
+          // another sentence or tool call. Keep the source label identity so
+          // repeated stream renders do not queue the erased sentence again.
+          beginReasoningLabelTyping($msgRow, state, 'Thinking', reduceMotion, {
+            preserveActiveLabel: true,
+            holdAfterTyping: true
+          });
+        }
       }
 
+      if (!remainingCharacters.length || reduceMotion) {
+        deleteNextCharacter();
+        return;
+      }
+      state.deleting = true;
       updateReasoningLabelElement($msgRow, state);
-      state.typingTimer = setTimeout(typeNextCharacter, reduceMotion ? 0 : characterDelay);
+      state.typingTimer = setTimeout(deleteNextCharacter, deletionDelay);
     }, waitMs);
   }
 
@@ -5709,8 +5885,9 @@ export function createMessagesUi(context, dependencies) {
 
     const desiredLabel = String($title.attr('data-reasoning-label') || 'Thought');
     let animator = $msgRow.data('reasoningLabelAnimator');
-    if (streaming !== true && !animator) {
-      $title.text(desiredLabel).removeClass('is-typing');
+    if (streaming !== true) {
+      stopReasoningLabelAnimator($msgRow);
+      $title.text(desiredLabel).removeClass('is-typing is-deleting');
       return;
     }
 
@@ -5720,9 +5897,13 @@ export function createMessagesUi(context, dependencies) {
         queuedLabel: desiredLabel,
         currentText: '',
         typing: false,
+        deleting: false,
         typingTimer: null,
         delayTimer: null,
-        lastCompletedAt: 0
+        lastCompletedAt: 0,
+        characterDelay: 0,
+        holdCurrentLabel: false,
+        streaming: true
       };
       $msgRow.data('reasoningLabelAnimator', animator);
       updateReasoningLabelElement($msgRow, animator);
@@ -5733,10 +5914,6 @@ export function createMessagesUi(context, dependencies) {
     updateReasoningLabelElement($msgRow, animator);
     if (desiredLabel === animator.activeLabel) {
       animator.queuedLabel = '';
-      if (animator.delayTimer) {
-        clearTimeout(animator.delayTimer);
-        animator.delayTimer = null;
-      }
       return;
     }
 

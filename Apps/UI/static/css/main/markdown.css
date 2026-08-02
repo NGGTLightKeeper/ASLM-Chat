@@ -591,7 +591,8 @@
   white-space: nowrap;
 }
 
-.msg-reasoning-title.is-typing {
+.msg-reasoning-title.is-typing,
+.msg-reasoning-title.is-deleting {
   opacity: 0.76;
 }
 
