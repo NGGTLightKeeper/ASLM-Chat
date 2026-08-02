@@ -64,6 +64,11 @@ TOOL_CALL_QUOTAS = {
     "read_page": 10,
 }
 HIGH_EFFORT_WEB_SEARCH_QUOTA = 3
+WEB_SEARCH_EFFORT_QUOTAS = {
+    "low": 12,
+    "medium": 10,
+    "high": 4,
+}
 TOOL_BLOCK_FINAL_PROMPT = (
     "Tool loop guard: repeated tool calls were blocked because they duplicate recent work, "
     "hit a quota, or are in cooldown. Do not call tools again. Use the evidence already "
@@ -668,15 +673,28 @@ def _search_effort(arguments: dict[str, Any] | None) -> str:
     value = arguments.get("effort")
     if value is None and isinstance(arguments.get("query"), dict):
         value = arguments["query"].get("effort")
-    return str(value or "").strip().lower()
+    effort = str(value or "medium").strip().lower()
+    return effort if effort in WEB_SEARCH_EFFORT_QUOTAS else "medium"
+
+
+def _uses_legacy_search_contract(arguments: dict[str, Any] | None) -> bool:
+    return isinstance(arguments, dict) and "query" in arguments and not any(
+        key in arguments for key in ("web", "shopping", "academic", "onion")
+    )
 
 
 # Return the per-response quota for one tool call.
 def _tool_quota_limit(quota_tool_id: str, arguments: dict[str, Any] | None = None) -> int:
     """Return the per-response quota for one tool call."""
 
-    if quota_tool_id == "web_search" and _search_effort(arguments) == "high":
-        return HIGH_EFFORT_WEB_SEARCH_QUOTA
+    if quota_tool_id == "web_search":
+        if _uses_legacy_search_contract(arguments):
+            return (
+                HIGH_EFFORT_WEB_SEARCH_QUOTA
+                if _search_effort(arguments) == "high"
+                else TOOL_CALL_QUOTAS[quota_tool_id]
+            )
+        return WEB_SEARCH_EFFORT_QUOTAS[_search_effort(arguments)]
     return TOOL_CALL_QUOTAS[quota_tool_id]
 
 
@@ -772,20 +790,39 @@ def consume_tool_quota(
         return None
 
     limit = _tool_quota_limit(quota_tool_id, arguments)
-    current = int(counters.get(quota_tool_id, 0) or 0)
-    if current >= limit:
+    legacy_search = quota_tool_id == "web_search" and _uses_legacy_search_contract(arguments)
+    effort = _search_effort(arguments) if quota_tool_id == "web_search" else ""
+    counter_key = f"{quota_tool_id}:{effort}" if effort and not legacy_search else quota_tool_id
+    batch_size = 1
+    if (
+        quota_tool_id == "web_search"
+        and not legacy_search
+        and isinstance((tool_event or {}).get("tool_ui"), dict)
+    ):
+        batch_size = max(
+            1,
+            int((tool_event or {}).get("tool_ui", {}).get("collapsed_parallel_calls", 1) or 1),
+        )
+    current = int(counters.get(counter_key, 0) or 0)
+    if current + batch_size > limit:
         display_name = str((tool_event or {}).get("tool_name") or quota_tool_id).strip() or quota_tool_id
-        if quota_tool_id == "web_search" and _search_effort(arguments) == "high":
+        if quota_tool_id == "web_search" and legacy_search and effort == "high":
             return (
                 f"Tool quota exceeded: {display_name} high mode is unavailable "
                 "for the rest of this assistant response; use medium or low."
+            )
+        if quota_tool_id == "web_search":
+            return (
+                f"Tool quota exceeded: {display_name} {effort} mode permits at most "
+                f"{limit} queries in one assistant response. Use another effort only when "
+                "its search semantics fit, or answer with the evidence already collected."
             )
         return (
             f"Tool quota exceeded: {display_name} can be used at most {limit} times "
             "in one assistant response. Stop calling this tool and answer with the evidence already collected."
         )
 
-    counters[quota_tool_id] = current + 1
+    counters[counter_key] = current + batch_size
     return None
 
 
@@ -2372,7 +2409,7 @@ def _normalized_batch_bool(arguments: dict[str, Any], key: str) -> bool:
 
 
 def _web_search_call_mode(arguments: dict[str, Any]) -> str:
-    if isinstance(arguments.get("queries"), list):
+    if any(key in arguments for key in ("web", "shopping", "academic", "onion")):
         return "advanced"
     if "query" in arguments:
         return "legacy"
@@ -2395,7 +2432,10 @@ def _rejected_parallel_search_call(
     rejected["preflight_error_result"] = {
         "error": {"code": "INCOMPATIBLE_PARALLEL_SEARCH_BATCH"},
         "sources": [],
-        "model_context": f"INCOMPATIBLE_PARALLEL_SEARCH_BATCH: {message}",
+        "model_context": (
+            "INCOMPATIBLE_PARALLEL_SEARCH_BATCH: "
+            f"{call_count} parallel web_search calls rejected: {message}"
+        ),
         "ui": dict(rejected["tool_ui"]),
     }
     return rejected
@@ -2433,11 +2473,39 @@ def _merge_parallel_web_search_calls(tool_calls: list[dict[str, Any]]) -> dict[s
     mode = next(iter(modes))
     merged_arguments = copy.deepcopy(raw_arguments[0])
     if mode == "advanced":
-        merged_arguments["queries"] = [
-            copy.deepcopy(query)
-            for arguments in raw_arguments
-            for query in arguments.get("queries", [])
-        ]
+        if efforts != {"low"}:
+            first["raw_arguments"] = raw_arguments
+            return _rejected_parallel_search_call(
+                first,
+                message="parallel search batching is allowed only at low effort",
+                call_count=len(tool_calls),
+            )
+        if len(tool_calls) > 3:
+            first["raw_arguments"] = raw_arguments
+            return _rejected_parallel_search_call(
+                first,
+                message="a parallel web batch permits at most 3 queries",
+                call_count=len(tool_calls),
+            )
+        web_queries: list[str] = []
+        for arguments in raw_arguments:
+            active_verticals = [
+                key for key in ("web", "shopping", "academic", "onion")
+                if isinstance(arguments.get(key), str) and arguments[key].strip()
+            ]
+            if active_verticals != ["web"]:
+                first["raw_arguments"] = raw_arguments
+                return _rejected_parallel_search_call(
+                    first,
+                    message=(
+                        "parallel calls may batch only one ordinary web query each; "
+                        "shopping, academic, and onion queries must never be parallelized"
+                    ),
+                    call_count=len(tool_calls),
+                )
+            web_queries.append(arguments["web"])
+        merged_arguments["web"] = web_queries
+        merged_arguments["__parallel_web_batch"] = True
     else:
         routing_keys = ("shopping", "academic", "onion")
         for key in routing_keys:

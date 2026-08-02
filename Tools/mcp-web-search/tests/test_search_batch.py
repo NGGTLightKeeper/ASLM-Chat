@@ -50,6 +50,43 @@ def test_query_batch_coercion_caps_and_sanitizes_items():
     assert coerce_search_query(["alpha", "beta"]) == "alpha"
 
 
+def test_advanced_internal_web_batch_is_low_only_and_capped(monkeypatch):
+    import core.config as config_module
+
+    cfg = type("Cfg", (), {
+        "query": type("Query", (), {"schema_mode": "advanced"})(),
+        "tor": type("Tor", (), {"enabled": False})(),
+    })()
+    monkeypatch.setattr(config_module, "load_search_config", lambda: cfg)
+
+    accepted = prepare_search_arguments({
+        "description": "Discover web candidates",
+        "web": ["alpha", "beta", "gamma"],
+        "effort": "low",
+        "__parallel_web_batch": True,
+    })
+    wrong_effort = prepare_search_arguments({
+        "description": "Discover web candidates",
+        "web": ["alpha", "beta"],
+        "effort": "medium",
+        "__parallel_web_batch": True,
+    })
+    oversized = prepare_search_arguments({
+        "description": "Discover web candidates",
+        "web": ["alpha", "beta", "gamma", "delta"],
+        "effort": "low",
+        "__parallel_web_batch": True,
+    })
+
+    assert accepted["ok"] is True
+    assert accepted["search_request"]["batch_kind"] == "web"
+    assert len(accepted["search_request"]["queries"]) == 3
+    assert wrong_effort["ok"] is False
+    assert "only at low effort" in wrong_effort["error_result"]["model_context"]
+    assert oversized["ok"] is False
+    assert "at most 3 queries" in oversized["error_result"]["model_context"]
+
+
 def test_legacy_preflight_rejects_oversized_batch_instead_of_truncating(monkeypatch):
     import core.config as config_module
 
@@ -101,15 +138,11 @@ def test_legacy_preflight_uses_specialized_vertical_quotas(monkeypatch):
 
 
 def test_tool_description_documents_rare_batch_and_operator_examples():
-    for description in (
-        LEGACY_WEB_SEARCH_TOOL_DESCRIPTION,
-        ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION,
-    ):
-        normalized = " ".join(description.split())
-        assert "make an internal plan before calling this tool" in normalized
-        assert "answer deliverables, evidence gaps, source classes" in normalized
-        assert "Each call executes the next plan step" in normalized
-        assert "Link count alone is not coverage" in normalized
+    normalized = " ".join(LEGACY_WEB_SEARCH_TOOL_DESCRIPTION.split())
+    assert "make an internal plan before calling this tool" in normalized
+    assert "answer deliverables, evidence gaps, source classes" in normalized
+    assert "Each call executes the next plan step" in normalized
+    assert "Link count alone is not coverage" in normalized
     assert "Arrays are reserved" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
     assert "4 shopping queries, and 8 academic queries" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
     assert "site:docs.example.com" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
@@ -123,6 +156,11 @@ def test_tool_description_documents_rare_batch_and_operator_examples():
     legacy_normalized = " ".join(LEGACY_WEB_SEARCH_TOOL_DESCRIPTION.split())
     assert "shopping=true for product discovery" in legacy_normalized
     assert "academic=true for papers" in legacy_normalized
+    advanced_normalized = " ".join(ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION.split())
+    assert "independent web, shopping, academic" in advanced_normalized
+    assert "omitted verticals are not searched" in advanced_normalized
+    assert "quota" not in advanced_normalized.lower()
+    assert len(advanced_normalized) < 250
 
 
 def test_advanced_operators_are_recognized_without_polluting_scoring_terms():

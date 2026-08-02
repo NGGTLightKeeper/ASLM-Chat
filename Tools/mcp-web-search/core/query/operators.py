@@ -85,6 +85,21 @@ SEARCH_OPERATOR_SPECS: tuple[SearchOperatorSpec, ...] = (
 )
 SEARCH_OPERATOR_BY_KEY = {spec.key: spec for spec in SEARCH_OPERATOR_SPECS}
 
+# Raw forms advertised by the flat advanced `web` string. Keep this list beside the
+# structured operator registry so model-facing syntax and backend recognition do not drift.
+WEB_QUERY_OPERATOR_FORMS: tuple[str, ...] = (
+    '"exact phrase"',
+    "OR",
+    "-term",
+    "site:",
+    "-site:",
+    "filetype:",
+    "intitle:",
+    "inurl:",
+    "after:",
+    "before:",
+)
+
 NON_CONTENT_OPERATOR_PREFIXES = tuple(
     spec.prefix
     for spec in SEARCH_OPERATOR_SPECS
@@ -107,6 +122,31 @@ SEARCH_OPERATOR_RE = re.compile(
     re.IGNORECASE,
 )
 
+_PREFIXED_OPERATOR_TOKEN_RE = re.compile(
+    rf'(?<!\S)-?(?:{_RECOGNIZED_PREFIX_PATTERN})(?:"[^"]*"|\S+)',
+    re.IGNORECASE,
+)
+_EXCLUDED_TOKEN_RE = re.compile(r'(?<!\S)-(?:"[^"]*"|\S+)')
+_OR_TOKEN_RE = re.compile(r'(?<!\S)OR(?!\S)', re.IGNORECASE)
+_QUOTED_VALUE_RE = re.compile(r'"([^"]*)"')
+
 
 def has_search_operators(query: str) -> bool:
     return bool(SEARCH_OPERATOR_RE.search(str(query or "")))
+
+
+def strip_search_operators(query: str) -> str:
+    """Remove web-only operator semantics from a specialized-vertical query.
+
+    Shopping, academic, and onion providers receive plain terms. Prefix operators and
+    exclusions are discarded, while quotes and OR grouping are reduced to ordinary text
+    so useful product names, titles, and authors are retained.
+    """
+
+    text = str(query or "").replace("\r", " ").replace("\n", " ")
+    text = _PREFIXED_OPERATOR_TOKEN_RE.sub(" ", text)
+    text = _EXCLUDED_TOKEN_RE.sub(" ", text)
+    text = _OR_TOKEN_RE.sub(" ", text)
+    text = _QUOTED_VALUE_RE.sub(r"\1", text)
+    text = text.replace("(", " ").replace(")", " ")
+    return re.sub(r"\s+", " ", text).strip()

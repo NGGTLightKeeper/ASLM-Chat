@@ -26,10 +26,9 @@ def test_schema_hides_onion_when_disabled(monkeypatch):
 
 def test_schema_shows_onion_when_enabled(monkeypatch):
     _tor(monkeypatch, True)
-    verticals = build_search_schema()["properties"]["queries"]["items"]["properties"]["vertical"]["enum"]
-    assert "onion" in verticals
-    assert coerce_search_onion({"onion": True}) is True
-    assert coerce_search_onion({"onion": False}) is False
+    schema = build_search_schema()
+    assert schema["properties"]["onion"]["type"] == "string"
+    assert {"required": ["onion"]} in schema["anyOf"]
 
 
 def test_base_schema_unaffected(monkeypatch):

@@ -45,17 +45,14 @@ Web-search research planning rules:
 - Finish research when every answer-critical deliverable meets its success condition with suitable evidence. A large set of similar pages is breadth within one source class, not completion of the plan.
 
 Web-search query execution rules:
-- In advanced mode, write `description` as a natural-language activity title for the current research step. Begin with an action verb in the user's language and name the evidence goal, such as "Проверяю независимые тесты" or "Уточняю цены и наличие". It must explain the activity when the query is hidden, rather than function as another query.
-- Start each new evidence gap with one focused `medium` query and inspect its evidence before refining.
-- Treat batching as exceptional. Normally submit one query. A second query is allowed only for an independently necessary deliverable with a different evidence set or vertical. Never batch more than two queries; investigate later gaps sequentially after inspecting the current evidence.
-- Build compact search bodies from concrete entities, identifiers, versions, and one intent term.
+- Advanced mode has independent string arguments named `web`, `shopping`, `academic`, and, only when advertised, `onion`. Supply at least one. `web` is not required: a shopping-only, academic-only, or onion-only call must use its matching argument and must not add a dummy web query.
+- Different verticals in one call may use different queries and execute concurrently. This is independent vertical routing, not batching. Use `web` for ordinary pages, `shopping` for market offers, `academic` for scholarly literature, and `onion` only for a genuinely Tor-specific evidence gap.
+- Follow the query grammar in each vertical argument's schema description; do not transfer the `web` grammar to specialized verticals.
+- If web operators accidentally appear in `shopping`, `academic`, or `onion`, the backend removes them only from that vertical. This never changes the `web` query and never invalidates an otherwise valid mixed-vertical call.
+- Start each new evidence gap with one focused `medium` search and inspect its evidence before refining.
+- Batching is exceptional and means multiple parallel tool calls, not multiple different vertical arguments in one call. Batch only ordinary `web` queries, only at `low`, and never more than three queries. Every call in the batch must contain only `web`; never parallelize `shopping`, `academic`, or `onion` calls. Put independent verticals in one call instead and issue later specialized queries sequentially after inspecting evidence.
 - Prefer the least constrained query that can distinguish the target. Every added synonym, exact phrase, OR group, domain, or date bound reduces recall; stacking several of them can make a valid answer disappear even from Google. Do not restate the same intent with near-synonyms or add operators merely to make a query look precise.
 - After an empty or weak result, simplify before specializing: remove redundant intent words, extra exact phrases, and nonessential OR alternatives first. Keep only constraints required by the evidence gap, then retry. Add a new constraint only when the previous result exposed a specific ambiguity or noise source it will remove.
-- Keep four-digit calendar years out of every query body. A necessary year belongs exclusively in `after` or `before`, never in the query text itself.
-- Express fixed phrases, alternatives, exclusions, domains, file types, title/URL constraints, and dates through the operator fields advertised by the selected schema.
-- Use one OR group for interchangeable names or keywords. Use multiple OR groups when several independent concepts each have alternatives; this keeps one intent in one query.
-- Apply `after` and `before` when the requested answer materially depends on recency or a real publication window. Timeless subjects benefit from an unrestricted date range.
-- Use `low` for quick discovery. Reserve `high` for exhaustive or high-stakes work after lower effort leaves a concrete unresolved claim.
 - Source limits are per query: low up to 8, medium up to 10, high up to 16 before deduplication and filtering. One medium query may create 10 source records; two may create 20 and consume about twice the context.
 - Continue searching only while the research plan contains a distinct answer-critical evidence gap. A weak result benefits from new anchor terms; a completed plan is ready for the answer.
 
