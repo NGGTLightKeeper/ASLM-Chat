@@ -5015,13 +5015,41 @@ export function createMessagesUi(context, dependencies) {
     return output.join('');
   }
 
+  // Markdown from reasoning models is frequently partial or malformed while
+  // streaming. Remove syntax characters that can survive the normal plain-text
+  // conversion instead of exposing unfinished emphasis, lists, or tables.
+  function stripResidualReasoningMarkdownSyntax(value) {
+    return String(value || '')
+      .replace(/[\*_~`#|]+/g, ' ')
+      .replace(/(^|\s)>{1,}(?=\s|$)/g, '$1')
+      .replace(/(^|\s)[+-](?=\s)/g, '$1')
+      .replace(/\\(?=[\\`*_{}\[\]()#+\-.!>|~])/g, '')
+      .replace(/[\[\]{}]/g, ' ')
+      .replace(/\s+([,.;:!?\u2026])/gu, '$1')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function sanitizeReasoningDisplayText(value) {
+    return String(value || '')
+      .replace(/\r\n?/g, '\n')
+      .split('\n')
+      .map(function sanitizeReasoningDisplayLine(line) {
+        return stripResidualReasoningMarkdownSyntax(markdownToPlainText(line));
+      })
+      .join('\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
   function sanitizeReasoningPreviewText(value) {
     const plainText = markdownToPlainText(value)
       .replace(REASONING_PREVIEW_PRIVATE_MARKER_PATTERN, ' ')
       .replace(REASONING_PREVIEW_BRACKETED_CITATION_PATTERN, ' ')
       .replace(REASONING_PREVIEW_INTERNAL_MARKER_PATTERN, ' ')
       .replace(REASONING_PREVIEW_INVISIBLE_PATTERN, ' ');
-    return stripReasoningPreviewBracketedText(plainText)
+    return stripResidualReasoningMarkdownSyntax(stripReasoningPreviewBracketedText(plainText))
       .replace(/\s+([,.;:!?\u2026])/gu, '$1')
       .replace(/\s+/g, ' ')
       .trim();
@@ -5264,7 +5292,7 @@ export function createMessagesUi(context, dependencies) {
 
   // Render reasoning thought text.
   function renderReasoningThoughtText(content) {
-    const text = String(content || '').trim();
+    const text = sanitizeReasoningDisplayText(content);
     if (!text) {
       return '';
     }
